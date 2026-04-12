@@ -221,6 +221,131 @@ export async function seedTestData(
 }
 
 // ----------------------------------------------------------
+// Seed Named Players (specific roster)
+// ----------------------------------------------------------
+// Creates exactly the 16 players specified by the organizer.
+// All are treated as "new joiners": games_played = 0, joined_at = now.
+
+const NAMED_PLAYERS: { name: string; skill: SkillLevel }[] = [
+  { name: "Carl", skill: "lower_advanced" },
+  { name: "Stelle", skill: "upper_intermediate" },
+  { name: "Mariah", skill: "upper_beginner" },
+  { name: "Jerg", skill: "intermediate" },
+  { name: "Veejay", skill: "intermediate" },
+  { name: "Keeeb", skill: "intermediate" },
+  { name: "Rufel", skill: "upper_intermediate" },
+  { name: "Bea", skill: "intermediate" },
+  { name: "Mark", skill: "upper_intermediate" },
+  { name: "Alvin", skill: "upper_intermediate" },
+  { name: "Miggy", skill: "lower_advanced" },
+  { name: "Ogie", skill: "upper_intermediate" },
+  { name: "Jackie", skill: "intermediate" },
+  { name: "JV", skill: "advanced" },
+  { name: "Bianca", skill: "upper_beginner" },
+  { name: "Chu", skill: "advanced" },
+];
+
+export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
+  let supabase: ReturnType<typeof createServiceClient>;
+  try {
+    supabase = createServiceClient();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[seedNamedPlayers] Failed to create service client:", msg);
+    return { success: false, message: msg };
+  }
+
+  // Verify session exists and is active.
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("id")
+    .eq("id", sessionId)
+    .eq("is_active", true)
+    .single();
+
+  if (sessionError || !session) {
+    return { success: false, message: `Session lookup failed: ${sessionError?.message ?? "not found"}` };
+  }
+
+  const runId = crypto.randomUUID().slice(0, 8);
+  const now = new Date().toISOString();
+  let inserted = 0;
+  let errors = 0;
+
+  for (let i = 0; i < NAMED_PLAYERS.length; i++) {
+    const { name, skill } = NAMED_PLAYERS[i];
+    const email = `player_${runId}_${name.toLowerCase().replace(/\s/g, "")}@seed.local`;
+
+    // Step 1: Create auth user.
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      email_confirm: true,
+      user_metadata: { display_name: name, skill_level: skill },
+    });
+
+    if (authError || !authData?.user) {
+      errors++;
+      console.error(`[seedNamedPlayers] auth.admin.createUser failed for "${name}":`, authError);
+      continue;
+    }
+
+    const userId = authData.user.id;
+
+    // Step 2: Upsert profile.
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .upsert(
+        { id: userId, display_name: name, skill_level: skill },
+        { onConflict: "id" }
+      );
+
+    if (profileError) {
+      errors++;
+      console.error(`[seedNamedPlayers] Profile upsert failed for "${name}":`, profileError);
+      await supabase.auth.admin.deleteUser(userId);
+      continue;
+    }
+
+    // Step 3: Insert queue entry — new joiner (games_played: 0, joined_at: now).
+    const { error: queueError } = await supabase
+      .from("queue_entries")
+      .upsert(
+        {
+          session_id: sessionId,
+          player_id: userId,
+          status: "waiting" as const,
+          joined_at: now,
+          games_played: 0,
+        },
+        { onConflict: "session_id,player_id" }
+      );
+
+    if (queueError) {
+      errors++;
+      console.error(`[seedNamedPlayers] Queue entry failed for "${name}":`, queueError);
+      continue;
+    }
+
+    inserted++;
+  }
+
+  console.log(`[seedNamedPlayers] Done. ${inserted}/${NAMED_PLAYERS.length} players inserted. errors=${errors}`);
+
+  if (inserted === 0) {
+    return {
+      success: false,
+      message: `Seeded 0 players — check server logs. errors: ${errors}`,
+    };
+  }
+
+  return {
+    success: true,
+    message: `Seeded ${inserted} named players (${NAMED_PLAYERS.length - inserted} failed).`,
+    playerCount: inserted,
+  };
+}
+
+// ----------------------------------------------------------
 // Clear Session Data
 // ----------------------------------------------------------
 export interface ClearResult {

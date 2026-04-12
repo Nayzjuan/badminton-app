@@ -11,6 +11,7 @@
 import { useState } from "react";
 import {
   seedTestData,
+  seedNamedPlayers,
   clearSessionData,
   type SeedResult,
   type ClearResult,
@@ -28,6 +29,7 @@ interface Toast {
 export function DevTools({ sessionId }: DevToolsProps) {
   const [expanded, setExpanded] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [seedingNamed, setSeedingNamed] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [confirmNuke, setConfirmNuke] = useState(false);
@@ -45,6 +47,16 @@ export function DevTools({ sessionId }: DevToolsProps) {
       message: result.message,
     });
     setSeeding(false);
+  }
+
+  async function handleSeedNamed() {
+    setSeedingNamed(true);
+    const result: SeedResult = await seedNamedPlayers(sessionId);
+    showToast({
+      type: result.success ? "success" : "error",
+      message: result.message,
+    });
+    setSeedingNamed(false);
   }
 
   async function handleClear() {
@@ -148,6 +160,34 @@ export function DevTools({ sessionId }: DevToolsProps) {
               <p className="text-[10px] text-muted-foreground px-1">
                 Creates dummy players with randomized skill levels, wait times (3-5 bottlenecks &gt; 20min),
                 and game counts.
+              </p>
+            </div>
+
+            {/* Seed Named Players */}
+            <div className="space-y-1.5">
+              <button
+                onClick={handleSeedNamed}
+                disabled={seedingNamed}
+                className="w-full rounded-lg border-2 border-dashed border-emerald-400 bg-emerald-50
+                           px-4 py-2.5 text-sm font-medium text-emerald-900 hover:bg-emerald-100
+                           disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+                           flex items-center justify-center gap-2"
+              >
+                {seedingNamed ? (
+                  <>
+                    <span className="inline-block h-3.5 w-3.5 border-2 border-emerald-600
+                                     border-t-transparent rounded-full animate-spin" />
+                    Seeding named players...
+                  </>
+                ) : (
+                  <>
+                    <span>&#x1F3F8;</span>
+                    Seed 16 Named Players
+                  </>
+                )}
+              </button>
+              <p className="text-[10px] text-muted-foreground px-1">
+                Creates 16 specific players (Carl, Stelle, Miggy, JV, etc.) as new joiners with 0 games played.
               </p>
             </div>
 

@@ -8,6 +8,7 @@
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { OrganizerDashboard } from "@/components/organizer/organizer-dashboard";
+import type { Session } from "@/types/database";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -55,5 +56,45 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
     redirect("/organizer");
   }
 
-  return <OrganizerDashboard profile={profile} session={session} />;
+  // ── Fetch sibling sessions for the session switcher ────────
+  const { data: orgEntries } = await supabase
+    .from("session_organizers")
+    .select("session_id")
+    .eq("user_id", user.id);
+
+  const orgSessionIds = (orgEntries ?? []).map((e) => e.session_id);
+
+  const { data: createdSessions } = await supabase
+    .from("sessions")
+    .select("*")
+    .eq("created_by", user.id)
+    .eq("is_active", true);
+
+  let orgSessions: Session[] = [];
+  if (orgSessionIds.length > 0) {
+    const { data } = await supabase
+      .from("sessions")
+      .select("*")
+      .in("id", orgSessionIds)
+      .eq("is_active", true);
+    orgSessions = data ?? [];
+  }
+
+  const sessionMap = new Map<string, Session>();
+  for (const s of [...(createdSessions ?? []), ...orgSessions]) {
+    sessionMap.set(s.id, s);
+  }
+  // Remove current session — we only need "other" sessions for the switcher.
+  sessionMap.delete(sessionId);
+  const otherSessions = Array.from(sessionMap.values()).sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+
+  return (
+    <OrganizerDashboard
+      profile={profile}
+      session={session}
+      otherSessions={otherSessions}
+    />
+  );
 }

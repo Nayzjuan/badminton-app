@@ -74,10 +74,9 @@ export default async function OrganizerPage() {
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   );
 
-  // Auto-redirect if exactly one active session.
-  if (organizedSessions.length === 1) {
-    redirect(`/organizer/${organizedSessions[0].id}`);
-  }
+  // Note: we no longer auto-redirect for a single session.
+  // The organizer should always be able to see the hub to create
+  // new sessions or switch between existing ones.
 
   // ── Enrich sessions with player + court counts ─────────────
   const sessionsWithStats: SessionWithStats[] = await Promise.all(
