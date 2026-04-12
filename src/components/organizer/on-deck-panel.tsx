@@ -4,19 +4,15 @@
 // OnDeckPanel — Organizer view of pre-formed pending matches
 // ============================================================
 // Shows matches that have been algorithmically generated but
-// are waiting for a court to free up. These will auto-promote
-// to in_progress when endMatch is called.
-//
-// Organizers can see team compositions here so they can relay
-// information to players before a court opens.
+// are waiting for a court to free up. Uses the badminton court
+// graphic for visual consistency.
 // ============================================================
 
-import { SkillBadge } from "@/components/ui/skill-badge";
+import { BadmintonCourt } from "@/components/ui/badminton-court";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 
 interface OnDeckPanelProps {
   matches: EnrichedMatch[];
-  /** Called when organizer manually triggers on-deck regeneration. */
   onGenerate?: () => void;
   generating?: boolean;
 }
@@ -81,8 +77,20 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
       {/* Match cards */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {matches.map((match, idx) => {
-          const teamA = match.players.filter((p) => p.team === "a");
-          const teamB = match.players.filter((p) => p.team === "b");
+          const teamA = match.players
+            .filter((p) => p.team === "a")
+            .map((p) => ({
+              player_id: p.player_id,
+              display_name: p.profile.display_name,
+              skill_level: p.profile.skill_level,
+            }));
+          const teamB = match.players
+            .filter((p) => p.team === "b")
+            .map((p) => ({
+              player_id: p.player_id,
+              display_name: p.profile.display_name,
+              skill_level: p.profile.skill_level,
+            }));
           const minutesWaiting = Math.floor(
             (Date.now() - new Date(match.created_at).getTime()) / 60_000
           );
@@ -110,44 +118,9 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
                 </span>
               </div>
 
-              {/* Teams */}
-              <div className="flex items-stretch gap-3 p-3">
-                {/* Team A */}
-                <div className="flex-1 rounded-xl bg-blue-50 p-3 text-center">
-                  <p className="mb-2 text-xs font-black tracking-wider text-slate-500 uppercase">
-                    Team A
-                  </p>
-                  {teamA.map((p) => (
-                    <div key={p.player_id} className="mb-1.5 last:mb-0">
-                      <p className="text-sm font-bold text-slate-900 leading-snug">
-                        {p.profile.display_name}
-                      </p>
-                      <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-                    </div>
-                  ))}
-                </div>
-
-                {/* VS */}
-                <div className="flex shrink-0 items-center justify-center">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-white shadow-sm">
-                    VS
-                  </div>
-                </div>
-
-                {/* Team B */}
-                <div className="flex-1 rounded-xl bg-rose-50 p-3 text-center">
-                  <p className="mb-2 text-xs font-black tracking-wider text-slate-500 uppercase">
-                    Team B
-                  </p>
-                  {teamB.map((p) => (
-                    <div key={p.player_id} className="mb-1.5 last:mb-0">
-                      <p className="text-sm font-bold text-slate-900 leading-snug">
-                        {p.profile.display_name}
-                      </p>
-                      <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-                    </div>
-                  ))}
-                </div>
+              {/* Court graphic */}
+              <div className="p-2">
+                <BadmintonCourt teamA={teamA} teamB={teamB} isOnDeck />
               </div>
 
               {/* Footer hint */}

@@ -17,7 +17,7 @@
 import { useState } from "react";
 import { Plus, Trophy, XCircle, Swords } from "lucide-react";
 import { ScoreModal } from "./score-modal";
-import { SkillBadge } from "@/components/ui/skill-badge";
+import { BadmintonCourt } from "@/components/ui/badminton-court";
 import type { Court } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
@@ -130,47 +130,21 @@ function CourtCard({
       {/* ── Body ───────────────────────────────────────────── */}
       <div className="flex-1 px-4 pb-3">
 
-        {/* IN PROGRESS — team matchup */}
+        {/* IN PROGRESS — badminton court graphic */}
         {hasActiveMatch && (
-          <div className="flex items-stretch gap-3 py-1">
-
-            {/* Team A */}
-            <div className="flex-1 rounded-xl bg-blue-50 p-4 text-center">
-              <p className="mb-3 text-xs font-black tracking-wider text-slate-500 uppercase">
-                Team A
-              </p>
-              {teamA.map((p) => (
-                <div key={p.player_id} className="mb-2 last:mb-0">
-                  <p className="text-lg font-bold leading-snug text-slate-900">
-                    {p.profile.display_name}
-                  </p>
-                  <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-                </div>
-              ))}
-            </div>
-
-            {/* VS */}
-            <div className="flex shrink-0 items-center justify-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full
-                              bg-slate-800 text-sm font-bold text-white shadow-sm">
-                VS
-              </div>
-            </div>
-
-            {/* Team B */}
-            <div className="flex-1 rounded-xl bg-rose-50 p-4 text-center">
-              <p className="mb-3 text-xs font-black tracking-wider text-slate-500 uppercase">
-                Team B
-              </p>
-              {teamB.map((p) => (
-                <div key={p.player_id} className="mb-2 last:mb-0">
-                  <p className="text-lg font-bold leading-snug text-slate-900">
-                    {p.profile.display_name}
-                  </p>
-                  <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-                </div>
-              ))}
-            </div>
+          <div className="py-1">
+            <BadmintonCourt
+              teamA={teamA.map((p) => ({
+                player_id: p.player_id,
+                display_name: p.profile.display_name,
+                skill_level: p.profile.skill_level,
+              }))}
+              teamB={teamB.map((p) => ({
+                player_id: p.player_id,
+                display_name: p.profile.display_name,
+                skill_level: p.profile.skill_level,
+              }))}
+            />
           </div>
         )}
 

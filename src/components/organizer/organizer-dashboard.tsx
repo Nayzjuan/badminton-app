@@ -10,6 +10,7 @@ import { ActiveCourts } from "./active-courts";
 import { OnDeckPanel } from "./on-deck-panel";
 import { QueueControl } from "./queue-control";
 import { WaitTimeMonitor } from "./wait-time-monitor";
+import { MatchHistoryPanel } from "./match-history-panel";
 import { DevTools } from "./dev-tools";
 import type { Profile, Session } from "@/types/database";
 
@@ -18,7 +19,7 @@ interface OrganizerDashboardProps {
   session: Session;
 }
 
-type Tab = "courts" | "queue" | "monitor";
+type Tab = "courts" | "queue" | "monitor" | "history";
 
 export function OrganizerDashboard({ profile, session }: OrganizerDashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>("courts");
@@ -46,6 +47,7 @@ export function OrganizerDashboard({ profile, session }: OrganizerDashboardProps
     { key: "courts", label: "Active Courts" },
     { key: "queue", label: "Queue & Match Control" },
     { key: "monitor", label: "Wait Time Monitor", badge: bottleneckCount > 0 ? bottleneckCount : undefined },
+    { key: "history", label: "Match History" },
   ];
 
   if (loading) {
@@ -144,6 +146,10 @@ export function OrganizerDashboard({ profile, session }: OrganizerDashboardProps
             queue={queue}
             onRemoveFromQueue={removeFromQueue}
           />
+        )}
+
+        {activeTab === "history" && (
+          <MatchHistoryPanel sessionId={session.id} />
         )}
       </main>
     </div>

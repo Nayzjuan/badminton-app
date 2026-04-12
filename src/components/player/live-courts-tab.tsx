@@ -3,13 +3,12 @@
 // ============================================================
 // LiveCourtsTab — Read-only view of all active matches
 // ============================================================
-// Shows in-progress matches (on a court) as cards, then
-// on-deck matches (pending, no court) in a separate section.
-// No organizer actions — purely informational for players.
+// Shows in-progress matches as badminton court graphics, then
+// on-deck matches in a separate section. No organizer actions.
 // ============================================================
 
 import { Swords } from "lucide-react";
-import { SkillBadge } from "@/components/ui/skill-badge";
+import { BadmintonCourt } from "@/components/ui/badminton-court";
 import type { SessionMatch } from "@/hooks/use-session-data";
 
 interface LiveCourtsTabProps {
@@ -65,9 +64,9 @@ export function LiveCourtsTab({
             </span>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4">
             {inProgressMatches.map((match) => (
-              <MatchCard key={match.id} match={match} variant="in_progress" />
+              <CourtMatchCard key={match.id} match={match} variant="in_progress" />
             ))}
           </div>
         </section>
@@ -89,9 +88,9 @@ export function LiveCourtsTab({
             </span>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4">
             {onDeckMatches.map((match) => (
-              <MatchCard key={match.id} match={match} variant="on_deck" />
+              <CourtMatchCard key={match.id} match={match} variant="on_deck" />
             ))}
           </div>
         </section>
@@ -101,48 +100,51 @@ export function LiveCourtsTab({
 }
 
 // ─────────────────────────────────────────────────────────────
-// MatchCard — Read-only court card for players
+// CourtMatchCard — Header bar + badminton court graphic
 // ─────────────────────────────────────────────────────────────
 
-function MatchCard({
+function CourtMatchCard({
   match,
   variant,
 }: {
   match: SessionMatch;
   variant: "in_progress" | "on_deck";
 }) {
-  const teamA = match.players.filter((p) => p.team === "a");
-  const teamB = match.players.filter((p) => p.team === "b");
+  const teamA = match.players
+    .filter((p) => p.team === "a")
+    .map((p) => ({
+      player_id: p.player_id,
+      display_name: p.profile.display_name,
+      skill_level: p.profile.skill_level,
+    }));
+
+  const teamB = match.players
+    .filter((p) => p.team === "b")
+    .map((p) => ({
+      player_id: p.player_id,
+      display_name: p.profile.display_name,
+      skill_level: p.profile.skill_level,
+    }));
+
   const isOnDeck = variant === "on_deck";
 
   return (
-    <div
-      className={`rounded-2xl overflow-hidden shadow-sm
-                  ${
-                    isOnDeck
-                      ? "border border-dashed border-amber-200 bg-slate-50"
-                      : "border border-slate-200 bg-white"
-                  }`}
-    >
-      {/* Header */}
+    <div className="rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-white">
+      {/* Header bar */}
       <div
-        className={`flex items-center justify-between px-4 py-2.5 border-b
-                    ${
-                      isOnDeck
-                        ? "bg-amber-50/60 border-amber-100"
-                        : "bg-slate-50 border-slate-100"
-                    }`}
+        className={`flex items-center justify-between px-4 py-2.5
+                    ${isOnDeck ? "bg-amber-50" : "bg-slate-900"}`}
       >
         <div className="flex items-center gap-2">
           <span
-            className={`text-sm font-bold ${
-              isOnDeck ? "text-amber-900" : "text-slate-900"
-            }`}
+            className={`text-sm font-bold
+                        ${isOnDeck ? "text-amber-900" : "text-white"}`}
           >
             {isOnDeck ? "On Deck" : match.court?.name ?? "Court"}
           </span>
           {match.is_mixed_level && (
-            <span className="rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+            <span className="rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5
+                            text-[10px] font-bold uppercase tracking-wider text-amber-800">
               Mixed Level
             </span>
           )}
@@ -151,52 +153,17 @@ function MatchCard({
           className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider
                       ${
                         isOnDeck
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-violet-100 text-violet-700"
+                          ? "bg-amber-200/60 text-amber-800"
+                          : "bg-white/20 text-white/90"
                       }`}
         >
           {isOnDeck ? "Waiting for court" : "In Progress"}
         </span>
       </div>
 
-      {/* Teams */}
-      <div className="flex items-stretch gap-3 p-3">
-        {/* Team A */}
-        <div className="flex-1 rounded-xl bg-blue-50 p-3 text-center">
-          <p className="mb-2 text-[10px] font-black tracking-wider text-slate-500 uppercase">
-            Team A
-          </p>
-          {teamA.map((p) => (
-            <div key={p.player_id} className="mb-1.5 last:mb-0">
-              <p className="text-sm font-bold text-slate-900 leading-snug">
-                {p.profile.display_name}
-              </p>
-              <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-            </div>
-          ))}
-        </div>
-
-        {/* VS */}
-        <div className="flex shrink-0 items-center justify-center">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-bold text-white shadow-sm">
-            VS
-          </div>
-        </div>
-
-        {/* Team B */}
-        <div className="flex-1 rounded-xl bg-rose-50 p-3 text-center">
-          <p className="mb-2 text-[10px] font-black tracking-wider text-slate-500 uppercase">
-            Team B
-          </p>
-          {teamB.map((p) => (
-            <div key={p.player_id} className="mb-1.5 last:mb-0">
-              <p className="text-sm font-bold text-slate-900 leading-snug">
-                {p.profile.display_name}
-              </p>
-              <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-            </div>
-          ))}
-        </div>
+      {/* Court graphic */}
+      <div className="p-2">
+        <BadmintonCourt teamA={teamA} teamB={teamB} isOnDeck={isOnDeck} />
       </div>
     </div>
   );
