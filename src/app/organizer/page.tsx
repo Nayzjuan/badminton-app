@@ -1,13 +1,22 @@
 // ============================================================
-// Organizer Entry Page — /organizer
+// Organizer Landing Page — /organizer
 // ============================================================
-// Lists active sessions the user organizes, or shows a form
-// to create a new session / enter a passcode to join as organizer.
+// Dashboard hub: shows the user's active sessions, a form to
+// create a new one, and a co-organizer join panel.
+//
+// If the user has exactly one active session, we auto-redirect
+// to it so they don't waste a click.
 // ============================================================
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { OrganizerEntry } from "@/components/organizer/organizer-entry";
+import type { Session } from "@/types/database";
+
+export type SessionWithStats = Session & {
+  playerCount: number;
+  courtCount: number;
+};
 
 export default async function OrganizerPage() {
   const supabase = await createClient();
@@ -25,7 +34,7 @@ export default async function OrganizerPage() {
 
   if (!profile) redirect("/");
 
-  // Get sessions where this user is an organizer.
+  // ── Fetch sessions this user organizes ─────────────────────
   const { data: orgEntries } = await supabase
     .from("session_organizers")
     .select("session_id")
@@ -33,7 +42,7 @@ export default async function OrganizerPage() {
 
   const orgSessionIds = (orgEntries ?? []).map((e) => e.session_id);
 
-  let organizedSessions: import("@/types/database").Session[] | null = [];
+  let organizedSessions: Session[] = [];
   if (orgSessionIds.length > 0) {
     const { data } = await supabase
       .from("sessions")
@@ -41,18 +50,41 @@ export default async function OrganizerPage() {
       .in("id", orgSessionIds)
       .eq("is_active", true)
       .order("created_at", { ascending: false });
-    organizedSessions = data;
+    organizedSessions = data ?? [];
   }
 
-  // Auto-redirect if exactly one active organized session.
-  if (organizedSessions && organizedSessions.length === 1) {
+  // Auto-redirect if exactly one active session.
+  if (organizedSessions.length === 1) {
     redirect(`/organizer/${organizedSessions[0].id}`);
   }
+
+  // ── Enrich sessions with player + court counts ─────────────
+  const sessionsWithStats: SessionWithStats[] = await Promise.all(
+    organizedSessions.map(async (session) => {
+      const { count: playerCount } = await supabase
+        .from("queue_entries")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", session.id)
+        .in("status", ["waiting", "on_deck", "playing"]);
+
+      const { count: courtCount } = await supabase
+        .from("courts")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", session.id)
+        .neq("status", "closed");
+
+      return {
+        ...session,
+        playerCount: playerCount ?? 0,
+        courtCount: courtCount ?? 0,
+      };
+    })
+  );
 
   return (
     <OrganizerEntry
       profile={profile}
-      organizedSessions={organizedSessions ?? []}
+      organizedSessions={sessionsWithStats}
     />
   );
 }
