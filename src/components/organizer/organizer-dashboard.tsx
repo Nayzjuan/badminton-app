@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useOrganizerData } from "@/hooks/use-organizer-data";
 import { ActiveCourts } from "./active-courts";
+import { OnDeckPanel } from "./on-deck-panel";
 import { QueueControl } from "./queue-control";
 import { WaitTimeMonitor } from "./wait-time-monitor";
 import { DevTools } from "./dev-tools";
@@ -26,11 +27,13 @@ export function OrganizerDashboard({ profile, session }: OrganizerDashboardProps
     courts,
     queue,
     activeMatches,
+    onDeckMatches,
     loading,
     addCourt,
     updateCourtStatus,
     removeCourt,
     callNextMatch,
+    generateOnDeckMatches,
     createManualMatch,
     endMatch,
     cancelMatch,
@@ -107,16 +110,24 @@ export function OrganizerDashboard({ profile, session }: OrganizerDashboardProps
       {/* Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
         {activeTab === "courts" && (
-          <ActiveCourts
-            courts={courts}
-            activeMatches={activeMatches}
-            onAddCourt={addCourt}
-            onUpdateCourtStatus={updateCourtStatus}
-            onRemoveCourt={removeCourt}
-            onCallNextMatch={callNextMatch}
-            onEndMatch={endMatch}
-            onCancelMatch={cancelMatch}
-          />
+          <div className="space-y-6">
+            {/* On-deck panel — always visible, collapses to empty state when no matches */}
+            <OnDeckPanel
+              matches={onDeckMatches}
+              onGenerate={generateOnDeckMatches}
+            />
+
+            <ActiveCourts
+              courts={courts}
+              activeMatches={activeMatches}
+              onAddCourt={addCourt}
+              onUpdateCourtStatus={updateCourtStatus}
+              onRemoveCourt={removeCourt}
+              onCallNextMatch={callNextMatch}
+              onEndMatch={endMatch}
+              onCancelMatch={cancelMatch}
+            />
+          </div>
         )}
 
         {activeTab === "queue" && (

@@ -111,6 +111,7 @@ export type Match = {
   status: MatchStatus;
   team_a_score: number | null;
   team_b_score: number | null;
+  is_mixed_level: boolean;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -210,10 +211,10 @@ export type QueueEntryUpdate = Partial<
 >;
 
 export type MatchInsert = Pick<Match, "session_id"> &
-  Partial<Pick<Match, "court_id" | "status" | "started_at">>;
+  Partial<Pick<Match, "court_id" | "status" | "started_at" | "is_mixed_level">>;
 
 export type MatchUpdate = Partial<
-  Pick<Match, "court_id" | "status" | "team_a_score" | "team_b_score" | "started_at" | "completed_at">
+  Pick<Match, "court_id" | "status" | "team_a_score" | "team_b_score" | "is_mixed_level" | "started_at" | "completed_at">
 >;
 
 export type MatchGameInsert = Pick<MatchGame, "match_id" | "game_number" | "team_a_score" | "team_b_score">;

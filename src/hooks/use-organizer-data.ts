@@ -43,6 +43,7 @@ import {
 } from "@/lib/realtime";
 import {
   callNextMatch as callNextMatchAction,
+  generateOnDeckMatchesAction,
   type MatchmakingResult,
 } from "@/app/actions/matchmaking";
 import {
@@ -66,7 +67,12 @@ export interface EnrichedMatch extends Match {
 export interface UseOrganizerDataResult {
   courts: Court[];
   queue: QueueWithWaitTime[];
+  /** All active matches (pending + in_progress). */
   activeMatches: EnrichedMatch[];
+  /** Pending matches — formed but waiting for a court (on-deck). */
+  onDeckMatches: EnrichedMatch[];
+  /** In-progress matches — assigned to a court, currently playing. */
+  inProgressMatches: EnrichedMatch[];
   profiles: Map<string, Profile>;
   loading: boolean;
   // -- Court actions --
@@ -75,6 +81,7 @@ export interface UseOrganizerDataResult {
   removeCourt: (courtId: string) => Promise<{ error?: string }>;
   // -- Matchmaking --
   callNextMatch: (courtId: string) => Promise<MatchmakingResult>;
+  generateOnDeckMatches: () => Promise<void>;
   // -- Match actions --
   createManualMatch: (
     courtId: string,
@@ -137,7 +144,10 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     const { data, error } = await supabase
       .from("v_queue_with_wait_time")
       .select("*")
-      .eq("session_id", sessionId);
+      .eq("session_id", sessionId)
+      // Must match the matchmaking sort so the organizer sees the real queue order.
+      .order("games_played", { ascending: true })
+      .order("joined_at", { ascending: true });
     if (error) {
       console.error("[useOrganizerData] fetchQueue error:", error);
     }
@@ -327,19 +337,21 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
   // activeMatches BEFORE returning. This guarantees that when the
   // component sets matchmakingCourt to null, activeMatches already
   // contains the new match — preventing the brief flash back to the
-  // "Call Next Match" button (Bug 2).
+  // "Call Next Match" button.
 
   const callNextMatch = useCallback(
     async (courtId: string): Promise<MatchmakingResult> => {
       const result = await callNextMatchAction(sessionId, courtId);
-      // Explicit refresh — do not rely solely on realtime here.
-      // This ensures the match is in activeMatches before the component
-      // clears the matchmaking spinner and re-evaluates button state.
       await Promise.all([fetchCourts(), fetchActiveMatches()]);
       return result;
     },
     [sessionId, fetchCourts, fetchActiveMatches]
   );
+
+  const generateOnDeckMatches = useCallback(async () => {
+    await generateOnDeckMatchesAction(sessionId);
+    await fetchActiveMatches();
+  }, [sessionId, fetchActiveMatches]);
 
   // ---- Match actions ----
 
@@ -423,16 +435,23 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     [supabase, sessionId]
   );
 
+  // Derived splits — avoids the dashboard needing to filter itself.
+  const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
+  const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
+
   return {
     courts,
     queue,
     activeMatches,
+    onDeckMatches,
+    inProgressMatches,
     profiles,
     loading,
     addCourt,
     updateCourtStatus,
     removeCourt,
     callNextMatch,
+    generateOnDeckMatches,
     createManualMatch,
     endMatch,
     cancelMatch,

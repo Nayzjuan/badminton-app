@@ -1,12 +1,15 @@
 "use client";
 
 // ============================================================
-// On-Deck Alert — Shows when player is assigned to a match
+// OnDeckAlert — Player-facing match status card
 // ============================================================
-// Displays different visual states:
-//   • "on_deck" with queue status → "Get ready!" approaching alert
-//   • "pending" match → "You're Next!" with court + player names
-//   • "in_progress" match → "Now Playing" active state
+// Four display states (in priority order):
+//
+//  1. "in_progress"  → "Now Playing" violet card (on court)
+//  2. "pending"      → "You're Up Next!" amber card (on-deck, no court yet)
+//                      Shows full Team A vs Team B with names + skill badges
+//  3. Approaching    → "Get Ready" blue/amber card (positions 1–4 in queue)
+//  4. null           → nothing rendered
 // ============================================================
 
 import { SkillBadge } from "@/components/ui/skill-badge";
@@ -29,12 +32,124 @@ export function OnDeckAlert({
   teammates,
   opponents,
 }: OnDeckAlertProps) {
-  // Nothing to show if player is just waiting normally.
-  if (!matchStatus && queueStatus === "waiting" && (position === null || position > 4)) {
-    return null;
+  // ── State 1: IN PROGRESS — on court right now ──────────────
+  if (matchStatus === "in_progress" || queueStatus === "playing") {
+    return (
+      <div className="rounded-2xl border-2 border-violet-400 bg-violet-50 p-5 text-center">
+        <p className="text-xs font-bold uppercase tracking-wider text-violet-500">
+          Now Playing
+        </p>
+        <p className="mt-1 text-2xl font-bold text-violet-900">
+          {court?.name ?? "On Court"}
+        </p>
+
+        <div className="mt-4 flex items-start justify-center gap-5 text-sm">
+          <div className="flex flex-col items-center gap-1.5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-violet-500">
+              You &amp; Partner
+            </p>
+            {teammates.map((t) => (
+              <div key={t.id} className="flex items-center gap-1.5">
+                <span className="text-sm font-bold text-violet-900">{t.display_name}</span>
+                <SkillBadge level={t.skill_level} />
+              </div>
+            ))}
+          </div>
+          <span className="mt-1 text-lg font-black text-violet-300">vs</span>
+          <div className="flex flex-col items-center gap-1.5">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-violet-500">
+              Opponents
+            </p>
+            {opponents.map((o) => (
+              <div key={o.id} className="flex items-center gap-1.5">
+                <span className="text-sm font-bold text-violet-900">{o.display_name}</span>
+                <SkillBadge level={o.skill_level} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  // Approaching alerts (4th, 3rd, 2nd in line).
+  // ── State 2: ON DECK — match formed, waiting for a court ───
+  if (matchStatus === "pending" || queueStatus === "on_deck") {
+    const hasPlayers = teammates.length > 0 || opponents.length > 0;
+
+    return (
+      <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 p-5 animate-in fade-in slide-in-from-top-2 duration-300">
+        {/* Header */}
+        <div className="text-center mb-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-amber-600">
+            You&apos;re Up Next!
+          </p>
+          <p className="mt-1 text-xl font-bold text-amber-900">
+            A court is opening soon
+          </p>
+          <p className="mt-1 text-sm text-amber-700">
+            Find your teammates — head to a court when called 🏸
+          </p>
+        </div>
+
+        {/* Team layout */}
+        {hasPlayers && (
+          <div className="mt-3 rounded-xl bg-white/70 p-4">
+            <div className="flex items-stretch gap-3">
+              {/* My team */}
+              <div className="flex-1 text-center">
+                <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  Your Team
+                </p>
+                {teammates.length > 0 ? (
+                  teammates.map((t) => (
+                    <div key={t.id} className="mb-1.5 last:mb-0">
+                      <p className="text-base font-bold text-slate-900">{t.display_name}</p>
+                      <SkillBadge level={t.skill_level} className="mt-0.5" />
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-500">Loading…</p>
+                )}
+              </div>
+
+              {/* VS divider */}
+              <div className="flex shrink-0 items-center justify-center">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-500 text-xs font-bold text-white shadow-sm">
+                  VS
+                </div>
+              </div>
+
+              {/* Opponents */}
+              <div className="flex-1 text-center">
+                <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  Opponents
+                </p>
+                {opponents.length > 0 ? (
+                  opponents.map((o) => (
+                    <div key={o.id} className="mb-1.5 last:mb-0">
+                      <p className="text-base font-bold text-slate-900">{o.display_name}</p>
+                      <SkillBadge level={o.skill_level} className="mt-0.5" />
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-500">Loading…</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Court line — only shows once court is assigned (pending→in_progress transition) */}
+        {court && (
+          <p className="mt-3 text-center text-base font-bold text-amber-900">
+            Head to {court.name}! →
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ── State 3: APPROACHING — in queue, near the front ────────
   if (!matchStatus && queueStatus === "waiting" && position !== null && position <= 4) {
     const urgencyStyles =
       position <= 2
@@ -45,7 +160,7 @@ export function OnDeckAlert({
       position === 1
         ? "You're Next!"
         : position === 2
-        ? "Almost there..."
+        ? "Almost there…"
         : position === 3
         ? "Get ready!"
         : "Coming up soon";
@@ -57,95 +172,7 @@ export function OnDeckAlert({
         <p className="text-sm font-medium uppercase tracking-wide opacity-75">
           #{position} in line
         </p>
-        <p className="text-xl font-bold mt-1">{label}</p>
-      </div>
-    );
-  }
-
-  // Match assigned — pending (on-deck, about to go to court).
-  if (matchStatus === "pending" || queueStatus === "on_deck") {
-    return (
-      <div className="rounded-2xl border-2 border-emerald-400 bg-emerald-50 p-5 text-center animate-in fade-in slide-in-from-top-2 duration-300">
-        <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
-          Match Ready
-        </p>
-        <p className="text-2xl font-bold text-emerald-900 mt-1">
-          {court ? `Head to ${court.name}!` : "Court assigning..."}
-        </p>
-
-        {/* Player names */}
-        <div className="mt-4 space-y-3">
-          <div>
-            <p className="text-xs font-medium text-emerald-600 uppercase tracking-wider">
-              Your Partner
-            </p>
-            {teammates.length > 0 ? (
-              teammates.map((t) => (
-                <div key={t.id} className="flex items-center justify-center gap-1.5 mt-1">
-                  <span className="text-base font-semibold text-emerald-900">
-                    {t.display_name}
-                  </span>
-                  <SkillBadge level={t.skill_level} />
-                </div>
-              ))
-            ) : (
-              <p className="text-base font-semibold text-emerald-900 mt-0.5">Assigning...</p>
-            )}
-          </div>
-          <div className="border-t border-emerald-200 pt-3">
-            <p className="text-xs font-medium text-emerald-600 uppercase tracking-wider">
-              Opponents
-            </p>
-            {opponents.length > 0 ? (
-              opponents.map((o) => (
-                <div key={o.id} className="flex items-center justify-center gap-1.5 mt-1">
-                  <span className="text-base font-semibold text-emerald-900">
-                    {o.display_name}
-                  </span>
-                  <SkillBadge level={o.skill_level} />
-                </div>
-              ))
-            ) : (
-              <p className="text-base font-semibold text-emerald-900 mt-0.5">Assigning...</p>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Match in progress — now playing.
-  if (matchStatus === "in_progress" || queueStatus === "playing") {
-    return (
-      <div className="rounded-2xl border-2 border-violet-400 bg-violet-50 p-5 text-center">
-        <p className="text-sm font-semibold uppercase tracking-wide text-violet-700">
-          Now Playing
-        </p>
-        <p className="text-2xl font-bold text-violet-900 mt-1">
-          {court?.name ?? "On Court"}
-        </p>
-
-        <div className="mt-4 flex items-start justify-center gap-4 text-sm">
-          <div className="flex flex-col items-center gap-1">
-            <p className="text-[10px] text-violet-600 uppercase font-medium">You &amp; Partner</p>
-            {teammates.map((t) => (
-              <div key={t.id} className="flex items-center gap-1.5">
-                <span className="text-xs text-violet-800 font-semibold">{t.display_name}</span>
-                <SkillBadge level={t.skill_level} />
-              </div>
-            ))}
-          </div>
-          <span className="text-violet-400 font-black text-lg mt-2">vs</span>
-          <div className="flex flex-col items-center gap-1">
-            <p className="text-[10px] text-violet-600 uppercase font-medium">Opponents</p>
-            {opponents.map((o) => (
-              <div key={o.id} className="flex items-center gap-1.5">
-                <span className="text-xs text-violet-800 font-semibold">{o.display_name}</span>
-                <SkillBadge level={o.skill_level} />
-              </div>
-            ))}
-          </div>
-        </div>
+        <p className="mt-1 text-xl font-bold">{label}</p>
       </div>
     );
   }

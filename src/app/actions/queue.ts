@@ -3,46 +3,37 @@
 // ============================================================
 // Queue Server Actions
 // ============================================================
-// joinQueueAction replaces the client-side supabase.rpc("rejoin_queue")
-// call so we can apply Inherited Games logic before inserting a
-// brand-new queue_entries row.
+// joinQueueAction applies Inherited Games logic so late-joining
+// players cannot jump to position #1 in the queue.
 //
-// The problem with plain RPC / INSERT games_played=0
-// ---------------------------------------------------
-// The matchmaking primary sort is games_played ASC, joined_at ASC.
-// A player joining 2 hours into a session with games_played=0
-// would land at position #1, ahead of players who have been
-// waiting their turn. That is unfair.
+// ── Inherited Games ────────────────────────────────────────
+// The queue sorts by (games_played ASC, joined_at ASC).
+// A player who joins with games_played=0 while everyone else
+// has played 3+ games lands at #1 — completely unfair.
 //
-// The fix: Inherited Games
-// -------------------------
-// When a player's queue_entries row for this session does NOT
-// yet exist (true first-time joiner), we query the minimum
-// games_played across every currently active player (waiting,
-// on_deck, playing). The new row is inserted with that minimum
-// instead of 0.
+// Fix: before inserting OR re-activating a row, query the
+// session floor (MIN games_played across active players).
+// The player's games_played is set to MAX(their_current, floor).
 //
-// Because their joined_at is brand-new, they will sort AFTER
-// everyone else who shares that same games_played tier — going
-// to the absolute back of the line while still being treated
-// fairly as a peer once others cycle past them.
+// ── Both branches must apply the floor ─────────────────────
+// BUG that was causing line-jumping:
+//   The floor query was ONLY run for first-time joiners.
+//   Returning players (row exists with status="left") went
+//   through a fast-path that kept their old games_played — often 0.
+//   A player who joined at the start, never played, left, and
+//   re-joined hours later would land at #1.
 //
-// Returning players (row already exists with any status)
-// -------------------------------------------------------
-// We simply reset status → "waiting" and update joined_at
-// to now, preserving their real accumulated games_played.
-// This mirrors what the old rejoin_queue RPC did.
+// Fix: compute the floor in BOTH branches, then take the max.
 //
-// Edge cases
-// ----------
-// • Empty session (no active players) → inheritedGames = 0
-// • All active players at games_played=0 → inheritedGames = 0
-//   (new joiner starts at 0 too, which is correct)
-// • Player already playing/on_deck → operation succeeds but
-//   has no practical effect; the UI should prevent this path.
+// ── Edge cases ──────────────────────────────────────────────
+// • Empty session → floor = 0, player starts at 0 ✓
+// • Everyone at 0 → floor = 0, correct ✓
+// • Floor query fails → log + fall back to 0 (non-blocking) ✓
+// • Player already on_deck/playing → allowed by DB; UI prevents
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
+import { generateOnDeckMatchesAction } from "@/app/actions/matchmaking";
 
 export interface JoinQueueResult {
   error?: string;
@@ -51,8 +42,7 @@ export interface JoinQueueResult {
 export async function joinQueueAction(sessionId: string): Promise<JoinQueueResult> {
   const supabase = await createClient();
 
-  // Resolve the caller's identity server-side so the client
-  // cannot spoof a different player_id.
+  // Resolve caller identity server-side — client cannot spoof player_id.
   const {
     data: { user },
     error: authError,
@@ -64,8 +54,10 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   const playerId = user.id;
 
+  console.log(`[joinQueueAction] player=${playerId} session=${sessionId}`);
+
   // ----------------------------------------------------------
-  // 1. Check for an existing queue entry for this player+session
+  // STEP 1 — Check for an existing queue_entries row
   // ----------------------------------------------------------
   const { data: existing, error: fetchError } = await supabase
     .from("queue_entries")
@@ -75,33 +67,21 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
     .maybeSingle();
 
   if (fetchError) {
+    console.error("[joinQueueAction] fetch existing error:", fetchError.message);
     return { error: fetchError.message };
   }
 
-  // ----------------------------------------------------------
-  // 2a. RETURNING PLAYER — row already exists
-  //     Reset to waiting + fresh joined_at, keep games_played.
-  // ----------------------------------------------------------
-  if (existing) {
-    const { error: updateError } = await supabase
-      .from("queue_entries")
-      .update({
-        status: "waiting" as const,
-        joined_at: new Date().toISOString(),
-      })
-      .eq("id", existing.id);
-
-    if (updateError) return { error: updateError.message };
-    return {};
-  }
+  console.log(
+    `[joinQueueAction] existing row:`,
+    existing
+      ? `id=${existing.id} games_played=${existing.games_played} status=${existing.status}`
+      : "none (first-time joiner)"
+  );
 
   // ----------------------------------------------------------
-  // 2b. FIRST-TIME JOINER — no row yet
-  //
-  //     Query the session floor: minimum games_played among all
-  //     players currently active (waiting OR on_deck OR playing).
-  //     We include "playing" so that a session where everyone
-  //     is mid-match doesn't look empty and give the joiner 0.
+  // STEP 2 — Query the session floor (MIN games_played)
+  //          Run this for BOTH first-time and returning players.
+  //          This is the key fix for the line-jumping bug.
   // ----------------------------------------------------------
   const { data: floorRow, error: floorError } = await supabase
     .from("queue_entries")
@@ -113,16 +93,73 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
     .maybeSingle();
 
   if (floorError) {
-    // Non-fatal: fall back to 0 rather than blocking the join.
+    // Non-fatal — fall back to 0 so joining is never blocked.
     console.error("[joinQueueAction] floor query failed:", floorError.message);
   }
 
-  // Default to 0 if the session is empty or the query failed.
-  const inheritedGames: number = floorRow?.games_played ?? 0;
+  const sessionFloor: number = floorRow?.games_played ?? 0;
+
+  console.log(
+    `[joinQueueAction] session floor=${sessionFloor}` +
+    (floorRow ? ` (from active players)` : ` (session empty, defaulting to 0)`)
+  );
 
   // ----------------------------------------------------------
-  // 3. Insert the new row with the inherited games_played floor
+  // STEP 3a — RETURNING PLAYER: row exists (any prior status)
+  //
+  // BUG FIX: previously we kept existing.games_played unchanged.
+  // If that value is BELOW the session floor (e.g., player has 0
+  // games played but everyone else has 3), they would jump to #1.
+  //
+  // Fix: use MAX(existing.games_played, sessionFloor).
+  // This preserves hard-earned games (never reduce), but prevents
+  // a stale 0 from granting an unfair front-of-queue position.
   // ----------------------------------------------------------
+  if (existing) {
+    const inheritedGames = Math.max(existing.games_played, sessionFloor);
+
+    console.log(
+      `[joinQueueAction] RETURNING PLAYER ` +
+      `existing.games_played=${existing.games_played} ` +
+      `sessionFloor=${sessionFloor} ` +
+      `→ will write games_played=${inheritedGames}`
+    );
+
+    const { error: updateError } = await supabase
+      .from("queue_entries")
+      .update({
+        status: "waiting" as const,
+        games_played: inheritedGames,
+        joined_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+
+    if (updateError) {
+      console.error("[joinQueueAction] update error:", updateError.message);
+      return { error: updateError.message };
+    }
+
+    console.log(`[joinQueueAction] RETURNING PLAYER re-queued at games_played=${inheritedGames}`);
+
+    await generateOnDeckMatchesAction(sessionId);
+    return {};
+  }
+
+  // ----------------------------------------------------------
+  // STEP 3b — FIRST-TIME JOINER: no row yet
+  //
+  // Insert with the session floor so they don't land at #1.
+  // Their joined_at is brand-new, so within the same games_played
+  // tier they go to the back of the line — fair.
+  // ----------------------------------------------------------
+  const inheritedGames = sessionFloor; // Floor already computed above.
+
+  console.log(
+    `[joinQueueAction] FIRST-TIME JOINER ` +
+    `sessionFloor=${sessionFloor} ` +
+    `→ inserting with games_played=${inheritedGames}`
+  );
+
   const { error: insertError } = await supabase.from("queue_entries").insert({
     session_id: sessionId,
     player_id: playerId,
@@ -131,6 +168,13 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
     joined_at: new Date().toISOString(),
   });
 
-  if (insertError) return { error: insertError.message };
+  if (insertError) {
+    console.error("[joinQueueAction] insert error:", insertError.message);
+    return { error: insertError.message };
+  }
+
+  console.log(`[joinQueueAction] FIRST-TIME JOINER inserted at games_played=${inheritedGames}`);
+
+  await generateOnDeckMatchesAction(sessionId);
   return {};
 }

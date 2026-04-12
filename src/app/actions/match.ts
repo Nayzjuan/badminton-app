@@ -3,23 +3,26 @@
 // ============================================================
 // Match Server Actions — End Match & Cancel Match
 // ============================================================
-// These run on the server with the user's authenticated session,
-// so they respect RLS while having reliable access to DB state.
+// endMatchAction
+//   1. Marks match completed with scores.
+//   2. Frees court (available).
+//   3. Re-queues all 4 players with incremented games_played.
+//   4. AUTO-FILL: promotes the oldest on-deck match to the freed court.
+//   5. Refills the on-deck pool with generateOnDeckMatchesInternal.
 //
-// Why server actions instead of client-side hook calls?
-// -------------------------------------------------------
-// endMatch previously looked up `games_played` from the React
-// `queue` state — but that state comes from v_queue_with_wait_time,
-// which only shows "waiting" players. Players currently in a match
-// have status "playing" and are excluded from that view. So
-// `queue.find()` always returned undefined, meaning games_played
-// was always reset to 1 instead of being properly incremented.
-//
-// Here we query queue_entries directly from the server, where we
-// get the real current value regardless of status.
+// cancelMatchAction
+//   1. Marks match cancelled.
+//   2. Frees court (available).
+//   3. Returns players to queue WITHOUT incrementing games_played.
+//   4. Refills the on-deck pool (cancelled players can now form new on-deck).
+//   5. Does NOT auto-promote — court stays "available" for manual organizer use.
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
+import {
+  promoteOnDeckMatchInternal,
+  generateOnDeckMatchesAction,
+} from "@/app/actions/matchmaking";
 
 export interface MatchActionResult {
   success: boolean;
@@ -29,12 +32,6 @@ export interface MatchActionResult {
 // ============================================================
 // endMatchAction
 // ============================================================
-// 1. Marks the match as completed with final scores.
-// 2. Frees the court (status → available).
-// 3. For each player: reads their real games_played from
-//    queue_entries, increments it by 1, resets status to
-//    "waiting" with a fresh joined_at so they re-queue.
-// ============================================================
 export async function endMatchAction(
   matchId: string,
   teamAScore: number,
@@ -42,7 +39,7 @@ export async function endMatchAction(
 ): Promise<MatchActionResult> {
   const supabase = await createClient();
 
-  // 1. Fetch the match so we have session_id and court_id.
+  // 1. Fetch the match.
   const { data: match, error: matchFetchError } = await supabase
     .from("matches")
     .select("id, session_id, court_id, status")
@@ -72,20 +69,7 @@ export async function endMatchAction(
     return { success: false, message: `Failed to save scores: ${matchUpdateError.message}` };
   }
 
-  // 3. Free the court.
-  if (match.court_id) {
-    const { error: courtError } = await supabase
-      .from("courts")
-      .update({ status: "available" as const })
-      .eq("id", match.court_id);
-
-    if (courtError) {
-      console.error("[endMatchAction] Failed to free court:", courtError.message);
-      // Non-fatal — match is already saved.
-    }
-  }
-
-  // 4. Fetch all players in this match.
+  // 3. Fetch all players in this match.
   const { data: matchPlayers, error: playersError } = await supabase
     .from("match_players")
     .select("player_id")
@@ -93,52 +77,62 @@ export async function endMatchAction(
 
   if (playersError || !matchPlayers) {
     console.error("[endMatchAction] Failed to fetch match players:", playersError?.message);
-    return { success: true, message: "Match completed, but failed to re-queue players." };
+    // Non-fatal — match is saved, continue with court auto-fill.
   }
 
-  // 5. For each player, read their real games_played from queue_entries
+  // 4. Re-queue all players: read real games_played from queue_entries
   //    (NOT from v_queue_with_wait_time — that view excludes "playing" status),
-  //    then increment and reset to waiting with a fresh timestamp.
+  //    increment by 1, reset to "waiting" with a fresh timestamp.
   const now = new Date().toISOString();
-  const requeueResults = await Promise.all(
-    matchPlayers.map(async (mp) => {
-      const { data: entry } = await supabase
-        .from("queue_entries")
-        .select("games_played")
-        .eq("session_id", match.session_id)
-        .eq("player_id", mp.player_id)
-        .single();
+  if (matchPlayers && matchPlayers.length > 0) {
+    await Promise.all(
+      matchPlayers.map(async (mp) => {
+        const { data: entry } = await supabase
+          .from("queue_entries")
+          .select("games_played")
+          .eq("session_id", match.session_id)
+          .eq("player_id", mp.player_id)
+          .single();
 
-      const updatedGames = (entry?.games_played ?? 0) + 1;
+        const updatedGames = (entry?.games_played ?? 0) + 1;
 
-      return supabase
-        .from("queue_entries")
-        .update({
-          status: "waiting" as const,
-          games_played: updatedGames,
-          joined_at: now, // Fresh timestamp so wait time resets.
-        })
-        .eq("session_id", match.session_id)
-        .eq("player_id", mp.player_id);
-    })
-  );
-
-  const requeueErrors = requeueResults.filter((r) => r.error);
-  if (requeueErrors.length > 0) {
-    console.error("[endMatchAction] Some players failed to re-queue:", requeueErrors);
+        return supabase
+          .from("queue_entries")
+          .update({
+            status: "waiting" as const,
+            games_played: updatedGames,
+            joined_at: now,
+          })
+          .eq("session_id", match.session_id)
+          .eq("player_id", mp.player_id);
+      })
+    );
   }
+
+  // 5. AUTO-FILL: if there is an on-deck match ready, promote it to this court immediately.
+  //    This is the core of the automated system — courts never idle after a scored match.
+  if (match.court_id) {
+    const promoted = await promoteOnDeckMatchInternal(supabase, match.session_id, match.court_id);
+
+    if (!promoted.success) {
+      // No on-deck match to promote — just free the court for manual use.
+      await supabase
+        .from("courts")
+        .update({ status: "available" as const })
+        .eq("id", match.court_id);
+    }
+    // If promotion succeeded, the court was already marked in_use by promoteOnDeckMatchInternal.
+  }
+
+  // 6. Refill the on-deck pool now that 4 players have re-joined the waiting list
+  //    and (possibly) one pending slot was consumed by the auto-fill above.
+  await generateOnDeckMatchesAction(match.session_id);
 
   return { success: true, message: "Match completed. Players returned to queue." };
 }
 
 // ============================================================
 // cancelMatchAction
-// ============================================================
-// 1. Marks the match as cancelled.
-// 2. Frees the court (status → available).
-// 3. Returns all 4 players to the queue WITHOUT incrementing
-//    games_played — they were never able to play, so they
-//    keep their priority position.
 // ============================================================
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
   const supabase = await createClient();
@@ -171,7 +165,9 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
     return { success: false, message: `Failed to cancel match: ${matchUpdateError.message}` };
   }
 
-  // 3. Free the court.
+  // 3. Free the court — available for manual organizer use.
+  //    Intentionally NOT calling promoteOnDeckMatchInternal here so the
+  //    organizer can choose to start a custom match via the Queue Control tab.
   if (match.court_id) {
     await supabase
       .from("courts")
@@ -179,9 +175,8 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       .eq("id", match.court_id);
   }
 
-  // 4. Return players to queue. Do NOT increment games_played —
-  //    they never played. Keep their original joined_at so their
-  //    queue priority is preserved as if the match never happened.
+  // 4. Return players to queue WITHOUT incrementing games_played.
+  //    They keep their priority position as if the match never happened.
   const { data: matchPlayers } = await supabase
     .from("match_players")
     .select("player_id")
@@ -195,6 +190,11 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       .eq("session_id", match.session_id)
       .in("player_id", playerIds);
   }
+
+  // 5. Refill the on-deck pool. The returned players are now waiting again,
+  //    so they can potentially form new on-deck matches.
+  //    Court is intentionally left available (no auto-promotion).
+  await generateOnDeckMatchesAction(match.session_id);
 
   return { success: true, message: "Match cancelled. Players returned to queue." };
 }

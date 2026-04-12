@@ -102,25 +102,22 @@ function CourtCard({
     closed:      { cls: "bg-gray-100 text-gray-600 border-gray-200", label: "Closed" },
   };
 
-  // Card outer ring — just a subtle left-accent for in-progress / available border for dashed
-  const cardBorder =
-    cardState === "in_progress"
-      ? "border-l-4 border-l-violet-500 border border-violet-100"
-      : cardState === "matchmaking"
-      ? "border-l-4 border-l-amber-400 border border-amber-100"
-      : cardState === "available"
-      ? "border border-dashed border-emerald-300"
-      : "border border-border";
-
   return (
     <div
       className={`flex flex-col rounded-2xl bg-white shadow-md overflow-hidden transition-all
-                  ${cardBorder}
                   ${cardState === "matchmaking" ? "animate-pulse" : ""}`}
     >
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
-        <h3 className="text-base font-bold truncate text-gray-900">{court.name}</h3>
+        <div className="flex items-center gap-2 min-w-0">
+          <h3 className="text-base font-bold truncate text-gray-900">{court.name}</h3>
+          {match?.is_mixed_level && (
+            <span className="shrink-0 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5
+                            text-[10px] font-bold uppercase tracking-wider text-amber-800">
+              Mixed Level
+            </span>
+          )}
+        </div>
         <span
           className={`ml-2 shrink-0 rounded-full border px-2.5 py-0.5
                       text-[10px] font-bold uppercase tracking-widest
@@ -135,16 +132,16 @@ function CourtCard({
 
         {/* IN PROGRESS — team matchup */}
         {hasActiveMatch && (
-          <div className="grid grid-cols-[1fr_40px_1fr] items-stretch gap-2 py-1">
+          <div className="flex items-stretch gap-3 py-1">
 
             {/* Team A */}
-            <div className="rounded-xl bg-blue-50 border border-blue-100 px-3 py-3 text-center">
-              <p className="mb-2 text-[9px] font-black uppercase tracking-widest text-blue-500">
+            <div className="flex-1 rounded-xl bg-blue-50 p-4 text-center">
+              <p className="mb-3 text-xs font-black tracking-wider text-slate-500 uppercase">
                 Team A
               </p>
               {teamA.map((p) => (
-                <div key={p.player_id} className="mb-1.5 last:mb-0">
-                  <p className="text-sm font-bold leading-snug text-blue-900">
+                <div key={p.player_id} className="mb-2 last:mb-0">
+                  <p className="text-lg font-bold leading-snug text-slate-900">
                     {p.profile.display_name}
                   </p>
                   <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
@@ -153,23 +150,21 @@ function CourtCard({
             </div>
 
             {/* VS */}
-            <div className="flex items-center justify-center">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full
-                              bg-gradient-to-br from-gray-800 to-gray-600 shadow-md">
-                <span className="text-[9px] font-black tracking-widest text-white">
-                  VS
-                </span>
+            <div className="flex shrink-0 items-center justify-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full
+                              bg-slate-800 text-sm font-bold text-white shadow-sm">
+                VS
               </div>
             </div>
 
             {/* Team B */}
-            <div className="rounded-xl bg-red-50 border border-red-100 px-3 py-3 text-center">
-              <p className="mb-2 text-[9px] font-black uppercase tracking-widest text-red-500">
+            <div className="flex-1 rounded-xl bg-rose-50 p-4 text-center">
+              <p className="mb-3 text-xs font-black tracking-wider text-slate-500 uppercase">
                 Team B
               </p>
               {teamB.map((p) => (
-                <div key={p.player_id} className="mb-1.5 last:mb-0">
-                  <p className="text-sm font-bold leading-snug text-red-900">
+                <div key={p.player_id} className="mb-2 last:mb-0">
+                  <p className="text-lg font-bold leading-snug text-slate-900">
                     {p.profile.display_name}
                   </p>
                   <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
@@ -250,10 +245,9 @@ function CourtCard({
                 <button
                   onClick={onCancelRequest}
                   disabled={isCancelling}
-                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2
-                             text-xs font-medium text-gray-500 hover:border-red-300 hover:bg-red-50
-                             hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed
-                             transition-colors"
+                  className="flex items-center gap-1.5 rounded-lg px-3 py-2
+                             text-xs font-medium text-slate-500 hover:bg-slate-100
+                             disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <XCircle className="h-3.5 w-3.5" />
                   Cancel
@@ -261,8 +255,8 @@ function CourtCard({
                 <button
                   onClick={onInputScore}
                   disabled={isCancelling}
-                  className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2
-                             text-xs font-semibold text-white hover:bg-violet-700
+                  className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+                             text-xs font-semibold text-white hover:bg-slate-800
                              disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
                 >
                   <Trophy className="h-3.5 w-3.5" />
@@ -368,10 +362,10 @@ export function ActiveCourts({
   }
 
   function getMatch(courtId: string): EnrichedMatch | undefined {
+    // Only in_progress matches have a court_id — pending (on-deck) matches
+    // have court_id=null and are displayed separately in OnDeckPanel.
     return activeMatches.find(
-      (m) =>
-        m.court_id === courtId &&
-        (m.status === "pending" || m.status === "in_progress")
+      (m) => m.court_id === courtId && m.status === "in_progress"
     );
   }
 

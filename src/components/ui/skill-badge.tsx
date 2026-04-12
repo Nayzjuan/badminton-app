@@ -1,15 +1,12 @@
 "use client";
 
 // ============================================================
-// SkillBadge — Colour-coded pill for a player's skill level
+// SkillBadge — Vibrant pill badge for a player's skill level
 // ============================================================
-// Three tiers:
-//   Beginner (1–2)      → green
-//   Intermediate (3–5)  → blue / indigo
-//   Advanced (6–7)      → orange / amber
-//
-// Each tier has two distinct shades so adjacent levels look
-// subtly different while staying clearly in the same family.
+// Three colour tiers, no border — pure pill shape:
+//   Beginner  (beginner, upper_beginner)                → emerald
+//   Intermediate (lower_int, int, upper_int)            → blue
+//   Advanced  (lower_advanced, advanced)                → purple
 // ============================================================
 
 import { cn } from "@/lib/utils";
@@ -20,37 +17,34 @@ interface SkillBadgeProps {
   className?: string;
 }
 
-const LEVEL_CONFIG: Record<
-  SkillLevel,
-  { label: string; cls: string }
-> = {
+const LEVEL_CONFIG: Record<SkillLevel, { label: string; cls: string }> = {
   beginner: {
     label: "Beginner",
-    cls: "bg-green-100 text-green-800 border-green-200",
+    cls: "bg-emerald-100 text-emerald-800",
   },
   upper_beginner: {
     label: "Upper Beg.",
-    cls: "bg-teal-100 text-teal-800 border-teal-200",
+    cls: "bg-emerald-100 text-emerald-800",
   },
   lower_intermediate: {
     label: "Lower Int.",
-    cls: "bg-sky-100 text-sky-800 border-sky-200",
+    cls: "bg-blue-100 text-blue-800",
   },
   intermediate: {
     label: "Intermediate",
-    cls: "bg-blue-100 text-blue-800 border-blue-200",
+    cls: "bg-blue-100 text-blue-800",
   },
   upper_intermediate: {
     label: "Upper Int.",
-    cls: "bg-indigo-100 text-indigo-800 border-indigo-200",
+    cls: "bg-blue-100 text-blue-800",
   },
   lower_advanced: {
     label: "Lower Adv.",
-    cls: "bg-orange-100 text-orange-800 border-orange-200",
+    cls: "bg-purple-100 text-purple-800",
   },
   advanced: {
     label: "Advanced",
-    cls: "bg-amber-100 text-amber-900 border-amber-300",
+    cls: "bg-purple-100 text-purple-800",
   },
 };
 
@@ -59,8 +53,8 @@ export function SkillBadge({ level, className }: SkillBadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full border px-2 py-0.5",
-        "text-[10px] font-semibold leading-none tracking-wide",
+        "inline-flex items-center rounded-full px-2.5 py-0.5",
+        "text-xs font-semibold leading-none",
         config.cls,
         className
       )}
