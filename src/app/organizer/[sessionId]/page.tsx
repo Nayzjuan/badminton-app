@@ -33,15 +33,7 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
 
   if (!profile) redirect("/");
 
-  // Verify this user is an organizer for this session.
-  // Check both session_organizers AND sessions.created_by.
-  const { data: orgEntry } = await supabase
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-
+  // Verify the session exists and is active.
   const { data: session } = await supabase
     .from("sessions")
     .select("*")
@@ -51,44 +43,15 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
 
   if (!session) notFound();
 
-  const isOrganizer = !!orgEntry || session.created_by === user.id;
-  if (!isOrganizer) {
-    redirect("/organizer");
-  }
-
-  // ── Fetch sibling sessions for the session switcher ────────
-  const { data: orgEntries } = await supabase
-    .from("session_organizers")
-    .select("session_id")
-    .eq("user_id", user.id);
-
-  const orgSessionIds = (orgEntries ?? []).map((e) => e.session_id);
-
-  const { data: createdSessions } = await supabase
+  // ── Fetch other active sessions for the session switcher ───
+  const { data: allSessions } = await supabase
     .from("sessions")
     .select("*")
-    .eq("created_by", user.id)
-    .eq("is_active", true);
+    .eq("is_active", true)
+    .neq("id", sessionId)
+    .order("created_at", { ascending: false });
 
-  let orgSessions: Session[] = [];
-  if (orgSessionIds.length > 0) {
-    const { data } = await supabase
-      .from("sessions")
-      .select("*")
-      .in("id", orgSessionIds)
-      .eq("is_active", true);
-    orgSessions = data ?? [];
-  }
-
-  const sessionMap = new Map<string, Session>();
-  for (const s of [...(createdSessions ?? []), ...orgSessions]) {
-    sessionMap.set(s.id, s);
-  }
-  // Remove current session — we only need "other" sessions for the switcher.
-  sessionMap.delete(sessionId);
-  const otherSessions = Array.from(sessionMap.values()).sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
+  const otherSessions = allSessions ?? [];
 
   return (
     <OrganizerDashboard

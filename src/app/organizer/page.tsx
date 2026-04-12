@@ -34,49 +34,17 @@ export default async function OrganizerPage() {
 
   if (!profile) redirect("/");
 
-  // ── Fetch sessions this user organizes ─────────────────────
-  // Check both session_organizers table AND sessions.created_by
-  // to cover cases where the trigger didn't fire or the user is
-  // on a different anonymous auth identity.
-  const { data: orgEntries } = await supabase
-    .from("session_organizers")
-    .select("session_id")
-    .eq("user_id", user.id);
-
-  const orgSessionIds = (orgEntries ?? []).map((e) => e.session_id);
-
-  // Also fetch sessions the user directly created.
-  const { data: createdSessions } = await supabase
+  // ── Fetch ALL active sessions ───────────────────────────────
+  // Any organizer can see and manage any active session.
+  // This avoids confusion with anonymous auth identities where
+  // each browser window creates a different user.
+  const { data: allSessions } = await supabase
     .from("sessions")
     .select("*")
-    .eq("created_by", user.id)
     .eq("is_active", true)
     .order("created_at", { ascending: false });
 
-  // Fetch sessions from session_organizers if any.
-  let orgSessions: Session[] = [];
-  if (orgSessionIds.length > 0) {
-    const { data } = await supabase
-      .from("sessions")
-      .select("*")
-      .in("id", orgSessionIds)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
-    orgSessions = data ?? [];
-  }
-
-  // Merge and deduplicate by session ID.
-  const sessionMap = new Map<string, Session>();
-  for (const s of [...(createdSessions ?? []), ...orgSessions]) {
-    sessionMap.set(s.id, s);
-  }
-  const organizedSessions = Array.from(sessionMap.values()).sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
-
-  // Note: we no longer auto-redirect for a single session.
-  // The organizer should always be able to see the hub to create
-  // new sessions or switch between existing ones.
+  const organizedSessions = allSessions ?? [];
 
   // ── Enrich sessions with player + court counts ─────────────
   const sessionsWithStats: SessionWithStats[] = await Promise.all(
