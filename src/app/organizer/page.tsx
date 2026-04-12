@@ -35,6 +35,9 @@ export default async function OrganizerPage() {
   if (!profile) redirect("/");
 
   // ── Fetch sessions this user organizes ─────────────────────
+  // Check both session_organizers table AND sessions.created_by
+  // to cover cases where the trigger didn't fire or the user is
+  // on a different anonymous auth identity.
   const { data: orgEntries } = await supabase
     .from("session_organizers")
     .select("session_id")
@@ -42,7 +45,16 @@ export default async function OrganizerPage() {
 
   const orgSessionIds = (orgEntries ?? []).map((e) => e.session_id);
 
-  let organizedSessions: Session[] = [];
+  // Also fetch sessions the user directly created.
+  const { data: createdSessions } = await supabase
+    .from("sessions")
+    .select("*")
+    .eq("created_by", user.id)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  // Fetch sessions from session_organizers if any.
+  let orgSessions: Session[] = [];
   if (orgSessionIds.length > 0) {
     const { data } = await supabase
       .from("sessions")
@@ -50,8 +62,17 @@ export default async function OrganizerPage() {
       .in("id", orgSessionIds)
       .eq("is_active", true)
       .order("created_at", { ascending: false });
-    organizedSessions = data ?? [];
+    orgSessions = data ?? [];
   }
+
+  // Merge and deduplicate by session ID.
+  const sessionMap = new Map<string, Session>();
+  for (const s of [...(createdSessions ?? []), ...orgSessions]) {
+    sessionMap.set(s.id, s);
+  }
+  const organizedSessions = Array.from(sessionMap.values()).sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
 
   // Auto-redirect if exactly one active session.
   if (organizedSessions.length === 1) {

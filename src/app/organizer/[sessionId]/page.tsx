@@ -33,19 +33,14 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
   if (!profile) redirect("/");
 
   // Verify this user is an organizer for this session.
+  // Check both session_organizers AND sessions.created_by.
   const { data: orgEntry } = await supabase
     .from("session_organizers")
     .select("id")
     .eq("session_id", sessionId)
     .eq("user_id", user.id)
-    .single();
+    .maybeSingle();
 
-  if (!orgEntry) {
-    // Not an organizer — redirect to the organizer entry page.
-    redirect("/organizer");
-  }
-
-  // Get session.
   const { data: session } = await supabase
     .from("sessions")
     .select("*")
@@ -54,6 +49,11 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
     .single();
 
   if (!session) notFound();
+
+  const isOrganizer = !!orgEntry || session.created_by === user.id;
+  if (!isOrganizer) {
+    redirect("/organizer");
+  }
 
   return <OrganizerDashboard profile={profile} session={session} />;
 }
