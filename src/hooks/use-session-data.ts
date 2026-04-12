@@ -204,11 +204,14 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   fetchWaitlistRef.current = fetchWaitlist;
 
   useEffect(() => {
+    // Use a unique channel prefix so these subscriptions don't collide
+    // with the ones in useQueue and usePlayerMatch on the same page.
+    const prefix = "session-data";
     const unsubs = [
-      subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current()),
-      subscribeToQueue(supabase, sessionId, () => fetchWaitlistRef.current()),
-      subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current()),
-      subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current()),
+      subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current(), prefix),
+      subscribeToQueue(supabase, sessionId, () => fetchWaitlistRef.current(), prefix),
+      subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
+      subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
     ];
     return () => unsubs.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps

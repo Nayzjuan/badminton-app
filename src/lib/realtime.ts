@@ -28,9 +28,12 @@ function subscribeToTable<T extends Record<string, unknown>>(
   supabase: TypedClient,
   table: string,
   sessionId: string,
-  onChange: ChangeHandler<T>
+  onChange: ChangeHandler<T>,
+  channelPrefix?: string
 ): () => void {
-  const channelName = `${table}:${sessionId}`;
+  const channelName = channelPrefix
+    ? `${channelPrefix}:${table}:${sessionId}`
+    : `${table}:${sessionId}`;
 
   const channel = supabase
     .channel(channelName)
@@ -74,35 +77,41 @@ function subscribeToTable<T extends Record<string, unknown>>(
 export function subscribeToCourts(
   supabase: TypedClient,
   sessionId: string,
-  onChange: ChangeHandler<Database["public"]["Tables"]["courts"]["Row"]>
+  onChange: ChangeHandler<Database["public"]["Tables"]["courts"]["Row"]>,
+  channelPrefix?: string
 ) {
-  return subscribeToTable(supabase, "courts", sessionId, onChange);
+  return subscribeToTable(supabase, "courts", sessionId, onChange, channelPrefix);
 }
 
 export function subscribeToQueue(
   supabase: TypedClient,
   sessionId: string,
-  onChange: ChangeHandler<Database["public"]["Tables"]["queue_entries"]["Row"]>
+  onChange: ChangeHandler<Database["public"]["Tables"]["queue_entries"]["Row"]>,
+  channelPrefix?: string
 ) {
-  return subscribeToTable(supabase, "queue_entries", sessionId, onChange);
+  return subscribeToTable(supabase, "queue_entries", sessionId, onChange, channelPrefix);
 }
 
 export function subscribeToMatches(
   supabase: TypedClient,
   sessionId: string,
-  onChange: ChangeHandler<Database["public"]["Tables"]["matches"]["Row"]>
+  onChange: ChangeHandler<Database["public"]["Tables"]["matches"]["Row"]>,
+  channelPrefix?: string
 ) {
-  return subscribeToTable(supabase, "matches", sessionId, onChange);
+  return subscribeToTable(supabase, "matches", sessionId, onChange, channelPrefix);
 }
 
 export function subscribeToMatchPlayers(
   supabase: TypedClient,
   sessionId: string,
-  onChange: ChangeHandler<Database["public"]["Tables"]["match_players"]["Row"]>
+  onChange: ChangeHandler<Database["public"]["Tables"]["match_players"]["Row"]>,
+  channelPrefix?: string
 ) {
   // match_players has no session_id column, so we subscribe broadly
   // and let the callback + state refresh handle filtering.
-  const channelName = `match_players:${sessionId}`;
+  const channelName = channelPrefix
+    ? `${channelPrefix}:match_players:${sessionId}`
+    : `match_players:${sessionId}`;
 
   const channel = supabase
     .channel(channelName)
