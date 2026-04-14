@@ -1,8 +1,9 @@
 // ============================================================
 // Home Page — Player Login / Profile Setup
 // ============================================================
-// If already authenticated, redirects to /play.
-// Otherwise shows the name + skill level entry form.
+// If already authenticated and in an active session, redirects
+// straight to that session dashboard. Otherwise shows the
+// name + skill level + PIN entry form.
 // ============================================================
 
 import { redirect } from "next/navigation";
@@ -15,8 +16,21 @@ export default async function HomePage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Already logged in — go straight to session picker.
   if (user) {
+    // Check if the player is actively in a session (queued or playing).
+    const { data: activeEntry } = await supabase
+      .from("queue_entries")
+      .select("session_id, sessions!inner(is_active)")
+      .eq("player_id", user.id)
+      .in("status", ["waiting", "on_deck", "playing"])
+      .limit(1)
+      .single();
+
+    if (activeEntry) {
+      redirect(`/play/${activeEntry.session_id}`);
+    }
+
+    // Has auth but no active session — go to session picker.
     redirect("/play");
   }
 

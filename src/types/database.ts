@@ -58,6 +58,7 @@ export type Profile = {
   id: string; // uuid — references auth.users
   display_name: string;
   skill_level: SkillLevel;
+  pin: string | null; // 4-digit reconnect PIN
   created_at: string; // ISO 8601 timestamptz
   updated_at: string;
 };
@@ -187,9 +188,9 @@ export type RecentPairing = {
 // ------------------------------------------------------------
 
 export type ProfileInsert = Pick<Profile, "id" | "display_name"> &
-  Partial<Pick<Profile, "skill_level">>;
+  Partial<Pick<Profile, "skill_level" | "pin">>;
 
-export type ProfileUpdate = Partial<Pick<Profile, "display_name" | "skill_level">>;
+export type ProfileUpdate = Partial<Pick<Profile, "display_name" | "skill_level" | "pin">>;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
   Partial<Pick<Session, "organizer_passcode" | "scoring">>;
@@ -207,7 +208,7 @@ export type QueueEntryInsert = Pick<QueueEntry, "session_id" | "player_id"> &
   Partial<Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position">>;
 
 export type QueueEntryUpdate = Partial<
-  Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position">
+  Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position" | "player_id">
 >;
 
 export type MatchInsert = Pick<Match, "session_id"> &
@@ -284,7 +285,7 @@ export type Database = {
       match_players: {
         Row: MatchPlayer;
         Insert: MatchPlayerInsert;
-        Update: Record<string, never>;
+        Update: Partial<Pick<MatchPlayer, "player_id">>;
         Relationships: [];
       };
     };

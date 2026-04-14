@@ -12,7 +12,7 @@
 import { useMemo, useState } from "react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
-import { updatePlayerSkill } from "@/app/actions/profile";
+import { updatePlayerSkill, getPlayerPin, resetPlayerPin } from "@/app/actions/profile";
 import type { Court, QueueWithWaitTime, SkillLevel } from "@/types/database";
 
 // Re-export constant for clarity in this file.
@@ -61,12 +61,41 @@ export function QueueControl({
   // Track which player is currently being updated to show loading state.
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
 
+  // PIN management state.
+  const [visiblePins, setVisiblePins] = useState<Map<string, string>>(new Map());
+  const [loadingPin, setLoadingPin] = useState<string | null>(null);
+
   async function handleSkillChange(playerId: string, newSkill: SkillLevel) {
     setUpdatingSkill(playerId);
     await updatePlayerSkill(playerId, newSkill);
     setUpdatingSkill(null);
-    // The realtime subscription on profiles will trigger a queue re-fetch
-    // to reflect the new skill level.
+  }
+
+  async function handleRevealPin(playerId: string) {
+    if (visiblePins.has(playerId)) {
+      // Toggle off.
+      setVisiblePins((prev) => {
+        const next = new Map(prev);
+        next.delete(playerId);
+        return next;
+      });
+      return;
+    }
+    setLoadingPin(playerId);
+    const result = await getPlayerPin(playerId);
+    setLoadingPin(null);
+    if (result.success && result.pin) {
+      setVisiblePins((prev) => new Map(prev).set(playerId, result.pin!));
+    }
+  }
+
+  async function handleResetPin(playerId: string) {
+    setLoadingPin(playerId);
+    const result = await resetPlayerPin(playerId);
+    setLoadingPin(null);
+    if (result.success && result.pin) {
+      setVisiblePins((prev) => new Map(prev).set(playerId, result.pin!));
+    }
   }
 
   async function handleCreateMatch() {
@@ -179,6 +208,7 @@ export function QueueControl({
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Skill</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground">Wait</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground">Games</th>
+                <th className="px-4 py-3 text-center font-medium text-muted-foreground">PIN</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-16"></th>
               </tr>
             </thead>
@@ -256,6 +286,49 @@ export function QueueControl({
                     </td>
                     {/* Games */}
                     <td className="px-4 py-3 text-right tabular-nums">{entry.games_played}</td>
+                    {/* PIN */}
+                    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-center gap-1">
+                        {loadingPin === entry.player_id ? (
+                          <span className="text-xs text-muted-foreground animate-pulse">...</span>
+                        ) : visiblePins.has(entry.player_id) ? (
+                          <>
+                            <span className="font-mono text-xs font-medium">
+                              {visiblePins.get(entry.player_id)}
+                            </span>
+                            <button
+                              onClick={() => handleRevealPin(entry.player_id)}
+                              className="text-muted-foreground hover:text-foreground transition-colors"
+                              title="Hide PIN"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handleResetPin(entry.player_id)}
+                              className="text-muted-foreground hover:text-amber-600 transition-colors"
+                              title="Reset PIN"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => handleRevealPin(entry.player_id)}
+                            className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+                            title="Reveal PIN"
+                          >
+                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     {/* Remove */}
                     <td className="px-4 py-3 text-right">
                       <button

@@ -221,6 +221,7 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
             id: mp.player_id,
             display_name: "Unknown",
             skill_level: "beginner" as const,
+            pin: null,
             created_at: "",
             updated_at: "",
           },

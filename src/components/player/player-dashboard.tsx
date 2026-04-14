@@ -12,7 +12,7 @@
 // ============================================================
 
 import { useState } from "react";
-import { User, LayoutGrid, ListOrdered } from "lucide-react";
+import { User, LayoutGrid, ListOrdered, Eye, EyeOff } from "lucide-react";
 import { useQueue } from "@/hooks/use-queue";
 import { usePlayerMatch } from "@/hooks/use-player-match";
 import { useSessionData } from "@/hooks/use-session-data";
@@ -41,6 +41,7 @@ const TABS: { key: Tab; label: string; icon: typeof User }[] = [
 
 export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>("status");
+  const [pinVisible, setPinVisible] = useState(false);
 
   const {
     queue,
@@ -97,6 +98,21 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                   {profile.display_name}
                 </span>
                 <SkillBadge level={profile.skill_level} />
+                {profile.pin && (
+                  <button
+                    onClick={() => setPinVisible((v) => !v)}
+                    className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px]
+                               font-mono text-slate-500 hover:bg-slate-200 transition-colors"
+                    title={pinVisible ? "Hide PIN" : "Show PIN"}
+                  >
+                    <span>{pinVisible ? profile.pin : `***${profile.pin.slice(-1)}`}</span>
+                    {pinVisible ? (
+                      <EyeOff className="h-2.5 w-2.5" />
+                    ) : (
+                      <Eye className="h-2.5 w-2.5" />
+                    )}
+                  </button>
+                )}
               </div>
             </div>
             <div

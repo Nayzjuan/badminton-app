@@ -1,23 +1,23 @@
 "use client";
 
 // ============================================================
-// Login Form — Name + Skill Level entry for anonymous auth
+// Login Form — Name + Skill Level + PIN entry for anonymous auth
 // ============================================================
-// Uses useTransition for non-blocking form submission with
-// immediate loading feedback. Prefetches /play on mount so
-// the post-login navigation is near-instant.
+// Includes a "Reconnect" flow for returning players who lost
+// their browser session. They enter name + PIN to reclaim their
+// queue position and match history.
 // ============================================================
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { signInAnonymously } from "@/app/actions/auth";
+import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
 import { SKILL_LEVELS } from "@/types/database";
 
 export function LoginForm() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showReconnect, setShowReconnect] = useState(false);
 
   // Prefetch /play so the redirect after login is instant.
   useEffect(() => {
@@ -28,7 +28,6 @@ export function LoginForm() {
   useEffect(() => {
     if (error) {
       const id = setTimeout(() => setError(null), 5000);
-      errorTimeoutRef.current = id;
       return () => clearTimeout(id);
     }
   }, [error]);
@@ -40,7 +39,6 @@ export function LoginForm() {
       if (result?.error) {
         setError(result.error);
       }
-      // On success, the server action redirects to /play.
     });
   }
 
@@ -95,6 +93,35 @@ export function LoginForm() {
           </select>
         </div>
 
+        {/* 4-digit PIN */}
+        <div className="space-y-2">
+          <label
+            htmlFor="pin"
+            className="block text-sm font-medium text-foreground"
+          >
+            4-Digit PIN
+          </label>
+          <p className="text-xs text-muted-foreground">
+            Remember this — you&apos;ll need it to reconnect if your browser closes.
+          </p>
+          <input
+            id="pin"
+            name="pin"
+            type="tel"
+            inputMode="numeric"
+            pattern="\d{4}"
+            maxLength={4}
+            required
+            disabled={isPending}
+            placeholder="e.g. 1234"
+            className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
+                       tracking-[0.3em] text-center font-mono
+                       placeholder:text-muted-foreground placeholder:tracking-normal
+                       focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
+                       disabled:opacity-50"
+          />
+        </div>
+
         {/* Submit */}
         <button
           type="submit"
@@ -104,31 +131,28 @@ export function LoginForm() {
                      disabled:opacity-70 disabled:cursor-not-allowed
                      flex items-center justify-center gap-2"
         >
-          {isPending && (
-            <svg
-              className="h-4 w-4 animate-spin"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
-            </svg>
-          )}
+          {isPending && <Spinner />}
           {isPending ? "Joining..." : "Enter"}
         </button>
       </form>
+
+      {/* Reconnect link */}
+      <div className="mt-4">
+        <button
+          onClick={() => setShowReconnect(true)}
+          className="text-sm text-muted-foreground hover:text-foreground underline transition-colors"
+        >
+          Returning player? Reconnect
+        </button>
+      </div>
+
+      {/* Reconnect Modal */}
+      {showReconnect && (
+        <ReconnectModal
+          onClose={() => setShowReconnect(false)}
+          onError={setError}
+        />
+      )}
 
       {/* Error toast — fixed at bottom */}
       {error && (
@@ -150,5 +174,152 @@ export function LoginForm() {
         </div>
       )}
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Reconnect Modal
+// ─────────────────────────────────────────────────────────────
+
+function ReconnectModal({
+  onClose,
+  onError,
+}: {
+  onClose: () => void;
+  onError: (msg: string) => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
+  const [isPending, startTransition] = useTransition();
+  const backdropRef = useRef<HTMLDivElement>(null);
+
+  function handleReconnect() {
+    if (!name.trim() || !pin.trim()) {
+      onError("Name and PIN are required.");
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await reconnectPlayer(name, pin);
+      if (!result.success) {
+        onError(result.error ?? "Reconnect failed.");
+      } else if (result.sessionId) {
+        onClose();
+        router.push(`/play/${result.sessionId}`);
+      }
+    });
+  }
+
+  return (
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={(e) => {
+        if (e.target === backdropRef.current) onClose();
+      }}
+    >
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl space-y-5">
+        <div>
+          <h2 className="text-lg font-bold text-foreground">Reconnect</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Enter the name and PIN you used when joining.
+          </p>
+        </div>
+
+        {/* Player Name */}
+        <div className="space-y-2">
+          <label htmlFor="reconnect_name" className="block text-sm font-medium text-foreground">
+            Player Name
+          </label>
+          <input
+            id="reconnect_name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={isPending}
+            autoFocus
+            placeholder="e.g. Miggy"
+            className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
+                       placeholder:text-muted-foreground focus:outline-none focus:ring-2
+                       focus:ring-ring focus:ring-offset-2 disabled:opacity-50"
+          />
+        </div>
+
+        {/* PIN */}
+        <div className="space-y-2">
+          <label htmlFor="reconnect_pin" className="block text-sm font-medium text-foreground">
+            PIN
+          </label>
+          <input
+            id="reconnect_pin"
+            type="tel"
+            inputMode="numeric"
+            maxLength={4}
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            disabled={isPending}
+            placeholder="1234"
+            className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
+                       tracking-[0.3em] text-center font-mono
+                       placeholder:text-muted-foreground placeholder:tracking-normal
+                       focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
+                       disabled:opacity-50"
+          />
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            disabled={isPending}
+            className="flex-1 rounded-lg border border-input px-4 py-3 text-sm font-medium
+                       text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleReconnect}
+            disabled={isPending || !name.trim() || pin.length !== 4}
+            className="flex-1 rounded-lg bg-primary px-4 py-3 text-sm font-semibold
+                       text-primary-foreground hover:bg-primary/90 transition-colors
+                       disabled:opacity-70 disabled:cursor-not-allowed
+                       flex items-center justify-center gap-2"
+          >
+            {isPending && <Spinner />}
+            {isPending ? "Reconnecting..." : "Reconnect"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Shared Spinner
+// ─────────────────────────────────────────────────────────────
+
+function Spinner() {
+  return (
+    <svg
+      className="h-4 w-4 animate-spin"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+      />
+    </svg>
   );
 }
