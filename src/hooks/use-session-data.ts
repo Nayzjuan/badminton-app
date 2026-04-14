@@ -22,6 +22,7 @@ import {
   subscribeToQueue,
   subscribeToMatches,
   subscribeToMatchPlayers,
+  subscribeToProfiles,
 } from "@/lib/realtime";
 import type {
   Court,
@@ -212,6 +213,11 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       subscribeToQueue(supabase, sessionId, () => fetchWaitlistRef.current(), prefix),
       subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
       subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
+      // Profile changes → re-fetch waitlist (skill badges) and active matches (player profiles).
+      subscribeToProfiles(supabase, sessionId, () => {
+        fetchWaitlistRef.current();
+        fetchActiveMatchesRef.current();
+      }, prefix),
     ];
     return () => unsubs.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps

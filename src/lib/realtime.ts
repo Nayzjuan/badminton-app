@@ -173,3 +173,41 @@ export function subscribeToSessionOrganizers(
 ) {
   return subscribeToTable(supabase, "session_organizers", sessionId, onChange);
 }
+
+/**
+ * Subscribe to all profile changes. Profiles have no session_id, so
+ * this subscribes broadly — the callback should re-fetch relevant
+ * data (queue view, match players, etc.) to pick up the new skill.
+ */
+export function subscribeToProfiles(
+  supabase: TypedClient,
+  sessionId: string,
+  onChange: ChangeHandler<Database["public"]["Tables"]["profiles"]["Row"]>,
+  channelPrefix?: string
+) {
+  const channelName = channelPrefix
+    ? `${channelPrefix}:profiles:${sessionId}`
+    : `profiles:${sessionId}`;
+
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "profiles" },
+      (payload) => {
+        console.log(`[realtime] ${channelName} event:`, payload.eventType);
+        onChange(payload as RealtimePostgresChangesPayload<Database["public"]["Tables"]["profiles"]["Row"]>);
+      }
+    )
+    .subscribe((status, err) => {
+      if (err) {
+        console.error(`[realtime] ${channelName} subscription error:`, err);
+      } else {
+        console.log(`[realtime] ${channelName} →`, status);
+      }
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}

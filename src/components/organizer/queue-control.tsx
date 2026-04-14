@@ -6,12 +6,14 @@
 // Live-updating queue list with checkbox selection for manual
 // match creation. Organizer selects exactly 4 players, picks
 // a court, and creates a custom match.
+// Skill levels are editable inline via dropdown.
 // ============================================================
 
 import { useMemo, useState } from "react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
-import type { Court, QueueWithWaitTime } from "@/types/database";
+import { updatePlayerSkill } from "@/app/actions/profile";
+import type { Court, QueueWithWaitTime, SkillLevel } from "@/types/database";
 
 // Re-export constant for clarity in this file.
 const REQUIRED_PLAYERS = PLAYERS_PER_MATCH; // 4
@@ -56,8 +58,15 @@ export function QueueControl({
     });
   }
 
-  function getSkillLabel(value: string): string {
-    return SKILL_LEVELS.find((s) => s.value === value)?.label ?? value;
+  // Track which player is currently being updated to show loading state.
+  const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
+
+  async function handleSkillChange(playerId: string, newSkill: SkillLevel) {
+    setUpdatingSkill(playerId);
+    await updatePlayerSkill(playerId, newSkill);
+    setUpdatingSkill(null);
+    // The realtime subscription on profiles will trigger a queue re-fetch
+    // to reflect the new skill level.
   }
 
   async function handleCreateMatch() {
@@ -216,11 +225,28 @@ export function QueueControl({
                     <td className="px-4 py-3 text-muted-foreground">{index + 1}</td>
                     {/* Name */}
                     <td className="px-4 py-3 font-medium">{entry.display_name}</td>
-                    {/* Skill */}
+                    {/* Skill — editable dropdown */}
                     <td className="px-4 py-3">
-                      <span className="inline-block rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
-                        {getSkillLabel(entry.skill_level)}
-                      </span>
+                      <select
+                        value={entry.skill_level}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleSkillChange(entry.player_id, e.target.value as SkillLevel);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        disabled={updatingSkill === entry.player_id}
+                        className={`rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs
+                                    font-medium text-slate-700 cursor-pointer
+                                    focus:outline-none focus:ring-2 focus:ring-ring
+                                    disabled:opacity-50 disabled:cursor-wait
+                                    ${updatingSkill === entry.player_id ? "animate-pulse" : ""}`}
+                      >
+                        {SKILL_LEVELS.map((sl) => (
+                          <option key={sl.value} value={sl.value}>
+                            {sl.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     {/* Wait time */}
                     <td className="px-4 py-3 text-right tabular-nums">

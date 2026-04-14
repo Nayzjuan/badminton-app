@@ -40,6 +40,7 @@ import {
   subscribeToQueue,
   subscribeToMatches,
   subscribeToMatchPlayers,
+  subscribeToProfiles,
 } from "@/lib/realtime";
 import {
   callNextMatch as callNextMatchAction,
@@ -286,6 +287,12 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
       subscribeToQueue(supabase, sessionId, () => fetchQueueRef.current()),
       subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current()),
       subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current()),
+      // Profile changes (e.g. skill override) → re-fetch queue (view includes
+      // skill_level from profiles) and active matches (embedded profiles).
+      subscribeToProfiles(supabase, sessionId, () => {
+        fetchQueueRef.current();
+        fetchActiveMatchesRef.current();
+      }),
     ];
     return () => unsubs.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
