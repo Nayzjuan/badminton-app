@@ -13,7 +13,19 @@ import { QueueControl } from "./queue-control";
 import { WaitTimeMonitor } from "./wait-time-monitor";
 import { MatchHistoryPanel } from "./match-history-panel";
 import { DevTools } from "./dev-tools";
-import { ChevronDown, ArrowLeft, Repeat } from "lucide-react";
+import { closeSession } from "@/app/actions/sessions";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { ChevronDown, ArrowLeft, Repeat, Power } from "lucide-react";
 import type { Profile, Session } from "@/types/database";
 
 interface OrganizerDashboardProps {
@@ -26,9 +38,21 @@ type Tab = "courts" | "queue" | "monitor" | "history";
 
 export function OrganizerDashboard({ profile, session, otherSessions = [] }: OrganizerDashboardProps) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<Tab>("courts");
+  const [activeTab, setActiveTab] = useState<Tab>(session.is_active ? "courts" : "history");
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+
+  async function handleCloseSession() {
+    setClosing(true);
+    const result = await closeSession(session.id);
+    if (result.success) {
+      router.push("/organizer");
+    } else {
+      setClosing(false);
+      alert(result.message);
+    }
+  }
 
   // Close switcher on outside click.
   useEffect(() => {
@@ -60,14 +84,17 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     removeFromQueue,
   } = useOrganizerData(session.id);
 
+  const isClosed = !session.is_active;
   const bottleneckCount = queue.filter((q) => q.is_bottleneck).length;
 
-  const tabs: { key: Tab; label: string; badge?: number }[] = [
-    { key: "courts", label: "Active Courts" },
-    { key: "queue", label: "Queue & Match Control" },
-    { key: "monitor", label: "Wait Time Monitor", badge: bottleneckCount > 0 ? bottleneckCount : undefined },
-    { key: "history", label: "Match History" },
-  ];
+  const tabs: { key: Tab; label: string; badge?: number }[] = isClosed
+    ? [{ key: "history", label: "Match History" }]
+    : [
+        { key: "courts", label: "Active Courts" },
+        { key: "queue", label: "Queue & Match Control" },
+        { key: "monitor", label: "Wait Time Monitor", badge: bottleneckCount > 0 ? bottleneckCount : undefined },
+        { key: "history", label: "Match History" },
+      ];
 
   if (loading) {
     return (
@@ -169,17 +196,59 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               <p className="text-sm text-muted-foreground hidden sm:block">
                 — {profile.display_name}
               </p>
+
+              {/* Closed badge inline with title */}
+              {isClosed && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100
+                                 border border-slate-200 px-2.5 py-0.5 text-[10px]
+                                 font-bold uppercase tracking-wider text-slate-500">
+                  Closed
+                </span>
+              )}
             </div>
 
-            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span>{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
-              <span className="text-border">|</span>
-              <span>{queue.length} in queue</span>
-              <span className="text-border">|</span>
-              <span>{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
-              <span className="text-border">|</span>
-              <DevTools sessionId={session.id} />
-            </div>
+            {!isClosed && (
+              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                <span className="hidden sm:inline">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
+                <span className="text-border hidden sm:inline">|</span>
+                <span className="hidden sm:inline">{queue.length} in queue</span>
+                <span className="text-border hidden sm:inline">|</span>
+                <span className="hidden sm:inline">{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
+                <span className="text-border hidden sm:inline">|</span>
+                <DevTools sessionId={session.id} />
+
+                {/* Close Session */}
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <button
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-200
+                                 bg-white px-3 py-1.5 text-xs font-semibold text-red-600
+                                 hover:bg-red-50 hover:border-red-300 transition-colors"
+                    >
+                      <Power className="h-3.5 w-3.5" />
+                      Close Session
+                    </button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Close &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will permanently end the session. All remaining players will be
+                        removed from the queue, any in-progress or on-deck matches will be
+                        cancelled, and courts will be closed. Completed match history will
+                        be preserved.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={handleCloseSession} disabled={closing}>
+                        {closing ? "Closing..." : "Yes, close session"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            )}
           </div>
         </div>
 

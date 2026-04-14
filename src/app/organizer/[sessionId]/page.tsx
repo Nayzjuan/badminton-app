@@ -33,12 +33,11 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
 
   if (!profile) redirect("/");
 
-  // Verify the session exists and is active.
+  // Fetch the session (active OR closed — closed sessions are viewable for history).
   const { data: session } = await supabase
     .from("sessions")
     .select("*")
     .eq("id", sessionId)
-    .eq("is_active", true)
     .single();
 
   if (!session) notFound();

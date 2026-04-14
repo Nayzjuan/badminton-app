@@ -1,11 +1,9 @@
 // ============================================================
 // Organizer Landing Page — /organizer
 // ============================================================
-// Dashboard hub: shows the user's active sessions, a form to
-// create a new one, and a co-organizer join panel.
-//
-// If the user has exactly one active session, we auto-redirect
-// to it so they don't waste a click.
+// Dashboard hub: shows active sessions prominently, past
+// (closed) sessions in a muted section, plus forms to create
+// or join sessions.
 // ============================================================
 
 import { redirect } from "next/navigation";
@@ -16,6 +14,7 @@ import type { Session } from "@/types/database";
 export type SessionWithStats = Session & {
   playerCount: number;
   courtCount: number;
+  matchCount: number;
 };
 
 export default async function OrganizerPage() {
@@ -34,37 +33,60 @@ export default async function OrganizerPage() {
 
   if (!profile) redirect("/");
 
-  // ── Fetch ALL active sessions ───────────────────────────────
-  // Any organizer can see and manage any active session.
-  // This avoids confusion with anonymous auth identities where
-  // each browser window creates a different user.
+  // ── Fetch ALL sessions (active + closed) ──────────────────
   const { data: allSessions } = await supabase
     .from("sessions")
     .select("*")
-    .eq("is_active", true)
     .order("created_at", { ascending: false });
 
-  const organizedSessions = allSessions ?? [];
+  const activeSessions = (allSessions ?? []).filter((s) => s.is_active);
+  const pastSessions = (allSessions ?? []).filter((s) => !s.is_active);
 
-  // ── Enrich sessions with player + court counts ─────────────
-  const sessionsWithStats: SessionWithStats[] = await Promise.all(
-    organizedSessions.map(async (session) => {
-      const { count: playerCount } = await supabase
-        .from("queue_entries")
-        .select("id", { count: "exact", head: true })
-        .eq("session_id", session.id)
-        .in("status", ["waiting", "on_deck", "playing"]);
-
-      const { count: courtCount } = await supabase
-        .from("courts")
-        .select("id", { count: "exact", head: true })
-        .eq("session_id", session.id)
-        .neq("status", "closed");
+  // ── Enrich active sessions with live counts ───────────────
+  const activeWithStats: SessionWithStats[] = await Promise.all(
+    activeSessions.map(async (session) => {
+      const [{ count: playerCount }, { count: courtCount }, { count: matchCount }] =
+        await Promise.all([
+          supabase
+            .from("queue_entries")
+            .select("id", { count: "exact", head: true })
+            .eq("session_id", session.id)
+            .in("status", ["waiting", "on_deck", "playing"]),
+          supabase
+            .from("courts")
+            .select("id", { count: "exact", head: true })
+            .eq("session_id", session.id)
+            .neq("status", "closed"),
+          supabase
+            .from("matches")
+            .select("id", { count: "exact", head: true })
+            .eq("session_id", session.id)
+            .eq("status", "completed"),
+        ]);
 
       return {
         ...session,
         playerCount: playerCount ?? 0,
         courtCount: courtCount ?? 0,
+        matchCount: matchCount ?? 0,
+      };
+    })
+  );
+
+  // ── Enrich past sessions with completed match count ───────
+  const pastWithStats: SessionWithStats[] = await Promise.all(
+    pastSessions.map(async (session) => {
+      const { count: matchCount } = await supabase
+        .from("matches")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", session.id)
+        .eq("status", "completed");
+
+      return {
+        ...session,
+        playerCount: 0,
+        courtCount: 0,
+        matchCount: matchCount ?? 0,
       };
     })
   );
@@ -72,7 +94,8 @@ export default async function OrganizerPage() {
   return (
     <OrganizerEntry
       profile={profile}
-      organizedSessions={sessionsWithStats}
+      activeSessions={activeWithStats}
+      pastSessions={pastWithStats}
     />
   );
 }

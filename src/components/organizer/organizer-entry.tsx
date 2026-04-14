@@ -18,6 +18,9 @@ import {
   KeyRound,
   Clock,
   Zap,
+  Archive,
+  Trophy,
+  ChevronDown,
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import type { Profile, ScoringFormat } from "@/types/database";
@@ -25,7 +28,8 @@ import type { SessionWithStats } from "@/app/organizer/page";
 
 interface OrganizerEntryProps {
   profile: Profile;
-  organizedSessions: SessionWithStats[];
+  activeSessions: SessionWithStats[];
+  pastSessions: SessionWithStats[];
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -56,7 +60,8 @@ function scoringLabel(s: ScoringFormat): string {
 
 export function OrganizerEntry({
   profile,
-  organizedSessions,
+  activeSessions,
+  pastSessions,
 }: OrganizerEntryProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -71,6 +76,9 @@ export function OrganizerEntry({
   const [joinSessionId, setJoinSessionId] = useState("");
   const [joinPasscode, setJoinPasscode] = useState("");
   const [joining, setJoining] = useState(false);
+
+  // Past sessions accordion
+  const [pastExpanded, setPastExpanded] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -127,7 +135,7 @@ export function OrganizerEntry({
     router.push(`/organizer/${joinSessionId.trim()}`);
   }
 
-  const hasSessions = organizedSessions.length > 0;
+  const hasSessions = activeSessions.length > 0;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -167,7 +175,7 @@ export function OrganizerEntry({
 
           {hasSessions ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              {organizedSessions.map((s) => (
+              {activeSessions.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => router.push(`/organizer/${s.id}`)}
@@ -370,6 +378,82 @@ export function OrganizerEntry({
             </button>
           </div>
         </section>
+
+        {/* ═══════════════════════════════════════════════════════
+            Section D: Past Sessions
+        ═══════════════════════════════════════════════════════ */}
+        {pastSessions.length > 0 && (
+          <section className="space-y-3">
+            <button
+              onClick={() => setPastExpanded(!pastExpanded)}
+              className="flex items-center gap-2 group"
+            >
+              <Archive className="h-4 w-4 text-slate-400" />
+              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400
+                             group-hover:text-slate-500 transition-colors">
+                Past Sessions ({pastSessions.length})
+              </h2>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-slate-400 transition-transform
+                            ${pastExpanded ? "rotate-180" : ""}`}
+              />
+            </button>
+
+            {pastExpanded && (
+              <div className="space-y-2">
+                {pastSessions.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => router.push(`/organizer/${s.id}`)}
+                    className="group flex items-center gap-4 w-full rounded-xl border border-slate-100
+                               bg-slate-50/80 px-4 py-3 text-left
+                               transition-all duration-150
+                               hover:bg-white hover:border-slate-200 hover:shadow-sm"
+                  >
+                    {/* Icon */}
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg
+                                    bg-slate-100 text-slate-400 group-hover:bg-slate-200
+                                    transition-colors">
+                      <Archive className="h-4 w-4" />
+                    </div>
+
+                    {/* Info */}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-slate-600 truncate
+                                    group-hover:text-slate-800 transition-colors">
+                        {s.name}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {formatDate(s.created_at)}
+                        {s.ended_at && (
+                          <> &middot; Ended {formatDate(s.ended_at)} at {formatTime(s.ended_at)}</>
+                        )}
+                      </p>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="flex items-center gap-3 shrink-0">
+                      {s.matchCount > 0 && (
+                        <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                          <Trophy className="h-3 w-3" />
+                          <span>{s.matchCount} match{s.matchCount !== 1 ? "es" : ""}</span>
+                        </div>
+                      )}
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px]
+                                       font-semibold text-slate-400">
+                        Closed
+                      </span>
+                    </div>
+
+                    {/* Arrow */}
+                    <ChevronRight className="h-4 w-4 text-slate-300 shrink-0
+                                             group-hover:text-slate-500 transition-colors" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );
