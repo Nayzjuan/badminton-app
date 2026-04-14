@@ -56,16 +56,22 @@ export async function signInAnonymously(formData: FormData) {
   }
 
   // The trigger should have created the profile, but if the metadata
-  // didn't propagate, do an upsert as a safety net.
+  // didn't propagate, fire an upsert as a safety net. We don't await
+  // it — the redirect can proceed immediately while the upsert
+  // completes in the background.
   if (data.user) {
-    await supabase.from("profiles").upsert(
+    supabase.from("profiles").upsert(
       {
         id: data.user.id,
         display_name: displayName,
         skill_level: skillLevel,
       },
       { onConflict: "id" }
-    );
+    ).then(({ error: upsertError }) => {
+      if (upsertError) {
+        console.error("[auth] profile upsert safety-net failed:", upsertError);
+      }
+    });
   }
 
   redirect("/play");

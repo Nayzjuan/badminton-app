@@ -4,12 +4,15 @@
 // Match History — Player's completed matches this session
 // ============================================================
 // Shows a chronological list of completed matches with clear
-// Win/Lost indicators, scores, partners, and opponents.
+// Won/Lost/Draw indicators, scores, partners, and opponents.
+// Real-time: subscribes to match changes so new completions
+// appear automatically without page reload.
 // ============================================================
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trophy, History } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
+import { subscribeToMatches } from "@/lib/realtime";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
 
 interface MatchHistoryProps {
@@ -22,20 +25,36 @@ export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createClient(), []);
 
-  useEffect(() => {
-    async function fetch() {
-      const { data } = await supabase
-        .from("v_match_history")
-        .select("*")
-        .eq("session_id", sessionId)
-        .eq("player_id", playerId)
-        .order("completed_at", { ascending: false });
+  const fetchHistory = useCallback(async () => {
+    const { data } = await supabase
+      .from("v_match_history")
+      .select("*")
+      .eq("session_id", sessionId)
+      .eq("player_id", playerId)
+      .order("completed_at", { ascending: false });
 
-      if (data) setHistory(data);
-      setLoading(false);
-    }
-    fetch();
+    if (data) setHistory(data);
+    setLoading(false);
   }, [supabase, sessionId, playerId]);
+
+  // Initial fetch.
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  // Real-time: re-fetch when any match changes (completion, score update).
+  const fetchRef = useRef(fetchHistory);
+  fetchRef.current = fetchHistory;
+
+  useEffect(() => {
+    const unsub = subscribeToMatches(
+      supabase,
+      sessionId,
+      () => fetchRef.current(),
+      "player-history"
+    );
+    return unsub;
+  }, [supabase, sessionId]);
 
   if (loading) {
     return (
@@ -66,7 +85,13 @@ export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
     const theirScore = isA ? m.team_b_score : m.team_a_score;
     return myScore !== null && theirScore !== null && myScore > theirScore;
   }).length;
-  const losses = history.length - wins;
+  const draws = history.filter((m) => {
+    const isA = m.team === "a";
+    const myScore = isA ? m.team_a_score : m.team_b_score;
+    const theirScore = isA ? m.team_b_score : m.team_a_score;
+    return myScore !== null && theirScore !== null && myScore === theirScore;
+  }).length;
+  const losses = history.length - wins - draws;
 
   return (
     <div className="space-y-4">
@@ -82,6 +107,12 @@ export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
           <span className="font-bold text-emerald-600">{wins}W</span>
           <span className="text-slate-300">/</span>
           <span className="font-bold text-red-500">{losses}L</span>
+          {draws > 0 && (
+            <>
+              <span className="text-slate-300">/</span>
+              <span className="font-bold text-slate-400">{draws}D</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -92,23 +123,50 @@ export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
           const myScore = isTeamA ? match.team_a_score : match.team_b_score;
           const theirScore = isTeamA ? match.team_b_score : match.team_a_score;
           const won = myScore !== null && theirScore !== null && myScore > theirScore;
-          const completedAt = match.completed_at
-            ? new Date(match.completed_at).toLocaleTimeString("en-US", {
+          const draw = myScore !== null && theirScore !== null && myScore === theirScore;
+          const lost = !won && !draw;
+
+          const completedDate = match.completed_at
+            ? new Date(match.completed_at)
+            : null;
+          const dateStr = completedDate
+            ? completedDate.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              })
+            : "";
+          const timeStr = completedDate
+            ? completedDate.toLocaleTimeString("en-US", {
                 hour: "numeric",
                 minute: "2-digit",
               })
             : "";
 
+          const borderColor = won
+            ? "border-emerald-200"
+            : draw
+            ? "border-slate-300"
+            : "border-slate-200";
+          const headerBg = won
+            ? "bg-emerald-50 border-emerald-100"
+            : draw
+            ? "bg-slate-100 border-slate-200"
+            : "bg-slate-50 border-slate-100";
+          const badgeStyle = won
+            ? "bg-emerald-500 text-white"
+            : draw
+            ? "bg-slate-400 text-white"
+            : "bg-red-100 text-red-700";
+          const badgeLabel = won ? "Won" : draw ? "Draw" : "Lost";
+
           return (
             <div
               key={match.match_id}
-              className={`rounded-2xl border overflow-hidden bg-white shadow-sm
-                          ${won ? "border-emerald-200" : "border-slate-200"}`}
+              className={`rounded-2xl border overflow-hidden bg-white shadow-sm ${borderColor}`}
             >
               {/* Header */}
               <div
-                className={`flex items-center justify-between px-4 py-2 border-b
-                            ${won ? "bg-emerald-50 border-emerald-100" : "bg-slate-50 border-slate-100"}`}
+                className={`flex items-center justify-between px-4 py-2 border-b ${headerBg}`}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-slate-500">
@@ -117,18 +175,15 @@ export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  {completedAt && (
-                    <span className="text-[10px] text-slate-400">{completedAt}</span>
+                  {(dateStr || timeStr) && (
+                    <span className="text-[10px] text-slate-400">
+                      {dateStr}{dateStr && timeStr ? " · " : ""}{timeStr}
+                    </span>
                   )}
                   <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase
-                                ${
-                                  won
-                                    ? "bg-emerald-500 text-white"
-                                    : "bg-red-100 text-red-700"
-                                }`}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${badgeStyle}`}
                   >
-                    {won ? "Won" : "Lost"}
+                    {badgeLabel}
                   </span>
                 </div>
               </div>
@@ -139,14 +194,14 @@ export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
                 <div className="flex items-center justify-center gap-3 mb-3">
                   <span
                     className={`text-3xl font-black tabular-nums
-                                ${won ? "text-emerald-600" : "text-slate-400"}`}
+                                ${won ? "text-emerald-600" : draw ? "text-slate-500" : "text-slate-400"}`}
                   >
                     {myScore ?? "?"}
                   </span>
                   <span className="text-sm font-bold text-slate-300">–</span>
                   <span
                     className={`text-3xl font-black tabular-nums
-                                ${!won ? "text-red-500" : "text-slate-400"}`}
+                                ${lost ? "text-red-500" : "text-slate-400"}`}
                   >
                     {theirScore ?? "?"}
                   </span>
