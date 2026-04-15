@@ -55,9 +55,9 @@ export function ShareSessionDialog({ sessionId, sessionName }: ShareSessionDialo
     <Dialog>
       <DialogTrigger asChild>
         <button
-          className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200
-                     bg-white px-3 py-1.5 text-xs font-semibold text-blue-600
-                     hover:bg-blue-50 hover:border-blue-300 transition-colors"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-white/40
+                     bg-white/10 px-3 py-1.5 text-xs font-semibold text-white
+                     hover:bg-white/20 hover:border-white/60 transition-colors"
         >
           <Share2 className="h-3.5 w-3.5" />
           Share Session

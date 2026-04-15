@@ -106,16 +106,16 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-[#FAFAF7]">
       {/* Top Header */}
-      <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
+      <header className="sticky top-0 z-20 bg-[#1D3A6F] shadow-lg">
         <div className="max-w-7xl mx-auto px-6 py-4">
           {/* Back link */}
           <div className="mb-2">
             <button
               onClick={() => router.push("/organizer")}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground
-                         hover:text-foreground transition-colors -ml-1 px-1 py-0.5 rounded"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-white/60
+                         hover:text-white hover:bg-white/10 transition-colors -ml-1 px-1 py-0.5 rounded"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               All Sessions
@@ -131,12 +131,12 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   className={`flex items-center gap-2 min-w-0 rounded-lg px-2 py-1 -mx-2 -my-1
                               transition-colors
                               ${otherSessions.length > 0
-                                ? "hover:bg-muted/60 cursor-pointer"
+                                ? "hover:bg-white/10 cursor-pointer"
                                 : "cursor-default"}`}
                 >
-                  <h1 className="text-xl font-bold text-foreground truncate">{session.name}</h1>
+                  <h1 className="text-xl font-bold text-white truncate">{session.name}</h1>
                   {otherSessions.length > 0 && (
-                    <ChevronDown className={`h-4 w-4 text-muted-foreground shrink-0 transition-transform
+                    <ChevronDown className={`h-4 w-4 text-white/60 shrink-0 transition-transform
                                              ${switcherOpen ? "rotate-180" : ""}`} />
                   )}
                 </button>
@@ -194,28 +194,28 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 )}
               </div>
 
-              <p className="text-sm text-muted-foreground hidden sm:block">
+              <p className="text-sm text-white/60 hidden sm:block">
                 — {profile.display_name}
               </p>
 
               {/* Closed badge inline with title */}
               {isClosed && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100
-                                 border border-slate-200 px-2.5 py-0.5 text-[10px]
-                                 font-bold uppercase tracking-wider text-slate-500">
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/15
+                                 border border-white/30 px-2.5 py-0.5 text-[10px]
+                                 font-bold uppercase tracking-wider text-white/80">
                   Closed
                 </span>
               )}
             </div>
 
             {!isClosed && (
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-4 text-sm text-white/70">
                 <span className="hidden sm:inline">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
-                <span className="text-border hidden sm:inline">|</span>
+                <span className="text-white/25 hidden sm:inline">|</span>
                 <span className="hidden sm:inline">{queue.length} in queue</span>
-                <span className="text-border hidden sm:inline">|</span>
+                <span className="text-white/25 hidden sm:inline">|</span>
                 <span className="hidden sm:inline">{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
-                <span className="text-border hidden sm:inline">|</span>
+                <span className="text-white/25 hidden sm:inline">|</span>
                 <DevTools sessionId={session.id} />
 
                 {/* Share Session */}
@@ -225,9 +225,9 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <button
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-200
-                                 bg-white px-3 py-1.5 text-xs font-semibold text-red-600
-                                 hover:bg-red-50 hover:border-red-300 transition-colors"
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-300/50
+                                 bg-white/10 px-3 py-1.5 text-xs font-semibold text-red-300
+                                 hover:bg-red-500/20 hover:border-red-300 transition-colors"
                     >
                       <Power className="h-3.5 w-3.5" />
                       Close Session
@@ -258,16 +258,16 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
         {/* Tab Navigation */}
         <div className="max-w-7xl mx-auto px-6">
-          <nav className="flex gap-1 -mb-px">
+          <nav className="flex gap-1 pt-2">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative px-5 py-3 text-sm font-medium transition-colors rounded-t-lg
+                className={`relative px-5 py-2.5 text-sm font-medium transition-colors rounded-t-lg
                             ${
                               activeTab === tab.key
-                                ? "text-foreground bg-muted border-b-2 border-primary"
-                                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                ? "bg-[#FAFAF7] text-[#1D3A6F] font-semibold shadow-sm"
+                                : "text-white/70 hover:text-white hover:bg-white/10"
                             }`}
               >
                 {tab.label}

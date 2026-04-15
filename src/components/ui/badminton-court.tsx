@@ -36,8 +36,9 @@ export function BadmintonCourt({
   teamB,
   isOnDeck = false,
 }: BadmintonCourtProps) {
-  const courtBg = isOnDeck ? "bg-teal-800/60" : "bg-emerald-700";
-  const ringColor = isOnDeck ? "ring-white/40" : "ring-white/70";
+  // All court cards — active or on-deck — use the same rich green surface.
+  const courtBg = "bg-emerald-700";
+  const ringColor = "ring-white/70";
 
   return (
     <div

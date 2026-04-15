@@ -96,10 +96,10 @@ function CourtCard({
 
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {
-    matchmaking: { cls: "bg-amber-100 text-amber-800 border-amber-300", label: "Finding Match…" },
-    in_progress: { cls: "bg-violet-100 text-violet-800 border-violet-300", label: "In Progress" },
-    available:   { cls: "bg-emerald-100 text-emerald-800 border-emerald-300", label: "Available" },
-    closed:      { cls: "bg-gray-100 text-gray-600 border-gray-200", label: "Closed" },
+    matchmaking: { cls: "bg-amber-400 text-white border-amber-500",             label: "Finding Match…" },
+    in_progress: { cls: "bg-blue-600 text-white border-blue-700",               label: "In Progress" },
+    available:   { cls: "bg-emerald-100 text-emerald-800 border-emerald-300",   label: "Available" },
+    closed:      { cls: "bg-gray-100 text-gray-600 border-gray-200",            label: "Closed" },
   };
 
   return (
