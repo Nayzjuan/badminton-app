@@ -12,7 +12,8 @@
 // ============================================================
 
 import { useState, useTransition } from "react";
-import { User, LayoutGrid, ListOrdered, Eye, EyeOff } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { User, LayoutGrid, ListOrdered, Eye, EyeOff, LogOut } from "lucide-react";
 import { useQueue } from "@/hooks/use-queue";
 import { usePlayerMatch } from "@/hooks/use-player-match";
 import { useSessionData } from "@/hooks/use-session-data";
@@ -25,6 +26,18 @@ import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import { submitMatchScore } from "@/app/actions/match";
+import { checkoutPlayer } from "@/app/actions/queue";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { Profile, Session } from "@/types/database";
 
 interface PlayerDashboardProps {
@@ -41,8 +54,16 @@ const TABS: { key: Tab; label: string; icon: typeof User }[] = [
 ];
 
 export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("status");
   const [pinVisible, setPinVisible] = useState(false);
+  const [checkingOut, setCheckingOut] = useState(false);
+
+  async function handleCheckout() {
+    setCheckingOut(true);
+    await checkoutPlayer(session.id);
+    router.push("/play");
+  }
 
   const {
     queue,
@@ -116,16 +137,51 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                 )}
               </div>
             </div>
-            <div
-              className={`h-2.5 w-2.5 rounded-full ${dotColor}`}
-              title={
-                hasActiveMatch
-                  ? "Match active"
-                  : isInQueue
-                  ? "In queue"
-                  : "Not in queue"
-              }
-            />
+            <div className="flex items-center gap-2">
+              <div
+                className={`h-2.5 w-2.5 rounded-full ${dotColor}`}
+                title={
+                  hasActiveMatch
+                    ? "Match active"
+                    : isInQueue
+                    ? "In queue"
+                    : "Not in queue"
+                }
+              />
+              {/* Leave Session */}
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <button
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium
+                               text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    title="Leave this session"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                    Leave
+                  </button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Leave &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You will be removed from the queue and will lose your spot. Any match
+                      currently in progress will not be affected. You can rejoin later
+                      using your name and PIN.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Stay</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleCheckout}
+                      disabled={checkingOut}
+                      className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                    >
+                      {checkingOut ? "Leaving…" : "Yes, leave session"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </div>
         </div>
 

@@ -35,6 +35,42 @@
 import { createClient } from "@/utils/supabase/server";
 import { generateOnDeckMatchesAction } from "@/app/actions/matchmaking";
 
+// ── Checkout ──────────────────────────────────────────────────
+// Marks the calling player's queue_entries row as "left" for a
+// given session, removing them from matchmaking.
+// Calling this while on_deck or playing is allowed — the match
+// already in progress is unaffected; they're only removed from
+// the future queue so they don't get scheduled again.
+
+export interface CheckoutResult {
+  success: boolean;
+  error?: string;
+}
+
+export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: "Not authenticated." };
+  }
+
+  const { error } = await supabase
+    .from("queue_entries")
+    .update({ status: "left" as const })
+    .eq("session_id", sessionId)
+    .eq("player_id", user.id);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true };
+}
+
 export interface JoinQueueResult {
   error?: string;
 }

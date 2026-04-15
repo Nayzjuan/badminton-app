@@ -172,6 +172,118 @@ export async function endMatchAction(
 }
 
 // ============================================================
+// updateMatchDetails — Organizer score edit / revert to active
+// ============================================================
+// Two modes:
+//   revertToActive=false → only corrects the scores on a
+//     completed match. Status stays "completed".
+//   revertToActive=true  → sets the match back to "in_progress",
+//     clears scores/completed_at, reclaims the court if free,
+//     and reverts each player's queue_entries row to "playing"
+//     with games_played decremented by 1. Use this when a player
+//     accidentally submitted the score before the game finished.
+// ============================================================
+export async function updateMatchDetails(
+  matchId: string,
+  teamAScore: number,
+  teamBScore: number,
+  revertToActive = false
+): Promise<MatchActionResult> {
+  const supabase = await createClient();
+
+  const { data: match, error: fetchErr } = await supabase
+    .from("matches")
+    .select("id, session_id, court_id, status")
+    .eq("id", matchId)
+    .single();
+
+  if (fetchErr || !match) {
+    return { success: false, message: `Match not found: ${fetchErr?.message ?? "unknown"}` };
+  }
+
+  if (!revertToActive) {
+    // ── Score-only edit ──────────────────────────────────────
+    const { error } = await supabase
+      .from("matches")
+      .update({ team_a_score: teamAScore, team_b_score: teamBScore })
+      .eq("id", matchId);
+
+    if (error) return { success: false, message: error.message };
+    return { success: true, message: "Scores updated." };
+  }
+
+  // ── Revert to in_progress ────────────────────────────────
+  const { error: revertErr } = await supabase
+    .from("matches")
+    .update({
+      status: "in_progress" as const,
+      team_a_score: null,
+      team_b_score: null,
+      completed_at: null,
+    })
+    .eq("id", matchId);
+
+  if (revertErr) return { success: false, message: revertErr.message };
+
+  // Court handling: reclaim if free, detach if occupied or closed.
+  if (match.court_id) {
+    const { data: court } = await supabase
+      .from("courts")
+      .select("status")
+      .eq("id", match.court_id)
+      .single();
+
+    if (court?.status === "available") {
+      await supabase
+        .from("courts")
+        .update({ status: "in_use" as const })
+        .eq("id", match.court_id);
+    } else {
+      // Another match occupies or the court is closed — detach.
+      await supabase
+        .from("matches")
+        .update({ court_id: null })
+        .eq("id", matchId);
+    }
+  }
+
+  // Revert player queue entries that are currently "waiting"
+  // (meaning endMatchAction already re-queued them).
+  const { data: matchPlayers } = await supabase
+    .from("match_players")
+    .select("player_id")
+    .eq("match_id", matchId);
+
+  if (matchPlayers && matchPlayers.length > 0) {
+    await Promise.all(
+      matchPlayers.map(async (mp) => {
+        const { data: entry } = await supabase
+          .from("queue_entries")
+          .select("games_played, status")
+          .eq("session_id", match.session_id)
+          .eq("player_id", mp.player_id)
+          .single();
+
+        // Only revert players currently waiting — those already in
+        // another on_deck / playing match are left untouched.
+        if (entry?.status === "waiting") {
+          return supabase
+            .from("queue_entries")
+            .update({
+              status: "playing" as const,
+              games_played: Math.max(0, (entry.games_played ?? 1) - 1),
+            })
+            .eq("session_id", match.session_id)
+            .eq("player_id", mp.player_id);
+        }
+      })
+    );
+  }
+
+  return { success: true, message: "Match reverted. Players can re-submit the correct score." };
+}
+
+// ============================================================
 // cancelMatchAction
 // ============================================================
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {

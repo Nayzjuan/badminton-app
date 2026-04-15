@@ -10,9 +10,21 @@
 // ============================================================
 
 import { useMemo, useState } from "react";
+import { LogOut } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
 import { updatePlayerSkill, getPlayerPin, resetPlayerPin } from "@/app/actions/profile";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { Court, QueueWithWaitTime, SkillLevel } from "@/types/database";
 
 // Re-export constant for clarity in this file.
@@ -329,18 +341,39 @@ export function QueueControl({
                         )}
                       </div>
                     </td>
-                    {/* Remove */}
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRemoveFromQueue(entry.player_id);
-                        }}
-                        className="text-xs text-muted-foreground hover:text-destructive transition-colors"
-                        title="Remove from queue"
-                      >
-                        &times;
-                      </button>
+                    {/* Checkout */}
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <button
+                            className="text-muted-foreground hover:text-red-600 transition-colors"
+                            title="Checkout — player has left the gym"
+                          >
+                            <LogOut className="h-3.5 w-3.5" />
+                          </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Checkout {entry.display_name}?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will remove them from the queue. If they are currently
+                              in a match, the match will not be affected. They can rejoin
+                              later using their name and PIN.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => onRemoveFromQueue(entry.player_id)}
+                              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                            >
+                              Checkout
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </td>
                   </tr>
                 );

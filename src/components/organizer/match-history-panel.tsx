@@ -8,11 +8,19 @@
 // independently with its own subscription.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Trophy, History } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { Trophy, History, Pencil, RotateCcw } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
 import { SkillBadge } from "@/components/ui/skill-badge";
+import { updateMatchDetails } from "@/app/actions/match";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import type { Match, MatchPlayer, Profile } from "@/types/database";
 
 interface CompletedMatch extends Match {
@@ -185,7 +193,14 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                     </span>
                   )}
                 </div>
-                <span className="text-xs text-slate-400">{completedAt}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400">{completedAt}</span>
+                  <EditMatchDialog
+                    matchId={match.id}
+                    initialScoreA={match.team_a_score ?? 0}
+                    initialScoreB={match.team_b_score ?? 0}
+                  />
+                </div>
               </div>
 
               {/* Score + Teams */}
@@ -265,5 +280,172 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
         })}
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// EditMatchDialog — Organizer score correction + revert to active
+// ─────────────────────────────────────────────────────────────
+
+interface EditMatchDialogProps {
+  matchId: string;
+  initialScoreA: number;
+  initialScoreB: number;
+}
+
+function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDialogProps) {
+  const [open, setOpen] = useState(false);
+  const [scoreA, setScoreA] = useState(String(initialScoreA));
+  const [scoreB, setScoreB] = useState(String(initialScoreB));
+  const [message, setMessage] = useState<string | null>(null);
+  const [isError, setIsError] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  // Reset form whenever the dialog is opened.
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      setScoreA(String(initialScoreA));
+      setScoreB(String(initialScoreB));
+      setMessage(null);
+    }
+    setOpen(next);
+  }
+
+  function handleSaveScore() {
+    const a = parseInt(scoreA, 10);
+    const b = parseInt(scoreB, 10);
+    if (isNaN(a) || isNaN(b) || a < 0 || b < 0) {
+      setMessage("Enter valid non-negative scores.");
+      setIsError(true);
+      return;
+    }
+    setMessage(null);
+    startTransition(async () => {
+      const result = await updateMatchDetails(matchId, a, b, false);
+      setMessage(result.message);
+      setIsError(!result.success);
+      if (result.success) {
+        // Real-time will update the card score; close after a short delay.
+        setTimeout(() => setOpen(false), 800);
+      }
+    });
+  }
+
+  function handleRevert() {
+    startTransition(async () => {
+      const result = await updateMatchDetails(matchId, 0, 0, true);
+      setMessage(result.message);
+      setIsError(!result.success);
+      if (result.success) {
+        // Match disappears from history list via real-time. Close dialog.
+        setTimeout(() => setOpen(false), 800);
+      }
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger asChild>
+        <button
+          className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium
+                     text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+          title="Edit scores or revert match"
+        >
+          <Pencil className="h-3 w-3" />
+          Edit
+        </button>
+      </DialogTrigger>
+
+      <DialogContent className="sm:max-w-xs">
+        <DialogHeader>
+          <DialogTitle>Edit Match Score</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          {/* Score inputs */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 space-y-1 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Team A
+              </p>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={99}
+                value={scoreA}
+                onChange={(e) => setScoreA(e.target.value)}
+                disabled={isPending}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5
+                           text-center text-2xl font-black tabular-nums text-slate-900
+                           focus:outline-none focus:ring-2 focus:ring-slate-400
+                           disabled:opacity-50"
+              />
+            </div>
+            <span className="text-sm font-bold text-slate-300 mt-5">–</span>
+            <div className="flex-1 space-y-1 text-center">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Team B
+              </p>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={99}
+                value={scoreB}
+                onChange={(e) => setScoreB(e.target.value)}
+                disabled={isPending}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5
+                           text-center text-2xl font-black tabular-nums text-slate-900
+                           focus:outline-none focus:ring-2 focus:ring-slate-400
+                           disabled:opacity-50"
+              />
+            </div>
+          </div>
+
+          {/* Feedback message */}
+          {message && (
+            <p className={`text-center text-xs ${isError ? "text-red-600" : "text-emerald-600"}`}>
+              {message}
+            </p>
+          )}
+
+          {/* Save score */}
+          <button
+            onClick={handleSaveScore}
+            disabled={isPending}
+            className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold
+                       text-white hover:bg-slate-800 transition-colors
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isPending ? "Saving…" : "Save Score"}
+          </button>
+
+          {/* Divider */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1 border-t border-slate-100" />
+            <span className="text-[10px] text-slate-400 uppercase tracking-widest">or</span>
+            <div className="flex-1 border-t border-slate-100" />
+          </div>
+
+          {/* Revert to active */}
+          <button
+            onClick={handleRevert}
+            disabled={isPending}
+            className="w-full flex items-center justify-center gap-2 rounded-xl border
+                       border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold
+                       text-amber-800 hover:bg-amber-100 transition-colors
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RotateCcw className="h-4 w-4" />
+            {isPending ? "Reverting…" : "Revert to Active Court"}
+          </button>
+          <p className="text-center text-[10px] text-slate-400">
+            Use this if a score was submitted by accident. The match returns
+            to the Active Courts view and players can re-submit.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
