@@ -30,6 +30,46 @@ export interface MatchActionResult {
 }
 
 // ============================================================
+// submitMatchScore — player-initiated score submission
+// ============================================================
+// Called from the player's dashboard. Validates that the
+// calling user is actually in the match before delegating
+// to the shared endMatchAction logic.
+// ============================================================
+export async function submitMatchScore(
+  matchId: string,
+  teamAScore: number,
+  teamBScore: number
+): Promise<MatchActionResult> {
+  const supabase = await createClient();
+
+  // Identify the calling player.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, message: "Not authenticated." };
+  }
+
+  // Verify this player is in the match (prevents spoofed submissions).
+  const { data: mySlot } = await supabase
+    .from("match_players")
+    .select("id")
+    .eq("match_id", matchId)
+    .eq("player_id", user.id)
+    .single();
+
+  if (!mySlot) {
+    return { success: false, message: "You are not a player in this match." };
+  }
+
+  // Delegate to the shared action which handles scoring, court release,
+  // re-queueing, auto-fill, and on-deck refill.
+  return endMatchAction(matchId, teamAScore, teamBScore);
+}
+
+// ============================================================
 // endMatchAction
 // ============================================================
 export async function endMatchAction(

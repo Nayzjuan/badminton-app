@@ -11,7 +11,7 @@
 // when the player has an active match assignment.
 // ============================================================
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { User, LayoutGrid, ListOrdered, Eye, EyeOff } from "lucide-react";
 import { useQueue } from "@/hooks/use-queue";
 import { usePlayerMatch } from "@/hooks/use-player-match";
@@ -24,6 +24,7 @@ import { MatchHistory } from "./match-history";
 import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
+import { submitMatchScore } from "@/app/actions/match";
 import type { Profile, Session } from "@/types/database";
 
 interface PlayerDashboardProps {
@@ -245,6 +246,14 @@ function MyStatusTab({
           isMixedLevel={currentMatch.match.is_mixed_level}
         />
 
+        {/* Score input — only when the match is actually in progress */}
+        {currentMatch.match.status === "in_progress" && (
+          <ScoreInputCard
+            matchId={currentMatch.match.id}
+            myTeam={currentMatch.myTeam}
+          />
+        )}
+
         <div className="pt-1">
           <QueueToggle
             isInQueue={isInQueue}
@@ -323,6 +332,167 @@ interface QueueSubTabProps {
   joinQueue: () => Promise<{ error?: string }>;
   leaveQueue: () => Promise<{ error?: string }>;
 }
+
+// ─────────────────────────────────────────────────────────────
+// ScoreInputCard — lets any player in the match submit the score
+// ─────────────────────────────────────────────────────────────
+
+interface ScoreInputCardProps {
+  matchId: string;
+  myTeam: "a" | "b";
+}
+
+function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
+  const [teamAScore, setTeamAScore] = useState<string>("");
+  const [teamBScore, setTeamBScore] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+  const [isPending, startTransition] = useTransition();
+
+  const myScoreLabel = myTeam === "a" ? "Your Team" : "Opponents";
+  const theirScoreLabel = myTeam === "a" ? "Opponents" : "Your Team";
+  const myScoreValue = myTeam === "a" ? teamAScore : teamBScore;
+  const theirScoreValue = myTeam === "a" ? teamBScore : teamAScore;
+
+  function handleMyScore(val: string) {
+    if (myTeam === "a") setTeamAScore(val);
+    else setTeamBScore(val);
+  }
+  function handleTheirScore(val: string) {
+    if (myTeam === "a") setTeamBScore(val);
+    else setTeamAScore(val);
+  }
+
+  function handleSubmit() {
+    const a = parseInt(teamAScore, 10);
+    const b = parseInt(teamBScore, 10);
+
+    if (isNaN(a) || isNaN(b)) {
+      setError("Enter scores for both teams.");
+      return;
+    }
+    if (a < 0 || b < 0) {
+      setError("Scores cannot be negative.");
+      return;
+    }
+
+    setError(null);
+    startTransition(async () => {
+      const result = await submitMatchScore(matchId, a, b);
+      if (!result.success) {
+        setError(result.message);
+      } else {
+        setSubmitted(true);
+        // Real-time will clear the match from this player's view.
+      }
+    });
+  }
+
+  if (submitted) {
+    return (
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-center">
+        <p className="text-sm font-semibold text-emerald-700">
+          ✅ Score submitted! Returning you to queue…
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      {/* Header */}
+      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
+        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+          📊 Submit Final Score
+        </p>
+      </div>
+
+      <div className="px-4 py-4 space-y-4">
+        {/* Score inputs */}
+        <div className="flex items-center gap-3">
+          {/* My team score */}
+          <div className="flex-1 text-center space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+              {myScoreLabel}
+            </p>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={99}
+              value={myScoreValue}
+              onChange={(e) => handleMyScore(e.target.value)}
+              disabled={isPending}
+              placeholder="0"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3
+                         text-center text-2xl font-black tabular-nums text-slate-900
+                         focus:outline-none focus:ring-2 focus:ring-emerald-400
+                         disabled:opacity-50"
+            />
+          </div>
+
+          <span className="text-lg font-bold text-slate-300 mt-5">–</span>
+
+          {/* Their team score */}
+          <div className="flex-1 text-center space-y-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              {theirScoreLabel}
+            </p>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={0}
+              max={99}
+              value={theirScoreValue}
+              onChange={(e) => handleTheirScore(e.target.value)}
+              disabled={isPending}
+              placeholder="0"
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3
+                         text-center text-2xl font-black tabular-nums text-slate-900
+                         focus:outline-none focus:ring-2 focus:ring-slate-400
+                         disabled:opacity-50"
+            />
+          </div>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <p className="text-center text-xs text-red-600">{error}</p>
+        )}
+
+        {/* Submit */}
+        <button
+          onClick={handleSubmit}
+          disabled={isPending || !teamAScore || !teamBScore}
+          className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold
+                     text-white hover:bg-slate-800 transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     flex items-center justify-center gap-2"
+        >
+          {isPending ? (
+            <>
+              <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Submitting…
+            </>
+          ) : (
+            "Submit Final Score"
+          )}
+        </button>
+
+        <p className="text-center text-[10px] text-slate-400">
+          Any player in the match can submit. This ends the match for everyone.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// QueueSubTab — position card + on-deck alert + toggle
+// ─────────────────────────────────────────────────────────────
 
 function QueueSubTab({
   isInQueue,
