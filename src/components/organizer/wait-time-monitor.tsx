@@ -36,7 +36,7 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
       <div
         className={`rounded-xl border-2 p-4 flex items-center justify-between ${
           bottleneckCount > 0
-            ? "border-red-400 bg-red-50"
+            ? "border-red-400 bg-red-50 dark:bg-red-950/30 dark:border-red-500/60"
             : "border-border bg-card"
         }`}
       >
@@ -74,9 +74,9 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                 key={entry.id}
                 className={`rounded-xl border p-4 transition-colors ${
                   entry.is_bottleneck
-                    ? "border-red-300 bg-red-50"
+                    ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-950/20"
                     : entry.wait_minutes > BOTTLENECK_THRESHOLD_MINUTES * 0.75
-                    ? "border-amber-300 bg-amber-50"
+                    ? "border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-950/20"
                     : "border-border bg-card"
                 }`}
               >
@@ -98,13 +98,13 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                   <div className="text-right shrink-0">
                     <p
                       className={`text-2xl font-bold tabular-nums ${
-                        entry.is_bottleneck ? "text-red-600" : "text-foreground"
+                        entry.is_bottleneck ? "text-red-600 dark:text-red-400" : "text-foreground"
                       }`}
                     >
                       {waitMin}m
                     </p>
                     {entry.is_bottleneck && (
-                      <p className="text-xs text-red-600 font-medium">NEEDS ATTENTION</p>
+                      <p className="text-xs text-red-600 dark:text-red-400 font-medium">NEEDS ATTENTION</p>
                     )}
                   </div>
 

@@ -350,7 +350,9 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
       <DialogTrigger asChild>
         <button
           className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium
-                     text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                     text-slate-400 hover:text-slate-700 hover:bg-slate-100
+                     dark:text-muted-foreground dark:hover:text-foreground dark:hover:bg-muted
+                     transition-colors"
           title="Edit scores or revert match"
         >
           <Pencil className="h-3 w-3" />
@@ -367,7 +369,7 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
           {/* Score inputs */}
           <div className="flex items-center gap-3">
             <div className="flex-1 space-y-1 text-center">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
                 Team A
               </p>
               <input
@@ -380,13 +382,14 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
                 disabled={isPending}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5
                            text-center text-2xl font-black tabular-nums text-slate-900
-                           focus:outline-none focus:ring-2 focus:ring-slate-400
+                           dark:border-border dark:bg-input dark:text-foreground
+                           focus:outline-none focus:ring-2 focus:ring-ring
                            disabled:opacity-50"
               />
             </div>
-            <span className="text-sm font-bold text-slate-300 mt-5">–</span>
+            <span className="text-sm font-bold text-slate-300 dark:text-muted-foreground/50 mt-5">–</span>
             <div className="flex-1 space-y-1 text-center">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
                 Team B
               </p>
               <input
@@ -399,7 +402,8 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
                 disabled={isPending}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5
                            text-center text-2xl font-black tabular-nums text-slate-900
-                           focus:outline-none focus:ring-2 focus:ring-slate-400
+                           dark:border-border dark:bg-input dark:text-foreground
+                           focus:outline-none focus:ring-2 focus:ring-ring
                            disabled:opacity-50"
               />
             </div>
@@ -418,6 +422,7 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
             disabled={isPending}
             className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold
                        text-white hover:bg-slate-800 transition-colors
+                       dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/90
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isPending ? "Saving…" : "Save Score"}
@@ -425,9 +430,9 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
 
           {/* Divider */}
           <div className="flex items-center gap-2">
-            <div className="flex-1 border-t border-slate-100" />
-            <span className="text-[10px] text-slate-400 uppercase tracking-widest">or</span>
-            <div className="flex-1 border-t border-slate-100" />
+            <div className="flex-1 border-t border-slate-100 dark:border-border" />
+            <span className="text-[10px] text-slate-400 dark:text-muted-foreground uppercase tracking-widest">or</span>
+            <div className="flex-1 border-t border-slate-100 dark:border-border" />
           </div>
 
           {/* Revert to active */}
@@ -437,12 +442,14 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
             className="w-full flex items-center justify-center gap-2 rounded-xl border
                        border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold
                        text-amber-800 hover:bg-amber-100 transition-colors
+                       dark:border-[hsl(35_100%_60%)]/50 dark:bg-[hsl(35_100%_55%)]/10
+                       dark:text-[hsl(35_100%_65%)] dark:hover:bg-[hsl(35_100%_55%)]/20
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RotateCcw className="h-4 w-4" />
             {isPending ? "Reverting…" : "Revert to Active Court"}
           </button>
-          <p className="text-center text-[10px] text-slate-400">
+          <p className="text-center text-[10px] text-slate-400 dark:text-muted-foreground">
             Use this if a score was submitted by accident. The match returns
             to the Active Courts view and players can re-submit.
           </p>

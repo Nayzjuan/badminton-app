@@ -141,9 +141,9 @@ export function QueueControl({
       <div
         className={`rounded-xl border-2 p-4 transition-colors ${
           selected.size === REQUIRED_PLAYERS
-            ? "border-emerald-400 bg-emerald-50"
+            ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-500/60"
             : selected.size > 0
-            ? "border-amber-300 bg-amber-50"
+            ? "border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-500/60"
             : "border-border bg-card"
         }`}
       >
@@ -234,8 +234,10 @@ export function QueueControl({
                   <tr
                     key={entry.id}
                     className={`border-b border-border last:border-b-0 transition-colors cursor-pointer
-                                ${isSelected ? "bg-emerald-50" : "hover:bg-muted/30"}
-                                ${entry.is_bottleneck ? "!bg-red-50" : ""}`}
+                                ${isSelected
+                                  ? "bg-emerald-50 dark:bg-emerald-950/30"
+                                  : "hover:bg-muted/30"}
+                                ${entry.is_bottleneck ? "!bg-red-50 dark:!bg-red-950/25" : ""}`}
                     onClick={() => togglePlayer(entry.player_id)}
                   >
                     {/* Checkbox */}
@@ -279,6 +281,7 @@ export function QueueControl({
                         disabled={updatingSkill === entry.player_id}
                         className={`rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs
                                     font-medium text-slate-700 cursor-pointer
+                                    dark:border-border dark:bg-input dark:text-foreground
                                     focus:outline-none focus:ring-2 focus:ring-ring
                                     disabled:opacity-50 disabled:cursor-wait
                                     ${updatingSkill === entry.player_id ? "animate-pulse" : ""}`}
@@ -292,7 +295,7 @@ export function QueueControl({
                     </td>
                     {/* Wait time */}
                     <td className="px-4 py-3 text-right tabular-nums">
-                      <span className={entry.is_bottleneck ? "text-red-600 font-bold" : ""}>
+                      <span className={entry.is_bottleneck ? "text-red-600 dark:text-red-400 font-bold" : ""}>
                         {waitMin}m
                       </span>
                     </td>
