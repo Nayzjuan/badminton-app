@@ -13,7 +13,12 @@ import { useRouter } from "next/navigation";
 import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
 import { SKILL_LEVELS } from "@/types/database";
 
-export function LoginForm() {
+interface LoginFormProps {
+  /** If provided, the user will be redirected to /play/[sessionId] after login. */
+  sessionId?: string;
+}
+
+export function LoginForm({ sessionId }: LoginFormProps = {}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -21,8 +26,8 @@ export function LoginForm() {
 
   // Prefetch /play so the redirect after login is instant.
   useEffect(() => {
-    router.prefetch("/play");
-  }, [router]);
+    router.prefetch(sessionId ? `/play/${sessionId}` : "/play");
+  }, [router, sessionId]);
 
   // Auto-dismiss error toast after 5 seconds.
   useEffect(() => {
@@ -121,6 +126,11 @@ export function LoginForm() {
                        disabled:opacity-50"
           />
         </div>
+
+        {/* Hidden session_id — routes the redirect to /play/[id] after login */}
+        {sessionId && (
+          <input type="hidden" name="session_id" value={sessionId} />
+        )}
 
         {/* Submit */}
         <button

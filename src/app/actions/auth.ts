@@ -18,6 +18,9 @@ export async function signInAnonymously(formData: FormData) {
   const displayName = (formData.get("display_name") as string)?.trim();
   const skillLevel = formData.get("skill_level") as SkillLevel;
   const pin = (formData.get("pin") as string)?.trim();
+  // Optional: if joining via QR/link, redirect straight to that session.
+  const sessionId = (formData.get("session_id") as string)?.trim() || null;
+  const destination = sessionId ? `/play/${sessionId}` : "/play";
 
   if (!displayName || !skillLevel) {
     return { error: "Name and skill level are required." };
@@ -45,7 +48,7 @@ export async function signInAnonymously(formData: FormData) {
       return { error: updateError.message };
     }
 
-    redirect("/play");
+    redirect(destination);
   }
 
   // ── Duplicate name check ──────────────────────────────────

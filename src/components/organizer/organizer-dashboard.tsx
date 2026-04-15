@@ -13,6 +13,7 @@ import { QueueControl } from "./queue-control";
 import { WaitTimeMonitor } from "./wait-time-monitor";
 import { MatchHistoryPanel } from "./match-history-panel";
 import { DevTools } from "./dev-tools";
+import { ShareSessionDialog } from "./share-session-dialog";
 import { closeSession } from "@/app/actions/sessions";
 import {
   AlertDialog,
@@ -216,6 +217,9 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 <span className="hidden sm:inline">{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
                 <span className="text-border hidden sm:inline">|</span>
                 <DevTools sessionId={session.id} />
+
+                {/* Share Session */}
+                <ShareSessionDialog sessionId={session.id} sessionName={session.name} />
 
                 {/* Close Session */}
                 <AlertDialog>
