@@ -27,7 +27,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ChevronDown, ArrowLeft, Repeat, Power } from "lucide-react";
+import { ChevronDown, ArrowLeft, Repeat, Power, Tv2 } from "lucide-react";
 import type { Profile, Session } from "@/types/database";
 
 interface OrganizerDashboardProps {
@@ -222,6 +222,21 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 <ThemeToggle className="text-white/60 hover:text-white hover:bg-white/10
                                         dark:text-primary dark:hover:bg-primary/10" />
                 <DevTools sessionId={session.id} />
+
+                {/* TV Scoreboard link */}
+                <a
+                  href={`/tv/${session.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/30
+                             bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/80
+                             hover:bg-white/20 hover:text-white hover:border-white/50
+                             transition-colors"
+                  title="Open TV scoreboard in a new tab"
+                >
+                  <Tv2 className="h-3.5 w-3.5" />
+                  TV View
+                </a>
 
                 {/* Share Session */}
                 <ShareSessionDialog sessionId={session.id} sessionName={session.name} />
