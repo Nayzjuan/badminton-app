@@ -104,13 +104,13 @@ function CourtCard({
 
   return (
     <div
-      className={`flex flex-col rounded-2xl bg-white shadow-md overflow-hidden transition-all
+      className={`flex flex-col rounded-2xl bg-white dark:bg-card shadow-md overflow-hidden transition-all
                   ${cardState === "matchmaking" ? "animate-pulse" : ""}`}
     >
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
         <div className="flex items-center gap-2 min-w-0">
-          <h3 className="text-base font-bold truncate text-gray-900">{court.name}</h3>
+          <h3 className="text-base font-bold truncate text-gray-900 dark:text-foreground">{court.name}</h3>
           {match?.is_mixed_level && (
             <span className="shrink-0 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5
                             text-[10px] font-bold uppercase tracking-wider text-amber-800">
@@ -450,7 +450,7 @@ export function ActiveCourts({
           onChange={(e) => setNewCourtName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleAddCourt()}
           placeholder="Court name (e.g. Court 3)"
-          className="flex-1 rounded-xl border border-input bg-white px-4 py-2.5
+          className="flex-1 rounded-xl border border-input bg-white dark:bg-input px-4 py-2.5
                      text-sm placeholder:text-muted-foreground focus:outline-none
                      focus:ring-2 focus:ring-ring shadow-sm"
         />
@@ -467,14 +467,14 @@ export function ActiveCourts({
 
       {/* ── Courts grid ────────────────────────────────────────── */}
       {courts.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-300 bg-white/60 py-16 text-center shadow-sm">
+        <div className="rounded-2xl border border-dashed border-gray-300 dark:border-border bg-white/60 dark:bg-card/60 py-16 text-center shadow-sm">
           <div className="flex flex-col items-center gap-3">
-            <div className="rounded-full bg-gray-100 p-4">
-              <Swords className="h-6 w-6 text-gray-400" />
+            <div className="rounded-full bg-gray-100 dark:bg-muted p-4">
+              <Swords className="h-6 w-6 text-gray-400 dark:text-muted-foreground" />
             </div>
             <div>
-              <p className="font-semibold text-gray-700">No courts yet</p>
-              <p className="mt-0.5 text-sm text-gray-400">
+              <p className="font-semibold text-gray-700 dark:text-foreground">No courts yet</p>
+              <p className="mt-0.5 text-sm text-gray-400 dark:text-muted-foreground">
                 Add a court above to get started.
               </p>
             </div>

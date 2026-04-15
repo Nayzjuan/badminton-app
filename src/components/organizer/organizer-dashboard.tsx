@@ -14,6 +14,7 @@ import { WaitTimeMonitor } from "./wait-time-monitor";
 import { MatchHistoryPanel } from "./match-history-panel";
 import { DevTools } from "./dev-tools";
 import { ShareSessionDialog } from "./share-session-dialog";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { closeSession } from "@/app/actions/sessions";
 import {
   AlertDialog,
@@ -106,9 +107,11 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAF7]">
+    <div className="min-h-screen bg-[#FAFAF7] dark:bg-background">
       {/* Top Header */}
-      <header className="sticky top-0 z-20 bg-[#1D3A6F] shadow-lg">
+      <header className="sticky top-0 z-20 bg-[#1D3A6F] shadow-lg
+                         dark:bg-[#120826] dark:shadow-[0_4px_24px_hsl(180_100%_50%/0.12)]
+                         dark:border-b dark:border-[hsl(180_100%_50%/0.2)]">
         <div className="max-w-7xl mx-auto px-6 py-4">
           {/* Back link */}
           <div className="mb-2">
@@ -216,6 +219,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 <span className="text-white/25 hidden sm:inline">|</span>
                 <span className="hidden sm:inline">{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
                 <span className="text-white/25 hidden sm:inline">|</span>
+                <ThemeToggle className="text-white/60 hover:text-white hover:bg-white/10
+                                        dark:text-primary dark:hover:bg-primary/10" />
                 <DevTools sessionId={session.id} />
 
                 {/* Share Session */}
@@ -266,8 +271,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 className={`relative px-5 py-2.5 text-sm font-medium transition-colors rounded-t-lg
                             ${
                               activeTab === tab.key
-                                ? "bg-[#FAFAF7] text-[#1D3A6F] font-semibold shadow-sm"
-                                : "text-white/70 hover:text-white hover:bg-white/10"
+                                ? "bg-[#FAFAF7] text-[#1D3A6F] font-semibold shadow-sm dark:bg-muted dark:text-primary dark:shadow-none"
+                                : "text-white/70 hover:text-white hover:bg-white/10 dark:hover:bg-white/5"
                             }`}
               >
                 {tab.label}

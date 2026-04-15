@@ -20,14 +20,14 @@ interface OnDeckPanelProps {
 export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProps) {
   if (matches.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-5 py-4">
+      <div className="rounded-xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-card/50 px-5 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="h-2 w-2 rounded-full bg-slate-300" />
-            <p className="text-sm font-medium text-slate-500">
+            <div className="h-2 w-2 rounded-full bg-slate-300 dark:bg-muted-foreground" />
+            <p className="text-sm font-medium text-slate-500 dark:text-muted-foreground">
               No matches on deck
             </p>
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-slate-400 dark:text-muted-foreground/70">
               — algorithm will pre-generate when enough players are waiting
             </span>
           </div>
@@ -35,8 +35,8 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
             <button
               onClick={onGenerate}
               disabled={generating}
-              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium
-                         text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors"
+              className="rounded-lg border border-slate-200 dark:border-border px-3 py-1.5 text-xs font-medium
+                         text-slate-600 dark:text-muted-foreground hover:bg-slate-100 dark:hover:bg-muted disabled:opacity-50 transition-colors"
             >
               {generating ? "Generating…" : "Generate Now"}
             </button>
@@ -55,7 +55,7 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
           </span>
-          <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider">
+          <h2 className="text-sm font-bold text-slate-700 dark:text-foreground uppercase tracking-wider">
             On Deck
           </h2>
           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
@@ -66,8 +66,8 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
           <button
             onClick={onGenerate}
             disabled={generating}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium
-                       text-slate-600 hover:bg-slate-100 disabled:opacity-50 transition-colors"
+            className="rounded-lg border border-slate-200 dark:border-border px-3 py-1.5 text-xs font-medium
+                       text-slate-600 dark:text-muted-foreground hover:bg-slate-100 dark:hover:bg-muted disabled:opacity-50 transition-colors"
           >
             {generating ? "Generating…" : "Refresh"}
           </button>
@@ -98,12 +98,12 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
           return (
             <div
               key={match.id}
-              className="rounded-2xl border border-amber-100 bg-white shadow-sm overflow-hidden"
+              className="rounded-2xl border border-amber-100 dark:border-amber-900/40 bg-white dark:bg-card shadow-sm overflow-hidden"
             >
               {/* Card header */}
-              <div className="flex items-center justify-between bg-amber-50/70 px-4 py-2.5 border-b border-amber-100">
+              <div className="flex items-center justify-between bg-amber-50/70 dark:bg-amber-900/20 px-4 py-2.5 border-b border-amber-100 dark:border-amber-900/40">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-amber-900">
+                  <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
                     On Deck #{idx + 1}
                   </span>
                   {match.is_mixed_level && (
@@ -113,7 +113,7 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
                     </span>
                   )}
                 </div>
-                <span className="text-xs text-amber-600 font-medium">
+                <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">
                   {minutesWaiting === 0 ? "Just formed" : `${minutesWaiting}m ago`}
                 </span>
               </div>
@@ -124,8 +124,8 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
               </div>
 
               {/* Footer hint */}
-              <div className="px-4 py-2 bg-slate-50 border-t border-slate-100">
-                <p className="text-center text-xs text-slate-400">
+              <div className="px-4 py-2 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border">
+                <p className="text-center text-xs text-slate-400 dark:text-muted-foreground">
                   Will auto-assign when a court frees up
                 </p>
               </div>

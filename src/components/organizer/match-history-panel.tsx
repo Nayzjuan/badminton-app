@@ -131,12 +131,12 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
 
   if (matches.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
-          <History className="h-5 w-5 text-slate-400" />
+      <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-white dark:bg-card px-6 py-12 text-center">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
+          <History className="h-5 w-5 text-slate-400 dark:text-muted-foreground" />
         </div>
-        <p className="text-sm font-medium text-slate-600">No completed matches yet</p>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="text-sm font-medium text-slate-600 dark:text-foreground">No completed matches yet</p>
+        <p className="mt-1 text-xs text-slate-400 dark:text-muted-foreground">
           Matches will appear here once they are scored and ended.
         </p>
       </div>
@@ -146,10 +146,10 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
           Completed Matches
         </h2>
-        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold text-slate-600">
+        <span className="rounded-full bg-slate-100 dark:bg-muted px-2.5 py-0.5 text-[10px] font-bold text-slate-600 dark:text-foreground">
           {matches.length} match{matches.length !== 1 ? "es" : ""}
         </span>
       </div>
@@ -172,17 +172,17 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
           return (
             <div
               key={match.id}
-              className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
+              className="rounded-2xl border border-slate-200 dark:border-border bg-white dark:bg-card shadow-sm overflow-hidden"
             >
               {/* Header */}
-              <div className="flex items-center justify-between bg-slate-50 px-4 py-2.5 border-b border-slate-100">
+              <div className="flex items-center justify-between bg-slate-50 dark:bg-muted/50 px-4 py-2.5 border-b border-slate-100 dark:border-border">
                 <div className="flex items-center gap-2">
-                  <Trophy className="h-3.5 w-3.5 text-slate-400" />
-                  <span className="text-sm font-bold text-slate-700">
+                  <Trophy className="h-3.5 w-3.5 text-slate-400 dark:text-muted-foreground" />
+                  <span className="text-sm font-bold text-slate-700 dark:text-foreground">
                     Match #{matches.length - idx}
                   </span>
                   {match.courtName && (
-                    <span className="text-xs text-slate-400">
+                    <span className="text-xs text-slate-400 dark:text-muted-foreground">
                       &middot; {match.courtName}
                     </span>
                   )}
@@ -194,7 +194,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400">{completedAt}</span>
+                  <span className="text-xs text-slate-400 dark:text-muted-foreground">{completedAt}</span>
                   <EditMatchDialog
                     matchId={match.id}
                     initialScoreA={match.team_a_score ?? 0}
@@ -209,14 +209,14 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                 <div className="flex items-center justify-center gap-4 mb-4">
                   <span
                     className={`text-3xl font-black tabular-nums
-                                ${aWon ? "text-emerald-600" : "text-slate-400"}`}
+                                ${aWon ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400 dark:text-muted-foreground"}`}
                   >
                     {scoreA}
                   </span>
-                  <span className="text-sm font-bold text-slate-300">–</span>
+                  <span className="text-sm font-bold text-slate-300 dark:text-muted-foreground/50">–</span>
                   <span
                     className={`text-3xl font-black tabular-nums
-                                ${bWon ? "text-emerald-600" : "text-slate-400"}`}
+                                ${bWon ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400 dark:text-muted-foreground"}`}
                   >
                     {scoreB}
                   </span>
@@ -227,10 +227,10 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                   {/* Team A */}
                   <div
                     className={`flex-1 rounded-xl p-3 text-center
-                                ${aWon ? "bg-emerald-50 ring-1 ring-emerald-200" : "bg-slate-50"}`}
+                                ${aWon ? "bg-emerald-50 dark:bg-emerald-900/20 ring-1 ring-emerald-200 dark:ring-emerald-700/40" : "bg-slate-50 dark:bg-muted/50"}`}
                   >
                     <div className="flex items-center justify-center gap-1.5 mb-2">
-                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
                         Team A
                       </p>
                       {aWon && (
@@ -241,7 +241,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                     </div>
                     {teamA.map((p) => (
                       <div key={p.player_id} className="mb-1 last:mb-0">
-                        <p className={`text-sm leading-snug ${aWon ? "font-bold text-emerald-900" : "font-medium text-slate-600"}`}>
+                        <p className={`text-sm leading-snug ${aWon ? "font-bold text-emerald-900 dark:text-emerald-300" : "font-medium text-slate-600 dark:text-foreground"}`}>
                           {p.profile.display_name}
                         </p>
                         <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
@@ -252,10 +252,10 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                   {/* Team B */}
                   <div
                     className={`flex-1 rounded-xl p-3 text-center
-                                ${bWon ? "bg-emerald-50 ring-1 ring-emerald-200" : "bg-slate-50"}`}
+                                ${bWon ? "bg-emerald-50 dark:bg-emerald-900/20 ring-1 ring-emerald-200 dark:ring-emerald-700/40" : "bg-slate-50 dark:bg-muted/50"}`}
                   >
                     <div className="flex items-center justify-center gap-1.5 mb-2">
-                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
                         Team B
                       </p>
                       {bWon && (
@@ -266,7 +266,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                     </div>
                     {teamB.map((p) => (
                       <div key={p.player_id} className="mb-1 last:mb-0">
-                        <p className={`text-sm leading-snug ${bWon ? "font-bold text-emerald-900" : "font-medium text-slate-600"}`}>
+                        <p className={`text-sm leading-snug ${bWon ? "font-bold text-emerald-900 dark:text-emerald-300" : "font-medium text-slate-600 dark:text-foreground"}`}>
                           {p.profile.display_name}
                         </p>
                         <SkillBadge level={p.profile.skill_level} className="mt-0.5" />

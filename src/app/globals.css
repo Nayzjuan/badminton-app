@@ -55,26 +55,27 @@
     --radius: 0.5rem;
   }
 
+  /* ── Neon Night Court — funky dark theme ─────────────────── */
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --background:              268 50% 8%;    /* deep midnight purple */
+    --foreground:              180 80% 94%;   /* bright ice-white/cyan */
+    --card:                    268 42% 13%;   /* elevated dark-purple card */
+    --card-foreground:         180 80% 94%;
+    --popover:                 268 48% 10%;
+    --popover-foreground:      180 80% 94%;
+    --primary:                 180 100% 50%;  /* neon cyan */
+    --primary-foreground:      268 50% 8%;    /* dark purple on neon buttons */
+    --secondary:               268 35% 20%;
+    --secondary-foreground:    180 80% 94%;
+    --muted:                   268 30% 17%;
+    --muted-foreground:        268 18% 62%;   /* soft purple-gray */
+    --accent:                  320 80% 60%;   /* hot-pink accent */
+    --accent-foreground:       0 0% 100%;
+    --destructive:             0 80% 55%;
+    --destructive-foreground:  0 0% 100%;
+    --border:                  268 28% 24%;   /* subtle purple border */
+    --input:                   268 30% 19%;
+    --ring:                    180 100% 50%;  /* neon cyan focus ring */
   }
 
   * {

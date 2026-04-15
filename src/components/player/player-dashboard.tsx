@@ -27,6 +27,7 @@ import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import { submitMatchScore } from "@/app/actions/match";
 import { checkoutPlayer } from "@/app/actions/queue";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -106,9 +107,10 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     : "bg-slate-300";
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50">
+    <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-background">
       {/* ── Header ──────────────────────────────────────────── */}
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80
+                         dark:bg-background/95 dark:border-border dark:shadow-[0_2px_16px_hsl(180_100%_50%/0.08)]">
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
             <div>
@@ -138,6 +140,8 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <ThemeToggle className="text-slate-500 hover:text-slate-900 hover:bg-slate-100
+                                      dark:text-primary dark:hover:bg-primary/10" />
               <div
                 className={`h-2.5 w-2.5 rounded-full ${dotColor}`}
                 title={
@@ -186,7 +190,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
         </div>
 
         {/* ── Tab Bar — 3 tabs, mobile-stretch ────────────── */}
-        <div className="grid grid-cols-3 border-t border-slate-200">
+        <div className="grid grid-cols-3 border-t border-slate-200 dark:border-border">
           {TABS.map(({ key, label, icon: Icon }) => {
             const isActive = activeTab === key;
             return (
@@ -197,8 +201,8 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                             transition-colors
                             ${
                               isActive
-                                ? "text-slate-900 border-b-2 border-slate-900"
-                                : "text-slate-400 hover:text-slate-600"
+                                ? "text-slate-900 border-b-2 border-slate-900 dark:text-primary dark:border-primary"
+                                : "text-slate-400 hover:text-slate-600 dark:text-muted-foreground dark:hover:text-foreground"
                             }`}
               >
                 <Icon className="h-3.5 w-3.5" />
