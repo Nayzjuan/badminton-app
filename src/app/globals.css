@@ -55,26 +55,26 @@
     --radius: 0.5rem;
   }
 
-  /* ── Neon Night Court — funky dark theme ─────────────────── */
+  /* ── Vantablack Neon Courts — high-contrast dark theme ─ */
   .dark {
-    --background:              268 50% 8%;    /* deep midnight purple */
+    --background:              240 10% 4%;    /* deep charcoal/midnight */
     --foreground:              180 80% 94%;   /* bright ice-white/cyan */
-    --card:                    268 42% 13%;   /* elevated dark-purple card */
+    --card:                    0 0% 2%;       /* Vantablack/near-black */
     --card-foreground:         180 80% 94%;
-    --popover:                 268 48% 10%;
+    --popover:                 240 10% 5%;
     --popover-foreground:      180 80% 94%;
     --primary:                 180 100% 50%;  /* neon cyan */
-    --primary-foreground:      268 50% 8%;    /* dark purple on neon buttons */
-    --secondary:               268 35% 20%;
+    --primary-foreground:      240 10% 4%;   /* deep charcoal on neon buttons */
+    --secondary:               268 35% 18%;
     --secondary-foreground:    180 80% 94%;
-    --muted:                   268 30% 17%;
-    --muted-foreground:        268 18% 62%;   /* soft purple-gray */
-    --accent:                  320 80% 60%;   /* hot-pink accent */
+    --muted:                   240 8% 11%;
+    --muted-foreground:        240 12% 56%;   /* soft grey */
+    --accent:                  300 100% 60%;  /* neon magenta */
     --accent-foreground:       0 0% 100%;
     --destructive:             0 80% 55%;
     --destructive-foreground:  0 0% 100%;
-    --border:                  268 28% 24%;   /* subtle purple border */
-    --input:                   268 30% 19%;
+    --border:                  180 40% 18%;   /* subtle cyan-tinted border */
+    --input:                   240 8% 9%;
     --ring:                    180 100% 50%;  /* neon cyan focus ring */
   }
 

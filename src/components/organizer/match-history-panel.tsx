@@ -187,8 +187,10 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                     </span>
                   )}
                   {match.is_mixed_level && (
-                    <span className="rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5
-                                    text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                    <span className="rounded-full border px-2 py-0.5
+                                    text-[10px] font-bold uppercase tracking-wider
+                                    bg-amber-100 border-amber-300 text-amber-800
+                                    dark:bg-[hsl(35_100%_55%)]/20 dark:border-[hsl(35_100%_60%)]/70 dark:text-[hsl(35_100%_65%)]">
                       Mixed Level
                     </span>
                   )}

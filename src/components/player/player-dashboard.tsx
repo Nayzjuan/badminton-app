@@ -201,7 +201,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                             transition-colors
                             ${
                               isActive
-                                ? "text-slate-900 border-b-2 border-slate-900 dark:text-primary dark:border-primary"
+                                ? "text-slate-900 border-b-2 border-slate-900 dark:text-[hsl(300_100%_70%)] dark:border-[hsl(300_100%_60%)]"
                                 : "text-slate-400 hover:text-slate-600 dark:text-muted-foreground dark:hover:text-foreground"
                             }`}
               >

@@ -96,10 +96,22 @@ function CourtCard({
 
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {
-    matchmaking: { cls: "bg-amber-400 text-white border-amber-500",             label: "Finding Match…" },
-    in_progress: { cls: "bg-blue-600 text-white border-blue-700",               label: "In Progress" },
-    available:   { cls: "bg-emerald-100 text-emerald-800 border-emerald-300",   label: "Available" },
-    closed:      { cls: "bg-gray-100 text-gray-600 border-gray-200",            label: "Closed" },
+    matchmaking: {
+      cls: "bg-amber-400 text-white border-amber-500 dark:bg-[hsl(35_100%_55%)] dark:border-[hsl(35_100%_60%)] dark:shadow-[0_0_8px_hsl(35_100%_55%/0.6)]",
+      label: "Finding Match…",
+    },
+    in_progress: {
+      cls: "bg-blue-600 text-white border-blue-700 dark:bg-[hsl(220_100%_58%)] dark:border-[hsl(220_100%_65%)] dark:shadow-[0_0_8px_hsl(220_100%_60%/0.5)]",
+      label: "In Progress",
+    },
+    available: {
+      cls: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-[hsl(150_100%_50%)]/15 dark:text-[hsl(150_100%_62%)] dark:border-[hsl(150_100%_50%)]/40",
+      label: "Available",
+    },
+    closed: {
+      cls: "bg-gray-100 text-gray-600 border-gray-200 dark:bg-muted dark:text-muted-foreground dark:border-border",
+      label: "Closed",
+    },
   };
 
   return (
@@ -112,8 +124,10 @@ function CourtCard({
         <div className="flex items-center gap-2 min-w-0">
           <h3 className="text-base font-bold truncate text-gray-900 dark:text-foreground">{court.name}</h3>
           {match?.is_mixed_level && (
-            <span className="shrink-0 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5
-                            text-[10px] font-bold uppercase tracking-wider text-amber-800">
+            <span className="shrink-0 rounded-full border px-2 py-0.5
+                            text-[10px] font-bold uppercase tracking-wider
+                            bg-amber-100 border-amber-300 text-amber-800
+                            dark:bg-[hsl(35_100%_55%)]/20 dark:border-[hsl(35_100%_60%)]/70 dark:text-[hsl(35_100%_65%)]">
               Mixed Level
             </span>
           )}

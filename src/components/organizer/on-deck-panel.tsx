@@ -58,7 +58,10 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
           <h2 className="text-sm font-bold text-slate-700 dark:text-foreground uppercase tracking-wider">
             On Deck
           </h2>
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+          <span className="rounded-full px-2 py-0.5 text-xs font-bold
+                           bg-amber-100 text-amber-800
+                           dark:bg-[hsl(35_100%_55%)]/20 dark:text-[hsl(35_100%_65%)]
+                           dark:ring-1 dark:ring-[hsl(35_100%_55%)]/50">
             {matches.length} match{matches.length !== 1 ? "es" : ""} ready
           </span>
         </div>
@@ -107,8 +110,10 @@ export function OnDeckPanel({ matches, onGenerate, generating }: OnDeckPanelProp
                     On Deck #{idx + 1}
                   </span>
                   {match.is_mixed_level && (
-                    <span className="rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5
-                                    text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                    <span className="rounded-full border px-2 py-0.5
+                                    text-[10px] font-bold uppercase tracking-wider
+                                    bg-amber-100 border-amber-300 text-amber-800
+                                    dark:bg-[hsl(35_100%_55%)]/20 dark:border-[hsl(35_100%_60%)]/70 dark:text-[hsl(35_100%_65%)]">
                       Mixed Level
                     </span>
                   )}
