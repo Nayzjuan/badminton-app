@@ -50,6 +50,7 @@ import {
 import {
   endMatchAction,
   cancelMatchAction,
+  createManualMatchAction,
 } from "@/app/actions/match";
 import type {
   Court,
@@ -363,42 +364,18 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
 
   // ---- Match actions ----
 
+  // P1-2: createManualMatch is now delegated to a server action so all
+  // validation and DB writes run server-side. This prevents a disconnected
+  // browser from leaving courts stuck in a stale state and adds proper
+  // auth + session-ownership checks on the server.
   const createManualMatch = useCallback(
     async (courtId: string, teamA: string[], teamB: string[]) => {
-      const { data: match, error: matchError } = await supabase
-        .from("matches")
-        .insert({
-          session_id: sessionId,
-          court_id: courtId,
-          status: "in_progress" as const,
-          started_at: new Date().toISOString(),
-        })
-        .select()
-        .single();
-
-      if (matchError || !match) return { error: matchError?.message ?? "Failed to create match" };
-
-      const players = [
-        ...teamA.map((pid) => ({ match_id: match.id, player_id: pid, team: "a" as const })),
-        ...teamB.map((pid) => ({ match_id: match.id, player_id: pid, team: "b" as const })),
-      ];
-
-      const { error: playersError } = await supabase.from("match_players").insert(players);
-      if (playersError) return { error: playersError.message };
-
-      await supabase.from("courts").update({ status: "in_use" as const }).eq("id", courtId);
-
-      const allPlayerIds = [...teamA, ...teamB];
-      await supabase
-        .from("queue_entries")
-        .update({ status: "playing" as const })
-        .eq("session_id", sessionId)
-        .in("player_id", allPlayerIds);
-
+      const result = await createManualMatchAction(sessionId, courtId, teamA, teamB);
+      if (!result.success) return { error: result.message };
       await Promise.all([fetchCourts(), fetchActiveMatches()]);
       return {};
     },
-    [supabase, sessionId, fetchCourts, fetchActiveMatches]
+    [sessionId, fetchCourts, fetchActiveMatches]
   );
 
   const endMatch = useCallback(

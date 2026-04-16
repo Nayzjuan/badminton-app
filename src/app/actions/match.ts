@@ -1,21 +1,29 @@
 "use server";
 
 // ============================================================
-// Match Server Actions — End Match & Cancel Match
+// Match Server Actions — End Match, Cancel Match, Manual Match
 // ============================================================
 // endMatchAction
-//   1. Marks match completed with scores.
-//   2. Frees court (available).
-//   3. Re-queues all 4 players with incremented games_played.
-//   4. AUTO-FILL: promotes the oldest on-deck match to the freed court.
-//   5. Refills the on-deck pool with generateOnDeckMatchesInternal.
+//   1. Auth guard — caller must be authenticated.
+//   2. Atomic UPDATE (status guard) prevents double-completion.
+//   3. Marks match completed with scores.
+//   4. Re-queues all 4 players with incremented games_played.
+//   5. AUTO-FILL: promotes the oldest on-deck match to the freed court.
+//   6. Refills the on-deck pool with generateOnDeckMatchesInternal.
 //
 // cancelMatchAction
-//   1. Marks match cancelled.
-//   2. Frees court (available).
-//   3. Returns players to queue WITHOUT incrementing games_played.
-//   4. Refills the on-deck pool (cancelled players can now form new on-deck).
-//   5. Does NOT auto-promote — court stays "available" for manual organizer use.
+//   1. Organizer-only auth guard.
+//   2. Atomic UPDATE (status guard) prevents double-cancellation.
+//   3. Marks match cancelled.
+//   4. Frees court (available).
+//   5. Returns players to queue WITHOUT incrementing games_played.
+//   6. Refills the on-deck pool.
+//
+// updateMatchDetails — organizer-only score correction / revert.
+//
+// createManualMatchAction — organizer-only court assignment with
+//   chosen players. Moved from client-side hook to server action
+//   so all business-logic validation runs server-side.
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
@@ -27,6 +35,46 @@ import {
 export interface MatchActionResult {
   success: boolean;
   message: string;
+}
+
+// ─── Auth helpers ─────────────────────────────────────────────
+
+/**
+ * Verify that the calling user is authenticated.
+ * Returns the user object or null.
+ */
+async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+/**
+ * Verify that the calling user is an organizer for the given session.
+ * Accepts either created_by ownership OR a session_organizers membership row.
+ */
+async function isSessionOrganizer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  sessionId: string
+): Promise<boolean> {
+  // Check sessions.created_by first (fast path).
+  const { data: session } = await supabase
+    .from("sessions")
+    .select("created_by")
+    .eq("id", sessionId)
+    .single();
+
+  if (session?.created_by === userId) return true;
+
+  // Fall back to session_organizers membership table.
+  const { data: membership } = await supabase
+    .from("session_organizers")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .single();
+
+  return !!membership;
 }
 
 // ============================================================
@@ -44,10 +92,7 @@ export async function submitMatchScore(
   const supabase = await createClient();
 
   // Identify the calling player.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  const user = await getAuthUser(supabase);
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
@@ -79,6 +124,12 @@ export async function endMatchAction(
 ): Promise<MatchActionResult> {
   const supabase = await createClient();
 
+  // P0-3: Require authentication — organizer or player (via submitMatchScore).
+  const user = await getAuthUser(supabase);
+  if (!user) {
+    return { success: false, message: "Not authenticated." };
+  }
+
   // 1. Fetch the match.
   const { data: match, error: matchFetchError } = await supabase
     .from("matches")
@@ -94,8 +145,11 @@ export async function endMatchAction(
     return { success: false, message: `Match is already ${match.status}.` };
   }
 
-  // 2. Mark match completed with scores.
-  const { error: matchUpdateError } = await supabase
+  // 2. P0-1: Atomic UPDATE — only succeeds if status is still "in_progress".
+  //    Adding .eq("status", "in_progress") makes this a compare-and-swap:
+  //    if a concurrent caller already changed the status, 0 rows are affected
+  //    and `updatedMatch` will be null — we bail out instead of double-completing.
+  const { data: updatedMatch, error: matchUpdateError } = await supabase
     .from("matches")
     .update({
       team_a_score: teamAScore,
@@ -103,10 +157,18 @@ export async function endMatchAction(
       status: "completed" as const,
       completed_at: new Date().toISOString(),
     })
-    .eq("id", matchId);
+    .eq("id", matchId)
+    .eq("status", "in_progress")   // ← Atomic guard (CAS)
+    .select("id")
+    .single();
 
-  if (matchUpdateError) {
-    return { success: false, message: `Failed to save scores: ${matchUpdateError.message}` };
+  if (matchUpdateError || !updatedMatch) {
+    // Either a DB error OR another concurrent caller already completed/cancelled
+    // this match. Return a friendly message — the match IS done, just not by us.
+    if (!updatedMatch && !matchUpdateError) {
+      return { success: false, message: "Match was already completed by another request." };
+    }
+    return { success: false, message: `Failed to save scores: ${matchUpdateError?.message}` };
   }
 
   // 3. Fetch all players in this match.
@@ -191,6 +253,12 @@ export async function updateMatchDetails(
 ): Promise<MatchActionResult> {
   const supabase = await createClient();
 
+  // P0-3: Organizer-only action.
+  const user = await getAuthUser(supabase);
+  if (!user) {
+    return { success: false, message: "Not authenticated." };
+  }
+
   const { data: match, error: fetchErr } = await supabase
     .from("matches")
     .select("id, session_id, court_id, status")
@@ -199,6 +267,12 @@ export async function updateMatchDetails(
 
   if (fetchErr || !match) {
     return { success: false, message: `Match not found: ${fetchErr?.message ?? "unknown"}` };
+  }
+
+  // Verify caller is an organizer for this session.
+  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  if (!organizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
   }
 
   if (!revertToActive) {
@@ -289,6 +363,12 @@ export async function updateMatchDetails(
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
   const supabase = await createClient();
 
+  // P0-3: Organizer-only action.
+  const user = await getAuthUser(supabase);
+  if (!user) {
+    return { success: false, message: "Not authenticated." };
+  }
+
   // 1. Fetch the match.
   const { data: match, error: matchFetchError } = await supabase
     .from("matches")
@@ -300,21 +380,34 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
     return { success: false, message: `Match not found: ${matchFetchError?.message ?? "unknown"}` };
   }
 
+  // Verify caller is an organizer for this session.
+  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  if (!organizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
+  }
+
   if (match.status === "completed" || match.status === "cancelled") {
     return { success: false, message: `Match is already ${match.status}.` };
   }
 
-  // 2. Mark match cancelled.
-  const { error: matchUpdateError } = await supabase
+  // 2. P0-1: Atomic UPDATE — guard against double-cancellation.
+  //    Only succeeds if the match is still in a cancellable state.
+  const { data: cancelledMatch, error: matchUpdateError } = await supabase
     .from("matches")
     .update({
       status: "cancelled" as const,
       completed_at: new Date().toISOString(),
     })
-    .eq("id", matchId);
+    .eq("id", matchId)
+    .in("status", ["pending", "in_progress"])  // ← Atomic guard (CAS)
+    .select("id")
+    .single();
 
-  if (matchUpdateError) {
-    return { success: false, message: `Failed to cancel match: ${matchUpdateError.message}` };
+  if (matchUpdateError || !cancelledMatch) {
+    if (!cancelledMatch && !matchUpdateError) {
+      return { success: false, message: "Match was already cancelled or completed by another request." };
+    }
+    return { success: false, message: `Failed to cancel match: ${matchUpdateError?.message}` };
   }
 
   // 3. Free the court — available for manual organizer use.
@@ -349,4 +442,107 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   await generateOnDeckMatchesAction(match.session_id);
 
   return { success: true, message: "Match cancelled. Players returned to queue." };
+}
+
+// ============================================================
+// createManualMatchAction — Organizer-only (P1-2)
+// ============================================================
+// Moved from the client-side hook to a server action so all
+// validation and DB writes run server-side. This prevents a
+// disconnected browser from leaving courts permanently in_use
+// with no active match row.
+// ============================================================
+export interface CreateManualMatchResult {
+  success: boolean;
+  message: string;
+  matchId?: string;
+}
+
+export async function createManualMatchAction(
+  sessionId: string,
+  courtId: string,
+  teamAPlayerIds: string[],
+  teamBPlayerIds: string[]
+): Promise<CreateManualMatchResult> {
+  const supabase = await createClient();
+
+  // Auth + organizer check.
+  const user = await getAuthUser(supabase);
+  if (!user) {
+    return { success: false, message: "Not authenticated." };
+  }
+  const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  if (!organizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
+  }
+
+  // Validate the court belongs to this session.
+  const { data: court } = await supabase
+    .from("courts")
+    .select("id, status")
+    .eq("id", courtId)
+    .eq("session_id", sessionId)
+    .single();
+
+  if (!court) {
+    return { success: false, message: "Court not found in this session." };
+  }
+
+  // Validate all players are in this session's queue.
+  const allPlayerIds = [...teamAPlayerIds, ...teamBPlayerIds];
+  const { data: queueEntries } = await supabase
+    .from("queue_entries")
+    .select("player_id")
+    .eq("session_id", sessionId)
+    .in("player_id", allPlayerIds);
+
+  const foundPlayerIds = new Set((queueEntries ?? []).map((e) => e.player_id));
+  const missingPlayers = allPlayerIds.filter((id) => !foundPlayerIds.has(id));
+  if (missingPlayers.length > 0) {
+    return { success: false, message: "One or more selected players are not in this session." };
+  }
+
+  // 1. Create the match row.
+  const { data: match, error: matchError } = await supabase
+    .from("matches")
+    .insert({
+      session_id: sessionId,
+      court_id: courtId,
+      status: "in_progress" as const,
+      started_at: new Date().toISOString(),
+    })
+    .select()
+    .single();
+
+  if (matchError || !match) {
+    return { success: false, message: matchError?.message ?? "Failed to create match." };
+  }
+
+  // 2. Assign players to the match.
+  const playerRows = [
+    ...teamAPlayerIds.map((pid) => ({ match_id: match.id, player_id: pid, team: "a" as const })),
+    ...teamBPlayerIds.map((pid) => ({ match_id: match.id, player_id: pid, team: "b" as const })),
+  ];
+
+  const { error: playersError } = await supabase.from("match_players").insert(playerRows);
+  if (playersError) {
+    // Roll back the match row to avoid an orphaned match.
+    await supabase.from("matches").delete().eq("id", match.id);
+    return { success: false, message: playersError.message };
+  }
+
+  // 3. Mark the court in_use.
+  await supabase
+    .from("courts")
+    .update({ status: "in_use" as const })
+    .eq("id", courtId);
+
+  // 4. Mark all players as "playing" in the queue.
+  await supabase
+    .from("queue_entries")
+    .update({ status: "playing" as const })
+    .eq("session_id", sessionId)
+    .in("player_id", allPlayerIds);
+
+  return { success: true, message: "Match created.", matchId: match.id };
 }

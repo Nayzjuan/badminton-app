@@ -38,11 +38,14 @@ export function usePlayerMatch(
   const supabase = useMemo(() => createClient(), []);
 
   const fetchMyMatch = useCallback(async () => {
-    // Find match_players rows for this player in active matches.
+    // Find match_players rows for this player in this session's active matches.
+    // P1-6: Scope by session_id via a join filter so we don't pull stale
+    // assignments from historical sessions when a player reconnects.
     const { data: myAssignments } = await supabase
       .from("match_players")
-      .select("match_id, team")
-      .eq("player_id", playerId);
+      .select("match_id, team, matches!inner(session_id)")
+      .eq("player_id", playerId)
+      .eq("matches.session_id", sessionId);
 
     if (!myAssignments || myAssignments.length === 0) {
       setCurrentMatch(null);

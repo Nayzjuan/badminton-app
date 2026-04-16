@@ -159,19 +159,32 @@ export async function promoteOnDeckMatchInternal(
   const match = pending[0];
   const now = new Date().toISOString();
 
-  const { error: updateError } = await supabase
+  // P0-2: Atomic compare-and-swap — add .eq("status", "pending") so that
+  // if two courts free simultaneously and both call this function with the
+  // same on-deck match, only the FIRST UPDATE wins. The second will affect
+  // 0 rows (promotedMatch = null) and returns early, preventing the same
+  // match from being assigned to two courts at once.
+  const { data: promotedMatch, error: updateError } = await supabase
     .from("matches")
     .update({
       court_id: courtId,
       status: "in_progress" as const,
       started_at: now,
     })
-    .eq("id", match.id);
+    .eq("id", match.id)
+    .eq("status", "pending")   // ← Atomic guard
+    .select("id")
+    .single();
 
-  if (updateError) {
+  if (updateError || !promotedMatch) {
+    if (!promotedMatch && !updateError) {
+      // Another concurrent request already promoted this match — bail gracefully.
+      console.warn("[matchmaking] promoteOnDeckMatch: match already promoted by concurrent request, skipping.");
+      return { success: false, message: "On-deck match was already promoted by another request." };
+    }
     return {
       success: false,
-      message: `Failed to promote on-deck match: ${updateError.message}`,
+      message: `Failed to promote on-deck match: ${updateError?.message}`,
     };
   }
 

@@ -213,48 +213,94 @@ export async function reconnectPlayer(
   const newUserId = authData.user.id;
 
   // ── Migrate all references from old ID to new ID ──────────
-  // The trigger will have created a new profiles row for newUserId.
-  // We need to:
-  // 1. Update queue_entries to point to new user
-  // 2. Update match_players to point to new user
-  // 3. Delete the auto-created new profile row
-  // 4. Update the old profile's ID to the new auth user ID
+  // P1-1 REORDERED STEPS (safest sequence to minimise data-loss window):
+  //
+  //  Old order (dangerous):          New order (safer):
+  //  1. Update queue_entries          1. Delete auto-created new profile
+  //  2. Update match_players          2. Insert new profile with newUserId
+  //  3. Delete new profile            3. Update queue_entries old→new
+  //  4. Insert new profile ← crash!  4. Update match_players old→new
+  //  5. Delete old profile            5. Delete old profile
+  //  6. Delete old auth user          6. Delete old auth user
+  //
+  // With the old order: if step 4 (insert) failed after step 3 (delete),
+  // neither profile existed and the player was locked out permanently.
+  //
+  // With the new order: the new profile is created BEFORE any FK references
+  // are migrated. If a later step fails:
+  //   - Steps 3-4 fail → profile is correct; queue/match still point to old
+  //     ID, but old auth user + profile still exist → player can retry reconnect.
+  //   - Step 5 fails → both profiles temporarily exist; no data lost.
+  //
+  // NOTE: A true atomic migration requires a Postgres stored procedure
+  // (RPC) wrapped in a transaction. This is the safest app-layer ordering
+  // but does NOT eliminate the window entirely.
 
-  // Step 1: Update queue_entries
-  await service
-    .from("queue_entries")
-    .update({ player_id: newUserId })
-    .eq("player_id", oldUserId);
-
-  // Step 2: Update match_players
-  await service
-    .from("match_players")
-    .update({ player_id: newUserId })
-    .eq("player_id", oldUserId);
-
-  // Step 3: Delete the auto-created profile for new user (if trigger created one)
-  await service
+  // Step 1: Delete the auto-created profile for newUserId (trigger created it).
+  const { error: deleteNewProfileErr } = await service
     .from("profiles")
     .delete()
     .eq("id", newUserId);
 
-  // Step 4: We can't update the primary key directly in Supabase.
-  // Instead, create a new profile row with the new ID and old data,
-  // then delete the old one.
-  await service.from("profiles").insert({
+  if (deleteNewProfileErr) {
+    console.error("[reconnectPlayer] Failed to delete auto-created new profile:", deleteNewProfileErr.message);
+    // Non-fatal — the profile may not have been created by the trigger yet.
+  }
+
+  // Step 2: Insert new profile with the new auth ID but OLD player data.
+  // This must succeed before we migrate any FK references.
+  const { error: insertProfileErr } = await service.from("profiles").insert({
     id: newUserId,
     display_name: targetProfile.display_name,
     skill_level: targetProfile.skill_level,
     pin: targetProfile.pin,
   });
 
-  // Delete old profile
+  if (insertProfileErr) {
+    // Profile creation failed — abort and clean up the new auth user so the
+    // player can retry. Old account remains intact.
+    console.error("[reconnectPlayer] Profile insert failed, aborting migration:", insertProfileErr.message);
+    await service.auth.admin.deleteUser(newUserId);
+    return { success: false, error: "Failed to migrate profile. Please try again." };
+  }
+
+  // Step 3: Update queue_entries to point to new user.
+  const { error: queueMigrateErr } = await service
+    .from("queue_entries")
+    .update({ player_id: newUserId })
+    .eq("player_id", oldUserId);
+
+  if (queueMigrateErr) {
+    console.error("[reconnectPlayer] queue_entries migration failed:", queueMigrateErr.message);
+    // Rollback: delete the new profile and auth user so the old account is untouched.
+    await service.from("profiles").delete().eq("id", newUserId);
+    await service.auth.admin.deleteUser(newUserId);
+    return { success: false, error: "Failed to migrate queue data. Please try again." };
+  }
+
+  // Step 4: Update match_players to point to new user.
+  const { error: matchMigrateErr } = await service
+    .from("match_players")
+    .update({ player_id: newUserId })
+    .eq("player_id", oldUserId);
+
+  if (matchMigrateErr) {
+    console.error("[reconnectPlayer] match_players migration failed:", matchMigrateErr.message);
+    // Partial rollback: queue_entries already migrated to newUserId.
+    // Attempt to revert queue_entries back to oldUserId.
+    await service.from("queue_entries").update({ player_id: oldUserId }).eq("player_id", newUserId);
+    await service.from("profiles").delete().eq("id", newUserId);
+    await service.auth.admin.deleteUser(newUserId);
+    return { success: false, error: "Failed to migrate match history. Please try again." };
+  }
+
+  // Step 5: Delete old profile (all FK references now point to newUserId).
   await service
     .from("profiles")
     .delete()
     .eq("id", oldUserId);
 
-  // Delete old auth user to clean up
+  // Step 6: Delete old auth user to clean up orphaned auth record.
   await service.auth.admin.deleteUser(oldUserId);
 
   return { success: true, sessionId: targetSessionId };

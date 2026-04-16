@@ -67,10 +67,31 @@ export interface SeedResult {
   playerCount?: number;
 }
 
+// ── Dev-tool auth guard ───────────────────────────────────────
+// P1-5: Dev tools use the service-role client which bypasses ALL
+// RLS. Without an auth check, any authenticated player who knows
+// the session ID could call these actions and wipe session data.
+//
+// Guard: caller must be authenticated. In production, these
+// actions should be disabled entirely (gated by NODE_ENV or a
+// feature flag). For now we at minimum require a valid session.
+async function requireAuth(): Promise<{ error: string } | null> {
+  // Inline import to avoid circular dep with server client.
+  const { createClient } = await import("@/utils/supabase/server");
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated." };
+  return null;
+}
+
 export async function seedTestData(
   sessionId: string,
   count: number = 35
 ): Promise<SeedResult> {
+  // P1-5: Require authentication before any service-role writes.
+  const authErr = await requireAuth();
+  if (authErr) return { success: false, message: authErr.error };
+
   // The service role client is required for two reasons:
   //   1. supabase.auth.admin.createUser() is an admin-only API —
   //      the anon key does not have access to it.
@@ -246,6 +267,10 @@ const NAMED_PLAYERS: { name: string; skill: SkillLevel }[] = [
 ];
 
 export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
+  // P1-5: Require authentication.
+  const authErr = await requireAuth();
+  if (authErr) return { success: false, message: authErr.error };
+
   let supabase: ReturnType<typeof createServiceClient>;
   try {
     supabase = createServiceClient();
@@ -354,6 +379,10 @@ export interface ClearResult {
 }
 
 export async function clearSessionData(sessionId: string): Promise<ClearResult> {
+  // P1-5: Require authentication.
+  const authErr = await requireAuth();
+  if (authErr) return { success: false, message: authErr.error };
+
   let supabase: ReturnType<typeof createServiceClient>;
   try {
     supabase = createServiceClient();
