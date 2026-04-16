@@ -29,6 +29,8 @@ interface UseQueueResult {
   joinQueue: () => Promise<{ error?: string }>;
   /** Leave the queue. */
   leaveQueue: () => Promise<{ error?: string }>;
+  /** Manually re-fetch queue data (used by useVisibilityRefresh). */
+  refresh: () => Promise<void>;
 }
 
 export function useQueue(sessionId: string, playerId: string): UseQueueResult {
@@ -126,5 +128,6 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
     loading,
     joinQueue,
     leaveQueue,
+    refresh: fetchQueue,
   };
 }

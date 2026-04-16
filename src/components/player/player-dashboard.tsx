@@ -17,6 +17,7 @@ import { User, LayoutGrid, ListOrdered, Eye, EyeOff, LogOut } from "lucide-react
 import { useQueue } from "@/hooks/use-queue";
 import { usePlayerMatch } from "@/hooks/use-player-match";
 import { useSessionData } from "@/hooks/use-session-data";
+import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
 import { MatchAlert } from "./match-alert";
 import { QueueToggle } from "./queue-toggle";
 import { QueueStatus } from "./queue-status";
@@ -74,9 +75,10 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     loading: queueLoading,
     joinQueue,
     leaveQueue,
+    refresh: refreshQueue,
   } = useQueue(session.id, profile.id);
 
-  const { currentMatch, loading: matchLoading } = usePlayerMatch(
+  const { currentMatch, loading: matchLoading, refresh: refreshMatch } = usePlayerMatch(
     session.id,
     profile.id
   );
@@ -86,7 +88,16 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     onDeckMatches,
     waitlist,
     loading: sessionLoading,
+    refresh: refreshSession,
   } = useSessionData(session.id);
+
+  // Re-fetch all client data + server state when the tab becomes visible
+  // (phone unlock, browser tab restore). Throttled to 5 s.
+  useVisibilityRefresh(() => {
+    refreshQueue();
+    refreshMatch();
+    refreshSession();
+  });
 
   // Player has an active match if they're on_deck or in_progress.
   const hasActiveMatch =

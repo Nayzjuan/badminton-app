@@ -27,6 +27,8 @@ interface UsePlayerMatchResult {
   currentMatch: PlayerMatchInfo | null;
   /** Whether data is loading. */
   loading: boolean;
+  /** Manually re-fetch match data (used by useVisibilityRefresh). */
+  refresh: () => Promise<void>;
 }
 
 export function usePlayerMatch(
@@ -149,5 +151,5 @@ export function usePlayerMatch(
     };
   }, [supabase, sessionId, fetchMyMatch]);
 
-  return { currentMatch, loading };
+  return { currentMatch, loading, refresh: fetchMyMatch };
 }

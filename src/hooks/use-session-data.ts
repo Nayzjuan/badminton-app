@@ -56,6 +56,8 @@ export interface UseSessionDataResult {
   /** All waiting queue entries with profiles, sorted by matchmaking order. */
   waitlist: QueueEntryWithProfile[];
   loading: boolean;
+  /** Manually re-fetch all session data (used by useVisibilityRefresh). */
+  refresh: () => Promise<void>;
 }
 
 // ── Hook ─────────────────────────────────────────────────────
@@ -230,11 +232,16 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
   const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
 
+  const refresh = useCallback(async () => {
+    await Promise.all([fetchCourts(), fetchActiveMatches(), fetchWaitlist()]);
+  }, [fetchCourts, fetchActiveMatches, fetchWaitlist]);
+
   return {
     courts,
     inProgressMatches,
     onDeckMatches,
     waitlist,
     loading,
+    refresh,
   };
 }
