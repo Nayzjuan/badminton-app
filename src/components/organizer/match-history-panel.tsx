@@ -1,18 +1,22 @@
 "use client";
 
 // ============================================================
-// MatchHistoryPanel — Organizer view of all completed matches
+// MatchHistoryPanel — Organizer view of completed + cancelled matches
 // ============================================================
-// Shows every completed match in the session with scores,
-// team compositions, and win/loss indicators. Fetches data
-// independently with its own subscription.
+// Shows every completed or cancelled match in the session.
+//
+// Completed matches: full scores, team panels with win/loss
+//   indicators, static MatchTimer showing game duration.
+// Cancelled matches: muted "Cancelled" banner — no scores, no
+//   timer. Players' names still visible for reference.
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Trophy, History, Pencil, RotateCcw } from "lucide-react";
+import { Trophy, History, Pencil, RotateCcw, Ban } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
 import { SkillBadge } from "@/components/ui/skill-badge";
+import { MatchTimer } from "@/components/ui/match-timer";
 import { updateMatchDetails } from "@/app/actions/match";
 import {
   Dialog,
@@ -38,11 +42,13 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
   const [loading, setLoading] = useState(true);
 
   const fetchHistory = useCallback(async () => {
+    // Fetch both completed AND cancelled matches so cancellations
+    // are preserved in history (with a distinct visual treatment).
     const { data: rawMatches } = await supabase
       .from("matches")
       .select("*")
       .eq("session_id", sessionId)
-      .eq("status", "completed")
+      .in("status", ["completed", "cancelled"])
       .order("completed_at", { ascending: false });
 
     if (!rawMatches || rawMatches.length === 0) {
@@ -143,25 +149,36 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
     );
   }
 
+  const completedCount = matches.filter((m) => m.status === "completed").length;
+  const cancelledCount = matches.filter((m) => m.status === "cancelled").length;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
-          Completed Matches
+          Match History
         </h2>
-        <span className="rounded-full bg-slate-100 dark:bg-muted px-2.5 py-0.5 text-[10px] font-bold text-slate-600 dark:text-foreground">
-          {matches.length} match{matches.length !== 1 ? "es" : ""}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-slate-100 dark:bg-muted px-2.5 py-0.5 text-[10px] font-bold text-slate-600 dark:text-foreground">
+            {completedCount} completed
+          </span>
+          {cancelledCount > 0 && (
+            <span className="rounded-full bg-slate-100 dark:bg-muted px-2.5 py-0.5 text-[10px] font-bold text-slate-500 dark:text-muted-foreground">
+              {cancelledCount} cancelled
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="space-y-3">
         {matches.map((match, idx) => {
+          const isCancelled = match.status === "cancelled";
           const teamA = match.players.filter((p) => p.team === "a");
           const teamB = match.players.filter((p) => p.team === "b");
           const scoreA = match.team_a_score ?? 0;
           const scoreB = match.team_b_score ?? 0;
-          const aWon = scoreA > scoreB;
-          const bWon = scoreB > scoreA;
+          const aWon = !isCancelled && scoreA > scoreB;
+          const bWon = !isCancelled && scoreB > scoreA;
           const completedAt = match.completed_at
             ? new Date(match.completed_at).toLocaleTimeString("en-US", {
                 hour: "numeric",
@@ -169,6 +186,72 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
               })
             : "";
 
+          // Cancelled match — distinct muted styling
+          if (isCancelled) {
+            return (
+              <div
+                key={match.id}
+                className="rounded-2xl border border-slate-200 dark:border-border bg-white dark:bg-card shadow-sm overflow-hidden opacity-70"
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between bg-slate-50 dark:bg-muted/40 px-4 py-2.5 border-b border-slate-100 dark:border-border">
+                  <div className="flex items-center gap-2">
+                    <Ban className="h-3.5 w-3.5 text-slate-400 dark:text-muted-foreground" />
+                    <span className="text-sm font-bold text-slate-500 dark:text-muted-foreground">
+                      Match #{matches.length - idx}
+                    </span>
+                    {match.courtName && (
+                      <span className="text-xs text-slate-400 dark:text-muted-foreground">
+                        &middot; {match.courtName}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400 dark:text-muted-foreground">{completedAt}</span>
+                    <span className="rounded-full bg-slate-200 dark:bg-muted text-slate-500 dark:text-muted-foreground
+                                     px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                      Cancelled
+                    </span>
+                  </div>
+                </div>
+
+                {/* Players — reference only, no scores */}
+                <div className="px-4 py-3">
+                  <div className="flex gap-3">
+                    <div className="flex-1 rounded-xl bg-slate-50 dark:bg-muted/50 p-3 text-center">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-muted-foreground mb-2">
+                        Team A
+                      </p>
+                      {teamA.map((p) => (
+                        <div key={p.player_id} className="mb-1 last:mb-0">
+                          <p className="text-sm font-medium text-slate-500 dark:text-muted-foreground">
+                            {p.profile.display_name}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-xs text-slate-300 dark:text-muted-foreground/40 font-bold">vs</span>
+                    </div>
+                    <div className="flex-1 rounded-xl bg-slate-50 dark:bg-muted/50 p-3 text-center">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-muted-foreground mb-2">
+                        Team B
+                      </p>
+                      {teamB.map((p) => (
+                        <div key={p.player_id} className="mb-1 last:mb-0">
+                          <p className="text-sm font-medium text-slate-500 dark:text-muted-foreground">
+                            {p.profile.display_name}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // Completed match — full scores + static duration timer
           return (
             <div
               key={match.id}
@@ -196,6 +279,14 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                   )}
                 </div>
                 <div className="flex items-center gap-3">
+                  {/* Static game-duration timer */}
+                  {match.started_at && match.completed_at && (
+                    <MatchTimer
+                      startedAt={match.started_at}
+                      endedAt={match.completed_at}
+                      variant="static"
+                    />
+                  )}
                   <span className="text-xs text-slate-400 dark:text-muted-foreground">{completedAt}</span>
                   <EditMatchDialog
                     matchId={match.id}

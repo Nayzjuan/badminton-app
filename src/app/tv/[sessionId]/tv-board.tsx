@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { MatchTimer } from "@/components/ui/match-timer";
 import { getTvData } from "@/app/actions/tv";
 import type { TvMatch, TvSession } from "@/app/actions/tv";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
@@ -193,6 +194,14 @@ function TvCourtCard({ match }: { match: TvMatch }) {
         >
           In Progress
         </span>
+        {/* Live match timer — TV-scale text for long-distance legibility */}
+        {match.started_at && (
+          <MatchTimer
+            startedAt={match.started_at}
+            variant="live"
+            className="text-base"
+          />
+        )}
         {match.is_mixed_level && <MixedLevelBadge />}
       </div>
 

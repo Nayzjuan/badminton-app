@@ -18,6 +18,7 @@ import { useState } from "react";
 import { Plus, Trophy, XCircle, Swords } from "lucide-react";
 import { ScoreModal } from "./score-modal";
 import { BadmintonCourt } from "@/components/ui/badminton-court";
+import { MatchTimer } from "@/components/ui/match-timer";
 import type { Court } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
@@ -132,13 +133,19 @@ function CourtCard({
             </span>
           )}
         </div>
-        <span
-          className={`ml-2 shrink-0 rounded-full border px-2.5 py-0.5
-                      text-[10px] font-bold uppercase tracking-widest
-                      ${badgeCfg[cardState].cls}`}
-        >
-          {badgeCfg[cardState].label}
-        </span>
+        <div className="flex items-center gap-2 shrink-0 ml-2">
+          {/* Live match timer — only shown when in_progress */}
+          {cardState === "in_progress" && match?.started_at && (
+            <MatchTimer startedAt={match.started_at} variant="live" />
+          )}
+          <span
+            className={`shrink-0 rounded-full border px-2.5 py-0.5
+                        text-[10px] font-bold uppercase tracking-widest
+                        ${badgeCfg[cardState].cls}`}
+          >
+            {badgeCfg[cardState].label}
+          </span>
+        </div>
       </div>
 
       {/* ── Body ───────────────────────────────────────────── */}

@@ -27,6 +27,7 @@ export interface TvMatch {
   court_name: string | null;
   is_mixed_level: boolean;
   created_at: string;
+  started_at: string | null;
   players: {
     player_id: string;
     display_name: string;
@@ -53,7 +54,7 @@ export async function getTvData(sessionId: string): Promise<{
   // Fetch active matches (in_progress = on a court, pending = on deck)
   const { data: matches } = await supabase
     .from("matches")
-    .select("id, status, court_id, is_mixed_level, created_at")
+    .select("id, status, court_id, is_mixed_level, created_at, started_at")
     .eq("session_id", sessionId)
     .in("status", ["in_progress", "pending"]);
 
@@ -111,6 +112,7 @@ export async function getTvData(sessionId: string): Promise<{
     court_name: match.court_id ? (courtMap.get(match.court_id) ?? null) : null,
     is_mixed_level: match.is_mixed_level,
     created_at: match.created_at,
+    started_at: match.started_at ?? null,
     players: (matchPlayers ?? [])
       .filter((mp) => mp.match_id === match.id)
       .map((mp) => ({
