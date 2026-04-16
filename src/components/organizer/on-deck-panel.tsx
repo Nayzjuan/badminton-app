@@ -10,25 +10,16 @@
 // ============================================================
 
 import { useState } from "react";
-import { Trash2, Shuffle } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { BadmintonCourt } from "@/components/ui/badminton-court";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 
 interface OnDeckPanelProps {
   matches: EnrichedMatch[];
   onClearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
-  onGenerate: () => Promise<void>;
-  isAutoOn: boolean;
 }
 
-export function OnDeckPanel({ matches, onClearOnDeckMatch, onGenerate, isAutoOn }: OnDeckPanelProps) {
-  const [generating, setGenerating] = useState(false);
-
-  async function handleGenerate() {
-    setGenerating(true);
-    await onGenerate();
-    setGenerating(false);
-  }
+export function OnDeckPanel({ matches, onClearOnDeckMatch }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -52,34 +43,14 @@ export function OnDeckPanel({ matches, onClearOnDeckMatch, onGenerate, isAutoOn 
   if (matches.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-card/50 px-5 py-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="h-2 w-2 rounded-full bg-slate-300 dark:bg-muted-foreground" />
-            <p className="text-sm font-medium text-slate-500 dark:text-muted-foreground">
-              No matches on deck
-            </p>
-            <span className="text-xs text-slate-400 dark:text-muted-foreground/70 hidden sm:inline">
-              — auto-generate or create manually in Queue &amp; Match Control
-            </span>
-          </div>
-          {isAutoOn ? (
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200
-                         dark:border-border px-3 py-1.5 text-xs font-medium
-                         text-slate-600 dark:text-muted-foreground
-                         hover:bg-slate-100 dark:hover:bg-muted
-                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <Shuffle className="h-3 w-3" />
-              {generating ? "Generating…" : "Auto-Generate"}
-            </button>
-          ) : (
-            <span className="text-xs text-slate-400 dark:text-muted-foreground/70">
-              Auto-matchmaking paused
-            </span>
-          )}
+        <div className="flex items-center gap-2.5">
+          <div className="h-2 w-2 rounded-full bg-slate-300 dark:bg-muted-foreground" />
+          <p className="text-sm font-medium text-slate-500 dark:text-muted-foreground">
+            No matches on deck
+          </p>
+          <span className="text-xs text-slate-400 dark:text-muted-foreground/70 hidden sm:inline">
+            — the engine fills this automatically, or create one manually in Queue &amp; Match Control
+          </span>
         </div>
       </div>
     );
@@ -88,40 +59,20 @@ export function OnDeckPanel({ matches, onClearOnDeckMatch, onGenerate, isAutoOn 
   return (
     <div className="space-y-3">
       {/* Section header */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
-          </span>
-          <h2 className="text-sm font-bold text-slate-700 dark:text-foreground uppercase tracking-wider">
-            On Deck
-          </h2>
-          <span className="rounded-full px-2 py-0.5 text-xs font-bold
-                           bg-amber-100 text-amber-800
-                           dark:bg-[hsl(35_100%_55%)]/20 dark:text-[hsl(35_100%_65%)]
-                           dark:ring-1 dark:ring-[hsl(35_100%_55%)]/50">
-            {matches.length} match{matches.length !== 1 ? "es" : ""} ready
-          </span>
-        </div>
-        {isAutoOn ? (
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200
-                       dark:border-border px-3 py-1.5 text-xs font-medium
-                       text-slate-600 dark:text-muted-foreground
-                       hover:bg-slate-100 dark:hover:bg-muted
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <Shuffle className="h-3 w-3" />
-            {generating ? "Generating…" : "Auto-Generate"}
-          </button>
-        ) : (
-          <span className="text-xs text-slate-400 dark:text-muted-foreground/70">
-            Auto-matchmaking paused
-          </span>
-        )}
+      <div className="flex items-center gap-2.5">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+        </span>
+        <h2 className="text-sm font-bold text-slate-700 dark:text-foreground uppercase tracking-wider">
+          On Deck
+        </h2>
+        <span className="rounded-full px-2 py-0.5 text-xs font-bold
+                         bg-amber-100 text-amber-800
+                         dark:bg-[hsl(35_100%_55%)]/20 dark:text-[hsl(35_100%_65%)]
+                         dark:ring-1 dark:ring-[hsl(35_100%_55%)]/50">
+          {matches.length} match{matches.length !== 1 ? "es" : ""} ready
+        </span>
       </div>
 
       {/* Match cards */}

@@ -33,7 +33,7 @@
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
-import { generateOnDeckMatchesAction } from "@/app/actions/matchmaking";
+import { runEngineForSession } from "@/app/actions/matchmaking";
 
 // ── Checkout ──────────────────────────────────────────────────
 // Marks the calling player's queue_entries row as "left" for a
@@ -177,7 +177,7 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
     console.log(`[joinQueueAction] RETURNING PLAYER re-queued at games_played=${inheritedGames}`);
 
-    await generateOnDeckMatchesAction(sessionId);
+    await runEngineForSession(sessionId);
     return {};
   }
 
@@ -211,6 +211,6 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   console.log(`[joinQueueAction] FIRST-TIME JOINER inserted at games_played=${inheritedGames}`);
 
-  await generateOnDeckMatchesAction(sessionId);
+  await runEngineForSession(sessionId);
   return {};
 }

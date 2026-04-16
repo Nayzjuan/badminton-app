@@ -94,7 +94,6 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     updateCourtStatus,
     removeCourt,
     callNextMatch,
-    generateOnDeckMatches,
     createManualMatch,
     endMatch,
     cancelMatch,
@@ -343,8 +342,6 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
             <OnDeckPanel
               matches={onDeckMatches}
               onClearOnDeckMatch={clearOnDeckMatch}
-              onGenerate={generateOnDeckMatches}
-              isAutoOn={autoMatchmaking}
             />
 
             <ActiveCourts

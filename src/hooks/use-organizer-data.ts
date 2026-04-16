@@ -44,7 +44,6 @@ import {
 } from "@/lib/realtime";
 import {
   callNextMatch as callNextMatchAction,
-  generateOnDeckMatchesAction,
   type MatchmakingResult,
 } from "@/app/actions/matchmaking";
 import {
@@ -84,7 +83,6 @@ export interface UseOrganizerDataResult {
   removeCourt: (courtId: string) => Promise<{ error?: string }>;
   // -- Matchmaking --
   callNextMatch: (courtId: string) => Promise<MatchmakingResult>;
-  generateOnDeckMatches: () => Promise<void>;
   // -- Match actions --
   createManualMatch: (
     teamA: string[],
@@ -358,11 +356,6 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     [sessionId, fetchCourts, fetchActiveMatches]
   );
 
-  const generateOnDeckMatches = useCallback(async () => {
-    await generateOnDeckMatchesAction(sessionId);
-    await fetchActiveMatches();
-  }, [sessionId, fetchActiveMatches]);
-
   // ---- Match actions ----
 
   // P1-2: createManualMatch is now delegated to a server action so all
@@ -449,7 +442,6 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     updateCourtStatus,
     removeCourt,
     callNextMatch,
-    generateOnDeckMatches,
     createManualMatch,
     endMatch,
     cancelMatch,

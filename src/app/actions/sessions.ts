@@ -11,6 +11,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
+import { runEngineForSession } from "@/app/actions/matchmaking";
 import type { ScoringFormat } from "@/types/database";
 
 // ── Passcode auto-generation ──────────────────────────────────
@@ -212,8 +213,8 @@ export interface ToggleAutoMatchmakingResult {
 
 /**
  * Flips the `is_auto_matchmaking_on` boolean for a session.
- * When ON:  endMatchAction auto-fills freed courts via the algorithm.
- * When OFF: courts just go "available" — organizer uses manual matches.
+ * When ON:  engine immediately runs to fill on-deck slots from the queue.
+ * When OFF: engine is silent — organizer uses manual "Add to On Deck".
  */
 export async function toggleAutoMatchmaking(
   sessionId: string
@@ -245,6 +246,12 @@ export async function toggleAutoMatchmaking(
 
   if (updateErr) {
     return { success: false, isOn: session.is_auto_matchmaking_on, message: updateErr.message };
+  }
+
+  // If toggled ON, immediately run the engine so the on-deck queue
+  // fills up right away without waiting for the next player event.
+  if (newValue) {
+    await runEngineForSession(sessionId);
   }
 
   return {

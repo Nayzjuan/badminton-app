@@ -28,7 +28,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { promoteOnDeckMatchInternal, autoFillCourt } from "@/app/actions/matchmaking";
+import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 
 export interface MatchActionResult {
   success: boolean;
@@ -209,34 +209,22 @@ export async function endMatchAction(
     );
   }
 
-  // 5. AUTO-FILL: attempt to fill the freed court.
-  //    Priority: promote on-deck → auto-generate (if toggle ON) → free court.
+  // 5. PIPELINE: promote oldest on-deck match to the freed court.
+  //    Then run the engine so it refills the on-deck slot (if toggle ON).
+  //    If no on-deck match exists, free the court — the engine will form
+  //    one for next time.
   if (match.court_id) {
     const promoted = await promoteOnDeckMatchInternal(supabase, match.session_id, match.court_id);
 
     if (!promoted.success) {
-      // No on-deck match to promote — check auto-matchmaking toggle.
-      const { data: sessionRow } = await supabase
-        .from("sessions")
-        .select("is_auto_matchmaking_on")
-        .eq("id", match.session_id)
-        .single();
-
-      let autoFilled = false;
-      if (sessionRow?.is_auto_matchmaking_on) {
-        const autoResult = await autoFillCourt(match.session_id, match.court_id);
-        autoFilled = autoResult.success;
-      }
-
-      if (!autoFilled) {
-        // No auto-fill — free the court for manual use.
-        await supabase
-          .from("courts")
-          .update({ status: "available" as const })
-          .eq("id", match.court_id);
-      }
+      // No on-deck match — free the court immediately.
+      await supabase
+        .from("courts")
+        .update({ status: "available" as const })
+        .eq("id", match.court_id);
     }
-    // If promotion or auto-fill succeeded, the court is already in_use.
+    // Either way, run the engine to refill on-deck from the queue.
+    await runEngineForSession(match.session_id);
   }
 
   return { success: true, message: "Match completed. Players returned to queue." };
@@ -610,6 +598,9 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   if (deleteError) {
     return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
   }
+
+  // 5. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
+  await runEngineForSession(match.session_id);
 
   return { success: true, message: "On-deck match cleared. Players returned to queue." };
 }

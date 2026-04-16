@@ -4,35 +4,25 @@
 // Enterprise Matchmaking Engine — Server Actions
 // ============================================================
 //
-// Algorithm overview
-// ------------------
-//   1. Fetch pool sorted by (games_played ASC, joined_at ASC).
-//   2. Anchor = pool[0] — the player who's waited longest at
-//      the fewest games.
-//   3. Build an overlap map: for each candidate, count how many
-//      past matches they've shared with the anchor today.
-//   4. Score candidates: lowest overlap → fewest games → longest
-//      wait (encoded as pool index).
-//   5. Progressive skill expansion:
-//        a. ±1 window first
-//        b. ±2 window if ±1 fails
-//   6. Time-based fallback: if anchor has waited > 15 min,
-//      bypass skill windows entirely, grab next 3, set
-//      is_mixed_level = true.
-//   7. Snake-draft team balancing: sort all 4 DESC by skill,
-//      Team A = [highest + lowest], Team B = [2nd + 3rd].
+// Pipeline: Queue → On Deck → Active Court
+// -----------------------------------------
+// The engine is PURELY an on-deck filler. It never places
+// players directly onto courts. Court assignment happens only
+// via promoteOnDeckMatchInternal when a court frees up.
 //
-// Public surface:
-//   callNextMatch(sessionId, courtId)
-//   generateOnDeckMatchesAction(sessionId)
+// Engine entry points (all check the toggle before running):
+//   runEngineForSession(sessionId)   — called by: toggle-ON,
+//     joinQueue, endMatch, clearOnDeck, callNextMatch
 //
-// Internal:
-//   runAlgorithm(supabase, sessionId, courtId | null, isOnDeck)
-//   buildOverlapMap(supabase, sessionId, anchorPlayerId)
-//   createOneOnDeckMatch(supabase, sessionId)
-//   generateOnDeckMatchesInternal(supabase, sessionId)
-//   promoteOnDeckMatchInternal(supabase, sessionId, courtId)
-//   executeMatch(supabase, sessionId, courtId | null, teamA, teamB, isMixedLevel)
+// Organizer surface:
+//   callNextMatch(sessionId, courtId)  — promote oldest on-deck;
+//     if none, run engine inline then retry once.
+//
+// Internal only:
+//   runEngineInternal(supabase, sessionId)  — capacity-limited
+//     on-deck filler. Cap = max(1, courtCount − 1).
+//   createOneOnDeckMatch / runAlgorithm / promoteOnDeckMatchInternal
+//   executeMatch / buildOverlapMap / snakeDraft / isGroupValid / etc.
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
@@ -60,6 +50,11 @@ export interface MatchmakingResult {
 // ─────────────────────────────────────────────────────────────
 // PUBLIC: callNextMatch
 // ─────────────────────────────────────────────────────────────
+// Organizer clicks "Call Next Match" on a court card.
+// Step 1: promote the oldest on-deck match.
+// Step 2: if none exists and toggle is ON, run engine inline
+//   to form one from the queue, then retry promotion once.
+// Always triggers engine after success so the slot is refilled.
 
 export async function callNextMatch(
   sessionId: string,
@@ -67,13 +62,15 @@ export async function callNextMatch(
 ): Promise<MatchmakingResult> {
   const supabase = await createClient();
 
-  // 1. Always try to promote the oldest on-deck match first.
-  const promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
+  // 1. Try to promote an existing on-deck match.
+  let promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
   if (promoted.success) {
+    // Refill the on-deck slot we just consumed.
+    await runEngineInternal(supabase, sessionId);
     return promoted;
   }
 
-  // 2. No on-deck match — check the auto-matchmaking toggle.
+  // 2. No on-deck match — check toggle.
   const { data: session } = await supabase
     .from("sessions")
     .select("is_auto_matchmaking_on")
@@ -83,47 +80,47 @@ export async function callNextMatch(
   if (!session?.is_auto_matchmaking_on) {
     return {
       success: false,
-      message: "No on-deck matches available. Auto-matchmaking is paused.",
+      message: "No on-deck matches. Auto-matchmaking is paused — create one manually.",
     };
   }
 
-  // 3. Toggle is ON — run the algorithm and place players directly
-  //    onto the court (in_progress).
-  return runAlgorithm(supabase, sessionId, courtId, false);
+  // 3. Toggle ON: run engine now, then retry promotion.
+  await runEngineInternal(supabase, sessionId);
+  promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
+  if (promoted.success) return promoted;
+
+  return {
+    success: false,
+    message: "Not enough players in the queue to form a match.",
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
-// PUBLIC: autoFillCourt
+// PUBLIC: runEngineForSession
 // ─────────────────────────────────────────────────────────────
-// Thin wrapper around runAlgorithm for use by endMatchAction.
-// Runs the matchmaking algorithm and places players directly
-// onto a specific court as in_progress. Returns the result.
-// Does NOT check the toggle — caller is responsible for that.
+// Called from: toggleAutoMatchmaking (ON), joinQueueAction,
+// endMatchAction, clearOnDeckMatch.
+// Checks the toggle itself — callers need not check it first.
 
-export async function autoFillCourt(
-  sessionId: string,
-  courtId: string
-): Promise<MatchmakingResult> {
+export async function runEngineForSession(sessionId: string): Promise<void> {
   const supabase = await createClient();
-  return runAlgorithm(supabase, sessionId, courtId, false);
+  const { data: session } = await supabase
+    .from("sessions")
+    .select("is_auto_matchmaking_on")
+    .eq("id", sessionId)
+    .single();
+  if (!session?.is_auto_matchmaking_on) return;
+  await runEngineInternal(supabase, sessionId);
 }
 
 // ─────────────────────────────────────────────────────────────
-// PUBLIC: generateOnDeckMatchesAction
+// INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
-// Manual trigger — organizer clicks "Auto-Generate" in OnDeckPanel.
-// Only runs when the organizer explicitly requests it.
+// Capacity-limited on-deck filler.
+// Cap = max(1, courtCount − 1): 4 courts → 3 on-deck max.
+// Fills slots up to capacity, stopping when queue is exhausted.
 
-export async function generateOnDeckMatchesAction(sessionId: string): Promise<void> {
-  const supabase = await createClient();
-  await generateOnDeckMatchesInternal(supabase, sessionId);
-}
-
-// ─────────────────────────────────────────────────────────────
-// INTERNAL: generateOnDeckMatchesInternal
-// ─────────────────────────────────────────────────────────────
-
-async function generateOnDeckMatchesInternal(
+async function runEngineInternal(
   supabase: Awaited<ReturnType<typeof createClient>>,
   sessionId: string
 ): Promise<void> {
@@ -136,17 +133,21 @@ async function generateOnDeckMatchesInternal(
   const courtCount = courts?.length ?? 0;
   if (courtCount === 0) return;
 
-  const { count: existingCount } = await supabase
+  // Cap on-deck at (courtCount − 1) to prevent locking the entire queue.
+  const capacity = Math.max(1, courtCount - 1);
+
+  const { count: existingOnDeck } = await supabase
     .from("matches")
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId)
     .eq("status", "pending");
 
-  const needed = Math.max(0, courtCount - (existingCount ?? 0));
+  const slotsAvailable = capacity - (existingOnDeck ?? 0);
+  if (slotsAvailable <= 0) return;
 
-  for (let i = 0; i < needed; i++) {
+  for (let i = 0; i < slotsAvailable; i++) {
     const created = await createOneOnDeckMatch(supabase, sessionId);
-    if (!created) break;
+    if (!created) break; // Not enough players — stop.
   }
 }
 
