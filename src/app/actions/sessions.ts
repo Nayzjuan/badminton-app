@@ -3,29 +3,129 @@
 // ============================================================
 // Session Lifecycle — Server Actions
 // ============================================================
-// closeSession    — archives an active session
-// joinAsCoOrganizer — lets a second organizer join by short code
-//                    (first 6 chars of the session UUID, uppercased)
-//                    instead of pasting the full UUID
+// createSession       — creates a new session with uniqueness-
+//                       enforced passcode (auto-generated if blank)
+// joinAsCoOrganizer   — co-organizer joins using ONLY the passcode
+// closeSession        — archives an active session
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
+import type { ScoringFormat } from "@/types/database";
 
-// ── Session Code helpers ──────────────────────────────────────
+// ── Passcode auto-generation ──────────────────────────────────
+
+const BIRDIE_WORDS = [
+  "BIRDIE", "SMASH", "DRIVE", "CLEAR", "DROPS",
+  "RALLY", "SERVE", "COURT", "NETSH", "LUNGE",
+];
 
 /**
- * Derives the short 6-character human-readable "Session Code"
- * from a full session UUID. Strips hyphens, takes the first 6
- * hex characters, uppercases them.
- *
- * Example: "abc123de-f456-..." → "ABC123"
- *
- * No DB column needed — the code is deterministically derived
- * from the UUID that already exists.
+ * Generates a random badminton-themed passcode.
+ * Format: one of the BIRDIE_WORDS + a random 1-digit suffix.
+ * e.g. "SMASH7", "BIRDIE3", "RALLY9"
  */
-export function toSessionCode(sessionId: string): string {
-  return sessionId.replace(/-/g, "").slice(0, 6).toUpperCase();
+function generatePasscode(): string {
+  const word = BIRDIE_WORDS[Math.floor(Math.random() * BIRDIE_WORDS.length)];
+  const digit = Math.floor(Math.random() * 10);
+  return `${word}${digit}`;
+}
+
+// ── createSession ─────────────────────────────────────────────
+
+export interface CreateSessionResult {
+  success: boolean;
+  message: string;
+  sessionId?: string;
+  passcode?: string;
+}
+
+/**
+ * Creates a new session for the authenticated user.
+ *
+ * • If passcode is provided, checks that no other ACTIVE session
+ *   currently uses that same passcode (case-insensitive).
+ * • If passcode is blank, auto-generates a badminton-themed one
+ *   (retries up to 5 times to avoid collision in edge cases).
+ * • Inserts the session row using the service-role client so the
+ *   uniqueness check and insert happen atomically without RLS
+ *   blocking the cross-session passcode lookup.
+ */
+export async function createSession(opts: {
+  name: string;
+  scoring: ScoringFormat;
+  passcode?: string;
+}): Promise<CreateSessionResult> {
+  // Auth gate
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const service = createServiceClient();
+
+  // Determine the passcode to use
+  let finalPasscode: string;
+
+  if (opts.passcode && opts.passcode.trim()) {
+    finalPasscode = opts.passcode.trim().toUpperCase();
+
+    // Uniqueness check — no active session may share this passcode
+    const { data: conflict } = await service
+      .from("sessions")
+      .select("id")
+      .eq("is_active", true)
+      .ilike("organizer_passcode", finalPasscode)
+      .maybeSingle();
+
+    if (conflict) {
+      return {
+        success: false,
+        message: "This passcode is currently in use by another active session. Please choose a different one.",
+      };
+    }
+  } else {
+    // Auto-generate — retry up to 5 times to avoid collision
+    let attempts = 0;
+    let candidate = "";
+    while (attempts < 5) {
+      candidate = generatePasscode();
+      const { data: conflict } = await service
+        .from("sessions")
+        .select("id")
+        .eq("is_active", true)
+        .ilike("organizer_passcode", candidate)
+        .maybeSingle();
+      if (!conflict) break;
+      attempts++;
+    }
+    finalPasscode = candidate || generatePasscode(); // fallback if all collide
+  }
+
+  // Insert the session
+  const { data: session, error: insertError } = await service
+    .from("sessions")
+    .insert({
+      name: opts.name.trim(),
+      created_by: user.id,
+      scoring: opts.scoring,
+      organizer_passcode: finalPasscode,
+    })
+    .select("id")
+    .single();
+
+  if (insertError || !session) {
+    return {
+      success: false,
+      message: insertError?.message ?? "Failed to create session.",
+    };
+  }
+
+  return {
+    success: true,
+    message: "Session created.",
+    sessionId: session.id,
+    passcode: finalPasscode,
+  };
 }
 
 // ── joinAsCoOrganizer ─────────────────────────────────────────
@@ -37,74 +137,47 @@ export interface JoinCoOrganizerResult {
 }
 
 /**
- * Co-organizer join flow using a SHORT SESSION CODE instead of
- * pasting the full UUID.
+ * Co-organizer join flow using ONLY the session passcode.
  *
- * 1. Resolves the session by matching the code against the
- *    prefix of the session UUID (case-insensitive ILIKE).
- * 2. Validates the organizer_passcode.
- * 3. Inserts a session_organizers row for the caller.
- * 4. Returns the resolved UUID so the client can redirect.
+ * 1. Looks up an active session whose organizer_passcode matches
+ *    the supplied value (exact, case-insensitive via ILIKE).
+ * 2. Inserts a session_organizers row for the caller.
+ * 3. Returns the resolved UUID so the client can redirect.
  *
- * Security: always returns the same generic error message when
- * validation fails — never reveals which part was wrong.
+ * Security: returns the same generic error when nothing matches
+ * — never reveals whether the passcode exists.
  */
 export async function joinAsCoOrganizer(
-  sessionCode: string,
   passcode: string
 ): Promise<JoinCoOrganizerResult> {
-  const INVALID = "Invalid session code or passcode.";
+  const INVALID = "Invalid passcode. No active session found.";
 
-  // Auth gate — must be authenticated.
+  // Auth gate
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return { success: false, message: "Not authenticated." };
-  }
+  if (!user) return { success: false, message: "Not authenticated." };
 
-  // Normalize: strip whitespace, uppercase.
-  const code = sessionCode.trim().toUpperCase();
-  if (!code || code.length !== 6) {
-    return { success: false, message: "Session code must be exactly 6 characters." };
-  }
-  if (!passcode.trim()) {
-    return { success: false, message: INVALID };
-  }
+  const normalized = passcode.trim().toUpperCase();
+  if (!normalized) return { success: false, message: INVALID };
 
-  // Use service client so we can read all sessions regardless of RLS.
+  // Service client — bypass RLS so we can search all active sessions
   const service = createServiceClient();
 
-  // Look up active sessions whose UUID starts with this code.
-  // UUIDs are hex + hyphens; after stripping hyphens, the first 6 chars
-  // are exactly what toSessionCode() produces.
-  // e.g. code "ABC123" → ilike filter "abc123%"
-  const { data: sessions } = await service
+  const { data: session } = await service
     .from("sessions")
-    .select("id, organizer_passcode, created_by")
+    .select("id, created_by")
     .eq("is_active", true)
-    .ilike("id", `${code.toLowerCase().split("").join("")}%`);
+    .ilike("organizer_passcode", normalized)
+    .maybeSingle();
 
-  if (!sessions || sessions.length === 0) {
-    return { success: false, message: INVALID };
-  }
+  if (!session) return { success: false, message: INVALID };
 
-  // Among matches (should be exactly one), find one whose passcode matches.
-  // We intentionally don't short-circuit on "code found but wrong passcode"
-  // to avoid leaking information.
-  const session = sessions.find(
-    (s) => s.organizer_passcode === passcode.trim()
-  );
-
-  if (!session) {
-    return { success: false, message: INVALID };
-  }
-
-  // Prevent the primary organizer from adding themselves again.
+  // Prevent the primary organizer from joining their own session
   if (session.created_by === user.id) {
     return { success: false, message: "You are already the primary organizer of this session." };
   }
 
-  // Check if already a co-organizer.
+  // Idempotent — if already a co-organizer just redirect in
   const { data: existing } = await service
     .from("session_organizers")
     .select("id")
@@ -113,11 +186,10 @@ export async function joinAsCoOrganizer(
     .maybeSingle();
 
   if (existing) {
-    // Already a co-organizer — just redirect them in.
     return { success: true, message: "Already a co-organizer.", sessionId: session.id };
   }
 
-  // Insert the co-organizer row.
+  // Insert the co-organizer row
   const { error: insertError } = await service
     .from("session_organizers")
     .insert({ session_id: session.id, user_id: user.id });

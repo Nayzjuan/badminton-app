@@ -9,7 +9,7 @@
 // ============================================================
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   ChevronRight,
   Users,
@@ -21,10 +21,9 @@ import {
   Archive,
   Trophy,
   ChevronDown,
-  Hash,
+  Key,
 } from "lucide-react";
-import { createClient } from "@/utils/supabase/client";
-import { joinAsCoOrganizer, toSessionCode } from "@/app/actions/sessions";
+import { createSession, joinAsCoOrganizer } from "@/app/actions/sessions";
 import type { Profile, ScoringFormat } from "@/types/database";
 import type { SessionWithStats } from "@/app/organizer/page";
 
@@ -66,7 +65,6 @@ export function OrganizerEntry({
   pastSessions,
 }: OrganizerEntryProps) {
   const router = useRouter();
-  const supabase = useMemo(() => createClient(), []);
 
   // Create session state
   const [sessionName, setSessionName] = useState("");
@@ -74,8 +72,7 @@ export function OrganizerEntry({
   const [passcode, setPasscode] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // Join via session code state
-  const [joinCode, setJoinCode] = useState("");
+  // Join via passcode state
   const [joinPasscode, setJoinPasscode] = useState("");
   const [joining, setJoining] = useState(false);
 
@@ -89,32 +86,27 @@ export function OrganizerEntry({
     setCreating(true);
     setError(null);
 
-    const { data: session, error: err } = await supabase
-      .from("sessions")
-      .insert({
-        name: sessionName.trim(),
-        created_by: profile.id,
-        scoring,
-        organizer_passcode: passcode || null,
-      })
-      .select()
-      .single();
+    const result = await createSession({
+      name: sessionName.trim(),
+      scoring,
+      passcode: passcode || undefined,
+    });
 
-    if (err) {
-      setError(err.message);
+    if (!result.success) {
+      setError(result.message);
       setCreating(false);
       return;
     }
 
-    router.push(`/organizer/${session.id}`);
+    router.push(`/organizer/${result.sessionId}`);
   }
 
   async function handleJoinAsOrganizer() {
-    if (!joinCode.trim() || !joinPasscode.trim()) return;
+    if (!joinPasscode.trim()) return;
     setJoining(true);
     setError(null);
 
-    const result = await joinAsCoOrganizer(joinCode.trim(), joinPasscode.trim());
+    const result = await joinAsCoOrganizer(joinPasscode.trim());
 
     if (!result.success) {
       setError(result.message);
@@ -215,17 +207,17 @@ export function OrganizerEntry({
                       Active
                     </span>
 
-                    {/* Session Code — primary organizer reads this to co-organizers */}
+                    {/* Passcode — primary organizer reads this aloud to co-organizers */}
                     {s.organizer_passcode && (
                       <span
                         className="inline-flex items-center gap-1 rounded-full
                                    bg-violet-50 border border-violet-200
-                                   px-2 py-0.5 text-[10px] font-bold tracking-widest
-                                   text-violet-700 font-mono"
-                        title="Share this code with your co-organizer"
+                                   px-2.5 py-0.5 text-[11px] font-black tracking-widest
+                                   text-violet-700 font-mono uppercase"
+                        title="Share this passcode with your co-organizer"
                       >
-                        <Hash className="h-2.5 w-2.5" />
-                        {toSessionCode(s.id)}
+                        <Key className="h-2.5 w-2.5 shrink-0" />
+                        {s.organizer_passcode}
                       </span>
                     )}
 
@@ -298,17 +290,22 @@ export function OrganizerEntry({
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-slate-700">
-                  Organizer Passcode
+                  Passcode
                 </label>
                 <input
                   type="text"
                   value={passcode}
-                  onChange={(e) => setPasscode(e.target.value)}
-                  placeholder="Optional — for co-organizers"
+                  onChange={(e) => setPasscode(e.target.value.toUpperCase())}
+                  placeholder="Auto-generated if blank"
+                  autoComplete="off"
                   className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
-                             text-slate-900 placeholder:text-slate-400
+                             font-mono tracking-widest uppercase text-slate-900
+                             placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
                              focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
                 />
+                <p className="text-[10px] text-slate-400">
+                  Co-organizers use this to join · leave blank to auto-generate
+                </p>
               </div>
             </div>
 
@@ -337,47 +334,30 @@ export function OrganizerEntry({
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">
-                  Session Code
-                </label>
-                <input
-                  type="text"
-                  value={joinCode}
-                  onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-F0-9]/g, "").slice(0, 6))}
-                  placeholder="e.g. ABC123"
-                  maxLength={6}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5
-                             text-sm font-mono tracking-widest uppercase text-slate-900
-                             placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
-                             focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
-                />
-                <p className="text-[10px] text-slate-400">
-                  6-character code from the primary organizer
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">
-                  Passcode
-                </label>
-                <input
-                  type="text"
-                  value={joinPasscode}
-                  onChange={(e) => setJoinPasscode(e.target.value)}
-                  placeholder="Organizer passcode"
-                  autoComplete="off"
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
-                             text-slate-900 placeholder:text-slate-400
-                             focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-slate-700">
+                Session Passcode
+              </label>
+              <input
+                type="text"
+                value={joinPasscode}
+                onChange={(e) => setJoinPasscode(e.target.value.toUpperCase())}
+                placeholder="e.g. BIRDIE3 or SMASH7"
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base
+                           font-mono tracking-widest uppercase text-slate-900
+                           placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
+                           placeholder:text-sm
+                           focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+              />
+              <p className="text-[11px] text-slate-400">
+                Enter the passcode shown on the primary organizer&apos;s session card
+              </p>
             </div>
             <button
               onClick={handleJoinAsOrganizer}
-              disabled={joining || joinCode.trim().length !== 6 || !joinPasscode.trim()}
+              disabled={joining || !joinPasscode.trim()}
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
                          font-semibold text-slate-700 shadow-sm
                          hover:bg-slate-50 transition-colors
