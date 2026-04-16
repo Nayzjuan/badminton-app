@@ -14,6 +14,7 @@
 
 import type { SupabaseClient, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import type { OrganizerInterventionPayload } from "@/lib/broadcast";
 
 type TypedClient = SupabaseClient<Database>;
 type ChangeHandler<T extends Record<string, unknown>> = (
@@ -179,6 +180,47 @@ export function subscribeToSessionOrganizers(
  * this subscribes broadly — the callback should re-fetch relevant
  * data (queue view, match players, etc.) to pick up the new skill.
  */
+/**
+ * Subscribe to organizer intervention broadcast events on the
+ * session's dedicated broadcast channel.
+ *
+ * The server emits these after clearOnDeckMatch and cancelMatchAction
+ * so affected players can be shown a contextual toast instead of
+ * experiencing a silent UI state change.
+ *
+ * Channel: "session-events:{sessionId}"
+ * Event:   "organizer_intervention"
+ */
+export function subscribeToOrganizerBroadcast(
+  supabase: TypedClient,
+  sessionId: string,
+  onIntervention: (payload: OrganizerInterventionPayload) => void
+): () => void {
+  const channelName = `session-events:${sessionId}`;
+
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      "broadcast",
+      { event: "organizer_intervention" },
+      (msg: { payload: OrganizerInterventionPayload }) => {
+        console.log(`[realtime] ${channelName} broadcast:`, msg.payload);
+        onIntervention(msg.payload);
+      }
+    )
+    .subscribe((status, err) => {
+      if (err) {
+        console.error(`[realtime] ${channelName} broadcast subscription error:`, err);
+      } else {
+        console.log(`[realtime] ${channelName} broadcast →`, status);
+      }
+    });
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}
+
 export function subscribeToProfiles(
   supabase: TypedClient,
   sessionId: string,

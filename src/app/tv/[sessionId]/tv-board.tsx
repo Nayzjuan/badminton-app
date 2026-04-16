@@ -78,9 +78,8 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
       {/* ── Header ──────────────────────────────────────────── */}
       <header
         className="shrink-0 flex items-center justify-between px-8 py-4
-                   bg-[#1D3A6F] dark:bg-[hsl(268_60%_14%)]
-                   dark:border-b dark:border-[hsl(180_100%_50%/0.25)]
-                   shadow-lg dark:shadow-[0_4px_24px_hsl(180_100%_50%/0.12)]"
+                   bg-[#1D3A6F] dark:bg-[hsl(217_30%_11%)]
+                   dark:border-b dark:border-border shadow-lg"
       >
         <div>
           <h1 className="text-2xl font-black text-white tracking-tight">

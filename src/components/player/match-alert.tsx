@@ -72,35 +72,37 @@ export function MatchAlert({
 
         {/* Mixed level warning */}
         {isMixedLevel && (
-          <div className="bg-amber-50 border-b border-amber-200 px-5 py-2.5 text-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 border border-amber-300 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-800">
+          <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800/50 px-5 py-2.5 text-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
               ⚠ Mixed Level Match
             </span>
           </div>
         )}
 
         {/* Teams section */}
-        <div className="bg-white px-5 pt-5 pb-6">
+        <div className="bg-slate-50 dark:bg-card px-5 pt-5 pb-6">
           <div className="flex items-stretch gap-3">
             {/* Your team */}
-            <div className="flex-1 rounded-2xl bg-emerald-50 p-4 text-center">
-              <p className="mb-3 text-[10px] font-black uppercase tracking-wider text-emerald-600">
+            <div className="flex-1 rounded-2xl bg-emerald-50 dark:bg-emerald-950/20 p-4 text-center">
+              <p className="mb-3 text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                 Your Team
               </p>
 
-              {/* You */}
-              <div className="mb-3">
-                <div className="mx-auto mb-1 flex h-9 w-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-black text-white">
-                  YOU
+              {/* You — first-initial circle instead of generic "YOU" label */}
+              <div className="mb-3 flex flex-col items-center">
+                <div className="mx-auto mb-1.5 flex h-9 w-9 items-center justify-center rounded-full
+                                bg-emerald-600 dark:bg-emerald-700 text-base font-bold text-white select-none">
+                  {myDisplayName.charAt(0).toUpperCase()}
                 </div>
-                <p className="text-sm font-bold text-slate-900">{myDisplayName}</p>
+                <p className="text-sm font-bold text-slate-900 dark:text-foreground leading-tight">{myDisplayName}</p>
+                <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">You</span>
                 <SkillBadge level={mySkillLevel} className="mt-0.5" />
               </div>
 
               {/* Teammates (1 in doubles) */}
               {teammates.map((t) => (
-                <div key={t.id}>
-                  <p className="text-sm font-bold text-slate-900">{t.display_name}</p>
+                <div key={t.id} className="flex flex-col items-center">
+                  <p className="text-sm font-bold text-slate-900 dark:text-foreground">{t.display_name}</p>
                   <SkillBadge level={t.skill_level} className="mt-0.5" />
                 </div>
               ))}
@@ -108,24 +110,24 @@ export function MatchAlert({
 
             {/* VS badge */}
             <div className="flex shrink-0 items-center justify-center">
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800 text-sm font-black text-white shadow-md">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800 dark:bg-slate-700 text-sm font-black text-white shadow-md">
                 VS
               </div>
             </div>
 
             {/* Opponents */}
-            <div className="flex-1 rounded-2xl bg-rose-50 p-4 text-center">
-              <p className="mb-3 text-[10px] font-black uppercase tracking-wider text-rose-600">
+            <div className="flex-1 rounded-2xl bg-rose-50 dark:bg-rose-950/20 p-4 text-center">
+              <p className="mb-3 text-xs font-black uppercase tracking-wider text-rose-700 dark:text-rose-400">
                 Opponents
               </p>
               {opponents.map((o) => (
                 <div key={o.id} className="mb-2.5 last:mb-0">
-                  <p className="text-sm font-bold text-slate-900">{o.display_name}</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-foreground">{o.display_name}</p>
                   <SkillBadge level={o.skill_level} className="mt-0.5" />
                 </div>
               ))}
               {opponents.length === 0 && (
-                <p className="text-sm text-slate-400">Loading…</p>
+                <p className="text-sm text-slate-400 dark:text-muted-foreground">Loading…</p>
               )}
             </div>
           </div>
@@ -159,34 +161,36 @@ export function MatchAlert({
 
       {/* Mixed level warning */}
       {isMixedLevel && (
-        <div className="bg-amber-50 border-b border-amber-200 px-5 py-2.5 text-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 border border-amber-300 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-800">
+        <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800/50 px-5 py-2.5 text-center">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 px-3 py-1 text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
             ⚠ Mixed Level Match
           </span>
         </div>
       )}
 
       {/* Teams section */}
-      <div className="bg-white px-5 pt-5 pb-6">
+      <div className="bg-slate-50 dark:bg-card px-5 pt-5 pb-6">
         <div className="flex items-stretch gap-3">
           {/* Your team */}
-          <div className="flex-1 rounded-2xl bg-amber-50 p-4 text-center">
-            <p className="mb-3 text-[10px] font-black uppercase tracking-wider text-amber-600">
+          <div className="flex-1 rounded-2xl bg-amber-50 dark:bg-amber-950/20 p-4 text-center">
+            <p className="mb-3 text-xs font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">
               Your Team
             </p>
 
-            {/* You */}
-            <div className="mb-3">
-              <div className="mx-auto mb-1 flex h-9 w-9 items-center justify-center rounded-full bg-amber-500 text-sm font-black text-white">
-                YOU
+            {/* You — first-initial circle instead of generic "YOU" label */}
+            <div className="mb-3 flex flex-col items-center">
+              <div className="mx-auto mb-1.5 flex h-9 w-9 items-center justify-center rounded-full
+                              bg-amber-500 dark:bg-amber-600 text-base font-bold text-white select-none">
+                {myDisplayName.charAt(0).toUpperCase()}
               </div>
-              <p className="text-sm font-bold text-slate-900">{myDisplayName}</p>
+              <p className="text-sm font-bold text-slate-900 dark:text-foreground leading-tight">{myDisplayName}</p>
+              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-wide">You</span>
               <SkillBadge level={mySkillLevel} className="mt-0.5" />
             </div>
 
             {teammates.map((t) => (
-              <div key={t.id}>
-                <p className="text-sm font-bold text-slate-900">{t.display_name}</p>
+              <div key={t.id} className="flex flex-col items-center">
+                <p className="text-sm font-bold text-slate-900 dark:text-foreground">{t.display_name}</p>
                 <SkillBadge level={t.skill_level} className="mt-0.5" />
               </div>
             ))}
@@ -194,30 +198,30 @@ export function MatchAlert({
 
           {/* VS badge */}
           <div className="flex shrink-0 items-center justify-center">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-700 text-sm font-black text-white shadow-md">
+            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-700 dark:bg-slate-600 text-sm font-black text-white shadow-md">
               VS
             </div>
           </div>
 
           {/* Opponents */}
-          <div className="flex-1 rounded-2xl bg-slate-100 p-4 text-center">
-            <p className="mb-3 text-[10px] font-black uppercase tracking-wider text-slate-500">
+          <div className="flex-1 rounded-2xl bg-slate-100 dark:bg-slate-800/40 p-4 text-center">
+            <p className="mb-3 text-xs font-black uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
               Opponents
             </p>
             {opponents.map((o) => (
               <div key={o.id} className="mb-2.5 last:mb-0">
-                <p className="text-sm font-bold text-slate-900">{o.display_name}</p>
+                <p className="text-sm font-bold text-slate-900 dark:text-foreground">{o.display_name}</p>
                 <SkillBadge level={o.skill_level} className="mt-0.5" />
               </div>
             ))}
             {opponents.length === 0 && (
-              <p className="text-sm text-slate-400">Loading…</p>
+              <p className="text-sm text-slate-400 dark:text-muted-foreground">Loading…</p>
             )}
           </div>
         </div>
 
         {/* Footer tip */}
-        <p className="mt-4 text-center text-xs text-slate-400">
+        <p className="mt-4 text-center text-xs text-slate-400 dark:text-muted-foreground">
           You&apos;ll be directed to a court as soon as one opens up
         </p>
       </div>

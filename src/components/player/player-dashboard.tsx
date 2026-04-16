@@ -18,6 +18,7 @@ import { useQueue } from "@/hooks/use-queue";
 import { usePlayerMatch } from "@/hooks/use-player-match";
 import { useSessionData } from "@/hooks/use-session-data";
 import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
+import { useOrganizerBroadcast } from "@/hooks/use-organizer-broadcast";
 import { MatchAlert } from "./match-alert";
 import { QueueToggle } from "./queue-toggle";
 import { QueueStatus } from "./queue-status";
@@ -99,6 +100,11 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     refreshSession();
   });
 
+  // Show a toast when the organizer clears an on-deck match or cancels
+  // a match that this player is part of. Prevents silent state changes
+  // from looking like app glitches.
+  useOrganizerBroadcast(session.id, profile.id);
+
   // Player has an active match if they're on_deck or in_progress.
   const hasActiveMatch =
     currentMatch !== null &&
@@ -121,7 +127,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-background">
       {/* ── Header ──────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80
-                         dark:bg-background/95 dark:border-border dark:shadow-[0_2px_16px_hsl(180_100%_50%/0.08)]">
+                         dark:bg-background/95 dark:border-border">
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
             <div>
@@ -153,16 +159,19 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
             <div className="flex items-center gap-2">
               <ThemeToggle className="text-slate-500 hover:text-slate-900 hover:bg-slate-100
                                       dark:text-primary dark:hover:bg-primary/10" />
+              {/* Status dot — aria-hidden since the sr-only span carries the label */}
               <div
+                aria-hidden="true"
                 className={`h-2.5 w-2.5 rounded-full ${dotColor}`}
-                title={
-                  hasActiveMatch
-                    ? "Match active"
-                    : isInQueue
-                    ? "In queue"
-                    : "Not in queue"
-                }
               />
+              <span className="sr-only">
+                Status:{" "}
+                {hasActiveMatch
+                  ? "Match active"
+                  : isInQueue
+                  ? "In queue"
+                  : "Not in queue"}
+              </span>
               {/* Leave Session */}
               <AlertDialog>
                 <AlertDialogTrigger asChild>

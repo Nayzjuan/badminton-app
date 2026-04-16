@@ -29,6 +29,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
+import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 
 export interface MatchActionResult {
   success: boolean;
@@ -431,6 +432,14 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       .update({ status: "waiting" as const })
       .eq("session_id", match.session_id)
       .in("player_id", playerIds);
+
+    // Notify affected players via Realtime Broadcast so their dashboards
+    // show a friendly explanation instead of a silent state change.
+    await broadcastOrganizerIntervention(
+      match.session_id,
+      "match_cancelled",
+      playerIds
+    );
   }
 
   return { success: true, message: "Match cancelled. Players returned to queue." };
@@ -599,7 +608,19 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
     return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
   }
 
-  // 5. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
+  // 5. Notify affected players via Realtime Broadcast. Their on-deck
+  //    banner will disappear (via Postgres change events) and this
+  //    broadcast ensures they see a friendly explanation toast rather
+  //    than a confusing silent state change.
+  if (playerIds.length > 0) {
+    await broadcastOrganizerIntervention(
+      match.session_id,
+      "on_deck_cleared",
+      playerIds
+    );
+  }
+
+  // 6. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
   await runEngineForSession(match.session_id);
 
   return { success: true, message: "On-deck match cleared. Players returned to queue." };

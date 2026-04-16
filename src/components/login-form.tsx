@@ -8,10 +8,17 @@
 // queue position and match history.
 // ============================================================
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
 import { SKILL_LEVELS } from "@/types/database";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 
 interface LoginFormProps {
   /** If provided, the user will be redirected to /play/[sessionId] after login. */
@@ -156,13 +163,12 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
         </button>
       </div>
 
-      {/* Reconnect Modal */}
-      {showReconnect && (
-        <ReconnectModal
-          onClose={() => setShowReconnect(false)}
-          onError={setError}
-        />
-      )}
+      {/* Reconnect Modal — Radix Dialog provides focus trap, aria-modal, Escape to close */}
+      <ReconnectModal
+        open={showReconnect}
+        onClose={() => setShowReconnect(false)}
+        onError={setError}
+      />
 
       {/* Error toast — fixed at bottom */}
       {error && (
@@ -192,9 +198,11 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
 // ─────────────────────────────────────────────────────────────
 
 function ReconnectModal({
+  open,
   onClose,
   onError,
 }: {
+  open: boolean;
   onClose: () => void;
   onError: (msg: string) => void;
 }) {
@@ -202,7 +210,6 @@ function ReconnectModal({
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
   const [isPending, startTransition] = useTransition();
-  const backdropRef = useRef<HTMLDivElement>(null);
 
   function handleReconnect() {
     if (!name.trim() || !pin.trim()) {
@@ -222,20 +229,16 @@ function ReconnectModal({
   }
 
   return (
-    <div
-      ref={backdropRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-      onClick={(e) => {
-        if (e.target === backdropRef.current) onClose();
-      }}
-    >
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl space-y-5">
-        <div>
-          <h2 className="text-lg font-bold text-foreground">Reconnect</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+    // Radix Dialog provides: focus trap, aria-modal, role="dialog",
+    // Escape-to-close, and scroll-lock — no custom backdrop needed.
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
+      <DialogContent className="w-full max-w-sm p-6 space-y-5">
+        <DialogHeader>
+          <DialogTitle>Reconnect</DialogTitle>
+          <DialogDescription>
             Enter the name and PIN you used when joining.
-          </p>
-        </div>
+          </DialogDescription>
+        </DialogHeader>
 
         {/* Player Name */}
         <div className="space-y-2">
@@ -300,8 +303,8 @@ function ReconnectModal({
             {isPending ? "Reconnecting..." : "Reconnect"}
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

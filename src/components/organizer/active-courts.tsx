@@ -103,15 +103,15 @@ function CourtCard({
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {
     matchmaking: {
-      cls: "bg-amber-400 text-white border-amber-500 dark:bg-[hsl(35_100%_55%)] dark:border-[hsl(35_100%_60%)] dark:shadow-[0_0_8px_hsl(35_100%_55%/0.6)]",
+      cls: "bg-amber-400 text-white border-amber-500 dark:bg-amber-500/90 dark:border-amber-600",
       label: "Finding Match…",
     },
     in_progress: {
-      cls: "bg-blue-600 text-white border-blue-700 dark:bg-[hsl(220_100%_58%)] dark:border-[hsl(220_100%_65%)] dark:shadow-[0_0_8px_hsl(220_100%_60%/0.5)]",
+      cls: "bg-blue-600 text-white border-blue-700 dark:bg-blue-700 dark:border-blue-800",
       label: "In Progress",
     },
     available: {
-      cls: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-[hsl(150_100%_50%)]/15 dark:text-[hsl(150_100%_62%)] dark:border-[hsl(150_100%_50%)]/40",
+      cls: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800/60",
       label: "Available",
     },
     closed: {
@@ -122,8 +122,7 @@ function CourtCard({
 
   return (
     <div
-      className={`flex flex-col rounded-2xl bg-white dark:bg-card shadow-md overflow-hidden transition-all
-                  ${cardState === "matchmaking" ? "animate-pulse" : ""}`}
+      className="flex flex-col rounded-2xl bg-white dark:bg-card shadow-md overflow-hidden transition-all"
     >
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-5 pt-4 pb-3">
@@ -131,7 +130,7 @@ function CourtCard({
           <h3 className="text-base font-bold truncate text-gray-900 dark:text-foreground">{court.name}</h3>
           {match?.is_mixed_level && (
             <span className="shrink-0 rounded-full border px-2 py-0.5
-                            text-[10px] font-bold uppercase tracking-wider
+                            text-xs font-bold uppercase tracking-wider
                             bg-amber-100 border-amber-300 text-amber-800
                             dark:bg-[hsl(35_100%_55%)]/20 dark:border-[hsl(35_100%_60%)]/70 dark:text-[hsl(35_100%_65%)]">
               Mixed Level
@@ -143,10 +142,12 @@ function CourtCard({
           {cardState === "in_progress" && match?.started_at && (
             <MatchTimer startedAt={match.started_at} variant="live" />
           )}
+          {/* Pulse scoped to the badge only when matchmaking — not the whole card */}
           <span
             className={`shrink-0 rounded-full border px-2.5 py-0.5
-                        text-[10px] font-bold uppercase tracking-widest
-                        ${badgeCfg[cardState].cls}`}
+                        text-xs font-bold uppercase tracking-widest
+                        ${badgeCfg[cardState].cls}
+                        ${cardState === "matchmaking" ? "animate-pulse" : ""}`}
           >
             {badgeCfg[cardState].label}
           </span>

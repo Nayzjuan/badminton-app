@@ -55,27 +55,29 @@
     --radius: 0.5rem;
   }
 
-  /* ── Vantablack Neon Courts — high-contrast dark theme ─ */
+  /* ── Court Nights — grounded dark theme for a gym environment ─ */
+  /* Philosophy: deep navy base, warm amber primary, lime-green      */
+  /* accent. Feels like a lit sports hall, not a sci-fi terminal.   */
   .dark {
-    --background:              240 10% 4%;    /* deep charcoal/midnight */
-    --foreground:              180 80% 94%;   /* bright ice-white/cyan */
-    --card:                    0 0% 2%;       /* Vantablack/near-black */
-    --card-foreground:         180 80% 94%;
-    --popover:                 240 10% 5%;
-    --popover-foreground:      180 80% 94%;
-    --primary:                 180 100% 50%;  /* neon cyan */
-    --primary-foreground:      240 10% 4%;   /* deep charcoal on neon buttons */
-    --secondary:               268 35% 18%;
-    --secondary-foreground:    180 80% 94%;
-    --muted:                   240 8% 11%;
-    --muted-foreground:        240 12% 56%;   /* soft grey */
-    --accent:                  300 100% 60%;  /* neon magenta */
+    --background:              217 28% 8%;    /* deep navy court floor */
+    --foreground:              220 12% 92%;   /* warm off-white — readable, not ice-blue */
+    --card:                    217 25% 11%;   /* slightly lifted navy panel */
+    --card-foreground:         220 12% 92%;
+    --popover:                 217 25% 10%;
+    --popover-foreground:      220 12% 92%;
+    --primary:                 38 92% 52%;    /* warm amber — confident, energetic */
+    --primary-foreground:      217 28% 8%;    /* dark navy text on amber buttons */
+    --secondary:               217 20% 17%;   /* muted navy surface */
+    --secondary-foreground:    220 12% 92%;
+    --muted:                   217 20% 14%;   /* recessed surface */
+    --muted-foreground:        220 10% 52%;   /* legible grey, not too bright */
+    --accent:                  82 58% 40%;    /* warm lime-green — shuttlecock energy */
     --accent-foreground:       0 0% 100%;
-    --destructive:             0 80% 55%;
+    --destructive:             0 72% 52%;
     --destructive-foreground:  0 0% 100%;
-    --border:                  180 40% 18%;   /* subtle cyan-tinted border */
-    --input:                   240 8% 9%;
-    --ring:                    180 100% 50%;  /* neon cyan focus ring */
+    --border:                  217 18% 22%;   /* clean navy border, no color cast */
+    --input:                   217 25% 10%;
+    --ring:                    38 92% 52%;    /* amber focus ring */
   }
 
   * {
@@ -84,5 +86,17 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* ── Reduced-motion: respect system preference ──────────── */
+  /* Collapses all CSS animations and transitions to near-zero  */
+  /* for users with vestibular disorders or motion sensitivity. */
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

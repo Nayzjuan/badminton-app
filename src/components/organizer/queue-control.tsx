@@ -181,7 +181,10 @@ export function QueueControl({
         </div>
       ) : (
         <div className="rounded-xl border border-border overflow-hidden">
-          <table className="w-full text-sm">
+          {/* overflow-x-auto lets the table scroll horizontally on narrow viewports
+              instead of squishing the 8 columns into unreadable widths. */}
+          <div className="overflow-x-auto -mx-px">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-muted/50 border-b border-border">
                 <th className="px-4 py-3 text-left w-12"></th>
@@ -203,37 +206,60 @@ export function QueueControl({
                 return (
                   <tr
                     key={entry.id}
+                    tabIndex={0}
+                    role="row"
+                    aria-selected={isSelected}
                     className={`border-b border-border last:border-b-0 transition-colors cursor-pointer
+                                focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset
                                 ${isSelected
                                   ? "bg-emerald-50 dark:bg-emerald-950/30"
                                   : "hover:bg-muted/30"}
                                 ${entry.is_bottleneck ? "!bg-red-50 dark:!bg-red-950/25" : ""}`}
                     onClick={() => togglePlayer(entry.player_id)}
+                    onKeyDown={(e) => {
+                      if (e.key === " " || e.key === "Enter") {
+                        e.preventDefault();
+                        togglePlayer(entry.player_id);
+                      }
+                    }}
                   >
-                    {/* Checkbox */}
+                    {/* Checkbox — native input for keyboard + screen reader support */}
                     <td className="px-4 py-3">
-                      <div
-                        className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
-                                    ${
-                                      isSelected
-                                        ? "bg-emerald-600 border-emerald-600"
-                                        : isFull
-                                        ? "border-muted bg-muted/50 cursor-not-allowed"
-                                        : "border-border hover:border-primary"
-                                    }`}
-                      >
-                        {isSelected && (
-                          <svg
-                            className="h-3 w-3 text-white"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={3}
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </div>
+                      <label className="relative flex h-5 w-5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={isSelected}
+                          disabled={!isSelected && isFull}
+                          onChange={() => togglePlayer(entry.player_id)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select ${entry.display_name}`}
+                        />
+                        {/* Visual checkbox — aria-hidden so the native input owns semantics */}
+                        <div
+                          aria-hidden="true"
+                          className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
+                                      ${
+                                        isSelected
+                                          ? "bg-emerald-600 border-emerald-600"
+                                          : isFull
+                                          ? "border-muted bg-muted/50 cursor-not-allowed"
+                                          : "border-border hover:border-primary"
+                                      }`}
+                        >
+                          {isSelected && (
+                            <svg
+                              className="h-3 w-3 text-white"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              strokeWidth={3}
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </label>
                     </td>
                     {/* Position */}
                     <td className="px-4 py-3 text-muted-foreground">{index + 1}</td>
@@ -283,8 +309,11 @@ export function QueueControl({
                             </span>
                             <button
                               onClick={() => handleRevealPin(entry.player_id)}
-                              className="text-muted-foreground hover:text-foreground transition-colors"
+                              className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                         text-muted-foreground hover:text-foreground transition-colors
+                                         rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               title="Hide PIN"
+                              aria-label="Hide PIN"
                             >
                               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
@@ -292,8 +321,11 @@ export function QueueControl({
                             </button>
                             <button
                               onClick={() => handleResetPin(entry.player_id)}
-                              className="text-muted-foreground hover:text-amber-600 transition-colors"
+                              className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                         text-muted-foreground hover:text-amber-600 transition-colors
+                                         rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               title="Reset PIN"
+                              aria-label="Reset PIN"
                             >
                               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -303,8 +335,11 @@ export function QueueControl({
                         ) : (
                           <button
                             onClick={() => handleRevealPin(entry.player_id)}
-                            className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+                            className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                       text-muted-foreground hover:text-foreground transition-colors
+                                       rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             title="Reveal PIN"
+                            aria-label="Reveal PIN"
                           >
                             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -319,8 +354,11 @@ export function QueueControl({
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <button
-                            className="text-muted-foreground hover:text-red-600 transition-colors"
+                            className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                       text-muted-foreground hover:text-red-600 transition-colors
+                                       rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             title="Checkout — player has left the gym"
+                            aria-label={`Checkout ${entry.display_name}`}
                           >
                             <LogOut className="h-3.5 w-3.5" />
                           </button>
@@ -353,6 +391,7 @@ export function QueueControl({
               })}
             </tbody>
           </table>
+          </div>{/* /overflow-x-auto */}
         </div>
       )}
     </div>
