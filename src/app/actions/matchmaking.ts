@@ -316,17 +316,31 @@ async function runAlgorithm(
     return { success: false, message: `Failed to fetch queue: ${poolError.message}` };
   }
 
-  if (!rawPool || rawPool.length < PLAYERS_PER_MATCH) {
+  // ── 1b. Filter soft-paused players ────────────────────────
+  // v_queue_with_wait_time does not expose is_paused, so we do a
+  // supplemental query directly on queue_entries and filter in memory.
+  // Paused players are strictly invisible to the matchmaking engine.
+  const { data: pausedRows } = await supabase
+    .from("queue_entries")
+    .select("player_id")
+    .eq("session_id", sessionId)
+    .eq("status", "waiting")
+    .eq("is_paused", true);
+
+  const pausedSet = new Set((pausedRows ?? []).map((r) => r.player_id));
+  const activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+
+  if (activePool.length < PLAYERS_PER_MATCH) {
     return {
       success: false,
-      message: `Not enough players in queue. Need ${PLAYERS_PER_MATCH}, have ${rawPool?.length ?? 0}.`,
+      message: `Not enough active players in queue. Need ${PLAYERS_PER_MATCH}, have ${activePool.length}.`,
     };
   }
 
   // ── 2. Enrich pool with priorityScore, sort DESC ──────────
   // Re-sort by priority score so the most-urgent player anchors
   // the match, regardless of how many games they've played.
-  const pool: ScoredPlayer[] = rawPool
+  const pool: ScoredPlayer[] = activePool
     .map((p) => ({ ...p, priorityScore: computePriorityScore(p) }))
     .sort((a, b) => b.priorityScore - a.priorityScore);
 

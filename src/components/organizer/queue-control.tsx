@@ -10,7 +10,7 @@
 // ============================================================
 
 import { useState } from "react";
-import { LogOut, PauseCircle } from "lucide-react";
+import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
 import { updatePlayerSkill, getPlayerPin, resetPlayerPin } from "@/app/actions/profile";
@@ -37,12 +37,14 @@ interface QueueControlProps {
     teamB: string[]
   ) => Promise<{ error?: string }>;
   onRemoveFromQueue: (playerId: string) => Promise<{ error?: string }>;
+  onPausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
 }
 
 export function QueueControl({
   queue,
   onCreateManualMatch,
   onRemoveFromQueue,
+  onPausePlayer,
 }: QueueControlProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
@@ -121,6 +123,13 @@ export function QueueControl({
     setCreating(false);
   }
 
+  // Paused players always sink to the bottom; active order is preserved.
+  const sortedQueue = [...queue].sort((a, b) => {
+    if (a.is_paused && !b.is_paused) return 1;
+    if (!a.is_paused && b.is_paused) return -1;
+    return 0;
+  });
+
   return (
     <div className="space-y-5">
       {/* Manual Match Bar */}
@@ -198,26 +207,30 @@ export function QueueControl({
               </tr>
             </thead>
             <tbody>
-              {queue.map((entry, index) => {
+              {sortedQueue.map((entry, index) => {
                 const isSelected = selected.has(entry.player_id);
                 const isFull = selected.size >= REQUIRED_PLAYERS;
                 const waitMin = Math.floor(entry.wait_minutes);
+                const isPaused = entry.is_paused;
 
                 return (
                   <tr
                     key={entry.id}
-                    tabIndex={0}
+                    tabIndex={isPaused ? -1 : 0}
                     role="row"
                     aria-selected={isSelected}
-                    className={`border-b border-border last:border-b-0 transition-colors cursor-pointer
+                    aria-disabled={isPaused ? "true" : undefined}
+                    className={`border-b border-border last:border-b-0 transition-colors
                                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset
-                                ${isSelected
-                                  ? "bg-emerald-50 dark:bg-emerald-950/30"
-                                  : "hover:bg-muted/30"}
-                                ${entry.is_bottleneck ? "!bg-red-50 dark:!bg-red-950/25" : ""}`}
-                    onClick={() => togglePlayer(entry.player_id)}
+                                ${isPaused
+                                  ? "opacity-50 bg-slate-50 dark:bg-muted/20 cursor-default"
+                                  : isSelected
+                                  ? "bg-emerald-50 dark:bg-emerald-950/30 cursor-pointer"
+                                  : "hover:bg-muted/30 cursor-pointer"}
+                                ${!isPaused && entry.is_bottleneck ? "!bg-red-50 dark:!bg-red-950/25" : ""}`}
+                    onClick={() => !isPaused && togglePlayer(entry.player_id)}
                     onKeyDown={(e) => {
-                      if (e.key === " " || e.key === "Enter") {
+                      if (!isPaused && (e.key === " " || e.key === "Enter")) {
                         e.preventDefault();
                         togglePlayer(entry.player_id);
                       }
@@ -264,7 +277,18 @@ export function QueueControl({
                     {/* Position */}
                     <td className="px-4 py-3 text-muted-foreground">{index + 1}</td>
                     {/* Name */}
-                    <td className="px-4 py-3 font-medium">{entry.display_name}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <span className="flex items-center gap-2">
+                        {entry.display_name}
+                        {isPaused && (
+                          <span className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
+                                           text-[10px] font-bold uppercase tracking-wide
+                                           text-slate-500 dark:text-slate-400">
+                            Paused
+                          </span>
+                        )}
+                      </span>
+                    </td>
                     {/* Skill — editable dropdown */}
                     <td className="px-4 py-3">
                       <select
@@ -349,48 +373,29 @@ export function QueueControl({
                         )}
                       </div>
                     </td>
-                    {/* Step Out + Checkout actions */}
+                    {/* Pause + Checkout actions */}
                     <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-0.5">
 
-                        {/* ── Step Out (Pause) ─────────────────────────────────
-                            Removes the player from the queue so they can rest.
-                            Same DB operation as Checkout — sets status → "left".
-                            Player can rejoin with their name + PIN at any time. */}
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <button
-                              className="min-w-[44px] min-h-[44px] flex items-center justify-center
-                                         text-muted-foreground hover:text-amber-500 transition-colors
-                                         rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              title="Step out of queue (pause)"
-                              aria-label={`Remove ${entry.display_name} from queue (pause)`}
-                            >
-                              <PauseCircle className="h-3.5 w-3.5" />
-                            </button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Step {entry.display_name} out?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This removes them from the queue so they can take a break.
-                                They can rejoin at any time using their name and PIN —
-                                their position will start fresh when they return.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => onRemoveFromQueue(entry.player_id)}
-                                className="bg-amber-500 hover:bg-amber-600 focus:ring-amber-500 text-white"
-                              >
-                                Step Out
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
+                        {/* ── Pause / Resume toggle ────────────────────────────
+                            Soft-pause: player stays visible but is removed from
+                            matchmaking eligibility. joined_at + games_played are
+                            never touched — queue position is fully preserved.
+                            No confirmation dialog needed — it's instantly reversible. */}
+                        <button
+                          onClick={() => onPausePlayer(entry.player_id, !isPaused)}
+                          className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                     transition-colors rounded
+                                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
+                                     text-muted-foreground hover:text-amber-500"
+                          title={isPaused ? `Resume ${entry.display_name}` : `Pause ${entry.display_name}`}
+                          aria-label={isPaused ? `Resume ${entry.display_name}` : `Pause ${entry.display_name}`}
+                        >
+                          {isPaused
+                            ? <PlayCircle className="h-3.5 w-3.5 text-emerald-500" />
+                            : <PauseCircle className="h-3.5 w-3.5" />
+                          }
+                        </button>
 
                         {/* ── Checkout (permanent) ─────────────────────────────
                             Player has left the gym entirely. */}

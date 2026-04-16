@@ -99,6 +99,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     cancelMatch,
     clearOnDeckMatch,
     removeFromQueue,
+    pausePlayer,
   } = useOrganizerData(session.id);
 
   const isClosed = !session.is_active;
@@ -362,6 +363,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
             queue={queue}
             onCreateManualMatch={createManualMatch}
             onRemoveFromQueue={removeFromQueue}
+            onPausePlayer={pausePlayer}
           />
         )}
 

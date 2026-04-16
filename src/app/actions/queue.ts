@@ -47,6 +47,47 @@ export interface CheckoutResult {
   error?: string;
 }
 
+// ── Soft Pause ────────────────────────────────────────────────
+// Toggles `is_paused` on the player's queue_entries row.
+// The player remains visible in the organizer dashboard but is
+// strictly excluded from the matchmaking engine while paused.
+// IMPORTANT: `joined_at` and `games_played` are never touched —
+// pausing does NOT forfeit queue position or game stats.
+
+export interface TogglePlayerPauseResult {
+  success: boolean;
+  error?: string;
+}
+
+export async function togglePlayerPause(
+  sessionId: string,
+  playerId: string,
+  isPaused: boolean
+): Promise<TogglePlayerPauseResult> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: "Not authenticated." };
+  }
+
+  // Update is_paused ONLY — never touch joined_at or games_played.
+  const { error } = await supabase
+    .from("queue_entries")
+    .update({ is_paused: isPaused })
+    .eq("session_id", sessionId)
+    .eq("player_id", playerId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true };
+}
+
 export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult> {
   const supabase = await createClient();
 

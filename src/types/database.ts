@@ -102,6 +102,8 @@ export type QueueEntry = {
   games_played: number;
   status: QueueStatus;
   position: number | null;
+  /** Soft-pause: player stays visible but is excluded from matchmaking. */
+  is_paused: boolean;
   created_at: string;
 };
 
@@ -209,7 +211,7 @@ export type QueueEntryInsert = Pick<QueueEntry, "session_id" | "player_id"> &
   Partial<Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position">>;
 
 export type QueueEntryUpdate = Partial<
-  Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position" | "player_id">
+  Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position" | "player_id" | "is_paused">
 >;
 
 export type MatchInsert = Pick<Match, "session_id"> &

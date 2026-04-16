@@ -52,6 +52,7 @@ import {
   createManualMatchAction,
   clearOnDeckMatch as clearOnDeckMatchAction,
 } from "@/app/actions/match";
+import { togglePlayerPause } from "@/app/actions/queue";
 import type {
   Court,
   Match,
@@ -97,6 +98,7 @@ export interface UseOrganizerDataResult {
   clearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   // -- Queue actions --
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
+  pausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
 }
 
 export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
@@ -152,7 +154,16 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     if (error) {
       console.error("[useOrganizerData] fetchQueue error:", error);
     }
-    if (data) setQueue(data);
+    if (data) {
+      // Supplement: v_queue_with_wait_time doesn't expose is_paused until the view
+      // is recreated. Fetch it directly from queue_entries and merge in-memory.
+      const { data: pauseData } = await supabase
+        .from("queue_entries")
+        .select("player_id, is_paused")
+        .eq("session_id", sessionId);
+      const pauseMap = new Map((pauseData ?? []).map((r) => [r.player_id, r.is_paused]));
+      setQueue(data.map((row) => ({ ...row, is_paused: pauseMap.get(row.player_id) ?? false })));
+    }
   }, [supabase, sessionId]);
 
   const fetchActiveMatches = useCallback(async () => {
@@ -426,6 +437,18 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     [supabase, sessionId]
   );
 
+  // Soft pause: keeps player in queue but excludes them from matchmaking.
+  // joined_at and games_played are NEVER modified — position is preserved.
+  const pausePlayer = useCallback(
+    async (playerId: string, isPaused: boolean) => {
+      const result = await togglePlayerPause(sessionId, playerId, isPaused);
+      if (!result.success) return { error: result.error };
+      await fetchQueue();
+      return {};
+    },
+    [sessionId, fetchQueue]
+  );
+
   // Derived splits — avoids the dashboard needing to filter itself.
   const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
   const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
@@ -447,5 +470,6 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     cancelMatch,
     clearOnDeckMatch,
     removeFromQueue,
+    pausePlayer,
   };
 }

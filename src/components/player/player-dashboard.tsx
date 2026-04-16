@@ -119,6 +119,8 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     ? currentMatch?.match.status === "in_progress"
       ? "bg-emerald-500 animate-pulse"
       : "bg-amber-400 animate-pulse"
+    : myEntry?.is_paused
+    ? "bg-slate-400"          // Paused — neutral, no pulse
     : isInQueue
     ? "bg-emerald-500 animate-pulse"
     : "bg-slate-300";
@@ -583,6 +585,32 @@ function QueueSubTab({
   joinQueue,
   leaveQueue,
 }: QueueSubTabProps) {
+  // ── Paused by organizer ─────────────────────────────────────
+  // is_paused is set on the queue_entries row without changing
+  // joined_at or games_played — queue position is fully preserved.
+  if (isInQueue && myEntry?.is_paused) {
+    return (
+      <div className="space-y-5">
+        <div className="rounded-2xl border-2 border-slate-300 dark:border-slate-600
+                        bg-slate-50 dark:bg-slate-800/30 p-6 text-center">
+          <div className="flex justify-center mb-3 text-3xl" aria-hidden="true">⏸</div>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
+            Paused by Organizer
+          </p>
+          <p className="mt-1 text-lg font-bold text-slate-700 dark:text-slate-200">
+            You are taking a break
+          </p>
+          <p className="mt-2 text-sm text-slate-500 dark:text-muted-foreground">
+            You will not be called for matches while paused.
+            Your queue position is saved — the organizer will resume you
+            when you&apos;re ready to play.
+          </p>
+        </div>
+        <QueueToggle isInQueue onJoin={joinQueue} onLeave={leaveQueue} />
+      </div>
+    );
+  }
+
   // ── Waiting in queue ────────────────────────────────────────
   if (isInQueue && myEntry?.status === "waiting") {
     return (
