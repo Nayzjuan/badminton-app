@@ -311,7 +311,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
             {/* On-deck panel — always visible, collapses to empty state when no matches */}
             <OnDeckPanel
               matches={onDeckMatches}
-              onGenerate={generateOnDeckMatches}
+              onClearOnDeckMatch={clearOnDeckMatch}
             />
 
             <ActiveCourts
