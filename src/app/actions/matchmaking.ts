@@ -84,12 +84,15 @@ export async function callNextMatch(
 // ─────────────────────────────────────────────────────────────
 // PUBLIC: generateOnDeckMatchesAction (DEPRECATED — no-op)
 // ─────────────────────────────────────────────────────────────
-// Kept as an export so existing imports don't break during the
-// transition, but on-deck auto-generation is now disabled.
-// Organizers create on-deck matches manually.
+// PUBLIC: generateOnDeckMatchesAction
+// ─────────────────────────────────────────────────────────────
+// Manual trigger — organizer clicks "Generate" in OnDeckPanel.
+// Auto-triggering (after endMatch / callNextMatch) is disabled;
+// this only runs when the organizer explicitly requests it.
 
-export async function generateOnDeckMatchesAction(_sessionId: string): Promise<void> {
-  // No-op: auto on-deck generation is disabled.
+export async function generateOnDeckMatchesAction(sessionId: string): Promise<void> {
+  const supabase = await createClient();
+  await generateOnDeckMatchesInternal(supabase, sessionId);
 }
 
 // ─────────────────────────────────────────────────────────────

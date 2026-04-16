@@ -312,6 +312,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
             <OnDeckPanel
               matches={onDeckMatches}
               onClearOnDeckMatch={clearOnDeckMatch}
+              onGenerate={generateOnDeckMatches}
             />
 
             <ActiveCourts
