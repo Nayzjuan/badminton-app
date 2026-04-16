@@ -32,9 +32,30 @@ import {
   PLAYERS_PER_MATCH,
   FALLBACK_WAIT_MINUTES,
   ANTI_REPEAT_LOOKBACK,
+  CRITICAL_WAIT_MINUTES,
+  GAME_PENALTY_MINUTES,
 } from "@/lib/constants";
 import { skillLevelToInt } from "@/types/database";
 import type { QueueWithWaitTime } from "@/types/database";
+
+// ─────────────────────────────────────────────────────────────
+// Local enriched type — pool row with computed priority score.
+// ─────────────────────────────────────────────────────────────
+// priorityScore drives the entire selection order:
+//   RED ZONE  (wait ≥ 25 min): 1000 + waitMinutes  → always anchors
+//   NORMAL    (wait < 25 min): waitMinutes − (gamesPlayed × 12)
+//
+// Higher score = higher urgency.
+// ─────────────────────────────────────────────────────────────
+type ScoredPlayer = QueueWithWaitTime & { priorityScore: number };
+
+function computePriorityScore(player: QueueWithWaitTime): number {
+  const wait = player.wait_minutes ?? 0;
+  if (wait >= CRITICAL_WAIT_MINUTES) {
+    return 1000 + wait; // Red Zone — ignore game debt entirely
+  }
+  return wait - player.games_played * GAME_PENALTY_MINUTES;
+}
 
 export interface MatchmakingResult {
   success: boolean;
@@ -265,6 +286,16 @@ export async function promoteOnDeckMatchInternal(
 // Unified algorithm used by both on-deck generation and direct
 // court assignment. The `isOnDeck` flag controls whether the
 // created match is pending (no court) or in_progress.
+//
+// Priority system (replaces raw games_played sort):
+//   RED ZONE (wait ≥ 25 min): score = 1000 + wait → anchor first, no swap immunity
+//   NORMAL   (wait < 25 min): score = wait − (games × 12)
+// Pool is re-sorted by score DESC before anchor selection.
+//
+// Red Zone safeguards:
+//   1. Skill window expands to ±3 then ±4 if ±2 can't fill the group.
+//   2. The 3rd group member (swap target) is immune from diversity swap
+//      if their priorityScore ≥ 1000.
 
 async function runAlgorithm(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -273,7 +304,7 @@ async function runAlgorithm(
   isOnDeck: boolean
 ): Promise<MatchmakingResult> {
   // ── 1. Fetch the waiting pool ─────────────────────────────
-  const { data: pool, error: poolError } = await supabase
+  const { data: rawPool, error: poolError } = await supabase
     .from("v_queue_with_wait_time")
     .select("*")
     .eq("session_id", sessionId)
@@ -285,31 +316,36 @@ async function runAlgorithm(
     return { success: false, message: `Failed to fetch queue: ${poolError.message}` };
   }
 
-  if (!pool || pool.length < PLAYERS_PER_MATCH) {
+  if (!rawPool || rawPool.length < PLAYERS_PER_MATCH) {
     return {
       success: false,
-      message: `Not enough players in queue. Need ${PLAYERS_PER_MATCH}, have ${pool?.length ?? 0}.`,
+      message: `Not enough players in queue. Need ${PLAYERS_PER_MATCH}, have ${rawPool?.length ?? 0}.`,
     };
   }
 
-  // ── 2. Anchor = pool[0] ───────────────────────────────────
+  // ── 2. Enrich pool with priorityScore, sort DESC ──────────
+  // Re-sort by priority score so the most-urgent player anchors
+  // the match, regardless of how many games they've played.
+  const pool: ScoredPlayer[] = rawPool
+    .map((p) => ({ ...p, priorityScore: computePriorityScore(p) }))
+    .sort((a, b) => b.priorityScore - a.priorityScore);
+
+  // ── 3. Anchor = highest-priority player ──────────────────
   const anchor = pool[0];
   const anchorSkill = anchor.skill_level_int;
-  const anchorWaitMinutes =
-    (Date.now() - new Date(anchor.joined_at).getTime()) / 60_000;
+  const anchorWaitMinutes = anchor.wait_minutes ?? 0;
+  const anchorIsRedZone = anchor.priorityScore >= 1000;
 
   console.log(
     `[matchmaking] anchor=${anchor.display_name} skill=${anchorSkill} ` +
-    `wait=${anchorWaitMinutes.toFixed(1)}min pool=${pool.length}`
+    `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
+    `redZone=${anchorIsRedZone} pool=${pool.length}`
   );
 
-  // ── 3. Build overlap map ──────────────────────────────────
+  // ── 4. Build overlap map ──────────────────────────────────
   const overlapMap = await buildOverlapMap(supabase, sessionId, anchor.player_id);
 
-  // ── 3b. Fetch recent match rosters for group-level diversity ─
-  // Grab the last ANTI_REPEAT_LOOKBACK completed matches and
-  // reconstruct the full 4-player roster for each, so we can
-  // detect when ≥3 of a proposed group played together recently.
+  // ── 5. Fetch recent rosters for group-level diversity ─────
   const { data: recentMatchRows } = await supabase
     .from("matches")
     .select("id")
@@ -339,32 +375,24 @@ async function runAlgorithm(
     }
   }
 
-  // Candidates = everyone except the anchor.
+  // Candidates = everyone except the anchor (already priority-sorted).
   const candidates = pool.slice(1);
 
-  // ── 4. Time-based fallback ────────────────────────────────
-  if (anchorWaitMinutes > FALLBACK_WAIT_MINUTES) {
-    console.log(
-      `[matchmaking] FALLBACK triggered — anchor waited ${anchorWaitMinutes.toFixed(1)}min > ${FALLBACK_WAIT_MINUTES}min`
-    );
+  // ── 6. Last-resort time fallback (> 15 min, non-Red Zone path) ──
+  // Fires only when the anchor has waited > FALLBACK_WAIT_MINUTES
+  // and we haven't entered Red Zone yet (15–25 min window) AND
+  // the progressive skill expansion below also fails. Handled
+  // at the end after all expansion windows are exhausted.
 
-    // Grab the next 3 players regardless of skill.
-    const fallbackGroup = candidates.slice(0, 3);
-    if (fallbackGroup.length < 3) {
-      return {
-        success: false,
-        message: "Not enough players for fallback match.",
-      };
-    }
+  // ── 7. Build skill window list ────────────────────────────
+  // Red Zone anchor: try ±1, ±2, ±3, ±4 to guarantee a match.
+  // Normal anchor:   try ±1, ±2 only (existing behaviour).
+  const skillWindows = anchorIsRedZone
+    ? [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX, 3, 4]
+    : [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX];
 
-    const allFour = [anchor, ...fallbackGroup];
-    const { teamA, teamB } = snakeDraft(allFour);
-
-    return executeMatch(supabase, sessionId, courtId, teamA, teamB, true, isOnDeck);
-  }
-
-  // ── 5. Progressive expansion ──────────────────────────────
-  for (const maxVariance of [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX]) {
+  // ── 8. Progressive expansion ──────────────────────────────
+  for (const maxVariance of skillWindows) {
     const eligible = candidates.filter(
       (c) => Math.abs(c.skill_level_int - anchorSkill) <= maxVariance
     );
@@ -376,25 +404,23 @@ async function runAlgorithm(
       continue;
     }
 
-    // Score: overlap (primary) * 1_000_000 + poolIndex (tiebreaker).
-    // poolIndex encodes games_played + joined_at since pool is pre-sorted.
+    // Score candidates: higher priorityScore = pick first (sort ASC gives DESC after negation).
+    // Overlap penalty applied as a secondary concern — de-prioritises recent opponents
+    // but never overrides Red Zone urgency.
     const scored = eligible.map((c) => {
-      const poolIndex = pool.indexOf(c);
       const overlap = overlapMap.get(c.player_id) ?? 0;
       return {
         candidate: c,
-        score: overlap * 1_000_000 + poolIndex,
+        // Sort ASC → effectively: priorityScore DESC, overlap as tiebreaker
+        score: -c.priorityScore + overlap * 10_000,
       };
     });
-
     scored.sort((a, b) => a.score - b.score);
 
     // Greedy group building with cross-validation.
-    const group: QueueWithWaitTime[] = [];
+    const group: ScoredPlayer[] = [];
     for (const { candidate } of scored) {
       if (group.length >= 3) break;
-
-      // Check that adding this candidate keeps ALL pairwise diffs ≤ maxVariance.
       const testGroup = [anchor, ...group, candidate];
       if (isGroupValid(testGroup, maxVariance)) {
         group.push(candidate);
@@ -405,52 +431,74 @@ async function runAlgorithm(
       const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
 
       // ── Group-level diversity check ───────────────────────
-      // If ≥3 of the 4 played together in any recent match,
-      // try swapping the last (lowest-priority) group member
-      // with the next eligible scored candidate.
       if (isDiversityViolation(proposedIds, recentRosters)) {
         console.log(
-          `[matchmaking] Diversity violation detected for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
+          `[matchmaking] Diversity violation for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
         );
 
-        // Keep the top 2 companions; try replacing the 3rd.
-        const fixedTwo = group.slice(0, 2);
-        const alreadyInGroup = new Set(group.map((g) => g.player_id));
-        const swapPool = scored.filter(
-          ({ candidate }) => !alreadyInGroup.has(candidate.player_id)
-        );
+        // Red Zone immunity: if the 3rd companion (swap target) is also
+        // in the Red Zone, never bench them for diversity — waiting time
+        // takes absolute precedence.
+        const swapTarget = group[2];
+        if (swapTarget.priorityScore >= 1000) {
+          console.warn(
+            `[matchmaking] Swap target ${swapTarget.display_name} is Red Zone ` +
+            `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
+          );
+          // Fall through to executeMatch with the original group.
+        } else {
+          // Keep the top 2 companions; try replacing the 3rd.
+          const fixedTwo = group.slice(0, 2);
+          const alreadyInGroup = new Set(group.map((g) => g.player_id));
+          const swapPool = scored.filter(
+            ({ candidate }) => !alreadyInGroup.has(candidate.player_id)
+          );
 
-        let swapped = false;
-        for (const { candidate } of swapPool) {
-          const swapGroup = [...fixedTwo, candidate];
-          if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
+          let swapped = false;
+          for (const { candidate } of swapPool) {
+            const swapGroup = [...fixedTwo, candidate];
+            if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
 
-          const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
-          if (!isDiversityViolation(swappedIds, recentRosters)) {
-            console.log(`[matchmaking] Swap succeeded — replaced with ${candidate.display_name}`);
-            const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
-            return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
+            const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
+            if (!isDiversityViolation(swappedIds, recentRosters)) {
+              console.log(`[matchmaking] Swap succeeded — replaced with ${candidate.display_name}`);
+              const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
+              return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
+            }
           }
-        }
 
-        // Critical fallback: pool too small / all alternatives also repeat.
-        // Accept the repeat group — NEVER leave a court idle.
-        if (!swapped) {
-          console.warn("[matchmaking] No diverse swap found — accepting repeat group (critical fallback)");
+          if (!swapped) {
+            console.warn("[matchmaking] No diverse swap found — accepting repeat group (critical fallback)");
+          }
         }
       }
 
+      const isMixed = maxVariance > SKILL_VARIANCE_MAX;
       console.log(
-        `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]`
+        `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +
+        (isMixed ? " (mixed level)" : "")
       );
       const allFour = [anchor, ...group];
       const { teamA, teamB } = snakeDraft(allFour);
-      return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
+      return executeMatch(supabase, sessionId, courtId, teamA, teamB, isMixed, isOnDeck);
     }
 
     console.log(
       `[matchmaking] ±${maxVariance} window: only built group of ${group.length} — expanding`
     );
+  }
+
+  // ── 9. Last-resort fallback (15+ min anchor, any 3 players) ──
+  if (anchorWaitMinutes > FALLBACK_WAIT_MINUTES) {
+    console.log(
+      `[matchmaking] LAST-RESORT FALLBACK — anchor waited ${anchorWaitMinutes.toFixed(1)}min > ${FALLBACK_WAIT_MINUTES}min`
+    );
+    const fallbackGroup = candidates.slice(0, 3);
+    if (fallbackGroup.length >= 3) {
+      const allFour = [anchor, ...fallbackGroup];
+      const { teamA, teamB } = snakeDraft(allFour);
+      return executeMatch(supabase, sessionId, courtId, teamA, teamB, true, isOnDeck);
+    }
   }
 
   return {
@@ -526,7 +574,7 @@ function isDiversityViolation(
 // All pairwise skill diffs must be ≤ maxVariance.
 
 function isGroupValid(
-  players: QueueWithWaitTime[],
+  players: ScoredPlayer[],
   maxVariance: number
 ): boolean {
   for (let i = 0; i < players.length; i++) {
@@ -549,9 +597,9 @@ function isGroupValid(
 //   Team A = [highest (pos 0) + lowest (pos 3)]
 //   Team B = [2nd highest (pos 1) + 3rd highest (pos 2)]
 
-function snakeDraft(allFour: QueueWithWaitTime[]): {
-  teamA: QueueWithWaitTime[];
-  teamB: QueueWithWaitTime[];
+function snakeDraft(allFour: ScoredPlayer[]): {
+  teamA: ScoredPlayer[];
+  teamB: ScoredPlayer[];
 } {
   const sorted = [...allFour].sort(
     (a, b) => b.skill_level_int - a.skill_level_int
@@ -572,8 +620,8 @@ async function executeMatch(
   supabase: Awaited<ReturnType<typeof createClient>>,
   sessionId: string,
   courtId: string | null,
-  teamA: QueueWithWaitTime[],
-  teamB: QueueWithWaitTime[],
+  teamA: ScoredPlayer[],
+  teamB: ScoredPlayer[],
   isMixedLevel: boolean,
   isOnDeck: boolean
 ): Promise<MatchmakingResult> {

@@ -17,5 +17,20 @@ export const PLAYERS_PER_MATCH = 4;
 /** Number of recent matches to check for anti-repeat logic. */
 export const ANTI_REPEAT_LOOKBACK = 5;
 
-/** Minutes before the time-based fallback kicks in (bypasses skill windows). */
+/** Minutes before the time-based fallback kicks in (bypasses skill windows entirely). */
 export const FALLBACK_WAIT_MINUTES = 15;
+
+/**
+ * Red Zone threshold — wait time in minutes at which a player's priority
+ * overrides their game debt entirely. Score = 1000 + waitMinutes so they
+ * always anchor the next match regardless of how many games they've played.
+ */
+export const CRITICAL_WAIT_MINUTES = 25;
+
+/**
+ * Game penalty applied in normal-queue priority scoring.
+ * Each game played subtracts this many "virtual minutes" from the player's
+ * effective wait time, so frequent players yield the queue to fresher ones.
+ * priorityScore = waitMinutes - (gamesPlayed * GAME_PENALTY_MINUTES)
+ */
+export const GAME_PENALTY_MINUTES = 12;
