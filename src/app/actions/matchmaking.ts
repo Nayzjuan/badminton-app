@@ -67,28 +67,52 @@ export async function callNextMatch(
 ): Promise<MatchmakingResult> {
   const supabase = await createClient();
 
-  // Try to promote a manually-created on-deck match first.
-  // Auto-generation of on-deck matches is disabled — organizers
-  // control the on-deck queue manually via "Create Match" in the
-  // Queue & Match Control tab.
+  // 1. Always try to promote the oldest on-deck match first.
   const promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
   if (promoted.success) {
     return promoted;
   }
 
-  // No on-deck match available — run the algorithm and place
-  // players directly onto the court (in_progress).
+  // 2. No on-deck match — check the auto-matchmaking toggle.
+  const { data: session } = await supabase
+    .from("sessions")
+    .select("is_auto_matchmaking_on")
+    .eq("id", sessionId)
+    .single();
+
+  if (!session?.is_auto_matchmaking_on) {
+    return {
+      success: false,
+      message: "No on-deck matches available. Auto-matchmaking is paused.",
+    };
+  }
+
+  // 3. Toggle is ON — run the algorithm and place players directly
+  //    onto the court (in_progress).
   return runAlgorithm(supabase, sessionId, courtId, false);
 }
 
 // ─────────────────────────────────────────────────────────────
-// PUBLIC: generateOnDeckMatchesAction (DEPRECATED — no-op)
+// PUBLIC: autoFillCourt
+// ─────────────────────────────────────────────────────────────
+// Thin wrapper around runAlgorithm for use by endMatchAction.
+// Runs the matchmaking algorithm and places players directly
+// onto a specific court as in_progress. Returns the result.
+// Does NOT check the toggle — caller is responsible for that.
+
+export async function autoFillCourt(
+  sessionId: string,
+  courtId: string
+): Promise<MatchmakingResult> {
+  const supabase = await createClient();
+  return runAlgorithm(supabase, sessionId, courtId, false);
+}
+
 // ─────────────────────────────────────────────────────────────
 // PUBLIC: generateOnDeckMatchesAction
 // ─────────────────────────────────────────────────────────────
-// Manual trigger — organizer clicks "Generate" in OnDeckPanel.
-// Auto-triggering (after endMatch / callNextMatch) is disabled;
-// this only runs when the organizer explicitly requests it.
+// Manual trigger — organizer clicks "Auto-Generate" in OnDeckPanel.
+// Only runs when the organizer explicitly requests it.
 
 export async function generateOnDeckMatchesAction(sessionId: string): Promise<void> {
   const supabase = await createClient();

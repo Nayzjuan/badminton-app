@@ -15,7 +15,7 @@ import { MatchHistoryPanel } from "./match-history-panel";
 import { DevTools } from "./dev-tools";
 import { ShareSessionDialog } from "./share-session-dialog";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { closeSession } from "@/app/actions/sessions";
+import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +43,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   const [activeTab, setActiveTab] = useState<Tab>(session.is_active ? "courts" : "history");
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [autoMatchmaking, setAutoMatchmaking] = useState(session.is_auto_matchmaking_on);
+  const [togglingAuto, setTogglingAuto] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
 
   async function handleCloseSession() {
@@ -54,6 +56,19 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
       setClosing(false);
       alert(result.message);
     }
+  }
+
+  async function handleToggleAuto() {
+    setTogglingAuto(true);
+    const prev = autoMatchmaking;
+    setAutoMatchmaking(!prev); // optimistic
+    const result = await toggleAutoMatchmaking(session.id);
+    if (!result.success) {
+      setAutoMatchmaking(prev); // revert on failure
+    } else {
+      setAutoMatchmaking(result.isOn);
+    }
+    setTogglingAuto(false);
   }
 
   // Close switcher on outside click.
@@ -220,6 +235,22 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 <span className="text-white/25 hidden sm:inline">|</span>
                 <span className="hidden sm:inline">{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
                 <span className="text-white/25 hidden sm:inline">|</span>
+                <button
+                  onClick={handleToggleAuto}
+                  disabled={togglingAuto}
+                  className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-3 py-1
+                              text-xs font-semibold transition-colors border
+                              ${autoMatchmaking
+                                ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30"
+                                : "bg-white/10 border-white/20 text-white/50 hover:bg-white/15"
+                              }
+                              disabled:opacity-50 disabled:cursor-not-allowed`}
+                  title={autoMatchmaking ? "Auto-matchmaking is ON — click to pause" : "Auto-matchmaking is PAUSED — click to enable"}
+                >
+                  <span className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`} />
+                  {autoMatchmaking ? "Auto On" : "Auto Off"}
+                </button>
+                <span className="text-white/25 hidden sm:inline">|</span>
                 <ThemeToggle className="text-white/60 hover:text-white hover:bg-white/10
                                         dark:text-primary dark:hover:bg-primary/10" />
                 <DevTools sessionId={session.id} />
@@ -313,6 +344,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               matches={onDeckMatches}
               onClearOnDeckMatch={clearOnDeckMatch}
               onGenerate={generateOnDeckMatches}
+              isAutoOn={autoMatchmaking}
             />
 
             <ActiveCourts
@@ -332,7 +364,6 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
         {activeTab === "queue" && (
           <QueueControl
             queue={queue}
-            courts={courts}
             onCreateManualMatch={createManualMatch}
             onRemoveFromQueue={removeFromQueue}
           />

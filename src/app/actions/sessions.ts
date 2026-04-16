@@ -202,6 +202,58 @@ export async function joinAsCoOrganizer(
   return { success: true, message: "Joined as co-organizer.", sessionId: session.id };
 }
 
+// ── toggleAutoMatchmaking ─────────────────────────────────────
+
+export interface ToggleAutoMatchmakingResult {
+  success: boolean;
+  isOn: boolean;
+  message: string;
+}
+
+/**
+ * Flips the `is_auto_matchmaking_on` boolean for a session.
+ * When ON:  endMatchAction auto-fills freed courts via the algorithm.
+ * When OFF: courts just go "available" — organizer uses manual matches.
+ */
+export async function toggleAutoMatchmaking(
+  sessionId: string
+): Promise<ToggleAutoMatchmakingResult> {
+  // Auth gate
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, isOn: false, message: "Not authenticated." };
+
+  const service = createServiceClient();
+
+  // Read current value
+  const { data: session, error: fetchErr } = await service
+    .from("sessions")
+    .select("is_auto_matchmaking_on")
+    .eq("id", sessionId)
+    .single();
+
+  if (fetchErr || !session) {
+    return { success: false, isOn: false, message: "Session not found." };
+  }
+
+  const newValue = !session.is_auto_matchmaking_on;
+
+  const { error: updateErr } = await service
+    .from("sessions")
+    .update({ is_auto_matchmaking_on: newValue })
+    .eq("id", sessionId);
+
+  if (updateErr) {
+    return { success: false, isOn: session.is_auto_matchmaking_on, message: updateErr.message };
+  }
+
+  return {
+    success: true,
+    isOn: newValue,
+    message: newValue ? "Auto-matchmaking enabled." : "Auto-matchmaking paused.",
+  };
+}
+
 export interface CloseSessionResult {
   success: boolean;
   message: string;

@@ -71,6 +71,7 @@ export type Session = {
   organizer_passcode: string | null;
   scoring: ScoringFormat;
   is_active: boolean;
+  is_auto_matchmaking_on: boolean; // organizer toggle — auto-fill courts on match completion
   created_at: string;
   ended_at: string | null;
 };
@@ -196,7 +197,7 @@ export type SessionInsert = Pick<Session, "name" | "created_by"> &
   Partial<Pick<Session, "organizer_passcode" | "scoring">>;
 
 export type SessionUpdate = Partial<
-  Pick<Session, "name" | "organizer_passcode" | "scoring" | "is_active" | "ended_at">
+  Pick<Session, "name" | "organizer_passcode" | "scoring" | "is_active" | "is_auto_matchmaking_on" | "ended_at">
 >;
 
 export type CourtInsert = Pick<Court, "session_id" | "name"> &

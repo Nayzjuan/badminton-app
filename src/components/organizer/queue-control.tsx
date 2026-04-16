@@ -9,7 +9,7 @@
 // Skill levels are editable inline via dropdown.
 // ============================================================
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { LogOut } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
@@ -25,16 +25,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import type { Court, QueueWithWaitTime, SkillLevel } from "@/types/database";
+import type { QueueWithWaitTime, SkillLevel } from "@/types/database";
 
 // Re-export constant for clarity in this file.
 const REQUIRED_PLAYERS = PLAYERS_PER_MATCH; // 4
 
 interface QueueControlProps {
   queue: QueueWithWaitTime[];
-  courts: Court[];
   onCreateManualMatch: (
-    courtId: string,
     teamA: string[],
     teamB: string[]
   ) => Promise<{ error?: string }>;
@@ -43,19 +41,12 @@ interface QueueControlProps {
 
 export function QueueControl({
   queue,
-  courts,
   onCreateManualMatch,
   onRemoveFromQueue,
 }: QueueControlProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [selectedCourt, setSelectedCourt] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const availableCourts = useMemo(
-    () => courts.filter((c) => c.status === "available"),
-    [courts]
-  );
 
   function togglePlayer(playerId: string) {
     setSelected((prev) => {
@@ -112,10 +103,6 @@ export function QueueControl({
 
   async function handleCreateMatch() {
     if (selected.size !== REQUIRED_PLAYERS) return;
-    if (!selectedCourt) {
-      setError("Please select a court.");
-      return;
-    }
 
     setCreating(true);
     setError(null);
@@ -125,12 +112,11 @@ export function QueueControl({
     const teamA = playerIds.slice(0, 2);
     const teamB = playerIds.slice(2, 4);
 
-    const result = await onCreateManualMatch(selectedCourt, teamA, teamB);
+    const result = await onCreateManualMatch(teamA, teamB);
     if (result.error) {
       setError(result.error);
     } else {
       setSelected(new Set());
-      setSelectedCourt("");
     }
     setCreating(false);
   }
@@ -162,31 +148,15 @@ export function QueueControl({
           </div>
 
           {selected.size === REQUIRED_PLAYERS && (
-            <>
-              <select
-                value={selectedCourt}
-                onChange={(e) => setSelectedCourt(e.target.value)}
-                className="rounded-lg border border-input bg-background px-3 py-2 text-sm
-                           focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="">Select court...</option>
-                {availableCourts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                onClick={handleCreateMatch}
-                disabled={creating || !selectedCourt}
-                className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white
-                           hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed
-                           whitespace-nowrap transition-colors"
-              >
-                {creating ? "Creating..." : "Create Manual Match"}
-              </button>
-            </>
+            <button
+              onClick={handleCreateMatch}
+              disabled={creating}
+              className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white
+                         hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed
+                         whitespace-nowrap transition-colors"
+            >
+              {creating ? "Adding..." : "Add to On Deck"}
+            </button>
           )}
 
           {selected.size > 0 && (

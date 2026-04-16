@@ -18,9 +18,10 @@ interface OnDeckPanelProps {
   matches: EnrichedMatch[];
   onClearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   onGenerate: () => Promise<void>;
+  isAutoOn: boolean;
 }
 
-export function OnDeckPanel({ matches, onClearOnDeckMatch, onGenerate }: OnDeckPanelProps) {
+export function OnDeckPanel({ matches, onClearOnDeckMatch, onGenerate, isAutoOn }: OnDeckPanelProps) {
   const [generating, setGenerating] = useState(false);
 
   async function handleGenerate() {
@@ -61,18 +62,24 @@ export function OnDeckPanel({ matches, onClearOnDeckMatch, onGenerate }: OnDeckP
               — auto-generate or create manually in Queue &amp; Match Control
             </span>
           </div>
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200
-                       dark:border-border px-3 py-1.5 text-xs font-medium
-                       text-slate-600 dark:text-muted-foreground
-                       hover:bg-slate-100 dark:hover:bg-muted
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <Shuffle className="h-3 w-3" />
-            {generating ? "Generating…" : "Auto-Generate"}
-          </button>
+          {isAutoOn ? (
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200
+                         dark:border-border px-3 py-1.5 text-xs font-medium
+                         text-slate-600 dark:text-muted-foreground
+                         hover:bg-slate-100 dark:hover:bg-muted
+                         disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <Shuffle className="h-3 w-3" />
+              {generating ? "Generating…" : "Auto-Generate"}
+            </button>
+          ) : (
+            <span className="text-xs text-slate-400 dark:text-muted-foreground/70">
+              Auto-matchmaking paused
+            </span>
+          )}
         </div>
       </div>
     );
@@ -97,18 +104,24 @@ export function OnDeckPanel({ matches, onClearOnDeckMatch, onGenerate }: OnDeckP
             {matches.length} match{matches.length !== 1 ? "es" : ""} ready
           </span>
         </div>
-        <button
-          onClick={handleGenerate}
-          disabled={generating}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200
-                     dark:border-border px-3 py-1.5 text-xs font-medium
-                     text-slate-600 dark:text-muted-foreground
-                     hover:bg-slate-100 dark:hover:bg-muted
-                     disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          <Shuffle className="h-3 w-3" />
-          {generating ? "Generating…" : "Auto-Generate"}
-        </button>
+        {isAutoOn ? (
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200
+                       dark:border-border px-3 py-1.5 text-xs font-medium
+                       text-slate-600 dark:text-muted-foreground
+                       hover:bg-slate-100 dark:hover:bg-muted
+                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Shuffle className="h-3 w-3" />
+            {generating ? "Generating…" : "Auto-Generate"}
+          </button>
+        ) : (
+          <span className="text-xs text-slate-400 dark:text-muted-foreground/70">
+            Auto-matchmaking paused
+          </span>
+        )}
       </div>
 
       {/* Match cards */}

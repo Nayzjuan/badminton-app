@@ -28,7 +28,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { promoteOnDeckMatchInternal } from "@/app/actions/matchmaking";
+import { promoteOnDeckMatchInternal, autoFillCourt } from "@/app/actions/matchmaking";
 
 export interface MatchActionResult {
   success: boolean;
@@ -209,19 +209,34 @@ export async function endMatchAction(
     );
   }
 
-  // 5. AUTO-FILL: if there is an on-deck match ready, promote it to this court immediately.
-  //    This is the core of the automated system — courts never idle after a scored match.
+  // 5. AUTO-FILL: attempt to fill the freed court.
+  //    Priority: promote on-deck → auto-generate (if toggle ON) → free court.
   if (match.court_id) {
     const promoted = await promoteOnDeckMatchInternal(supabase, match.session_id, match.court_id);
 
     if (!promoted.success) {
-      // No on-deck match to promote — just free the court for manual use.
-      await supabase
-        .from("courts")
-        .update({ status: "available" as const })
-        .eq("id", match.court_id);
+      // No on-deck match to promote — check auto-matchmaking toggle.
+      const { data: sessionRow } = await supabase
+        .from("sessions")
+        .select("is_auto_matchmaking_on")
+        .eq("id", match.session_id)
+        .single();
+
+      let autoFilled = false;
+      if (sessionRow?.is_auto_matchmaking_on) {
+        const autoResult = await autoFillCourt(match.session_id, match.court_id);
+        autoFilled = autoResult.success;
+      }
+
+      if (!autoFilled) {
+        // No auto-fill — free the court for manual use.
+        await supabase
+          .from("courts")
+          .update({ status: "available" as const })
+          .eq("id", match.court_id);
+      }
     }
-    // If promotion succeeded, the court was already marked in_use by promoteOnDeckMatchInternal.
+    // If promotion or auto-fill succeeded, the court is already in_use.
   }
 
   return { success: true, message: "Match completed. Players returned to queue." };
@@ -449,7 +464,6 @@ export interface CreateManualMatchResult {
 
 export async function createManualMatchAction(
   sessionId: string,
-  courtId: string,
   teamAPlayerIds: string[],
   teamBPlayerIds: string[]
 ): Promise<CreateManualMatchResult> {
@@ -463,18 +477,6 @@ export async function createManualMatchAction(
   const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
-  }
-
-  // Validate the court belongs to this session.
-  const { data: court } = await supabase
-    .from("courts")
-    .select("id, status")
-    .eq("id", courtId)
-    .eq("session_id", sessionId)
-    .single();
-
-  if (!court) {
-    return { success: false, message: "Court not found in this session." };
   }
 
   // Validate all players are in this session's queue.
@@ -491,14 +493,14 @@ export async function createManualMatchAction(
     return { success: false, message: "One or more selected players are not in this session." };
   }
 
-  // 1. Create the match row.
+  // 1. Create the match row — goes On Deck (pending, no court).
   const { data: match, error: matchError } = await supabase
     .from("matches")
     .insert({
       session_id: sessionId,
-      court_id: courtId,
-      status: "in_progress" as const,
-      started_at: new Date().toISOString(),
+      court_id: null,
+      status: "pending" as const,
+      started_at: null,
     })
     .select()
     .single();
@@ -520,20 +522,15 @@ export async function createManualMatchAction(
     return { success: false, message: playersError.message };
   }
 
-  // 3. Mark the court in_use.
-  await supabase
-    .from("courts")
-    .update({ status: "in_use" as const })
-    .eq("id", courtId);
-
-  // 4. Mark all players as "playing" in the queue.
+  // 3. Mark all players as "on_deck" — removes them from the
+  //    waiting pool so they can't be double-booked by the auto-algo.
   await supabase
     .from("queue_entries")
-    .update({ status: "playing" as const })
+    .update({ status: "on_deck" as const })
     .eq("session_id", sessionId)
     .in("player_id", allPlayerIds);
 
-  return { success: true, message: "Match created.", matchId: match.id };
+  return { success: true, message: "Match added to On Deck.", matchId: match.id };
 }
 
 // ============================================================

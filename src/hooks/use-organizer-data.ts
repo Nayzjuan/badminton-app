@@ -87,7 +87,6 @@ export interface UseOrganizerDataResult {
   generateOnDeckMatches: () => Promise<void>;
   // -- Match actions --
   createManualMatch: (
-    courtId: string,
     teamA: string[],
     teamB: string[]
   ) => Promise<{ error?: string }>;
@@ -371,13 +370,14 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
   // browser from leaving courts stuck in a stale state and adds proper
   // auth + session-ownership checks on the server.
   const createManualMatch = useCallback(
-    async (courtId: string, teamA: string[], teamB: string[]) => {
-      const result = await createManualMatchAction(sessionId, courtId, teamA, teamB);
+    async (teamA: string[], teamB: string[]) => {
+      const result = await createManualMatchAction(sessionId, teamA, teamB);
       if (!result.success) return { error: result.message };
-      await Promise.all([fetchCourts(), fetchActiveMatches()]);
+      // Refresh queue (players moved to on_deck) and active matches (new pending match).
+      await Promise.all([fetchQueue(), fetchActiveMatches()]);
       return {};
     },
-    [sessionId, fetchCourts, fetchActiveMatches]
+    [sessionId, fetchQueue, fetchActiveMatches]
   );
 
   const endMatch = useCallback(
