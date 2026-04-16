@@ -10,7 +10,7 @@
 // ============================================================
 
 import { useState } from "react";
-import { LogOut } from "lucide-react";
+import { LogOut, PauseCircle } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
 import { updatePlayerSkill, getPlayerPin, resetPlayerPin } from "@/app/actions/profile";
@@ -349,42 +349,87 @@ export function QueueControl({
                         )}
                       </div>
                     </td>
-                    {/* Checkout */}
-                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <button
-                            className="min-w-[44px] min-h-[44px] flex items-center justify-center
-                                       text-muted-foreground hover:text-red-600 transition-colors
-                                       rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            title="Checkout — player has left the gym"
-                            aria-label={`Checkout ${entry.display_name}`}
-                          >
-                            <LogOut className="h-3.5 w-3.5" />
-                          </button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Checkout {entry.display_name}?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This will remove them from the queue. If they are currently
-                              in a match, the match will not be affected. They can rejoin
-                              later using their name and PIN.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              onClick={() => onRemoveFromQueue(entry.player_id)}
-                              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                    {/* Step Out + Checkout actions */}
+                    <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-0.5">
+
+                        {/* ── Step Out (Pause) ─────────────────────────────────
+                            Removes the player from the queue so they can rest.
+                            Same DB operation as Checkout — sets status → "left".
+                            Player can rejoin with their name + PIN at any time. */}
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <button
+                              className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                         text-muted-foreground hover:text-amber-500 transition-colors
+                                         rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              title="Step out of queue (pause)"
+                              aria-label={`Remove ${entry.display_name} from queue (pause)`}
                             >
-                              Checkout
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                              <PauseCircle className="h-3.5 w-3.5" />
+                            </button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Step {entry.display_name} out?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This removes them from the queue so they can take a break.
+                                They can rejoin at any time using their name and PIN —
+                                their position will start fresh when they return.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => onRemoveFromQueue(entry.player_id)}
+                                className="bg-amber-500 hover:bg-amber-600 focus:ring-amber-500 text-white"
+                              >
+                                Step Out
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+
+                        {/* ── Checkout (permanent) ─────────────────────────────
+                            Player has left the gym entirely. */}
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <button
+                              className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                         text-muted-foreground hover:text-red-600 transition-colors
+                                         rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              title="Checkout — player has left the gym"
+                              aria-label={`Checkout ${entry.display_name}`}
+                            >
+                              <LogOut className="h-3.5 w-3.5" />
+                            </button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Checkout {entry.display_name}?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will remove them from the queue. If they are currently
+                                in a match, the match will not be affected. They can rejoin
+                                later using their name and PIN.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => onRemoveFromQueue(entry.player_id)}
+                                className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                              >
+                                Checkout
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+
+                      </div>
                     </td>
                   </tr>
                 );
