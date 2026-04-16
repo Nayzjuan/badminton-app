@@ -15,7 +15,7 @@ export const SKILL_VARIANCE_MAX = 2;
 export const PLAYERS_PER_MATCH = 4;
 
 /** Number of recent matches to check for anti-repeat logic. */
-export const ANTI_REPEAT_LOOKBACK = 3;
+export const ANTI_REPEAT_LOOKBACK = 5;
 
 /** Minutes before the time-based fallback kicks in (bypasses skill windows). */
 export const FALLBACK_WAIT_MINUTES = 15;

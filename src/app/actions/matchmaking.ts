@@ -41,6 +41,7 @@ import {
   SKILL_VARIANCE_MAX,
   PLAYERS_PER_MATCH,
   FALLBACK_WAIT_MINUTES,
+  ANTI_REPEAT_LOOKBACK,
 } from "@/lib/constants";
 import { skillLevelToInt } from "@/types/database";
 import type { QueueWithWaitTime } from "@/types/database";
@@ -278,6 +279,39 @@ async function runAlgorithm(
   // ── 3. Build overlap map ──────────────────────────────────
   const overlapMap = await buildOverlapMap(supabase, sessionId, anchor.player_id);
 
+  // ── 3b. Fetch recent match rosters for group-level diversity ─
+  // Grab the last ANTI_REPEAT_LOOKBACK completed matches and
+  // reconstruct the full 4-player roster for each, so we can
+  // detect when ≥3 of a proposed group played together recently.
+  const { data: recentMatchRows } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("status", "completed")
+    .order("completed_at", { ascending: false })
+    .limit(ANTI_REPEAT_LOOKBACK);
+
+  let recentRosters: string[][] = [];
+  const recentMatchIds = (recentMatchRows ?? []).map((m) => m.id);
+  if (recentMatchIds.length > 0) {
+    const { data: recentPlayers } = await supabase
+      .from("match_players")
+      .select("match_id, player_id")
+      .in("match_id", recentMatchIds);
+
+    if (recentPlayers) {
+      const rosterMap = new Map<string, string[]>();
+      for (const row of recentPlayers) {
+        const list = rosterMap.get(row.match_id) ?? [];
+        list.push(row.player_id);
+        rosterMap.set(row.match_id, list);
+      }
+      recentRosters = recentMatchIds
+        .map((id) => rosterMap.get(id) ?? [])
+        .filter((r) => r.length > 0);
+    }
+  }
+
   // Candidates = everyone except the anchor.
   const candidates = pool.slice(1);
 
@@ -341,6 +375,44 @@ async function runAlgorithm(
     }
 
     if (group.length === 3) {
+      const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
+
+      // ── Group-level diversity check ───────────────────────
+      // If ≥3 of the 4 played together in any recent match,
+      // try swapping the last (lowest-priority) group member
+      // with the next eligible scored candidate.
+      if (isDiversityViolation(proposedIds, recentRosters)) {
+        console.log(
+          `[matchmaking] Diversity violation detected for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
+        );
+
+        // Keep the top 2 companions; try replacing the 3rd.
+        const fixedTwo = group.slice(0, 2);
+        const alreadyInGroup = new Set(group.map((g) => g.player_id));
+        const swapPool = scored.filter(
+          ({ candidate }) => !alreadyInGroup.has(candidate.player_id)
+        );
+
+        let swapped = false;
+        for (const { candidate } of swapPool) {
+          const swapGroup = [...fixedTwo, candidate];
+          if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
+
+          const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
+          if (!isDiversityViolation(swappedIds, recentRosters)) {
+            console.log(`[matchmaking] Swap succeeded — replaced with ${candidate.display_name}`);
+            const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
+            return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
+          }
+        }
+
+        // Critical fallback: pool too small / all alternatives also repeat.
+        // Accept the repeat group — NEVER leave a court idle.
+        if (!swapped) {
+          console.warn("[matchmaking] No diverse swap found — accepting repeat group (critical fallback)");
+        }
+      }
+
       console.log(
         `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]`
       );
@@ -393,6 +465,32 @@ async function buildOverlapMap(
   }
 
   return overlapMap;
+}
+
+// ─────────────────────────────────────────────────────────────
+// HELPER: overlapWithRoster
+// ─────────────────────────────────────────────────────────────
+// Counts how many of the given playerIds appear in a roster.
+
+function overlapWithRoster(playerIds: string[], roster: string[]): number {
+  const rosterSet = new Set(roster);
+  return playerIds.filter((id) => rosterSet.has(id)).length;
+}
+
+// ─────────────────────────────────────────────────────────────
+// HELPER: isDiversityViolation
+// ─────────────────────────────────────────────────────────────
+// Returns true if ≥3 of the proposed 4 player IDs appeared
+// together in any single recent match roster.
+
+function isDiversityViolation(
+  playerIds: string[],
+  recentRosters: string[][]
+): boolean {
+  for (const roster of recentRosters) {
+    if (overlapWithRoster(playerIds, roster) >= 3) return true;
+  }
+  return false;
 }
 
 // ─────────────────────────────────────────────────────────────
