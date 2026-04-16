@@ -15,7 +15,7 @@
 // ============================================================
 
 import { useState } from "react";
-import { Plus, Trophy, XCircle, Swords } from "lucide-react";
+import { Plus, Trophy, XCircle, Swords, Trash2 } from "lucide-react";
 import { ScoreModal } from "./score-modal";
 import { BadmintonCourt } from "@/components/ui/badminton-court";
 import { MatchTimer } from "@/components/ui/match-timer";
@@ -41,6 +41,7 @@ interface ActiveCourtsProps {
     teamBScore: number
   ) => Promise<{ error?: string }>;
   onCancelMatch: (matchId: string) => Promise<{ error?: string }>;
+  onClearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
 }
 
 interface Toast {
@@ -57,12 +58,14 @@ interface CourtCardProps {
   isMatchmaking: boolean;
   isConfirmingCancel: boolean;
   isCancelling: boolean;
+  isClearing: boolean;
   error: string | undefined;
   onCallNextMatch: () => void;
   onInputScore: () => void;
   onCancelRequest: () => void;
   onCancelConfirm: () => void;
   onCancelDismiss: () => void;
+  onClearOnDeckMatch: () => void;
   onUpdateStatus: (s: Court["status"]) => void;
   onRemove: () => void;
 }
@@ -73,12 +76,14 @@ function CourtCard({
   isMatchmaking,
   isConfirmingCancel,
   isCancelling,
+  isClearing,
   error,
   onCallNextMatch,
   onInputScore,
   onCancelRequest,
   onCancelConfirm,
   onCancelDismiss,
+  onClearOnDeckMatch,
   onUpdateStatus,
   onRemove,
 }: CourtCardProps) {
@@ -204,60 +209,83 @@ function CourtCard({
           </p>
         )}
 
-        {/* IN PROGRESS actions */}
+        {/* Match actions — split by status */}
         {hasActiveMatch && match && (
           <>
-            {isConfirmingCancel ? (
-              /* Two-step cancel confirmation */
-              <div className="space-y-2 rounded-xl border border-red-200 bg-red-50 p-3">
-                <p className="text-center text-xs font-semibold text-red-800">
-                  Cancel this match? Players return to queue.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={onCancelConfirm}
-                    disabled={isCancelling}
-                    className="flex-1 rounded-lg bg-red-600 py-2 text-xs font-semibold
-                               text-white hover:bg-red-700 disabled:opacity-50
-                               disabled:cursor-not-allowed transition-colors"
-                  >
-                    {isCancelling ? "Cancelling…" : "Yes, Cancel"}
-                  </button>
-                  <button
-                    onClick={onCancelDismiss}
-                    disabled={isCancelling}
-                    className="flex-1 rounded-lg border border-gray-200 bg-white py-2 text-xs
-                               font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50
-                               disabled:cursor-not-allowed transition-colors"
-                  >
-                    Keep Playing
-                  </button>
-                </div>
-              </div>
-            ) : (
-              /* Normal in-progress actions */
-              <div className="flex items-center justify-end gap-2">
+            {/* ON DECK (pending) — red "Clear" button only */}
+            {match.status === "pending" && (
+              <div className="flex items-center justify-end">
                 <button
-                  onClick={onCancelRequest}
-                  disabled={isCancelling}
-                  className="flex items-center gap-1.5 rounded-lg px-3 py-2
-                             text-xs font-medium text-slate-500 hover:bg-slate-100
+                  onClick={onClearOnDeckMatch}
+                  disabled={isClearing}
+                  className="flex items-center gap-1.5 rounded-lg border border-red-200
+                             bg-red-50 px-3 py-2 text-xs font-semibold text-red-700
+                             hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
+                             dark:text-red-400 dark:hover:bg-red-950/60
                              disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  <XCircle className="h-3.5 w-3.5" />
-                  Cancel
-                </button>
-                <button
-                  onClick={onInputScore}
-                  disabled={isCancelling}
-                  className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
-                             text-xs font-semibold text-white hover:bg-slate-800
-                             disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-                >
-                  <Trophy className="h-3.5 w-3.5" />
-                  Input Score &amp; End
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {isClearing ? "Clearing…" : "Clear"}
                 </button>
               </div>
+            )}
+
+            {/* IN PROGRESS — cancel + score actions */}
+            {match.status === "in_progress" && (
+              <>
+                {isConfirmingCancel ? (
+                  /* Two-step cancel confirmation */
+                  <div className="space-y-2 rounded-xl border border-red-200 bg-red-50 p-3">
+                    <p className="text-center text-xs font-semibold text-red-800">
+                      Cancel this match? Players return to queue.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={onCancelConfirm}
+                        disabled={isCancelling}
+                        className="flex-1 rounded-lg bg-red-600 py-2 text-xs font-semibold
+                                   text-white hover:bg-red-700 disabled:opacity-50
+                                   disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isCancelling ? "Cancelling…" : "Yes, Cancel"}
+                      </button>
+                      <button
+                        onClick={onCancelDismiss}
+                        disabled={isCancelling}
+                        className="flex-1 rounded-lg border border-gray-200 bg-white py-2 text-xs
+                                   font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50
+                                   disabled:cursor-not-allowed transition-colors"
+                      >
+                        Keep Playing
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Normal in-progress actions */
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={onCancelRequest}
+                      disabled={isCancelling}
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-2
+                                 text-xs font-medium text-slate-500 hover:bg-slate-100
+                                 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      Cancel
+                    </button>
+                    <button
+                      onClick={onInputScore}
+                      disabled={isCancelling}
+                      className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+                                 text-xs font-semibold text-white hover:bg-slate-800
+                                 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                    >
+                      <Trophy className="h-3.5 w-3.5" />
+                      Input Score &amp; End
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -320,6 +348,7 @@ export function ActiveCourts({
   onCallNextMatch,
   onEndMatch,
   onCancelMatch,
+  onClearOnDeckMatch,
 }: ActiveCourtsProps) {
   // ── Add-court form ──────────────────────────────────────────
   const [newCourtName, setNewCourtName] = useState("");
@@ -329,6 +358,7 @@ export function ActiveCourts({
   const [matchmakingCourt, setMatchmakingCourt] = useState<string | null>(null);
   const [confirmingCancel, setConfirmingCancel] = useState<Set<string>>(new Set());
   const [cancellingCourt, setCancellingCourt] = useState<Set<string>>(new Set());
+  const [clearingMatch, setClearingMatch] = useState<Set<string>>(new Set());
   const [courtErrors, setCourtErrors] = useState<Record<string, string>>({});
 
   // ── Score modal state ───────────────────────────────────────
@@ -415,6 +445,25 @@ export function ActiveCourts({
       setCourtError(courtId, result.error);
     } else {
       showToast({ type: "success", title: "Match Cancelled", body: "Players returned to queue." });
+    }
+  }
+
+  async function handleClearOnDeckMatch(courtId: string, matchId: string) {
+    setClearingMatch((prev) => new Set(prev).add(matchId));
+    setCourtError(courtId, null);
+
+    const result = await onClearOnDeckMatch(matchId);
+
+    setClearingMatch((prev) => {
+      const s = new Set(prev);
+      s.delete(matchId);
+      return s;
+    });
+
+    if (result.error) {
+      setCourtError(courtId, result.error);
+    } else {
+      showToast({ type: "success", title: "On-Deck Cleared", body: "Players returned to queue." });
     }
   }
 
@@ -513,6 +562,7 @@ export function ActiveCourts({
                 isMatchmaking={matchmakingCourt === court.id}
                 isConfirmingCancel={confirmingCancel.has(court.id)}
                 isCancelling={cancellingCourt.has(court.id)}
+                isClearing={match ? clearingMatch.has(match.id) : false}
                 error={courtErrors[court.id]}
                 onCallNextMatch={() => handleCallNextMatch(court.id)}
                 onInputScore={() => {
@@ -523,6 +573,9 @@ export function ActiveCourts({
                   if (match) handleCancelConfirm(court.id, match.id);
                 }}
                 onCancelDismiss={() => handleCancelDismiss(court.id)}
+                onClearOnDeckMatch={() => {
+                  if (match) handleClearOnDeckMatch(court.id, match.id);
+                }}
                 onUpdateStatus={(s) => onUpdateCourtStatus(court.id, s)}
                 onRemove={() => onRemoveCourt(court.id)}
               />

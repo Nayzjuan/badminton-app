@@ -27,10 +27,8 @@
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
-import {
-  promoteOnDeckMatchInternal,
-  generateOnDeckMatchesAction,
-} from "@/app/actions/matchmaking";
+import { createServiceClient } from "@/utils/supabase/service";
+import { promoteOnDeckMatchInternal } from "@/app/actions/matchmaking";
 
 export interface MatchActionResult {
   success: boolean;
@@ -225,10 +223,6 @@ export async function endMatchAction(
     }
     // If promotion succeeded, the court was already marked in_use by promoteOnDeckMatchInternal.
   }
-
-  // 6. Refill the on-deck pool now that 4 players have re-joined the waiting list
-  //    and (possibly) one pending slot was consumed by the auto-fill above.
-  await generateOnDeckMatchesAction(match.session_id);
 
   return { success: true, message: "Match completed. Players returned to queue." };
 }
@@ -436,11 +430,6 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       .in("player_id", playerIds);
   }
 
-  // 5. Refill the on-deck pool. The returned players are now waiting again,
-  //    so they can potentially form new on-deck matches.
-  //    Court is intentionally left available (no auto-promotion).
-  await generateOnDeckMatchesAction(match.session_id);
-
   return { success: true, message: "Match cancelled. Players returned to queue." };
 }
 
@@ -545,4 +534,85 @@ export async function createManualMatchAction(
     .in("player_id", allPlayerIds);
 
   return { success: true, message: "Match created.", matchId: match.id };
+}
+
+// ============================================================
+// clearOnDeckMatch
+// ============================================================
+// Clears a pending (on-deck) match and returns its players to
+// the waiting queue WITHOUT touching games_played or joined_at,
+// preserving their original queue position.
+//
+// Only works on matches with status = "pending". Rejects if
+// the match is already in_progress, completed, or cancelled.
+// ============================================================
+export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResult> {
+  // Auth check — caller must be authenticated.
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return { success: false, message: "Not authenticated." };
+  }
+
+  // Use service-role client for all DB operations so RLS does not interfere.
+  const db = createServiceClient();
+
+  // 1. Fetch and validate the match.
+  const { data: match, error: matchFetchError } = await db
+    .from("matches")
+    .select("id, session_id, status")
+    .eq("id", matchId)
+    .single();
+
+  if (matchFetchError || !match) {
+    return { success: false, message: `Match not found: ${matchFetchError?.message ?? "unknown"}` };
+  }
+
+  if (match.status !== "pending") {
+    return {
+      success: false,
+      message: `Cannot clear a match with status "${match.status}". Only pending on-deck matches can be cleared.`,
+    };
+  }
+
+  // 2. Fetch the players in this match.
+  const { data: matchPlayers, error: playersError } = await db
+    .from("match_players")
+    .select("player_id")
+    .eq("match_id", matchId);
+
+  if (playersError || !matchPlayers) {
+    return { success: false, message: `Failed to fetch match players: ${playersError?.message ?? "unknown"}` };
+  }
+
+  const playerIds = matchPlayers.map((mp) => mp.player_id);
+
+  // 3. Restore players to "waiting" status.
+  //    joined_at and games_played are intentionally left unchanged —
+  //    their original queue position and play count are preserved
+  //    as if this on-deck match never happened.
+  if (playerIds.length > 0) {
+    const { error: restoreError } = await db
+      .from("queue_entries")
+      .update({ status: "waiting" as const })
+      .eq("session_id", match.session_id)
+      .in("player_id", playerIds);
+
+    if (restoreError) {
+      return { success: false, message: `Failed to restore players to queue: ${restoreError.message}` };
+    }
+  }
+
+  // 4. Delete the pending match row — it never played, so deletion
+  //    is cleaner than marking it "cancelled" (no history entry needed).
+  const { error: deleteError } = await db
+    .from("matches")
+    .delete()
+    .eq("id", matchId);
+
+  if (deleteError) {
+    return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
+  }
+
+  return { success: true, message: "On-deck match cleared. Players returned to queue." };
 }

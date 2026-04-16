@@ -51,6 +51,7 @@ import {
   endMatchAction,
   cancelMatchAction,
   createManualMatchAction,
+  clearOnDeckMatch as clearOnDeckMatchAction,
 } from "@/app/actions/match";
 import type {
   Court,
@@ -96,6 +97,7 @@ export interface UseOrganizerDataResult {
     teamBScore: number
   ) => Promise<{ error?: string }>;
   cancelMatch: (matchId: string) => Promise<{ error?: string }>;
+  clearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   // -- Queue actions --
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
 }
@@ -405,6 +407,17 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     [fetchCourts, fetchActiveMatches]
   );
 
+  const clearOnDeckMatch = useCallback(
+    async (matchId: string) => {
+      const result = await clearOnDeckMatchAction(matchId);
+      if (!result.success) return { error: result.message };
+      // Refresh both the match list and the queue so players appear waiting again.
+      await Promise.all([fetchQueue(), fetchActiveMatches()]);
+      return {};
+    },
+    [fetchQueue, fetchActiveMatches]
+  );
+
   // ---- Queue actions ----
 
   const removeFromQueue = useCallback(
@@ -440,6 +453,7 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     createManualMatch,
     endMatch,
     cancelMatch,
+    clearOnDeckMatch,
     removeFromQueue,
   };
 }

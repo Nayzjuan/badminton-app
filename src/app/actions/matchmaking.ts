@@ -67,30 +67,29 @@ export async function callNextMatch(
 ): Promise<MatchmakingResult> {
   const supabase = await createClient();
 
-  // Try to promote an on-deck match first.
+  // Try to promote a manually-created on-deck match first.
+  // Auto-generation of on-deck matches is disabled — organizers
+  // control the on-deck queue manually via "Create Match" in the
+  // Queue & Match Control tab.
   const promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
   if (promoted.success) {
-    await generateOnDeckMatchesInternal(supabase, sessionId);
     return promoted;
   }
 
-  // No on-deck match — run the algorithm and create in_progress directly.
-  const result = await runAlgorithm(supabase, sessionId, courtId, false);
-
-  if (result.success) {
-    await generateOnDeckMatchesInternal(supabase, sessionId);
-  }
-
-  return result;
+  // No on-deck match available — run the algorithm and place
+  // players directly onto the court (in_progress).
+  return runAlgorithm(supabase, sessionId, courtId, false);
 }
 
 // ─────────────────────────────────────────────────────────────
-// PUBLIC: generateOnDeckMatchesAction
+// PUBLIC: generateOnDeckMatchesAction (DEPRECATED — no-op)
 // ─────────────────────────────────────────────────────────────
+// Kept as an export so existing imports don't break during the
+// transition, but on-deck auto-generation is now disabled.
+// Organizers create on-deck matches manually.
 
-export async function generateOnDeckMatchesAction(sessionId: string): Promise<void> {
-  const supabase = await createClient();
-  await generateOnDeckMatchesInternal(supabase, sessionId);
+export async function generateOnDeckMatchesAction(_sessionId: string): Promise<void> {
+  // No-op: auto on-deck generation is disabled.
 }
 
 // ─────────────────────────────────────────────────────────────

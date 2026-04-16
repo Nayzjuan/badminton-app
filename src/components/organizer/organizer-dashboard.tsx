@@ -83,6 +83,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     createManualMatch,
     endMatch,
     cancelMatch,
+    clearOnDeckMatch,
     removeFromQueue,
   } = useOrganizerData(session.id);
 
@@ -322,6 +323,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               onCallNextMatch={callNextMatch}
               onEndMatch={endMatch}
               onCancelMatch={cancelMatch}
+              onClearOnDeckMatch={clearOnDeckMatch}
             />
           </div>
         )}
