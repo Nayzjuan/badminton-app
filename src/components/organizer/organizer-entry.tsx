@@ -21,8 +21,10 @@ import {
   Archive,
   Trophy,
   ChevronDown,
+  Hash,
 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
+import { joinAsCoOrganizer, toSessionCode } from "@/app/actions/sessions";
 import type { Profile, ScoringFormat } from "@/types/database";
 import type { SessionWithStats } from "@/app/organizer/page";
 
@@ -72,8 +74,8 @@ export function OrganizerEntry({
   const [passcode, setPasscode] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // Join via passcode state
-  const [joinSessionId, setJoinSessionId] = useState("");
+  // Join via session code state
+  const [joinCode, setJoinCode] = useState("");
   const [joinPasscode, setJoinPasscode] = useState("");
   const [joining, setJoining] = useState(false);
 
@@ -108,31 +110,19 @@ export function OrganizerEntry({
   }
 
   async function handleJoinAsOrganizer() {
-    if (!joinSessionId.trim() || !joinPasscode.trim()) return;
+    if (!joinCode.trim() || !joinPasscode.trim()) return;
     setJoining(true);
     setError(null);
 
-    const { data: result, error: err } = await supabase.rpc(
-      "elevate_to_organizer",
-      {
-        p_session_id: joinSessionId.trim(),
-        p_passcode: joinPasscode.trim(),
-      }
-    );
+    const result = await joinAsCoOrganizer(joinCode.trim(), joinPasscode.trim());
 
-    if (err) {
-      setError(err.message);
+    if (!result.success) {
+      setError(result.message);
       setJoining(false);
       return;
     }
 
-    if (!result) {
-      setError("Invalid passcode. Please check and try again.");
-      setJoining(false);
-      return;
-    }
-
-    router.push(`/organizer/${joinSessionId.trim()}`);
+    router.push(`/organizer/${result.sessionId}`);
   }
 
   const hasSessions = activeSessions.length > 0;
@@ -224,16 +214,25 @@ export function OrganizerEntry({
                       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                       Active
                     </span>
+
+                    {/* Session Code — primary organizer reads this to co-organizers */}
+                    {s.organizer_passcode && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full
+                                   bg-violet-50 border border-violet-200
+                                   px-2 py-0.5 text-[10px] font-bold tracking-widest
+                                   text-violet-700 font-mono"
+                        title="Share this code with your co-organizer"
+                      >
+                        <Hash className="h-2.5 w-2.5" />
+                        {toSessionCode(s.id)}
+                      </span>
+                    )}
+
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px]
                                      font-semibold text-slate-500">
                       {scoringLabel(s.scoring)}
                     </span>
-                    {s.organizer_passcode && (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px]
-                                       font-semibold text-slate-500">
-                        Passcode set
-                      </span>
-                    )}
                   </div>
                 </button>
               ))}
@@ -338,37 +337,47 @@ export function OrganizerEntry({
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">
-                Session ID
-              </label>
-              <input
-                type="text"
-                value={joinSessionId}
-                onChange={(e) => setJoinSessionId(e.target.value)}
-                placeholder="Paste the session ID from the organizer"
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
-                           text-slate-900 placeholder:text-slate-400
-                           focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">
-                Passcode
-              </label>
-              <input
-                type="text"
-                value={joinPasscode}
-                onChange={(e) => setJoinPasscode(e.target.value)}
-                placeholder="Enter the organizer passcode"
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
-                           text-slate-900 placeholder:text-slate-400
-                           focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
-              />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">
+                  Session Code
+                </label>
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value.toUpperCase().replace(/[^A-F0-9]/g, "").slice(0, 6))}
+                  placeholder="e.g. ABC123"
+                  maxLength={6}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5
+                             text-sm font-mono tracking-widest uppercase text-slate-900
+                             placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
+                             focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+                />
+                <p className="text-[10px] text-slate-400">
+                  6-character code from the primary organizer
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-slate-700">
+                  Passcode
+                </label>
+                <input
+                  type="text"
+                  value={joinPasscode}
+                  onChange={(e) => setJoinPasscode(e.target.value)}
+                  placeholder="Organizer passcode"
+                  autoComplete="off"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
+                             text-slate-900 placeholder:text-slate-400
+                             focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+                />
+              </div>
             </div>
             <button
               onClick={handleJoinAsOrganizer}
-              disabled={joining || !joinSessionId.trim() || !joinPasscode.trim()}
+              disabled={joining || joinCode.trim().length !== 6 || !joinPasscode.trim()}
               className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
                          font-semibold text-slate-700 shadow-sm
                          hover:bg-slate-50 transition-colors
