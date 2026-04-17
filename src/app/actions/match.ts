@@ -541,10 +541,11 @@ export async function createManualMatchAction(
 // the match is already in_progress, completed, or cancelled.
 // ============================================================
 export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResult> {
-  // Auth check — caller must be authenticated.
+  // Auth + organizer check — caller must be authenticated and an organizer
+  // for the session this match belongs to.
   const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
+  const user = await getAuthUser(supabase);
+  if (!user) {
     return { success: false, message: "Not authenticated." };
   }
 
@@ -560,6 +561,12 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
 
   if (matchFetchError || !match) {
     return { success: false, message: `Match not found: ${matchFetchError?.message ?? "unknown"}` };
+  }
+
+  // Verify caller is an organizer for this session (using the RLS client).
+  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  if (!organizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
   }
 
   if (match.status !== "pending") {

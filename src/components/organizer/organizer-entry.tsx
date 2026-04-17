@@ -79,6 +79,9 @@ export function OrganizerEntry({
   // Past sessions accordion
   const [pastExpanded, setPastExpanded] = useState(false);
 
+  // When the user already has active sessions, collapse create/join behind disclosure
+  const [createJoinExpanded, setCreateJoinExpanded] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
 
   async function handleCreateSession() {
@@ -243,134 +246,93 @@ export function OrganizerEntry({
         </section>
 
         {/* ═══════════════════════════════════════════════════════
-            Section B: Start a New Session
+            Sections B + C: Create / Join
+            — Shown prominently when no active sessions exist.
+            — Collapsed behind a disclosure when sessions exist
+              (user is already in the system; these are secondary).
         ═══════════════════════════════════════════════════════ */}
-        <section className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4 text-blue-500" />
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
-              Start a New Session
-            </h2>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-            {/* Session name */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">
-                Session Name
-              </label>
-              <input
-                type="text"
-                value={sessionName}
-                onChange={(e) => setSessionName(e.target.value)}
-                placeholder="e.g. Saturday Open Play"
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
-                           text-slate-900 placeholder:text-slate-400
-                           focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+        {hasSessions ? (
+          /* ── Collapsed disclosure ─────────────────────────── */
+          <section>
+            <button
+              onClick={() => setCreateJoinExpanded(!createJoinExpanded)}
+              className="flex items-center gap-2 group w-full text-left"
+            >
+              <Plus className="h-4 w-4 text-slate-400 group-hover:text-slate-500 transition-colors" />
+              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400
+                             group-hover:text-slate-500 transition-colors">
+                New or different session
+              </h2>
+              <ChevronDown
+                className={`h-3.5 w-3.5 text-slate-400 ml-auto transition-transform
+                            ${createJoinExpanded ? "rotate-180" : ""}`}
               />
-            </div>
+            </button>
 
-            {/* Two columns */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">
-                  Scoring Format
-                </label>
-                <select
-                  value={scoring}
-                  onChange={(e) => setScoring(e.target.value as ScoringFormat)}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm
-                             text-slate-900
-                             focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
-                >
-                  <option value="single">Single Game</option>
-                  <option value="best_of_3">Best of 3</option>
-                  <option value="best_of_5">Best of 5</option>
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-slate-700">
-                  Passcode
-                </label>
-                <input
-                  type="text"
-                  value={passcode}
-                  onChange={(e) => setPasscode(e.target.value.toUpperCase())}
-                  placeholder="Auto-generated if blank"
-                  autoComplete="off"
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
-                             font-mono tracking-widest uppercase text-slate-900
-                             placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
-                             focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+            {createJoinExpanded && (
+              <div className="mt-3 space-y-4">
+                <CreateSessionForm
+                  sessionName={sessionName}
+                  setSessionName={setSessionName}
+                  scoring={scoring}
+                  setScoring={setScoring}
+                  passcode={passcode}
+                  setPasscode={setPasscode}
+                  creating={creating}
+                  onSubmit={handleCreateSession}
                 />
-                <p className="text-[10px] text-slate-400">
-                  Co-organizers use this to join · leave blank to auto-generate
-                </p>
+                <JoinAsCoOrgForm
+                  joinPasscode={joinPasscode}
+                  setJoinPasscode={setJoinPasscode}
+                  joining={joining}
+                  onSubmit={handleJoinAsOrganizer}
+                />
               </div>
-            </div>
-
-            <button
-              onClick={handleCreateSession}
-              disabled={creating || !sessionName.trim()}
-              className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold
-                         text-white shadow-sm
-                         hover:bg-slate-800 transition-colors
-                         disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {creating ? "Creating…" : "Create Session"}
-            </button>
-          </div>
-        </section>
-
-        {/* ═══════════════════════════════════════════════════════
-            Section C: Join as Co-Organizer
-        ═══════════════════════════════════════════════════════ */}
-        <section className="space-y-3">
-          <div className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4 text-violet-500" />
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
-              Join as Co-Organizer
-            </h2>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-slate-700">
-                Session Passcode
-              </label>
-              <input
-                type="text"
-                value={joinPasscode}
-                onChange={(e) => setJoinPasscode(e.target.value.toUpperCase())}
-                placeholder="e.g. BIRDIE3 or SMASH7"
-                autoComplete="off"
-                spellCheck={false}
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base
-                           font-mono tracking-widest uppercase text-slate-900
-                           placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
-                           placeholder:text-sm
-                           focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+            )}
+          </section>
+        ) : (
+          /* ── Prominent create + join when no active sessions ─ */
+          <>
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Plus className="h-4 w-4 text-blue-500" />
+                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                  Start a New Session
+                </h2>
+              </div>
+              <CreateSessionForm
+                sessionName={sessionName}
+                setSessionName={setSessionName}
+                scoring={scoring}
+                setScoring={setScoring}
+                passcode={passcode}
+                setPasscode={setPasscode}
+                creating={creating}
+                onSubmit={handleCreateSession}
               />
-              <p className="text-[11px] text-slate-400">
-                Enter the passcode shown on the primary organizer&apos;s session card
-              </p>
-            </div>
-            <button
-              onClick={handleJoinAsOrganizer}
-              disabled={joining || !joinPasscode.trim()}
-              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
-                         font-semibold text-slate-700 shadow-sm
-                         hover:bg-slate-50 transition-colors
-                         disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {joining ? "Joining…" : "Join Session"}
-            </button>
-          </div>
-        </section>
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-violet-500" />
+                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                  Join as Co-Organizer
+                </h2>
+              </div>
+              <JoinAsCoOrgForm
+                joinPasscode={joinPasscode}
+                setJoinPasscode={setJoinPasscode}
+                joining={joining}
+                onSubmit={handleJoinAsOrganizer}
+              />
+            </section>
+          </>
+        )}
 
         {/* ═══════════════════════════════════════════════════════
             Section D: Past Sessions
         ═══════════════════════════════════════════════════════ */}
+
         {pastSessions.length > 0 && (
           <section className="space-y-3">
             <button
@@ -444,6 +406,145 @@ export function OrganizerEntry({
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// CreateSessionForm — reusable form extracted so it can be
+// rendered both prominently (no sessions) and inside the
+// collapsed disclosure (existing sessions).
+// ─────────────────────────────────────────────────────────────
+
+interface CreateSessionFormProps {
+  sessionName: string;
+  setSessionName: (v: string) => void;
+  scoring: ScoringFormat;
+  setScoring: (v: ScoringFormat) => void;
+  passcode: string;
+  setPasscode: (v: string) => void;
+  creating: boolean;
+  onSubmit: () => void;
+}
+
+function CreateSessionForm({
+  sessionName,
+  setSessionName,
+  scoring,
+  setScoring,
+  passcode,
+  setPasscode,
+  creating,
+  onSubmit,
+}: CreateSessionFormProps) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium text-slate-700">Session Name</label>
+        <input
+          type="text"
+          value={sessionName}
+          onChange={(e) => setSessionName(e.target.value)}
+          placeholder="e.g. Saturday Open Play"
+          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
+                     text-slate-900 placeholder:text-slate-400
+                     focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-700">Scoring Format</label>
+          <select
+            value={scoring}
+            onChange={(e) => setScoring(e.target.value as ScoringFormat)}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm
+                       text-slate-900 focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+          >
+            <option value="single">Single Game</option>
+            <option value="best_of_3">Best of 3</option>
+            <option value="best_of_5">Best of 5</option>
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium text-slate-700">Passcode</label>
+          <input
+            type="text"
+            value={passcode}
+            onChange={(e) => setPasscode(e.target.value.toUpperCase())}
+            placeholder="Auto-generated if blank"
+            autoComplete="off"
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
+                       font-mono tracking-widest uppercase text-slate-900
+                       placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
+                       focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+          />
+          <p className="text-[10px] text-slate-400">
+            Co-organizers use this to join · leave blank to auto-generate
+          </p>
+        </div>
+      </div>
+
+      <button
+        onClick={onSubmit}
+        disabled={creating || !sessionName.trim()}
+        className="w-full rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold
+                   text-white shadow-sm hover:bg-slate-800 transition-colors
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {creating ? "Creating…" : "Create Session"}
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// JoinAsCoOrgForm
+// ─────────────────────────────────────────────────────────────
+
+interface JoinAsCoOrgFormProps {
+  joinPasscode: string;
+  setJoinPasscode: (v: string) => void;
+  joining: boolean;
+  onSubmit: () => void;
+}
+
+function JoinAsCoOrgForm({
+  joinPasscode,
+  setJoinPasscode,
+  joining,
+  onSubmit,
+}: JoinAsCoOrgFormProps) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium text-slate-700">Session Passcode</label>
+        <input
+          type="text"
+          value={joinPasscode}
+          onChange={(e) => setJoinPasscode(e.target.value.toUpperCase())}
+          placeholder="e.g. BIRDIE3 or SMASH7"
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base
+                     font-mono tracking-widest uppercase text-slate-900
+                     placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
+                     placeholder:text-sm
+                     focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
+        />
+        <p className="text-[11px] text-slate-400">
+          Enter the passcode shown on the primary organizer&apos;s session card
+        </p>
+      </div>
+      <button
+        onClick={onSubmit}
+        disabled={joining || !joinPasscode.trim()}
+        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
+                   font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {joining ? "Joining…" : "Join Session"}
+      </button>
     </div>
   );
 }
