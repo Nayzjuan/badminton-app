@@ -202,7 +202,7 @@ export function QueueControl({
                 <th className="px-4 py-3 text-left font-medium text-muted-foreground">Skill</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground">Wait</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground">Games</th>
-                <th className="px-4 py-3 text-center font-medium text-muted-foreground">PIN</th>
+                <th className="px-4 py-3 text-center font-medium text-muted-foreground hidden lg:table-cell">PIN</th>
                 <th className="px-4 py-3 text-right font-medium text-muted-foreground w-16"></th>
               </tr>
             </thead>
@@ -238,41 +238,63 @@ export function QueueControl({
                   >
                     {/* Checkbox — native input for keyboard + screen reader support */}
                     <td className="px-4 py-3">
-                      <label className="relative flex h-5 w-5 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          className="sr-only"
-                          checked={isSelected}
-                          disabled={!isSelected && isFull}
-                          onChange={() => togglePlayer(entry.player_id)}
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={`Select ${entry.display_name}`}
-                        />
-                        {/* Visual checkbox — aria-hidden so the native input owns semantics */}
-                        <div
-                          aria-hidden="true"
-                          className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
-                                      ${
-                                        isSelected
-                                          ? "bg-emerald-600 border-emerald-600"
-                                          : isFull
-                                          ? "border-muted bg-muted/50 cursor-not-allowed"
-                                          : "border-border hover:border-primary"
-                                      }`}
+                      {/*
+                        Hit-area container: z-10 ensures this cell sits above any
+                        adjacent td overflow; stopPropagation here is the PRIMARY
+                        isolation point that prevents clicks from reaching the <tr>
+                        onClick and causing a double-toggle.
+                      */}
+                      <div
+                        className="relative z-10 flex items-center justify-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <label
+                          htmlFor={`select-${entry.player_id}`}
+                          className="relative flex h-5 w-5 cursor-pointer"
                         >
-                          {isSelected && (
-                            <svg
-                              className="h-3 w-3 text-white"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                              stroke="currentColor"
-                              strokeWidth={3}
-                            >
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </div>
-                      </label>
+                          <input
+                            id={`select-${entry.player_id}`}
+                            type="checkbox"
+                            className="sr-only"
+                            checked={isSelected}
+                            disabled={!isSelected && isFull}
+                            onChange={() => togglePlayer(entry.player_id)}
+                            /*
+                              Belt-and-suspenders: the outer div already stops the
+                              original click, but the browser fires a second synthetic
+                              click directly on this input (label → input activation).
+                              Stopping it here prevents that synthetic click from
+                              bubbling past this cell and reaching the <tr>.
+                            */
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select ${entry.display_name}`}
+                          />
+                          {/* Visual checkbox — aria-hidden so the native input owns semantics */}
+                          <div
+                            aria-hidden="true"
+                            className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
+                                        ${
+                                          isSelected
+                                            ? "bg-emerald-600 border-emerald-600"
+                                            : isFull
+                                            ? "border-muted bg-muted/50 cursor-not-allowed"
+                                            : "border-border hover:border-primary"
+                                        }`}
+                          >
+                            {isSelected && (
+                              <svg
+                                className="h-3 w-3 text-white"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                strokeWidth={3}
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                        </label>
+                      </div>
                     </td>
                     {/* Position */}
                     <td className="px-4 py-3 text-muted-foreground">{index + 1}</td>
@@ -321,8 +343,8 @@ export function QueueControl({
                     </td>
                     {/* Games */}
                     <td className="px-4 py-3 text-right tabular-nums">{entry.games_played}</td>
-                    {/* PIN */}
-                    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                    {/* PIN — hidden on narrow viewports, visible lg+ */}
+                    <td className="px-4 py-3 text-center hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-center gap-1">
                         {loadingPin === entry.player_id ? (
                           <span className="text-xs text-muted-foreground animate-pulse">...</span>
