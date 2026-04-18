@@ -13,12 +13,15 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { User, LayoutGrid, ListOrdered, Eye, EyeOff, LogOut } from "lucide-react";
+import { User, LayoutGrid, ListOrdered, Eye, EyeOff, LogOut, Trophy } from "lucide-react";
+import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import { useQueue } from "@/hooks/use-queue";
 import { usePlayerMatch } from "@/hooks/use-player-match";
 import { useSessionData } from "@/hooks/use-session-data";
 import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
 import { useOrganizerBroadcast } from "@/hooks/use-organizer-broadcast";
+import { useMatchAlerts } from "@/hooks/use-match-alerts";
+import { NotificationEnrollment } from "@/components/notifications/notification-enrollment";
 import { MatchAlert } from "./match-alert";
 import { QueueToggle } from "./queue-toggle";
 import { QueueStatus } from "./queue-status";
@@ -48,12 +51,13 @@ interface PlayerDashboardProps {
   session: Session;
 }
 
-type Tab = "status" | "courts" | "waitlist";
+type Tab = "status" | "courts" | "waitlist" | "leaderboard";
 
 const TABS: { key: Tab; label: string; icon: typeof User }[] = [
   { key: "status", label: "My Status", icon: User },
   { key: "courts", label: "Live Courts", icon: LayoutGrid },
   { key: "waitlist", label: "Waitlist", icon: ListOrdered },
+  { key: "leaderboard", label: "Leaderboard", icon: Trophy },
 ];
 
 export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
@@ -104,6 +108,10 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
   // a match that this player is part of. Prevents silent state changes
   // from looking like app glitches.
   useOrganizerBroadcast(session.id, profile.id);
+
+  // Fire audio + push notifications when the player transitions to
+  // on_deck (warning chime) or gets a court assigned (court call arpeggio).
+  useMatchAlerts({ sessionId: session.id, playerId: profile.id });
 
   // Player has an active match if they're on_deck or in_progress.
   const hasActiveMatch =
@@ -211,8 +219,8 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
           </div>
         </div>
 
-        {/* ── Tab Bar — 3 tabs, mobile-stretch ────────────── */}
-        <div className="grid grid-cols-3 border-t border-slate-200 dark:border-border">
+        {/* ── Tab Bar — 4 tabs, mobile-stretch ────────────── */}
+        <div className="grid grid-cols-4 border-t border-slate-200 dark:border-border">
           {TABS.map(({ key, label, icon: Icon }) => {
             const isActive = activeTab === key;
             return (
@@ -234,6 +242,10 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
           })}
         </div>
       </header>
+
+      {/* ── Pocket Ping enrollment prompt ───────────────────── */}
+      {/* Shown once, 2.5 s after mount, if Notification.permission === 'default'. */}
+      <NotificationEnrollment userId={profile.id} />
 
       {/* ── Content ─────────────────────────────────────────── */}
       <main className="flex-1 px-4 py-5 pb-8">
@@ -268,6 +280,14 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
             waitlist={waitlist}
             myPlayerId={profile.id}
             loading={sessionLoading}
+          />
+        )}
+
+        {activeTab === "leaderboard" && (
+          <LeaderboardPage
+            sessionId={session.id}
+            currentUserId={profile.id}
+            variant="player-panel"
           />
         )}
       </main>

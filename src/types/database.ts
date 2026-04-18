@@ -116,6 +116,7 @@ export type Match = {
   team_a_score: number | null;
   team_b_score: number | null;
   is_mixed_level: boolean;
+  sort_order: number | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -218,7 +219,7 @@ export type MatchInsert = Pick<Match, "session_id"> &
   Partial<Pick<Match, "court_id" | "status" | "started_at" | "is_mixed_level">>;
 
 export type MatchUpdate = Partial<
-  Pick<Match, "court_id" | "status" | "team_a_score" | "team_b_score" | "is_mixed_level" | "started_at" | "completed_at">
+  Pick<Match, "court_id" | "status" | "team_a_score" | "team_b_score" | "is_mixed_level" | "sort_order" | "started_at" | "completed_at">
 >;
 
 export type MatchGameInsert = Pick<MatchGame, "match_id" | "game_number" | "team_a_score" | "team_b_score">;
@@ -226,6 +227,27 @@ export type MatchGameInsert = Pick<MatchGame, "match_id" | "game_number" | "team
 export type MatchGameUpdate = Partial<Pick<MatchGame, "team_a_score" | "team_b_score">>;
 
 export type MatchPlayerInsert = Pick<MatchPlayer, "match_id" | "player_id" | "team">;
+
+/** push_subscriptions table */
+export type PushSubscription = {
+  id: string;
+  user_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth_key: string;
+  user_agent: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PushSubscriptionInsert = Pick<
+  PushSubscription,
+  "user_id" | "endpoint" | "p256dh" | "auth_key"
+> & Partial<Pick<PushSubscription, "user_agent">>;
+
+export type PushSubscriptionUpdate = Partial<
+  Pick<PushSubscription, "p256dh" | "auth_key" | "user_agent">
+>;
 
 // ------------------------------------------------------------
 // Supabase Database Type
@@ -291,6 +313,12 @@ export type Database = {
         Update: Partial<Pick<MatchPlayer, "player_id">>;
         Relationships: [];
       };
+      push_subscriptions: {
+        Row: PushSubscription;
+        Insert: PushSubscriptionInsert;
+        Update: PushSubscriptionUpdate;
+        Relationships: [];
+      };
     };
     Views: {
       v_queue_with_wait_time: {
@@ -303,6 +331,35 @@ export type Database = {
       };
       v_recent_pairings: {
         Row: RecentPairing;
+        Relationships: [];
+      };
+      v_session_leaderboard: {
+        Row: {
+          player_id: string;
+          session_id: string;
+          display_name: string;
+          games_played: number;
+          wins: number;
+          losses: number;
+          points_for: number;
+          points_against: number;
+          point_diff: number;
+          win_pct: number;
+        };
+        Relationships: [];
+      };
+      v_alltime_leaderboard_mat: {
+        Row: {
+          player_id: string;
+          display_name: string;
+          games_played: number;
+          wins: number;
+          losses: number;
+          points_for: number;
+          points_against: number;
+          point_diff: number;
+          win_pct: number;
+        };
         Relationships: [];
       };
     };
@@ -318,6 +375,28 @@ export type Database = {
       skill_level_to_int: {
         Args: { lvl: SkillLevel };
         Returns: number;
+      };
+      get_player_streaks: {
+        Args: { p_session_id?: string | null };
+        Returns: { player_id: string; win_streak: number }[];
+      };
+      get_alltime_snapshot_before: {
+        Args: { p_cutoff: string };
+        Returns: {
+          player_id: string;
+          display_name: string;
+          games_played: number;
+          wins: number;
+          losses: number;
+          points_for: number;
+          points_against: number;
+          point_diff: number;
+          win_pct: number;
+        }[];
+      };
+      refresh_alltime_leaderboard: {
+        Args: Record<string, never>;
+        Returns: void;
       };
     };
     Enums: {
