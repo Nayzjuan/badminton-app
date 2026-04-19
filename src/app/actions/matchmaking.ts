@@ -32,30 +32,19 @@ import {
   PLAYERS_PER_MATCH,
   FALLBACK_WAIT_MINUTES,
   ANTI_REPEAT_LOOKBACK,
-  CRITICAL_WAIT_MINUTES,
-  GAME_PENALTY_MINUTES,
 } from "@/lib/constants";
-import { skillLevelToInt } from "@/types/database";
+import {
+  computePriorityScore,
+  isGroupValid,
+  snakeDraft,
+  overlapWithRoster,
+  isDiversityViolation,
+  scoreCandidates,
+  buildCombinationGroup,
+  type ScoredPlayer,
+} from "@/lib/matchmaking-core";
 import type { QueueWithWaitTime } from "@/types/database";
 
-// ─────────────────────────────────────────────────────────────
-// Local enriched type — pool row with computed priority score.
-// ─────────────────────────────────────────────────────────────
-// priorityScore drives the entire selection order:
-//   RED ZONE  (wait ≥ 25 min): 1000 + waitMinutes  → always anchors
-//   NORMAL    (wait < 25 min): waitMinutes − (gamesPlayed × 12)
-//
-// Higher score = higher urgency.
-// ─────────────────────────────────────────────────────────────
-type ScoredPlayer = QueueWithWaitTime & { priorityScore: number };
-
-function computePriorityScore(player: QueueWithWaitTime): number {
-  const wait = player.wait_minutes ?? 0;
-  if (wait >= CRITICAL_WAIT_MINUTES) {
-    return 1000 + wait; // Red Zone — ignore game debt entirely
-  }
-  return wait - player.games_played * GAME_PENALTY_MINUTES;
-}
 
 export interface MatchmakingResult {
   success: boolean;
@@ -418,28 +407,11 @@ async function runAlgorithm(
       continue;
     }
 
-    // Score candidates: higher priorityScore = pick first (sort ASC gives DESC after negation).
-    // Overlap penalty applied as a secondary concern — de-prioritises recent opponents
-    // but never overrides Red Zone urgency.
-    const scored = eligible.map((c) => {
-      const overlap = overlapMap.get(c.player_id) ?? 0;
-      return {
-        candidate: c,
-        // Sort ASC → effectively: priorityScore DESC, overlap as tiebreaker
-        score: -c.priorityScore + overlap * 10_000,
-      };
-    });
-    scored.sort((a, b) => a.score - b.score);
+    // Rank eligible candidates: highest priorityScore first, overlap as tiebreaker.
+    const scored = scoreCandidates(eligible, overlapMap);
 
-    // Greedy group building with cross-validation.
-    const group: ScoredPlayer[] = [];
-    for (const { candidate } of scored) {
-      if (group.length >= 3) break;
-      const testGroup = [anchor, ...group, candidate];
-      if (isGroupValid(testGroup, maxVariance)) {
-        group.push(candidate);
-      }
-    }
+    // Combination group building with cross-validation.
+    const group = buildCombinationGroup(anchor, scored, maxVariance);
 
     if (group.length === 3) {
       const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
@@ -507,7 +479,10 @@ async function runAlgorithm(
     console.log(
       `[matchmaking] LAST-RESORT FALLBACK — anchor waited ${anchorWaitMinutes.toFixed(1)}min > ${FALLBACK_WAIT_MINUTES}min`
     );
-    const fallbackGroup = candidates.slice(0, 3);
+    // Apply overlap penalties so we don't accidentally repeat exact matches
+    const scoredFallback = scoreCandidates(candidates, overlapMap);
+    const fallbackGroup = scoredFallback.slice(0, 3).map((s) => s.candidate);
+    
     if (fallbackGroup.length >= 3) {
       const allFour = [anchor, ...fallbackGroup];
       const { teamA, teamB } = snakeDraft(allFour);
@@ -523,106 +498,6 @@ async function runAlgorithm(
   };
 }
 
-// ─────────────────────────────────────────────────────────────
-// HELPER: buildOverlapMap
-// ─────────────────────────────────────────────────────────────
-// Returns a Map<player_id, count> of how many completed matches
-// each player has shared with the anchor in this session.
-
-async function buildOverlapMap(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  sessionId: string,
-  anchorPlayerId: string
-): Promise<Map<string, number>> {
-  const overlapMap = new Map<string, number>();
-
-  const { data: pairings, error } = await supabase
-    .from("v_recent_pairings")
-    .select("player_a, player_b")
-    .eq("session_id", sessionId)
-    .or(`player_a.eq.${anchorPlayerId},player_b.eq.${anchorPlayerId}`);
-
-  if (error || !pairings) {
-    console.warn("[matchmaking] buildOverlapMap failed:", error?.message);
-    return overlapMap;
-  }
-
-  for (const row of pairings) {
-    const otherPlayer =
-      row.player_a === anchorPlayerId ? row.player_b : row.player_a;
-    overlapMap.set(otherPlayer, (overlapMap.get(otherPlayer) ?? 0) + 1);
-  }
-
-  return overlapMap;
-}
-
-// ─────────────────────────────────────────────────────────────
-// HELPER: overlapWithRoster
-// ─────────────────────────────────────────────────────────────
-// Counts how many of the given playerIds appear in a roster.
-
-function overlapWithRoster(playerIds: string[], roster: string[]): number {
-  const rosterSet = new Set(roster);
-  return playerIds.filter((id) => rosterSet.has(id)).length;
-}
-
-// ─────────────────────────────────────────────────────────────
-// HELPER: isDiversityViolation
-// ─────────────────────────────────────────────────────────────
-// Returns true if ≥3 of the proposed 4 player IDs appeared
-// together in any single recent match roster.
-
-function isDiversityViolation(
-  playerIds: string[],
-  recentRosters: string[][]
-): boolean {
-  for (const roster of recentRosters) {
-    if (overlapWithRoster(playerIds, roster) >= 3) return true;
-  }
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────
-// HELPER: isGroupValid
-// ─────────────────────────────────────────────────────────────
-// All pairwise skill diffs must be ≤ maxVariance.
-
-function isGroupValid(
-  players: ScoredPlayer[],
-  maxVariance: number
-): boolean {
-  for (let i = 0; i < players.length; i++) {
-    for (let j = i + 1; j < players.length; j++) {
-      if (
-        Math.abs(players[i].skill_level_int - players[j].skill_level_int) >
-        maxVariance
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-// ─────────────────────────────────────────────────────────────
-// HELPER: snakeDraft
-// ─────────────────────────────────────────────────────────────
-// Sort all 4 DESC by skill, then:
-//   Team A = [highest (pos 0) + lowest (pos 3)]
-//   Team B = [2nd highest (pos 1) + 3rd highest (pos 2)]
-
-function snakeDraft(allFour: ScoredPlayer[]): {
-  teamA: ScoredPlayer[];
-  teamB: ScoredPlayer[];
-} {
-  const sorted = [...allFour].sort(
-    (a, b) => b.skill_level_int - a.skill_level_int
-  );
-  return {
-    teamA: [sorted[0], sorted[3]],
-    teamB: [sorted[1], sorted[2]],
-  };
-}
 
 // ─────────────────────────────────────────────────────────────
 // HELPER: executeMatch
