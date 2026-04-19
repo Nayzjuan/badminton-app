@@ -33,6 +33,10 @@ interface MatchAlertProps {
   teammates: Profile[];  // excludes self
   opponents: Profile[];
   isMixedLevel?: boolean;
+  /** 1-based position among pending on-deck matches (1 = next court). null when in_progress. */
+  onDeckPosition?: number | null;
+  /** Total pending on-deck matches right now. */
+  totalOnDeck?: number;
 }
 
 export function MatchAlert({
@@ -43,6 +47,8 @@ export function MatchAlert({
   teammates,
   opponents,
   isMixedLevel = false,
+  onDeckPosition = null,
+  totalOnDeck = 0,
 }: MatchAlertProps) {
   const isPlaying = matchStatus === "in_progress";
 
@@ -137,6 +143,27 @@ export function MatchAlert({
   }
 
   // ── On-Deck: "You're On Deck!" ─────────────────────────────
+  // Derive position-aware copy.
+  // pos=1 (or unknown) → "You're Next Up!" — court any second
+  // pos=2 → "#2 On Deck" — 1 match ahead of you
+  // pos=3+ → "#N On Deck" — N-1 matches ahead of you
+  const posLabel =
+    onDeckPosition === null || onDeckPosition === 1
+      ? "You're Next Up!"
+      : `#${onDeckPosition} On Deck`;
+
+  const posSubline =
+    onDeckPosition === null || onDeckPosition === 1
+      ? "Find your team — a court is opening soon 🏸"
+      : onDeckPosition === 2
+      ? "1 match ahead of you — get warmed up!"
+      : `${onDeckPosition - 1} matches ahead of you — be ready soon`;
+
+  const posEyebrow =
+    onDeckPosition !== null && totalOnDeck > 1
+      ? `${onDeckPosition} of ${totalOnDeck} on deck`
+      : "On Deck";
+
   return (
     <div className="rounded-3xl overflow-hidden shadow-xl animate-in fade-in zoom-in-95 duration-300">
       {/* Gradient header */}
@@ -149,13 +176,13 @@ export function MatchAlert({
           </span>
         </div>
         <p className="text-sm font-bold uppercase tracking-widest text-amber-100">
-          Get ready!
+          {posEyebrow}
         </p>
         <h2 className="mt-2 text-4xl font-black text-white leading-tight">
-          You&apos;re On Deck!
+          {posLabel}
         </h2>
         <p className="mt-2 text-amber-100 text-sm font-medium">
-          Find your team — a court is opening soon
+          {posSubline}
         </p>
       </div>
 

@@ -346,6 +346,8 @@ function MyStatusTab({
           teammates={currentMatch.teammates}
           opponents={currentMatch.opponents}
           isMixedLevel={currentMatch.match.is_mixed_level}
+          onDeckPosition={currentMatch.onDeckPosition}
+          totalOnDeck={currentMatch.totalOnDeck}
         />
 
         {/* Score input — only when the match is actually in progress */}

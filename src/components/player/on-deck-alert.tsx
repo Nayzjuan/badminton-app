@@ -22,6 +22,10 @@ interface OnDeckAlertProps {
   court: Court | null;
   teammates: Profile[];
   opponents: Profile[];
+  /** 1-based position among all pending on-deck matches (1 = next court). */
+  onDeckPosition?: number | null;
+  /** Total pending on-deck matches right now. */
+  totalOnDeck?: number;
 }
 
 export function OnDeckAlert({
@@ -31,6 +35,8 @@ export function OnDeckAlert({
   court,
   teammates,
   opponents,
+  onDeckPosition = null,
+  totalOnDeck = 0,
 }: OnDeckAlertProps) {
   // ── State 1: IN PROGRESS — on court right now ──────────────
   if (matchStatus === "in_progress" || queueStatus === "playing") {
@@ -76,18 +82,34 @@ export function OnDeckAlert({
   if (matchStatus === "pending" || queueStatus === "on_deck") {
     const hasPlayers = teammates.length > 0 || opponents.length > 0;
 
+    // Position-aware header copy
+    const deckEyebrow =
+      onDeckPosition !== null && totalOnDeck > 1
+        ? `${onDeckPosition} of ${totalOnDeck} on deck`
+        : "You're Up Next!";
+    const deckHeading =
+      onDeckPosition === null || onDeckPosition === 1
+        ? "A court is opening soon"
+        : `#${onDeckPosition} On Deck`;
+    const deckSubline =
+      onDeckPosition === null || onDeckPosition === 1
+        ? "Find your teammates — head to a court when called 🏸"
+        : onDeckPosition === 2
+        ? "1 match ahead — get warmed up! 🏸"
+        : `${onDeckPosition - 1} matches ahead — be ready soon 🏸`;
+
     return (
       <div className="rounded-2xl border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 p-5 animate-in fade-in slide-in-from-top-2 duration-300">
         {/* Header */}
         <div className="text-center mb-4">
           <p className="text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-            You&apos;re Up Next!
+            {deckEyebrow}
           </p>
           <p className="mt-1 text-xl font-bold text-amber-900 dark:text-amber-200">
-            A court is opening soon
+            {deckHeading}
           </p>
           <p className="mt-1 text-sm text-amber-700 dark:text-amber-400">
-            Find your teammates — head to a court when called 🏸
+            {deckSubline}
           </p>
         </div>
 

@@ -20,6 +20,16 @@ interface PlayerMatchInfo {
   myTeam: Team;
   teammates: Profile[];
   opponents: Profile[];
+  /**
+   * 1-based position among all pending (on-deck) matches for this session,
+   * ordered by sort_order ASC then created_at ASC.
+   * - 1  = next match to receive a court (highest priority)
+   * - 2+ = waiting behind N-1 other pending matches
+   * - null if the match is already in_progress (position is no longer relevant)
+   */
+  onDeckPosition: number | null;
+  /** Total number of pending (on-deck) matches right now (including this one). */
+  totalOnDeck: number;
 }
 
 interface UsePlayerMatchResult {
@@ -87,6 +97,31 @@ export function usePlayerMatch(
       court = courtData;
     }
 
+    // ── On-deck position ─────────────────────────────────────
+    // Count how many pending (on-deck) matches exist in this session,
+    // ordered by sort_order ASC then created_at ASC (same order as the
+    // organizer's On Deck panel). Position 1 = next to receive a court.
+    // Only relevant when match is still pending — once in_progress the
+    // player is already on a court so position is moot.
+    let onDeckPosition: number | null = null;
+    let totalOnDeck = 0;
+
+    if (match.status === "pending") {
+      const { data: pendingMatches } = await supabase
+        .from("matches")
+        .select("id, sort_order, created_at")
+        .eq("session_id", sessionId)
+        .eq("status", "pending")
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: true });
+
+      if (pendingMatches && pendingMatches.length > 0) {
+        totalOnDeck = pendingMatches.length;
+        const idx = pendingMatches.findIndex((m) => m.id === match.id);
+        onDeckPosition = idx >= 0 ? idx + 1 : null;
+      }
+    }
+
     // Get all players in this match.
     const { data: allPlayers } = await supabase
       .from("match_players")
@@ -129,6 +164,8 @@ export function usePlayerMatch(
       myTeam: myAssignment.team as Team,
       teammates,
       opponents,
+      onDeckPosition,
+      totalOnDeck,
     });
     setLoading(false);
   }, [supabase, sessionId, playerId]);
