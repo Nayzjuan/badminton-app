@@ -38,7 +38,6 @@ import {
   computePriorityScore,
   isGroupValid,
   snakeDraft,
-  overlapWithRoster,
   isDiversityViolation,
   scoreCandidates,
   buildCombinationGroup,
@@ -156,8 +155,14 @@ async function runEngineInternal(
   const slotsAvailable = capacity - (existingOnDeck ?? 0);
   if (slotsAvailable <= 0) return;
 
+  // Pre-fetch recent rosters once for the entire fill loop.
+  // recentRosters only contains COMPLETED matches, which don't change while
+  // we're filling on-deck slots — safe to share across all iterations and
+  // avoids (2 × slotsAvailable − 2) redundant DB queries per engine run.
+  const recentRosters = await fetchRecentRosters(supabase, sessionId);
+
   for (let i = 0; i < slotsAvailable; i++) {
-    const created = await createOneOnDeckMatch(supabase, sessionId);
+    const created = await createOneOnDeckMatch(supabase, sessionId, recentRosters);
     if (!created) break; // Not enough players — stop.
   }
 }
@@ -168,9 +173,10 @@ async function runEngineInternal(
 
 async function createOneOnDeckMatch(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  sessionId: string
+  sessionId: string,
+  recentRosters?: string[][]
 ): Promise<boolean> {
-  const result = await runAlgorithm(supabase, sessionId, null, true);
+  const result = await runAlgorithm(supabase, sessionId, null, true, recentRosters);
   return result.success;
 }
 
@@ -291,7 +297,8 @@ async function runAlgorithm(
   supabase: Awaited<ReturnType<typeof createClient>>,
   sessionId: string,
   courtId: string | null,
-  isOnDeck: boolean
+  isOnDeck: boolean,
+  cachedRecentRosters?: string[][]
 ): Promise<MatchmakingResult> {
   // ── 1. Fetch the waiting pool ─────────────────────────────
   const { data: rawPool, error: poolError } = await supabase
@@ -349,42 +356,17 @@ async function runAlgorithm(
   }
 
   // ── 4. Build overlap map ──────────────────────────────────
-  // NOTE: buildOverlapMap is called once per createOneOnDeckMatch tick.
-  // For the current queue sizes (≤ 30 players) and on-deck cap (courtCount−1),
-  // this is at most ~3 DB calls per engine run — acceptable. If tick frequency
-  // increases significantly, consider computing once in runEngineInternal and
-  // passing the map down to avoid redundant per-slot fetches.
+  // buildOverlapMap is anchor-specific (counts pairings with THIS anchor)
+  // so it cannot be hoisted above the loop — it must run once per tick as
+  // the anchor changes each slot fill.
   const overlapMap = await buildOverlapMap(supabase, sessionId, anchor.player_id);
 
-  // ── 5. Fetch recent rosters for group-level diversity ─────
-  const { data: recentMatchRows } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("status", "completed")
-    .order("completed_at", { ascending: false })
-    .limit(ANTI_REPEAT_LOOKBACK);
-
-  let recentRosters: string[][] = [];
-  const recentMatchIds = (recentMatchRows ?? []).map((m) => m.id);
-  if (recentMatchIds.length > 0) {
-    const { data: recentPlayers } = await supabase
-      .from("match_players")
-      .select("match_id, player_id")
-      .in("match_id", recentMatchIds);
-
-    if (recentPlayers) {
-      const rosterMap = new Map<string, string[]>();
-      for (const row of recentPlayers) {
-        const list = rosterMap.get(row.match_id) ?? [];
-        list.push(row.player_id);
-        rosterMap.set(row.match_id, list);
-      }
-      recentRosters = recentMatchIds
-        .map((id) => rosterMap.get(id) ?? [])
-        .filter((r) => r.length > 0);
-    }
-  }
+  // ── 5. Recent rosters for group-level diversity ───────────
+  // Use the pre-fetched cache from runEngineInternal when available
+  // (saves 2 DB queries per additional on-deck slot filled in one run).
+  // Falls back to a fresh fetch when called from single-match paths
+  // (callNextMatch inline engine, or direct court assignment).
+  const recentRosters = cachedRecentRosters ?? await fetchRecentRosters(supabase, sessionId);
 
   // Candidates = everyone except the anchor (already priority-sorted).
   const candidates = pool.slice(1);
@@ -527,6 +509,51 @@ async function runAlgorithm(
   };
 }
 
+
+// ─────────────────────────────────────────────────────────────
+// HELPER: fetchRecentRosters
+// ─────────────────────────────────────────────────────────────
+// Returns the last ANTI_REPEAT_LOOKBACK completed match rosters as
+// arrays of player IDs. Used by the diversity-violation check.
+//
+// This data is stable within a single engine run (completed matches
+// don't change while filling on-deck slots), so runEngineInternal
+// pre-fetches it once and passes it to each runAlgorithm call rather
+// than re-fetching per slot.
+
+async function fetchRecentRosters(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  sessionId: string
+): Promise<string[][]> {
+  const { data: recentMatchRows } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("status", "completed")
+    .order("completed_at", { ascending: false })
+    .limit(ANTI_REPEAT_LOOKBACK);
+
+  const recentMatchIds = (recentMatchRows ?? []).map((m) => m.id);
+  if (recentMatchIds.length === 0) return [];
+
+  const { data: recentPlayers } = await supabase
+    .from("match_players")
+    .select("match_id, player_id")
+    .in("match_id", recentMatchIds);
+
+  if (!recentPlayers) return [];
+
+  const rosterMap = new Map<string, string[]>();
+  for (const row of recentPlayers) {
+    const list = rosterMap.get(row.match_id) ?? [];
+    list.push(row.player_id);
+    rosterMap.set(row.match_id, list);
+  }
+
+  return recentMatchIds
+    .map((id) => rosterMap.get(id) ?? [])
+    .filter((r) => r.length > 0);
+}
 
 // ─────────────────────────────────────────────────────────────
 // HELPER: buildOverlapMap

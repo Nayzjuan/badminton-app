@@ -1,23 +1,22 @@
 // ============================================================
-// Unit Tests: Matchmaking Core (TDD Harness)
+// Unit Tests: Matchmaking Core — Regression Suite
 // ============================================================
 //
-// These tests are intentionally written BEFORE the algorithm
-// fixes are applied (Phase 1 — Red/Green/Refactor).
+// These tests were written as a TDD harness for the algorithm
+// fixes in commit 3d70a2e. All three tests now pass.
 //
-// Test 1 — [EXPECTED: FAIL] Audit Rec #2 target
+// Test 1 — Regression for Audit Rec #2 (scoreCandidates fix)
 //   Red Zone candidate with overlap should outrank a fresh
-//   low-priority candidate. The current scoreCandidates formula
-//   uses overlap * 10_000 which overrides Red Zone urgency.
+//   low-priority candidate. Fixed by capping Red Zone overlap
+//   penalty at 100× instead of 10_000×.
 //
-// Test 2 — [EXPECTED: FAIL] Audit Rec #1 target
-//   Greedy group assembly traps itself by locking in an out-of-
-//   range candidate (Skill 7) first, then failing to reach 3
-//   members even though [B(3), C(4), D(5)] is a valid group.
+// Test 2 — Regression for Audit Rec #1 (combination search fix)
+//   Greedy group assembly trapped itself by locking in an out-of-
+//   range candidate first. Fixed by replacing greedy with a full
+//   N-choose-3 combination search.
 //
-// Test 3 — [EXPECTED: PASS] Happy-path sanity check
-//   4 perfectly matched players, no overlaps. Verifies the test
-//   harness itself is wired correctly.
+// Test 3 — Happy-path sanity check
+//   4 perfectly matched players, no overlaps.
 // ============================================================
 
 import { describe, it, expect } from "vitest";
@@ -71,7 +70,7 @@ function makePlayer(
 }
 
 // ─────────────────────────────────────────────────────────────
-// Test 1 — Rec #2: Red Zone urgency must not be drowned by overlap
+// Test 1 — Regression for Rec #2: Red Zone urgency vs overlap
 // ─────────────────────────────────────────────────────────────
 // Scenario:
 //   Candidate A: has waited 30 minutes (Red Zone, score ≥ 1030),
@@ -79,15 +78,11 @@ function makePlayer(
 //   Candidate B: has waited 2 minutes, 0 games (score ≈ 2),
 //                zero overlap with the anchor.
 //
-// Expected (after fix): A ranked before B — Red Zone urgency
-//   should override a single overlap event.
-// Currently FAILS because: A's score = -1030 + 1×10_000 = 8,970
-//   which sorts AFTER B's score of -2 (ascending = B first = bug).
+// Fix: Red Zone overlap penalty capped at 100× (not 10_000×), so
+//   A's score = -1030 + 1×100 = -930 — sorts before B's -2. ✓
 
 describe("Rec #2 — Red Zone urgency vs overlap penalty", () => {
   it("ranks the Red Zone candidate above a fresh candidate with no overlap", () => {
-    const anchorId = "anchor";
-
     // Candidate A: Red Zone (30 min wait), 1 prior overlap with anchor
     const candidateA = makePlayer("A", { skillInt: 4, waitMinutes: 30 });
 
@@ -99,27 +94,25 @@ describe("Rec #2 — Red Zone urgency vs overlap penalty", () => {
 
     const scored = scoreCandidates([candidateA, candidateB], overlapMap);
 
-    // After the fix, A (Red Zone) must be ranked first despite overlap.
+    // A (Red Zone, 1 overlap) must rank before B (fresh, 0 overlap).
     expect(scored[0].candidate.player_id).toBe("A");
   });
 });
 
 // ─────────────────────────────────────────────────────────────
-// Test 2 — Rec #1: Greedy trapping with skill extremes
+// Test 2 — Regression for Rec #1: Combination search replaces greedy
 // ─────────────────────────────────────────────────────────────
 // Scenario (all variance windows = ±2):
 //   Anchor:      Skill 5
 //   Candidate A: Skill 7 — eligible vs. Anchor (|7-5|=2 ≤ 2),
-//                but incompatible with B (|7-3|=4 > 2).
-//                Has highest priorityScore → greedy picks it first.
-//   Candidate B: Skill 3 — valid vs Anchor (|5-3|=2) but blocked
-//                by A already in group.
-//   Candidate C: Skill 4 — valid vs Anchor, blocked by A.
-//   Candidate D: Skill 5 — only one compatible with A after anchor.
+//                but incompatible with B/C/D (|7-3|=4, |7-4|=3, |7-5|=2).
+//                Has highest priorityScore.
+//   Candidate B: Skill 3 — valid vs Anchor, valid vs C/D but not A.
+//   Candidate C: Skill 4 — valid vs Anchor and B/D.
+//   Candidate D: Skill 5 — valid vs all.
 //
-// Currently FAILS because greedy locks in A, then can only add D,
-//   reaching group size 2 (not 3).
-// After fix (combination search), [B, C, D] is found as valid.
+// Fix: N-choose-3 combination search finds [B, C, D] as the first
+//   valid triple instead of greedily locking A and failing.
 
 describe("Rec #1 — Greedy trapping with extreme-skill candidate", () => {
   it("forms a valid group of 3 even when the highest-priority candidate would block others", () => {
@@ -168,8 +161,7 @@ describe("Rec #1 — Greedy trapping with extreme-skill candidate", () => {
     // Run combination group builder
     const group = buildCombinationGroup(anchor, scored, maxVariance);
 
-    // After fix: group should contain exactly B, C, D (3 players)
-    // Currently FAILS: group only has [A, D] (size 2).
+    // Combination search finds B, C, D — the first valid triple.
     expect(group).toHaveLength(3);
 
     // All members plus anchor must form a valid group
