@@ -20,7 +20,6 @@ import { DevTools } from "./dev-tools";
 import { ShareSessionDialog } from "./share-session-dialog";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
-import { swapPlayerInMatch } from "@/app/actions/swap-player";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -120,6 +119,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     cancelMatch,
     clearOnDeckMatch,
     reorderOnDeckMatches,
+    swapPlayer,
     removeFromQueue,
     pausePlayer,
   } = useOrganizerData(session.id);
@@ -162,7 +162,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   // ── Undo: reverse-call swapPlayerInMatch ───────────────────
   async function handleUndoSwap(swap: UndoableSwap) {
     lastSwapRef.current = null;
-    const result = await swapPlayerInMatch(
+    const result = await swapPlayer(
       swap.matchId,
       swap.inPlayerId,   // inPlayer becomes the new "out"
       swap.outPlayerId   // outPlayer comes back in
@@ -493,6 +493,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
         key={swapContext ? `${swapContext.matchId}-${swapContext.outPlayerId}` : "closed"}
         context={swapContext}
         queue={queue}
+        activeMatches={activeMatches}
+        swapPlayer={swapPlayer}
         onClose={() => setSwapContext(null)}
         onSwapComplete={handleSwapComplete}
       />
