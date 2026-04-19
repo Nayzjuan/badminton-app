@@ -4,11 +4,15 @@
 // Organizer Dashboard — Main shell with tab navigation
 // ============================================================
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { useOrganizerData } from "@/hooks/use-organizer-data";
 import { ActiveCourts } from "./active-courts";
 import { OnDeckPanel } from "./on-deck-panel";
+import type { SwapContext } from "./on-deck-panel";
+import { SwapSheet } from "./swap-sheet";
+import type { UndoableSwap } from "./swap-sheet";
 import { QueueControl } from "./queue-control";
 import { WaitTimeMonitor } from "./wait-time-monitor";
 import { MatchHistoryPanel } from "./match-history-panel";
@@ -16,6 +20,7 @@ import { DevTools } from "./dev-tools";
 import { ShareSessionDialog } from "./share-session-dialog";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
+import { swapPlayerInMatch } from "@/app/actions/swap-player";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +33,15 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { ChevronDown, ArrowLeft, Repeat, Power, Tv2 } from "lucide-react";
+
+import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
+
+// ── Design token constants ───────────────────────────────────
+// Centralised so a future CSS-variable migration touches one place.
+const HEADER_BG = "bg-[#1D3A6F] dark:bg-[hsl(217_30%_11%)]";
+const SURFACE_BG = "bg-[#FAFAF7] dark:bg-background";
+const ACTIVE_TAB = "border-b-2 border-white text-white font-semibold dark:border-primary dark:text-primary";
 
 interface OrganizerDashboardProps {
   profile: Profile;
@@ -36,7 +49,7 @@ interface OrganizerDashboardProps {
   otherSessions?: Session[];
 }
 
-type Tab = "courts" | "queue" | "monitor" | "history";
+type Tab = "courts" | "queue" | "monitor" | "history" | "leaderboard";
 
 export function OrganizerDashboard({ profile, session, otherSessions = [] }: OrganizerDashboardProps) {
   const router = useRouter();
@@ -46,6 +59,14 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   const [autoMatchmaking, setAutoMatchmaking] = useState(session.is_auto_matchmaking_on);
   const [togglingAuto, setTogglingAuto] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+
+  // ── Tap-to-Swap state ───────────────────────────────────────
+  // swapContext !== null means the SwapSheet is open.
+  // Derived open/close from one piece of state — no separate boolean.
+  const [swapContext, setSwapContext] = useState<SwapContext | null>(null);
+  // Ref holds the last successful swap for the 5-second undo toast.
+  // Using a ref (not state) so setting it doesn't cause a re-render.
+  const lastSwapRef = useRef<UndoableSwap | null>(null);
 
   async function handleCloseSession() {
     setClosing(true);
@@ -98,20 +119,77 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     endMatch,
     cancelMatch,
     clearOnDeckMatch,
+    reorderOnDeckMatches,
     removeFromQueue,
     pausePlayer,
   } = useOrganizerData(session.id);
+
+  // ── Layer 2 — Frontend Race Condition Guard ─────────────────
+  // When a match transitions from pending → in_progress (promoted
+  // by promoteOnDeckMatchInternal), it disappears from onDeckMatches.
+  // This effect proactively closes the SwapSheet ~100ms after promotion
+  // so the organizer sees a clear warning rather than a server error.
+  //
+  // Zero new subscriptions needed — onDeckMatches is already driven
+  // by the existing subscribeToMatches → fetchActiveMatches pipeline.
+  useEffect(() => {
+    if (!swapContext) return;
+    const matchStillPending = onDeckMatches.some((m) => m.id === swapContext.matchId);
+    if (!matchStillPending) {
+      setSwapContext(null);
+      toast.warning("Match has started — the swap was cancelled automatically.");
+    }
+  }, [onDeckMatches, swapContext]);
+
+  // ── Stable swap open handler (useCallback so OnDeckPanel memo holds) ──
+  const handleOpenSwap = useCallback((ctx: SwapContext) => {
+    setSwapContext(ctx);
+  }, []);
+
+  // ── Swap complete: close sheet + fire undo toast ───────────
+  function handleSwapComplete(swap: UndoableSwap) {
+    lastSwapRef.current = swap;
+    toast.success(`Swapped ${swap.outName} → ${swap.inName}`, {
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => handleUndoSwap(swap),
+      },
+    });
+    // Sheet is closed by SwapSheet itself after calling onSwapComplete
+  }
+
+  // ── Undo: reverse-call swapPlayerInMatch ───────────────────
+  async function handleUndoSwap(swap: UndoableSwap) {
+    lastSwapRef.current = null;
+    const result = await swapPlayerInMatch(
+      swap.matchId,
+      swap.inPlayerId,   // inPlayer becomes the new "out"
+      swap.outPlayerId   // outPlayer comes back in
+    );
+    if (result.success) {
+      toast.success("Swap undone.");
+    } else if (result.errorCode === "MATCH_STARTED") {
+      toast.error("Couldn't undo — match has already started.");
+    } else {
+      toast.error("Couldn't undo — match may have changed.");
+    }
+  }
 
   const isClosed = !session.is_active;
   const bottleneckCount = queue.filter((q) => q.is_bottleneck).length;
 
   const tabs: { key: Tab; label: string; badge?: number }[] = isClosed
-    ? [{ key: "history", label: "Match History" }]
+    ? [
+        { key: "history", label: "Match History" },
+        { key: "leaderboard", label: "Leaderboard" },
+      ]
     : [
         { key: "courts", label: "Active Courts" },
         { key: "queue", label: "Queue & Match Control" },
         { key: "monitor", label: "Wait Time Monitor", badge: bottleneckCount > 0 ? bottleneckCount : undefined },
         { key: "history", label: "Match History" },
+        { key: "leaderboard", label: "Leaderboard" },
       ];
 
   if (loading) {
@@ -123,17 +201,17 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAF7] dark:bg-background">
+    <div className={`min-h-screen ${SURFACE_BG}`}>
       {/* Top Header */}
-      <header className="sticky top-0 z-20 bg-[#1D3A6F] shadow-lg
-                         dark:bg-[hsl(217_30%_11%)] dark:border-b dark:border-border">
+      <header className={`sticky top-0 z-20 ${HEADER_BG} shadow-lg dark:border-b dark:border-border`}>
         <div className="max-w-7xl mx-auto px-6 py-4">
           {/* Back link */}
           <div className="mb-2">
             <button
               onClick={() => router.push("/organizer")}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-white/60
-                         hover:text-white hover:bg-white/10 transition-colors -ml-1 px-1 py-0.5 rounded"
+                         hover:text-white hover:bg-white/10 transition-colors -ml-1 px-3 py-2
+                         min-h-[44px] rounded"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               All Sessions
@@ -146,8 +224,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               <div className="relative min-w-0" ref={switcherRef}>
                 <button
                   onClick={() => otherSessions.length > 0 && setSwitcherOpen(!switcherOpen)}
-                  className={`flex items-center gap-2 min-w-0 rounded-lg px-2 py-1 -mx-2 -my-1
-                              transition-colors
+                  className={`flex items-center gap-2 min-w-0 rounded-lg px-2 py-2 -mx-2 -my-2
+                              min-h-[44px] transition-colors
                               ${otherSessions.length > 0
                                 ? "hover:bg-white/10 cursor-pointer"
                                 : "cursor-default"}`}
@@ -228,17 +306,22 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
             {!isClosed && (
               <div className="flex items-center gap-4 text-sm text-white/70">
+                {/* Mobile-only compact summary (full stats hidden below sm) */}
+                <span className="text-[10px] text-white/60 sm:hidden">
+                  {courts.length}c · {queue.length}q · {activeMatches.length}m
+                </span>
                 <span className="hidden sm:inline">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
-                <span className="text-white/25 hidden sm:inline">|</span>
+                <span className="text-white/40 hidden sm:inline">|</span>
                 <span className="hidden sm:inline">{queue.length} in queue</span>
-                <span className="text-white/25 hidden sm:inline">|</span>
+                <span className="text-white/40 hidden sm:inline">|</span>
                 <span className="hidden sm:inline">{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
-                <span className="text-white/25 hidden sm:inline">|</span>
+                <span className="text-white/40 hidden sm:inline">|</span>
                 <button
                   onClick={handleToggleAuto}
                   disabled={togglingAuto}
-                  className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-3 py-1
-                              text-xs font-semibold transition-colors border
+                  aria-pressed={autoMatchmaking}
+                  className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-3 py-2
+                              min-h-[44px] text-xs font-semibold transition-colors border
                               ${autoMatchmaking
                                 ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30"
                                 : "bg-white/10 border-white/20 text-white/50 hover:bg-white/15"
@@ -249,10 +332,12 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   <span className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`} />
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
-                <span className="text-white/25 hidden sm:inline">|</span>
+                <span className="text-white/40 hidden sm:inline">|</span>
                 <ThemeToggle className="text-white/60 hover:text-white hover:bg-white/10
                                         dark:text-primary dark:hover:bg-primary/10" />
-                <DevTools sessionId={session.id} />
+                {process.env.NODE_ENV === "development" && (
+                  <DevTools sessionId={session.id} />
+                )}
 
                 {/* TV Scoreboard link */}
                 <a
@@ -260,7 +345,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-white/30
-                             bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/80
+                             bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-white/80
                              hover:bg-white/20 hover:text-white hover:border-white/50
                              transition-colors"
                   title="Open TV scoreboard in a new tab"
@@ -277,7 +362,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   <AlertDialogTrigger asChild>
                     <button
                       className="inline-flex items-center gap-1.5 rounded-lg border border-red-300/50
-                                 bg-white/10 px-3 py-1.5 text-xs font-semibold text-red-300
+                                 bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-red-300
                                  hover:bg-red-500/20 hover:border-red-300 transition-colors"
                     >
                       <Power className="h-3.5 w-3.5" />
@@ -309,15 +394,19 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
         {/* Tab Navigation */}
         <div className="max-w-7xl mx-auto px-6">
-          <nav className="flex gap-1 pt-2">
+          <nav className="flex gap-1 pt-2" role="tablist" aria-label="Dashboard sections">
             {tabs.map((tab) => (
               <button
                 key={tab.key}
+                id={`tab-${tab.key}`}
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                aria-controls={`tabpanel-${tab.key}`}
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative px-5 py-2.5 text-sm font-medium transition-colors rounded-t-lg
+                className={`relative px-5 py-2.5 text-sm font-medium transition-colors
                             ${
                               activeTab === tab.key
-                                ? "bg-[#FAFAF7] text-[#1D3A6F] font-semibold shadow-sm dark:bg-muted dark:text-primary dark:shadow-none"
+                                ? ACTIVE_TAB
                                 : "text-white/70 hover:text-white hover:bg-white/10 dark:hover:bg-white/5"
                             }`}
               >
@@ -336,12 +425,19 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
+        <div
+          role="tabpanel"
+          id={`tabpanel-${activeTab}`}
+          aria-labelledby={`tab-${activeTab}`}
+        >
         {activeTab === "courts" && (
           <div className="space-y-6">
             {/* On-deck panel — always visible, collapses to empty state when no matches */}
             <OnDeckPanel
               matches={onDeckMatches}
               onClearOnDeckMatch={clearOnDeckMatch}
+              onReorderMatches={reorderOnDeckMatches}
+              onOpenSwap={handleOpenSwap}
             />
 
             <ActiveCourts
@@ -377,7 +473,29 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
         {activeTab === "history" && (
           <MatchHistoryPanel sessionId={session.id} />
         )}
+
+        {activeTab === "leaderboard" && (
+          <LeaderboardPage
+            sessionId={session.id}
+            sessionName={session.name}
+            currentUserId={profile.id}
+            variant="organizer-panel"
+          />
+        )}
+        </div>
       </main>
+
+      {/* ── SwapSheet — rendered OUTSIDE DndContext so the drawer
+            portal never interferes with the dnd-kit drag layer.
+            Key resets all internal sheet state when the organizer
+            taps a different player badge.                          ── */}
+      <SwapSheet
+        key={swapContext ? `${swapContext.matchId}-${swapContext.outPlayerId}` : "closed"}
+        context={swapContext}
+        queue={queue}
+        onClose={() => setSwapContext(null)}
+        onSwapComplete={handleSwapComplete}
+      />
     </div>
   );
 }
