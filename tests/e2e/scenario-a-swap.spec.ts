@@ -13,7 +13,7 @@
 // Happy path assertions:
 //   UI:  - SwapSheet opens with Eve as an available candidate
 //        - Confirm button enabled after selecting Eve
-//        - Sheet closes and "Swap complete" toast appears
+//        - Sheet closes and "Swapped … → …" toast appears
 //        - On-deck card now shows Eve, NOT Alice
 //   DB:  - match_players: Alice removed, Eve added (Team A)
 //        - queue_entries: Eve=on_deck, Alice=waiting
@@ -117,7 +117,9 @@ test.describe("Tap-to-Swap — Happy Path", () => {
       await expect(page.getByText("Swap Player")).toBeVisible();
 
       // The outgoing player is shown in the sheet header
-      await expect(page.getByText("E2E_Alice")).toBeVisible();
+      // Scope to the dialog to avoid strict-mode violation with the player
+      // pill (which also contains "E2E_Alice") still visible in the background.
+      await expect(page.getByRole("dialog").getByText("E2E_Alice")).toBeVisible();
 
       // ── 5. Eve should appear as an available candidate ──────
       const eveCandidate = page.locator(
@@ -157,7 +159,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
       // Sonner "Swap complete" toast should appear
       // Sonner renders toasts with data-sonner-toast attribute
       await expect(
-        page.locator('[data-sonner-toast]').filter({ hasText: "Swap complete" })
+        page.locator('[data-sonner-toast]').filter({ hasText: "Swapped" })
       ).toBeVisible({ timeout: 5_000 });
 
       // On-deck card: Eve is now shown
@@ -426,7 +428,7 @@ test.describe("Tap-to-Swap — Undo", () => {
       // Wait for the undo toast
       const toast = page
         .locator("[data-sonner-toast]")
-        .filter({ hasText: "Swap complete" });
+        .filter({ hasText: "Swapped" });
       await expect(toast).toBeVisible({ timeout: 5_000 });
 
       // Click the "Undo" action button on the toast
