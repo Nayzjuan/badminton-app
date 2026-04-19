@@ -162,14 +162,16 @@ test.describe("Tap-to-Swap — Happy Path", () => {
         page.locator('[data-sonner-toast]').filter({ hasText: "Swapped" })
       ).toBeVisible({ timeout: 5_000 });
 
-      // On-deck card: Eve is now shown
-      await expect(page.getByText("E2E_Eve")).toBeVisible({ timeout: 5_000 });
+      // On-deck card: Eve is now shown (use testid to avoid matching toast text)
+      await expect(
+        page.getByTestId(`player-pill-${seeded.players.eve.userId}`)
+      ).toBeVisible({ timeout: 5_000 });
 
       // On-deck card: Alice is NO LONGER shown (she's back in waiting queue)
-      // Note: Alice's name might still appear in the queue table on the
-      // "Queue" tab. We check she's gone from the ON-DECK CARD specifically.
-      const onDeckCard = page.locator('[aria-labelledby="tab-courts"]').first();
-      await expect(onDeckCard.getByText("E2E_Alice")).not.toBeVisible({ timeout: 3_000 });
+      // Use testid to avoid matching toast text ("Swapped E2E_Alice → E2E_Eve").
+      await expect(
+        page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
+      ).not.toBeVisible({ timeout: 3_000 });
 
       // ── 10. DB assertions ───────────────────────────────────
       const matchId = seeded.matchId!;
@@ -434,9 +436,14 @@ test.describe("Tap-to-Swap — Undo", () => {
       // Click the "Undo" action button on the toast
       await toast.getByRole("button", { name: "Undo" }).click();
 
-      // After undo, Alice should be back in the match
-      await expect(page.getByText("E2E_Alice")).toBeVisible({ timeout: 8_000 });
-      await expect(page.getByText("E2E_Eve")).not.toBeVisible({ timeout: 3_000 });
+      // After undo, Alice should be back in the on-deck card (use testid to
+      // avoid matching the lingering "Swapped E2E_Alice → E2E_Eve" toast text).
+      await expect(
+        page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
+      ).toBeVisible({ timeout: 8_000 });
+      await expect(
+        page.getByTestId(`player-pill-${seeded.players.eve.userId}`)
+      ).not.toBeVisible({ timeout: 3_000 });
 
       // DB verification
       const matchId = seeded.matchId!;
