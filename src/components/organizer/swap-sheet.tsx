@@ -288,6 +288,7 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
             return (
               <button
                 key={player.player_id}
+                data-testid={`swap-candidate-${player.player_id}`}
                 disabled={isDisabled}
                 onClick={() => {
                   if (!player.is_paused) {
@@ -397,6 +398,7 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
 
           {/* Confirm Swap */}
           <button
+            data-testid="swap-confirm"
             onClick={handleConfirm}
             disabled={!selectedPlayerId || isConfirming}
             className="w-full rounded-xl px-4 py-3 text-sm font-bold

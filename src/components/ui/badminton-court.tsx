@@ -148,6 +148,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
         onPointerDown={(e) => e.stopPropagation()}
         // ── dnd-kit isolation: Defense 2 (declarative label) ──
         data-no-dnd="true"
+        data-testid={`player-pill-${player.player_id}`}
         onClick={() => onPlayerClick(player)}
         aria-label={`Swap ${player.display_name}`}
         className="relative flex flex-col items-center gap-1
