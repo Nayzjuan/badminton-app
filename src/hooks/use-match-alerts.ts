@@ -4,18 +4,32 @@
 // useMatchAlerts — Real-time match status → audio + push
 // ============================================================
 // Watches the player's queue entry and match assignment for
-// state TRANSITIONS and fires the appropriate alert exactly
+// state transitions and fires the appropriate alert exactly
 // once per transition.
 //
-// Transitions tracked:
-//   waiting → on_deck       playWarningBeep()   (get ready)
-//   on_deck → playing       playCourtCall()     (go now)
-//   pending → in_progress   playCourtCall()     (court assigned)
+// Alerts fired:
+//   → on_deck      playWarningBeep()   (match forming, get ready)
+//   → playing      playCourtCall()     (court assigned, go now)
+//   → in_progress  playCourtCall()     (match started on court)
 //
-// The hook fires audio immediately (client-side, no latency)
-// and separately calls the sendPlayerNotification server
-// action when the player is NOT currently focused on the app
-// (document.visibilityState !== "visible").
+// Android-specific fixes applied here:
+//
+//   FIX 1 — Transition detection: no longer requires knowing the
+//   exact previous state.  Old code checked `prev === "waiting"`
+//   which fails if bootstrap() hadn't finished yet (race condition).
+//   New code checks `next === "on_deck" && prev !== "on_deck"` so
+//   any entry INTO the target state fires the alert, regardless of
+//   what state we thought we were in before.
+//
+//   FIX 2 — Push notification always sent (visibility gate removed).
+//   Old code skipped push when visibilityState === "visible".
+//   On Android, if AudioContext also silently fails (Bug in audio.ts),
+//   the user got ZERO feedback.  Now push always fires as a reliable
+//   backup channel independent of AudioContext state.
+//
+//   FIX 3 — AudioContext async issue is fixed in audio.ts; play
+//   functions are now async and await ctx.resume() before scheduling
+//   tones.
 // ============================================================
 
 import { useCallback, useEffect, useRef, useMemo } from "react";
@@ -27,7 +41,7 @@ import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
 // ── Types ────────────────────────────────────────────────────
 
-type AlertType = "ON_DECK_WARNING" | "COURT_CALL";
+export type AlertType = "ON_DECK_WARNING" | "COURT_CALL";
 
 interface UseMatchAlertsOptions {
   sessionId: string;
@@ -45,71 +59,77 @@ export function useMatchAlerts({
 }: UseMatchAlertsOptions): void {
   const supabase = useMemo(() => createClient(), []);
 
-  // Track the last-known status values so we can detect direction
-  // of the transition and avoid re-firing on unrelated updates.
+  // Last-known status refs — used only to detect transitions and
+  // suppress duplicate alerts for the same state.
   const lastQueueStatus = useRef<QueueStatus | null>(null);
   const lastMatchStatus = useRef<MatchStatus | null>(null);
 
-  // Whether the player is currently assigned to ANY non-completed match.
+  // Fast-path cache: the match ID the player is currently assigned to.
   const assignedMatchId = useRef<string | null>(null);
 
   // ── Audio unlock on first interaction ──────────────────────
   // Browsers require a user gesture before AudioContext can start.
-  // Register a one-time listener so we capture the first click/touch
-  // on the dashboard and prime the AudioContext before any alert fires.
+  // We register a one-time listener and also call unlockAudio()
+  // eagerly so the context is primed as soon as possible.
   useEffect(() => {
-    const unlock = () => {
-      unlockAudio();
-      document.removeEventListener("click", unlock);
-      document.removeEventListener("touchstart", unlock);
-    };
-    document.addEventListener("click", unlock, { once: true });
+    const unlock = () => unlockAudio();
+    document.addEventListener("click",      unlock, { once: true });
     document.addEventListener("touchstart", unlock, { once: true, passive: true });
+    document.addEventListener("keydown",    unlock, { once: true });
     return () => {
-      document.removeEventListener("click", unlock);
+      document.removeEventListener("click",      unlock);
       document.removeEventListener("touchstart", unlock);
+      document.removeEventListener("keydown",    unlock);
     };
   }, []);
 
   // ── Fire alert ───────────────────────────────────────────────
   const fireAlert = useCallback(
     async (type: AlertType) => {
+      console.log(`[useMatchAlerts] 🔔 firing ${type}`);
+
       // Audio fires immediately regardless of visibility.
+      // play* functions are async and await ctx.resume() internally
+      // so they work correctly on Android Chrome.
       if (audioEnabled) {
         if (type === "ON_DECK_WARNING") {
-          playWarningBeep();
+          await playWarningBeep();
         } else {
-          playCourtCall();
+          await playCourtCall();
         }
       }
 
-      // Push notification only fires if the tab is backgrounded.
-      // When the app is visible, the in-app audio + UI (MatchAlert overlay,
-      // OnDeckAlert) already give strong feedback.
-      if (
-        typeof document !== "undefined" &&
-        document.visibilityState !== "visible"
-      ) {
-        try {
-          const { sendPlayerNotification } = await import(
-            "@/app/actions/notifications"
-          );
-          await sendPlayerNotification(playerId, type);
-        } catch (err) {
-          // Non-critical — audio already fired; just log.
-          console.warn("[useMatchAlerts] push notification failed:", err);
-        }
+      // Push notification fires ALWAYS (not just when backgrounded).
+      //
+      // WHY: On Android the AudioContext can fail silently even after a
+      // user gesture (e.g. permission dialog closed the gesture context).
+      // Push is a completely independent delivery channel — OS-level
+      // vibration + sound + banner — that does not depend on the
+      // AudioContext being in a "running" state.  It is the reliable
+      // fallback for mobile.
+      try {
+        const { sendPlayerNotification } = await import(
+          "@/app/actions/notifications"
+        );
+        await sendPlayerNotification(playerId, type);
+      } catch (err) {
+        // Non-critical — audio already fired; just log.
+        console.warn("[useMatchAlerts] push notification failed:", err);
       }
     },
     [playerId, audioEnabled]
   );
 
   // ── Initial state bootstrap ──────────────────────────────────
-  // Fetch the player's current queue and match status so the refs
-  // are seeded before any realtime events arrive.  This prevents a
-  // false-positive alert on the first subscription event.
+  // Seeds the lastQueueStatus / lastMatchStatus refs so the first
+  // real-time event is compared against the correct baseline.
+  //
+  // NOTE: bootstrap is async and there IS a small race window where a
+  // realtime event can arrive before bootstrap finishes.  The transition
+  // detection below uses `next !== prev` (not `prev === "waiting"`) so it
+  // fires correctly even if prev is null.
   const bootstrap = useCallback(async () => {
-    // Queue status
+    // ── Queue status ─────────────────────────────────────────
     const { data: queueRow } = await supabase
       .from("queue_entries")
       .select("status")
@@ -122,10 +142,10 @@ export function useMatchAlerts({
       lastQueueStatus.current = queueRow.status as QueueStatus;
     }
 
-    // Active match (pending / in_progress) for this player
+    // ── Active match (pending / in_progress) ─────────────────
     const { data: assignments } = await supabase
       .from("match_players")
-      .select("match_id, matches!inner(session_id, status)")
+      .select("match_id, matches!inner(session_id)")
       .eq("player_id", playerId)
       .eq("matches.session_id", sessionId);
 
@@ -149,33 +169,34 @@ export function useMatchAlerts({
   }, [supabase, sessionId, playerId]);
 
   // ── Queue changes ─────────────────────────────────────────────
-  // Fires when *any* queue_entry in this session changes.
-  // We filter to our own player's row and inspect the transition.
   const handleQueueChange = useCallback(
     (payload: RealtimePostgresChangesPayload<QueueEntry>) => {
       const row = payload.new as Partial<QueueEntry>;
 
-      // Ignore updates for other players.
+      // Ignore other players.
       if (row.player_id !== playerId) return;
 
       const prev = lastQueueStatus.current;
       const next = row.status;
-
-      // Only fire on status change, not on other field updates.
       if (!next || next === prev) return;
+
       lastQueueStatus.current = next as QueueStatus;
 
-      // waiting → on_deck: match is forming
-      if (prev === "waiting" && next === "on_deck") {
+      console.log(`[useMatchAlerts] queue transition: ${prev} → ${next}`);
+
+      // ── FIX 1: check `next === target` not `prev === source`  ──
+      // Old: if (prev === "waiting" && next === "on_deck")
+      // Problem: if bootstrap hasn't finished, prev === null and the
+      // check fails even though the transition is genuine.
+      // New: fire whenever we ENTER on_deck, regardless of origin.
+      if (next === "on_deck" && prev !== "on_deck") {
         fireAlert("ON_DECK_WARNING");
         return;
       }
 
-      // on_deck → playing: court assigned (match moved to in_progress)
-      // The COURT_CALL fires from the match change handler below, but
-      // this catches the edge case where queue status changes without
-      // a separate match update being observed.
-      if (prev === "on_deck" && next === "playing") {
+      // Also catch queue-level playing transition as a belt-and-suspenders
+      // COURT_CALL in case the match status event is missed.
+      if (next === "playing" && prev !== "playing") {
         fireAlert("COURT_CALL");
       }
     },
@@ -183,8 +204,6 @@ export function useMatchAlerts({
   );
 
   // ── Match changes ─────────────────────────────────────────────
-  // Fires when any match in this session changes.  We verify the
-  // player is actually in the match before firing.
   const handleMatchChange = useCallback(
     async (payload: RealtimePostgresChangesPayload<Match>) => {
       const row = payload.new as Partial<Match>;
@@ -192,13 +211,14 @@ export function useMatchAlerts({
       if (!matchId) return;
 
       const next = row.status;
+      // Only care about in_progress transitions (court assigned).
+      if (next !== "in_progress") return;
 
-      // Determine if this player is in the match — check against
-      // the in-memory assignedMatchId first (fast path), then fall
-      // back to a DB query if the match is new.
+      // Fast-path: is this the match we already know about?
       let playerIsInMatch = assignedMatchId.current === matchId;
 
       if (!playerIsInMatch) {
+        // Slow-path: query match_players to confirm this player is in the match.
         const { data } = await supabase
           .from("match_players")
           .select("match_id")
@@ -215,13 +235,17 @@ export function useMatchAlerts({
       if (!playerIsInMatch) return;
 
       const prev = lastMatchStatus.current;
-      if (!next || next === prev) return;
+      if (next === prev) return;
       lastMatchStatus.current = next as MatchStatus;
 
-      // pending → in_progress: the match got a court; walk there now
-      if (prev === "pending" && next === "in_progress") {
-        fireAlert("COURT_CALL");
-      }
+      console.log(`[useMatchAlerts] match transition: ${prev} → ${next} (match ${matchId})`);
+
+      // ── FIX 1 (same pattern): fire on entering in_progress ─────
+      // Old: if (prev === "pending" && next === "in_progress")
+      // Problem: if bootstrap hasn't set lastMatchStatus yet, or if the
+      // match was created while bootstrap was running, prev is null.
+      // New: fire whenever match enters in_progress.
+      fireAlert("COURT_CALL");
     },
     [supabase, playerId, fireAlert]
   );
@@ -244,14 +268,12 @@ export function useMatchAlerts({
       "alerts-matches"
     );
 
-    // match_players changes signal when a player is added to a new match.
-    // We refresh our assignment ref so subsequent match status events are
-    // correctly attributed.
     const unsubPlayers = subscribeToMatchPlayers(
       supabase,
       sessionId,
       (_payload: RealtimePostgresChangesPayload<MatchPlayer>) => {
-        // Re-bootstrap the assigned match when player assignments change.
+        // Player assignment changed — re-seed the match ref so subsequent
+        // match status events are correctly attributed.
         assignedMatchId.current = null;
         lastMatchStatus.current = null;
         bootstrap();
