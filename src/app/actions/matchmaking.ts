@@ -32,6 +32,7 @@ import {
   PLAYERS_PER_MATCH,
   FALLBACK_WAIT_MINUTES,
   ANTI_REPEAT_LOOKBACK,
+  RED_ZONE_SCORE_FLOOR,
 } from "@/lib/constants";
 import {
   computePriorityScore,
@@ -337,15 +338,22 @@ async function runAlgorithm(
   const anchor = pool[0];
   const anchorSkill = anchor.skill_level_int;
   const anchorWaitMinutes = anchor.wait_minutes ?? 0;
-  const anchorIsRedZone = anchor.priorityScore >= 1000;
+  const anchorIsRedZone = anchor.priorityScore >= RED_ZONE_SCORE_FLOOR;
 
-  console.log(
-    `[matchmaking] anchor=${anchor.display_name} skill=${anchorSkill} ` +
-    `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
-    `redZone=${anchorIsRedZone} pool=${pool.length}`
-  );
+  if (process.env.DEBUG_MATCHMAKING === "true") {
+    console.log(
+      `[matchmaking] anchor=${anchor.display_name} skill=${anchorSkill} ` +
+      `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
+      `redZone=${anchorIsRedZone} pool=${pool.length}`
+    );
+  }
 
   // ── 4. Build overlap map ──────────────────────────────────
+  // NOTE: buildOverlapMap is called once per createOneOnDeckMatch tick.
+  // For the current queue sizes (≤ 30 players) and on-deck cap (courtCount−1),
+  // this is at most ~3 DB calls per engine run — acceptable. If tick frequency
+  // increases significantly, consider computing once in runEngineInternal and
+  // passing the map down to avoid redundant per-slot fetches.
   const overlapMap = await buildOverlapMap(supabase, sessionId, anchor.player_id);
 
   // ── 5. Fetch recent rosters for group-level diversity ─────
@@ -401,9 +409,11 @@ async function runAlgorithm(
     );
 
     if (eligible.length < 3) {
-      console.log(
-        `[matchmaking] ±${maxVariance} window: only ${eligible.length} eligible, need 3 — expanding`
-      );
+      if (process.env.DEBUG_MATCHMAKING === "true") {
+        console.log(
+          `[matchmaking] ±${maxVariance} window: only ${eligible.length} eligible, need 3 — expanding`
+        );
+      }
       continue;
     }
 
@@ -418,19 +428,23 @@ async function runAlgorithm(
 
       // ── Group-level diversity check ───────────────────────
       if (isDiversityViolation(proposedIds, recentRosters)) {
-        console.log(
-          `[matchmaking] Diversity violation for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
-        );
+        if (process.env.DEBUG_MATCHMAKING === "true") {
+          console.log(
+            `[matchmaking] Diversity violation for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
+          );
+        }
 
         // Red Zone immunity: if the 3rd companion (swap target) is also
         // in the Red Zone, never bench them for diversity — waiting time
         // takes absolute precedence.
         const swapTarget = group[2];
-        if (swapTarget.priorityScore >= 1000) {
-          console.warn(
-            `[matchmaking] Swap target ${swapTarget.display_name} is Red Zone ` +
-            `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
-          );
+        if (swapTarget.priorityScore >= RED_ZONE_SCORE_FLOOR) {
+          if (process.env.DEBUG_MATCHMAKING === "true") {
+            console.warn(
+              `[matchmaking] Swap target ${swapTarget.display_name} is Red Zone ` +
+              `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
+            );
+          }
           // Fall through to executeMatch with the original group.
         } else {
           // Keep the top 2 companions; try replacing the 3rd.
@@ -440,45 +454,60 @@ async function runAlgorithm(
             ({ candidate }) => !alreadyInGroup.has(candidate.player_id)
           );
 
-          let swapped = false;
+          let diverseSwapFound = false;
           for (const { candidate } of swapPool) {
             const swapGroup = [...fixedTwo, candidate];
             if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
 
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (!isDiversityViolation(swappedIds, recentRosters)) {
-              console.log(`[matchmaking] Swap succeeded — replaced with ${candidate.display_name}`);
+              diverseSwapFound = true;
+              if (process.env.DEBUG_MATCHMAKING === "true") {
+                console.log(`[matchmaking] Swap succeeded — replaced with ${candidate.display_name}`);
+              }
               const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
               return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
             }
           }
 
-          if (!swapped) {
+          if (!diverseSwapFound) {
             console.warn("[matchmaking] No diverse swap found — accepting repeat group (critical fallback)");
           }
         }
       }
 
       const isMixed = maxVariance > SKILL_VARIANCE_MAX;
-      console.log(
-        `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +
-        (isMixed ? " (mixed level)" : "")
-      );
+      if (process.env.DEBUG_MATCHMAKING === "true") {
+        console.log(
+          `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +
+          (isMixed ? " (mixed level)" : "")
+        );
+      }
       const allFour = [anchor, ...group];
       const { teamA, teamB } = snakeDraft(allFour);
       return executeMatch(supabase, sessionId, courtId, teamA, teamB, isMixed, isOnDeck);
     }
 
-    console.log(
-      `[matchmaking] ±${maxVariance} window: only built group of ${group.length} — expanding`
-    );
+    if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.log(
+        `[matchmaking] ±${maxVariance} window: only built group of ${group.length} — expanding`
+      );
+    }
   }
 
   // ── 9. Last-resort fallback (15+ min anchor, any 3 players) ──
+  // NOTE: This path intentionally skips skill validation. A player who has
+  // waited > FALLBACK_WAIT_MINUTES without finding a compatible group will be
+  // matched with the next-best available players regardless of skill spread.
+  // The match is always flagged isMixedLevel=true so the UI can warn the
+  // organizer. Tradeoff: prevents indefinite starvation at the cost of match
+  // quality. This only fires when ALL skill-window expansion passes fail.
   if (anchorWaitMinutes > FALLBACK_WAIT_MINUTES) {
-    console.log(
-      `[matchmaking] LAST-RESORT FALLBACK — anchor waited ${anchorWaitMinutes.toFixed(1)}min > ${FALLBACK_WAIT_MINUTES}min`
-    );
+    if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.log(
+        `[matchmaking] LAST-RESORT FALLBACK — anchor waited ${anchorWaitMinutes.toFixed(1)}min > ${FALLBACK_WAIT_MINUTES}min`
+      );
+    }
     // Apply overlap penalties so we don't accidentally repeat exact matches
     const scoredFallback = scoreCandidates(candidates, overlapMap);
     const fallbackGroup = scoredFallback.slice(0, 3).map((s) => s.candidate);
@@ -498,6 +527,40 @@ async function runAlgorithm(
   };
 }
 
+
+// ─────────────────────────────────────────────────────────────
+// HELPER: buildOverlapMap
+// ─────────────────────────────────────────────────────────────
+// Returns a Map<player_id, count> of how many completed matches
+// each player has shared with the anchor in this session.
+// Used to apply anti-repeat overlap penalties in scoreCandidates.
+
+async function buildOverlapMap(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  sessionId: string,
+  anchorPlayerId: string
+): Promise<Map<string, number>> {
+  const overlapMap = new Map<string, number>();
+
+  const { data: pairings, error } = await supabase
+    .from("v_recent_pairings")
+    .select("player_a, player_b")
+    .eq("session_id", sessionId)
+    .or(`player_a.eq.${anchorPlayerId},player_b.eq.${anchorPlayerId}`);
+
+  if (error || !pairings) {
+    console.warn("[matchmaking] buildOverlapMap failed:", error?.message);
+    return overlapMap;
+  }
+
+  for (const row of pairings) {
+    const otherPlayer =
+      row.player_a === anchorPlayerId ? row.player_b : row.player_a;
+    overlapMap.set(otherPlayer, (overlapMap.get(otherPlayer) ?? 0) + 1);
+  }
+
+  return overlapMap;
+}
 
 // ─────────────────────────────────────────────────────────────
 // HELPER: executeMatch

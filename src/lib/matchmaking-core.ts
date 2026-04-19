@@ -12,6 +12,7 @@
 import {
   CRITICAL_WAIT_MINUTES,
   GAME_PENALTY_MINUTES,
+  RED_ZONE_SCORE_FLOOR,
 } from "@/lib/constants";
 import type { QueueWithWaitTime } from "@/types/database";
 
@@ -109,8 +110,12 @@ export function isDiversityViolation(
   playerIds: string[],
   recentRosters: string[][]
 ): boolean {
+  // Build the Set once here so each roster check is O(n) rather than O(n²)
+  // from constructing a new rosterSet inside overlapWithRoster per iteration.
+  const playerSet = new Set(playerIds);
   for (const roster of recentRosters) {
-    if (overlapWithRoster(playerIds, roster) >= 3) return true;
+    const overlap = roster.filter((id) => playerSet.has(id)).length;
+    if (overlap >= 3) return true;
   }
   return false;
 }
@@ -143,7 +148,7 @@ export function scoreCandidates(
     .map((c) => {
       const overlap = overlapMap.get(c.player_id) ?? 0;
       // Red Zone: cap overlap penalty so urgency always wins.
-      const isRedZone = c.priorityScore >= 1000;
+      const isRedZone = c.priorityScore >= RED_ZONE_SCORE_FLOOR;
       const overlapPenalty = isRedZone ? overlap * 100 : overlap * 10_000;
       return {
         candidate: c,
@@ -157,7 +162,7 @@ export function scoreCandidates(
 // EXPORT: buildCombinationGroup   [FIX — Audit Rec #1]
 // ─────────────────────────────────────────────────────────────
 // Replaces the previous greedy approach with a full N-choose-3
-// combination search. Because `scored` is already sorted
+// combination search. Because `scoredCandidates` is already sorted
 // best-priority-first, the very first valid combination found
 // IS the optimal group — so we break immediately on success.
 //
@@ -169,25 +174,27 @@ export function scoreCandidates(
 //   highest-priority candidate can't participate in a valid
 //   group, we still find [candidates[1], [2], [3]] etc.
 //
-// Complexity: O(n³) in the worst case, but n is the size of the
-//   skill-filtered eligible pool (~20 players max in practice),
-//   giving at most C(20,3) = 1,140 iterations — negligible.
+// Scale invariant: n is the size of the skill-filtered eligible
+//   pool, bounded by the queue size (≤ ~30 players per session).
+//   Worst case: C(30,3) = 4,060 iterations — still negligible at
+//   runtime. If sessions grow beyond ~50 players, consider adding
+//   a candidate pre-filter before this search.
 
 export function buildCombinationGroup(
   anchor: ScoredPlayer,
-  scored: ScoredCandidate[],
+  scoredCandidates: ScoredCandidate[],
   maxVariance: number
 ): ScoredPlayer[] {
-  const n = scored.length;
+  const n = scoredCandidates.length;
   if (n < 3) return [];
 
   for (let i = 0; i < n - 2; i++) {
     for (let j = i + 1; j < n - 1; j++) {
       for (let k = j + 1; k < n; k++) {
         const combo: ScoredPlayer[] = [
-          scored[i].candidate,
-          scored[j].candidate,
-          scored[k].candidate,
+          scoredCandidates[i].candidate,
+          scoredCandidates[j].candidate,
+          scoredCandidates[k].candidate,
         ];
         if (isGroupValid([anchor, ...combo], maxVariance)) {
           // Early exit — first valid triple in priority order IS optimal.
