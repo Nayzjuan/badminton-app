@@ -149,7 +149,7 @@ export function MatchAlert({
   // pos=3+ → "#N On Deck" — N-1 matches ahead of you
   const posLabel =
     onDeckPosition === null || onDeckPosition === 1
-      ? "You're Next Up!"
+      ? "Next Available Court!"
       : `#${onDeckPosition} On Deck`;
 
   const posSubline =

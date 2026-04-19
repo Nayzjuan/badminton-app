@@ -89,7 +89,7 @@ export function OnDeckAlert({
         : "You're Up Next!";
     const deckHeading =
       onDeckPosition === null || onDeckPosition === 1
-        ? "A court is opening soon"
+        ? "Next Available Court!"
         : `#${onDeckPosition} On Deck`;
     const deckSubline =
       onDeckPosition === null || onDeckPosition === 1
