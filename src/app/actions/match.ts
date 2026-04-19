@@ -97,12 +97,14 @@ export async function submitMatchScore(
   }
 
   // Verify this player is in the match (prevents spoofed submissions).
+  // Use .maybeSingle() — .single() throws if 0 rows, which would surface
+  // as a confusing error instead of the "not a player" message.
   const { data: mySlot } = await supabase
     .from("match_players")
     .select("id")
     .eq("match_id", matchId)
     .eq("player_id", user.id)
-    .single();
+    .maybeSingle();
 
   if (!mySlot) {
     return { success: false, message: "You are not a player in this match." };
@@ -147,8 +149,13 @@ export async function endMatchAction(
   // 2. P0-1: Atomic UPDATE — only succeeds if status is still "in_progress".
   //    Adding .eq("status", "in_progress") makes this a compare-and-swap:
   //    if a concurrent caller already changed the status, 0 rows are affected
-  //    and `updatedMatch` will be null — we bail out instead of double-completing.
-  const { data: updatedMatch, error: matchUpdateError } = await supabase
+  //    and `updatedRows` will be empty — we bail out instead of double-completing.
+  //
+  //    NOTE: Do NOT use .single() here. When the CAS guard causes 0 rows to be
+  //    updated (concurrent request already completed the match), PostgREST returns
+  //    an empty array — .single() throws "Cannot coerce the result to a single JSON
+  //    object" instead of returning null, surfacing a confusing error to the player.
+  const { data: updatedRows, error: matchUpdateError } = await supabase
     .from("matches")
     .update({
       team_a_score: teamAScore,
@@ -158,16 +165,14 @@ export async function endMatchAction(
     })
     .eq("id", matchId)
     .eq("status", "in_progress")   // ← Atomic guard (CAS)
-    .select("id")
-    .single();
+    .select("id");
 
-  if (matchUpdateError || !updatedMatch) {
-    // Either a DB error OR another concurrent caller already completed/cancelled
-    // this match. Return a friendly message — the match IS done, just not by us.
-    if (!updatedMatch && !matchUpdateError) {
-      return { success: false, message: "Match was already completed by another request." };
-    }
-    return { success: false, message: `Failed to save scores: ${matchUpdateError?.message}` };
+  if (matchUpdateError) {
+    return { success: false, message: `Failed to save scores: ${matchUpdateError.message}` };
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    // 0 rows affected — another concurrent caller already completed/cancelled.
+    return { success: false, message: "Match was already completed by another request." };
   }
 
   // 3. Fetch all players in this match.
@@ -193,7 +198,7 @@ export async function endMatchAction(
           .select("games_played")
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
-          .single();
+          .maybeSingle();
 
         const updatedGames = (entry?.games_played ?? 0) + 1;
 
@@ -227,6 +232,13 @@ export async function endMatchAction(
     // Either way, run the engine to refill on-deck from the queue.
     await runEngineForSession(match.session_id);
   }
+
+  // 6. Refresh the all-time leaderboard materialized view.
+  //    Fire without awaiting so a slow refresh never delays the player's UI.
+  //    CONCURRENTLY means reads are never blocked during refresh.
+  void supabase.rpc("refresh_alltime_leaderboard").then(({ error }) => {
+    if (error) console.warn("[endMatchAction] leaderboard refresh failed:", error.message);
+  });
 
   return { success: true, message: "Match completed. Players returned to queue." };
 }
@@ -390,7 +402,12 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
 
   // 2. P0-1: Atomic UPDATE — guard against double-cancellation.
   //    Only succeeds if the match is still in a cancellable state.
-  const { data: cancelledMatch, error: matchUpdateError } = await supabase
+  //
+  //    NOTE: Do NOT use .single() here. When .in("status", [...]) matches
+  //    0 rows (already cancelled/completed), PostgREST returns an empty array
+  //    and .single() throws "Cannot coerce the result to a single JSON object"
+  //    instead of returning null.
+  const { data: cancelledRows, error: matchUpdateError } = await supabase
     .from("matches")
     .update({
       status: "cancelled" as const,
@@ -398,14 +415,13 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
     })
     .eq("id", matchId)
     .in("status", ["pending", "in_progress"])  // ← Atomic guard (CAS)
-    .select("id")
-    .single();
+    .select("id");
 
-  if (matchUpdateError || !cancelledMatch) {
-    if (!cancelledMatch && !matchUpdateError) {
-      return { success: false, message: "Match was already cancelled or completed by another request." };
-    }
-    return { success: false, message: `Failed to cancel match: ${matchUpdateError?.message}` };
+  if (matchUpdateError) {
+    return { success: false, message: `Failed to cancel match: ${matchUpdateError.message}` };
+  }
+  if (!cancelledRows || cancelledRows.length === 0) {
+    return { success: false, message: "Match was already cancelled or completed by another request." };
   }
 
   // 3. Free the court — available for manual organizer use.
@@ -631,4 +647,44 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   await runEngineForSession(match.session_id);
 
   return { success: true, message: "On-deck match cleared. Players returned to queue." };
+}
+
+// ============================================================
+// reorderOnDeckMatches — persist drag-and-drop sort order
+// ============================================================
+// Bulk-updates the sort_order column for a set of on-deck
+// matches in one round trip. Called optimistically — the UI
+// has already reordered before this resolves.
+// ============================================================
+
+export async function reorderOnDeckMatches(
+  sessionId: string,
+  orderedMatchIds: string[]
+): Promise<MatchActionResult> {
+  const db = await createClient();
+
+  const user = await getAuthUser(db);
+  if (!user) return { success: false, message: "Unauthorized" };
+
+  const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
+  if (!isOrganizer) return { success: false, message: "Forbidden" };
+
+  // Build individual updates — Supabase JS client doesn't support
+  // bulk UPDATE with per-row values, so we fire them concurrently.
+  const updates = orderedMatchIds.map((id, index) =>
+    db
+      .from("matches")
+      .update({ sort_order: index })
+      .eq("id", id)
+      .eq("session_id", sessionId)
+      .eq("status", "pending")
+  );
+
+  const results = await Promise.all(updates);
+  const firstError = results.find((r) => r.error);
+  if (firstError?.error) {
+    return { success: false, message: `Failed to save order: ${firstError.error.message}` };
+  }
+
+  return { success: true, message: "Order saved." };
 }
