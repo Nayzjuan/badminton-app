@@ -39,8 +39,9 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { swapPlayerInMatch } from "@/app/actions/swap-player";
+import type { SwapResult } from "@/app/actions/swap-player";
 import type { QueueWithWaitTime, SkillLevel } from "@/types/database";
+import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { SwapContext } from "./on-deck-panel";
 
 // ── Exported types ────────────────────────────────────────────
@@ -60,6 +61,10 @@ interface SwapSheetProps {
   context: SwapContext | null;
   /** Full queue — filtered internally to show only available players. */
   queue: QueueWithWaitTime[];
+  /** All active matches (pending + in_progress) — used to exclude on-court players. */
+  activeMatches: EnrichedMatch[];
+  /** Hook-provided swap function that triggers immediate state refresh. */
+  swapPlayer: (matchId: string, outPlayerId: string, inPlayerId: string) => Promise<SwapResult>;
   /** Called when the sheet should close (Cancel, Escape, backdrop). */
   onClose: () => void;
   /** Called after a successful swap with data needed to power the undo toast. */
@@ -74,7 +79,7 @@ function teamLabel(team: "a" | "b") {
 
 // ── Main component ────────────────────────────────────────────
 
-export function SwapSheet({ context, queue, onClose, onSwapComplete }: SwapSheetProps) {
+export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, onSwapComplete }: SwapSheetProps) {
   // Internal state — reset via key prop in parent when context changes.
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [mismatchDismissed, setMismatchDismissed] = useState(false);
@@ -101,10 +106,20 @@ export function SwapSheet({ context, queue, onClose, onSwapComplete }: SwapSheet
     context?.currentPlayers.map((p) => p.player_id) ?? []
   );
 
+  // Build a set of ALL player IDs currently assigned to any active match
+  // (both pending on-deck and in_progress on-court). This prevents players
+  // who are physically on a court from appearing as swap candidates, even
+  // if Realtime hasn't yet updated the queue status to "playing".
+  const activeMatchPlayerIds = new Set(
+    activeMatches.flatMap((m) => m.players.map((p) => p.player_id))
+  );
+
   const allCandidates = queue
     .filter((p) => {
       // Must not already be in this match
       if (currentMatchPlayerIds.has(p.player_id)) return false;
+      // Must not be assigned to any other active match (on-court or on-deck)
+      if (activeMatchPlayerIds.has(p.player_id)) return false;
       // Must be waiting (on_deck/playing/left excluded — they're not available)
       if (p.status !== "waiting") return false;
       return true;
@@ -152,7 +167,7 @@ export function SwapSheet({ context, queue, onClose, onSwapComplete }: SwapSheet
     const inPlayer = queue.find((p) => p.player_id === selectedPlayerId);
     const inName = inPlayer?.display_name ?? "Unknown";
 
-    const result = await swapPlayerInMatch(
+    const result = await swapPlayer(
       context.matchId,
       context.outPlayerId,
       selectedPlayerId
