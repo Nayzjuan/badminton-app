@@ -1,50 +1,321 @@
 "use client";
 
 // ============================================================
-// LeaderboardPage — Placeholder (full implementation pending)
+// LeaderboardPage — Orchestrates all leaderboard variants
 // ============================================================
-// This stub satisfies the import in player-dashboard.tsx while
-// the full leaderboard feature is being built.
+// Three variants controlled by the `variant` prop:
 //
-// Props:
-//   sessionId      — the session to scope stats to
-//   currentUserId  — highlight this player's own row
-//   variant        — "player-panel" (inline) | "full-page"
+//   player-panel    — embedded in player dashboard tab.
+//                     Session stats only. No advanced toggle.
+//                     Compact padding.
+//
+//   organizer-panel — embedded in organizer dashboard tab.
+//                     Session + All-Time tabs.
+//                     Advanced stats toggle (PF/PA/+/-).
+//
+//   standalone      — public /leaderboard/[sessionId] page.
+//                     Session + All-Time tabs.
+//                     Advanced stats toggle.
+//                     Max-width centered layout.
+//
+// Data flow:
+//   Session tab  → getSessionLeaderboard(sessionId)
+//   All-Time tab → getAllTimeLeaderboard() (lazy: fetched on first visit)
+//
+// Flash: rows new to the board after a refresh pulse for 1.2 s.
+// Hero card: current user's row is pinned above the table so
+//   they can always see their rank without scrolling.
 // ============================================================
 
-import { Trophy } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Trophy, RefreshCw } from "lucide-react";
+import { LeaderboardTable } from "./leaderboard-table";
+import { AdvancedStatsToggle } from "./advanced-stats-toggle";
+import { getSessionLeaderboard, getAllTimeLeaderboard } from "@/app/actions/leaderboard";
+import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
+
+const MIN_SESSION_GP = 3;
+const MIN_ALLTIME_GP = 10;
+
+const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
+
+// ── Props ─────────────────────────────────────────────────────
 
 interface LeaderboardPageProps {
   sessionId: string;
-  currentUserId: string;
-  variant?: "player-panel" | "full-page";
+  /** Display name shown in the header subtitle (optional). */
+  sessionName?: string;
+  /** Currently logged-in user — null for unauthenticated public page. */
+  currentUserId: string | null;
+  variant?: LeaderboardVariant;
 }
 
+// ── Scope tab type ────────────────────────────────────────────
+
+type ScopeTab = "session" | "alltime";
+
+// ── Component ─────────────────────────────────────────────────
+
 export function LeaderboardPage({
-  sessionId: _sessionId,
-  currentUserId: _currentUserId,
+  sessionId,
+  sessionName,
+  currentUserId,
   variant = "player-panel",
 }: LeaderboardPageProps) {
+  const isCompact       = variant === "player-panel";
+  const showAllTimeTab  = variant === "organizer-panel" || variant === "standalone";
+  const showAdvToggle   = variant === "organizer-panel" || variant === "standalone";
+  const isCentered      = variant === "standalone";
+
+  // ── State ──────────────────────────────────────────────────
+  const [scopeTab,       setScopeTab]      = useState<ScopeTab>("session");
+  const [sessionRows,    setSessionRows]   = useState<LeaderboardRow[]>([]);
+  const [alltimeRows,    setAlltimeRows]   = useState<LeaderboardRow[]>([]);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [alltimeLoading, setAlltimeLoading] = useState(false);
+  const [alltimeFetched, setAlltimeFetched] = useState(false);
+  const [error,          setError]          = useState<string | null>(null);
+  const [showAdvanced,   setShowAdvanced]   = useState(false);
+  const [flashedIds,     setFlashedIds]     = useState<Set<string>>(new Set());
+
+  // Track previous row IDs to detect new entrants for flash effect.
+  const prevIdsRef = useRef<Set<string>>(new Set());
+
+  // ── Flash helper ──────────────────────────────────────────
+  const flashNewEntrants = useCallback((rows: LeaderboardRow[]) => {
+    const toFlash = new Set<string>();
+    rows.forEach((r) => {
+      if (!prevIdsRef.current.has(r.player_id)) toFlash.add(r.player_id);
+    });
+    prevIdsRef.current = new Set(rows.map((r) => r.player_id));
+    if (toFlash.size === 0) return;
+    setFlashedIds(toFlash);
+    setTimeout(() => setFlashedIds(new Set()), 1200);
+  }, []);
+
+  // ── Fetch functions ───────────────────────────────────────
+  const fetchSession = useCallback(async () => {
+    setSessionLoading(true);
+    setError(null);
+    const result = await getSessionLeaderboard(sessionId);
+    setSessionLoading(false);
+    if (result.success) {
+      flashNewEntrants(result.rows);
+      setSessionRows(result.rows);
+    } else {
+      setError(result.error);
+    }
+  }, [sessionId, flashNewEntrants]);
+
+  const fetchAllTime = useCallback(async () => {
+    setAlltimeLoading(true);
+    setError(null);
+    const result = await getAllTimeLeaderboard();
+    setAlltimeLoading(false);
+    setAlltimeFetched(true);
+    if (result.success) {
+      setAlltimeRows(result.rows);
+    } else {
+      setError(result.error);
+    }
+  }, []);
+
+  // ── Initial load ──────────────────────────────────────────
+  useEffect(() => { fetchSession(); }, [fetchSession]);
+
+  // ── Lazy load all-time on first tab visit ─────────────────
+  useEffect(() => {
+    if (scopeTab === "alltime" && !alltimeFetched && !alltimeLoading) {
+      fetchAllTime();
+    }
+  }, [scopeTab, alltimeFetched, alltimeLoading, fetchAllTime]);
+
+  // ── Derived state ─────────────────────────────────────────
+  const activeRows    = scopeTab === "session" ? sessionRows    : alltimeRows;
+  const activeLoading = scopeTab === "session" ? sessionLoading : alltimeLoading;
+  const minGP         = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
+  const showRankMov   = scopeTab === "alltime";
+  const myRow         = currentUserId
+    ? activeRows.find((r) => r.player_id === currentUserId)
+    : null;
+
+  const handleRefresh = () => {
+    if (scopeTab === "session") fetchSession();
+    else fetchAllTime();
+  };
+
+  // ── Layout classes ────────────────────────────────────────
+  const wrapperClass = [
+    "space-y-4",
+    isCompact  ? "px-4 py-4"      : "px-4 py-6",
+    isCentered ? "max-w-2xl mx-auto" : "",
+  ].filter(Boolean).join(" ");
+
+  // ── Render ────────────────────────────────────────────────
   return (
-    <div
-      className={
-        variant === "player-panel"
-          ? "flex flex-col items-center justify-center gap-4 py-16 px-6 text-center"
-          : "min-h-screen flex flex-col items-center justify-center gap-4 py-16 px-6 text-center"
-      }
-    >
-      <div className="rounded-full bg-amber-100 dark:bg-amber-900/30 p-4">
-        <Trophy className="h-8 w-8 text-amber-600 dark:text-amber-400" />
+    <div className={wrapperClass}>
+
+      {/* ── Header ─────────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Trophy
+            className="h-5 w-5 text-amber-500 shrink-0"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-foreground leading-tight">
+              Leaderboard
+            </h2>
+            {sessionName && (
+              <p className="text-xs text-muted-foreground truncate">
+                {sessionName}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {showAdvToggle && (
+            <AdvancedStatsToggle
+              isOpen={showAdvanced}
+              onToggle={() => setShowAdvanced((v) => !v)}
+            />
+          )}
+          <button
+            onClick={handleRefresh}
+            disabled={activeLoading}
+            aria-label="Refresh leaderboard"
+            className="flex items-center justify-center w-8 h-8 rounded-lg
+                       border border-slate-200 dark:border-border
+                       hover:bg-muted/50 transition-colors
+                       disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 text-muted-foreground ${
+                activeLoading ? "animate-spin" : ""
+              }`}
+              aria-hidden="true"
+            />
+          </button>
+        </div>
       </div>
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">
-          Leaderboard Coming Soon
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground max-w-xs">
-          Rankings, streaks, and win stats are on the way. Check back after your
-          next match!
+
+      {/* ── Scope tab switcher (organizer-panel + standalone) ── */}
+      {showAllTimeTab && (
+        <div
+          role="tablist"
+          aria-label="Leaderboard scope"
+          className="flex gap-1 rounded-xl bg-muted/50 p-1"
+        >
+          {(["session", "alltime"] as const).map((tab) => (
+            <button
+              key={tab}
+              role="tab"
+              aria-selected={scopeTab === tab}
+              onClick={() => setScopeTab(tab)}
+              className={[
+                "flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors",
+                scopeTab === tab
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              ].join(" ")}
+            >
+              {tab === "session" ? "This Session" : "All-Time"}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* ── Error banner ───────────────────────────────────── */}
+      {error && !activeLoading && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5
+                        px-4 py-3 text-sm text-destructive">
+          Failed to load: {error}
+        </div>
+      )}
+
+      {/* ── Hero card — current user's rank pinned at top ──── */}
+      {myRow && !activeLoading && (
+        <div
+          className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800
+                     bg-indigo-50/70 dark:bg-indigo-950/20
+                     px-3 py-2.5 flex items-center gap-3"
+          aria-label={`Your rank: #${myRow.rank}`}
+        >
+          {/* Rank / medal */}
+          <div className="w-7 shrink-0 text-center">
+            {MEDALS[myRow.rank] ? (
+              <span className="text-base leading-none">{MEDALS[myRow.rank]}</span>
+            ) : (
+              <span className="text-sm font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+                #{myRow.rank}
+              </span>
+            )}
+          </div>
+
+          {/* Name + streak */}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground truncate">
+              {myRow.display_name}{" "}
+              <span className="text-xs font-normal text-indigo-500 dark:text-indigo-400">
+                (you)
+              </span>
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {myRow.wins}W–{myRow.losses}L ·{" "}
+              {myRow.win_pct.toFixed(1)}% win rate
+              {myRow.win_streak >= 3 && (
+                <span className="ml-1 text-orange-500">
+                  {myRow.win_streak === 3
+                    ? "🔥🔥🔥"
+                    : `🔥×${myRow.win_streak}`}
+                </span>
+              )}
+            </p>
+          </div>
+
+          {/* Rank movement (all-time tab only) */}
+          {showRankMov && myRow.rank_movement !== undefined && (
+            <div className="shrink-0 text-right">
+              {myRow.rank_movement === null ? (
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500">
+                  NEW
+                </span>
+              ) : myRow.rank_movement > 0 ? (
+                <span className="text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                  ↑{myRow.rank_movement}
+                </span>
+              ) : myRow.rank_movement < 0 ? (
+                <span className="text-xs font-bold tabular-nums text-red-500 dark:text-red-400">
+                  ↓{Math.abs(myRow.rank_movement)}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Leaderboard table ──────────────────────────────── */}
+      <LeaderboardTable
+        rows={activeRows}
+        loading={activeLoading}
+        currentUserId={currentUserId}
+        flashedIds={flashedIds}
+        showAdvanced={showAdvanced}
+        showRankMovement={showRankMov}
+        minGP={minGP}
+      />
+
+      {/* ── Footer note ────────────────────────────────────── */}
+      {!activeLoading && activeRows.length > 0 && (
+        <p className="text-[10px] text-muted-foreground text-center">
+          {scopeTab === "session"
+            ? `Min. ${MIN_SESSION_GP} completed games to appear · Session stats only`
+            : `Min. ${MIN_ALLTIME_GP} completed games to appear · All sessions combined`}
         </p>
-      </div>
+      )}
     </div>
   );
 }
