@@ -34,3 +34,11 @@ export const CRITICAL_WAIT_MINUTES = 25;
  * priorityScore = waitMinutes - (gamesPlayed * GAME_PENALTY_MINUTES)
  */
 export const GAME_PENALTY_MINUTES = 12;
+
+/**
+ * Sentinel score floor for Red Zone players.
+ * Any player with priorityScore >= RED_ZONE_SCORE_FLOOR is in the Red Zone,
+ * meaning their urgency overrides game debt entirely.
+ * Score formula: 1000 + waitMinutes (always > any Normal-queue score).
+ */
+export const RED_ZONE_SCORE_FLOOR = 1000;
