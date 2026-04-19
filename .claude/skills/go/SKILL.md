@@ -1,4 +1,5 @@
 ---
+name: go
 description: A powerhouse architect command that plans, reads context, and retrieves docs before coding.
 argument-hint: [your feature request]
 ---

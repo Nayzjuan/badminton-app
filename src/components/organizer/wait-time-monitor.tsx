@@ -111,9 +111,11 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                   {/* Remove */}
                   <button
                     onClick={() => onRemoveFromQueue(entry.player_id)}
-                    className="text-xs text-muted-foreground hover:text-destructive transition-colors
-                               px-2 py-1 rounded hover:bg-muted"
+                    className="flex items-center justify-center text-sm text-muted-foreground
+                               hover:text-destructive transition-colors
+                               px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg hover:bg-muted"
                     title="Remove from queue"
+                    aria-label={`Remove ${entry.display_name} from queue`}
                   >
                     &times;
                   </button>

@@ -78,6 +78,11 @@
     --border:                  217 18% 22%;   /* clean navy border, no color cast */
     --input:                   217 25% 10%;
     --ring:                    38 92% 52%;    /* amber focus ring */
+
+    /* ── Court / accent tokens (used in badminton-court + badges) ── */
+    --court-cyan-hsl:          180 100% 70%; /* court lines, net, labels */
+    --court-lime-hsl:          80 100% 60%;  /* player name pills */
+    --amber-accent-hsl:        35 100% 60%;  /* mixed-level badge, revert button */
   }
 
   * {
@@ -86,6 +91,27 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  /* ── Leaderboard rank-change flash ──────────────────────── */
+  /* Triggered by setting data-flash="true" for 800ms via JS.  */
+  /* Clears automatically when the attribute is removed.        */
+  [data-flash="true"] {
+    animation: leaderboard-flash 0.8s ease-out forwards;
+  }
+
+  @keyframes leaderboard-flash {
+    0%   { background-color: hsl(38 92% 52% / 0.25); }
+    100% { background-color: transparent; }
+  }
+
+  .dark [data-flash="true"] {
+    animation: leaderboard-flash-dark 0.8s ease-out forwards;
+  }
+
+  @keyframes leaderboard-flash-dark {
+    0%   { background-color: hsl(38 92% 52% / 0.20); }
+    100% { background-color: transparent; }
   }
 
   /* ── Reduced-motion: respect system preference ──────────── */

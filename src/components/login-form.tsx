@@ -72,11 +72,16 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             required
             autoFocus
             disabled={isPending}
-            placeholder="e.g. Miggy"
+            placeholder="e.g. Smash King, Net Ninja..."
+            autoComplete="nickname"
             className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
                        placeholder:text-muted-foreground focus:outline-none focus:ring-2
                        focus:ring-ring focus:ring-offset-2 disabled:opacity-50"
           />
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            This is your official player account and login name. Pick a name
+            you won&apos;t mind your friends shouting across the court!
+          </p>
         </div>
 
         {/* Skill Level Select */}

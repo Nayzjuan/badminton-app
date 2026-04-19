@@ -1,12 +1,19 @@
 // ============================================================
 // Organizer Landing Page — /organizer
 // ============================================================
-// Auto-discovery: shows only sessions this user owns or co-organizes.
+// Shows ALL sessions (active + past) for any authenticated user.
+//
+// Why no user-ownership filter:
+//   This app uses anonymous Supabase auth — each new browser session
+//   produces a different user UUID. A single physical organizer can
+//   accumulate sessions under several user IDs. Filtering by
+//   created_by / session_organizers would hide those sessions.
+//   The sessions_select RLS policy intentionally allows all
+//   authenticated users to read all sessions, so this is safe.
 //
 // Routing logic (server-side):
-//   1 active session  → redirect directly into the dashboard
-//   2+ active sessions → render session picker + demoted create/join
-//   0 active sessions  → render create + join forms
+//   1+ active sessions → render session picker + demoted create/join
+//   0 active sessions  → render create + join forms prominently
 // ============================================================
 
 import { redirect } from "next/navigation";
@@ -36,49 +43,19 @@ export default async function OrganizerPage() {
 
   if (!profile) redirect("/");
 
-  // ── 1. Sessions where user is the primary organizer ────────
-  const { data: ownedSessions } = await supabase
+  // ── 1. Fetch ALL sessions (active + closed) ───────────────
+  const { data: allSessionsData } = await supabase
     .from("sessions")
     .select("*")
-    .eq("created_by", user.id)
     .order("created_at", { ascending: false });
 
-  // ── 2. Sessions where user is a co-organizer ───────────────
-  const { data: memberships } = await supabase
-    .from("session_organizers")
-    .select("session_id")
-    .eq("user_id", user.id);
-
-  const coOrgSessionIds = (memberships ?? []).map((m) => m.session_id);
-
-  let coOrgSessions: Session[] = [];
-  if (coOrgSessionIds.length > 0) {
-    const { data } = await supabase
-      .from("sessions")
-      .select("*")
-      .in("id", coOrgSessionIds)
-      .order("created_at", { ascending: false });
-    coOrgSessions = data ?? [];
-  }
-
-  // ── 3. Merge + deduplicate (owned takes precedence) ────────
-  const ownedIds = new Set((ownedSessions ?? []).map((s) => s.id));
-  const allSessions = [
-    ...(ownedSessions ?? []),
-    ...coOrgSessions.filter((s) => !ownedIds.has(s.id)),
-  ].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
-
+  const allSessions = allSessionsData ?? [];
   const activeSessions = allSessions.filter((s) => s.is_active);
   const pastSessions = allSessions.filter((s) => !s.is_active);
 
-  // ── 4. Auto-redirect when there is exactly one active session
-  if (activeSessions.length === 1) {
-    redirect(`/organizer/${activeSessions[0].id}`);
-  }
-
-  // ── 5. Enrich active sessions with live counts ─────────────
+  // ── 2. Enrich active sessions with live counts ─────────────
+  // No auto-redirect for single sessions — always render the picker so
+  // the "All Sessions" back button always lands somewhere meaningful.
   const activeWithStats: SessionWithStats[] = await Promise.all(
     activeSessions.map(async (session) => {
       const [{ count: playerCount }, { count: courtCount }, { count: matchCount }] =
@@ -109,7 +86,7 @@ export default async function OrganizerPage() {
     })
   );
 
-  // ── 6. Enrich past sessions with completed match count ──────
+  // ── 3. Enrich past sessions with completed match count ──────
   const pastWithStats: SessionWithStats[] = await Promise.all(
     pastSessions.map(async (session) => {
       const { count: matchCount } = await supabase

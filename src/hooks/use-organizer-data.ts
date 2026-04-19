@@ -51,6 +51,7 @@ import {
   cancelMatchAction,
   createManualMatchAction,
   clearOnDeckMatch as clearOnDeckMatchAction,
+  reorderOnDeckMatches as reorderOnDeckMatchesAction,
 } from "@/app/actions/match";
 import { togglePlayerPause } from "@/app/actions/queue";
 import type {
@@ -96,6 +97,7 @@ export interface UseOrganizerDataResult {
   ) => Promise<{ error?: string }>;
   cancelMatch: (matchId: string) => Promise<{ error?: string }>;
   clearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
+  reorderOnDeckMatches: (orderedMatchIds: string[]) => Promise<{ error?: string }>;
   // -- Queue actions --
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
   pausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
@@ -176,6 +178,7 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
       .select("*")
       .eq("session_id", sessionId)
       .in("status", ["pending", "in_progress"])
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: true });
 
     // Abort if superseded.
@@ -422,6 +425,15 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     [fetchQueue, fetchActiveMatches]
   );
 
+  const reorderOnDeckMatches = useCallback(
+    async (orderedMatchIds: string[]) => {
+      const result = await reorderOnDeckMatchesAction(sessionId, orderedMatchIds);
+      if (!result.success) return { error: result.message };
+      return {};
+    },
+    [sessionId]
+  );
+
   // ---- Queue actions ----
 
   const removeFromQueue = useCallback(
@@ -469,6 +481,7 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     endMatch,
     cancelMatch,
     clearOnDeckMatch,
+    reorderOnDeckMatches,
     removeFromQueue,
     pausePlayer,
   };

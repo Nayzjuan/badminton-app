@@ -11,24 +11,34 @@ import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
+import { displayNameSchema, pinSchema } from "@/lib/schemas/auth";
 
 // ── Registration ────────────────────────────────────────────
 
 export async function signInAnonymously(formData: FormData) {
-  const displayName = (formData.get("display_name") as string)?.trim();
+  const rawName = formData.get("display_name") as string | null;
   const skillLevel = formData.get("skill_level") as SkillLevel;
-  const pin = (formData.get("pin") as string)?.trim();
+  const rawPin = formData.get("pin") as string | null;
   // Optional: if joining via QR/link, redirect straight to that session.
   const sessionId = (formData.get("session_id") as string)?.trim() || null;
   const destination = sessionId ? `/play/${sessionId}` : "/play";
 
-  if (!displayName || !skillLevel) {
-    return { error: "Name and skill level are required." };
+  // ── Zod validation ───────────────────────────────────────
+  const nameResult = displayNameSchema.safeParse(rawName ?? "");
+  if (!nameResult.success) {
+    return { error: nameResult.error.issues[0].message };
+  }
+  const displayName = nameResult.data; // trimmed + spaces collapsed
+
+  if (!skillLevel) {
+    return { error: "Please select your skill level." };
   }
 
-  if (!pin || !/^\d{4}$/.test(pin)) {
-    return { error: "A 4-digit PIN is required." };
+  const pinResult = pinSchema.safeParse(rawPin ?? "");
+  if (!pinResult.success) {
+    return { error: pinResult.error.issues[0].message };
   }
+  const pin = pinResult.data;
 
   const supabase = await createClient();
 
@@ -83,8 +93,9 @@ export async function signInAnonymously(formData: FormData) {
 
   // The trigger should have created the profile, but if the metadata
   // didn't propagate, fire an upsert as a safety net (with PIN).
+  // Awaited so we can surface DB-level errors (e.g. 23505 unique violation).
   if (data.user) {
-    supabase.from("profiles").upsert(
+    const { error: upsertError } = await supabase.from("profiles").upsert(
       {
         id: data.user.id,
         display_name: displayName,
@@ -92,14 +103,18 @@ export async function signInAnonymously(formData: FormData) {
         pin,
       },
       { onConflict: "id" }
-    ).then(({ error: upsertError }) => {
-      if (upsertError) {
-        console.error("[auth] profile upsert safety-net failed:", upsertError);
+    );
+
+    if (upsertError) {
+      // PostgreSQL unique violation — display_name already registered
+      if (upsertError.code === "23505") {
+        return { error: "That name is already taken! Try adding a number or your initial." };
       }
-    });
+      console.error("[auth] profile upsert safety-net failed:", upsertError);
+    }
   }
 
-  redirect("/play");
+  redirect(destination);
 }
 
 // ── Reconnect ────────────────────────────────────────────────
@@ -118,11 +133,17 @@ export async function reconnectPlayer(
   playerName: string,
   pin: string
 ): Promise<ReconnectResult> {
-  if (!playerName?.trim() || !pin?.trim()) {
-    return { success: false, error: "Name and PIN are required." };
+  // Validate via Zod — same rules as registration
+  const nameResult = displayNameSchema.safeParse(playerName ?? "");
+  if (!nameResult.success) {
+    return { success: false, error: nameResult.error.issues[0].message };
   }
+  const name = nameResult.data; // trimmed + normalized
 
-  const name = playerName.trim();
+  const pinResult = pinSchema.safeParse(pin ?? "");
+  if (!pinResult.success) {
+    return { success: false, error: pinResult.error.issues[0].message };
+  }
   const service = createServiceClient();
 
   // Find the profile by name + PIN (case-insensitive name match).
@@ -130,7 +151,7 @@ export async function reconnectPlayer(
     .from("profiles")
     .select("*")
     .ilike("display_name", name)
-    .eq("pin", pin);
+    .eq("pin", pinResult.data);
 
   if (!profiles || profiles.length === 0) {
     return { success: false, error: "No match found. Check your name and PIN." };

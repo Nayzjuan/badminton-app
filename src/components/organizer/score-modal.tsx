@@ -119,7 +119,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
           {/* Team A row */}
           <div className="flex items-center gap-4">
             <div className="flex-1 min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-violet-600 mb-0.5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 mb-0.5">
                 Team A
               </p>
               <p className="text-sm font-semibold text-foreground truncate">{teamALabel}</p>
@@ -139,8 +139,9 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
                 "text-center text-3xl font-bold",
                 "placeholder:text-muted-foreground/40",
                 "focus:outline-none transition-colors",
-                "bg-violet-50 border-violet-200 text-violet-900",
-                "focus:border-violet-500 focus:bg-white",
+                "bg-indigo-50 border-indigo-200 text-indigo-900",
+                "focus:border-indigo-500 focus:bg-white",
+                "dark:bg-indigo-950/30 dark:border-indigo-800 dark:text-indigo-100 dark:focus:bg-indigo-950/50",
                 // Hide browser spin buttons.
                 "[appearance:textfield]",
                 "[&::-webkit-outer-spin-button]:appearance-none",
@@ -222,8 +223,8 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="flex items-center gap-2 rounded-lg bg-violet-600 px-6 py-2.5
-                       text-sm font-semibold text-white hover:bg-violet-700
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5
+                       text-sm font-semibold text-white hover:bg-indigo-700
                        disabled:opacity-40 disabled:cursor-not-allowed
                        transition-colors shadow-sm"
           >

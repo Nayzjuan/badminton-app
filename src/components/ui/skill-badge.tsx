@@ -20,31 +20,31 @@ interface SkillBadgeProps {
 const LEVEL_CONFIG: Record<SkillLevel, { label: string; cls: string }> = {
   beginner: {
     label: "Beginner",
-    cls: "bg-emerald-100 text-emerald-800",
+    cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
   },
   upper_beginner: {
     label: "Upper Beg.",
-    cls: "bg-emerald-100 text-emerald-800",
+    cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
   },
   lower_intermediate: {
     label: "Lower Int.",
-    cls: "bg-blue-100 text-blue-800",
+    cls: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
   },
   intermediate: {
     label: "Intermediate",
-    cls: "bg-blue-100 text-blue-800",
+    cls: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
   },
   upper_intermediate: {
     label: "Upper Int.",
-    cls: "bg-blue-100 text-blue-800",
+    cls: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
   },
   lower_advanced: {
     label: "Lower Adv.",
-    cls: "bg-purple-100 text-purple-800",
+    cls: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
   },
   advanced: {
     label: "Advanced",
-    cls: "bg-purple-100 text-purple-800",
+    cls: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
   },
 };
 

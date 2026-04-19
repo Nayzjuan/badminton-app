@@ -191,9 +191,9 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
             return (
               <div
                 key={match.id}
-                className="rounded-2xl border border-slate-200 dark:border-border bg-white dark:bg-card shadow-sm overflow-hidden opacity-70"
+                className="rounded-2xl border border-slate-200 dark:border-border bg-white dark:bg-card shadow-sm overflow-hidden"
               >
-                {/* Header */}
+                {/* Header — full opacity so "Cancelled" label stays legible */}
                 <div className="flex items-center justify-between bg-slate-50 dark:bg-muted/40 px-4 py-2.5 border-b border-slate-100 dark:border-border">
                   <div className="flex items-center gap-2">
                     <Ban className="h-3.5 w-3.5 text-slate-400 dark:text-muted-foreground" />
@@ -215,8 +215,8 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                   </div>
                 </div>
 
-                {/* Players — reference only, no scores */}
-                <div className="px-4 py-3">
+                {/* Players — muted since match didn't complete */}
+                <div className="px-4 py-3 opacity-60">
                   <div className="flex gap-3">
                     <div className="flex-1 rounded-xl bg-slate-50 dark:bg-muted/50 p-3 text-center">
                       <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-muted-foreground mb-2">
@@ -273,7 +273,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                     <span className="rounded-full border px-2 py-0.5
                                     text-[10px] font-bold uppercase tracking-wider
                                     bg-amber-100 border-amber-300 text-amber-800
-                                    dark:bg-[hsl(35_100%_55%)]/20 dark:border-[hsl(35_100%_60%)]/70 dark:text-[hsl(35_100%_65%)]">
+                                    dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]">
                       Mixed Level
                     </span>
                   )}
@@ -533,8 +533,8 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
             className="w-full flex items-center justify-center gap-2 rounded-xl border
                        border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-semibold
                        text-amber-800 hover:bg-amber-100 transition-colors
-                       dark:border-[hsl(35_100%_60%)]/50 dark:bg-[hsl(35_100%_55%)]/10
-                       dark:text-[hsl(35_100%_65%)] dark:hover:bg-[hsl(35_100%_55%)]/20
+                       dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:bg-[hsl(var(--amber-accent-hsl))]/10
+                       dark:text-[hsl(var(--amber-accent-hsl))] dark:hover:bg-[hsl(var(--amber-accent-hsl))]/20
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RotateCcw className="h-4 w-4" />

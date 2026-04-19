@@ -132,7 +132,7 @@ function CourtCard({
             <span className="shrink-0 rounded-full border px-2 py-0.5
                             text-xs font-bold uppercase tracking-wider
                             bg-amber-100 border-amber-300 text-amber-800
-                            dark:bg-[hsl(35_100%_55%)]/20 dark:border-[hsl(35_100%_60%)]/70 dark:text-[hsl(35_100%_65%)]">
+                            dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]">
               Mixed Level
             </span>
           )}
@@ -268,7 +268,8 @@ function CourtCard({
                       onClick={onCancelRequest}
                       disabled={isCancelling}
                       className="flex items-center gap-1.5 rounded-lg px-3 py-2
-                                 text-xs font-medium text-slate-500 hover:bg-slate-100
+                                 text-xs font-medium text-red-500 dark:text-red-400
+                                 hover:bg-red-50 dark:hover:bg-red-950/20
                                  disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <XCircle className="h-3.5 w-3.5" />
@@ -277,7 +278,7 @@ function CourtCard({
                     <button
                       onClick={onInputScore}
                       disabled={isCancelling}
-                      className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2
+                      className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2.5 min-h-[44px]
                                  text-xs font-semibold text-white hover:bg-slate-800
                                  disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
                     >
@@ -296,10 +297,9 @@ function CourtCard({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={onCallNextMatch}
-              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500
-                         to-emerald-600 px-4 py-2.5 text-sm font-semibold text-white
-                         hover:from-emerald-600 hover:to-emerald-700
-                         transition-all shadow-sm hover:shadow-md"
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5
+                         text-sm font-semibold text-white hover:bg-emerald-700
+                         transition-colors shadow-sm"
             >
               <Plus className="h-4 w-4" />
               Call Next Match
