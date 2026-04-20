@@ -408,6 +408,19 @@ export type Database = {
         };
         Returns: void;
       };
+      create_match_with_players: {
+        Args: {
+          p_session_id:     string;
+          p_court_id:       string | null;
+          p_status:         string;
+          p_is_mixed_level: boolean;
+          p_started_at:     string | null;
+          p_is_on_deck:     boolean;
+          p_team_a_ids:     string[];
+          p_team_b_ids:     string[];
+        };
+        Returns: string; // UUID of the new match
+      };
     };
     Enums: {
       skill_level: SkillLevel;

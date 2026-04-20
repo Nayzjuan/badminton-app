@@ -604,63 +604,45 @@ async function executeMatch(
   isMixedLevel: boolean,
   isOnDeck: boolean
 ): Promise<MatchmakingResult> {
-  const status = isOnDeck ? ("pending" as const) : ("in_progress" as const);
+  // ── Atomic write: match + players + queue statuses + court ──
+  // All steps run inside a single Postgres transaction via the
+  // create_match_with_players RPC (migration 20260421000000).
+  //
+  // Previously: 3 sequential writes with only partial compensation
+  //   — Write 3 (queue status update) had no error check, meaning
+  //     a failure left matched players stuck as "waiting" and the
+  //     engine could create a duplicate match for them on the next tick.
+  //   — A server crash between Write 1 and Write 2 produced a ghost
+  //     match row with 0 players visible across the TV board and
+  //     leaderboard queries.
+  //
+  // Now: Postgres rolls back the entire transaction on any failure.
   const now = new Date().toISOString();
 
-  const { data: match, error: matchError } = await supabase
-    .from("matches")
-    .insert({
-      session_id: sessionId,
-      court_id: isOnDeck ? null : courtId,
-      status,
-      is_mixed_level: isMixedLevel,
-      started_at: isOnDeck ? null : now,
-    })
-    .select()
-    .single();
+  const { data: matchId, error: rpcError } = await supabase.rpc(
+    "create_match_with_players",
+    {
+      p_session_id:     sessionId,
+      p_court_id:       isOnDeck ? null : courtId,
+      p_status:         isOnDeck ? "pending" : "in_progress",
+      p_is_mixed_level: isMixedLevel,
+      p_started_at:     isOnDeck ? null : now,
+      p_is_on_deck:     isOnDeck,
+      p_team_a_ids:     teamA.map((p) => p.player_id),
+      p_team_b_ids:     teamB.map((p) => p.player_id),
+    }
+  );
 
-  if (matchError || !match) {
+  if (rpcError || !matchId) {
     return {
       success: false,
-      message: `Failed to create match: ${matchError?.message ?? "Unknown error"}`,
+      message: `Failed to create match: ${rpcError?.message ?? "Unknown error"}`,
     };
-  }
-
-  const playerRows = [
-    ...teamA.map((p) => ({ match_id: match.id, player_id: p.player_id, team: "a" as const })),
-    ...teamB.map((p) => ({ match_id: match.id, player_id: p.player_id, team: "b" as const })),
-  ];
-
-  const { error: playersError } = await supabase.from("match_players").insert(playerRows);
-
-  if (playersError) {
-    await supabase.from("matches").delete().eq("id", match.id);
-    return {
-      success: false,
-      message: `Failed to assign players: ${playersError.message}`,
-    };
-  }
-
-  // Update queue statuses + court status.
-  const allPlayerIds = [...teamA, ...teamB].map((p) => p.player_id);
-  const queueStatus = isOnDeck ? ("on_deck" as const) : ("playing" as const);
-
-  await supabase
-    .from("queue_entries")
-    .update({ status: queueStatus })
-    .eq("session_id", sessionId)
-    .in("player_id", allPlayerIds);
-
-  if (!isOnDeck && courtId) {
-    await supabase
-      .from("courts")
-      .update({ status: "in_use" as const })
-      .eq("id", courtId);
   }
 
   return {
     success: true,
-    matchId: match.id,
+    matchId,
     message: isOnDeck ? "On-deck match created!" : "Match created successfully!",
     teamA: teamA.map((p) => p.display_name),
     teamB: teamB.map((p) => p.display_name),
