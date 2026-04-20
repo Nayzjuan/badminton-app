@@ -61,6 +61,41 @@ All DB row types use `type` aliases (NOT `interface`) — required to satisfy Su
 
 ---
 
+## DATABASE RULES & GOTCHAS
+
+### Critical Schema Considerations
+
+| Table | Behaviour | Rule |
+|-------|-----------|------|
+| `profiles` | `id` = `auth.users.uuid` (no auto-increment) | Always use `auth.uid()` as the PK; never insert a synthetic ID |
+| `session_organizers` | Append-only — rows are never updated or deleted | Treat as an immutable audit log; do NOT add DELETE/UPDATE operations; presence of a row = permission granted |
+| `matches` | `court_id` is nullable (`null` = on-deck / pending, non-null = assigned to a court) | Always null-check `court_id` before referencing the court; don't assume a match has a court |
+| `push_subscriptions` | Requires three Web Push fields: `endpoint`, `p256dh`, `auth_key` | All three must be present and non-empty or the push will fail silently; validate at the point of subscription creation, not at send time |
+
+### push_subscriptions — Key Shape
+```ts
+// Required fields when inserting a new subscription row:
+{
+  user_id:   string,   // auth.uid()
+  endpoint:  string,   // PushSubscription.endpoint
+  p256dh:    string,   // btoa(PushSubscription.getKey('p256dh'))
+  auth_key:  string,   // btoa(PushSubscription.getKey('auth'))
+}
+```
+`p256dh` and `auth_key` are the ECDH public key and HMAC authentication key from the browser's `PushSubscription` object. They are required by the Web Push Protocol for payload encryption. Missing either key causes the push API to reject the request — the failure is often silent on the client side.
+
+### Supabase Type System
+- `Relationships: []` is **required** on every table entry in `database.ts` — even tables with no foreign keys (e.g. `push_subscriptions`). The `@supabase/supabase-js v2.49+` generic system enforces this structurally.
+- `tsc --noEmit` is the authoritative check — IDE red squiggles can be stale cache. Run `TypeScript: Restart TS Server` in VS Code if they don't match `tsc` output.
+- Never use `interface` for DB row types — use `type` aliases only (Supabase generic constraint).
+
+### PostgREST Behavioural Rules
+- `UPDATE` that matches 0 rows returns an **empty array**, not `null` or an error. Using `.single()` on such an UPDATE throws "Cannot coerce the result to a single JSON object". Use array + length check for atomic CAS guards.
+- `INSERT` with `.select().single()` is safe — inserts always return exactly one row or an error.
+- RLS policies are enforced on the `anon` and `authenticated` roles. The service-role client bypasses all RLS — use it only in server actions, never in client components.
+
+---
+
 ## CORE ARCHITECTURAL PATTERNS
 
 ### 1. State Management — `useOrganizerData`
