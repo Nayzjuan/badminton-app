@@ -125,9 +125,16 @@ function CourtCard({
       className="flex flex-col rounded-2xl bg-white dark:bg-card shadow-md overflow-hidden transition-all"
     >
       {/* ── Header ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-5 pt-4 pb-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <h3 className="text-base font-bold truncate text-gray-900 dark:text-foreground">{court.name}</h3>
+      {/*
+        Grouped flex-wrap: left group (name + mixed badge) and right group
+        (timer + status badge) stay paired. On narrow viewports the two
+        groups wrap onto separate lines rather than the court name truncating.
+        gap-y-2 keeps the rows from collapsing when they do wrap.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-y-2 px-5 pt-4 pb-3">
+        {/* Left group — court name + mixed-level badge */}
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold text-gray-900 dark:text-foreground">{court.name}</h3>
           {match?.is_mixed_level && (
             <span className="shrink-0 rounded-full border px-2 py-0.5
                             text-xs font-bold uppercase tracking-wider
@@ -137,7 +144,8 @@ function CourtCard({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0 ml-2">
+        {/* Right group — live timer + status badge; never shrinks or wraps internally */}
+        <div className="flex items-center gap-2 shrink-0">
           {/* Live match timer — only shown when in_progress */}
           {cardState === "in_progress" && match?.started_at && (
             <MatchTimer startedAt={match.started_at} variant="live" />
