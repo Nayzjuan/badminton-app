@@ -31,6 +31,12 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 
+// Service client singleton for this module — bypasses RLS for writes.
+// Auth is always verified at the JS layer before any service client write.
+function getServiceClient() {
+  return createServiceClient();
+}
+
 export interface MatchActionResult {
   success: boolean;
   message: string;
@@ -118,21 +124,35 @@ export async function submitMatchScore(
 // ============================================================
 // endMatchAction
 // ============================================================
+// Auth model:
+//   Accepts two kinds of callers:
+//     A. A session organizer (primary creator OR co-organizer)
+//     B. A player who is in this specific match (via submitMatchScore)
+//
+//   The RLS client (supabase) is used for read-only auth lookups so
+//   we don't leak rows outside the user's visibility. All writes use
+//   the service client (db) — bypassing RLS entirely — because JS-
+//   level auth is performed first and the old RLS path was silently
+//   blocking the primary organizer (sessions.created_by) who never
+//   has a session_organizers row.
+// ============================================================
 export async function endMatchAction(
   matchId: string,
   teamAScore: number,
   teamBScore: number
 ): Promise<MatchActionResult> {
   const supabase = await createClient();
+  const db = getServiceClient();
 
-  // P0-3: Require authentication — organizer or player (via submitMatchScore).
+  // P0-3: Require authentication.
   const user = await getAuthUser(supabase);
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
 
-  // 1. Fetch the match.
-  const { data: match, error: matchFetchError } = await supabase
+  // 1. Fetch the match (via service client — guarantees read succeeds
+  //    regardless of any read-side RLS policy).
+  const { data: match, error: matchFetchError } = await db
     .from("matches")
     .select("id, session_id, court_id, status")
     .eq("id", matchId)
@@ -146,16 +166,40 @@ export async function endMatchAction(
     return { success: false, message: `Match is already ${match.status}.` };
   }
 
+  // 1b. JS-level authorization: organizer OR player in this match.
+  //    Run both checks in parallel to avoid serial round-trips.
+  //    isSessionOrganizer checks sessions.created_by FIRST (fast path),
+  //    then falls back to session_organizers membership.
+  const [isOrg, playerSlot] = await Promise.all([
+    isSessionOrganizer(supabase, user.id, match.session_id),
+    db
+      .from("match_players")
+      .select("id")
+      .eq("match_id", matchId)
+      .eq("player_id", user.id)
+      .maybeSingle(),
+  ]);
+
+  if (!isOrg && !playerSlot.data) {
+    return {
+      success: false,
+      message: "Not authorized. You must be a session organizer or a player in this match.",
+    };
+  }
+
   // 2. P0-1: Atomic UPDATE — only succeeds if status is still "in_progress".
   //    Adding .eq("status", "in_progress") makes this a compare-and-swap:
   //    if a concurrent caller already changed the status, 0 rows are affected
   //    and `updatedRows` will be empty — we bail out instead of double-completing.
   //
+  //    Uses the service client so the primary organizer (sessions.created_by)
+  //    is never blocked. JS auth above is the gate; RLS is intentionally bypassed.
+  //
   //    NOTE: Do NOT use .single() here. When the CAS guard causes 0 rows to be
   //    updated (concurrent request already completed the match), PostgREST returns
   //    an empty array — .single() throws "Cannot coerce the result to a single JSON
   //    object" instead of returning null, surfacing a confusing error to the player.
-  const { data: updatedRows, error: matchUpdateError } = await supabase
+  const { data: updatedRows, error: matchUpdateError } = await db
     .from("matches")
     .update({
       team_a_score: teamAScore,
@@ -176,7 +220,7 @@ export async function endMatchAction(
   }
 
   // 3. Fetch all players in this match.
-  const { data: matchPlayers, error: playersError } = await supabase
+  const { data: matchPlayers, error: playersError } = await db
     .from("match_players")
     .select("player_id")
     .eq("match_id", matchId);
@@ -193,7 +237,7 @@ export async function endMatchAction(
   if (matchPlayers && matchPlayers.length > 0) {
     await Promise.all(
       matchPlayers.map(async (mp) => {
-        const { data: entry } = await supabase
+        const { data: entry } = await db
           .from("queue_entries")
           .select("games_played")
           .eq("session_id", match.session_id)
@@ -202,7 +246,7 @@ export async function endMatchAction(
 
         const updatedGames = (entry?.games_played ?? 0) + 1;
 
-        return supabase
+        return db
           .from("queue_entries")
           .update({
             status: "waiting" as const,
@@ -219,12 +263,13 @@ export async function endMatchAction(
   //    Then run the engine so it refills the on-deck slot (if toggle ON).
   //    If no on-deck match exists, free the court — the engine will form
   //    one for next time.
+  //    Pass the service client so promotion writes are never RLS-blocked.
   if (match.court_id) {
-    const promoted = await promoteOnDeckMatchInternal(supabase, match.session_id, match.court_id);
+    const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id);
 
     if (!promoted.success) {
       // No on-deck match — free the court immediately.
-      await supabase
+      await db
         .from("courts")
         .update({ status: "available" as const })
         .eq("id", match.court_id);
@@ -236,7 +281,7 @@ export async function endMatchAction(
   // 6. Refresh the all-time leaderboard materialized view.
   //    Fire without awaiting so a slow refresh never delays the player's UI.
   //    CONCURRENTLY means reads are never blocked during refresh.
-  void supabase.rpc("refresh_alltime_leaderboard").then(({ error }) => {
+  void db.rpc("refresh_alltime_leaderboard").then(({ error }) => {
     if (error) console.warn("[endMatchAction] leaderboard refresh failed:", error.message);
   });
 
