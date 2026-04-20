@@ -162,8 +162,18 @@ async function runEngineInternal(
   const recentRosters = await fetchRecentRosters(supabase, sessionId);
 
   for (let i = 0; i < slotsAvailable; i++) {
-    const created = await createOneOnDeckMatch(supabase, sessionId, recentRosters);
-    if (!created) break; // Not enough players — stop.
+    const { created, message } = await createOneOnDeckMatch(supabase, sessionId, recentRosters);
+    if (!created) {
+      // Surface the reason so it's visible in Vercel logs.
+      // "Not enough players" is expected and not an error; anything else is.
+      const isExpected = message?.includes("Not enough");
+      if (!isExpected) {
+        console.error(`[matchmaking] runEngineInternal: slot ${i + 1}/${slotsAvailable} failed — ${message}`);
+      } else if (process.env.DEBUG_MATCHMAKING === "true") {
+        console.log(`[matchmaking] runEngineInternal: stopping at slot ${i + 1} — ${message}`);
+      }
+      break;
+    }
   }
 }
 
@@ -175,9 +185,9 @@ async function createOneOnDeckMatch(
   supabase: Awaited<ReturnType<typeof createClient>>,
   sessionId: string,
   recentRosters?: string[][]
-): Promise<boolean> {
+): Promise<{ created: boolean; message: string }> {
   const result = await runAlgorithm(supabase, sessionId, null, true, recentRosters);
-  return result.success;
+  return { created: result.success, message: result.message };
 }
 
 // ─────────────────────────────────────────────────────────────
