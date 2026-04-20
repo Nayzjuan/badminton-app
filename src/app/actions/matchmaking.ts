@@ -114,12 +114,22 @@ export async function callNextMatch(
 
 export async function runEngineForSession(sessionId: string): Promise<void> {
   const supabase = await createClient();
-  const { data: session } = await supabase
+  const { data: session, error: sessionErr } = await supabase
     .from("sessions")
     .select("is_auto_matchmaking_on")
     .eq("id", sessionId)
     .single();
-  if (!session?.is_auto_matchmaking_on) return;
+
+  if (sessionErr) {
+    console.error(`[engine] runEngineForSession: failed to read session ${sessionId} — ${sessionErr.message}`);
+    return;
+  }
+  if (!session?.is_auto_matchmaking_on) {
+    console.log(`[engine] runEngineForSession: toggle is OFF for session ${sessionId} — skipping`);
+    return;
+  }
+
+  console.log(`[engine] runEngineForSession: toggle ON for session ${sessionId} — starting engine`);
   await runEngineInternal(supabase, sessionId);
 }
 
@@ -134,26 +144,43 @@ async function runEngineInternal(
   supabase: Awaited<ReturnType<typeof createClient>>,
   sessionId: string
 ): Promise<void> {
-  const { data: courts } = await supabase
+  const { data: courts, error: courtsErr } = await supabase
     .from("courts")
     .select("id")
     .eq("session_id", sessionId)
     .neq("status", "closed");
 
+  if (courtsErr) {
+    console.error(`[engine] runEngineInternal: courts query failed — ${courtsErr.message}`);
+    return;
+  }
+
   const courtCount = courts?.length ?? 0;
-  if (courtCount === 0) return;
+  if (courtCount === 0) {
+    console.log(`[engine] runEngineInternal: no open courts for session ${sessionId} — skipping`);
+    return;
+  }
 
   // Cap on-deck at (courtCount − 1) to prevent locking the entire queue.
   const capacity = Math.max(1, courtCount - 1);
 
-  const { count: existingOnDeck } = await supabase
+  const { count: existingOnDeck, error: deckErr } = await supabase
     .from("matches")
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId)
     .eq("status", "pending");
 
+  if (deckErr) {
+    console.error(`[engine] runEngineInternal: pending count query failed — ${deckErr.message}`);
+    return;
+  }
+
   const slotsAvailable = capacity - (existingOnDeck ?? 0);
-  if (slotsAvailable <= 0) return;
+  console.log(`[engine] runEngineInternal: courts=${courtCount} capacity=${capacity} onDeck=${existingOnDeck ?? 0} slots=${slotsAvailable}`);
+  if (slotsAvailable <= 0) {
+    console.log(`[engine] runEngineInternal: on-deck at capacity (${existingOnDeck}/${capacity}) — skipping`);
+    return;
+  }
 
   // Pre-fetch recent rosters once for the entire fill loop.
   // recentRosters only contains COMPLETED matches, which don't change while
