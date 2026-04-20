@@ -1,3 +1,5 @@
+Read MEMORY.md before answering any architectural questions or writing any code. Do not perform global codebase searches to learn the architecture; rely on the memory index.
+
 @AGENTS.md
 
 # Badminton Queue & Matchmaking App

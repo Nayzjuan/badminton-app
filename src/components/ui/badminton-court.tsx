@@ -106,8 +106,11 @@ export function BadmintonCourt({
 // Light: white bubble, dark text
 // Dark:  near-transparent dark bubble, neon-lime glowing name
 //
-// When onPlayerClick is provided the pill becomes an interactive
-// button with two dnd-kit isolation defences:
+// When onPlayerClick is provided (on-deck cards) the pill becomes
+// an interactive button. The swap icon (ArrowLeftRight) is always
+// visible at 50% opacity, rising to 80% on hover — no hidden gap.
+//
+// dnd-kit isolation defences:
 //   1. onPointerDown stopPropagation — hard stop, prevents any
 //      dnd sensor from capturing the event before it reaches here
 //   2. data-no-dnd="true"           — declarative opt-out label
@@ -155,9 +158,9 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                    rounded-full transition-transform active:scale-95
                    focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
       >
-        {/* Name pill — hover reveals swap icon */}
+        {/* Name pill — swap icon always visible */}
         <span
-          className="relative inline-flex items-center gap-1.5 rounded-full px-4 py-2
+          className="relative inline-flex items-center gap-1.5 rounded-full px-3 py-2
                      text-sm font-bold shadow-md
                      bg-white text-slate-900 shadow-black/15
                      dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
@@ -169,8 +172,8 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
         >
           {player.display_name}
           <ArrowLeftRight
-            className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-60
-                       transition-opacity duration-150 text-slate-500
+            className="h-3 w-3 shrink-0 opacity-50 group-hover:opacity-80
+                       transition-opacity duration-150 text-slate-400
                        dark:text-[hsl(var(--court-lime-hsl))]"
           />
         </span>
