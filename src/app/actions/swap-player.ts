@@ -12,12 +12,15 @@
 //   3. outPlayer still in match_players  (PLAYER_NOT_IN_MATCH)
 //   4. inPlayer queue_entries.status === "waiting" (PLAYER_UNAVAILABLE)
 //
-// Writes (sequential with compensation on failure):
+// Writes (single atomic Postgres transaction via swap_player_in_match RPC):
 //   a. DELETE outPlayerId from match_players
 //   b. INSERT inPlayerId  into match_players (same team)
 //   c. UPDATE inPlayerId  queue_entries → "on_deck"
 //   d. UPDATE outPlayerId queue_entries → "waiting"
-//   e. READ-AFTER-WRITE: recompute is_mixed_level from current players
+//   e. Recompute is_mixed_level from current roster (COUNT DISTINCT skill_level)
+//
+// Atomicity: if the server crashes at any point Postgres rolls back the
+// entire transaction automatically — no partial-state corruption possible.
 //
 // Concurrent swap safety:
 //   - Scenario A (same outgoing player):    guard 3 returns PLAYER_NOT_IN_MATCH
@@ -155,94 +158,21 @@ export async function swapPlayerInMatch(
     };
   }
 
-  // ── Write step a: DELETE outPlayerId from match_players ───
-  const { error: deleteError } = await db
-    .from("match_players")
-    .delete()
-    .eq("match_id", matchId)
-    .eq("player_id", outPlayerId);
-
-  if (deleteError) {
-    return { success: false, message: `Failed to swap: ${deleteError.message}` };
-  }
-
-  // ── Write step b: INSERT inPlayerId (same team) ───────────
-  const { error: insertError } = await db.from("match_players").insert({
-    match_id: matchId,
-    player_id: inPlayerId,
-    team: outPlayerRow.team,
+  // ── Atomic write: all 4 steps + is_mixed_level recompute ─
+  // Runs inside a single Postgres transaction via the
+  // swap_player_in_match RPC (migration 20260420000000).
+  // If the server crashes mid-execution Postgres rolls back
+  // automatically — no manual compensation needed.
+  const { error: swapError } = await db.rpc("swap_player_in_match", {
+    p_match_id:      matchId,
+    p_out_player_id: outPlayerId,
+    p_in_player_id:  inPlayerId,
+    p_session_id:    match.session_id,
+    p_team:          outPlayerRow.team,
   });
 
-  if (insertError) {
-    // Compensation: re-insert outPlayerId to restore original state.
-    await db.from("match_players").insert({
-      match_id: matchId,
-      player_id: outPlayerId,
-      team: outPlayerRow.team,
-    });
-    return { success: false, message: `Failed to swap: ${insertError.message}` };
-  }
-
-  // ── Write step c: inPlayerId → "on_deck" ─────────────────
-  const { error: inUpdateError } = await db
-    .from("queue_entries")
-    .update({ status: "on_deck" as const })
-    .eq("session_id", match.session_id)
-    .eq("player_id", inPlayerId);
-
-  if (inUpdateError) {
-    // Compensation: undo the insert, re-insert outPlayerId.
-    await db
-      .from("match_players")
-      .delete()
-      .eq("match_id", matchId)
-      .eq("player_id", inPlayerId);
-    await db.from("match_players").insert({
-      match_id: matchId,
-      player_id: outPlayerId,
-      team: outPlayerRow.team,
-    });
-    return { success: false, message: `Failed to swap: ${inUpdateError.message}` };
-  }
-
-  // ── Write step d: outPlayerId → "waiting" ────────────────
-  // Non-fatal if this fails — the match assignment is already consistent.
-  const { error: outUpdateError } = await db
-    .from("queue_entries")
-    .update({ status: "waiting" as const })
-    .eq("session_id", match.session_id)
-    .eq("player_id", outPlayerId);
-
-  if (outUpdateError) {
-    console.error("[swapPlayerInMatch] Failed to restore outPlayer queue status:", outUpdateError.message);
-    // Continue — the match itself is consistent at this point.
-  }
-
-  // ── Write step e: READ-AFTER-WRITE is_mixed_level recompute
-  // Fetch ALL current match_players AFTER the insert so we see the
-  // true post-swap composition. This handles Scenario C (two concurrent
-  // swaps on different slots) correctly — last writer wins with the
-  // correct final state.
-  const { data: currentPlayers } = await db
-    .from("match_players")
-    .select("player_id")
-    .eq("match_id", matchId);
-
-  const currentIds = (currentPlayers ?? []).map((p) => p.player_id);
-
-  if (currentIds.length > 0) {
-    const { data: currentProfiles } = await db
-      .from("profiles")
-      .select("skill_level")
-      .in("id", currentIds);
-
-    const levels = new Set((currentProfiles ?? []).map((p) => p.skill_level));
-    const isMixed = levels.size > 1;
-
-    await db
-      .from("matches")
-      .update({ is_mixed_level: isMixed })
-      .eq("id", matchId);
+  if (swapError) {
+    return { success: false, message: `Failed to swap: ${swapError.message}` };
   }
 
   // ── Broadcast: notify outgoing player their on-deck slot is gone

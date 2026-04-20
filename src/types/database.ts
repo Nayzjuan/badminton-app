@@ -398,6 +398,16 @@ export type Database = {
         Args: Record<string, never>;
         Returns: void;
       };
+      swap_player_in_match: {
+        Args: {
+          p_match_id:      string;
+          p_out_player_id: string;
+          p_in_player_id:  string;
+          p_session_id:    string;
+          p_team:          "a" | "b";
+        };
+        Returns: void;
+      };
     };
     Enums: {
       skill_level: SkillLevel;
