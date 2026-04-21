@@ -46,6 +46,7 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
   } = await supabase.auth.getUser();
 
   if (user) {
+    // Case A: already in this session's queue — skip straight to the session.
     const { data: activeEntry } = await supabase
       .from("queue_entries")
       .select("id")
@@ -56,7 +57,30 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
       .single();
 
     if (activeEntry) {
-      // Already in this session — skip registration.
+      redirect(`/play/${sessionId}`);
+    }
+
+    // Case B: authenticated but not yet in this session's queue.
+    // If the player has a profile they have already registered before —
+    // join them directly without forcing a redundant login screen.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", user.id)
+      .single();
+
+    if (profile) {
+      // Upsert a waiting queue entry so the player appears in the queue,
+      // then send them straight to the session dashboard.
+      await supabase.from("queue_entries").upsert(
+        {
+          session_id: sessionId,
+          player_id: user.id,
+          status: "waiting",
+        },
+        { onConflict: "session_id,player_id", ignoreDuplicates: true }
+      );
+
       redirect(`/play/${sessionId}`);
     }
   }

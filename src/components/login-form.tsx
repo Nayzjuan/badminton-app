@@ -226,9 +226,11 @@ function ReconnectModal({
       const result = await reconnectPlayer(name, pin);
       if (!result.success) {
         onError(result.error ?? "Reconnect failed.");
-      } else if (result.sessionId) {
+      } else {
         onClose();
-        router.push(`/play/${result.sessionId}`);
+        // If no active session was found, send to the lobby so the player
+        // can join a new session — don't leave them on a blank screen.
+        router.push(result.sessionId ? `/play/${result.sessionId}` : "/play");
       }
     });
   }

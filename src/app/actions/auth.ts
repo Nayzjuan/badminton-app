@@ -195,7 +195,7 @@ export async function reconnectPlayer(
     }
   }
 
-  // If no active session found, check for any session they were part of.
+  // If no active session found, check for any ACTIVE session they were part of.
   if (!targetSessionId) {
     const { data: anyEntry } = await service
       .from("queue_entries")
@@ -206,13 +206,17 @@ export async function reconnectPlayer(
       .single();
 
     if (anyEntry) {
-      targetSessionId = anyEntry.session_id;
+      // Only use the session if it is still active.
+      const sessionMeta = anyEntry.sessions as unknown as { is_active: boolean };
+      if (sessionMeta?.is_active) {
+        targetSessionId = anyEntry.session_id;
+      }
     }
   }
 
-  if (!targetSessionId) {
-    return { success: false, error: "No active session found for this player." };
-  }
+  // No active session — proceed with migration so the auth cookie is set,
+  // then the caller redirects to the lobby (/play) instead of crashing.
+  // targetSessionId remains null here; the return below handles it.
 
   const oldUserId = targetProfile.id;
 
@@ -324,7 +328,7 @@ export async function reconnectPlayer(
   // Step 6: Delete old auth user to clean up orphaned auth record.
   await service.auth.admin.deleteUser(oldUserId);
 
-  return { success: true, sessionId: targetSessionId };
+  return { success: true, sessionId: targetSessionId ?? undefined };
 }
 
 // ── Sign Out ─────────────────────────────────────────────────
