@@ -226,11 +226,15 @@ export async function promoteOnDeckMatchInternal(
   sessionId: string,
   courtId: string
 ): Promise<MatchmakingResult> {
+  // Order by sort_order first (drag-and-drop priority), fall back to
+  // created_at for new matches that haven't been manually reordered yet
+  // (sort_order is NULL until the organizer drags a card).
   const { data: pending, error } = await supabase
     .from("matches")
     .select("*")
     .eq("session_id", sessionId)
     .eq("status", "pending")
+    .order("sort_order", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true })
     .limit(1);
 

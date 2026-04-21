@@ -21,9 +21,14 @@ import {
 interface ShareSessionDialogProps {
   sessionId: string;
   sessionName: string;
+  /** Controlled open state. When provided the built-in trigger is hidden
+   *  and the parent controls visibility. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export function ShareSessionDialog({ sessionId, sessionName }: ShareSessionDialogProps) {
+export function ShareSessionDialog({ sessionId, sessionName, open, onOpenChange }: ShareSessionDialogProps) {
+  const isControlled = open !== undefined;
   const [joinUrl, setJoinUrl] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -52,17 +57,19 @@ export function ShareSessionDialog({ sessionId, sessionName }: ShareSessionDialo
   }
 
   return (
-    <Dialog>
-      <DialogTrigger asChild>
-        <button
-          className="inline-flex items-center gap-1.5 rounded-lg border border-white/40
-                     bg-white/10 px-3 py-1.5 text-xs font-semibold text-white
-                     hover:bg-white/20 hover:border-white/60 transition-colors"
-        >
-          <Share2 className="h-3.5 w-3.5" />
-          Share Session
-        </button>
-      </DialogTrigger>
+    <Dialog open={isControlled ? open : undefined} onOpenChange={isControlled ? onOpenChange : undefined}>
+      {!isControlled && (
+        <DialogTrigger asChild>
+          <button
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/40
+                       bg-white/10 px-3 py-1.5 text-xs font-semibold text-white
+                       hover:bg-white/20 hover:border-white/60 transition-colors"
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            Share Session
+          </button>
+        </DialogTrigger>
+      )}
 
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>

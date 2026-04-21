@@ -29,9 +29,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ChevronDown, ArrowLeft, Repeat, Power, Tv2 } from "lucide-react";
+import { ChevronDown, ArrowLeft, Repeat, Power, Tv2, Share2, MoreVertical } from "lucide-react";
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
@@ -54,10 +53,14 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>(session.is_active ? "courts" : "history");
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [autoMatchmaking, setAutoMatchmaking] = useState(session.is_auto_matchmaking_on);
   const [togglingAuto, setTogglingAuto] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   // ── Tap-to-Swap state ───────────────────────────────────────
   // swapContext !== null means the SwapSheet is open.
@@ -103,6 +106,19 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
       return () => document.removeEventListener("mousedown", handleClick);
     }
   }, [switcherOpen]);
+
+  // Close mobile more-menu on outside click.
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    }
+    if (moreMenuOpen) {
+      document.addEventListener("mousedown", handleClick);
+      return () => document.removeEventListener("mousedown", handleClick);
+    }
+  }, [moreMenuOpen]);
 
   const {
     courts,
@@ -204,9 +220,10 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     <div className={`min-h-screen ${SURFACE_BG}`}>
       {/* Top Header */}
       <header className={`sticky top-0 z-20 ${HEADER_BG} shadow-lg dark:border-b dark:border-border`}>
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          {/* Back link */}
-          <div className="mb-2">
+        <div className="max-w-7xl mx-auto px-3 md:px-6 py-3 md:py-4">
+
+          {/* ── Row 1: back link + mobile controls ── */}
+          <div className="mb-2 flex items-center justify-between">
             <button
               onClick={() => router.push("/organizer")}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-white/60
@@ -216,11 +233,89 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               <ArrowLeft className="h-3.5 w-3.5" />
               All Sessions
             </button>
+
+            {/* Mobile-only: mini auto toggle + more-options menu */}
+            {!isClosed && (
+              <div className="flex items-center gap-2 md:hidden">
+                {/* Mini auto-matchmaking toggle */}
+                <button
+                  onClick={handleToggleAuto}
+                  disabled={togglingAuto}
+                  aria-pressed={autoMatchmaking}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5
+                              text-[11px] font-semibold transition-colors border
+                              ${autoMatchmaking
+                                ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
+                                : "bg-white/10 border-white/20 text-white/50"
+                              }
+                              disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full shrink-0
+                                    ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`} />
+                  {autoMatchmaking ? "Auto" : "Off"}
+                </button>
+
+                {/* More-options dropdown */}
+                <div className="relative" ref={moreMenuRef}>
+                  <button
+                    onClick={() => setMoreMenuOpen((v) => !v)}
+                    className="inline-flex items-center justify-center h-9 w-9 rounded-lg
+                               text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                    aria-label="More options"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </button>
+
+                  {moreMenuOpen && (
+                    <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl
+                                    border border-slate-200 bg-white shadow-xl z-50 overflow-hidden
+                                    animate-in fade-in slide-in-from-top-1 duration-150">
+                      {/* TV View */}
+                      <a
+                        href={`/tv/${session.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => setMoreMenuOpen(false)}
+                        className="flex items-center gap-3 w-full px-4 py-3 text-sm
+                                   text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <Tv2 className="h-4 w-4 text-slate-400 shrink-0" />
+                        TV Scoreboard
+                      </a>
+
+                      {/* Share Session */}
+                      <button
+                        onClick={() => { setMoreMenuOpen(false); setShareOpen(true); }}
+                        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
+                                   text-slate-700 hover:bg-slate-50 transition-colors"
+                      >
+                        <Share2 className="h-4 w-4 text-slate-400 shrink-0" />
+                        Share Session
+                      </button>
+
+                      <div className="border-t border-slate-100" />
+
+                      {/* Close Session */}
+                      <button
+                        onClick={() => { setMoreMenuOpen(false); setCloseOpen(true); }}
+                        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
+                                   text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        <Power className="h-4 w-4 shrink-0" />
+                        Close Session
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="flex items-center justify-between">
+          {/* ── Row 2: title (left) + desktop action strip (right) ── */}
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-y-2 gap-x-4">
+
+            {/* Title + profile name + closed badge */}
             <div className="flex items-center gap-3 min-w-0">
-              {/* Session name + switcher */}
               <div className="relative min-w-0" ref={switcherRef}>
                 <button
                   onClick={() => otherSessions.length > 0 && setSwitcherOpen(!switcherOpen)}
@@ -230,14 +325,14 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                                 ? "hover:bg-white/10 cursor-pointer"
                                 : "cursor-default"}`}
                 >
-                  <h1 className="text-xl font-bold text-white truncate">{session.name}</h1>
+                  <h1 className="text-lg md:text-xl font-bold text-white truncate">{session.name}</h1>
                   {otherSessions.length > 0 && (
                     <ChevronDown className={`h-4 w-4 text-white/60 shrink-0 transition-transform
                                              ${switcherOpen ? "rotate-180" : ""}`} />
                   )}
                 </button>
 
-                {/* Dropdown */}
+                {/* Session switcher dropdown */}
                 {switcherOpen && otherSessions.length > 0 && (
                   <div className="absolute left-0 top-full mt-2 w-72 rounded-xl border border-slate-200
                                   bg-white shadow-xl z-50 overflow-hidden
@@ -251,15 +346,11 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                       {otherSessions.map((s) => (
                         <button
                           key={s.id}
-                          onClick={() => {
-                            setSwitcherOpen(false);
-                            router.push(`/organizer/${s.id}`);
-                          }}
+                          onClick={() => { setSwitcherOpen(false); router.push(`/organizer/${s.id}`); }}
                           className="flex items-center gap-3 w-full px-3 py-2.5 text-left
                                      hover:bg-slate-50 transition-colors"
                         >
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg
-                                          bg-slate-100">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100">
                             <Repeat className="h-3.5 w-3.5 text-slate-500" />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -275,10 +366,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                     </div>
                     <div className="border-t border-slate-100 px-3 py-2">
                       <button
-                        onClick={() => {
-                          setSwitcherOpen(false);
-                          router.push("/organizer");
-                        }}
+                        onClick={() => { setSwitcherOpen(false); router.push("/organizer"); }}
                         className="flex items-center gap-2 w-full text-xs font-medium text-blue-600
                                    hover:text-blue-800 transition-colors py-1"
                       >
@@ -290,37 +378,35 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 )}
               </div>
 
-              <p className="text-sm text-white/60 hidden sm:block">
+              <p className="text-sm text-white/60 hidden sm:block shrink-0">
                 — {profile.display_name}
               </p>
 
-              {/* Closed badge inline with title */}
               {isClosed && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-white/15
                                  border border-white/30 px-2.5 py-0.5 text-[10px]
-                                 font-bold uppercase tracking-wider text-white/80">
+                                 font-bold uppercase tracking-wider text-white/80 shrink-0">
                   Closed
                 </span>
               )}
             </div>
 
+            {/* Desktop action strip (hidden on mobile) */}
             {!isClosed && (
-              <div className="flex items-center gap-4 text-sm text-white/70">
-                {/* Mobile-only compact summary (full stats hidden below sm) */}
-                <span className="text-[10px] text-white/60 sm:hidden">
-                  {courts.length}c · {queue.length}q · {activeMatches.length}m
-                </span>
-                <span className="hidden sm:inline">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
-                <span className="text-white/40 hidden sm:inline">|</span>
-                <span className="hidden sm:inline">{queue.length} in queue</span>
-                <span className="text-white/40 hidden sm:inline">|</span>
-                <span className="hidden sm:inline">{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
-                <span className="text-white/40 hidden sm:inline">|</span>
+              <div className="hidden md:flex items-center gap-3 text-sm text-white/70 shrink-0">
+                <span>{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
+                <span className="text-white/40">|</span>
+                <span>{queue.length} in queue</span>
+                <span className="text-white/40">|</span>
+                <span>{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
+                <span className="text-white/40">|</span>
+
+                {/* Auto-matchmaking toggle */}
                 <button
                   onClick={handleToggleAuto}
                   disabled={togglingAuto}
                   aria-pressed={autoMatchmaking}
-                  className={`hidden sm:inline-flex items-center gap-1.5 rounded-full px-3 py-2
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2
                               min-h-[44px] text-xs font-semibold transition-colors border
                               ${autoMatchmaking
                                 ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30"
@@ -332,69 +418,76 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   <span className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`} />
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
-                <span className="text-white/40 hidden sm:inline">|</span>
+
+                <span className="text-white/40">|</span>
                 <ThemeToggle className="text-white/60 hover:text-white hover:bg-white/10
                                         dark:text-primary dark:hover:bg-primary/10" />
                 {process.env.NODE_ENV === "development" && (
                   <DevTools sessionId={session.id} />
                 )}
 
-                {/* TV Scoreboard link */}
+                {/* TV View */}
                 <a
                   href={`/tv/${session.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-white/30
                              bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-white/80
-                             hover:bg-white/20 hover:text-white hover:border-white/50
-                             transition-colors"
+                             hover:bg-white/20 hover:text-white hover:border-white/50 transition-colors"
                   title="Open TV scoreboard in a new tab"
                 >
                   <Tv2 className="h-3.5 w-3.5" />
                   TV View
                 </a>
 
-                {/* Share Session */}
-                <ShareSessionDialog sessionId={session.id} sessionName={session.name} />
+                {/* Share Session — desktop trigger */}
+                <button
+                  onClick={() => setShareOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/40
+                             bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-white
+                             hover:bg-white/20 hover:border-white/60 transition-colors"
+                >
+                  <Share2 className="h-3.5 w-3.5" />
+                  Share Session
+                </button>
 
-                {/* Close Session */}
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <button
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-300/50
-                                 bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-red-300
-                                 hover:bg-red-500/20 hover:border-red-300 transition-colors"
-                    >
-                      <Power className="h-3.5 w-3.5" />
-                      Close Session
-                    </button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Close &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        This will permanently end the session. All remaining players will be
-                        removed from the queue, any in-progress or on-deck matches will be
-                        cancelled, and courts will be closed. Completed match history will
-                        be preserved.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={handleCloseSession} disabled={closing}>
-                        {closing ? "Closing..." : "Yes, close session"}
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                {/* Close Session — desktop trigger */}
+                <button
+                  onClick={() => setCloseOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300/50
+                             bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-red-300
+                             hover:bg-red-500/20 hover:border-red-300 transition-colors"
+                >
+                  <Power className="h-3.5 w-3.5" />
+                  Close Session
+                </button>
               </div>
             )}
           </div>
+
+          {/* Mobile stats row — visible only below md */}
+          {!isClosed && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-white/50 md:hidden">
+              <span>{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
+              <span className="text-white/30">·</span>
+              <span>{queue.length} in queue</span>
+              <span className="text-white/30">·</span>
+              <span>{activeMatches.length} active</span>
+              <span className="text-white/30">·</span>
+              <ThemeToggle className="text-white/50 hover:text-white hover:bg-white/10
+                                      dark:text-primary dark:hover:bg-primary/10 -my-1" />
+            </div>
+          )}
         </div>
 
-        {/* Tab Navigation */}
-        <div className="max-w-7xl mx-auto px-6">
-          <nav className="flex gap-1 pt-2" role="tablist" aria-label="Dashboard sections">
+        {/* ── Tab Navigation — horizontally scrollable on mobile ── */}
+        <div className="max-w-7xl mx-auto px-3 md:px-6">
+          <nav
+            className="flex overflow-x-auto gap-1 pt-2
+                       [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+            role="tablist"
+            aria-label="Dashboard sections"
+          >
             {tabs.map((tab) => (
               <button
                 key={tab.key}
@@ -403,7 +496,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 aria-selected={activeTab === tab.key}
                 aria-controls={`tabpanel-${tab.key}`}
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative px-5 py-2.5 text-sm font-medium transition-colors
+                className={`relative shrink-0 whitespace-nowrap px-4 md:px-5 py-2.5 text-sm
+                            font-medium transition-colors
                             ${
                               activeTab === tab.key
                                 ? ACTIVE_TAB
@@ -423,8 +517,42 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
         </div>
       </header>
 
+      {/* ── Controlled dialogs (shared between desktop + mobile menu) ── */}
+      {!isClosed && (
+        <>
+          {/* Share Session dialog — controlled by shareOpen state */}
+          <ShareSessionDialog
+            sessionId={session.id}
+            sessionName={session.name}
+            open={shareOpen}
+            onOpenChange={setShareOpen}
+          />
+
+          {/* Close Session confirmation dialog — controlled by closeOpen state */}
+          <AlertDialog open={closeOpen} onOpenChange={setCloseOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Close &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently end the session. All remaining players will be
+                  removed from the queue, any in-progress or on-deck matches will be
+                  cancelled, and courts will be closed. Completed match history will
+                  be preserved.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={handleCloseSession} disabled={closing}>
+                  {closing ? "Closing..." : "Yes, close session"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      )}
+
       {/* Content */}
-      <main className="max-w-7xl mx-auto px-6 py-6">
+      <main className="max-w-7xl mx-auto px-3 md:px-6 py-4 md:py-6">
         <div
           role="tabpanel"
           id={`tabpanel-${activeTab}`}
