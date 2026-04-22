@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="#1D3A6F"/>
+  <!-- Shuttlecock cork base -->
+  <circle cx="256" cy="312" r="36" fill="#F59E0B"/>
+  <!-- Shuttlecock feather skirt -->
+  <ellipse cx="256" cy="220" rx="72" ry="64" fill="none" stroke="#FAFAF7" stroke-width="12"/>
+  <!-- Vertical center feather line -->
+  <line x1="256" y1="160" x2="256" y2="276" stroke="#FAFAF7" stroke-width="8" stroke-linecap="round"/>
+  <!-- Left feather lines -->
+  <line x1="200" y1="172" x2="240" y2="276" stroke="#FAFAF7" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <line x1="184" y1="202" x2="232" y2="276" stroke="#FAFAF7" stroke-width="6" stroke-linecap="round" opacity="0.6"/>
+  <!-- Right feather lines -->
+  <line x1="312" y1="172" x2="272" y2="276" stroke="#FAFAF7" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <line x1="328" y1="202" x2="280" y2="276" stroke="#FAFAF7" stroke-width="6" stroke-linecap="round" opacity="0.6"/>
+  <!-- Cork to skirt stem -->
+  <line x1="256" y1="276" x2="256" y2="312" stroke="#F59E0B" stroke-width="10" stroke-linecap="round"/>
+</svg>

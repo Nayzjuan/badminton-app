@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Space_Grotesk } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
+import { SerwistRegister } from "@/components/serwist-register";
 import "./globals.css";
 
 // Space Grotesk: geometric, slightly editorial — fits a fast-paced sports context
@@ -11,6 +12,25 @@ const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], weight: ["300", "400", 
 export const metadata: Metadata = {
   title: "Badminton Queue",
   description: "Real-time badminton social queuing and matchmaking",
+  // ── PWA / Apple home screen ──────────────────────────────────
+  appleWebApp: {
+    capable: true,
+    title: "Badminton Queue",
+    // black-translucent: the status bar overlays the app content,
+    // letting our navy header bleed all the way to the top edge on iOS.
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    // Standard browser favicon
+    icon: [
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/icon.svg", type: "image/svg+xml" },
+    ],
+    // iOS "Add to Home Screen" icon — must be PNG, 180×180
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+  },
+  // Tells browsers this is a PWA-capable page
+  applicationName: "Badminton Queue",
 };
 
 export const viewport: Viewport = {
@@ -56,6 +76,15 @@ export default function RootLayout({
             }}
           />
         </ThemeProvider>
+
+        {/*
+          Service Worker registration.
+          – Runs only in the browser (client component).
+          – NEXT_PUBLIC_KILL_SW=true in Vercel env vars instantly
+            unregisters any active SW on next page load — emergency
+            escape hatch if a bad SW ships to production.
+        */}
+        <SerwistRegister />
       </body>
     </html>
   );
