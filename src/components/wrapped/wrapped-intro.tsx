@@ -72,13 +72,16 @@ const PARTICLES: {
 
 interface WrappedIntroProps {
   playerName: string;
-  statLine: string;
+  /** Total completed matches the player played this session */
+  games: number;
+  /** Total wins this session */
+  wins: number;
   onDismiss: () => void;
 }
 
 // ── Component ─────────────────────────────────────────────────
 
-export function WrappedIntro({ playerName, statLine, onDismiss }: WrappedIntroProps) {
+export function WrappedIntro({ playerName, games, wins, onDismiss }: WrappedIntroProps) {
   const [canDismiss,   setCanDismiss]   = useState(false);
   const [isDismissing, setIsDismissing] = useState(false);
 
@@ -175,10 +178,11 @@ export function WrappedIntro({ playerName, statLine, onDismiss }: WrappedIntroPr
         {/* ── SESSION label ───────────────────────────────── */}
         <div style={a("wi-up", 380, 700)}>
           <p
-            className="text-[11px] font-black uppercase leading-none mb-3"
+            className="font-black uppercase leading-none mb-3"
             style={{
-              letterSpacing: "0.45em",
-              color: "rgba(251,191,36,0.78)",
+              fontSize: "clamp(2rem, 9.5vw, 3rem)",
+              letterSpacing: "0.18em",
+              color: "rgba(251,191,36,0.82)",
             }}
           >
             Session
@@ -239,14 +243,59 @@ export function WrappedIntro({ playerName, statLine, onDismiss }: WrappedIntroPr
           </p>
         </div>
 
-        {/* ── Stat teaser ─────────────────────────────────── */}
-        <div style={a("wi-fade", 380, 1730, "ease-out")} className="mt-1.5">
-          <p
-            className="text-sm tabular-nums"
-            style={{ color: "rgba(255,255,255,0.36)" }}
-          >
-            {statLine}
-          </p>
+        {/* ── Stat blocks — big numbers, two columns ──────── */}
+        <div
+          style={a("wi-up", 400, 1730, "ease-out")}
+          className="mt-3 flex items-end justify-center gap-6"
+        >
+          {/* Matches */}
+          <div className="flex flex-col items-center gap-1">
+            <span
+              className="font-black tabular-nums leading-none"
+              style={{
+                fontSize: "clamp(3.5rem, 16vw, 5.5rem)",
+                color: "#FFFFFF",
+              }}
+            >
+              {games}
+            </span>
+            <span
+              className="text-[11px] font-black uppercase tracking-[0.2em]"
+              style={{ color: "rgba(255,255,255,0.35)" }}
+            >
+              Matches
+            </span>
+          </div>
+
+          {/* Divider dot */}
+          <div
+            className="rounded-full mb-6 shrink-0"
+            style={{
+              width: 5,
+              height: 5,
+              backgroundColor: "rgba(245,158,11,0.45)",
+            }}
+            aria-hidden="true"
+          />
+
+          {/* Wins */}
+          <div className="flex flex-col items-center gap-1">
+            <span
+              className="font-black tabular-nums leading-none"
+              style={{
+                fontSize: "clamp(3.5rem, 16vw, 5.5rem)",
+                color: "#F59E0B",
+              }}
+            >
+              {wins}
+            </span>
+            <span
+              className="text-[11px] font-black uppercase tracking-[0.2em]"
+              style={{ color: "rgba(245,158,11,0.5)" }}
+            >
+              Wins
+            </span>
+          </div>
         </div>
 
         {/* ── CTA — slides up, then breathes ──────────────── */}

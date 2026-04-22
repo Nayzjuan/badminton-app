@@ -615,7 +615,8 @@ export default function WrappedPreview() {
       {showIntro && (
         <WrappedIntro
           playerName={SCENARIO_PLAYER[activeScenario].name}
-          statLine={`${SCENARIO_PLAYER[activeScenario].gp} matches · ${SCENARIO_PLAYER[activeScenario].w} wins`}
+          games={SCENARIO_PLAYER[activeScenario].gp}
+          wins={SCENARIO_PLAYER[activeScenario].w}
           onDismiss={() => setShowIntro(false)}
         />
       )}
