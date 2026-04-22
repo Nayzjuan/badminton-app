@@ -1,20 +1,24 @@
 "use client";
 
 // ============================================================
-// useOrganizerBroadcast — Player-side intervention listener
+// useOrganizerBroadcast — Player-side broadcast listener
 // ============================================================
-// Subscribes to the session's broadcast channel and surfaces a
-// toast notification whenever the organizer clears an On Deck
-// match or cancels an In-Progress match that the current player
-// was assigned to.
+// Subscribes to the session's broadcast channel and handles
+// two events:
 //
-// This prevents the silent "your match card just disappeared"
-// confusion on the player's screen. The toast gives players
-// a human-readable reason for the change and persists until
-// they dismiss it.
+//   organizer_intervention — organizer cleared/cancelled a match
+//     → shows a toast so the player knows why their card changed
+//
+//   session_closed — organizer closed the session
+//     → redirects the player to their personal Wrapped page at
+//        /wrapped/{sessionId}/{playerId}
+//
+// Both are fire-and-forget from the server. Failures are silent
+// on the server side; this hook is the only delivery mechanism.
 // ============================================================
 
 import { useEffect, useMemo, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
@@ -30,31 +34,42 @@ const TOAST_MESSAGES: Record<OrganizerInterventionPayload["type"], string> = {
 
 export function useOrganizerBroadcast(sessionId: string, playerId: string): void {
   const supabase = useMemo(() => createClient(), []);
+  const router   = useRouter();
 
-  // Keep a stable ref to the latest playerId so the subscription
-  // callback always reads the current value without re-registering.
+  // Keep stable refs so the subscription callback always reads
+  // current values without re-registering the channel.
   const playerIdRef = useRef(playerId);
-  useEffect(() => {
-    playerIdRef.current = playerId;
-  });
+  const routerRef   = useRef(router);
+  useEffect(() => { playerIdRef.current = playerId; });
+  useEffect(() => { routerRef.current   = router;   });
 
   useEffect(() => {
     const unsub = subscribeToOrganizerBroadcast(
       supabase,
       sessionId,
+      // ── organizer_intervention ────────────────────────────
       (payload: OrganizerInterventionPayload) => {
-        // Only show the toast if this player is affected.
         if (!payload.affectedPlayerIds.includes(playerIdRef.current)) return;
 
         const message = TOAST_MESSAGES[payload.type] ?? TOAST_MESSAGES.match_cancelled;
-
         toast.info(message, {
-          // Keep it on screen long enough to read (5 s).
           duration: 5_000,
-          // Explicit dismiss button so players can clear it on their own terms.
           closeButton: true,
           description: "Your queue position and wait time have been preserved.",
         });
+      },
+      // ── session_closed ────────────────────────────────────
+      () => {
+        // Brief toast so the player knows what's happening, then redirect.
+        toast.info("Session's over — time to see your awards! 🏆", {
+          duration: 2_000,
+        });
+        // Give the toast 800ms to render before navigating.
+        setTimeout(() => {
+          routerRef.current.push(
+            `/wrapped/${sessionId}/${playerIdRef.current}`
+          );
+        }, 800);
       }
     );
 

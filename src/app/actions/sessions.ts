@@ -12,6 +12,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
+import { broadcastSessionClosed } from "@/lib/broadcast";
 import type { ScoringFormat } from "@/types/database";
 
 // ── Passcode auto-generation ──────────────────────────────────
@@ -289,6 +290,18 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     return { success: false, message: "Session is already closed." };
   }
 
+  // ── 0. Pre-compute Wrapped stats ────────────────────────────
+  // Fire-and-forget: if the RPC fails the session still closes.
+  // Stats are computed before the broadcast so rows exist when
+  // players' browsers receive the session_closed event.
+  try {
+    await supabase.rpc("compute_session_wrapped", {
+      p_session_id: sessionId,
+    });
+  } catch (err) {
+    console.warn("[closeSession] compute_session_wrapped failed (non-fatal):", err);
+  }
+
   // ── 1. Cancel any lingering on_deck / in_progress matches ───
   const { data: activeMatches } = await supabase
     .from("matches")
@@ -331,6 +344,10 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   if (updateError) {
     return { success: false, message: `Failed to close session: ${updateError.message}` };
   }
+
+  // ── 5. Broadcast session_closed to all connected players ───
+  // Fire-and-forget after the session row is committed.
+  await broadcastSessionClosed(sessionId);
 
   return {
     success: true,

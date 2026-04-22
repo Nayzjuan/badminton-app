@@ -69,6 +69,29 @@ async function postBroadcast(topic: string, event: string, payload: object): Pro
 
 // ── Public API ────────────────────────────────────────────────
 
+// ── session_closed ────────────────────────────────────────
+
+export interface SessionClosedPayload {
+  sessionId: string;
+}
+
+/**
+ * Notify all players in a session that the session has been
+ * closed by the organizer. The client-side hook uses this to
+ * redirect each player to their personal Wrapped page.
+ *
+ * Broadcast on channel: session-events:{sessionId}
+ * Event name:           session_closed
+ */
+export async function broadcastSessionClosed(sessionId: string): Promise<void> {
+  const payload: SessionClosedPayload = { sessionId };
+  await postBroadcast(
+    `realtime:session-events:${sessionId}`,
+    "session_closed",
+    payload
+  );
+}
+
 /**
  * Notify all players in a session that the organizer has
  * intervened (cleared an On Deck match or cancelled an

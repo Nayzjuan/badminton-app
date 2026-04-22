@@ -228,6 +228,30 @@ export type MatchGameUpdate = Partial<Pick<MatchGame, "team_a_score" | "team_b_s
 
 export type MatchPlayerInsert = Pick<MatchPlayer, "match_id" | "player_id" | "team">;
 
+/** session_wrapped_stats table */
+export type SessionWrappedStats = {
+  id:             string;
+  session_id:     string;
+  player_id:      string;
+  computed_at:    string;
+  games_played:   number;
+  wins:           number;
+  losses:         number;
+  points_for:     number;
+  points_against: number;
+  point_diff:     number;   // GENERATED ALWAYS AS (points_for - points_against)
+  win_pct:        number;
+  win_streak:     number;
+  session_rank:   number | null;
+  earned_awards:  string[];
+  award_data:     Record<string, Record<string, unknown>>;
+};
+
+export type SessionWrappedStatsInsert = Omit<SessionWrappedStats, "id" | "point_diff" | "computed_at"> &
+  Partial<Pick<SessionWrappedStats, "computed_at">>;
+
+export type SessionWrappedStatsUpdate = Partial<Omit<SessionWrappedStats, "id" | "session_id" | "player_id" | "point_diff">>;
+
 /** push_subscriptions table */
 export type PushSubscription = {
   id: string;
@@ -317,6 +341,12 @@ export type Database = {
         Row: PushSubscription;
         Insert: PushSubscriptionInsert;
         Update: PushSubscriptionUpdate;
+        Relationships: [];
+      };
+      session_wrapped_stats: {
+        Row: SessionWrappedStats;
+        Insert: SessionWrappedStatsInsert;
+        Update: SessionWrappedStatsUpdate;
         Relationships: [];
       };
     };
@@ -420,6 +450,10 @@ export type Database = {
           p_team_b_ids:     string[];
         };
         Returns: string; // UUID of the new match
+      };
+      compute_session_wrapped: {
+        Args: { p_session_id: string };
+        Returns: void;
       };
     };
     Enums: {

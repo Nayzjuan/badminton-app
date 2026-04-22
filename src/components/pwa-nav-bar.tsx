@@ -22,6 +22,10 @@ export function PwaNavBar() {
   const pathname = usePathname();
   const router = useRouter();
 
+  // The Wrapped experience is a full-bleed immersive overlay —
+  // suppress the nav bar so it doesn't compete with the animation.
+  if (pathname.startsWith("/wrapped/")) return null;
+
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [origin, setOrigin] = useState("");

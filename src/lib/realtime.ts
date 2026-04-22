@@ -14,7 +14,7 @@
 
 import type { SupabaseClient, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import type { OrganizerInterventionPayload } from "@/lib/broadcast";
+import type { OrganizerInterventionPayload, SessionClosedPayload } from "@/lib/broadcast";
 
 type TypedClient = SupabaseClient<Database>;
 type ChangeHandler<T extends Record<string, unknown>> = (
@@ -194,7 +194,8 @@ export function subscribeToSessionOrganizers(
 export function subscribeToOrganizerBroadcast(
   supabase: TypedClient,
   sessionId: string,
-  onIntervention: (payload: OrganizerInterventionPayload) => void
+  onIntervention: (payload: OrganizerInterventionPayload) => void,
+  onSessionClosed?: (payload: SessionClosedPayload) => void
 ): () => void {
   const channelName = `session-events:${sessionId}`;
 
@@ -206,6 +207,14 @@ export function subscribeToOrganizerBroadcast(
       (msg: { payload: OrganizerInterventionPayload }) => {
         console.log(`[realtime] ${channelName} broadcast:`, msg.payload);
         onIntervention(msg.payload);
+      }
+    )
+    .on(
+      "broadcast",
+      { event: "session_closed" },
+      (msg: { payload: SessionClosedPayload }) => {
+        console.log(`[realtime] ${channelName} session_closed:`, msg.payload);
+        onSessionClosed?.(msg.payload);
       }
     )
     .subscribe((status, err) => {
