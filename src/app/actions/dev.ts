@@ -250,7 +250,7 @@ export async function seedTestData(
 const NAMED_PLAYERS: { name: string; skill: SkillLevel }[] = [
   { name: "Carl", skill: "lower_advanced" },
   { name: "Stelle", skill: "upper_intermediate" },
-  { name: "Mariah", skill: "upper_beginner" },
+  { name: "Mariah", skill: "beginner" },
   { name: "Jerg", skill: "intermediate" },
   { name: "Veejay", skill: "intermediate" },
   { name: "Keeeb", skill: "intermediate" },
@@ -262,7 +262,7 @@ const NAMED_PLAYERS: { name: string; skill: SkillLevel }[] = [
   { name: "Ogie", skill: "upper_intermediate" },
   { name: "Jackie", skill: "intermediate" },
   { name: "JV", skill: "advanced" },
-  { name: "Bianca", skill: "upper_beginner" },
+  { name: "Bianca", skill: "beginner" },
   { name: "Chu", skill: "advanced" },
 ];
 

@@ -15,7 +15,6 @@
 
 export type SkillLevel =
   | "beginner"
-  | "upper_beginner"
   | "lower_intermediate"
   | "intermediate"
   | "upper_intermediate"
@@ -24,13 +23,12 @@ export type SkillLevel =
 
 /** Ordered array for UI dropdowns and display. Index = numeric level (0-based). */
 export const SKILL_LEVELS: { value: SkillLevel; label: string; numeric: number }[] = [
-  { value: "beginner", label: "Beginner", numeric: 1 },
-  { value: "upper_beginner", label: "Upper Beginner", numeric: 2 },
-  { value: "lower_intermediate", label: "Lower Intermediate", numeric: 3 },
-  { value: "intermediate", label: "Intermediate", numeric: 4 },
-  { value: "upper_intermediate", label: "Upper Intermediate", numeric: 5 },
-  { value: "lower_advanced", label: "Lower Advanced", numeric: 6 },
-  { value: "advanced", label: "Advanced", numeric: 7 },
+  { value: "beginner",           label: "Beginner",           numeric: 1 },
+  { value: "lower_intermediate", label: "Lower Intermediate", numeric: 2 },
+  { value: "intermediate",       label: "Intermediate",       numeric: 3 },
+  { value: "upper_intermediate", label: "Upper Intermediate", numeric: 4 },
+  { value: "lower_advanced",     label: "Lower Advanced",     numeric: 5 },
+  { value: "advanced",           label: "Advanced",           numeric: 6 },
 ];
 
 /** Convert a SkillLevel enum to its numeric value (1–7). */

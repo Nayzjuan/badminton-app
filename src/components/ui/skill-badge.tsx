@@ -4,7 +4,7 @@
 // SkillBadge — Vibrant pill badge for a player's skill level
 // ============================================================
 // Three colour tiers, no border — pure pill shape:
-//   Beginner  (beginner, upper_beginner)                → emerald
+//   Beginner  (beginner)                                → emerald
 //   Intermediate (lower_int, int, upper_int)            → blue
 //   Advanced  (lower_advanced, advanced)                → purple
 // ============================================================
@@ -20,10 +20,6 @@ interface SkillBadgeProps {
 const LEVEL_CONFIG: Record<SkillLevel, { label: string; cls: string }> = {
   beginner: {
     label: "Beginner",
-    cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
-  },
-  upper_beginner: {
-    label: "Upper Beg.",
     cls: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
   },
   lower_intermediate: {
