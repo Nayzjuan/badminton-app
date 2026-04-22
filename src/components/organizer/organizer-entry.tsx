@@ -24,6 +24,7 @@ import {
   Key,
 } from "lucide-react";
 import { createSession, joinAsCoOrganizer } from "@/app/actions/sessions";
+import { SignOutButton } from "@/components/sign-out-button";
 import type { Profile, ScoringFormat } from "@/types/database";
 import type { SessionWithStats } from "@/app/organizer/page";
 
@@ -130,7 +131,7 @@ export function OrganizerEntry({
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 shadow-md">
             <span className="text-xl">&#127992;</span>
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
               Organizer Dashboard
             </h1>
@@ -138,6 +139,7 @@ export function OrganizerEntry({
               Welcome back, {profile.display_name}
             </p>
           </div>
+          <SignOutButton variant="icon" className="shrink-0" />
         </div>
 
         {/* ── Global error ─────────────────────────────────────── */}

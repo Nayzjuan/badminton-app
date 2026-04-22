@@ -32,8 +32,8 @@ import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import { submitMatchScore } from "@/app/actions/match";
 import { checkoutPlayer } from "@/app/actions/queue";
-import { playerLogOut } from "@/app/actions/auth";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { SignOutButton } from "@/components/sign-out-button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -66,17 +66,11 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>("status");
   const [pinVisible, setPinVisible] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
-  const [signingOut, setSigningOut] = useState(false);
 
   async function handleCheckout() {
     setCheckingOut(true);
     await checkoutPlayer(session.id);
     router.push("/play");
-  }
-
-  async function handleSignOut() {
-    setSigningOut(true);
-    await playerLogOut(); // server action → clears auth + redirect("/")
   }
 
   const {
@@ -176,6 +170,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
             <div className="flex items-center gap-2">
               <ThemeToggle className="text-slate-500 hover:text-slate-900 hover:bg-slate-100
                                       dark:text-primary dark:hover:bg-primary/10" />
+              <SignOutButton variant="icon" />
               {/* Status dot — aria-hidden since the sr-only span carries the label */}
               <div
                 aria-hidden="true"
@@ -214,7 +209,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                     <AlertDialogCancel>Stay</AlertDialogCancel>
                     <AlertDialogAction
                       onClick={handleCheckout}
-                      disabled={checkingOut || signingOut}
+                      disabled={checkingOut}
                       className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
                     >
                       {checkingOut ? "Leaving…" : "Leave session"}
@@ -222,15 +217,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                   </AlertDialogFooter>
                   {/* Secondary escape hatch — full sign-out for device handoff */}
                   <div className="border-t border-border mt-1 pt-3 text-center">
-                    <button
-                      onClick={handleSignOut}
-                      disabled={signingOut || checkingOut}
-                      className="text-[11px] text-muted-foreground hover:text-foreground
-                                 underline underline-offset-2 transition-colors
-                                 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {signingOut ? "Signing out…" : "Sign out of the app entirely"}
-                    </button>
+                    <SignOutButton variant="text" />
                   </div>
                 </AlertDialogContent>
               </AlertDialog>

@@ -3,6 +3,7 @@ import { Space_Grotesk } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SerwistRegister } from "@/components/serwist-register";
+import { PwaNavBar } from "@/components/pwa-nav-bar";
 import "./globals.css";
 
 // Space Grotesk: geometric, slightly editorial — fits a fast-paced sports context
@@ -54,7 +55,7 @@ export default function RootLayout({
     // class/style mismatch next-themes causes on the <html> element
     // between SSR and the first client render.
     <html lang="en" suppressHydrationWarning>
-      <body className={`${spaceGrotesk.className} antialiased`}>
+      <body className={`${spaceGrotesk.className} antialiased pb-12`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"
@@ -75,6 +76,13 @@ export default function RootLayout({
               },
             }}
           />
+          {/*
+            PWA URL bar — fixed to the bottom of the screen.
+            In standalone mode (installed PWA) the browser's native URL
+            bar is hidden; this restores URL visibility and editability.
+            The pb-12 on <body> above ensures content is never obscured.
+          */}
+          <PwaNavBar />
         </ThemeProvider>
 
         {/*
