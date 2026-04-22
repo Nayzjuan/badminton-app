@@ -339,6 +339,20 @@ export async function signOut() {
   redirect("/");
 }
 
+/**
+ * playerLogOut — clears the player's auth session and redirects to the
+ * login screen.  Called from the player dashboard "Sign out" escape hatch.
+ *
+ * Distinct from "Leave Session" (checkoutPlayer) which only removes the
+ * player from the queue but keeps them authenticated.  Use this when the
+ * player wants to switch accounts or hand the device to someone else.
+ */
+export async function playerLogOut(): Promise<void> {
+  const supabase = await createClient();
+  await supabase.auth.signOut();
+  redirect("/");
+}
+
 // ── Get Current Profile ──────────────────────────────────────
 
 export async function getCurrentProfile() {
