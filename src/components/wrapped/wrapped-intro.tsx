@@ -253,7 +253,7 @@ export function WrappedIntro({ playerName, games, wins, onDismiss }: WrappedIntr
             <span
               className="font-black tabular-nums leading-none"
               style={{
-                fontSize: "clamp(3.5rem, 16vw, 5.5rem)",
+                fontSize: "clamp(6rem, 26vw, 9.5rem)",
                 color: "#FFFFFF",
               }}
             >
@@ -283,7 +283,7 @@ export function WrappedIntro({ playerName, games, wins, onDismiss }: WrappedIntr
             <span
               className="font-black tabular-nums leading-none"
               style={{
-                fontSize: "clamp(3.5rem, 16vw, 5.5rem)",
+                fontSize: "clamp(6rem, 26vw, 9.5rem)",
                 color: "#F59E0B",
               }}
             >
