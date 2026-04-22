@@ -114,6 +114,41 @@
     100% { background-color: transparent; }
   }
 
+  /* ── Session Wrapped intro overlay ─────────────────────── */
+  /* Five keyframes that drive the staged reveal sequence.     */
+  /* All use transform + opacity only — GPU-accelerated,       */
+  /* no layout properties touched.                             */
+
+  /* 1. Full-screen fade-in (backdrop + overall exit) */
+  @keyframes wi-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* 2. Shuttlecock icon: tiny + rotated → full size */
+  @keyframes wi-icon {
+    from { opacity: 0; transform: scale(0.4) rotate(-20deg); }
+    to   { opacity: 1; transform: scale(1)   rotate(0deg);   }
+  }
+
+  /* 3. Standard text slide-up (SESSION label, name, stats) */
+  @keyframes wi-up {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0);    }
+  }
+
+  /* 4. "WRAPPED" word slam — larger vertical travel, slight scale */
+  @keyframes wi-word {
+    from { opacity: 0; transform: translateY(28px) scale(0.88); }
+    to   { opacity: 1; transform: translateY(0)    scale(1);    }
+  }
+
+  /* 5. CTA soft breathe — very subtle, non-distracting pulse */
+  @keyframes wi-breathe {
+    0%, 100% { transform: scale(1);    }
+    50%       { transform: scale(1.04); }
+  }
+
   /* ── Reduced-motion: respect system preference ──────────── */
   /* Collapses all CSS animations and transitions to near-zero  */
   /* for users with vestibular disorders or motion sensitivity. */

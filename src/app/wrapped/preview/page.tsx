@@ -10,6 +10,7 @@
 // ============================================================
 
 import { useState } from "react";
+import { WrappedIntro } from "@/components/wrapped/wrapped-intro";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -600,6 +601,7 @@ const SCENARIO_PLAYER: Record<Scenario, {
 export default function WrappedPreview() {
   const [activeScenario, setActiveScenario] = useState<Scenario>("many_awards");
   const [showAll, setShowAll] = useState(false);
+  const [showIntro, setShowIntro] = useState(false);
 
   const scenarioAwardKeys = SCENARIO_AWARDS[activeScenario];
   const player = SCENARIO_PLAYER[activeScenario];
@@ -609,6 +611,15 @@ export default function WrappedPreview() {
   return (
     <div className="min-h-screen bg-[#080F1C] text-white pb-24">
 
+      {/* ── Animated intro overlay ───────────────────────────── */}
+      {showIntro && (
+        <WrappedIntro
+          playerName={SCENARIO_PLAYER[activeScenario].name}
+          statLine={`${SCENARIO_PLAYER[activeScenario].gp} matches · ${SCENARIO_PLAYER[activeScenario].w} wins`}
+          onDismiss={() => setShowIntro(false)}
+        />
+      )}
+
       {/* ── Top banner ─────────────────────────────────────── */}
       <div className="border-b border-white/10 bg-[#0E1C3A]/80 backdrop-blur px-4 py-3 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
@@ -616,10 +627,22 @@ export default function WrappedPreview() {
             <p className="text-xs font-black uppercase tracking-widest text-amber-400">Preview Mode</p>
             <p className="text-sm font-semibold text-white/70">Session Wrapped — Design Preview</p>
           </div>
-          <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30
-                           rounded-full px-2.5 py-1 font-bold">
-            Static / No DB
-          </span>
+          <div className="flex items-center gap-2">
+            {/* Trigger the animated intro */}
+            <button
+              onClick={() => setShowIntro(true)}
+              className="flex items-center gap-1.5 rounded-full
+                         bg-amber-500 hover:bg-amber-400 active:scale-95
+                         px-3 py-1.5 text-[11px] font-black uppercase tracking-widest
+                         text-[#060D1B] transition-all"
+            >
+              ▶ Play Intro
+            </button>
+            <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30
+                             rounded-full px-2.5 py-1 font-bold hidden sm:inline">
+              Static / No DB
+            </span>
+          </div>
         </div>
       </div>
 
