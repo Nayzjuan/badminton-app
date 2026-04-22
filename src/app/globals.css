@@ -115,11 +115,10 @@
   }
 
   /* ── Session Wrapped intro overlay ─────────────────────── */
-  /* Five keyframes that drive the staged reveal sequence.     */
-  /* All use transform + opacity only — GPU-accelerated,       */
-  /* no layout properties touched.                             */
+  /* Keyframes that drive the staged reveal + enhancement      */
+  /* layers. All use transform + opacity only unless noted.    */
 
-  /* 1. Full-screen fade-in (backdrop + overall exit) */
+  /* 1. Full-screen fade-in / fade-out */
   @keyframes wi-fade {
     from { opacity: 0; }
     to   { opacity: 1; }
@@ -127,7 +126,7 @@
 
   /* 2. Shuttlecock icon: tiny + rotated → full size */
   @keyframes wi-icon {
-    from { opacity: 0; transform: scale(0.4) rotate(-20deg); }
+    from { opacity: 0; transform: scale(0.3) rotate(-25deg); }
     to   { opacity: 1; transform: scale(1)   rotate(0deg);   }
   }
 
@@ -137,13 +136,48 @@
     to   { opacity: 1; transform: translateY(0);    }
   }
 
-  /* 4. "WRAPPED" word slam — larger vertical travel, slight scale */
+  /* 4. "WRAPPED" slam + amber→white color flash.             */
+  /*    color IS animatable; GPU-composited props (transform,  */
+  /*    opacity) animate alongside it without conflict.        */
   @keyframes wi-word {
-    from { opacity: 0; transform: translateY(28px) scale(0.88); }
-    to   { opacity: 1; transform: translateY(0)    scale(1);    }
+    0%   { opacity: 0; transform: translateY(28px) scale(0.88); color: #F59E0B; }
+    30%  {             transform: translateY(6px)  scale(0.96); color: #FDE68A; }
+    65%  {                                                       color: #FFFFFF; }
+    100% { opacity: 1; transform: translateY(0)    scale(1);    color: #FFFFFF; }
   }
 
-  /* 5. CTA soft breathe — very subtle, non-distracting pulse */
+  /* 5. Diagonal shimmer sweep across WRAPPED text (one pass) */
+  @keyframes wi-shimmer {
+    from { transform: translateX(-110%) skewX(-18deg); opacity: 0;   }
+    15%  {                                              opacity: 0.9; }
+    85%  {                                              opacity: 0.6; }
+    to   { transform: translateX(280%)  skewX(-18deg); opacity: 0;   }
+  }
+
+  /* 6. Ring burst radiating from behind the icon */
+  @keyframes wi-ring {
+    0%   { transform: scale(0.7); opacity: 0.7; }
+    60%  {                        opacity: 0.3; }
+    100% { transform: scale(4.0); opacity: 0;   }
+  }
+
+  /* 7. Particle float — rightward drift */
+  @keyframes wi-float-r {
+    0%   { transform: translate(0, 0)      scale(1);   opacity: 0;   }
+    8%   {                                             opacity: 1;   }
+    88%  {                                             opacity: 0.6; }
+    100% { transform: translate(22px, -150px) scale(0.4); opacity: 0; }
+  }
+
+  /* 8. Particle float — leftward drift */
+  @keyframes wi-float-l {
+    0%   { transform: translate(0, 0)       scale(1);   opacity: 0;   }
+    8%   {                                              opacity: 1;   }
+    88%  {                                              opacity: 0.6; }
+    100% { transform: translate(-18px, -150px) scale(0.4); opacity: 0; }
+  }
+
+  /* 9. CTA soft breathe — very subtle, non-distracting pulse */
   @keyframes wi-breathe {
     0%, 100% { transform: scale(1);    }
     50%       { transform: scale(1.04); }
