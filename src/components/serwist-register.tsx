@@ -53,9 +53,8 @@ export function SerwistRegister() {
     }
 
     // ── Normal registration (production only) ────────────────
-    // The SW is only built and available in production.
-    // In development, Serwist is disabled (set in next.config.ts)
-    // to prevent stale cache interfering with hot-reload.
+    // SW registration is intentionally skipped in development to
+    // prevent stale cache responses from interfering with hot-reload.
     if (process.env.NODE_ENV === "production") {
       navigator.serviceWorker
         .register("/sw.js", { scope: "/" })

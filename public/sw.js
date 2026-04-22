@@ -223,7 +223,10 @@ self.addEventListener("push", (event) => {
   const { type, title, body, data } = payload;
 
   let vibrate = [200, 100, 200];
-  const badge = "/icons/icon-192.png";
+  // badge: small monochrome icon shown in the notification tray on Android.
+  // Should be 96×96 for sharp rendering at notification badge size.
+  // icon: full-colour icon shown in the notification body.
+  const badge = "/icons/icon-96.png";
   const icon = "/icons/icon-192.png";
   let tag = "pocket-ping";
   let requireInteraction = false;
