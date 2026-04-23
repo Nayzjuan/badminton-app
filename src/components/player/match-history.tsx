@@ -16,37 +16,52 @@ import { subscribeToMatches } from "@/lib/realtime";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
 
 interface MatchHistoryProps {
-  sessionId: string;
+  /** When provided, shows history for this session only (+ real-time updates).
+   *  When omitted, shows all-time history across every session. */
+  sessionId?: string;
   playerId: string;
+  /** Cap the number of results returned. Default: unlimited. */
+  limit?: number;
 }
 
-export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
+export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) {
   const [history, setHistory] = useState<MatchHistoryType[]>([]);
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createClient(), []);
 
   const fetchHistory = useCallback(async () => {
-    const { data } = await supabase
+    let query = supabase
       .from("v_match_history")
       .select("*")
-      .eq("session_id", sessionId)
       .eq("player_id", playerId)
       .order("completed_at", { ascending: false });
 
+    // Filter by session when provided.
+    if (sessionId) {
+      query = query.eq("session_id", sessionId);
+    }
+
+    // Cap results when a limit is given.
+    if (limit) {
+      query = query.limit(limit);
+    }
+
+    const { data } = await query;
     if (data) setHistory(data);
     setLoading(false);
-  }, [supabase, sessionId, playerId]);
+  }, [supabase, sessionId, playerId, limit]);
 
   // Initial fetch.
   useEffect(() => {
     fetchHistory();
   }, [fetchHistory]);
 
-  // Real-time: re-fetch when any match changes (completion, score update).
+  // Real-time: only subscribe when scoped to a specific session.
   const fetchRef = useRef(fetchHistory);
   fetchRef.current = fetchHistory;
 
   useEffect(() => {
+    if (!sessionId) return; // No real-time for all-time view.
     const unsub = subscribeToMatches(
       supabase,
       sessionId,
@@ -170,14 +185,14 @@ export function MatchHistory({ sessionId, playerId }: MatchHistoryProps) {
               >
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-slate-500 dark:text-muted-foreground">
-                    Match {history.length - i}
+                    {sessionId ? `Match ${history.length - i}` : (dateStr || `Match ${history.length - i}`)}
                     {match.court_name && ` · ${match.court_name}`}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {(dateStr || timeStr) && (
                     <span className="text-[10px] text-slate-400 dark:text-muted-foreground">
-                      {dateStr}{dateStr && timeStr ? " · " : ""}{timeStr}
+                      {sessionId ? `${dateStr}${dateStr && timeStr ? " · " : ""}${timeStr}` : timeStr}
                     </span>
                   )}
                   <span

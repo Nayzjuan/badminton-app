@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
+import { MatchHistory } from "@/components/player/match-history";
 
 export default async function PlayPage() {
   const supabase = await createClient();
@@ -72,6 +73,14 @@ export default async function PlayPage() {
             </p>
           </div>
         )}
+
+        {/* Recent Match History */}
+        <div className="space-y-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">
+            Recent Matches
+          </p>
+          <MatchHistory playerId={profile.id} limit={10} />
+        </div>
       </div>
     </main>
   );
