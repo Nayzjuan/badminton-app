@@ -185,14 +185,14 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
               >
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-slate-500 dark:text-muted-foreground">
-                    {sessionId ? `Match ${history.length - i}` : (dateStr || `Match ${history.length - i}`)}
+                    Match {history.length - i}
                     {match.court_name && ` · ${match.court_name}`}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {(dateStr || timeStr) && (
                     <span className="text-[10px] text-slate-400 dark:text-muted-foreground">
-                      {sessionId ? `${dateStr}${dateStr && timeStr ? " · " : ""}${timeStr}` : timeStr}
+                      {dateStr}{dateStr && timeStr ? " · " : ""}{timeStr}
                     </span>
                   )}
                   <span
