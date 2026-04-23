@@ -28,47 +28,50 @@ const THEME_TOKENS: Record<
   VipTheme,
   {
     label: string;
-    gradient: string;          // gradient-clip text colors
-    glowLight: string;         // drop-shadow for light bg
-    glowDark: string;          // drop-shadow stack for dark bg
-    border: string;            // tag border color (light)
-    borderDark: string;        // tag border color (dark)
-    bg: string;                // tag bg (light)
-    bgDark: string;            // tag bg (dark)
+    gradient: string;        // gradient-clip text colors
+    boxShadowLight: string;  // box-shadow for light bg pill
+    boxShadowDark: string;   // box-shadow for dark bg pill
+    borderLight: string;     // border color CSS value (light)
+    borderDark: string;      // border color CSS value (dark)
+    bgLight: string;         // bg CSS value (light)
+    bgDark: string;          // bg CSS value (dark)
   }
 > = {
   "cyber-neon": {
     label: "Cyber Neon",
-    gradient: "from-[hsl(165_100%_45%)] via-[hsl(185_100%_60%)] to-[hsl(165_100%_45%)]",
-    glowLight: "drop-shadow(0_0_4px_hsl(165_100%_45%/0.55)) drop-shadow(0_0_7px_hsl(185_100%_60%/0.35))",
-    glowDark:
-      "drop-shadow(0_0_5px_hsl(165_100%_50%/0.9)) drop-shadow(0_0_12px_hsl(185_100%_60%/0.7)) drop-shadow(0_0_18px_hsl(165_100%_45%/0.4))",
-    border: "border-[hsl(165_100%_45%/0.4)]",
-    borderDark: "border-[hsl(165_100%_55%/0.55)]",
-    bg: "bg-[hsl(165_100%_45%/0.08)]",
-    bgDark: "bg-[hsl(165_100%_45%/0.12)]",
+    gradient: "from-[hsl(165_100%_50%)] via-[hsl(185_100%_65%)] to-[hsl(165_100%_50%)]",
+    boxShadowLight:
+      "0 0 6px 1px hsl(165 100% 45% / 0.7), 0 0 14px 2px hsl(185 100% 60% / 0.45)",
+    boxShadowDark:
+      "0 0 8px 2px hsl(165 100% 50% / 1), 0 0 18px 4px hsl(185 100% 60% / 0.8), 0 0 32px 6px hsl(165 100% 45% / 0.5)",
+    borderLight: "hsl(165 100% 45% / 0.7)",
+    borderDark: "hsl(165 100% 60% / 0.9)",
+    bgLight: "hsl(165 100% 45% / 0.12)",
+    bgDark: "hsl(165 100% 50% / 0.18)",
   },
   "gold-prestige": {
     label: "Gold Prestige",
-    gradient: "from-[hsl(43_100%_55%)] via-[hsl(38_100%_70%)] to-[hsl(43_100%_55%)]",
-    glowLight: "drop-shadow(0_0_4px_hsl(43_100%_55%/0.55)) drop-shadow(0_0_7px_hsl(38_100%_65%/0.35))",
-    glowDark:
-      "drop-shadow(0_0_5px_hsl(43_100%_60%/0.9)) drop-shadow(0_0_12px_hsl(38_100%_70%/0.7)) drop-shadow(0_0_18px_hsl(43_100%_50%/0.4))",
-    border: "border-[hsl(43_100%_55%/0.4)]",
-    borderDark: "border-[hsl(43_100%_65%/0.55)]",
-    bg: "bg-[hsl(43_100%_55%/0.08)]",
-    bgDark: "bg-[hsl(43_100%_55%/0.12)]",
+    gradient: "from-[hsl(43_100%_55%)] via-[hsl(38_100%_72%)] to-[hsl(43_100%_55%)]",
+    boxShadowLight:
+      "0 0 6px 1px hsl(43 100% 55% / 0.7), 0 0 14px 2px hsl(38 100% 65% / 0.45)",
+    boxShadowDark:
+      "0 0 8px 2px hsl(43 100% 60% / 1), 0 0 18px 4px hsl(38 100% 72% / 0.8), 0 0 32px 6px hsl(43 100% 50% / 0.5)",
+    borderLight: "hsl(43 100% 55% / 0.7)",
+    borderDark: "hsl(43 100% 68% / 0.9)",
+    bgLight: "hsl(43 100% 55% / 0.12)",
+    bgDark: "hsl(43 100% 55% / 0.18)",
   },
   "crimson-elite": {
     label: "Crimson Elite",
-    gradient: "from-[hsl(0_100%_60%)] via-[hsl(15_100%_70%)] to-[hsl(0_100%_60%)]",
-    glowLight: "drop-shadow(0_0_4px_hsl(0_100%_60%/0.55)) drop-shadow(0_0_7px_hsl(15_100%_65%/0.35))",
-    glowDark:
-      "drop-shadow(0_0_5px_hsl(0_100%_60%/0.9)) drop-shadow(0_0_12px_hsl(15_100%_70%/0.7)) drop-shadow(0_0_18px_hsl(0_100%_55%/0.4))",
-    border: "border-[hsl(0_100%_60%/0.4)]",
-    borderDark: "border-[hsl(0_100%_65%/0.55)]",
-    bg: "bg-[hsl(0_100%_60%/0.08)]",
-    bgDark: "bg-[hsl(0_100%_60%/0.12)]",
+    gradient: "from-[hsl(0_100%_62%)] via-[hsl(15_100%_72%)] to-[hsl(0_100%_62%)]",
+    boxShadowLight:
+      "0 0 6px 1px hsl(0 100% 60% / 0.7), 0 0 14px 2px hsl(15 100% 65% / 0.45)",
+    boxShadowDark:
+      "0 0 8px 2px hsl(0 100% 62% / 1), 0 0 18px 4px hsl(15 100% 70% / 0.8), 0 0 32px 6px hsl(0 100% 55% / 0.5)",
+    borderLight: "hsl(0 100% 60% / 0.7)",
+    borderDark: "hsl(0 100% 65% / 0.9)",
+    bgLight: "hsl(0 100% 60% / 0.12)",
+    bgDark: "hsl(0 100% 60% / 0.18)",
   },
 };
 
@@ -87,26 +90,23 @@ function VipTag({
 
   return (
     <span
-      className={[
-        "inline-flex items-center rounded-[3px] border px-[5px] py-[1px]",
-        dark ? t.bgDark : t.bg,
-        dark ? t.borderDark : t.border,
-      ].join(" ")}
+      className="inline-flex items-center rounded-[4px] border-2 px-2 py-[3px]"
       style={{
-        filter: dark ? t.glowDark : t.glowLight,
-        animation:
-          "vip-glow-pulse 2.6s ease-in-out infinite",
+        background: dark ? t.bgDark : t.bgLight,
+        borderColor: dark ? t.borderDark : t.borderLight,
+        boxShadow: dark ? t.boxShadowDark : t.boxShadowLight,
+        animation: "vip-glow-pulse 2.6s ease-in-out infinite",
       }}
     >
       <span
         className={[
-          "bg-gradient-to-r bg-clip-text text-transparent font-black uppercase tracking-[0.18em]",
-          "text-[9px] leading-none",
+          "bg-gradient-to-r bg-clip-text text-transparent font-black uppercase tracking-[0.2em]",
+          "text-[11px] leading-none",
           t.gradient,
         ].join(" ")}
         style={{
           backgroundSize: "200% auto",
-          animation: "vip-shimmer 5.5s linear infinite",
+          animation: "vip-shimmer 4s linear infinite",
         }}
       >
         {tag}
@@ -289,8 +289,8 @@ export default function VipPreviewPage() {
           100% { background-position: 200% center; }
         }
         @keyframes vip-glow-pulse {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.72; }
+          0%, 100% { opacity: 1;    filter: brightness(1.1); }
+          50%       { opacity: 0.6; filter: brightness(0.85); }
         }
         @media (prefers-reduced-motion: reduce) {
           [style*="vip-shimmer"],
