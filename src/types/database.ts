@@ -57,6 +57,16 @@ export type Profile = {
   display_name: string;
   skill_level: SkillLevel;
   pin: string | null; // 4-digit reconnect PIN
+  /**
+   * VIP tag label shown as a floating badge (e.g. "DEV", "MVP").
+   * Set directly in the Supabase dashboard. null = no tag.
+   */
+  vip_tag: string | null;
+  /**
+   * VIP theme key that controls the visual treatment (neon/holo).
+   * Must match a key in VIP_THEMES from @/lib/vip-config.
+   */
+  vip_theme: string | null;
   created_at: string; // ISO 8601 timestamptz
   updated_at: string;
 };
@@ -192,7 +202,7 @@ export type RecentPairing = {
 export type ProfileInsert = Pick<Profile, "id" | "display_name"> &
   Partial<Pick<Profile, "skill_level" | "pin">>;
 
-export type ProfileUpdate = Partial<Pick<Profile, "display_name" | "skill_level" | "pin">>;
+export type ProfileUpdate = Partial<Pick<Profile, "display_name" | "skill_level" | "pin" | "vip_tag" | "vip_theme">>;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
   Partial<Pick<Session, "organizer_passcode" | "scoring">>;

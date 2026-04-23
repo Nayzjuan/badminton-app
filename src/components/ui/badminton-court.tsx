@@ -14,12 +14,17 @@
 
 import { ArrowLeftRight } from "lucide-react";
 import { SkillBadge } from "@/components/ui/skill-badge";
+import { VipTag } from "@/components/ui/vip-tag";
 import type { SkillLevel } from "@/types/database";
 
 interface PlayerInfo {
   player_id: string;
   display_name: string;
   skill_level: SkillLevel;
+  /** VIP display label, e.g. "DEV". null = no tag shown. */
+  vip_tag?: string | null;
+  /** VIP theme key, e.g. "cyber-neon". Must pair with vip_tag. */
+  vip_theme?: string | null;
 }
 
 interface BadmintonCourtProps {
@@ -133,6 +138,9 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
       >
         {player.display_name}
       </span>
+      {player.vip_tag && player.vip_theme && (
+        <VipTag tag={player.vip_tag} theme={player.vip_theme} />
+      )}
       <SkillBadge
         level={player.skill_level}
         className="!bg-white/20 !text-white/90 dark:!bg-[hsl(var(--court-cyan-hsl))]/10 dark:!text-[hsl(var(--court-cyan-hsl))] text-[10px] backdrop-blur-sm"
@@ -177,6 +185,10 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                        dark:text-[hsl(var(--court-lime-hsl))]"
           />
         </span>
+
+        {player.vip_tag && player.vip_theme && (
+          <VipTag tag={player.vip_tag} theme={player.vip_theme} />
+        )}
 
         <SkillBadge
           level={player.skill_level}

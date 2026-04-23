@@ -183,6 +183,12 @@
     50%       { transform: scale(1.04); }
   }
 
+  /* ── VIP tag holographic shimmer ───────────────────────── */
+  @keyframes vip-holo-shimmer {
+    0%   { background-position: 200% center; }
+    100% { background-position: -200% center; }
+  }
+
   /* ── Reduced-motion: respect system preference ──────────── */
   /* Collapses all CSS animations and transitions to near-zero  */
   /* for users with vestibular disorders or motion sensitivity. */

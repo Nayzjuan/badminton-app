@@ -125,6 +125,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     queue,
     activeMatches,
     onDeckMatches,
+    profiles,
     loading,
     addCourt,
     updateCourtStatus,
@@ -585,6 +586,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
         {activeTab === "queue" && (
           <QueueControl
             queue={queue}
+            profiles={profiles}
             onCreateManualMatch={createManualMatch}
             onRemoveFromQueue={removeFromQueue}
             onPausePlayer={pausePlayer}

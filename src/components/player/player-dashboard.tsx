@@ -30,6 +30,7 @@ import { MatchHistory } from "./match-history";
 import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
+import { VipTag } from "@/components/ui/vip-tag";
 import { submitMatchScore } from "@/app/actions/match";
 import { checkoutPlayer } from "@/app/actions/queue";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -149,6 +150,9 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                 <span className="text-xs text-slate-500">
                   {profile.display_name}
                 </span>
+                {profile.vip_tag && profile.vip_theme && (
+                  <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
+                )}
                 <SkillBadge level={profile.skill_level} />
                 {profile.pin && (
                   <button

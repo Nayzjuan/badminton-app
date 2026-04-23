@@ -246,6 +246,8 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
             display_name: "Unknown",
             skill_level: "beginner" as const,
             pin: null,
+            vip_tag: null,
+            vip_theme: null,
             created_at: "",
             updated_at: "",
           },

@@ -116,6 +116,8 @@ function CourtMatchCard({
       player_id: p.player_id,
       display_name: p.profile.display_name,
       skill_level: p.profile.skill_level,
+      vip_tag: p.profile.vip_tag,
+      vip_theme: p.profile.vip_theme,
     }));
 
   const teamB = match.players
@@ -124,6 +126,8 @@ function CourtMatchCard({
       player_id: p.player_id,
       display_name: p.profile.display_name,
       skill_level: p.profile.skill_level,
+      vip_tag: p.profile.vip_tag,
+      vip_theme: p.profile.vip_theme,
     }));
 
   const isOnDeck = variant === "on_deck";

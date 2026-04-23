@@ -12,6 +12,7 @@
 import { useState } from "react";
 import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
+import { VipTag } from "@/components/ui/vip-tag";
 import { SKILL_LEVELS } from "@/types/database";
 import { updatePlayerSkill, getPlayerPin, resetPlayerPin } from "@/app/actions/profile";
 import {
@@ -25,13 +26,15 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import type { QueueWithWaitTime, SkillLevel } from "@/types/database";
+import type { QueueWithWaitTime, SkillLevel, Profile } from "@/types/database";
 
 // Re-export constant for clarity in this file.
 const REQUIRED_PLAYERS = PLAYERS_PER_MATCH; // 4
 
 interface QueueControlProps {
   queue: QueueWithWaitTime[];
+  /** Full profiles map (from useOrganizerData) for VIP tag lookup. */
+  profiles?: Map<string, Profile>;
   onCreateManualMatch: (
     teamA: string[],
     teamB: string[]
@@ -42,6 +45,7 @@ interface QueueControlProps {
 
 export function QueueControl({
   queue,
+  profiles,
   onCreateManualMatch,
   onRemoveFromQueue,
   onPausePlayer,
@@ -302,6 +306,12 @@ export function QueueControl({
                     <td className="px-4 py-3 font-medium">
                       <span className="flex items-center gap-2">
                         {entry.display_name}
+                        {(() => {
+                          const p = profiles?.get(entry.player_id);
+                          return p?.vip_tag && p?.vip_theme
+                            ? <VipTag tag={p.vip_tag} theme={p.vip_theme} />
+                            : null;
+                        })()}
                         {isPaused && (
                           <span className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
                                            text-[10px] font-bold uppercase tracking-wide

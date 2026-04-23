@@ -10,6 +10,7 @@
 
 import { ListOrdered } from "lucide-react";
 import { SkillBadge } from "@/components/ui/skill-badge";
+import { VipTag } from "@/components/ui/vip-tag";
 import type { QueueEntryWithProfile } from "@/hooks/use-session-data";
 
 interface WaitlistTabProps {
@@ -84,20 +85,25 @@ export function WaitlistTab({ waitlist, myPlayerId, loading }: WaitlistTabProps)
               {/* Player info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <p
-                    className={`text-sm truncate ${
-                      isMe
-                        ? "font-bold text-blue-900"
-                        : "font-semibold text-slate-900"
-                    }`}
-                  >
-                    {entry.profile.display_name}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p
+                      className={`text-sm truncate ${
+                        isMe
+                          ? "font-bold text-blue-900"
+                          : "font-semibold text-slate-900"
+                      }`}
+                    >
+                      {entry.profile.display_name}
+                    </p>
+                    {entry.profile.vip_tag && entry.profile.vip_theme && (
+                      <VipTag tag={entry.profile.vip_tag} theme={entry.profile.vip_theme} />
+                    )}
                     {isMe && (
-                      <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-600">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600">
                         You
                       </span>
                     )}
-                  </p>
+                  </div>
                 </div>
                 <SkillBadge level={entry.profile.skill_level} className="mt-0.5" />
               </div>
