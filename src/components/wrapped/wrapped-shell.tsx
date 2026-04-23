@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { Share2 } from "lucide-react";
 import { WrappedIntro } from "@/components/wrapped/wrapped-intro";
 import { WrappedAwardCard } from "@/components/wrapped/wrapped-award-card";
+import { MatchHistory } from "@/components/player/match-history";
 import { sortAwardsByRarity } from "@/lib/wrapped-awards";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ export type WrappedStats = {
 interface WrappedShellProps {
   stats:     WrappedStats;
   sessionId: string;
+  playerId:  string;
 }
 
 // ── Rarity badge colors (for the stat card) ───────────────────
@@ -67,7 +69,7 @@ function WinRateBar({ pct }: { pct: number }) {
 
 // ── Component ──────────────────────────────────────────────────
 
-export function WrappedShell({ stats, sessionId }: WrappedShellProps) {
+export function WrappedShell({ stats, sessionId, playerId }: WrappedShellProps) {
   const [introVisible, setIntroVisible] = useState(true);
   const router = useRouter();
 
@@ -312,6 +314,28 @@ export function WrappedShell({ stats, sessionId }: WrappedShellProps) {
               </div>
             )}
           </div>
+
+          {/* ── Match Recap ───────────────────────────── */}
+          {stats.games > 0 && (
+            <div style={{ padding: "0 1.25rem 1.5rem" }}>
+              <p
+                style={{
+                  fontSize:      "10px",
+                  fontWeight:    "900",
+                  letterSpacing: "0.2em",
+                  textTransform: "uppercase",
+                  color:         "rgba(255,255,255,0.3)",
+                  marginBottom:  "0.75rem",
+                }}
+              >
+                Match Recap
+              </p>
+              {/* dark wrapper so MatchHistory uses its dark-mode variants */}
+              <div className="dark">
+                <MatchHistory sessionId={sessionId} playerId={playerId} />
+              </div>
+            </div>
+          )}
 
           {/* ── Footer: share + done ──────────────────── */}
           <div
