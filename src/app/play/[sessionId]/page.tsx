@@ -32,15 +32,19 @@ export default async function PlayerDashboardPage({ params }: PageProps) {
 
   if (!profile) redirect("/");
 
-  // Get session.
+  // Get session — do NOT filter by is_active so closed sessions don't 404.
   const { data: session } = await supabase
     .from("sessions")
     .select("*")
     .eq("id", sessionId)
-    .eq("is_active", true)
     .single();
 
   if (!session) notFound();
+
+  // Session has ended — send player straight to their Wrapped page.
+  if (!session.is_active) {
+    redirect(`/wrapped/${sessionId}/${user.id}`);
+  }
 
   return <PlayerDashboard profile={profile} session={session} />;
 }
