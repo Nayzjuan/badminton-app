@@ -31,6 +31,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Trophy, RefreshCw, ChevronLeft } from "lucide-react";
 import { LeaderboardTable } from "./leaderboard-table";
 import { AdvancedStatsToggle } from "./advanced-stats-toggle";
+import { VipTag } from "@/components/ui/vip-tag";
 import { getSessionLeaderboard, getAllTimeLeaderboard } from "@/app/actions/leaderboard";
 import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
 
@@ -340,14 +341,19 @@ export function LeaderboardPage({
             )}
           </div>
 
-          {/* Name + streak */}
+          {/* Name + VIP tag + streak */}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-foreground truncate">
-              {myRow.display_name}{" "}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-sm font-semibold text-foreground truncate">
+                {myRow.display_name}
+              </p>
+              {myRow.vip_tag && myRow.vip_theme && (
+                <VipTag tag={myRow.vip_tag} theme={myRow.vip_theme} />
+              )}
               <span className="text-xs font-normal text-indigo-500 dark:text-indigo-400">
                 (you)
               </span>
-            </p>
+            </div>
             <p className="text-xs text-muted-foreground">
               {myRow.wins}W–{myRow.losses}L ·{" "}
               {myRow.win_pct.toFixed(1)}% win rate

@@ -71,6 +71,26 @@ function buildStreakMap(streaks: PlayerStreak[]): Map<string, number> {
   return new Map(streaks.map((s) => [s.player_id, s.win_streak]));
 }
 
+// ── VIP Map Builder ───────────────────────────────────────────
+// Fetches vip_tag + vip_theme from profiles for a list of player IDs.
+// Returns a Map<player_id, { vip_tag, vip_theme }>.
+async function buildVipMap(
+  supabase: Awaited<ReturnType<typeof import("@/utils/supabase/server").createClient>>,
+  playerIds: string[]
+): Promise<Map<string, { vip_tag: string | null; vip_theme: string | null }>> {
+  if (playerIds.length === 0) return new Map();
+  const { data } = await supabase
+    .from("profiles")
+    .select("id, vip_tag, vip_theme")
+    .in("id", playerIds);
+  return new Map(
+    (data ?? []).map((p) => [
+      p.id,
+      { vip_tag: p.vip_tag ?? null, vip_theme: p.vip_theme ?? null },
+    ])
+  );
+}
+
 // ============================================================
 // getSessionLeaderboard
 // ============================================================
@@ -107,6 +127,9 @@ export async function getSessionLeaderboard(
     const sorted = sortLeaderboard(rawStats);
     const ranked = assignRanks(sorted);
 
+    // Batch-fetch VIP fields for all qualified players
+    const vipMap = await buildVipMap(supabase, ranked.map((r) => r.player_id));
+
     const rows: LeaderboardRow[] = ranked.map((entry) => ({
       player_id: entry.player_id,
       display_name: entry.display_name,
@@ -120,6 +143,8 @@ export async function getSessionLeaderboard(
       rank: entry.rank,
       win_streak: streakMap.get(entry.player_id) ?? 0,
       rank_movement: null, // session tab never shows rank movement
+      vip_tag:   vipMap.get(entry.player_id)?.vip_tag   ?? null,
+      vip_theme: vipMap.get(entry.player_id)?.vip_theme ?? null,
     }));
 
     return { success: true, rows };
@@ -195,7 +220,10 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
       rankedPrev.forEach((r) => previousRankMap.set(r.player_id, r.rank));
     }
 
-    // Assemble final rows with rank movement
+    // Batch-fetch VIP fields for all qualified players
+    const vipMap = await buildVipMap(supabase, rankedCurrent.map((r) => r.player_id));
+
+    // Assemble final rows with rank movement + VIP fields
     const rows: LeaderboardRow[] = rankedCurrent.map((entry) => {
       const previousRank = previousRankMap.get(entry.player_id);
       const rank_movement: number | null =
@@ -216,6 +244,8 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
         rank: entry.rank,
         win_streak: streakMap.get(entry.player_id) ?? 0,
         rank_movement,
+        vip_tag:   vipMap.get(entry.player_id)?.vip_tag   ?? null,
+        vip_theme: vipMap.get(entry.player_id)?.vip_theme ?? null,
       };
     });
 

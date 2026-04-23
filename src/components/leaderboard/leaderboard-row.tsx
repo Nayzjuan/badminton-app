@@ -14,6 +14,7 @@
 // data-flash triggers the global flash animation from globals.css.
 // ============================================================
 
+import { VipTag } from "@/components/ui/vip-tag";
 import type { LeaderboardRow as LeaderboardRowType } from "@/types/leaderboard";
 
 const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
@@ -120,14 +121,17 @@ export function LeaderboardRow({
         )}
       </div>
 
-      {/* Player name + streak */}
-      <div className="flex-1 min-w-0 flex items-center gap-0 pl-2">
+      {/* Player name + VIP tag + streak */}
+      <div className="flex-1 min-w-0 flex items-center gap-1.5 pl-2">
         <span className="text-sm font-medium text-foreground truncate">
           {row.display_name}
         </span>
+        {row.vip_tag && row.vip_theme && (
+          <VipTag tag={row.vip_tag} theme={row.vip_theme} />
+        )}
         {streak && (
           <span
-            className="text-xs font-medium text-orange-500 dark:text-orange-400 ml-1 shrink-0"
+            className="text-xs font-medium text-orange-500 dark:text-orange-400 shrink-0"
             aria-label={`Win streak: ${row.win_streak}`}
           >
             {streak}

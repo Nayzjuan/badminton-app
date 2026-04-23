@@ -19,6 +19,7 @@
 // ============================================================
 
 import { Trophy } from "lucide-react";
+import { VipTag } from "@/components/ui/vip-tag";
 import type { LeaderboardRow } from "@/types/leaderboard";
 
 // Minimum GP to appear on the board (matches server action constant)
@@ -142,10 +143,13 @@ export function LeaderboardHeroCard({
 
         {/* Name + streak */}
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
             <span className="text-sm font-bold text-foreground truncate">
               {row.display_name}
             </span>
+            {row.vip_tag && row.vip_theme && (
+              <VipTag tag={row.vip_tag} theme={row.vip_theme} />
+            )}
             {streak && (
               <span
                 className="text-xs font-medium text-orange-500 dark:text-orange-400 shrink-0"

@@ -82,6 +82,10 @@ export type LeaderboardRow = {
    *   null      → new entrant this week (show ✦ NEW)
    */
   rank_movement: number | null;
+
+  // VIP badge — fetched from profiles in the server action
+  vip_tag:   string | null;
+  vip_theme: string | null;
 };
 
 // ------------------------------------------------------------
