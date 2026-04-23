@@ -44,7 +44,7 @@ export function VipTag({ tag, theme }: VipTagProps) {
       {/* ── Light mode: holographic foil shimmer ──────────── */}
       <span
         className={[
-          "inline dark:hidden",
+          "inline-block dark:hidden",
           "bg-gradient-to-r",
           config.holoFrom,
           config.holoVia,
@@ -55,7 +55,6 @@ export function VipTag({ tag, theme }: VipTagProps) {
         style={{
           backgroundSize: "200% auto",
           animation: "vip-holo-shimmer 2.5s linear infinite",
-          display: "inline-block",
         }}
       >
         {tag}
