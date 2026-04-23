@@ -16,10 +16,9 @@ import { useState } from "react";
 // ── VIP Config Map (proposed — not yet live) ─────────────────
 // Keys are lowercase normalized display names.
 const VIP_PLAYERS: Record<string, { tag: string; theme: VipTheme }> = {
-  miggy:  { tag: "DEV",  theme: "cyber-neon"    },
-  stelle: { tag: "8080", theme: "crimson-elite"  },
-  cogs:   { tag: "MVP",  theme: "gold-prestige"  },
-  raf:    { tag: "BOSS", theme: "crimson-elite"  },
+  miggy: { tag: "DEV", theme: "cyber-neon" },
+  cogs: { tag: "MVP", theme: "gold-prestige" },
+  raf: { tag: "BOSS", theme: "crimson-elite" },
 };
 
 type VipTheme = "cyber-neon" | "gold-prestige" | "crimson-elite";
@@ -100,15 +99,15 @@ function VipTag({
         filter:        dark ? t.glowDark   : t.glowLight,
         animation:     "vip-glow-pulse 2.6s ease-in-out infinite",
         // fixed height keeps the pill the same size as the surrounding text line
-        height: "22px",
+        height: "18px",
         lineHeight: "1",
       }}
     >
       <span
         className={[
           "bg-gradient-to-r bg-clip-text text-transparent",
-          "font-black uppercase tracking-[0.15em]",
-          "text-[13px]",
+          "font-black uppercase tracking-[0.2em]",
+          "text-[10px]",
           t.gradient,
         ].join(" ")}
         style={{
