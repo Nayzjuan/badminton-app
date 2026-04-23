@@ -42,8 +42,9 @@ match_players      id, match_id(FK), player_id(FK→profiles), team("a"|"b")
 QueueStatus:  "waiting" | "on_deck" | "playing" | "left"
 MatchStatus:  "pending" | "in_progress" | "completed" | "cancelled"
 CourtStatus:  "available" | "in_use" | "closed"
-SkillLevel:   "beginner"|"beginner_intermediate"|"intermediate"|"intermediate_advanced"|
-              "advanced"|"advanced_open"|"open"  (mapped to int 1-7)
+SkillLevel:   "beginner" | "lower_intermediate" | "intermediate" |
+              "upper_intermediate" | "lower_advanced" | "advanced"
+              (mapped to int 1–6 via skillLevelToInt(); numeric stored in SKILL_LEVELS array)
 ```
 
 ### Views
@@ -119,6 +120,17 @@ Rules:
 
 ### 3. Server Actions Pattern
 **Convention:** All mutations are Server Actions (`"use server"`) in `src/app/actions/`.
+
+**Cancel Match** (`src/app/actions/match.ts` — `cancelMatchAction`):
+- Auth lookups use RLS client (`supabase`); ALL DB reads/writes use service client (`db`)
+- Step order matters: return players to `"waiting"` BEFORE running engine (so they're visible to matchmaker)
+- Pipeline on cancel: `promoteOnDeckMatchInternal(db, sessionId, courtId)` → if fail, free court → `runEngineForSession(sessionId)`
+- On-deck (pending) match cancel: no court to free, but engine still runs to refill on-deck pool
+- Broadcast fires only if `playerIds.length > 0` (guard against null/empty matchPlayers)
+
+**End Match** (`src/app/actions/match.ts` — `endMatchAction`):
+- Same pipeline: re-queue players → promote on-deck → run engine
+- Uses service client (`db`) for all writes (same reasoning as cancelMatchAction)
 
 **Swap Player** (`src/app/actions/swap-player.ts`):
 - 4-guard safety model before any writes:
@@ -254,7 +266,8 @@ All `console.log`/`console.warn` gated on `process.env.DEBUG_MATCHMAKING === "tr
 src/
   app/
     actions/
-      matchmaking.ts          # runEngineInternal, runAlgorithm, fetchRecentRosters, buildOverlapMap
+      match.ts                # endMatchAction, cancelMatchAction, updateMatchDetails, createManualMatchAction
+      matchmaking.ts          # runEngineInternal, runAlgorithm, fetchRecentRosters, buildOverlapMap, promoteOnDeckMatchInternal
       swap-player.ts          # swapPlayer: 4-guard + compensating sequential writes
       session.ts              # session CRUD
     organizer/[sessionId]/    # organizer dashboard route
@@ -305,5 +318,6 @@ playwright.config.ts          # baseURL = Vercel URL, bypass header injection
 4. **`recentRosters` hoisted, `overlapMap` NOT** — `recentRosters` is the same for all anchors; `overlapMap` is anchor-specific.
 5. **Vercel bypass**: `_vercel_share` tokens don't work for Playwright. Only `x-vercel-protection-bypass` header works.
 6. **dnd-kit**: `data-no-dnd` + `onPointerDown stopPropagation` BOTH required on interactive children.
-7. **Service client for mutations**: Any cross-user write (swap, matchmaking) must use `createServiceClient()`.
+7. **Service client for mutations**: Any cross-user write (swap, matchmaking, match end/cancel) must use `createServiceClient()`. The primary organizer (`sessions.created_by`) has no `session_organizers` row — write-side RLS silently returns 0 rows for them if the RLS client is used. Pattern: keep `supabase` (RLS) for `getAuthUser` / `isSessionOrganizer` auth lookups only; use `db` (service) for all `.from(...)` reads and writes.
+8. **`cancelMatchAction` auto-promotes**: As of commit 3072eb1, cancelling a match auto-promotes the oldest on-deck match to the freed court and runs the engine. It no longer leaves the court idle for manual assignment.
 8. **Cookie chunking**: `@supabase/ssr` chunks auth tokens at 3180 encoded chars — handle `.0`, `.1` suffixes.
