@@ -13,6 +13,7 @@
 
 import { notFound } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import { WrappedShell, type WrappedStats } from "@/components/wrapped/wrapped-shell";
 
 interface WrappedPageProps {
@@ -42,6 +43,17 @@ export default async function WrappedPage({ params }: WrappedPageProps) {
   // If neither exists, the URL is genuinely invalid.
   if (!profile) return notFound();
 
+  // ── Fetch match history via service client (bypasses RLS) ────
+  // The wrapped page is shareable — the viewer may not be authenticated
+  // as this player, so we can't rely on client-side RLS-gated queries.
+  const service = createServiceClient();
+  const { data: matchHistory } = await service
+    .from("v_match_history")
+    .select("*")
+    .eq("session_id", sessionId)
+    .eq("player_id", playerId)
+    .order("completed_at", { ascending: false });
+
   // ── Handle no stats row (session not yet computed or 0 games) ─
   // Show a "no stats yet" shell rather than 404.
   if (statsError || !statsRow) {
@@ -58,7 +70,7 @@ export default async function WrappedPage({ params }: WrappedPageProps) {
       earnedAwards:  [],
       awardData:     {},
     };
-    return <WrappedShell stats={emptyStats} sessionId={sessionId} playerId={playerId} />;
+    return <WrappedShell stats={emptyStats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} />;
   }
 
   // ── Build the typed stats object ────────────────────────────
@@ -76,5 +88,5 @@ export default async function WrappedPage({ params }: WrappedPageProps) {
     awardData:     (statsRow.award_data as Record<string, Record<string, unknown>>) ?? {},
   };
 
-  return <WrappedShell stats={stats} sessionId={sessionId} playerId={playerId} />;
+  return <WrappedShell stats={stats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} />;
 }
