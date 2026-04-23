@@ -126,7 +126,14 @@ export async function signInAnonymously(formData: FormData) {
 export interface ReconnectResult {
   success: boolean;
   error?: string;
+  /** ID of an active session to rejoin, if one was found. */
   sessionId?: string;
+  /**
+   * If the player's most recent session has already closed and Wrapped stats
+   * exist, this is set to the /wrapped URL so the caller can redirect them
+   * directly to their results instead of dropping them on the lobby.
+   */
+  wrappedUrl?: string;
 }
 
 export async function reconnectPlayer(
@@ -319,6 +326,51 @@ export async function reconnectPlayer(
     return { success: false, error: "Failed to migrate match history. Please try again." };
   }
 
+  // Step 4.5: Migrate session_wrapped_stats to new user ID.
+  // player_id is part of the composite PK — UpdateType excludes it, so we
+  // cannot update it in-place. Instead: read rows, re-insert under newUserId
+  // (dropping the generated columns id and point_diff), then delete the
+  // originals. Must happen BEFORE step 5 (delete old profile) to satisfy any
+  // FK constraint. Non-fatal throughout.
+  {
+    const { data: oldStats, error: readStatsErr } = await service
+      .from("session_wrapped_stats")
+      .select("*")
+      .eq("player_id", oldUserId);
+
+    if (readStatsErr) {
+      console.warn(
+        "[reconnectPlayer] session_wrapped_stats read failed (non-fatal):",
+        readStatsErr.message
+      );
+    } else if (oldStats && oldStats.length > 0) {
+      // Exclude auto-generated columns (id, point_diff) and override player_id.
+      // point_diff is GENERATED ALWAYS and computed_at has a DB default — both
+      // are excluded from SessionWrappedStatsInsert, so the spread is safe.
+      const newStats = oldStats.map(({ id: _id, point_diff: _pd, ...row }) => ({
+        ...row,
+        player_id: newUserId,
+      }));
+
+      const { error: insertStatsErr } = await service
+        .from("session_wrapped_stats")
+        .insert(newStats);
+
+      if (insertStatsErr) {
+        console.warn(
+          "[reconnectPlayer] session_wrapped_stats re-insert failed (non-fatal):",
+          insertStatsErr.message
+        );
+      } else {
+        // Delete originals only after successful insert to avoid data loss.
+        await service
+          .from("session_wrapped_stats")
+          .delete()
+          .eq("player_id", oldUserId);
+      }
+    }
+  }
+
   // Step 5: Delete old profile (all FK references now point to newUserId).
   await service
     .from("profiles")
@@ -328,7 +380,47 @@ export async function reconnectPlayer(
   // Step 6: Delete old auth user to clean up orphaned auth record.
   await service.auth.admin.deleteUser(oldUserId);
 
-  return { success: true, sessionId: targetSessionId ?? undefined };
+  // ── Offline Wrapped redirect ────────────────────────────────
+  // If the player isn't rejoining an active session, check whether
+  // their most recently closed session has Wrapped stats available.
+  // We look for sessions that ended within the last 48 hours so we
+  // don't redirect returning players to stale results from weeks ago.
+  let wrappedUrl: string | undefined;
+  if (!targetSessionId) {
+    const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+    const { data: recentEntry } = await service
+      .from("queue_entries")
+      .select("session_id, sessions!inner(is_active, ended_at)")
+      .eq("player_id", newUserId)
+      .order("joined_at", { ascending: false })
+      .limit(10);
+
+    if (recentEntry) {
+      for (const entry of recentEntry) {
+        const sess = entry.sessions as unknown as {
+          is_active: boolean;
+          ended_at: string | null;
+        };
+        if (sess.is_active || !sess.ended_at || sess.ended_at < cutoff) continue;
+
+        // Check that Wrapped stats actually exist for this player in this session.
+        const { data: statsRow } = await service
+          .from("session_wrapped_stats")
+          .select("session_id")
+          .eq("session_id", entry.session_id)
+          .eq("player_id", newUserId)
+          .single();
+
+        if (statsRow) {
+          wrappedUrl = `/wrapped/${entry.session_id}/${newUserId}`;
+          break;
+        }
+      }
+    }
+  }
+
+  return { success: true, sessionId: targetSessionId ?? undefined, wrappedUrl };
 }
 
 // ── Sign Out ─────────────────────────────────────────────────

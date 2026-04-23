@@ -265,6 +265,8 @@ export async function toggleAutoMatchmaking(
 export interface CloseSessionResult {
   success: boolean;
   message: string;
+  /** true when compute_session_wrapped succeeded and Wrapped pages are ready. */
+  wrappedReady?: boolean;
 }
 
 export async function closeSession(sessionId: string): Promise<CloseSessionResult> {
@@ -291,15 +293,38 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   }
 
   // ── 0. Pre-compute Wrapped stats ────────────────────────────
-  // Fire-and-forget: if the RPC fails the session still closes.
-  // Stats are computed before the broadcast so rows exist when
-  // players' browsers receive the session_closed event.
-  try {
-    await supabase.rpc("compute_session_wrapped", {
+  // Runs before broadcast so rows exist when players' browsers
+  // receive the session_closed event.
+  //
+  // NOTE: supabase.rpc() resolves with { data, error } — it never
+  // throws. The old try/catch only caught network-level exceptions,
+  // not Supabase-level errors. We now check { error } explicitly
+  // and retry once before giving up.
+  let wrappedReady = false;
+  {
+    const { error: rpcError } = await supabase.rpc("compute_session_wrapped", {
       p_session_id: sessionId,
     });
-  } catch (err) {
-    console.warn("[closeSession] compute_session_wrapped failed (non-fatal):", err);
+    if (rpcError) {
+      console.warn(
+        "[closeSession] compute_session_wrapped failed, retrying in 600 ms:",
+        rpcError.message
+      );
+      await new Promise((r) => setTimeout(r, 600));
+      const { error: retryError } = await supabase.rpc("compute_session_wrapped", {
+        p_session_id: sessionId,
+      });
+      if (retryError) {
+        console.error(
+          "[closeSession] compute_session_wrapped retry also failed — Wrapped pages will show empty stats:",
+          retryError.message
+        );
+      } else {
+        wrappedReady = true;
+      }
+    } else {
+      wrappedReady = true;
+    }
   }
 
   // ── 1. Cancel any lingering on_deck / in_progress matches ───
@@ -352,5 +377,6 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   return {
     success: true,
     message: `Session closed. ${matchIds.length} match(es) cancelled, all players removed from queue.`,
+    wrappedReady,
   };
 }

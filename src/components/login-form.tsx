@@ -231,9 +231,16 @@ function ReconnectModal({
         setLocalError(result.error ?? "Reconnect failed.");
       } else {
         onClose();
-        // If no active session was found, send to the lobby so the player
-        // can join a new session — don't leave them on a blank screen.
-        router.push(result.sessionId ? `/play/${result.sessionId}` : "/play");
+        // Priority: active session → pending Wrapped page → lobby.
+        // wrappedUrl is set when the player's most recent session closed
+        // while they were offline (within the last 48 h).
+        if (result.wrappedUrl) {
+          router.push(result.wrappedUrl);
+        } else if (result.sessionId) {
+          router.push(`/play/${result.sessionId}`);
+        } else {
+          router.push("/play");
+        }
       }
     });
   }
