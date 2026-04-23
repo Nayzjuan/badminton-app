@@ -76,6 +76,25 @@ export async function signInAnonymously(formData: FormData) {
     return { error: "Name taken. Add an initial (e.g. \"Miggy L.\")." };
   }
 
+  // ── Returning player check ────────────────────────────────────
+  // If a profile already exists with this exact name + PIN, the player
+  // is returning and should use Reconnect instead of registering fresh.
+  // Without this check, they'd silently create a duplicate (ghost) profile
+  // every time they open the app between sessions.
+  const { data: existingProfile } = await service
+    .from("profiles")
+    .select("id")
+    .ilike("display_name", displayName)
+    .eq("pin", pin)
+    .limit(1)
+    .single();
+
+  if (existingProfile) {
+    return {
+      error: "Looks like you've played before! Use \"Reconnect\" below to pick up where you left off.",
+    };
+  }
+
   // Sign in anonymously. Supabase creates an auth.users row
   // and our trigger auto-creates the profiles row.
   const { data, error } = await supabase.auth.signInAnonymously({
