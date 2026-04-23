@@ -164,10 +164,21 @@ export async function reconnectPlayer(
     return { success: false, error: "No match found. Check your name and PIN." };
   }
 
-  // If multiple profiles match (unlikely), pick the one that's active in a session.
+  // Pick the best profile across all matches, in three phases:
+  //
+  // Phase 1: active queue entry (waiting / on_deck / playing) → highest priority.
+  // Phase 2: pending / in_progress match assignment → still in a live game.
+  // Phase 3: most-recently-joined queue entry (any status) → picks the account
+  //          with real history rather than a ghost profile that has no data.
+  //          Fixes the bug where only profiles[0] was checked, causing reconnect
+  //          to target a ghost account and silently migrate nothing.
+  //
+  // Fall-through: if none of the above match, keep profiles[0] as the target.
+
   let targetProfile = profiles[0];
   let targetSessionId: string | null = null;
 
+  // Phase 1 — active queue entry.
   for (const profile of profiles) {
     const { data: activeEntry } = await service
       .from("queue_entries")
@@ -184,39 +195,53 @@ export async function reconnectPlayer(
     }
   }
 
-  // Also check if the profile is in a session even if not in queue
-  // (could be in an active match).
+  // Phase 2 — pending / in_progress match (loop all profiles).
   if (!targetSessionId) {
-    const { data: activeMatch } = await service
-      .from("match_players")
-      .select("matches!inner(session_id, status)")
-      .eq("player_id", targetProfile.id)
-      .limit(1)
-      .single();
+    for (const profile of profiles) {
+      const { data: activeMatch } = await service
+        .from("match_players")
+        .select("matches!inner(session_id, status)")
+        .eq("player_id", profile.id)
+        .limit(1)
+        .single();
 
-    if (activeMatch && activeMatch.matches) {
-      const match = activeMatch.matches as unknown as { session_id: string; status: string };
-      if (match.status === "pending" || match.status === "in_progress") {
-        targetSessionId = match.session_id;
+      if (activeMatch && activeMatch.matches) {
+        const match = activeMatch.matches as unknown as { session_id: string; status: string };
+        if (match.status === "pending" || match.status === "in_progress") {
+          targetProfile = profile;
+          targetSessionId = match.session_id;
+          break;
+        }
       }
     }
   }
 
-  // If no active session found, check for any ACTIVE session they were part of.
+  // Phase 3 — most recent queue history across ALL profiles (any status).
+  // This prevents targeting a ghost profile (0 games) when a real profile
+  // with actual data exists but whose queue entry is status="left".
   if (!targetSessionId) {
-    const { data: anyEntry } = await service
-      .from("queue_entries")
-      .select("session_id, sessions!inner(is_active)")
-      .eq("player_id", targetProfile.id)
-      .order("joined_at", { ascending: false })
-      .limit(1)
-      .single();
+    let bestJoinedAt: Date | null = null;
 
-    if (anyEntry) {
-      // Only use the session if it is still active.
-      const sessionMeta = anyEntry.sessions as unknown as { is_active: boolean };
-      if (sessionMeta?.is_active) {
-        targetSessionId = anyEntry.session_id;
+    for (const profile of profiles) {
+      const { data: anyEntry } = await service
+        .from("queue_entries")
+        .select("session_id, joined_at, sessions!inner(is_active)")
+        .eq("player_id", profile.id)
+        .order("joined_at", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (anyEntry) {
+        const joinedAt = new Date(anyEntry.joined_at as string);
+        if (!bestJoinedAt || joinedAt > bestJoinedAt) {
+          bestJoinedAt = joinedAt;
+          targetProfile = profile;
+          // If this session is still active, capture it.
+          const sessionMeta = anyEntry.sessions as unknown as { is_active: boolean };
+          if (sessionMeta?.is_active) {
+            targetSessionId = anyEntry.session_id;
+          }
+        }
       }
     }
   }
