@@ -6,11 +6,9 @@
 // ============================================================
 
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { createClient } from "@/utils/supabase/server";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
-import { LayoutDashboard } from "lucide-react";
 
 export default async function PlayPage() {
   const supabase = await createClient();
@@ -58,26 +56,7 @@ export default async function PlayPage() {
             </p>
           </div>
 
-          {/* Header action group */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/*
-              Organizer nav — visible to all authenticated users.
-              In PWA standalone mode (no URL bar), this is the only
-              way to reach /organizer without typing a URL manually.
-            */}
-            <Link
-              href="/organizer"
-              className="flex items-center gap-1.5 rounded-xl
-                         border border-border bg-card px-3 py-2
-                         text-xs font-semibold text-muted-foreground
-                         hover:border-foreground/20 hover:text-foreground
-                         hover:bg-accent transition-colors"
-            >
-              <LayoutDashboard className="h-3.5 w-3.5" />
-              Organizer
-            </Link>
-            <SignOutButton variant="icon" />
-          </div>
+          <SignOutButton variant="icon" />
         </div>
 
         {/* Session List */}

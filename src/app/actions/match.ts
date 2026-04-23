@@ -12,12 +12,16 @@
 //   6. Refills the on-deck pool with generateOnDeckMatchesInternal.
 //
 // cancelMatchAction
-//   1. Organizer-only auth guard.
+//   1. Organizer-only auth guard (RLS client for auth lookups only).
 //   2. Atomic UPDATE (status guard) prevents double-cancellation.
-//   3. Marks match cancelled.
-//   4. Frees court (available).
-//   5. Returns players to queue WITHOUT incrementing games_played.
-//   6. Refills the on-deck pool.
+//   3. Returns players to queue WITHOUT incrementing games_played
+//      (done BEFORE engine so returned players are visible to matchmaker).
+//   4. PIPELINE: promotes oldest on-deck match to the freed court;
+//      if no on-deck match exists, frees the court immediately.
+//   5. Runs engine to refill the on-deck pool (toggle-gated).
+//   6. Broadcasts cancellation to affected players.
+//   All DB writes use the service client (db) — bypasses RLS so the
+//   primary organizer (sessions.created_by) is never silently blocked.
 //
 // updateMatchDetails — organizer-only score correction / revert.
 //
@@ -417,15 +421,19 @@ export async function updateMatchDetails(
 // ============================================================
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
   const supabase = await createClient();
+  const db = getServiceClient();
 
-  // P0-3: Organizer-only action.
+  // Auth lookups use the RLS client; all DB writes use db (service client)
+  // so the primary organizer (sessions.created_by) is never silently blocked
+  // by write-side RLS policies that check session_organizers membership.
   const user = await getAuthUser(supabase);
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
 
-  // 1. Fetch the match.
-  const { data: match, error: matchFetchError } = await supabase
+  // 1. Fetch the match (service client — guarantees read succeeds regardless
+  //    of read-side RLS policies).
+  const { data: match, error: matchFetchError } = await db
     .from("matches")
     .select("id, session_id, court_id, status")
     .eq("id", matchId)
@@ -452,7 +460,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   //    0 rows (already cancelled/completed), PostgREST returns an empty array
   //    and .single() throws "Cannot coerce the result to a single JSON object"
   //    instead of returning null.
-  const { data: cancelledRows, error: matchUpdateError } = await supabase
+  const { data: cancelledRows, error: matchUpdateError } = await db
     .from("matches")
     .update({
       status: "cancelled" as const,
@@ -469,33 +477,44 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
     return { success: false, message: "Match was already cancelled or completed by another request." };
   }
 
-  // 3. Free the court — available for manual organizer use.
-  //    Intentionally NOT calling promoteOnDeckMatchInternal here so the
-  //    organizer can choose to start a custom match via the Queue Control tab.
-  if (match.court_id) {
-    await supabase
-      .from("courts")
-      .update({ status: "available" as const })
-      .eq("id", match.court_id);
-  }
-
-  // 4. Return players to queue WITHOUT incrementing games_played.
-  //    They keep their priority position as if the match never happened.
-  const { data: matchPlayers } = await supabase
+  // 3. Return players to queue WITHOUT incrementing games_played.
+  //    Done BEFORE running the engine so returned players are visible
+  //    to the matchmaker and can be included in new on-deck matches.
+  const { data: matchPlayers } = await db
     .from("match_players")
     .select("player_id")
     .eq("match_id", matchId);
 
+  let playerIds: string[] = [];
   if (matchPlayers && matchPlayers.length > 0) {
-    const playerIds = matchPlayers.map((mp) => mp.player_id);
-    await supabase
+    playerIds = matchPlayers.map((mp) => mp.player_id);
+    await db
       .from("queue_entries")
       .update({ status: "waiting" as const })
       .eq("session_id", match.session_id)
       .in("player_id", playerIds);
+  }
 
-    // Notify affected players via Realtime Broadcast so their dashboards
-    // show a friendly explanation instead of a silent state change.
+  // 4. PIPELINE: promote oldest on-deck match to the freed court.
+  //    If no on-deck match exists, free the court immediately.
+  //    Mirrors the endMatchAction pipeline so behaviour is consistent.
+  if (match.court_id) {
+    const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id);
+    if (!promoted.success) {
+      // Nothing on deck — free the court for manual use.
+      await db
+        .from("courts")
+        .update({ status: "available" as const })
+        .eq("id", match.court_id);
+    }
+  }
+
+  // 5. Refill on-deck pool (engine exits silently if toggle is OFF).
+  await runEngineForSession(match.session_id);
+
+  // 6. Notify affected players via Realtime Broadcast so their dashboards
+  //    show a friendly explanation instead of a silent state change.
+  if (playerIds.length > 0) {
     await broadcastOrganizerIntervention(
       match.session_id,
       "match_cancelled",
