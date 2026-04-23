@@ -28,7 +28,7 @@
 // ============================================================
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Trophy, RefreshCw } from "lucide-react";
+import { Trophy, RefreshCw, ChevronLeft } from "lucide-react";
 import { LeaderboardTable } from "./leaderboard-table";
 import { AdvancedStatsToggle } from "./advanced-stats-toggle";
 import { getSessionLeaderboard, getAllTimeLeaderboard } from "@/app/actions/leaderboard";
@@ -41,10 +41,27 @@ const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
 // ── Props ─────────────────────────────────────────────────────
 
+/** Session metadata used by the picker when sessionId is null */
+export type LeaderboardSessionOption = {
+  id: string;
+  name: string;
+  created_at: string;
+  is_active: boolean;
+};
+
 interface LeaderboardPageProps {
-  sessionId: string;
-  /** Display name shown in the header subtitle (optional). */
+  /**
+   * Pre-selected session. Pass null (or omit) to start on the All-Time tab
+   * with a session picker on the "This Session" tab.
+   */
+  sessionId?: string | null;
+  /** Display name shown in the header subtitle when a session is pre-selected. */
   sessionName?: string;
+  /**
+   * Session list for the picker — only needed when sessionId is null.
+   * Ordered newest-first by the server.
+   */
+  sessions?: LeaderboardSessionOption[];
   /** Currently logged-in user — null for unauthenticated public page. */
   currentUserId: string | null;
   variant?: LeaderboardVariant;
@@ -59,6 +76,7 @@ type ScopeTab = "session" | "alltime";
 export function LeaderboardPage({
   sessionId,
   sessionName,
+  sessions,
   currentUserId,
   variant = "player-panel",
 }: LeaderboardPageProps) {
@@ -68,15 +86,19 @@ export function LeaderboardPage({
   const isCentered      = variant === "standalone";
 
   // ── State ──────────────────────────────────────────────────
-  const [scopeTab,       setScopeTab]      = useState<ScopeTab>("session");
-  const [sessionRows,    setSessionRows]   = useState<LeaderboardRow[]>([]);
-  const [alltimeRows,    setAlltimeRows]   = useState<LeaderboardRow[]>([]);
-  const [sessionLoading, setSessionLoading] = useState(true);
-  const [alltimeLoading, setAlltimeLoading] = useState(false);
-  const [alltimeFetched, setAlltimeFetched] = useState(false);
-  const [error,          setError]          = useState<string | null>(null);
-  const [showAdvanced,   setShowAdvanced]   = useState(false);
-  const [flashedIds,     setFlashedIds]     = useState<Set<string>>(new Set());
+  // Default to all-time tab when no session is pre-selected (lobby use case).
+  const [scopeTab,         setScopeTab]       = useState<ScopeTab>(sessionId ? "session" : "alltime");
+  // Tracks the currently selected session (may differ from the prop after picker interaction).
+  const [activeSessionId,  setActiveSessionId] = useState<string | null>(sessionId ?? null);
+  const [activeSessionName, setActiveSessionName] = useState<string | undefined>(sessionName);
+  const [sessionRows,      setSessionRows]    = useState<LeaderboardRow[]>([]);
+  const [alltimeRows,      setAlltimeRows]    = useState<LeaderboardRow[]>([]);
+  const [sessionLoading,   setSessionLoading] = useState(!!sessionId);
+  const [alltimeLoading,   setAlltimeLoading] = useState(false);
+  const [alltimeFetched,   setAlltimeFetched] = useState(false);
+  const [error,            setError]          = useState<string | null>(null);
+  const [showAdvanced,     setShowAdvanced]   = useState(false);
+  const [flashedIds,       setFlashedIds]     = useState<Set<string>>(new Set());
 
   // Track previous row IDs to detect new entrants for flash effect.
   const prevIdsRef = useRef<Set<string>>(new Set());
@@ -95,9 +117,10 @@ export function LeaderboardPage({
 
   // ── Fetch functions ───────────────────────────────────────
   const fetchSession = useCallback(async () => {
+    if (!activeSessionId) return;
     setSessionLoading(true);
     setError(null);
-    const result = await getSessionLeaderboard(sessionId);
+    const result = await getSessionLeaderboard(activeSessionId);
     setSessionLoading(false);
     if (result.success) {
       flashNewEntrants(result.rows);
@@ -105,7 +128,7 @@ export function LeaderboardPage({
     } else {
       setError(result.error);
     }
-  }, [sessionId, flashNewEntrants]);
+  }, [activeSessionId, flashNewEntrants]);
 
   const fetchAllTime = useCallback(async () => {
     setAlltimeLoading(true);
@@ -121,6 +144,7 @@ export function LeaderboardPage({
   }, []);
 
   // ── Initial load ──────────────────────────────────────────
+  // fetchSession re-memoizes when activeSessionId changes, which re-triggers this effect.
   useEffect(() => { fetchSession(); }, [fetchSession]);
 
   // ── Lazy load all-time on first tab visit ─────────────────
@@ -130,18 +154,27 @@ export function LeaderboardPage({
     }
   }, [scopeTab, alltimeFetched, alltimeLoading, fetchAllTime]);
 
+  // ── Session picker handler ────────────────────────────────
+  const handleSessionPick = useCallback((s: LeaderboardSessionOption) => {
+    setActiveSessionId(s.id);
+    setActiveSessionName(s.name);
+    setSessionRows([]); // clear stale rows immediately
+  }, []);
+
   // ── Derived state ─────────────────────────────────────────
   const activeRows    = scopeTab === "session" ? sessionRows    : alltimeRows;
   const activeLoading = scopeTab === "session" ? sessionLoading : alltimeLoading;
   const minGP         = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
   const showRankMov   = scopeTab === "alltime";
+  // Show session picker when on session tab but no session is selected yet
+  const showSessionPicker = scopeTab === "session" && !activeSessionId && !!sessions?.length;
   const myRow         = currentUserId
     ? activeRows.find((r) => r.player_id === currentUserId)
     : null;
 
   const handleRefresh = () => {
-    if (scopeTab === "session") fetchSession();
-    else fetchAllTime();
+    if (scopeTab === "session" && activeSessionId) fetchSession();
+    else if (scopeTab === "alltime") fetchAllTime();
   };
 
   // ── Layout classes ────────────────────────────────────────
@@ -166,9 +199,9 @@ export function LeaderboardPage({
             <h2 className="text-base font-semibold text-foreground leading-tight">
               Leaderboard
             </h2>
-            {sessionName && (
+            {activeSessionName && scopeTab === "session" && (
               <p className="text-xs text-muted-foreground truncate">
-                {sessionName}
+                {activeSessionName}
               </p>
             )}
           </div>
@@ -234,8 +267,62 @@ export function LeaderboardPage({
         </div>
       )}
 
+      {/* ── Session picker — shown when no session is selected ── */}
+      {showSessionPicker && (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Choose a session to view its leaderboard
+          </p>
+          <div className="space-y-2">
+            {sessions!.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => handleSessionPick(s)}
+                className="w-full text-left rounded-xl border border-border bg-card
+                           px-4 py-3 hover:bg-muted/50 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-foreground truncate">
+                    {s.name}
+                  </span>
+                  {s.is_active && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider
+                                     text-emerald-600 dark:text-emerald-400 shrink-0">
+                      ● Live
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {new Date(s.created_at).toLocaleDateString("en-US", {
+                    weekday: "short",
+                    month:   "short",
+                    day:     "numeric",
+                  })}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── "Change session" back button (picker mode, session selected) ── */}
+      {scopeTab === "session" && activeSessionId && sessions && (
+        <button
+          onClick={() => {
+            setActiveSessionId(null);
+            setActiveSessionName(undefined);
+            setSessionRows([]);
+          }}
+          className="flex items-center gap-1 text-xs text-muted-foreground
+                     hover:text-foreground transition-colors"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+          Change session
+        </button>
+      )}
+
       {/* ── Hero card — current user's rank pinned at top ──── */}
-      {myRow && !activeLoading && (
+      {myRow && !activeLoading && !showSessionPicker && (
         <div
           className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800
                      bg-indigo-50/70 dark:bg-indigo-950/20
@@ -297,19 +384,21 @@ export function LeaderboardPage({
         </div>
       )}
 
-      {/* ── Leaderboard table ──────────────────────────────── */}
-      <LeaderboardTable
-        rows={activeRows}
-        loading={activeLoading}
-        currentUserId={currentUserId}
-        flashedIds={flashedIds}
-        showAdvanced={showAdvanced}
-        showRankMovement={showRankMov}
-        minGP={minGP}
-      />
+      {/* ── Leaderboard table — hidden during picker ───────── */}
+      {!showSessionPicker && (
+        <LeaderboardTable
+          rows={activeRows}
+          loading={activeLoading}
+          currentUserId={currentUserId}
+          flashedIds={flashedIds}
+          showAdvanced={showAdvanced}
+          showRankMovement={showRankMov}
+          minGP={minGP}
+        />
+      )}
 
       {/* ── Footer note ────────────────────────────────────── */}
-      {!activeLoading && activeRows.length > 0 && (
+      {!activeLoading && !showSessionPicker && activeRows.length > 0 && (
         <p className="text-[10px] text-muted-foreground text-center">
           {scopeTab === "session"
             ? `Min. ${MIN_SESSION_GP} completed games to appear · Session stats only`

@@ -5,12 +5,14 @@
 // Also allows updating profile (name/skill) from here.
 // ============================================================
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
 import { VipTag } from "@/components/ui/vip-tag";
+import { Trophy } from "lucide-react";
 
 export default async function PlayPage() {
   const supabase = await createClient();
@@ -79,6 +81,22 @@ export default async function PlayPage() {
             </p>
           </div>
         )}
+
+        {/* Leaderboard shortcut */}
+        <Link
+          href="/leaderboard"
+          className="flex items-center justify-between gap-3 rounded-xl border border-border
+                     bg-card px-4 py-3 hover:bg-muted/50 transition-colors"
+        >
+          <div className="flex items-center gap-2.5">
+            <Trophy className="h-4 w-4 text-amber-500 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-semibold text-foreground">Leaderboard</p>
+              <p className="text-xs text-muted-foreground">All-Time &amp; per-session rankings</p>
+            </div>
+          </div>
+          <span className="text-muted-foreground text-sm">›</span>
+        </Link>
 
         {/* Match History — grouped by session */}
         <div className="space-y-3">
