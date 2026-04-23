@@ -39,6 +39,7 @@ import {
   isGroupValid,
   snakeDraft,
   isDiversityViolation,
+  getEffectiveLookback,
   scoreCandidates,
   buildCombinationGroup,
   type ScoredPlayer,
@@ -450,6 +451,20 @@ async function runAlgorithm(
       continue;
     }
 
+    // ── Dynamic lookback: scale memory to the eligible pool ───
+    // eligible.length + 1 (anchor) = total players available in
+    // this skill window. Smaller pools get a shorter memory so
+    // isolated tiers (e.g. 3 advanced players) don't thrash on
+    // swap failures and then accept a repeat anyway.
+    const effectiveLookback = getEffectiveLookback(eligible.length + 1);
+    const activeRosters = recentRosters.slice(0, effectiveLookback);
+
+    if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.log(
+        `[matchmaking] ±${maxVariance} window: pool=${eligible.length + 1} → lookback=${effectiveLookback}`
+      );
+    }
+
     // Rank eligible candidates: highest priorityScore first, overlap as tiebreaker.
     const scored = scoreCandidates(eligible, overlapMap);
 
@@ -460,7 +475,7 @@ async function runAlgorithm(
       const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
 
       // ── Group-level diversity check ───────────────────────
-      if (isDiversityViolation(proposedIds, recentRosters)) {
+      if (isDiversityViolation(proposedIds, activeRosters)) {
         if (process.env.DEBUG_MATCHMAKING === "true") {
           console.log(
             `[matchmaking] Diversity violation for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
@@ -493,7 +508,7 @@ async function runAlgorithm(
             if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
 
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
-            if (!isDiversityViolation(swappedIds, recentRosters)) {
+            if (!isDiversityViolation(swappedIds, activeRosters)) {
               diverseSwapFound = true;
               if (process.env.DEBUG_MATCHMAKING === "true") {
                 console.log(`[matchmaking] Swap succeeded — replaced with ${candidate.display_name}`);

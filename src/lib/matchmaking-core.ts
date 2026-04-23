@@ -107,6 +107,32 @@ export function overlapWithRoster(
 }
 
 // ─────────────────────────────────────────────────────────────
+// EXPORT: getEffectiveLookback
+// ─────────────────────────────────────────────────────────────
+// Scales the diversity lookback window to the size of the
+// eligible pool available to the anchor player.
+//
+// Why: with a fixed lookback of 5, a small skill-tier group
+// (e.g. only 4 advanced players in queue) exhausts its
+// "fresh" combinations after 1–2 matches. Every subsequent
+// attempt triggers a swap failure and accepts a repeat anyway.
+// Shorter memory for smaller pools avoids that collapse while
+// preserving strict diversity enforcement for large sessions.
+//
+// Thresholds (eligiblePoolSize = eligible candidates + anchor):
+//   ≤ 5  → 2  (nearly isolated tier — only avoid the last match)
+//   6–9  → 3  (small pool — today's Thursday-night scenario)
+//   10–15 → 4  (medium pool)
+//   16+  → 5  (full memory — current behaviour, unchanged)
+
+export function getEffectiveLookback(eligiblePoolSize: number): number {
+  if (eligiblePoolSize <= 5)  return 2;
+  if (eligiblePoolSize <= 9)  return 3;
+  if (eligiblePoolSize <= 15) return 4;
+  return 5;
+}
+
+// ─────────────────────────────────────────────────────────────
 // EXPORT: isDiversityViolation
 // ─────────────────────────────────────────────────────────────
 // Returns true if ≥3 of the proposed 4 player IDs appeared

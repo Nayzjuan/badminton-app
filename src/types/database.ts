@@ -198,7 +198,7 @@ export type SessionInsert = Pick<Session, "name" | "created_by"> &
   Partial<Pick<Session, "organizer_passcode" | "scoring">>;
 
 export type SessionUpdate = Partial<
-  Pick<Session, "name" | "organizer_passcode" | "scoring" | "is_active" | "is_auto_matchmaking_on" | "ended_at">
+  Pick<Session, "name" | "organizer_passcode" | "scoring" | "is_active" | "is_auto_matchmaking_on" | "ended_at" | "created_by">
 >;
 
 export type CourtInsert = Pick<Court, "session_id" | "name"> &

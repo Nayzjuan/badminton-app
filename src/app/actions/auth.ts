@@ -373,12 +373,19 @@ export async function reconnectPlayer(
   // Step 4.5: Reassign sessions.created_by so the old profile can be deleted.
   // sessions.created_by has a FK → profiles.id. If the player ever created a
   // session under the old ID, deleting the old profile would fail with a FK
-  // violation — silently, since Step 5 has no error check. This is the root
-  // cause of the recurring ghost profile bug.
-  await service
+  // violation. This step clears that blocker before Step 5.
+  const { error: sessionsMigrateErr } = await service
     .from("sessions")
     .update({ created_by: newUserId })
     .eq("created_by", oldUserId);
+
+  if (sessionsMigrateErr) {
+    console.error(
+      "[reconnectPlayer] sessions.created_by migration failed — Step 5 delete may fail:",
+      sessionsMigrateErr.message,
+      { oldUserId, newUserId }
+    );
+  }
 
   // Step 4.6: Migrate session_wrapped_stats to new user ID.
   // player_id is part of the composite PK — UpdateType excludes it, so we
