@@ -32,7 +32,10 @@ export type ScoredCandidate = {
 // EXPORT: computePriorityScore
 // ─────────────────────────────────────────────────────────────
 // RED ZONE (wait ≥ 25 min): 1000 + waitMinutes → absolute urgency.
-// NORMAL   (wait < 25 min): waitMinutes − (gamesPlayed × 12).
+// NORMAL   (wait < 25 min): max(0, waitMinutes − (gamesPlayed × 12)).
+//   Floored at 0 so a player with game debt never scores below a
+//   fresh joiner. Players in the same score bucket (both 0) are
+//   further sorted by joined_at in runAlgorithm — earlier joiner wins.
 // Higher score = higher urgency.
 
 export function computePriorityScore(player: QueueWithWaitTime): number {
@@ -40,7 +43,10 @@ export function computePriorityScore(player: QueueWithWaitTime): number {
   if (wait >= CRITICAL_WAIT_MINUTES) {
     return 1000 + wait; // Red Zone — ignore game debt entirely
   }
-  return wait - player.games_played * GAME_PENALTY_MINUTES;
+  // Floor at 0: game debt holds you back but never drops you below
+  // a brand-new joiner who has 0 wait time. The joined_at tiebreaker
+  // in runAlgorithm resolves ties within the 0-score bucket.
+  return Math.max(0, wait - player.games_played * GAME_PENALTY_MINUTES);
 }
 
 // ─────────────────────────────────────────────────────────────

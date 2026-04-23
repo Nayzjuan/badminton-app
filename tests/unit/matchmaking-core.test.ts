@@ -73,8 +73,12 @@ function makePlayer(
 // computePriorityScore
 // ─────────────────────────────────────────────────────────────
 // Formula:
-//   Normal   (wait < 25): score = wait - (games × GAME_PENALTY_MINUTES)
+//   Normal   (wait < 25): score = max(0, wait - (games × GAME_PENALTY_MINUTES))
 //   Red Zone (wait ≥ 25): score = 1000 + wait  (game debt ignored)
+//
+// The floor at 0 ensures a player with game debt never scores below a fresh
+// joiner. Within the 0-bucket, runAlgorithm uses joined_at ASC as a
+// tiebreaker so the longest-waiting player still anchors first.
 
 describe("computePriorityScore", () => {
   it("returns wait_minutes when games_played=0 (normal zone)", () => {
@@ -82,16 +86,17 @@ describe("computePriorityScore", () => {
     expect(computePriorityScore(p)).toBe(10);
   });
 
-  it("subtracts GAME_PENALTY per game played (normal zone)", () => {
-    const p = makePlayer("a", { skillInt: 3, waitMinutes: 10, gamesPlayed: 1 });
-    // 10 - 1 × 12 = -2
-    expect(computePriorityScore(p)).toBe(10 - GAME_PENALTY_MINUTES);
+  it("subtracts GAME_PENALTY per game played when wait exceeds the penalty (normal zone)", () => {
+    const p = makePlayer("a", { skillInt: 3, waitMinutes: 15, gamesPlayed: 1 });
+    // 15 - 1 × 12 = 3  (positive — no floor needed)
+    expect(computePriorityScore(p)).toBe(15 - GAME_PENALTY_MINUTES);
   });
 
-  it("can produce a negative score for frequent players with short wait", () => {
+  it("floors at 0 when game debt exceeds wait time — never negative", () => {
     const p = makePlayer("a", { skillInt: 3, waitMinutes: 0, gamesPlayed: 2 });
-    // 0 - 2 × 12 = -24
-    expect(computePriorityScore(p)).toBe(-2 * GAME_PENALTY_MINUTES);
+    // max(0, 0 - 2 × 12) = max(0, -24) = 0
+    // Within the 0-bucket, joined_at (not score) decides rank order.
+    expect(computePriorityScore(p)).toBe(0);
   });
 
   it("returns 0 for a fresh player with 0 wait and 0 games", () => {
@@ -163,8 +168,8 @@ describe("computePriorityScore", () => {
     // This ensures runtime safety when the view returns null.
     const p = makePlayer("a", { skillInt: 3, waitMinutes: 0, gamesPlayed: 2 });
     const withNullWait = { ...p, wait_minutes: null as unknown as number };
-    // null ?? 0 = 0 → 0 - 2×12 = -24
-    expect(computePriorityScore(withNullWait)).toBe(-2 * GAME_PENALTY_MINUTES);
+    // null ?? 0 = 0 → max(0, 0 - 2×12) = 0
+    expect(computePriorityScore(withNullWait)).toBe(0);
   });
 });
 

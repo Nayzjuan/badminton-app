@@ -20,7 +20,7 @@
 //
 // Internal only:
 //   runEngineInternal(supabase, sessionId)  — capacity-limited
-//     on-deck filler. Cap = max(1, courtCount − 1).
+//     on-deck filler. Cap = courtCount (one slot per open court).
 //   createOneOnDeckMatch / runAlgorithm / promoteOnDeckMatchInternal
 //   executeMatch / buildOverlapMap / snakeDraft / isGroupValid / etc.
 // ============================================================
@@ -137,7 +137,7 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
 // Capacity-limited on-deck filler.
-// Cap = max(1, courtCount − 1): 4 courts → 3 on-deck max.
+// Cap = courtCount: 2 courts → 2 on-deck, 4 courts → 4 on-deck.
 // Fills slots up to capacity, stopping when queue is exhausted.
 
 async function runEngineInternal(
@@ -161,8 +161,10 @@ async function runEngineInternal(
     return;
   }
 
-  // Cap on-deck at (courtCount − 1) to prevent locking the entire queue.
-  const capacity = Math.max(1, courtCount - 1);
+  // One on-deck slot per court: 2 courts → 2 on-deck, 3 → 3, etc.
+  // Previous formula (courtCount − 1) capped at 1 for 2-court sessions,
+  // meaning only one match was ever queued. courtCount is the correct target.
+  const capacity = courtCount;
 
   const { count: existingOnDeck, error: deckErr } = await supabase
     .from("matches")
@@ -376,11 +378,19 @@ async function runAlgorithm(
   }
 
   // ── 2. Enrich pool with priorityScore, sort DESC ──────────
-  // Re-sort by priority score so the most-urgent player anchors
-  // the match, regardless of how many games they've played.
+  // Primary: priorityScore DESC — most urgent player anchors.
+  // Tiebreaker: joined_at ASC — among equal-score players (common in
+  // the score-0 bucket where game debt is floored), the one who has
+  // been waiting longest goes first. Prevents fresh joiners from
+  // jumping ahead of players held at 0 by game-debt penalty.
   const pool: ScoredPlayer[] = activePool
     .map((p) => ({ ...p, priorityScore: computePriorityScore(p) }))
-    .sort((a, b) => b.priorityScore - a.priorityScore);
+    .sort((a, b) => {
+      const diff = b.priorityScore - a.priorityScore;
+      if (Math.abs(diff) > 0.001) return diff;
+      // Same score bucket → earlier joiner wins.
+      return new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime();
+    });
 
   // ── 3. Anchor = highest-priority player ──────────────────
   const anchor = pool[0];

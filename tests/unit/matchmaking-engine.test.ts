@@ -365,12 +365,12 @@ describe("runEngineForSession", () => {
   });
 
   it("stops filling when on-deck is already at capacity", async () => {
-    // 2 courts → capacity = max(1, 2-1) = 1
-    // 1 pending match already → slotsAvailable = 0 → no match creation
+    // 2 courts → capacity = courtCount = 2
+    // 2 pending matches already → slotsAvailable = 0 → no match creation
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null },  // sessions
       { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2)
-      { count: 1, data: null, error: null },                    // pending count = 1 → at capacity
+      { count: 2, data: null, error: null },                    // pending count = 2 → at capacity
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
