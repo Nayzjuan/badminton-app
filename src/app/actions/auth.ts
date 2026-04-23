@@ -351,7 +351,17 @@ export async function reconnectPlayer(
     return { success: false, error: "Failed to migrate match history. Please try again." };
   }
 
-  // Step 4.5: Migrate session_wrapped_stats to new user ID.
+  // Step 4.5: Reassign sessions.created_by so the old profile can be deleted.
+  // sessions.created_by has a FK → profiles.id. If the player ever created a
+  // session under the old ID, deleting the old profile would fail with a FK
+  // violation — silently, since Step 5 has no error check. This is the root
+  // cause of the recurring ghost profile bug.
+  await service
+    .from("sessions")
+    .update({ created_by: newUserId })
+    .eq("created_by", oldUserId);
+
+  // Step 4.6: Migrate session_wrapped_stats to new user ID.
   // player_id is part of the composite PK — UpdateType excludes it, so we
   // cannot update it in-place. Instead: read rows, re-insert under newUserId
   // (dropping the generated columns id and point_diff), then delete the
@@ -397,10 +407,20 @@ export async function reconnectPlayer(
   }
 
   // Step 5: Delete old profile (all FK references now point to newUserId).
-  await service
+  // sessions.created_by was migrated in Step 4.5, so this should never fail
+  // on a FK violation. Log if it does so ghosts are visible in server logs.
+  const { error: deleteOldProfileErr } = await service
     .from("profiles")
     .delete()
     .eq("id", oldUserId);
+
+  if (deleteOldProfileErr) {
+    console.error(
+      "[reconnectPlayer] Failed to delete old profile — ghost may remain:",
+      deleteOldProfileErr.message,
+      { oldUserId, newUserId }
+    );
+  }
 
   // Step 6: Delete old auth user to clean up orphaned auth record.
   await service.auth.admin.deleteUser(oldUserId);
