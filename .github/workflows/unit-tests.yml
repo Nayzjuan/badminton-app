@@ -1,0 +1,41 @@
+# ============================================================
+# CI: Unit Tests — Chillax Badminton
+# ============================================================
+# Runs on every push to any branch and every pull request.
+# Vitest auto-discovers all tests/unit/**/*.test.ts files,
+# so new test files are picked up automatically — no changes
+# to this file needed when you add tests.
+#
+# Failure notifications:
+#   GitHub emails the pusher automatically when this fails.
+#   Go to github.com → Settings → Notifications to configure.
+# ============================================================
+
+name: Unit Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  vitest:
+    name: Vitest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:unit
