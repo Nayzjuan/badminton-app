@@ -11,12 +11,12 @@ import "./globals.css";
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], weight: ["300", "400", "500", "600", "700"] });
 
 export const metadata: Metadata = {
-  title: "Badminton Queue",
+  title: "Chillax Badminton",
   description: "Real-time badminton social queuing and matchmaking",
   // ── PWA / Apple home screen ──────────────────────────────────
   appleWebApp: {
     capable: true,
-    title: "Badminton Queue",
+    title: "Chillax Badminton",
     // black-translucent: the status bar overlays the app content,
     // letting our navy header bleed all the way to the top edge on iOS.
     statusBarStyle: "black-translucent",
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
     apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
   },
   // Tells browsers this is a PWA-capable page
-  applicationName: "Badminton Queue",
+  applicationName: "Chillax Badminton",
 };
 
 export const viewport: Viewport = {

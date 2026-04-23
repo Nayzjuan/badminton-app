@@ -9,8 +9,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Badminton Queue",
-    short_name: "BQ",
+    name: "Chillax Badminton",
+    short_name: "Chillax",
     description: "Real-time badminton social queuing and matchmaking",
     start_url: "/play",
     scope: "/",
