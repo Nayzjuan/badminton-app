@@ -17,88 +17,63 @@ import { useState } from "react";
 // Keys are lowercase normalized display names.
 const VIP_PLAYERS: Record<string, { tag: string; theme: VipTheme }> = {
   miggy:  { tag: "DEV",  theme: "cyber-neon"    },
-  stelle: { tag: "8080", theme: "violet-spark"   },
+  stelle: { tag: "8080", theme: "crimson-elite"  },
   cogs:   { tag: "MVP",  theme: "gold-prestige"  },
   raf:    { tag: "BOSS", theme: "crimson-elite"  },
 };
 
-type VipTheme = "cyber-neon" | "gold-prestige" | "crimson-elite" | "violet-spark";
+type VipTheme = "cyber-neon" | "gold-prestige" | "crimson-elite";
 
 // ── Theme token definitions ───────────────────────────────────
-//
-// Light mode strategy: box-shadow creates a physically visible
-// colored halo around the pill shape — filter: drop-shadow
-// bleeds into white/cream and disappears.
-//
-// Dark mode strategy: filter: drop-shadow stacks produce the
-// layered neon bloom effect on dark surfaces.
-//
 const THEME_TOKENS: Record<
   VipTheme,
   {
     label: string;
-    gradientLight: string;  // darker stops — contrast on cream
-    gradientDark: string;   // bright stops — neon on black
-    // Light: box-shadow string (ring + soft outer glow)
-    glowLight: string;
-    // Dark: filter value (drop-shadow stacks)
-    glowDark: string;
-    borderLight: string;
-    borderDark: string;
-    bgLight: string;
-    bgDark: string;
+    gradient: string;       // gradient-clip text colors
+    glowLight: string;      // filter: drop-shadow stack for light bg
+    glowDark: string;       // filter: drop-shadow stack for dark bg
+    borderLight: string;    // border color (light)
+    borderDark: string;     // border color (dark)
+    bgLight: string;        // bg tint (light) — intentionally visible
+    bgDark: string;         // bg tint (dark)
   }
 > = {
   "cyber-neon": {
     label: "Cyber Neon",
-    gradientLight: "from-[hsl(165_100%_28%)] via-[hsl(185_100%_36%)] to-[hsl(165_100%_28%)]",
-    gradientDark:  "from-[hsl(165_100%_55%)] via-[hsl(185_100%_68%)] to-[hsl(165_100%_55%)]",
+    gradient: "from-[hsl(165_100%_40%)] via-[hsl(185_100%_55%)] to-[hsl(165_100%_40%)]",
+    // Light: strong enough to show on white/cream
     glowLight:
-      "0 0 0 1.5px hsl(165 100% 35%), 0 0 8px 3px hsl(165 100% 42% / 0.55), 0 0 18px 5px hsl(185 100% 50% / 0.35)",
+      "drop-shadow(0 0 4px hsl(165 100% 42% / 1)) drop-shadow(0 0 10px hsl(165 100% 45% / 0.8)) drop-shadow(0 0 18px hsl(185 100% 55% / 0.55))",
+    // Dark: full neon stack
     glowDark:
       "drop-shadow(0 0 5px hsl(165 100% 55% / 1)) drop-shadow(0 0 12px hsl(185 100% 65% / 0.85)) drop-shadow(0 0 22px hsl(165 100% 50% / 0.55))",
-    borderLight: "hsl(165 100% 35% / 0.9)",
+    borderLight: "hsl(165 100% 38% / 0.75)",
     borderDark:  "hsl(165 100% 58% / 0.85)",
-    bgLight: "hsl(165 100% 38% / 0.12)",
+    bgLight: "hsl(165 100% 42% / 0.14)",
     bgDark:  "hsl(165 100% 48% / 0.16)",
-  },
-  "violet-spark": {
-    label: "Violet Spark",
-    gradientLight: "from-[hsl(270_100%_45%)] via-[hsl(290_100%_55%)] to-[hsl(270_100%_45%)]",
-    gradientDark:  "from-[hsl(270_100%_72%)] via-[hsl(290_100%_80%)] to-[hsl(270_100%_72%)]",
-    glowLight:
-      "0 0 0 1.5px hsl(270 100% 48%), 0 0 8px 3px hsl(270 100% 55% / 0.55), 0 0 18px 5px hsl(290 100% 62% / 0.35)",
-    glowDark:
-      "drop-shadow(0 0 5px hsl(270 100% 72% / 1)) drop-shadow(0 0 12px hsl(290 100% 78% / 0.85)) drop-shadow(0 0 22px hsl(270 100% 65% / 0.55))",
-    borderLight: "hsl(270 100% 48% / 0.9)",
-    borderDark:  "hsl(270 100% 72% / 0.85)",
-    bgLight: "hsl(270 100% 52% / 0.1)",
-    bgDark:  "hsl(270 100% 60% / 0.16)",
   },
   "gold-prestige": {
     label: "Gold Prestige",
-    gradientLight: "from-[hsl(43_100%_32%)] via-[hsl(38_100%_42%)] to-[hsl(43_100%_32%)]",
-    gradientDark:  "from-[hsl(43_100%_58%)] via-[hsl(38_100%_70%)] to-[hsl(43_100%_58%)]",
+    gradient: "from-[hsl(43_100%_45%)] via-[hsl(38_100%_62%)] to-[hsl(43_100%_45%)]",
     glowLight:
-      "0 0 0 1.5px hsl(43 100% 38%), 0 0 8px 3px hsl(43 100% 45% / 0.55), 0 0 18px 5px hsl(38 100% 52% / 0.35)",
+      "drop-shadow(0 0 4px hsl(43 100% 45% / 1)) drop-shadow(0 0 10px hsl(43 100% 50% / 0.8)) drop-shadow(0 0 18px hsl(38 100% 58% / 0.55))",
     glowDark:
       "drop-shadow(0 0 5px hsl(43 100% 58% / 1)) drop-shadow(0 0 12px hsl(38 100% 68% / 0.85)) drop-shadow(0 0 22px hsl(43 100% 52% / 0.55))",
-    borderLight: "hsl(43 100% 36% / 0.9)",
+    borderLight: "hsl(43 100% 42% / 0.75)",
     borderDark:  "hsl(43 100% 62% / 0.85)",
-    bgLight: "hsl(43 100% 42% / 0.12)",
+    bgLight: "hsl(43 100% 48% / 0.14)",
     bgDark:  "hsl(43 100% 52% / 0.16)",
   },
   "crimson-elite": {
     label: "Crimson Elite",
-    gradientLight: "from-[hsl(0_100%_40%)] via-[hsl(15_100%_50%)] to-[hsl(0_100%_40%)]",
-    gradientDark:  "from-[hsl(0_100%_62%)] via-[hsl(15_100%_72%)] to-[hsl(0_100%_62%)]",
+    gradient: "from-[hsl(0_100%_52%)] via-[hsl(15_100%_62%)] to-[hsl(0_100%_52%)]",
     glowLight:
-      "0 0 0 1.5px hsl(0 100% 42%), 0 0 8px 3px hsl(0 100% 50% / 0.55), 0 0 18px 5px hsl(15 100% 55% / 0.35)",
+      "drop-shadow(0 0 4px hsl(0 100% 52% / 1)) drop-shadow(0 0 10px hsl(0 100% 55% / 0.8)) drop-shadow(0 0 18px hsl(15 100% 60% / 0.55))",
     glowDark:
       "drop-shadow(0 0 5px hsl(0 100% 60% / 1)) drop-shadow(0 0 12px hsl(15 100% 68% / 0.85)) drop-shadow(0 0 22px hsl(0 100% 55% / 0.55))",
-    borderLight: "hsl(0 100% 40% / 0.9)",
+    borderLight: "hsl(0 100% 50% / 0.75)",
     borderDark:  "hsl(0 100% 62% / 0.85)",
-    bgLight: "hsl(0 100% 45% / 0.1)",
+    bgLight: "hsl(0 100% 52% / 0.12)",
     bgDark:  "hsl(0 100% 55% / 0.16)",
   },
 };
@@ -120,27 +95,26 @@ function VipTag({
     <span
       className="inline-flex items-center justify-center rounded-[3px] border px-[6px]"
       style={{
-        background:  dark ? t.bgDark    : t.bgLight,
-        borderColor: dark ? t.borderDark : t.borderLight,
-        // Light → box-shadow: colored ring + soft outer bloom visible on cream
-        // Dark  → filter drop-shadow: layered neon bloom on dark surfaces
-        ...(dark
-          ? { filter:     t.glowDark }
-          : { boxShadow:  t.glowLight }),
-        animation: "vip-glow-pulse 2.6s ease-in-out infinite",
-        height:     "18px",
+        background:    dark ? t.bgDark    : t.bgLight,
+        borderColor:   dark ? t.borderDark : t.borderLight,
+        filter:        dark ? t.glowDark   : t.glowLight,
+        animation:     "vip-glow-pulse 2.6s ease-in-out infinite",
+        // fixed height keeps the pill the same size as the surrounding text line
+        height: "22px",
         lineHeight: "1",
       }}
     >
       <span
         className={[
           "bg-gradient-to-r bg-clip-text text-transparent",
-          "font-black uppercase tracking-[0.2em] text-[10px]",
-          dark ? t.gradientDark : t.gradientLight,
+          "font-black uppercase tracking-[0.15em]",
+          "text-[13px]",
+          t.gradient,
         ].join(" ")}
         style={{
           backgroundSize: "200% auto",
           animation: "vip-shimmer 4.5s linear infinite",
+          // nudge so gradient-clip text sits on the optical centre
           display: "inline-block",
           transform: "translateY(0.5px)",
         }}
@@ -253,20 +227,12 @@ function ThemeLegend() {
   return (
     <div className="flex flex-wrap gap-3">
       {(Object.entries(THEME_TOKENS) as [VipTheme, (typeof THEME_TOKENS)[VipTheme]][]).map(
-        ([key, t]) => {
-          const tagLabels: Record<VipTheme, string> = {
-            "cyber-neon":    "DEV",
-            "violet-spark":  "8080",
-            "gold-prestige": "MVP",
-            "crimson-elite": "BOSS",
-          };
-          return (
-            <div key={key} className="flex items-center gap-2">
-              <VipTag tag={tagLabels[key]} theme={key} />
-              <span className="text-xs text-muted-foreground">{t.label}</span>
-            </div>
-          );
-        }
+        ([key, t]) => (
+          <div key={key} className="flex items-center gap-2">
+            <VipTag tag={key === "cyber-neon" ? "DEV" : key === "gold-prestige" ? "MVP" : "BOSS"} theme={key} />
+            <span className="text-xs text-muted-foreground">{t.label}</span>
+          </div>
+        )
       )}
     </div>
   );
@@ -307,9 +273,8 @@ function VipConfigTable() {
                   {meta.tag}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{THEME_TOKENS[meta.theme].label}</td>
-                <td className="px-4 py-3 flex gap-2">
-                  <VipTag tag={meta.tag} theme={meta.theme} dark={false} />
-                  <VipTag tag={meta.tag} theme={meta.theme} dark={true} />
+                <td className="px-4 py-3">
+                  <VipTag tag={meta.tag} theme={meta.theme} />
                 </td>
               </tr>
             );
