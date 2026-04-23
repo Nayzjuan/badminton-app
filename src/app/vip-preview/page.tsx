@@ -28,50 +28,52 @@ const THEME_TOKENS: Record<
   VipTheme,
   {
     label: string;
-    gradient: string;        // gradient-clip text colors
-    boxShadowLight: string;  // box-shadow for light bg pill
-    boxShadowDark: string;   // box-shadow for dark bg pill
-    borderLight: string;     // border color CSS value (light)
-    borderDark: string;      // border color CSS value (dark)
-    bgLight: string;         // bg CSS value (light)
-    bgDark: string;          // bg CSS value (dark)
+    gradient: string;       // gradient-clip text colors
+    glowLight: string;      // filter: drop-shadow stack for light bg
+    glowDark: string;       // filter: drop-shadow stack for dark bg
+    borderLight: string;    // border color (light)
+    borderDark: string;     // border color (dark)
+    bgLight: string;        // bg tint (light) — intentionally visible
+    bgDark: string;         // bg tint (dark)
   }
 > = {
   "cyber-neon": {
     label: "Cyber Neon",
-    gradient: "from-[hsl(165_100%_50%)] via-[hsl(185_100%_65%)] to-[hsl(165_100%_50%)]",
-    boxShadowLight:
-      "0 0 6px 1px hsl(165 100% 45% / 0.7), 0 0 14px 2px hsl(185 100% 60% / 0.45)",
-    boxShadowDark:
-      "0 0 8px 2px hsl(165 100% 50% / 1), 0 0 18px 4px hsl(185 100% 60% / 0.8), 0 0 32px 6px hsl(165 100% 45% / 0.5)",
-    borderLight: "hsl(165 100% 45% / 0.7)",
-    borderDark: "hsl(165 100% 60% / 0.9)",
-    bgLight: "hsl(165 100% 45% / 0.12)",
-    bgDark: "hsl(165 100% 50% / 0.18)",
+    gradient: "from-[hsl(165_100%_40%)] via-[hsl(185_100%_55%)] to-[hsl(165_100%_40%)]",
+    // Light: strong enough to show on white/cream
+    glowLight:
+      "drop-shadow(0 0 4px hsl(165 100% 42% / 1)) drop-shadow(0 0 10px hsl(165 100% 45% / 0.8)) drop-shadow(0 0 18px hsl(185 100% 55% / 0.55))",
+    // Dark: full neon stack
+    glowDark:
+      "drop-shadow(0 0 5px hsl(165 100% 55% / 1)) drop-shadow(0 0 12px hsl(185 100% 65% / 0.85)) drop-shadow(0 0 22px hsl(165 100% 50% / 0.55))",
+    borderLight: "hsl(165 100% 38% / 0.75)",
+    borderDark:  "hsl(165 100% 58% / 0.85)",
+    bgLight: "hsl(165 100% 42% / 0.14)",
+    bgDark:  "hsl(165 100% 48% / 0.16)",
   },
   "gold-prestige": {
     label: "Gold Prestige",
-    gradient: "from-[hsl(43_100%_55%)] via-[hsl(38_100%_72%)] to-[hsl(43_100%_55%)]",
-    boxShadowLight:
-      "0 0 6px 1px hsl(43 100% 55% / 0.7), 0 0 14px 2px hsl(38 100% 65% / 0.45)",
-    boxShadowDark:
-      "0 0 8px 2px hsl(43 100% 60% / 1), 0 0 18px 4px hsl(38 100% 72% / 0.8), 0 0 32px 6px hsl(43 100% 50% / 0.5)",
-    borderLight: "hsl(43 100% 55% / 0.7)",
-    borderDark: "hsl(43 100% 68% / 0.9)",
-    bgLight: "hsl(43 100% 55% / 0.12)",
-    bgDark: "hsl(43 100% 55% / 0.18)",
+    gradient: "from-[hsl(43_100%_45%)] via-[hsl(38_100%_62%)] to-[hsl(43_100%_45%)]",
+    glowLight:
+      "drop-shadow(0 0 4px hsl(43 100% 45% / 1)) drop-shadow(0 0 10px hsl(43 100% 50% / 0.8)) drop-shadow(0 0 18px hsl(38 100% 58% / 0.55))",
+    glowDark:
+      "drop-shadow(0 0 5px hsl(43 100% 58% / 1)) drop-shadow(0 0 12px hsl(38 100% 68% / 0.85)) drop-shadow(0 0 22px hsl(43 100% 52% / 0.55))",
+    borderLight: "hsl(43 100% 42% / 0.75)",
+    borderDark:  "hsl(43 100% 62% / 0.85)",
+    bgLight: "hsl(43 100% 48% / 0.14)",
+    bgDark:  "hsl(43 100% 52% / 0.16)",
   },
   "crimson-elite": {
     label: "Crimson Elite",
-    gradient: "from-[hsl(0_100%_62%)] via-[hsl(15_100%_72%)] to-[hsl(0_100%_62%)]",
-    boxShadowLight:
-      "0 0 6px 1px hsl(0 100% 60% / 0.7), 0 0 14px 2px hsl(15 100% 65% / 0.45)",
-    boxShadowDark:
-      "0 0 8px 2px hsl(0 100% 62% / 1), 0 0 18px 4px hsl(15 100% 70% / 0.8), 0 0 32px 6px hsl(0 100% 55% / 0.5)",
-    borderLight: "hsl(0 100% 60% / 0.7)",
-    borderDark: "hsl(0 100% 65% / 0.9)",
-    bgLight: "hsl(0 100% 60% / 0.12)",
-    bgDark: "hsl(0 100% 60% / 0.18)",
+    gradient: "from-[hsl(0_100%_52%)] via-[hsl(15_100%_62%)] to-[hsl(0_100%_52%)]",
+    glowLight:
+      "drop-shadow(0 0 4px hsl(0 100% 52% / 1)) drop-shadow(0 0 10px hsl(0 100% 55% / 0.8)) drop-shadow(0 0 18px hsl(15 100% 60% / 0.55))",
+    glowDark:
+      "drop-shadow(0 0 5px hsl(0 100% 60% / 1)) drop-shadow(0 0 12px hsl(15 100% 68% / 0.85)) drop-shadow(0 0 22px hsl(0 100% 55% / 0.55))",
+    borderLight: "hsl(0 100% 50% / 0.75)",
+    borderDark:  "hsl(0 100% 62% / 0.85)",
+    bgLight: "hsl(0 100% 52% / 0.12)",
+    bgDark:  "hsl(0 100% 55% / 0.16)",
   },
 };
 
@@ -90,23 +92,30 @@ function VipTag({
 
   return (
     <span
-      className="inline-flex items-center rounded-[4px] border-2 px-2 py-[3px]"
+      className="inline-flex items-center justify-center rounded-[3px] border px-[6px]"
       style={{
-        background: dark ? t.bgDark : t.bgLight,
-        borderColor: dark ? t.borderDark : t.borderLight,
-        boxShadow: dark ? t.boxShadowDark : t.boxShadowLight,
-        animation: "vip-glow-pulse 2.6s ease-in-out infinite",
+        background:    dark ? t.bgDark    : t.bgLight,
+        borderColor:   dark ? t.borderDark : t.borderLight,
+        filter:        dark ? t.glowDark   : t.glowLight,
+        animation:     "vip-glow-pulse 2.6s ease-in-out infinite",
+        // fixed height keeps the pill the same size as the surrounding text line
+        height: "18px",
+        lineHeight: "1",
       }}
     >
       <span
         className={[
-          "bg-gradient-to-r bg-clip-text text-transparent font-black uppercase tracking-[0.2em]",
-          "text-[11px] leading-none",
+          "bg-gradient-to-r bg-clip-text text-transparent",
+          "font-black uppercase tracking-[0.2em]",
+          "text-[10px]",
           t.gradient,
         ].join(" ")}
         style={{
           backgroundSize: "200% auto",
-          animation: "vip-shimmer 4s linear infinite",
+          animation: "vip-shimmer 4.5s linear infinite",
+          // nudge so gradient-clip text sits on the optical centre
+          display: "inline-block",
+          transform: "translateY(0.5px)",
         }}
       >
         {tag}
@@ -289,8 +298,8 @@ export default function VipPreviewPage() {
           100% { background-position: 200% center; }
         }
         @keyframes vip-glow-pulse {
-          0%, 100% { opacity: 1;    filter: brightness(1.1); }
-          50%       { opacity: 0.6; filter: brightness(0.85); }
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.55; }
         }
         @media (prefers-reduced-motion: reduce) {
           [style*="vip-shimmer"],
