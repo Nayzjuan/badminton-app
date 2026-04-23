@@ -172,7 +172,6 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
       <ReconnectModal
         open={showReconnect}
         onClose={() => setShowReconnect(false)}
-        onError={setError}
       />
 
       {/* Error toast — fixed at bottom */}
@@ -205,27 +204,31 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
 function ReconnectModal({
   open,
   onClose,
-  onError,
 }: {
   open: boolean;
   onClose: () => void;
-  onError: (msg: string) => void;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
   const [isPending, startTransition] = useTransition();
+  // Error lives inside the modal so it's always visible to the user.
+  // Previously it was passed up to the parent and rendered as a fixed
+  // toast at z-50 — same z-index as the Radix dialog overlay — causing
+  // the error to render behind the modal.
+  const [localError, setLocalError] = useState<string | null>(null);
 
   function handleReconnect() {
+    setLocalError(null);
     if (!name.trim() || !pin.trim()) {
-      onError("Name and PIN are required.");
+      setLocalError("Name and PIN are required.");
       return;
     }
 
     startTransition(async () => {
       const result = await reconnectPlayer(name, pin);
       if (!result.success) {
-        onError(result.error ?? "Reconnect failed.");
+        setLocalError(result.error ?? "Reconnect failed.");
       } else {
         onClose();
         // If no active session was found, send to the lobby so the player
@@ -238,7 +241,7 @@ function ReconnectModal({
   return (
     // Radix Dialog provides: focus trap, aria-modal, role="dialog",
     // Escape-to-close, and scroll-lock — no custom backdrop needed.
-    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) onClose(); }}>
+    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) { onClose(); setLocalError(null); } }}>
       <DialogContent className="w-full max-w-sm p-6 space-y-5">
         <DialogHeader>
           <DialogTitle>Reconnect</DialogTitle>
@@ -287,6 +290,16 @@ function ReconnectModal({
                        disabled:opacity-50"
           />
         </div>
+
+        {/* Inline error — always visible inside the modal */}
+        {localError && (
+          <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
+            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{localError}</span>
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex gap-3">

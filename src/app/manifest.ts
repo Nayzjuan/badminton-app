@@ -20,6 +20,23 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#1D3A6F",
     categories: ["sports", "social"],
     icons: [
+      // purpose:"any" — standard home screen icon used by all browsers.
+      // Firefox on Android requires a PNG with purpose:"any" to render the
+      // app icon; it does not support SVG for PWA installs.
+      {
+        src: "/icons/icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+        purpose: "any",
+      },
+      {
+        src: "/icons/icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "any",
+      },
+      // purpose:"maskable" — adaptive icon for Android (content within the
+      // safe zone allows the OS to apply its own shape mask).
       {
         src: "/icons/icon-192.png",
         sizes: "192x192",
@@ -32,27 +49,14 @@ export default function manifest(): MetadataRoute.Manifest {
         type: "image/png",
         purpose: "maskable",
       },
-      {
-        src: "/icons/icon.svg",
-        sizes: "any",
-        type: "image/svg+xml",
-        purpose: "any",
-      },
     ],
-    // Deep-link shortcuts — long-press the icon on Android to access directly.
+    // Deep-link shortcuts — long-press the icon on Android/iOS.
     shortcuts: [
       {
         name: "Join a Session",
         short_name: "Join",
         description: "Scan a QR code or enter a session",
         url: "/play",
-        icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }],
-      },
-      {
-        name: "Organizer Dashboard",
-        short_name: "Organizer",
-        description: "Manage courts and matchmaking",
-        url: "/organizer",
         icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }],
       },
     ],
