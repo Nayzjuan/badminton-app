@@ -76,7 +76,7 @@ function VipTag({ tag, theme, dark }: { tag: string; theme: VipTheme; dark: bool
       <span
         className={[
           "font-black tracking-widest uppercase",
-          "text-[11px] leading-none",
+          "text-[13px] leading-none",
           t.neonClass,
           "animate-pulse",
         ].join(" ")}
@@ -94,7 +94,7 @@ function VipTag({ tag, theme, dark }: { tag: string; theme: VipTheme; dark: bool
         t.holoFrom, t.holoVia, t.holoTo,
         "bg-clip-text text-transparent",
         "font-black tracking-widest uppercase",
-        "text-[11px] leading-none",
+        "text-[13px] leading-none",
       ].join(" ")}
       style={{
         backgroundSize:  "200% auto",
