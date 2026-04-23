@@ -10,6 +10,7 @@ import { createClient } from "@/utils/supabase/server";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
+import { VipTag } from "@/components/ui/vip-tag";
 
 export default async function PlayPage() {
   const supabase = await createClient();
@@ -49,9 +50,14 @@ export default async function PlayPage() {
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold text-foreground">
-              Hey, {profile.display_name}!
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-foreground">
+                Hey, {profile.display_name}!
+              </h1>
+              {profile.vip_tag && profile.vip_theme && (
+                <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
+              )}
+            </div>
             <p className="text-sm text-muted-foreground mt-1">
               Pick a session to join.
             </p>
