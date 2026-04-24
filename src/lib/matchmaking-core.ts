@@ -239,3 +239,62 @@ export function buildCombinationGroup(
   return []; // No valid combination found within this skill window.
 }
 
+// ─────────────────────────────────────────────────────────────
+// EXPORT: rotatedDraft
+// ─────────────────────────────────────────────────────────────
+// Used when all swap paths are exhausted and the same 4 players
+// must play again (forced repeat). Rather than always producing
+// the identical snakeDraft split, this cycles through 3 possible
+// team configurations based on how many times these 4 players
+// have appeared together in recent match history.
+//
+// The 3 splits (sorted DESC by skill: positions [0,1,2,3]):
+//   Split 0 — [0,3] vs [1,2]: highest+lowest vs 2nd+3rd  (snakeDraft default)
+//   Split 1 — [0,1] vs [2,3]: top pair vs bottom pair
+//   Split 2 — [0,2] vs [1,3]: alternating cross-split
+//
+// splitIndex = repeatCount % 3, where repeatCount is the number
+// of recent rosters that contain all 4 of these players. This is
+// derivable from the recentRosters data already in scope at the
+// call site — no extra DB query required.
+//
+// Limitation: recentRosters is bounded by ANTI_REPEAT_LOOKBACK (5),
+// so repeatCount saturates at 5. After 5+ repeats the cycle may
+// stall on split 2. The soft gate limits how often forced repeats
+// occur, so this edge case is rare in practice.
+
+export function rotatedDraft(
+  allFour: ScoredPlayer[],
+  recentRosters: string[][]
+): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } {
+  const sorted = [...allFour].sort(
+    (a, b) => b.skill_level_int - a.skill_level_int
+  );
+
+  // Count recent rosters that contained ALL 4 of these players.
+  const playerIds = allFour.map((p) => p.player_id);
+  const repeatCount = recentRosters.filter((roster) => {
+    const rosterSet = new Set(roster);
+    return playerIds.every((id) => rosterSet.has(id));
+  }).length;
+
+  // Advance the split index one step beyond the last used split so
+  // this match uses a different configuration than the previous one.
+  const splitIndex = repeatCount % 3;
+
+  switch (splitIndex) {
+    case 0:
+      // snakeDraft default: highest+lowest vs 2nd+3rd
+      return { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] };
+    case 1:
+      // Top pair vs bottom pair
+      return { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] };
+    case 2:
+      // Alternating cross-split
+      return { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] };
+    default:
+      // Unreachable — default to snakeDraft
+      return { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] };
+  }
+}
+

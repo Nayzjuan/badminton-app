@@ -365,12 +365,12 @@ describe("runEngineForSession", () => {
   });
 
   it("stops filling when on-deck is already at capacity", async () => {
-    // 2 courts → capacity = courtCount = 2
-    // 2 pending matches already → slotsAvailable = 0 → no match creation
+    // 2 courts → capacity = courtCount + ON_DECK_LOOKAHEAD = 3
+    // 3 pending matches already → slotsAvailable = 0 → no match creation
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null },  // sessions
       { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2)
-      { count: 2, data: null, error: null },                    // pending count = 2 → at capacity
+      { count: 3, data: null, error: null },                    // pending count = 3 → at capacity
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
@@ -399,8 +399,9 @@ describe("runEngineForSession", () => {
     // runEngineForSession returns void — no crash, no rethrow.
     //
     // Queue sequence:
-    //   sessions(ON) → courts(2) → pending(0, need 1 slot) → fetchRecentRosters(empty)
-    //   → v_queue_with_wait_time(4 players) → queue_entries paused(0)
+    //   sessions(ON) → courts(2) → pending(0, need 1 slot)
+    //   → [soft gate] v_queue_with_wait_time(4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8 → gateTimedOut, no active-courts query)
+    //   → fetchRecentRosters(empty) → v_queue_with_wait_time(4 players) → queue_entries paused(0)
     //   → v_recent_pairings(0 pairings for buildOverlapMap)
     //   → rpc fails → engine exits cleanly
     const fourPlayers = Array.from({ length: 4 }, (_, i) => ({
@@ -423,8 +424,9 @@ describe("runEngineForSession", () => {
     const mock = makeMockClient(
       [
         { data: { is_auto_matchmaking_on: true }, error: null },  // sessions
-        { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2 → capacity=1)
+        { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2 → capacity=3)
         { count: 0, data: null, error: null },                    // pending count → 0 (fill 1 slot)
+        { data: fourPlayers, error: null },                       // [soft gate] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases
         { data: [], error: null },                                 // fetchRecentRosters: recent completed → []
         // (match_players not queried — recentMatchIds is empty)
         { data: fourPlayers, error: null },                       // v_queue_with_wait_time → 4 players
@@ -456,7 +458,8 @@ describe("runEngineForSession", () => {
 
 describe("callNextMatch", () => {
   it("returns success when an on-deck match is promoted successfully", async () => {
-    // promoteOnDeckMatchInternal (5 calls) + runEngineInternal (courts[1] + pending at cap[1])
+    // promoteOnDeckMatchInternal (5 calls) + runEngineInternal (courts[1] + pending at cap[2])
+    // 1 court → capacity = courtCount + ON_DECK_LOOKAHEAD = 2; count=2 → slotsAvailable=0 → no fill
     const mock = makeMockClient([
       { data: [MOCK_MATCH], error: null },        // matches fetch
       { data: { id: "match-1" }, error: null },   // matches update (CAS)
@@ -464,7 +467,7 @@ describe("callNextMatch", () => {
       { data: [], error: null },                  // match_players → empty
       { data: [], error: null },                  // profiles → empty
       { data: [{ id: "c1" }], error: null },      // runEngineInternal: courts query
-      { count: 1, data: null, error: null },      // runEngineInternal: pending count → at capacity
+      { count: 2, data: null, error: null },      // runEngineInternal: pending count = 2 → at capacity
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
@@ -477,6 +480,7 @@ describe("callNextMatch", () => {
   it("toggle bypass: after successful promotion, engine runs WITHOUT checking the toggle", async () => {
     // If callNextMatch went through runEngineForSession, it would query "sessions" first.
     // If it calls runEngineInternal directly, the next table after promotion is "courts".
+    // 1 court → capacity = 2; count=2 → slotsAvailable=0 → engine exits after pending check (no gate query).
     const mock = makeMockClient([
       { data: [MOCK_MATCH], error: null },        // matches fetch (promotion)
       { data: { id: "match-1" }, error: null },   // matches update (CAS)
@@ -484,7 +488,7 @@ describe("callNextMatch", () => {
       { data: [], error: null },                  // match_players → empty
       { data: [], error: null },                  // profiles → empty
       { data: [{ id: "c1" }], error: null },      // ← first query AFTER promotion = courts (not sessions)
-      { count: 1, data: null, error: null },      // pending count
+      { count: 2, data: null, error: null },      // pending count = 2 → at capacity (1 court + lookahead)
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 

@@ -42,3 +42,44 @@ export const GAME_PENALTY_MINUTES = 12;
  * Score formula: 1000 + waitMinutes (always > any Normal-queue score).
  */
 export const RED_ZONE_SCORE_FLOOR = 1000;
+
+/**
+ * Soft gate — maximum waiting-pool size that triggers cross-court mixing
+ * deferral in runEngineInternal. When the pool of waiting players is at or
+ * below this count AND at least one match is currently in progress, the
+ * engine holds on-deck generation so that returning players from the active
+ * court can be included in a larger, more diverse scheduling pool.
+ *
+ * Why 4: a pool of exactly 4 means there is only ONE possible combination —
+ * the same players who just finished together. The gate prevents this repeat
+ * by waiting for the active court to also finish, doubling the pool to 8.
+ */
+export const GATE_POOL_THRESHOLD = 4;
+
+/**
+ * Soft gate — minutes a player must wait before the gate releases
+ * automatically. Once any waiting player has been in the queue for this
+ * long, the gate stops holding and schedules from whatever pool is available
+ * (partner rotation then handles variety within the forced group).
+ *
+ * Set below FALLBACK_WAIT_MINUTES (15) so the gate never delays longer than
+ * the time-based fallback that already overrides skill matching.
+ */
+export const GATE_HOLD_MINUTES = 8;
+
+/**
+ * Extra on-deck slots generated beyond the number of open courts.
+ * capacity = courtCount + ON_DECK_LOOKAHEAD
+ *
+ * With the default of 1:
+ *   1 court  → 2 on-deck
+ *   2 courts → 3 on-deck  (was 2 — fixes the 17-player / 2-court scenario)
+ *   3 courts → 4 on-deck
+ *
+ * The lookahead match absorbs the gap between a court finishing and the
+ * engine refilling: even if two courts end almost simultaneously, there is
+ * always a queued match for the second one rather than a brief idle period.
+ * The engine's fill loop already stops gracefully when the pool is exhausted,
+ * so this never creates phantom matches.
+ */
+export const ON_DECK_LOOKAHEAD = 1;

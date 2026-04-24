@@ -33,11 +33,16 @@ import {
   FALLBACK_WAIT_MINUTES,
   ANTI_REPEAT_LOOKBACK,
   RED_ZONE_SCORE_FLOOR,
+  CRITICAL_WAIT_MINUTES,
+  GATE_POOL_THRESHOLD,
+  GATE_HOLD_MINUTES,
+  ON_DECK_LOOKAHEAD,
 } from "@/lib/constants";
 import {
   computePriorityScore,
   isGroupValid,
   snakeDraft,
+  rotatedDraft,
   isDiversityViolation,
   getEffectiveLookback,
   scoreCandidates,
@@ -96,7 +101,9 @@ export async function callNextMatch(
   }
 
   // 3. Toggle ON: run engine now, then retry promotion.
-  await runEngineInternal(supabase, sessionId);
+  // bypassGate=true: organizer explicitly requested a match — don't let the
+  // soft gate defer it. Serve the best available group immediately.
+  await runEngineInternal(supabase, sessionId, true);
   promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
   if (promoted.success) return promoted;
 
@@ -138,12 +145,14 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
 // Capacity-limited on-deck filler.
-// Cap = courtCount: 2 courts → 2 on-deck, 4 courts → 4 on-deck.
+// Cap = courtCount + ON_DECK_LOOKAHEAD (default 1):
+//   2 courts → 3 on-deck, 3 courts → 4 on-deck.
 // Fills slots up to capacity, stopping when queue is exhausted.
 
 async function runEngineInternal(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  sessionId: string
+  sessionId: string,
+  bypassGate = false
 ): Promise<void> {
   const { data: courts, error: courtsErr } = await supabase
     .from("courts")
@@ -162,10 +171,12 @@ async function runEngineInternal(
     return;
   }
 
-  // One on-deck slot per court: 2 courts → 2 on-deck, 3 → 3, etc.
-  // Previous formula (courtCount − 1) capped at 1 for 2-court sessions,
-  // meaning only one match was ever queued. courtCount is the correct target.
-  const capacity = courtCount;
+  // capacity = courts + lookahead: 2 courts → 3 on-deck, 3 courts → 4, etc.
+  // The extra slot means there is always one match queued beyond the number
+  // of active courts, so a second court finishing right after the first
+  // never idles while the engine refills. The fill loop stops gracefully
+  // when the player pool is exhausted, so this never creates phantom matches.
+  const capacity = courtCount + ON_DECK_LOOKAHEAD;
 
   const { count: existingOnDeck, error: deckErr } = await supabase
     .from("matches")
@@ -183,6 +194,52 @@ async function runEngineInternal(
   if (slotsAvailable <= 0) {
     console.log(`[engine] runEngineInternal: on-deck at capacity (${existingOnDeck}/${capacity}) — skipping`);
     return;
+  }
+
+  // ── Soft gate: defer on-deck when pool is too small for cross-court mixing ──
+  // When only GATE_POOL_THRESHOLD (4) or fewer players are waiting AND at least
+  // one match is still active, hold on-deck generation so that the players
+  // currently playing will return to the queue and enable a larger, more diverse
+  // scheduling pool (avoids the "same 4 cycle" problem).
+  //
+  // Gate releases automatically when:
+  //   a) Any waiting player has queued ≥ GATE_HOLD_MINUTES (timeout — player
+  //      has waited long enough; schedule from whatever is available)
+  //   b) Any waiting player is in the Red Zone (≥ CRITICAL_WAIT_MINUTES)
+  //   c) No active matches exist (nothing to wait for)
+  //   d) bypassGate = true (organizer explicitly called "Call Next Match")
+  if (!bypassGate) {
+    const { data: waitingRows, error: waitErr } = await supabase
+      .from("v_queue_with_wait_time")
+      .select("wait_minutes")
+      .eq("session_id", sessionId)
+      .eq("status", "waiting");
+
+    if (!waitErr && waitingRows) {
+      const waitingCount = waitingRows.length;
+      if (waitingCount > 0 && waitingCount <= GATE_POOL_THRESHOLD) {
+        const maxWait = Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0));
+        const hasRedZone  = maxWait >= CRITICAL_WAIT_MINUTES;
+        const gateTimedOut = maxWait >= GATE_HOLD_MINUTES;
+
+        if (!hasRedZone && !gateTimedOut) {
+          const { count: activeCount, error: activeErr } = await supabase
+            .from("matches")
+            .select("id", { count: "exact", head: true })
+            .eq("session_id", sessionId)
+            .eq("status", "in_progress");
+
+          if (!activeErr && (activeCount ?? 0) > 0) {
+            console.log(
+              `[engine] Soft gate active: pool=${waitingCount} ≤ ${GATE_POOL_THRESHOLD}, ` +
+              `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
+              `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
+            );
+            return;
+          }
+        }
+      }
+    }
   }
 
   // Pre-fetch recent rosters once for the entire fill loop.
@@ -495,32 +552,78 @@ async function runAlgorithm(
           }
           // Fall through to executeMatch with the original group.
         } else {
-          // Keep the top 2 companions; try replacing the 3rd.
+          // ── Tier 1: primary swap within current skill window ──────────
+          // Keep the top 2 companions; try replacing the 3rd with a fresh
+          // candidate from the same ±maxVariance eligible pool.
           const fixedTwo = group.slice(0, 2);
           const alreadyInGroup = new Set(group.map((g) => g.player_id));
           const swapPool = scored.filter(
             ({ candidate }) => !alreadyInGroup.has(candidate.player_id)
           );
 
-          let diverseSwapFound = false;
           for (const { candidate } of swapPool) {
             const swapGroup = [...fixedTwo, candidate];
             if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
 
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (!isDiversityViolation(swappedIds, activeRosters)) {
-              diverseSwapFound = true;
               if (process.env.DEBUG_MATCHMAKING === "true") {
-                console.log(`[matchmaking] Swap succeeded — replaced with ${candidate.display_name}`);
+                console.log(`[matchmaking] Tier-1 swap succeeded — replaced with ${candidate.display_name}`);
               }
               const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
-              return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
+              // Inherit isMixed from the current window — swap doesn't change
+              // the skill spread, only the 3rd companion.
+              const isMixedSwap = maxVariance > SKILL_VARIANCE_MAX;
+              return executeMatch(supabase, sessionId, courtId, teamA, teamB, isMixedSwap, isOnDeck);
             }
           }
 
-          if (!diverseSwapFound) {
-            console.warn("[matchmaking] No diverse swap found — accepting repeat group (critical fallback)");
+          // ── Tier 2: expanded swap at ±SKILL_VARIANCE_MAX ──────────────
+          // Primary pool was exhausted (swapPool empty or all repeat).
+          // Pull candidates from the wider ±SKILL_VARIANCE_MAX window that
+          // aren't already in the proposed group. This breaks tier isolation
+          // (e.g. an advanced player whose only ±1 partners have all played
+          // together can now reach intermediate-tier players at ±2).
+          // Only attempted when currently at a narrower window (maxVariance < MAX).
+          if (swapPool.length === 0 && maxVariance < SKILL_VARIANCE_MAX) {
+            const widerEligible = candidates.filter(
+              (c) =>
+                Math.abs(c.skill_level_int - anchorSkill) <= SKILL_VARIANCE_MAX &&
+                !alreadyInGroup.has(c.player_id)
+            );
+
+            if (widerEligible.length > 0) {
+              const widerScored = scoreCandidates(widerEligible, overlapMap);
+              for (const { candidate } of widerScored) {
+                const swapGroup = [...fixedTwo, candidate];
+                if (!isGroupValid([anchor, ...swapGroup], SKILL_VARIANCE_MAX)) continue;
+
+                const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
+                if (!isDiversityViolation(swappedIds, activeRosters)) {
+                  if (process.env.DEBUG_MATCHMAKING === "true") {
+                    console.log(
+                      `[matchmaking] Tier-2 expanded swap (±${SKILL_VARIANCE_MAX}) — replaced with ${candidate.display_name}`
+                    );
+                  }
+                  const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
+                  // ±SKILL_VARIANCE_MAX is still within normal parameters (not mixed).
+                  return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
+                }
+              }
+            }
           }
+
+          // ── Tier 3: partner rotation ───────────────────────────────────
+          // All swap paths exhausted — the same 4 players must play again.
+          // rotatedDraft cycles through 3 team-split configurations so that
+          // partners change on each forced repeat, providing variety even
+          // when the opponent group cannot be changed.
+          console.warn(
+            "[matchmaking] No diverse swap found — applying partner rotation (forced repeat)"
+          );
+          const isMixedRotation = maxVariance > SKILL_VARIANCE_MAX;
+          const { teamA, teamB } = rotatedDraft([anchor, ...group], recentRosters);
+          return executeMatch(supabase, sessionId, courtId, teamA, teamB, isMixedRotation, isOnDeck);
         }
       }
 
