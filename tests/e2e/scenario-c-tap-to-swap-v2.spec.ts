@@ -467,10 +467,16 @@ test.describe("Tap-to-Swap v2 — [I] Undo", () => {
       // Click Undo
       await toast.getByRole("button", { name: "Undo" }).click();
 
-      // Alice should be back in match 1
+      // Wait for "Swap undone." confirmation toast — this fires only after the
+      // server action resolves, so it's the reliable gate before the DB check.
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: "Swap undone" })
+      ).toBeVisible({ timeout: 10_000 });
+
+      // Alice's pill should now be back in match 1's court card
       await expect(
         page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
-      ).toBeVisible({ timeout: 10_000 });
+      ).toBeVisible({ timeout: 5_000 });
 
       // ── DB: Alice back in match 1 ─────────────────────────
       const { data: m1Players } = await db
