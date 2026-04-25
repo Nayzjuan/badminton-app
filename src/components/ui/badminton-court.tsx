@@ -131,17 +131,20 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
   const pillContent = (
     <>
       <span
-        className="inline-block max-w-[9rem] truncate rounded-full px-4 py-2 text-sm font-bold shadow-md
+        className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold shadow-md
                    bg-white text-slate-900 shadow-black/15
                    dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
                    dark:ring-1 dark:ring-[hsl(var(--court-lime-hsl))]/30"
         title={player.display_name}
       >
-        {player.display_name}
+        <span className="max-w-[7rem] truncate">{player.display_name}</span>
+        {player.vip_tag && player.vip_theme && (
+          <>
+            <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">|</span>
+            <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
+          </>
+        )}
       </span>
-      {player.vip_tag && player.vip_theme && (
-        <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
-      )}
       <SkillBadge
         level={player.skill_level}
         className="!bg-white/20 !text-white/90 dark:!bg-[hsl(var(--court-cyan-hsl))]/10 dark:!text-[hsl(var(--court-cyan-hsl))] text-[10px] backdrop-blur-sm"
@@ -167,9 +170,9 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                    rounded-full transition-transform active:scale-95
                    focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
       >
-        {/* Name pill — swap icon always visible */}
+        {/* Name pill — VIP tag inline, swap icon at the end */}
         <span
-          className="relative inline-flex items-center gap-1.5 max-w-[9rem] rounded-full px-3 py-2
+          className="relative inline-flex items-center gap-1.5 rounded-full px-3 py-2
                      text-sm font-bold shadow-md
                      bg-white text-slate-900 shadow-black/15
                      dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
@@ -180,17 +183,19 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                      transition-all duration-150"
           title={player.display_name}
         >
-          <span className="min-w-0 truncate">{player.display_name}</span>
+          <span className="min-w-0 max-w-[6rem] truncate">{player.display_name}</span>
+          {player.vip_tag && player.vip_theme && (
+            <>
+              <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">|</span>
+              <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
+            </>
+          )}
           <ArrowLeftRight
             className="h-3 w-3 shrink-0 opacity-50 group-hover:opacity-80
                        transition-opacity duration-150 text-slate-400
                        dark:text-[hsl(var(--court-lime-hsl))]"
           />
         </span>
-
-        {player.vip_tag && player.vip_theme && (
-          <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
-        )}
 
         <SkillBadge
           level={player.skill_level}
