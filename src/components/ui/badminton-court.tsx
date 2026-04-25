@@ -10,6 +10,10 @@
 // Light mode: Rich emerald green court surface.
 // Dark mode:  Vantablack/near-black surface (hsl(0 0% 2%)),
 //             neon-cyan court lines, glowing neon-lime player pills.
+//
+// Team identity: Team A = sky-blue dot, Team B = amber dot.
+// Each pill carries a small colored circle so teammates are
+// visually grouped at a glance even across the VS divider.
 // ============================================================
 
 import { ArrowLeftRight } from "lucide-react";
@@ -57,8 +61,8 @@ export function BadmintonCourt({
       <div className="absolute inset-x-4 bottom-1/4 border-t border-white/20 dark:border-[hsl(var(--court-cyan-hsl))]/25" />
       <div className="absolute inset-y-4 left-1/2 border-l border-white/15 dark:border-[hsl(180_100%_70%)]/20" />
 
-      {/* ── Team A (top half) ──────────────────────────────── */}
-      <div className="relative px-4 pt-5 pb-4">
+      {/* ── Team A (top half) — sky-blue identity ──────────── */}
+      <div className="relative px-4 pt-5 pb-4 bg-sky-400/[0.07]">
         <p className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
                       text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
           Team A
@@ -68,6 +72,7 @@ export function BadmintonCourt({
             <PlayerPill
               key={p.player_id}
               player={p}
+              team="a"
               onPlayerClick={onPlayerClick ? (pl) => onPlayerClick(pl, "a") : undefined}
             />
           ))}
@@ -86,8 +91,8 @@ export function BadmintonCourt({
         <div className="flex-1 border-t border-dashed border-white/25 dark:border-[hsl(var(--court-cyan-hsl))]/40" />
       </div>
 
-      {/* ── Team B (bottom half) ───────────────────────────── */}
-      <div className="relative px-4 pt-4 pb-5">
+      {/* ── Team B (bottom half) — amber identity ──────────── */}
+      <div className="relative px-4 pt-4 pb-5 bg-amber-400/[0.07]">
         <p className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
                       text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
           Team B
@@ -97,6 +102,7 @@ export function BadmintonCourt({
             <PlayerPill
               key={p.player_id}
               player={p}
+              team="b"
               onPlayerClick={onPlayerClick ? (pl) => onPlayerClick(pl, "b") : undefined}
             />
           ))}
@@ -111,6 +117,10 @@ export function BadmintonCourt({
 // Light: white bubble, dark text
 // Dark:  near-transparent dark bubble, neon-lime glowing name
 //
+// Team identity dot: sky-blue for team A, amber for team B.
+// Sits at the leading edge of the pill so teammates share a
+// consistent color cue regardless of name length or VIP tag.
+//
 // When onPlayerClick is provided (on-deck cards) the pill becomes
 // an interactive button. The swap icon (ArrowLeftRight) is always
 // visible at 50% opacity, rising to 80% on hover — no hidden gap.
@@ -124,19 +134,33 @@ export function BadmintonCourt({
 
 interface PlayerPillProps {
   player: PlayerInfo;
+  team: "a" | "b";
   onPlayerClick?: (player: PlayerInfo) => void;
 }
 
-function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
+function PlayerPill({ player, team, onPlayerClick }: PlayerPillProps) {
+  const teamDot = (
+    <span
+      aria-hidden
+      className={[
+        "inline-block h-2 w-2 shrink-0 rounded-full",
+        team === "a"
+          ? "bg-sky-400 dark:bg-sky-400"
+          : "bg-amber-400 dark:bg-amber-400",
+      ].join(" ")}
+    />
+  );
+
   const pillContent = (
     <>
       <span
-        className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold shadow-md
+        className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-bold shadow-md
                    bg-white text-slate-900 shadow-black/15
                    dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
                    dark:ring-1 dark:ring-[hsl(var(--court-lime-hsl))]/30"
         title={player.display_name}
       >
+        {teamDot}
         <span className="max-w-[7rem] truncate">{player.display_name}</span>
         {player.vip_tag && player.vip_theme && (
           <>
@@ -170,7 +194,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                    rounded-full transition-transform active:scale-95
                    focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
       >
-        {/* Name pill — VIP tag inline, swap icon at the end */}
+        {/* Name pill — team dot leading, VIP tag inline, swap icon trailing */}
         <span
           className="relative inline-flex items-center gap-1.5 rounded-full px-3 py-2
                      text-sm font-bold shadow-md
@@ -183,6 +207,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                      transition-all duration-150"
           title={player.display_name}
         >
+          {teamDot}
           <span className="min-w-0 max-w-[6rem] truncate">{player.display_name}</span>
           {player.vip_tag && player.vip_theme && (
             <>
