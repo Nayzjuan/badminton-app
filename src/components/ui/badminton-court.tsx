@@ -131,10 +131,11 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
   const pillContent = (
     <>
       <span
-        className="rounded-full px-4 py-2 text-sm font-bold shadow-md
+        className="inline-block max-w-[9rem] truncate rounded-full px-4 py-2 text-sm font-bold shadow-md
                    bg-white text-slate-900 shadow-black/15
                    dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
                    dark:ring-1 dark:ring-[hsl(var(--court-lime-hsl))]/30"
+        title={player.display_name}
       >
         {player.display_name}
       </span>
@@ -168,7 +169,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
       >
         {/* Name pill — swap icon always visible */}
         <span
-          className="relative inline-flex items-center gap-1.5 rounded-full px-3 py-2
+          className="relative inline-flex items-center gap-1.5 max-w-[9rem] rounded-full px-3 py-2
                      text-sm font-bold shadow-md
                      bg-white text-slate-900 shadow-black/15
                      dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
@@ -177,8 +178,9 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                      group-hover:ring-2 group-hover:ring-slate-300
                      dark:group-hover:ring-[hsl(var(--court-lime-hsl))]/50
                      transition-all duration-150"
+          title={player.display_name}
         >
-          {player.display_name}
+          <span className="min-w-0 truncate">{player.display_name}</span>
           <ArrowLeftRight
             className="h-3 w-3 shrink-0 opacity-50 group-hover:opacity-80
                        transition-opacity duration-150 text-slate-400
