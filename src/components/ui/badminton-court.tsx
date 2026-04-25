@@ -131,13 +131,13 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
   const pillContent = (
     <>
       <span
-        className="flex w-full items-center justify-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold shadow-md
+        className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-bold shadow-md
                    bg-white text-slate-900 shadow-black/15
                    dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
                    dark:ring-1 dark:ring-[hsl(var(--court-lime-hsl))]/30"
         title={player.display_name}
       >
-        <span className="min-w-0 truncate">{player.display_name}</span>
+        <span className="max-w-[7rem] truncate">{player.display_name}</span>
         {player.vip_tag && player.vip_theme && (
           <>
             <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">|</span>
@@ -153,11 +153,11 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
   );
 
   if (!onPlayerClick) {
-    return <div className="flex w-full flex-col items-center gap-1">{pillContent}</div>;
+    return <div className="flex flex-col items-center gap-1">{pillContent}</div>;
   }
 
   return (
-    <div className="flex w-full flex-col items-center gap-1 group">
+    <div className="flex flex-col items-center gap-1 group">
       <button
         // ── dnd-kit isolation: Defense 1 (hard stop) ──────────
         onPointerDown={(e) => e.stopPropagation()}
@@ -166,13 +166,13 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
         data-testid={`player-pill-${player.player_id}`}
         onClick={() => onPlayerClick(player)}
         aria-label={`Swap ${player.display_name}`}
-        className="relative flex w-full flex-col items-center gap-1
+        className="relative flex flex-col items-center gap-1
                    rounded-full transition-transform active:scale-95
                    focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
       >
         {/* Name pill — VIP tag inline, swap icon at the end */}
         <span
-          className="relative flex w-full items-center gap-1.5 rounded-full px-3 py-2
+          className="relative inline-flex items-center gap-1.5 rounded-full px-3 py-2
                      text-sm font-bold shadow-md
                      bg-white text-slate-900 shadow-black/15
                      dark:bg-black/60 dark:text-[hsl(var(--court-lime-hsl))]
@@ -183,7 +183,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
                      transition-all duration-150"
           title={player.display_name}
         >
-          <span className="min-w-0 flex-1 truncate">{player.display_name}</span>
+          <span className="min-w-0 max-w-[6rem] truncate">{player.display_name}</span>
           {player.vip_tag && player.vip_theme && (
             <>
               <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">|</span>
