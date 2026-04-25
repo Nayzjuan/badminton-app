@@ -141,7 +141,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
         {player.vip_tag && player.vip_theme && (
           <>
             <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">|</span>
-            <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
+            <VipTag tag={player.vip_tag} theme={player.vip_theme} />
           </>
         )}
       </span>
@@ -187,7 +187,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
           {player.vip_tag && player.vip_theme && (
             <>
               <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">|</span>
-              <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
+              <VipTag tag={player.vip_tag} theme={player.vip_theme} />
             </>
           )}
           <ArrowLeftRight
