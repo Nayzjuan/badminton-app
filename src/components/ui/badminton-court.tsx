@@ -62,7 +62,7 @@ export function BadmintonCourt({
       <div className="absolute inset-y-4 left-1/2 border-l border-white/15 dark:border-[hsl(180_100%_70%)]/20" />
 
       {/* ── Team A (top half) — sky-blue identity ──────────── */}
-      <div className="relative px-4 pt-5 pb-4 bg-sky-400/[0.07]">
+      <div className="relative px-4 pt-5 pb-4">
         <p className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
                       text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
           Team A
@@ -92,7 +92,7 @@ export function BadmintonCourt({
       </div>
 
       {/* ── Team B (bottom half) — amber identity ──────────── */}
-      <div className="relative px-4 pt-4 pb-5 bg-amber-400/[0.07]">
+      <div className="relative px-4 pt-4 pb-5">
         <p className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
                       text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
           Team B
