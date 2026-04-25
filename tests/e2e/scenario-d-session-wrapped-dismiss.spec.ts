@@ -343,11 +343,11 @@ test.describe("Wrapped Dismiss — [G] /play redirect → lobby when already dis
     try {
       await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
 
-      // Should NOT redirect to wrapped — should land on /play
-      await page.waitForURL(/\/play($|\?)/, { timeout: 10_000 });
-
-      // Confirm we are NOT on the /wrapped route
-      expect(page.url()).not.toContain("/wrapped");
+      // The server redirects to /play, which may itself auto-forward to
+      // /play/[some-other-active-session-id]. Either way, the player must
+      // NOT be sent to the wrapped page for this already-dismissed session.
+      await page.waitForURL(/\/play/, { timeout: 10_000 });
+      expect(page.url()).not.toContain(`/wrapped/${SESSION_ID}`);
     } finally {
       await context.close();
     }
