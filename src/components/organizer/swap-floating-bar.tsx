@@ -51,10 +51,13 @@ export function SwapFloatingBar({
       data-testid="swap-floating-bar"
       aria-label={`Swap mode active. ${playerName} from ${teamLabel(team)} selected. Tap another player to swap, or pick from bench.`}
       className={[
-        // Positioning: fixed bottom-center, above any bottom nav
-        "fixed bottom-5 left-1/2 -translate-x-1/2 z-50",
-        // Layout
-        "flex items-center gap-3 rounded-2xl px-4 py-3",
+        // Positioning: fixed bottom-center, clears the 48px PwaNavBar + iOS safe-area.
+        // 3rem base = PwaNavBar h-12; env() adds notch/home-indicator clearance.
+        // z-[110] beats PwaNavBar's z-[100] so the pill always floats on top.
+        "fixed left-1/2 -translate-x-1/2 z-[110]",
+        "[bottom:calc(3rem+max(1rem,env(safe-area-inset-bottom,0px)))]",
+        // Layout — extra vertical padding so text is never clipped
+        "flex items-center gap-3 rounded-2xl px-4 py-3.5",
         // Visuals: amber pill with subtle shadow
         "bg-amber-50 dark:bg-amber-950/90",
         "border border-amber-300 dark:border-amber-700",

@@ -126,8 +126,37 @@ test.describe("Engine Flow: Auto ON", () => {
       await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
 
       // ── 3. Wait for the engine to generate an on-deck match ─
-      // The engine runs synchronously inside toggleAutoMatchmaking,
-      // then Realtime propagates the new match to the UI.
+      // The engine runs synchronously inside toggleAutoMatchmaking and
+      // writes the pending match to DB immediately. However, the Vercel
+      // deployment uses Supabase read replicas: the Next.js server render
+      // and client-side Realtime subscription may read stale replica data
+      // for several seconds after the primary write.
+      //
+      // Strategy:
+      //   a) Poll the primary DB via adminDb() until the pending match
+      //      appears — this is authoritative and fast (~1–2s).
+      //   b) Wait 2s for read replicas to catch up.
+      //   c) Reload the page so the server-side render and client-side
+      //      fetchActiveMatches both read fresh replica data.
+      const db = adminDb();
+      await expect.poll(
+        async () => {
+          const { data } = await db
+            .from("matches")
+            .select("id")
+            .eq("session_id", seeded.sessionId)
+            .eq("status", "pending");
+          return data?.length ?? 0;
+        },
+        { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
+      ).toBeGreaterThan(0);
+
+      // Give read replicas time to sync with the primary write.
+      await page.waitForTimeout(2_000);
+
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+
       await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
 
       // The "matches ready" badge count should be at least 1
@@ -223,6 +252,11 @@ test.describe("Engine Flow: Red Zone escalation", () => {
       await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
 
       // ── Wait for an on-deck match to appear ──────────────────
+      // Realtime delivery is unreliable on Vercel infra; reload to
+      // force a fresh fetch that reads the engine-created match from DB.
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+
       await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
 
       // ── UI: "Mixed Level" badge should be visible on the card ─

@@ -15,9 +15,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MatchTimer } from "@/components/ui/match-timer";
+import { VipTag } from "@/components/ui/vip-tag";
 import { getTvData } from "@/app/actions/tv";
 import type { TvMatch, TvSession } from "@/app/actions/tv";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import type { SkillLevel } from "@/types/database";
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -174,22 +176,22 @@ function TvCourtCard({ match }: { match: TvMatch }) {
   const teamB = match.players.filter((p) => p.team === "b");
 
   return (
-    <div className="rounded-2xl bg-white dark:bg-card shadow-md overflow-hidden">
+    <div
+      className="rounded-2xl overflow-hidden shadow-md"
+      style={{
+        background: "#0D1B2A",
+        boxShadow: "0 0 0 1px rgba(16,185,129,0.3), 0 0 32px rgba(16,185,129,0.1)",
+      }}
+    >
       {/* Card header */}
-      <div
-        className="flex items-center gap-3 px-6 py-4
-                   bg-slate-50 dark:bg-muted/50
-                   border-b border-slate-100 dark:border-border"
-      >
-        <h3 className="text-2xl font-black text-gray-900 dark:text-foreground">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+        <h3 className="text-2xl font-black text-white">
           {match.court_name ?? "Court"}
         </h3>
         <span
           className="shrink-0 rounded-full border px-3 py-0.5
                      text-xs font-bold uppercase tracking-widest
-                     bg-blue-600 text-white border-blue-700
-                     dark:bg-[hsl(220_100%_58%)] dark:border-[hsl(220_100%_65%)]
-                     dark:shadow-[0_0_8px_hsl(220_100%_60%/0.4)]"
+                     bg-emerald-500/20 border-emerald-500/40 text-emerald-300"
         >
           In Progress
         </span>
@@ -204,10 +206,8 @@ function TvCourtCard({ match }: { match: TvMatch }) {
         {match.is_mixed_level && <MixedLevelBadge />}
       </div>
 
-      {/* TV court graphic */}
-      <div className="p-4">
-        <TvBadmintonCourt teamA={teamA} teamB={teamB} />
-      </div>
+      {/* TV roster grid — dark variant */}
+      <TvTeamsGrid teamA={teamA} teamB={teamB} dark />
     </div>
   );
 }
@@ -224,14 +224,14 @@ function TvOnDeckCard({ match, index }: { match: TvMatch; index: number }) {
   return (
     <div
       className="rounded-2xl overflow-hidden shadow-sm
-                 border border-amber-100 dark:border-amber-900/40
+                 border border-amber-100 dark:border-amber-500/20
                  bg-white dark:bg-card"
     >
       {/* Card header */}
       <div
         className="flex items-center justify-between px-5 py-3
-                   bg-amber-50/70 dark:bg-amber-900/20
-                   border-b border-amber-100 dark:border-amber-900/40"
+                   bg-amber-50/70 dark:bg-amber-500/10
+                   border-b border-amber-100 dark:border-amber-500/20"
       >
         <div className="flex items-center gap-3">
           <span className="text-xl font-bold text-amber-900 dark:text-amber-300">
@@ -246,10 +246,8 @@ function TvOnDeckCard({ match, index }: { match: TvMatch; index: number }) {
         </span>
       </div>
 
-      {/* TV court graphic */}
-      <div className="p-4">
-        <TvBadmintonCourt teamA={teamA} teamB={teamB} />
-      </div>
+      {/* TV roster grid — light variant */}
+      <TvTeamsGrid teamA={teamA} teamB={teamB} />
 
       {/* Footer hint */}
       <div
@@ -264,91 +262,175 @@ function TvOnDeckCard({ match, index }: { match: TvMatch; index: number }) {
   );
 }
 
-// ─── TV-Sized Badminton Court Graphic ─────────────────────────
-// Identical structure to BadmintonCourt but with larger fonts
-// and padding for long-distance TV legibility.
+// ─── TV-Scale Teams Grid ──────────────────────────────────────
+// Mirrors the 3-column CSS-grid layout of TeamsGrid in
+// match-roster.tsx but scaled up for long-distance TV legibility
+// (text-xl names, h-12 VS badge, larger row padding).
 
 interface TvPlayerInfo {
   player_id: string;
   display_name: string;
+  skill_level: SkillLevel;
+  vip_tag: string | null;
+  vip_theme: string | null;
 }
 
-function TvBadmintonCourt({
+// Skill bucket → dot + abbreviation (same 3-tier mapping as match-roster.tsx)
+type SkillBucket = "beginner" | "intermediate" | "advanced";
+function getSkillBucket(level: SkillLevel): SkillBucket {
+  if (level === "beginner") return "beginner";
+  if (level === "lower_advanced" || level === "advanced") return "advanced";
+  return "intermediate";
+}
+const TV_SKILL_CONFIG: Record<SkillBucket, { dot: string; abbr: string }> = {
+  beginner:     { dot: "bg-emerald-500", abbr: "Beg" },
+  intermediate: { dot: "bg-sky-500",     abbr: "Int" },
+  advanced:     { dot: "bg-violet-500",  abbr: "Adv" },
+};
+
+function TvTeamsGrid({
   teamA,
   teamB,
+  dark,
 }: {
   teamA: TvPlayerInfo[];
   teamB: TvPlayerInfo[];
+  dark?: boolean;
 }) {
+  const a0 = teamA[0];
+  const a1 = teamA[1];
+  const b0 = teamB[0];
+  const b1 = teamB[1];
+
+  if (!a0 || !a1 || !b0 || !b1) return null;
+
   return (
     <div
-      className="relative rounded-xl overflow-hidden
-                 bg-emerald-700 dark:bg-[hsl(0_0%_2%)]
-                 ring-[3px] ring-inset ring-white/70 dark:ring-[hsl(180_100%_70%)]/70"
+      className="grid gap-y-3 px-4 py-4"
+      style={{ gridTemplateColumns: "1fr 64px 1fr" }}
     >
-      {/* Service line markings */}
-      <div className="absolute inset-x-4 top-1/4 border-t border-white/20 dark:border-[hsl(180_100%_70%)]/25" />
-      <div className="absolute inset-x-4 bottom-1/4 border-t border-white/20 dark:border-[hsl(180_100%_70%)]/25" />
-      <div className="absolute inset-y-4 left-1/2 border-l border-white/15 dark:border-[hsl(180_100%_70%)]/20" />
-
-      {/* Team A */}
-      <div className="relative px-6 pt-8 pb-6">
-        <p
-          className="mb-4 text-center text-[11px] font-black uppercase tracking-[0.25em]
-                     text-white/50 dark:text-[hsl(180_100%_70%)]/60"
+      {/* Row 1 — column labels */}
+      <div style={{ gridColumn: 1, gridRow: 1 }}>
+        <span
+          className={`text-[10px] font-black uppercase tracking-widest ${
+            dark ? "text-sky-400/70" : "text-sky-600 dark:text-sky-400"
+          }`}
         >
           Team A
-        </p>
-        <div className="flex items-center justify-center gap-4 flex-wrap">
-          {teamA.map((p) => (
-            <TvPlayerPill key={p.player_id} name={p.display_name} />
-          ))}
-        </div>
-      </div>
-
-      {/* Net */}
-      <div className="relative flex items-center px-4">
-        <div className="flex-1 border-t-[3px] border-dashed border-white/60 dark:border-[hsl(180_100%_70%)]" />
-        <span
-          className="mx-3 flex h-8 w-8 shrink-0 items-center justify-center rounded-full
-                     text-xs font-black backdrop-blur-sm
-                     bg-white/20 dark:bg-[hsl(180_100%_50%)]/15
-                     text-white/80 dark:text-[hsl(180_100%_70%)]"
-        >
-          VS
         </span>
-        <div className="flex-1 border-t-[3px] border-dashed border-white/60 dark:border-[hsl(180_100%_70%)]" />
       </div>
-
-      {/* Team B */}
-      <div className="relative px-6 pt-6 pb-8">
-        <p
-          className="mb-4 text-center text-[11px] font-black uppercase tracking-[0.25em]
-                     text-white/50 dark:text-[hsl(180_100%_70%)]/60"
+      <div style={{ gridColumn: 2, gridRow: 1 }} aria-hidden="true" />
+      <div style={{ gridColumn: 3, gridRow: 1 }} className="text-right">
+        <span
+          className={`text-[10px] font-black uppercase tracking-widest ${
+            dark ? "text-amber-400/70" : "text-amber-600 dark:text-amber-400"
+          }`}
         >
           Team B
-        </p>
-        <div className="flex items-center justify-center gap-4 flex-wrap">
-          {teamB.map((p) => (
-            <TvPlayerPill key={p.player_id} name={p.display_name} />
-          ))}
+        </span>
+      </div>
+
+      {/* VS badge — col 2, spans rows 2–3 */}
+      <div
+        style={{ gridColumn: 2, gridRow: "2 / span 2" }}
+        className="flex items-center justify-center"
+      >
+        <div
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${
+            dark
+              ? "bg-emerald-500/20 ring-1 ring-emerald-500/40"
+              : "bg-white dark:bg-white/10 ring-1 ring-slate-200 dark:ring-white/20 shadow-sm dark:shadow-none"
+          }`}
+          aria-hidden="true"
+        >
+          <span
+            className={`text-xs font-black tracking-tight ${
+              dark ? "text-emerald-400" : "text-slate-400 dark:text-white/50"
+            }`}
+          >
+            VS
+          </span>
         </div>
+      </div>
+
+      {/* Row 2 — first player pair */}
+      <div style={{ gridColumn: 1, gridRow: 2 }}>
+        <TvPlayerRow player={a0} dark={dark} teamColor="text-sky-200" />
+      </div>
+      <div style={{ gridColumn: 3, gridRow: 2 }}>
+        <TvPlayerRow player={b0} dark={dark} teamColor="text-amber-200" />
+      </div>
+
+      {/* Row 3 — second player pair */}
+      <div style={{ gridColumn: 1, gridRow: 3 }}>
+        <TvPlayerRow player={a1} dark={dark} teamColor="text-sky-200" />
+      </div>
+      <div style={{ gridColumn: 3, gridRow: 3 }}>
+        <TvPlayerRow player={b1} dark={dark} teamColor="text-amber-200" />
       </div>
     </div>
   );
 }
 
-function TvPlayerPill({ name }: { name: string }) {
+function TvPlayerRow({
+  player,
+  dark,
+  teamColor,
+}: {
+  player: TvPlayerInfo;
+  dark?: boolean;
+  teamColor: string;
+}) {
+  const hasTag = !!(player.vip_tag && player.vip_theme);
+  const { dot, abbr } = TV_SKILL_CONFIG[getSkillBucket(player.skill_level)];
+
   return (
-    <span
-      className="rounded-full px-6 py-3 text-xl font-bold shadow-md
-                 bg-white text-slate-900 shadow-black/20
-                 dark:bg-black/60 dark:text-[hsl(80_100%_60%)]
-                 dark:[text-shadow:0_0_12px_hsl(80_100%_60%/0.7)]
-                 dark:ring-1 dark:ring-[hsl(80_100%_60%)]/30"
+    <div
+      className={`w-full rounded-xl px-4 py-3 transition-colors ${
+        dark ? "hover:bg-white/5" : "bg-slate-100/70 dark:bg-white/[0.06]"
+      }`}
+      style={dark ? { background: "rgba(255,255,255,0.04)" } : undefined}
     >
-      {name}
-    </span>
+      {/* Line 1 — name + optional VIP tag */}
+      <div className="flex items-center gap-2 overflow-hidden">
+        <span
+          className={`shrink min-w-0 truncate text-xl font-bold leading-tight ${
+            dark ? teamColor : "text-slate-800 dark:text-slate-100"
+          }`}
+        >
+          {player.display_name}
+        </span>
+        {hasTag && (
+          <>
+            <span
+              className={`shrink-0 text-sm leading-none select-none ${
+                dark ? "text-white/25" : "text-slate-300 dark:text-white/20"
+              }`}
+              aria-hidden="true"
+            >
+              |
+            </span>
+            <span className="shrink-0 leading-none">
+              <VipTag tag={player.vip_tag!} theme={player.vip_theme!} />
+            </span>
+          </>
+        )}
+      </div>
+      {/* Line 2 — skill dot */}
+      <div className="mt-1.5 flex items-center gap-1.5" aria-label={player.skill_level}>
+        <span
+          className={`h-2 w-2 rounded-full shrink-0 ${dot} ${dark ? "opacity-80" : ""}`}
+          aria-hidden="true"
+        />
+        <span
+          className={`text-[9px] font-bold uppercase tracking-wide leading-none ${
+            dark ? "text-white/40" : "text-slate-500 dark:text-slate-400"
+          }`}
+        >
+          {abbr}
+        </span>
+      </div>
+    </div>
   );
 }
 

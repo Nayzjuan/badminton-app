@@ -111,7 +111,15 @@ test.describe("Tap-to-Swap — Happy Path", () => {
       await expect(alicePill).toBeVisible({ timeout: 5_000 });
       await alicePill.click();
 
-      // ── 4. Assert SwapSheet is open ─────────────────────────
+      // ── 4. v2: picking mode → floating bar → open SwapSheet ──
+      // Tap-to-Swap v2: first tap enters picking mode (floating amber bar).
+      // "Pick from Bench" opens the legacy SwapSheet dialog.
+      await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
+      await page.getByTestId("swap-floating-bar")
+        .getByRole("button", { name: "Pick from Bench" })
+        .click();
+
+      // ── 5. Assert SwapSheet is open ─────────────────────────
       // The sheet's title is "Swap Player"
       await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
       await expect(page.getByText("Swap Player")).toBeVisible();
@@ -121,7 +129,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
       // pill (which also contains "E2E_Alice") still visible in the background.
       await expect(page.getByRole("dialog").getByText("E2E_Alice")).toBeVisible();
 
-      // ── 5. Eve should appear as an available candidate ──────
+      // ── 6. Eve should appear as an available candidate ──────
       const eveCandidate = page.locator(
         `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
       );
@@ -136,11 +144,11 @@ test.describe("Tap-to-Swap — Happy Path", () => {
         page.locator(`[data-testid="swap-candidate-${seeded.players.bob.userId}"]`)
       ).not.toBeVisible();
 
-      // ── 6. Confirm button disabled before selection ─────────
+      // ── 7. Confirm button disabled before selection ─────────
       const confirmBtn = page.locator('[data-testid="swap-confirm"]');
       await expect(confirmBtn).toBeDisabled();
 
-      // ── 7. Select Eve ───────────────────────────────────────
+      // ── 8. Select Eve ───────────────────────────────────────
       await eveCandidate.click();
 
       // Confirm button should now be enabled
@@ -149,10 +157,10 @@ test.describe("Tap-to-Swap — Happy Path", () => {
       // No mismatch warning (all players are intermediate)
       await expect(page.getByText("mixed-level match")).not.toBeVisible();
 
-      // ── 8. Confirm the swap ─────────────────────────────────
+      // ── 9. Confirm the swap ─────────────────────────────────
       await confirmBtn.click();
 
-      // ── 9. UI assertions post-swap ──────────────────────────
+      // ── 10. UI assertions post-swap ─────────────────────────
       // Sheet should close
       await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5_000 });
 
@@ -173,7 +181,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
         page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
       ).not.toBeVisible({ timeout: 3_000 });
 
-      // ── 10. DB assertions ───────────────────────────────────
+      // ── 11. DB assertions ───────────────────────────────────
       const matchId = seeded.matchId!;
 
       // 10a. match_players: Eve in, Alice out (same team = "a")
@@ -252,10 +260,15 @@ test.describe("Tap-to-Swap — Skill Mismatch Warning", () => {
       );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
-      // Open swap sheet for Alice
+      // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
       await page.locator(
         `[data-testid="player-pill-${seeded.players.alice.userId}"]`
       ).click();
+
+      await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
+      await page.getByTestId("swap-floating-bar")
+        .getByRole("button", { name: "Pick from Bench" })
+        .click();
 
       await expect(page.getByRole("dialog")).toBeVisible();
 
@@ -301,10 +314,14 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
       );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
-      // Open swap sheet for Alice
+      // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
       await page.locator(
         `[data-testid="player-pill-${seeded.players.alice.userId}"]`
       ).click();
+      await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
+      await page.getByTestId("swap-floating-bar")
+        .getByRole("button", { name: "Pick from Bench" })
+        .click();
       await expect(page.getByRole("dialog")).toBeVisible();
 
       // Simulate match being promoted while sheet is open:
@@ -368,10 +385,14 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
       );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
-      // Open swap sheet for Alice
+      // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
       await page.locator(
         `[data-testid="player-pill-${seeded.players.alice.userId}"]`
       ).click();
+      await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
+      await page.getByTestId("swap-floating-bar")
+        .getByRole("button", { name: "Pick from Bench" })
+        .click();
       await expect(page.getByRole("dialog")).toBeVisible();
 
       // Select Eve
@@ -418,10 +439,16 @@ test.describe("Tap-to-Swap — Undo", () => {
       );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
-      // Perform the swap (Alice → Eve)
+      // Perform the swap (Alice → Eve) via v2 flow
       await page.locator(
         `[data-testid="player-pill-${seeded.players.alice.userId}"]`
       ).click();
+      // v2: tap → picking mode (floating bar) → "Pick from Bench" → SwapSheet dialog
+      await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
+      await page.getByTestId("swap-floating-bar")
+        .getByRole("button", { name: "Pick from Bench" })
+        .click();
+      await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
       await page.locator(
         `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
       ).click();

@@ -32,6 +32,8 @@ export interface TvMatch {
     player_id: string;
     display_name: string;
     skill_level: SkillLevel;
+    vip_tag: string | null;
+    vip_theme: string | null;
     team: "a" | "b";
   }[];
 }
@@ -87,12 +89,12 @@ export async function getTvData(sessionId: string): Promise<{
   ];
   let profileMap = new Map<
     string,
-    { display_name: string; skill_level: SkillLevel }
+    { display_name: string; skill_level: SkillLevel; vip_tag: string | null; vip_theme: string | null }
   >();
   if (playerIds.length) {
     const { data: profiles } = await supabase
       .from("profiles")
-      .select("id, display_name, skill_level")
+      .select("id, display_name, skill_level, vip_tag, vip_theme")
       .in("id", playerIds);
     profileMap = new Map(
       (profiles ?? []).map((p) => [
@@ -100,6 +102,8 @@ export async function getTvData(sessionId: string): Promise<{
         {
           display_name: p.display_name,
           skill_level: p.skill_level as SkillLevel,
+          vip_tag: p.vip_tag ?? null,
+          vip_theme: p.vip_theme ?? null,
         },
       ])
     );
@@ -121,6 +125,8 @@ export async function getTvData(sessionId: string): Promise<{
           profileMap.get(mp.player_id)?.display_name ?? "Unknown",
         skill_level:
           profileMap.get(mp.player_id)?.skill_level ?? "beginner",
+        vip_tag: profileMap.get(mp.player_id)?.vip_tag ?? null,
+        vip_theme: profileMap.get(mp.player_id)?.vip_theme ?? null,
         team: mp.team as "a" | "b",
       })),
   }));

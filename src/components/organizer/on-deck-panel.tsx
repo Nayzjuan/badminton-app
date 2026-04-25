@@ -19,7 +19,7 @@
 //   "sheet"    — legacy bench-swap sheet opened (tap "Pick from Bench")
 // ============================================================
 
-import { memo, useState, useEffect, useRef, useCallback } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -41,7 +41,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Clock, GripVertical, Trash2 } from "lucide-react";
-import { BadmintonCourt } from "@/components/ui/badminton-court";
+import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { SkillLevel } from "@/types/database";
 
@@ -88,7 +88,10 @@ interface OnDeckPanelProps {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-function getTeams(match: EnrichedMatch) {
+function getTeams(match: EnrichedMatch): {
+  teamA: RosterPlayer[];
+  teamB: RosterPlayer[];
+} {
   return {
     teamA: match.players
       .filter((p) => p.team === "a")
@@ -160,7 +163,7 @@ function SortableCard({
 
   // ── Derive swap visual state for this card ─────────────────
   // selectedPlayerId: the pill in THIS match that is currently selected
-  //   (amber ring + lifted treatment in BadmintonCourt).
+  //   (amber ring treatment in TeamsGrid).
   // isSwapModeActive: any picking-mode selection is active, so all
   //   OTHER pills show the valid-target (hover-amber) treatment.
 
@@ -171,12 +174,9 @@ function SortableCard({
       : undefined;
   const isSwapModeActive = isPickingMode;
 
-  // Build SwapContext from a player badge tap.
+  // Build SwapContext from a player row tap.
   // All profile data is pre-fetched in EnrichedMatch — no extra calls needed.
-  function handlePlayerClick(
-    player: { player_id: string; display_name: string; skill_level: SkillLevel },
-    team: "a" | "b"
-  ) {
+  function handlePlayerTap(player: RosterPlayer, team: "a" | "b") {
     onPlayerTap({
       matchId: match.id,
       sessionId: match.session_id,
@@ -200,23 +200,27 @@ function SortableCard({
         "relative rounded-2xl border bg-white dark:bg-card shadow-sm overflow-hidden transition-all",
         // Highlight card border when the selected player is in this card
         selectedPlayerId
-          ? "border-amber-400 dark:border-amber-600 shadow-amber-200 dark:shadow-amber-900/40 shadow-md"
-          : "border-amber-100 dark:border-amber-900/40",
+          ? "border-amber-400 dark:border-amber-500/60 shadow-amber-200 dark:shadow-amber-500/20 shadow-md"
+          : "border-amber-100 dark:border-amber-500/20",
       ].join(" ")}
     >
       {/* ── Card header row ────────────────────────────────── */}
-      <div className="flex items-center gap-1
-                      bg-amber-50/70 dark:bg-amber-900/20
-                      px-2 py-2.5 border-b border-amber-100 dark:border-amber-900/40">
-
-        {/* DRAG HANDLE — only the grip icon, no text children */}
+      <div
+        className="flex items-center gap-1
+                    bg-amber-50/70 dark:bg-amber-500/10
+                    px-2 py-2.5 border-b border-amber-100 dark:border-amber-500/20"
+      >
+        {/* DRAG HANDLE — suppressHydrationWarning prevents SSR/CSR
+            aria-describedby counter mismatch from dnd-kit's global counter */}
         <div
           ref={setActivatorNodeRef}
           {...attributes}
           {...listeners}
+          suppressHydrationWarning
           className="touch-none select-none cursor-grab active:cursor-grabbing
                      flex items-center justify-center p-1 rounded
                      hover:bg-amber-100/60 dark:hover:bg-amber-800/30 transition-colors"
+          aria-label="Drag to reorder"
         >
           <GripVertical className="h-5 w-5 text-amber-400 dark:text-amber-500 shrink-0" />
         </div>
@@ -244,20 +248,18 @@ function SortableCard({
             {mins === 0 ? "Just formed" : `${mins}m ago`}
           </span>
         </div>
-
       </div>
 
-      {/* ── Court graphic with tappable player pills ────────── */}
-      <div className="p-2">
-        <BadmintonCourt
-          teamA={teamA}
-          teamB={teamB}
-          isOnDeck
-          onPlayerClick={handlePlayerClick}
-          selectedPlayerId={selectedPlayerId}
-          isSwapModeActive={isSwapModeActive}
-        />
-      </div>
+      {/* ── Teams grid — replaces BadmintonCourt ─────────────── */}
+      <TeamsGrid
+        teamA={teamA}
+        teamB={teamB}
+        onPlayerTap={handlePlayerTap}
+        selectedPlayerId={selectedPlayerId}
+        isSwapModeActive={isSwapModeActive}
+        labelA="Your Team"
+        labelB="Opponents"
+      />
 
       {/* ── Footer — hint + Clear button ──────────────────── */}
       <div className="px-4 py-2.5 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-3">
@@ -296,8 +298,8 @@ function OverlayCard({ match, index }: { match: EnrichedMatch; index: number }) 
   const mins = minutesSince(match.created_at);
 
   return (
-    <div className="rounded-2xl border border-amber-100 dark:border-amber-900/40 bg-white dark:bg-card shadow-2xl overflow-hidden rotate-1">
-      <div className="flex items-center gap-1 bg-amber-50/70 dark:bg-amber-900/20 px-2 py-2.5 border-b border-amber-100 dark:border-amber-900/40">
+    <div className="rounded-2xl border border-amber-100 dark:border-amber-500/20 bg-white dark:bg-card shadow-2xl overflow-hidden rotate-1">
+      <div className="flex items-center gap-1 bg-amber-50/70 dark:bg-amber-500/10 px-2 py-2.5 border-b border-amber-100 dark:border-amber-500/20">
         <div className="touch-none select-none cursor-grabbing flex items-center justify-center p-1 rounded">
           <GripVertical className="h-5 w-5 text-amber-400 dark:text-amber-500 shrink-0" />
         </div>
@@ -317,15 +319,23 @@ function OverlayCard({ match, index }: { match: EnrichedMatch; index: number }) 
           </span>
         </div>
       </div>
-      <div className="p-2">
-        {/* No onPlayerClick on overlay — purely visual during drag */}
-        <BadmintonCourt teamA={teamA} teamB={teamB} isOnDeck />
-      </div>
+
+      {/* No onPlayerTap on overlay — purely visual during drag */}
+      <TeamsGrid
+        teamA={teamA}
+        teamB={teamB}
+        labelA="Your Team"
+        labelB="Opponents"
+      />
+
       <div className="px-4 py-2.5 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-3">
         <p className="text-xs text-slate-400 dark:text-muted-foreground">
           Tap any player to start a swap
         </p>
-        <button disabled className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 opacity-50 cursor-not-allowed">
+        <button
+          disabled
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 opacity-50 cursor-not-allowed"
+        >
           <Trash2 className="h-3 w-3" />
           Clear
         </button>
@@ -415,11 +425,19 @@ function OnDeckPanelInner({
 
   async function handleClear(matchId: string) {
     setClearingIds((prev) => new Set(prev).add(matchId));
-    setErrors((prev) => { const e = { ...prev }; delete e[matchId]; return e; });
+    setErrors((prev) => {
+      const e = { ...prev };
+      delete e[matchId];
+      return e;
+    });
 
     const result = await onClearOnDeckMatch(matchId);
 
-    setClearingIds((prev) => { const s = new Set(prev); s.delete(matchId); return s; });
+    setClearingIds((prev) => {
+      const s = new Set(prev);
+      s.delete(matchId);
+      return s;
+    });
 
     if (result.error) {
       setErrors((prev) => ({ ...prev, [matchId]: result.error! }));

@@ -476,7 +476,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
           </div>
 
           {/* ── Row 2: title (left) + desktop action strip (right) ── */}
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-y-2 gap-x-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-y-2 gap-x-6">
 
             {/* Title + profile name + closed badge */}
             <div className="flex items-center gap-3 min-w-0">
@@ -542,7 +542,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 )}
               </div>
 
-              <p className="text-sm text-white/60 hidden sm:block shrink-0">
+              <p className="text-sm text-white/60 hidden xl:block shrink-0">
                 — {profile.display_name}
               </p>
 
@@ -557,13 +557,16 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
             {/* Desktop action strip (hidden on mobile) */}
             {!isClosed && (
-              <div className="hidden md:flex items-center gap-3 text-sm text-white/70 shrink-0">
-                <span>{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
-                <span className="text-white/40">|</span>
-                <span>{queue.length} in queue</span>
-                <span className="text-white/40">|</span>
-                <span>{activeMatches.length} active match{activeMatches.length !== 1 ? "es" : ""}</span>
-                <span className="text-white/40">|</span>
+              <div className="hidden md:flex items-center gap-2 text-sm text-white/70 shrink-0">
+                {/* Stats cluster */}
+                <span className="text-white/60 tabular-nums">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
+                <span className="text-white/30">·</span>
+                <span className="text-white/60 tabular-nums">{queue.length} in queue</span>
+                <span className="text-white/30">·</span>
+                <span className="text-white/60 tabular-nums">{activeMatches.length} in play</span>
+
+                {/* Visual divider between stats and action buttons */}
+                <span className="h-4 w-px bg-white/20 mx-1 shrink-0" aria-hidden="true" />
 
                 {/* Auto-matchmaking toggle */}
                 <button
@@ -584,7 +587,6 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
 
-                <span className="text-white/40">|</span>
                 <ThemeToggle className="text-white/60 hover:text-white hover:bg-white/10
                                         dark:text-primary dark:hover:bg-primary/10" />
                 {process.env.NODE_ENV === "development" && (

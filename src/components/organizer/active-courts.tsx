@@ -12,12 +12,18 @@
 //     and cleared when the modal is closed or submit succeeds.
 //   • Cancel uses a two-step inline confirmation so the
 //     organiser cannot accidentally abort a live game.
+//
+// In-Progress court cards:
+//   When cardState === "in_progress", the card switches to a
+//   dark navy surface (#0D1B2A) with an emerald glow ring,
+//   replacing the old BadmintonCourt graphic with a CSS-grid
+//   TeamsGrid roster (from match-roster.tsx).
 // ============================================================
 
 import { useState } from "react";
 import { Plus, Trophy, XCircle, Swords, Trash2 } from "lucide-react";
 import { ScoreModal } from "./score-modal";
-import { BadmintonCourt } from "@/components/ui/badminton-court";
+import { TeamsGrid } from "@/components/organizer/match-roster";
 import { MatchTimer } from "@/components/ui/match-timer";
 import type { Court } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
@@ -100,6 +106,9 @@ function CourtCard({
     ? "closed"
     : "available";
 
+  // When a match is live, the card flips to a dark navy surface.
+  const isActive = cardState === "in_progress";
+
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {
     matchmaking: {
@@ -122,7 +131,19 @@ function CourtCard({
 
   return (
     <div
-      className="flex flex-col rounded-2xl bg-white dark:bg-card shadow-md overflow-hidden transition-all"
+      className={[
+        "flex flex-col rounded-2xl shadow-md overflow-hidden transition-all",
+        !isActive ? "bg-white dark:bg-card" : "",
+      ].join(" ")}
+      style={
+        isActive
+          ? {
+              background: "#0D1B2A",
+              boxShadow:
+                "0 0 0 1px rgba(16,185,129,0.3), 0 0 40px rgba(16,185,129,0.12)",
+            }
+          : undefined
+      }
     >
       {/* ── Header ─────────────────────────────────────────── */}
       {/*
@@ -131,15 +152,29 @@ function CourtCard({
         groups wrap onto separate lines rather than the court name truncating.
         gap-y-2 keeps the rows from collapsing when they do wrap.
       */}
-      <div className="flex flex-wrap items-center justify-between gap-y-2 px-5 pt-4 pb-3">
+      <div
+        className={[
+          "flex flex-wrap items-center justify-between gap-y-2 px-5 pt-4 pb-3",
+          isActive ? "border-b" : "",
+        ].join(" ")}
+        style={isActive ? { borderColor: "rgba(255,255,255,0.1)" } : undefined}
+      >
         {/* Left group — court name + mixed-level badge */}
         <div className="flex items-center gap-2">
-          <h3 className="text-base font-bold text-gray-900 dark:text-foreground">{court.name}</h3>
+          <h3
+            className={`text-base font-bold ${
+              isActive ? "text-white" : "text-gray-900 dark:text-foreground"
+            }`}
+          >
+            {court.name}
+          </h3>
           {match?.is_mixed_level && (
-            <span className="shrink-0 rounded-full border px-2 py-0.5
-                            text-xs font-bold uppercase tracking-wider
-                            bg-amber-100 border-amber-300 text-amber-800
-                            dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]">
+            <span
+              className="shrink-0 rounded-full border px-2 py-0.5
+                          text-xs font-bold uppercase tracking-wider
+                          bg-amber-100 border-amber-300 text-amber-800
+                          dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]"
+            >
               Mixed Level
             </span>
           )}
@@ -163,58 +198,67 @@ function CourtCard({
       </div>
 
       {/* ── Body ───────────────────────────────────────────── */}
-      <div className="flex-1 px-4 pb-3">
 
-        {/* IN PROGRESS — badminton court graphic */}
-        {hasActiveMatch && (
-          <div className="py-1">
-            <BadmintonCourt
-              teamA={teamA.map((p) => ({
-                player_id: p.player_id,
-                display_name: p.profile.display_name,
-                skill_level: p.profile.skill_level,
-                vip_tag: p.profile.vip_tag,
-                vip_theme: p.profile.vip_theme,
-              }))}
-              teamB={teamB.map((p) => ({
-                player_id: p.player_id,
-                display_name: p.profile.display_name,
-                skill_level: p.profile.skill_level,
-                vip_tag: p.profile.vip_tag,
-                vip_theme: p.profile.vip_theme,
-              }))}
-            />
-          </div>
-        )}
+      {/* IN PROGRESS — dark roster grid (replaces BadmintonCourt) */}
+      {hasActiveMatch && match && (
+        <div className="flex-1">
+          <TeamsGrid
+            dark
+            teamA={teamA.map((p) => ({
+              player_id: p.player_id,
+              display_name: p.profile.display_name,
+              skill_level: p.profile.skill_level,
+              vip_tag: p.profile.vip_tag,
+              vip_theme: p.profile.vip_theme,
+            }))}
+            teamB={teamB.map((p) => ({
+              player_id: p.player_id,
+              display_name: p.profile.display_name,
+              skill_level: p.profile.skill_level,
+              vip_tag: p.profile.vip_tag,
+              vip_theme: p.profile.vip_theme,
+            }))}
+            labelA="Team A"
+            labelB="Team B"
+          />
+        </div>
+      )}
 
-        {/* MATCHMAKING — spinner */}
-        {isMatchmaking && !hasActiveMatch && (
-          <div className="flex flex-col items-center justify-center gap-2 py-6">
-            <div className="h-7 w-7 rounded-full border-[3px] border-amber-200 border-t-amber-600 animate-spin" />
-            <p className="text-sm font-medium text-amber-700">Running algorithm…</p>
-          </div>
-        )}
-
-        {/* AVAILABLE — dashed placeholder with icon */}
-        {!hasActiveMatch && !isMatchmaking && cardState === "available" && (
-          <div className="flex flex-col items-center justify-center gap-2 py-6">
-            <div className="rounded-full bg-emerald-50 border border-emerald-200 p-2.5">
-              <Swords className="h-5 w-5 text-emerald-400" />
+      {/* Non-active states — keep original body layout */}
+      {!hasActiveMatch && (
+        <div className="flex-1 px-4 pb-3">
+          {/* MATCHMAKING — spinner */}
+          {isMatchmaking && (
+            <div className="flex flex-col items-center justify-center gap-2 py-6">
+              <div className="h-7 w-7 rounded-full border-[3px] border-amber-200 border-t-amber-600 animate-spin" />
+              <p className="text-sm font-medium text-amber-700">Running algorithm…</p>
             </div>
-            <p className="text-sm font-medium text-emerald-600">Ready for next match</p>
-          </div>
-        )}
+          )}
 
-        {/* CLOSED — placeholder */}
-        {!hasActiveMatch && cardState === "closed" && (
-          <div className="flex items-center justify-center py-6">
-            <p className="text-sm text-muted-foreground">Court is closed</p>
-          </div>
-        )}
-      </div>
+          {/* AVAILABLE — dashed placeholder with icon */}
+          {!isMatchmaking && cardState === "available" && (
+            <div className="flex flex-col items-center justify-center gap-2 py-6">
+              <div className="rounded-full bg-emerald-50 border border-emerald-200 p-2.5">
+                <Swords className="h-5 w-5 text-emerald-400" />
+              </div>
+              <p className="text-sm font-medium text-emerald-600">Ready for next match</p>
+            </div>
+          )}
+
+          {/* CLOSED — placeholder */}
+          {cardState === "closed" && (
+            <div className="flex items-center justify-center py-6">
+              <p className="text-sm text-muted-foreground">Court is closed</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Footer ─────────────────────────────────────────── */}
-      <div className="px-4 pb-4 space-y-2">
+      <div
+        className={`px-4 pb-4 space-y-2 ${isActive ? "border-t" : ""}`}
+        style={isActive ? { borderColor: "rgba(255,255,255,0.1)" } : undefined}
+      >
         {/* Inline error */}
         {error && (
           <p className="rounded-lg bg-destructive/10 px-3 py-2 text-center text-xs text-destructive">
@@ -275,7 +319,7 @@ function CourtCard({
                   </div>
                 ) : (
                   /* Normal in-progress actions */
-                  <div className="flex items-center justify-end gap-2">
+                  <div className="flex items-center justify-end gap-2 pt-2">
                     <button
                       onClick={onCancelRequest}
                       disabled={isCancelling}
@@ -496,21 +540,27 @@ export function ActiveCourts({
         <div
           className={`fixed right-4 top-4 z-[150] max-w-sm rounded-xl border-2 p-4
                       shadow-xl animate-in slide-in-from-top-2 fade-in duration-300
-                      ${toast.type === "success"
-                        ? "border-emerald-400 bg-emerald-50"
-                        : "border-red-400 bg-red-50"}`}
+                      ${
+                        toast.type === "success"
+                          ? "border-emerald-400 bg-emerald-50"
+                          : "border-red-400 bg-red-50"
+                      }`}
         >
           <div className="flex items-start gap-3">
             <span className="mt-0.5 text-xl">
               {toast.type === "success" ? "✅" : "⚠️"}
             </span>
             <div className="flex-1 min-w-0">
-              <p className={`text-sm font-semibold
-                  ${toast.type === "success" ? "text-emerald-900" : "text-red-900"}`}>
+              <p
+                className={`text-sm font-semibold
+                    ${toast.type === "success" ? "text-emerald-900" : "text-red-900"}`}
+              >
                 {toast.title}
               </p>
-              <p className={`mt-0.5 text-xs
-                  ${toast.type === "success" ? "text-emerald-700" : "text-red-700"}`}>
+              <p
+                className={`mt-0.5 text-xs
+                    ${toast.type === "success" ? "text-emerald-700" : "text-red-700"}`}
+              >
                 {toast.body}
               </p>
             </div>
