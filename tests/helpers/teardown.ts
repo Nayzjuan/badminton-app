@@ -202,16 +202,18 @@ export interface SeedResult {
     dan: BotPlayer;
     eve: BotPlayer;
   };
-  /** Extra bot players created for extended presets (e.g. soft_gate). */
+  /** Extra bot players created for extended presets (e.g. soft_gate, two_matches_on_deck). */
   extraPlayers: Record<string, BotPlayer>;
-  matchId?: string; // Set when preset creates a match
+  matchId?: string;  // Primary / first match ID
+  matchId2?: string; // Second match ID (two_matches_on_deck preset only)
 }
 
 export type QueuePreset =
   | "all_waiting"             // all 5 players waiting, no matches
   | "first_match_on_deck"     // alice/bob/cara/dan in a pending match; eve waiting
   | "first_match_in_progress" // alice/bob/cara/dan in active match; eve waiting
-  | "soft_gate";              // alice/bob/cara/dan in active match; eve/frank/grace/henry waiting (4 = GATE_POOL_THRESHOLD)
+  | "soft_gate"               // alice/bob/cara/dan in active match; eve/frank/grace/henry waiting (4 = GATE_POOL_THRESHOLD)
+  | "two_matches_on_deck";    // match1: alice/bob vs cara/dan (pending); match2: eve/frank vs grace/henry (pending)
 
 export async function seedSession(
   preset: QueuePreset = "first_match_on_deck"
@@ -471,11 +473,115 @@ export async function seedSession(
     }
   }
 
+  let matchId2: string | undefined;
+
+  if (preset === "two_matches_on_deck") {
+    // ── Two Matches On-Deck Preset ────────────────────────────────
+    // Purpose: test Tap-to-Swap v2 cross-match and same-match swaps.
+    //
+    // Layout:
+    //   Match 1 (pending, sort_order=1): alice/bob (Team A) vs cara/dan (Team B)
+    //   Match 2 (pending, sort_order=2): eve/frank (Team A) vs grace/henry (Team B)
+    //   All 8 players: status=on_deck
+    //   2 courts: both available (no active match)
+
+    // ── Create extra bot players (frank, grace, henry) ───────────
+    const extraDefs = [
+      { key: "frank", name: "E2E_Frank", skill: "intermediate" as const },
+      { key: "grace", name: "E2E_Grace", skill: "intermediate" as const },
+      { key: "henry", name: "E2E_Henry", skill: "intermediate" as const },
+    ];
+
+    for (const def of extraDefs) {
+      const { data: userData, error: userErr } = await db.auth.admin.createUser({
+        email: `${def.name.toLowerCase()}@playwright.local`,
+        email_confirm: true,
+        user_metadata: { display_name: def.name },
+      });
+
+      if (userErr || !userData.user) {
+        throw new Error(`[seed:two_matches_on_deck] Failed to create user ${def.name}: ${userErr?.message}`);
+      }
+
+      const userId = userData.user.id;
+
+      const { error: profileErr } = await db.from("profiles").upsert(
+        { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
+        { onConflict: "id" }
+      );
+      if (profileErr) {
+        throw new Error(`[seed:two_matches_on_deck] Failed to upsert profile ${def.name}: ${profileErr.message}`);
+      }
+
+      extraPlayers[def.key] = {
+        userId,
+        profileId: userId,
+        displayName: def.name,
+        skill: def.skill,
+      };
+    }
+
+    // Queue entries for frank, grace, henry (alice–eve already inserted above)
+    const extraQueueInserts = [
+      { session_id: sessionId, player_id: extraPlayers.frank.userId, status: "waiting" as const, games_played: 0, position: 6 },
+      { session_id: sessionId, player_id: extraPlayers.grace.userId, status: "waiting" as const, games_played: 0, position: 7 },
+      { session_id: sessionId, player_id: extraPlayers.henry.userId, status: "waiting" as const, games_played: 0, position: 8 },
+    ];
+
+    const { error: extraQueueErr } = await db.from("queue_entries").insert(extraQueueInserts);
+    if (extraQueueErr) {
+      throw new Error(`[seed:two_matches_on_deck] Failed to create extra queue entries: ${extraQueueErr.message}`);
+    }
+
+    // ── Match 1: alice/bob (Team A) vs cara/dan (Team B) ─────────
+    const { data: m1, error: m1Err } = await db
+      .from("matches")
+      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 1 })
+      .select("id")
+      .single();
+    if (m1Err || !m1) throw new Error(`[seed:two_matches_on_deck] Failed to create match 1: ${m1Err?.message}`);
+    matchId = m1.id;
+
+    await db.from("match_players").insert([
+      { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.bob.userId,   team: "a" as const },
+      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId,   team: "b" as const },
+    ]);
+
+    await db.from("queue_entries")
+      .update({ status: "on_deck" })
+      .eq("session_id", sessionId)
+      .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId]);
+
+    // ── Match 2: eve/frank (Team A) vs grace/henry (Team B) ──────
+    const { data: m2, error: m2Err } = await db
+      .from("matches")
+      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 2 })
+      .select("id")
+      .single();
+    if (m2Err || !m2) throw new Error(`[seed:two_matches_on_deck] Failed to create match 2: ${m2Err?.message}`);
+    matchId2 = m2.id;
+
+    await db.from("match_players").insert([
+      { match_id: matchId2, player_id: bots.eve.userId,         team: "a" as const },
+      { match_id: matchId2, player_id: extraPlayers.frank.userId, team: "a" as const },
+      { match_id: matchId2, player_id: extraPlayers.grace.userId, team: "b" as const },
+      { match_id: matchId2, player_id: extraPlayers.henry.userId, team: "b" as const },
+    ]);
+
+    await db.from("queue_entries")
+      .update({ status: "on_deck" })
+      .eq("session_id", sessionId)
+      .in("player_id", [bots.eve.userId, extraPlayers.frank.userId, extraPlayers.grace.userId, extraPlayers.henry.userId]);
+  }
+
   return {
     sessionId,
     courtIds: courts.map((c) => c.id),
     players: bots as SeedResult["players"],
     extraPlayers,
     matchId,
+    matchId2,
   };
 }

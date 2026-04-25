@@ -48,6 +48,7 @@ export function SwapFloatingBar({
     <div
       role="status"
       aria-live="polite"
+      data-testid="swap-floating-bar"
       aria-label={`Swap mode active. ${playerName} from ${teamLabel(team)} selected. Tap another player to swap, or pick from bench.`}
       className={[
         // Positioning: fixed bottom-center, above any bottom nav
