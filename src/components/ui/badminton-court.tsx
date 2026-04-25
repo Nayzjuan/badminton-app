@@ -144,9 +144,7 @@ function PlayerPill({ player, team, onPlayerClick }: PlayerPillProps) {
       aria-hidden
       className={[
         "inline-block h-2 w-2 shrink-0 rounded-full",
-        team === "a"
-          ? "bg-sky-400 dark:bg-sky-400"
-          : "bg-amber-400 dark:bg-amber-400",
+        team === "a" ? "bg-sky-400" : "bg-amber-400",
       ].join(" ")}
     />
   );
