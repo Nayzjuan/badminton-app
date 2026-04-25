@@ -202,13 +202,16 @@ export interface SeedResult {
     dan: BotPlayer;
     eve: BotPlayer;
   };
-  matchId?: string; // Set when queue === "first_match_on_deck"
+  /** Extra bot players created for extended presets (e.g. soft_gate). */
+  extraPlayers: Record<string, BotPlayer>;
+  matchId?: string; // Set when preset creates a match
 }
 
 export type QueuePreset =
-  | "all_waiting"          // all 5 players waiting, no matches
-  | "first_match_on_deck"  // alice/bob/cara/dan in a pending match; eve waiting
-  | "first_match_in_progress"; // alice/bob/cara/dan in active match; eve waiting
+  | "all_waiting"             // all 5 players waiting, no matches
+  | "first_match_on_deck"     // alice/bob/cara/dan in a pending match; eve waiting
+  | "first_match_in_progress" // alice/bob/cara/dan in active match; eve waiting
+  | "soft_gate";              // alice/bob/cara/dan in active match; eve/frank/grace/henry waiting (4 = GATE_POOL_THRESHOLD)
 
 export async function seedSession(
   preset: QueuePreset = "first_match_on_deck"
@@ -295,6 +298,7 @@ export async function seedSession(
   }
 
   let matchId: string | undefined;
+  const extraPlayers: Record<string, BotPlayer> = {};
 
   if (preset === "first_match_on_deck" || preset === "first_match_in_progress") {
     // ── Create a match with alice/bob vs cara/dan ─────────────
@@ -353,10 +357,125 @@ export async function seedSession(
     }
   }
 
+  if (preset === "soft_gate") {
+    // ── Soft Gate Preset ─────────────────────────────────────────
+    // Purpose: test that the engine defers scheduling when the waiting
+    // pool is exactly at GATE_POOL_THRESHOLD (4) and an active match
+    // is in progress.
+    //
+    // Layout:
+    //   Court 1: in_use — alice/bob/cara/dan playing (in_progress match)
+    //   Court 2: available
+    //   Waiting queue: eve + frank/grace/henry (4 players = GATE_POOL_THRESHOLD)
+    //
+    // With all 4 waiting players fresh (joined_at ≈ now, wait < GATE_HOLD_MINUTES=8),
+    // the gate condition fires:
+    //   poolSize(4) ≤ GATE_POOL_THRESHOLD(4) AND hasActiveMatches=true AND maxWait<8
+    //   → engine defers, no on-deck match is created.
+
+    // ── Create 3 extra bot players (frank, grace, henry) ─────────
+    const extraDefs = [
+      { key: "frank", name: "E2E_Frank", skill: "intermediate" as const },
+      { key: "grace", name: "E2E_Grace", skill: "intermediate" as const },
+      { key: "henry", name: "E2E_Henry", skill: "intermediate" as const },
+    ];
+
+    for (const def of extraDefs) {
+      const { data: userData, error: userErr } = await db.auth.admin.createUser({
+        email: `${def.name.toLowerCase()}@playwright.local`,
+        email_confirm: true,
+        user_metadata: { display_name: def.name },
+      });
+
+      if (userErr || !userData.user) {
+        throw new Error(`[seed:soft_gate] Failed to create user ${def.name}: ${userErr?.message}`);
+      }
+
+      const userId = userData.user.id;
+
+      const { error: profileErr } = await db.from("profiles").upsert(
+        { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
+        { onConflict: "id" }
+      );
+      if (profileErr) {
+        throw new Error(`[seed:soft_gate] Failed to upsert profile ${def.name}: ${profileErr.message}`);
+      }
+
+      extraPlayers[def.key] = {
+        userId,
+        profileId: userId,
+        displayName: def.name,
+        skill: def.skill,
+      };
+    }
+
+    // ── Create in_progress match for alice/bob/cara/dan on court 1 ──
+    const { data: matchData, error: matchErr } = await db
+      .from("matches")
+      .insert({
+        session_id: sessionId,
+        court_id: courts[0].id,
+        status: "in_progress",
+        is_mixed_level: false,
+        sort_order: 1,
+      })
+      .select("id")
+      .single();
+
+    if (matchErr || !matchData) {
+      throw new Error(`[seed:soft_gate] Failed to create match: ${matchErr?.message}`);
+    }
+
+    matchId = matchData.id;
+
+    const matchPlayers = [
+      { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.bob.userId,   team: "a" as const },
+      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId,   team: "b" as const },
+    ];
+
+    const { error: mpErr } = await db.from("match_players").insert(matchPlayers);
+    if (mpErr) {
+      throw new Error(`[seed:soft_gate] Failed to create match_players: ${mpErr.message}`);
+    }
+
+    // Mark alice/bob/cara/dan as "playing"
+    await db
+      .from("queue_entries")
+      .update({ status: "playing" })
+      .eq("session_id", sessionId)
+      .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId]);
+
+    // Mark court 1 as in_use
+    await db
+      .from("courts")
+      .update({ status: "in_use" })
+      .eq("id", courts[0].id);
+
+    // ── Add frank/grace/henry to queue (eve is already in queue at pos 5) ──
+    // Combined waiting pool: eve (pos 5) + frank/grace/henry (pos 6-8) = 4 waiting
+    // 4 == GATE_POOL_THRESHOLD — the gate holds when these are the only players available
+    const extraQueueInserts = [
+      { session_id: sessionId, player_id: extraPlayers.frank.userId, status: "waiting" as const, games_played: 0, position: 6 },
+      { session_id: sessionId, player_id: extraPlayers.grace.userId, status: "waiting" as const, games_played: 0, position: 7 },
+      { session_id: sessionId, player_id: extraPlayers.henry.userId, status: "waiting" as const, games_played: 0, position: 8 },
+    ];
+
+    const { error: extraQueueErr } = await db
+      .from("queue_entries")
+      .insert(extraQueueInserts);
+
+    if (extraQueueErr) {
+      throw new Error(`[seed:soft_gate] Failed to create extra queue entries: ${extraQueueErr.message}`);
+    }
+  }
+
   return {
     sessionId,
     courtIds: courts.map((c) => c.id),
     players: bots as SeedResult["players"],
+    extraPlayers,
     matchId,
   };
 }

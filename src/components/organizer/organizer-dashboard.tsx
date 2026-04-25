@@ -404,6 +404,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
                 {/* Auto-matchmaking toggle */}
                 <button
+                  data-testid="toggle-auto-matchmaking"
                   onClick={handleToggleAuto}
                   disabled={togglingAuto}
                   aria-pressed={autoMatchmaking}

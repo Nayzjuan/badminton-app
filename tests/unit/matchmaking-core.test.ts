@@ -24,6 +24,8 @@ import {
   isDiversityViolation,
   scoreCandidates,
   buildCombinationGroup,
+  getEffectiveLookback,
+  rotatedDraft,
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
@@ -687,5 +689,177 @@ describe("isMixed level boundary (maxVariance > SKILL_VARIANCE_MAX)", () => {
     expect(buildCombinationGroup(anchor, scored, 3)).toEqual([]);                   // ±3 fails
     expect(buildCombinationGroup(anchor, scored, 4)).toHaveLength(3);               // ±4 succeeds
     expect(4 > SKILL_VARIANCE_MAX).toBe(true); // isMixed flag would be set
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// getEffectiveLookback
+// ─────────────────────────────────────────────────────────────
+// Scales the anti-repeat lookback window to the eligible pool size.
+// Thresholds (eligiblePoolSize = eligible candidates + anchor):
+//   ≤ 5  → 2  (nearly isolated tier — only avoid the last match)
+//   6–9  → 3  (small pool — Thursday-night 6-player scenario)
+//   10–15 → 4  (medium session)
+//   16+  → 5  (full memory — unchanged from original behaviour)
+//
+// Why this matters: a fixed lookback of 5 collapses a 4-player
+// pool after 1–2 matches because every new combination was already
+// seen. Shorter memory for smaller pools prevents that failure mode.
+
+describe("getEffectiveLookback", () => {
+  it("returns 2 for pool size of 1 (minimum meaningful input)", () => {
+    expect(getEffectiveLookback(1)).toBe(2);
+  });
+
+  it("returns 2 for pool size of 4 (typical gate-hold scenario)", () => {
+    expect(getEffectiveLookback(4)).toBe(2);
+  });
+
+  it("returns 2 at the upper boundary of the ≤5 bracket (poolSize=5)", () => {
+    expect(getEffectiveLookback(5)).toBe(2);
+  });
+
+  it("returns 3 at the first entry of the 6–9 bracket (poolSize=6)", () => {
+    expect(getEffectiveLookback(6)).toBe(3);
+  });
+
+  it("returns 3 at the upper boundary of the 6–9 bracket (poolSize=9)", () => {
+    expect(getEffectiveLookback(9)).toBe(3);
+  });
+
+  it("returns 4 at the first entry of the 10–15 bracket (poolSize=10)", () => {
+    expect(getEffectiveLookback(10)).toBe(4);
+  });
+
+  it("returns 4 at the upper boundary of the 10–15 bracket (poolSize=15)", () => {
+    expect(getEffectiveLookback(15)).toBe(4);
+  });
+
+  it("returns 5 at the first entry of the 16+ bracket (poolSize=16)", () => {
+    expect(getEffectiveLookback(16)).toBe(5);
+  });
+
+  it("returns 5 for large full-session pools (poolSize=30)", () => {
+    // Full memory — same as the original ANTI_REPEAT_LOOKBACK constant.
+    expect(getEffectiveLookback(30)).toBe(5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// rotatedDraft
+// ─────────────────────────────────────────────────────────────
+// Used when the same 4 players must play again (forced repeat).
+// Cycles through 3 team splits so the pairing changes each time:
+//
+//   splitIndex = repeatCount % 3
+//   (repeatCount = number of recent rosters containing ALL 4 players)
+//
+//   Split 0 (0 repeats): teamA=[sorted[0], sorted[3]], teamB=[sorted[1], sorted[2]]
+//                        ↑ identical to snakeDraft (highest + lowest vs 2nd + 3rd)
+//   Split 1 (1 repeat):  teamA=[sorted[0], sorted[1]], teamB=[sorted[2], sorted[3]]
+//                        ↑ top pair vs bottom pair
+//   Split 2 (2 repeats): teamA=[sorted[0], sorted[2]], teamB=[sorted[1], sorted[3]]
+//                        ↑ alternating cross-split
+//   3 repeats → splitIndex = 3 % 3 = 0 → cycles back to snake
+//
+// Input players are sorted DESC by skill internally; input order does not matter.
+
+describe("rotatedDraft", () => {
+  // 4 players with distinct skill levels — sorted DESC → [p6, p5, p4, p3]
+  function makeFour() {
+    const p6 = makePlayer("p6", { skillInt: 6 });
+    const p5 = makePlayer("p5", { skillInt: 5 });
+    const p4 = makePlayer("p4", { skillInt: 4 });
+    const p3 = makePlayer("p3", { skillInt: 3 });
+    return { p6, p5, p4, p3 };
+  }
+
+  it("splitIndex=0 (no repeats): teamA=[highest+lowest], teamB=[2nd+3rd] — same as snakeDraft", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], []);
+    // Sorted DESC: [p6(0), p5(1), p4(2), p3(3)]
+    // teamA = [p6, p3], teamB = [p5, p4]
+    expect(teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
+    expect(teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
+  });
+
+  it("splitIndex=1 (1 full-repeat roster): teamA=[top pair], teamB=[bottom pair]", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
+    // Exactly 1 roster containing all 4 → repeatCount=1 → splitIndex=1
+    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], [allFourIds]);
+    // teamA = [p6, p5], teamB = [p4, p3]
+    expect(teamA.map((p) => p.player_id).sort()).toEqual(["p5", "p6"]);
+    expect(teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p4"]);
+  });
+
+  it("splitIndex=2 (2 full-repeat rosters): teamA=[1st+3rd], teamB=[2nd+4th] — cross-split", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
+    // 2 rosters both containing all 4 → repeatCount=2 → splitIndex=2
+    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], [allFourIds, allFourIds]);
+    // teamA = [p6, p4], teamB = [p5, p3]
+    expect(teamA.map((p) => p.player_id).sort()).toEqual(["p4", "p6"]);
+    expect(teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p5"]);
+  });
+
+  it("cycles back to splitIndex=0 at 3 full-repeat rosters (3 % 3 = 0)", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
+    // 3 full-repeat rosters → repeatCount=3 → splitIndex=0 (snakeDraft)
+    const { teamA, teamB } = rotatedDraft(
+      [p6, p5, p4, p3],
+      [allFourIds, allFourIds, allFourIds]
+    );
+    expect(teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
+    expect(teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
+  });
+
+  it("partial-overlap rosters do not count towards repeatCount (only ALL 4 present increments it)", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    // 3 rosters each missing one of the 4 players → repeatCount=0 → splitIndex=0
+    const partialRosters = [
+      ["p6", "p5", "p4", "outsider1"],  // missing p3
+      ["p6", "p5", "p3", "outsider2"],  // missing p4
+      ["p6", "p4", "p3", "outsider3"],  // missing p5
+    ];
+    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], partialRosters);
+    // repeatCount=0 → splitIndex=0 → snakeDraft output
+    expect(teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
+    expect(teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
+  });
+
+  it("produces exactly 2 players per team for all 3 splits", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
+
+    for (const rosterCount of [0, 1, 2]) {
+      const recentRosters = Array.from({ length: rosterCount }, () => allFourIds);
+      const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], recentRosters);
+      expect(teamA).toHaveLength(2);
+      expect(teamB).toHaveLength(2);
+      // No duplicates across teams
+      const allAssigned = [...teamA, ...teamB].map((p) => p.player_id);
+      expect(new Set(allAssigned).size).toBe(4);
+    }
+  });
+
+  it("does not mutate the input array order", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    const input = [p3, p6, p4, p5]; // shuffled order
+    const originalOrder = input.map((p) => p.player_id);
+    rotatedDraft(input, []);
+    expect(input.map((p) => p.player_id)).toEqual(originalOrder);
+  });
+
+  it("sorts input by skill DESC before splitting — input order does not affect result", () => {
+    const { p6, p5, p4, p3 } = makeFour();
+    // Pass in shuffled order; result should be same as sorted order
+    const shuffled = rotatedDraft([p3, p6, p4, p5], []);
+    const sorted  = rotatedDraft([p6, p5, p4, p3], []);
+    expect(shuffled.teamA.map((p) => p.player_id).sort())
+      .toEqual(sorted.teamA.map((p) => p.player_id).sort());
+    expect(shuffled.teamB.map((p) => p.player_id).sort())
+      .toEqual(sorted.teamB.map((p) => p.player_id).sort());
   });
 });
