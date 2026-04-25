@@ -63,7 +63,7 @@ export function BadmintonCourt({
                       text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
           Team A
         </p>
-        <div className="flex items-center justify-center gap-3 flex-wrap">
+        <div className="flex items-start justify-center gap-3 flex-wrap">
           {teamA.map((p) => (
             <PlayerPill
               key={p.player_id}
@@ -92,7 +92,7 @@ export function BadmintonCourt({
                       text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
           Team B
         </p>
-        <div className="flex items-center justify-center gap-3 flex-wrap">
+        <div className="flex items-start justify-center gap-3 flex-wrap">
           {teamB.map((p) => (
             <PlayerPill
               key={p.player_id}
@@ -140,7 +140,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
         {player.display_name}
       </span>
       {player.vip_tag && player.vip_theme && (
-        <VipTag tag={player.vip_tag} theme={player.vip_theme} />
+        <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
       )}
       <SkillBadge
         level={player.skill_level}
@@ -189,7 +189,7 @@ function PlayerPill({ player, onPlayerClick }: PlayerPillProps) {
         </span>
 
         {player.vip_tag && player.vip_theme && (
-          <VipTag tag={player.vip_tag} theme={player.vip_theme} />
+          <VipTag tag={player.vip_tag} theme={player.vip_theme} neonOnly />
         )}
 
         <SkillBadge
