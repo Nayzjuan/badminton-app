@@ -353,6 +353,8 @@ function MyStatusTab({
           court={currentMatch.court}
           myDisplayName={profile.display_name}
           mySkillLevel={profile.skill_level}
+          myVipTag={profile.vip_tag}
+          myVipTheme={profile.vip_theme}
           teammates={currentMatch.teammates}
           opponents={currentMatch.opponents}
           isMixedLevel={currentMatch.match.is_mixed_level}
