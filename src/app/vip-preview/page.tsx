@@ -98,6 +98,68 @@ function CourtCard({ dark }: { dark: boolean }) {
   );
 }
 
+// ── InlinePill — "Username | VipTag" side-by-side layout ──────
+
+function InlinePill({ name, skill = "intermediate" }: {
+  name: string;
+  skill?: string;
+}) {
+  const vip = PREVIEW_PLAYERS[name.toLowerCase()];
+
+  const skillColors: Record<string, string> = {
+    beginner:     "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    intermediate: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
+    advanced:     "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+  };
+
+  return (
+    <div className="inline-flex flex-col items-center gap-1">
+      {/* Name pill with VIP tag inline */}
+      <div className="inline-flex items-center gap-1.5 rounded-full px-3 py-2
+                      text-sm font-bold shadow-md
+                      bg-white text-slate-900 shadow-black/15
+                      dark:bg-black/60 dark:text-[hsl(80_100%_60%)]
+                      dark:ring-1 dark:ring-[hsl(80_100%_60%)]/30">
+        <span>{name}</span>
+        {vip && (
+          <>
+            <span className="text-slate-300 dark:text-white/20 font-normal">|</span>
+            <VipTag tag={vip.tag} theme={vip.theme} neonOnly />
+          </>
+        )}
+      </div>
+      {/* Skill badge below */}
+      <span className={[
+        "rounded-full px-2.5 py-0.5 text-[10px] font-semibold",
+        skillColors[skill] ?? skillColors.intermediate,
+      ].join(" ")}>
+        {skill}
+      </span>
+    </div>
+  );
+}
+
+function InlineCourtCard({ dark }: { dark: boolean }) {
+  return (
+    <div className={[
+      "rounded-xl p-5 space-y-2.5",
+      dark ? "bg-emerald-800" : "bg-[#FAFAF7] border border-slate-200",
+    ].join(" ")}>
+      <p className={[
+        "text-[10px] font-semibold uppercase tracking-widest mb-3",
+        dark ? "text-white/50" : "text-slate-400",
+      ].join(" ")}>
+        {dark ? "Inline style — dark" : "Inline style — light"}
+      </p>
+      <div className="flex flex-wrap gap-3">
+        {COURT_ROWS.map((r) => (
+          <InlinePill key={r.name} name={r.name} skill={r.skill} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── ThemeLegend ───────────────────────────────────────────────
 
 function ThemeLegend() {
@@ -164,17 +226,31 @@ export default function VipPreviewPage() {
             <ThemeLegend />
           </section>
 
-          {/* In-context */}
+          {/* In-context — current stacked layout */}
           <section className="space-y-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              In Context
+              Current — Stacked (name above tag)
             </h2>
             <p className="text-xs text-muted-foreground">
-              VIP players alongside regular players exactly as they appear on court.
+              VIP tag sits below the name pill. Skill badge below that.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <CourtCard dark={true} />
               <CourtCard dark={false} />
+            </div>
+          </section>
+
+          {/* Inline layout preview */}
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              Proposed — Inline (Username | Tag)
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              VIP tag sits inside the name pill, separated by a pipe. Skill badge below.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <InlineCourtCard dark={true} />
+              <InlineCourtCard dark={false} />
             </div>
           </section>
 

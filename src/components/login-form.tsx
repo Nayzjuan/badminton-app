@@ -30,6 +30,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [showReconnect, setShowReconnect] = useState(false);
+  const [nameValue, setNameValue] = useState("");
 
   // Prefetch /play so the redirect after login is instant.
   useEffect(() => {
@@ -72,16 +73,32 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             required
             autoFocus
             disabled={isPending}
+            maxLength={20}
+            value={nameValue}
+            onChange={(e) => setNameValue(e.target.value)}
             placeholder="e.g. Smash King, Net Ninja..."
             autoComplete="nickname"
             className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
                        placeholder:text-muted-foreground focus:outline-none focus:ring-2
                        focus:ring-ring focus:ring-offset-2 disabled:opacity-50"
           />
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            This is your official player account and login name. Pick a name
-            you won&apos;t mind your friends shouting across the court!
-          </p>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              This is your official player account and login name. Pick a name
+              you won&apos;t mind your friends shouting across the court!
+            </p>
+            <span
+              className={`shrink-0 text-xs font-mono tabular-nums ${
+                nameValue.length === 20
+                  ? "font-semibold text-red-500"
+                  : nameValue.length >= 15
+                  ? "text-amber-500"
+                  : "text-muted-foreground"
+              }`}
+            >
+              {nameValue.length}/20
+            </span>
+          </div>
         </div>
 
         {/* Skill Level Select */}

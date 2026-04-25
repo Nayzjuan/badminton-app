@@ -21,11 +21,31 @@ interface VipTagProps {
   tag: string;
   /** Theme key from VIP_THEMES (e.g. "cyber-neon"). */
   theme: string;
+  /**
+   * When true, always renders the neon glow style regardless of color scheme.
+   * Use this when the tag sits on a colored background (e.g. the court graphic)
+   * where the holographic bg-clip-text shimmer would lose contrast.
+   */
+  neonOnly?: boolean;
 }
 
-export function VipTag({ tag, theme }: VipTagProps) {
+export function VipTag({ tag, theme, neonOnly = false }: VipTagProps) {
   const config = getVipThemeConfig(theme);
   if (!config) return null;
+
+  if (neonOnly) {
+    return (
+      <span
+        className={[
+          "font-black tracking-widest uppercase text-[13px] leading-none",
+          config.neonClass,
+          "animate-pulse",
+        ].join(" ")}
+      >
+        {tag}
+      </span>
+    );
+  }
 
   return (
     <>

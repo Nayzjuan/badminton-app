@@ -46,6 +46,7 @@ const LEVEL_CONFIG: Record<SkillLevel, { label: string; cls: string }> = {
 
 export function SkillBadge({ level, className }: SkillBadgeProps) {
   const config = LEVEL_CONFIG[level];
+  if (!config) return null;
   return (
     <span
       className={cn(
