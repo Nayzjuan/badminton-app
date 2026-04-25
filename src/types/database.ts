@@ -446,6 +446,15 @@ export type Database = {
         };
         Returns: void;
       };
+      swap_match_players: {
+        Args: {
+          p_a_match_id:   string;
+          p_a_player_id:  string;
+          p_b_match_id:   string;
+          p_b_player_id:  string;
+        };
+        Returns: void;
+      };
       create_match_with_players: {
         Args: {
           p_session_id:     string;

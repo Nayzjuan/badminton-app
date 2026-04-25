@@ -46,6 +46,18 @@ export type SwapResult = {
   errorCode?: SwapErrorCode;
 };
 
+// ── Match-to-match swap return type ──────────────────────────
+
+export type SwapMatchPlayersErrorCode =
+  | "MATCH_STARTED"      // one/both matches started → toast + clear picking state
+  | "PLAYER_NOT_IN_MATCH"; // a player already moved → toast + clear picking state
+
+export type SwapMatchPlayersResult = {
+  success: boolean;
+  message: string;
+  errorCode?: SwapMatchPlayersErrorCode;
+};
+
 // ── Auth helpers (mirrors pattern in match.ts) ────────────────
 
 async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
@@ -183,6 +195,122 @@ export async function swapPlayerInMatch(
     "on_deck_cleared",
     [outPlayerId]
   );
+
+  return { success: true, message: "Swap complete." };
+}
+
+// ============================================================
+// swapMatchPlayers — Direct Match↔Match Player Swap
+// ============================================================
+// Swaps two players who are already inside on-deck matches,
+// either within the same match (team reassignment) or across
+// two different on-deck matches (match + team reassignment).
+//
+// Unlike swapPlayerInMatch, neither player touches the queue —
+// both remain "on_deck" throughout; only match_players rows change.
+//
+// Safety guards (four pre-write checks):
+//   1. Auth
+//   2. Both matches exist + status === "pending"
+//   3. Caller is organizer of the session
+//   4. Both players still present in their respective matches
+//
+// Writes (single atomic Postgres transaction via swap_match_players RPC):
+//   a. DELETE both players from match_players
+//   b. INSERT Player A into match B (on B's team)
+//   c. INSERT Player B into match A (on A's team)
+//   d. Recompute is_mixed_level for both affected matches
+//
+// queue_entries.status is intentionally UNCHANGED — both players
+// remain "on_deck" since they are still assigned to some match.
+// ============================================================
+
+export async function swapMatchPlayers(
+  aMatchId:  string,
+  aPlayerId: string,
+  bMatchId:  string,
+  bPlayerId: string,
+  sessionId: string,
+): Promise<SwapMatchPlayersResult> {
+  const supabase = await createClient();
+  const db = createServiceClient();
+
+  // ── Guard 1: Authentication ───────────────────────────────
+  const user = await getAuthUser(supabase);
+  if (!user) {
+    return { success: false, message: "Not authenticated." };
+  }
+
+  // ── Guard 2: Both matches exist and are still pending ─────
+  const matchIds = aMatchId === bMatchId ? [aMatchId] : [aMatchId, bMatchId];
+  const { data: matches } = await db
+    .from("matches")
+    .select("id, status, session_id")
+    .in("id", matchIds);
+
+  if (!matches || matches.length < matchIds.length) {
+    return {
+      success: false,
+      errorCode: "MATCH_STARTED",
+      message: "One or both matches could not be found.",
+    };
+  }
+
+  for (const m of matches) {
+    if (m.status !== "pending") {
+      return {
+        success: false,
+        errorCode: "MATCH_STARTED",
+        message: "A match has already started — the swap was cancelled.",
+      };
+    }
+  }
+
+  // ── Guard 3: Caller must be organizer of this session ─────
+  const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  if (!organizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
+  }
+
+  // ── Guard 4: Both players must still be in their matches ──
+  const { data: playerRows } = await db
+    .from("match_players")
+    .select("match_id, player_id, team")
+    .in("player_id", [aPlayerId, bPlayerId]);
+
+  const aRow = playerRows?.find(
+    (r) => r.match_id === aMatchId && r.player_id === aPlayerId
+  );
+  const bRow = playerRows?.find(
+    (r) => r.match_id === bMatchId && r.player_id === bPlayerId
+  );
+
+  if (!aRow || !bRow) {
+    return {
+      success: false,
+      errorCode: "PLAYER_NOT_IN_MATCH",
+      message: "One or both players are no longer in their match.",
+    };
+  }
+
+  // ── Atomic write via swap_match_players RPC ───────────────
+  const { error: swapError } = await db.rpc("swap_match_players", {
+    p_a_match_id:  aMatchId,
+    p_a_player_id: aPlayerId,
+    p_b_match_id:  bMatchId,
+    p_b_player_id: bPlayerId,
+  });
+
+  if (swapError) {
+    const msg = swapError.message ?? "";
+    if (msg.includes("MATCH_STARTED")) {
+      return { success: false, errorCode: "MATCH_STARTED", message: "A match has already started." };
+    }
+    if (msg.includes("PLAYER_NOT_IN_MATCH")) {
+      return { success: false, errorCode: "PLAYER_NOT_IN_MATCH", message: "Player no longer in match." };
+    }
+    return { success: false, message: `Failed to swap: ${msg}` };
+  }
 
   return { success: true, message: "Swap complete." };
 }

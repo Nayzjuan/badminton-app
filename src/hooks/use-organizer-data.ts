@@ -55,7 +55,9 @@ import {
 } from "@/app/actions/match";
 import {
   swapPlayerInMatch as swapPlayerInMatchAction,
+  swapMatchPlayers as swapMatchPlayersAction,
   type SwapResult,
+  type SwapMatchPlayersResult,
 } from "@/app/actions/swap-player";
 import { togglePlayerPause } from "@/app/actions/queue";
 import type {
@@ -108,6 +110,13 @@ export interface UseOrganizerDataResult {
     outPlayerId: string,
     inPlayerId: string
   ) => Promise<SwapResult>;
+  swapMatchPlayers: (
+    aMatchId: string,
+    aPlayerId: string,
+    bMatchId: string,
+    bPlayerId: string,
+    sessionId: string,
+  ) => Promise<SwapMatchPlayersResult>;
   // -- Queue actions --
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
   pausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
@@ -492,6 +501,28 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     [fetchQueue, fetchActiveMatches]
   );
 
+  // ---- Match-to-match swap action ----
+  // Swaps two players who are already inside on-deck matches.
+  // Neither player changes queue status (both remain "on_deck").
+  // Refreshes active matches so the UI reflects the change immediately.
+
+  const swapMatchPlayers = useCallback(
+    async (
+      aMatchId: string,
+      aPlayerId: string,
+      bMatchId: string,
+      bPlayerId: string,
+      sessionId: string,
+    ): Promise<SwapMatchPlayersResult> => {
+      const result = await swapMatchPlayersAction(aMatchId, aPlayerId, bMatchId, bPlayerId, sessionId);
+      // Refresh active matches regardless of outcome so the UI
+      // shows the latest server state (swap or any concurrent change).
+      await fetchActiveMatches();
+      return result;
+    },
+    [fetchActiveMatches]
+  );
+
   // Derived splits — avoids the dashboard needing to filter itself.
   const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
   const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
@@ -514,6 +545,7 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     clearOnDeckMatch,
     reorderOnDeckMatches,
     swapPlayer,
+    swapMatchPlayers,
     removeFromQueue,
     pausePlayer,
   };

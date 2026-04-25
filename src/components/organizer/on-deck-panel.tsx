@@ -6,7 +6,17 @@
 // Wrapped in React.memo so that opening/closing the SwapSheet
 // (swapContext state in OrganizerDashboard) never causes the
 // entire dnd board to re-render. The memo only re-renders when
-// the matches array actually changes.
+// the matches array or swapContext actually changes.
+//
+// Tap-to-Swap v2 — two-tap direct interaction model:
+//   First tap  → enter "picking" mode (amber ring on selected pill)
+//   Second tap → execute direct match↔match swap (no sheet needed)
+//   "Pick from Bench" in floating bar → promotes to "sheet" mode
+//   Tap same player again / Esc → cancel picking mode
+//
+// SwapContext mode:
+//   "picking"  — first tap registered, waiting for second target
+//   "sheet"    — legacy bench-swap sheet opened (tap "Pick from Bench")
 // ============================================================
 
 import { memo, useState, useEffect, useRef, useCallback } from "react";
@@ -36,10 +46,17 @@ import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { SkillLevel } from "@/types/database";
 
 // ── SwapContext ───────────────────────────────────────────────
-// Exported so organizer-dashboard and swap-sheet can share the
-// same type definition without a separate types file.
+// Exported so OrganizerDashboard and SwapSheet can share the
+// same type without a separate types file.
+//
+// mode: "picking" — organizer tapped a player, floating bar shows,
+//                   waiting for a second tap to complete the swap.
+// mode: "sheet"   — legacy path: picking a replacement from the bench.
+//                   The SwapSheet drawer is open.
 
 export type SwapContext = {
+  /** Determines which UI is shown. */
+  mode: "picking" | "sheet";
   matchId: string;
   sessionId: string;
   outPlayerId: string;
@@ -48,7 +65,7 @@ export type SwapContext = {
   outPlayerSkill: SkillLevel;
   /**
    * All current players in this match (including outgoing player).
-   * Used by SwapSheet for skill-mismatch detection on replacement selection.
+   * Used by SwapSheet for skill-mismatch detection.
    */
   currentPlayers: Array<{
     player_id: string;
@@ -61,10 +78,12 @@ export type SwapContext = {
 
 interface OnDeckPanelProps {
   matches: EnrichedMatch[];
+  /** Current swap state from OrganizerDashboard. Drives visual selection. */
+  swapContext: SwapContext | null;
   onClearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   onReorderMatches: (orderedMatchIds: string[]) => Promise<{ error?: string }>;
-  /** Called when a player badge is tapped — opens the SwapSheet. */
-  onOpenSwap: (ctx: SwapContext) => void;
+  /** Called when a player badge is tapped — drives both picking and sheet modes. */
+  onPlayerTap: (ctx: Omit<SwapContext, "mode">) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -105,8 +124,9 @@ interface SortableCardProps {
   index: number;
   isClearing: boolean;
   error?: string;
+  swapContext: SwapContext | null;
   onClear: (id: string) => void;
-  onOpenSwap: (ctx: SwapContext) => void;
+  onPlayerTap: (ctx: Omit<SwapContext, "mode">) => void;
 }
 
 function SortableCard({
@@ -114,8 +134,9 @@ function SortableCard({
   index,
   isClearing,
   error,
+  swapContext,
   onClear,
-  onOpenSwap,
+  onPlayerTap,
 }: SortableCardProps) {
   const {
     attributes,
@@ -137,13 +158,26 @@ function SortableCard({
     zIndex: isDragging ? 50 : 1,
   };
 
+  // ── Derive swap visual state for this card ─────────────────
+  // selectedPlayerId: the pill in THIS match that is currently selected
+  //   (amber ring + lifted treatment in BadmintonCourt).
+  // isSwapModeActive: any picking-mode selection is active, so all
+  //   OTHER pills show the valid-target (hover-amber) treatment.
+
+  const isPickingMode = swapContext?.mode === "picking";
+  const selectedPlayerId =
+    isPickingMode && swapContext.matchId === match.id
+      ? swapContext.outPlayerId
+      : undefined;
+  const isSwapModeActive = isPickingMode;
+
   // Build SwapContext from a player badge tap.
   // All profile data is pre-fetched in EnrichedMatch — no extra calls needed.
   function handlePlayerClick(
     player: { player_id: string; display_name: string; skill_level: SkillLevel },
     team: "a" | "b"
   ) {
-    onOpenSwap({
+    onPlayerTap({
       matchId: match.id,
       sessionId: match.session_id,
       outPlayerId: player.player_id,
@@ -162,7 +196,13 @@ function SortableCard({
     <div
       ref={setNodeRef}
       style={style}
-      className="relative rounded-2xl border border-amber-100 dark:border-amber-900/40 bg-white dark:bg-card shadow-sm overflow-hidden"
+      className={[
+        "relative rounded-2xl border bg-white dark:bg-card shadow-sm overflow-hidden transition-all",
+        // Highlight card border when the selected player is in this card
+        selectedPlayerId
+          ? "border-amber-400 dark:border-amber-600 shadow-amber-200 dark:shadow-amber-900/40 shadow-md"
+          : "border-amber-100 dark:border-amber-900/40",
+      ].join(" ")}
     >
       {/* ── Card header row ────────────────────────────────── */}
       <div className="flex items-center gap-1
@@ -214,17 +254,21 @@ function SortableCard({
           teamB={teamB}
           isOnDeck
           onPlayerClick={handlePlayerClick}
+          selectedPlayerId={selectedPlayerId}
+          isSwapModeActive={isSwapModeActive}
         />
       </div>
 
-      {/* ── Footer — Clear button ──────────────────────────── */}
+      {/* ── Footer — hint + Clear button ──────────────────── */}
       <div className="px-4 py-2.5 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-3">
         <p className="text-xs text-slate-400 dark:text-muted-foreground">
-          Tap a player name to swap them out
+          {isPickingMode && selectedPlayerId
+            ? "Tap another player to swap"
+            : "Tap any player to start a swap"}
         </p>
         <button
           onClick={() => onClear(match.id)}
-          disabled={isClearing}
+          disabled={isClearing || isPickingMode}
           className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200
                      bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700
                      hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
@@ -279,7 +323,7 @@ function OverlayCard({ match, index }: { match: EnrichedMatch; index: number }) 
       </div>
       <div className="px-4 py-2.5 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-3">
         <p className="text-xs text-slate-400 dark:text-muted-foreground">
-          Tap a player name to swap them out
+          Tap any player to start a swap
         </p>
         <button disabled className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 opacity-50 cursor-not-allowed">
           <Trash2 className="h-3 w-3" />
@@ -292,15 +336,16 @@ function OverlayCard({ match, index }: { match: EnrichedMatch; index: number }) 
 
 // ── Main panel ────────────────────────────────────────────────
 // Wrapped in React.memo: swapContext state lives in
-// OrganizerDashboard. Since onOpenSwap is stabilised with
-// useCallback there, this component never re-renders just
-// because the swap sheet opens or closes.
+// OrganizerDashboard. Since onPlayerTap is stabilised with
+// useCallback there (via ref pattern), this component re-renders
+// only when matches or swapContext changes — not on every state update.
 
 function OnDeckPanelInner({
   matches,
+  swapContext,
   onClearOnDeckMatch,
   onReorderMatches,
-  onOpenSwap,
+  onPlayerTap,
 }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -442,8 +487,9 @@ function OnDeckPanelInner({
                 index={idx}
                 isClearing={clearingIds.has(match.id)}
                 error={errors[match.id]}
+                swapContext={swapContext}
                 onClear={handleClear}
-                onOpenSwap={onOpenSwap}
+                onPlayerTap={onPlayerTap}
               />
             ))}
           </div>
@@ -463,6 +509,7 @@ function OnDeckPanelInner({
 }
 
 // Export the memoised version. OrganizerDashboard stabilises
-// onOpenSwap with useCallback so this memo is effective —
-// the board never re-renders when the swap sheet opens/closes.
+// onPlayerTap with useCallback (ref pattern) so this memo is
+// effective — the board never re-renders when the swap sheet
+// opens/closes or toasts appear.
 export const OnDeckPanel = memo(OnDeckPanelInner);
