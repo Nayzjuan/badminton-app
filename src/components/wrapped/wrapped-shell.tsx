@@ -11,12 +11,13 @@
 // data-fetching logic — just presentation.
 // ============================================================
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Share2 } from "lucide-react";
 import { WrappedIntro } from "@/components/wrapped/wrapped-intro";
 import { WrappedAwardCard } from "@/components/wrapped/wrapped-award-card";
 import { sortAwardsByRarity } from "@/lib/wrapped-awards";
+import { dismissWrappedIntro } from "@/app/actions/wrapped";
 import type { MatchHistory as MatchHistoryRow } from "@/types/database";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -36,10 +37,12 @@ export type WrappedStats = {
 };
 
 interface WrappedShellProps {
-  stats:        WrappedStats;
-  sessionId:    string;
-  playerId:     string;
-  matchHistory: MatchHistoryRow[];
+  stats:           WrappedStats;
+  sessionId:       string;
+  playerId:        string;
+  matchHistory:    MatchHistoryRow[];
+  /** True when intro_dismissed_at is already set in DB — skip the overlay immediately. */
+  introDismissed:  boolean;
 }
 
 // ── Rarity badge colors (for the stat card) ───────────────────
@@ -70,11 +73,37 @@ function WinRateBar({ pct }: { pct: number }) {
 
 // ── Component ──────────────────────────────────────────────────
 
-export function WrappedShell({ stats, sessionId, playerId, matchHistory }: WrappedShellProps) {
-  const [introVisible, setIntroVisible] = useState(true);
+export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDismissed }: WrappedShellProps) {
+  // If the player already dismissed the intro (DB flag set), skip it immediately.
+  // This prevents the overlay from reappearing on every page load / device.
+  const [introVisible,  setIntroVisible]  = useState(!introDismissed);
+  // Guard against double-click: set true before the async action, reset on error.
+  const [isDismissing,  setIsDismissing]  = useState(false);
   const router = useRouter();
 
   const sorted = sortAwardsByRarity(stats.earnedAwards);
+
+  /**
+   * Persist the dismiss to the DB then navigate to the lobby.
+   * Called only when the player explicitly clicks "Done" or "Back to Lobby" —
+   * not when they tap "See Your Awards →" (which just closes the overlay
+   * to reveal the awards without marking the session as fully seen).
+   *
+   * Guarded against double-click via `isDismissing`.  If the server action
+   * fails, we stay on the page so the player can retry rather than silently
+   * navigating away with an un-persisted dismiss.
+   */
+  const handleDone = useCallback(async () => {
+    if (isDismissing) return;
+    setIsDismissing(true);
+    const result = await dismissWrappedIntro(sessionId, playerId);
+    if (!result.success) {
+      console.error("[WrappedShell] dismissWrappedIntro failed:", result.error);
+      setIsDismissing(false); // let player retry
+      return;
+    }
+    router.push("/play");
+  }, [isDismissing, sessionId, playerId, router]);
 
   return (
     <>
@@ -138,7 +167,7 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory }: Wrapp
             </div>
 
             <button
-              onClick={() => router.push("/play")}
+              onClick={handleDone}
               style={{
                 fontSize:      "11px",
                 fontWeight:    "700",
@@ -476,7 +505,7 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory }: Wrapp
             </button>
 
             <button
-              onClick={() => router.push("/play")}
+              onClick={handleDone}
               style={{
                 flex:          2,
                 padding:       "0.875rem",

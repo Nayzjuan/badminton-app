@@ -57,6 +57,7 @@ export interface TeardownResult {
   queueEntriesDeleted: number;
   courtsDeleted: number;
   botUsersDeleted: number;
+  wrappedStatsDeleted: number;
 }
 
 export async function resetSandboxSession(): Promise<TeardownResult> {
@@ -84,7 +85,18 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     );
   }
 
-  // ── Step 1: Fetch all match IDs for this session ────────────
+  // ── Step 1: Delete session_wrapped_stats ────────────────────
+  // Independent of matches — no FK dependencies.
+  const { count: wrappedStatsCount, error: wrappedStatsErr } = await db
+    .from("session_wrapped_stats")
+    .delete({ count: "exact" })
+    .eq("session_id", sessionId);
+
+  if (wrappedStatsErr) {
+    throw new Error(`[teardown] Failed to delete session_wrapped_stats: ${wrappedStatsErr.message}`);
+  }
+
+  // ── Step 2: Fetch all match IDs for this session ────────────
   const { data: matches } = await db
     .from("matches")
     .select("id")
@@ -92,7 +104,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
 
   const matchIds = (matches ?? []).map((m) => m.id);
 
-  // ── Step 2: Delete match_players (leaf table, no FKs out) ───
+  // ── Step 3: Delete match_players (leaf table, no FKs out) ───
   let matchPlayersDeleted = 0;
   if (matchIds.length > 0) {
     const { count, error } = await db
@@ -106,7 +118,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     matchPlayersDeleted = count ?? 0;
   }
 
-  // ── Step 3: Delete matches ────────────────────────────────
+  // ── Step 4: Delete matches ────────────────────────────────
   const { count: matchCount, error: matchErr } = await db
     .from("matches")
     .delete({ count: "exact" })
@@ -116,7 +128,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     throw new Error(`[teardown] Failed to delete matches: ${matchErr.message}`);
   }
 
-  // ── Step 4: Delete queue_entries ─────────────────────────
+  // ── Step 5: Delete queue_entries ─────────────────────────
   const { count: queueCount, error: queueErr } = await db
     .from("queue_entries")
     .delete({ count: "exact" })
@@ -126,7 +138,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     throw new Error(`[teardown] Failed to delete queue_entries: ${queueErr.message}`);
   }
 
-  // ── Step 5: Delete courts ─────────────────────────────────
+  // ── Step 6: Delete courts ─────────────────────────────────
   const { count: courtCount, error: courtErr } = await db
     .from("courts")
     .delete({ count: "exact" })
@@ -136,7 +148,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     throw new Error(`[teardown] Failed to delete courts: ${courtErr.message}`);
   }
 
-  // ── Step 6: Delete bot auth users (cascades to profiles) ──
+  // ── Step 7: Delete bot auth users (cascades to profiles) ──
   // Bot accounts are identified by display_name prefix "E2E_".
   const { data: botProfiles } = await db
     .from("profiles")
@@ -154,7 +166,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     }
   }
 
-  // ── Step 7: Reset the session row to a known-good state ────
+  // ── Step 8: Reset the session row to a known-good state ────
   await db
     .from("sessions")
     .update({
@@ -170,12 +182,14 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     queueEntriesDeleted: queueCount ?? 0,
     courtsDeleted: courtCount ?? 0,
     botUsersDeleted,
+    wrappedStatsDeleted: wrappedStatsCount ?? 0,
   };
 
   console.log(
     `[teardown] ✓ Reset session ${sessionId}: ` +
       `${result.matchesDeleted} matches, ${result.queueEntriesDeleted} queue entries, ` +
-      `${result.courtsDeleted} courts, ${result.botUsersDeleted} bot users`
+      `${result.courtsDeleted} courts, ${result.botUsersDeleted} bot users, ` +
+      `${result.wrappedStatsDeleted} wrapped stats`
   );
 
   return result;

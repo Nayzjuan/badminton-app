@@ -70,7 +70,7 @@ export default async function WrappedPage({ params }: WrappedPageProps) {
       earnedAwards:  [],
       awardData:     {},
     };
-    return <WrappedShell stats={emptyStats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} />;
+    return <WrappedShell stats={emptyStats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} introDismissed={false} />;
   }
 
   // ── Build the typed stats object ────────────────────────────
@@ -88,5 +88,5 @@ export default async function WrappedPage({ params }: WrappedPageProps) {
     awardData:     (statsRow.award_data as Record<string, Record<string, unknown>>) ?? {},
   };
 
-  return <WrappedShell stats={stats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} />;
+  return <WrappedShell stats={stats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} introDismissed={!!statsRow.intro_dismissed_at} />;
 }

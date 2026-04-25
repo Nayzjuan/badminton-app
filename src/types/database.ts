@@ -238,25 +238,26 @@ export type MatchPlayerInsert = Pick<MatchPlayer, "match_id" | "player_id" | "te
 
 /** session_wrapped_stats table */
 export type SessionWrappedStats = {
-  id:             string;
-  session_id:     string;
-  player_id:      string;
-  computed_at:    string;
-  games_played:   number;
-  wins:           number;
-  losses:         number;
-  points_for:     number;
-  points_against: number;
-  point_diff:     number;   // GENERATED ALWAYS AS (points_for - points_against)
-  win_pct:        number;
-  win_streak:     number;
-  session_rank:   number | null;
-  earned_awards:  string[];
-  award_data:     Record<string, Record<string, unknown>>;
+  id:                  string;
+  session_id:          string;
+  player_id:           string;
+  computed_at:         string;
+  games_played:        number;
+  wins:                number;
+  losses:              number;
+  points_for:          number;
+  points_against:      number;
+  point_diff:          number;   // GENERATED ALWAYS AS (points_for - points_against)
+  win_pct:             number;
+  win_streak:          number;
+  session_rank:        number | null;
+  earned_awards:       string[];
+  award_data:          Record<string, Record<string, unknown>>;
+  intro_dismissed_at:  string | null;
 };
 
-export type SessionWrappedStatsInsert = Omit<SessionWrappedStats, "id" | "point_diff" | "computed_at"> &
-  Partial<Pick<SessionWrappedStats, "computed_at">>;
+export type SessionWrappedStatsInsert = Omit<SessionWrappedStats, "id" | "point_diff" | "computed_at" | "intro_dismissed_at"> &
+  Partial<Pick<SessionWrappedStats, "computed_at" | "intro_dismissed_at">>;
 
 export type SessionWrappedStatsUpdate = Partial<Omit<SessionWrappedStats, "id" | "session_id" | "player_id" | "point_diff">>;
 

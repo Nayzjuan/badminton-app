@@ -41,8 +41,22 @@ export default async function PlayerDashboardPage({ params }: PageProps) {
 
   if (!session) notFound();
 
-  // Session has ended — send player straight to their Wrapped page.
+  // Session has ended — send the player to their Wrapped page,
+  // but only if they haven't already dismissed the intro.
+  // Once dismissed, /play is the correct landing page (no spam).
   if (!session.is_active) {
+    const { data: wrappedStats } = await supabase
+      .from("session_wrapped_stats")
+      .select("intro_dismissed_at")
+      .eq("session_id", sessionId)
+      .eq("player_id", user.id)
+      .maybeSingle();
+
+    if (wrappedStats?.intro_dismissed_at) {
+      // Already seen and dismissed — don't redirect back to Wrapped.
+      redirect("/play");
+    }
+
     redirect(`/wrapped/${sessionId}/${user.id}`);
   }
 
