@@ -280,16 +280,24 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   executeMatchSwapRef.current = executeMatchSwap;
 
   // ── handleUndoMatchSwap ─────────────────────────────────────
-  // Reverses a direct match↔match swap. The function is its own
-  // inverse — call with the same args to restore original state.
+  // Reverses a direct match↔match swap.
+  //
+  // After the initial swap:
+  //   first.outPlayerId  is now in  second.matchId
+  //   second.outPlayerId is now in  first.matchId
+  //
+  // So the undo must REVERSE the matchId arguments — pass each
+  // player's NEW match as the source, restoring original placement.
+  // For a same-match team swap (first.matchId == second.matchId)
+  // the argument order doesn't matter and this still works correctly.
   async function handleUndoMatchSwap(
     first: Omit<SwapContext, "mode">,
     second: Omit<SwapContext, "mode">
   ) {
     const result = await swapMatchPlayers(
-      first.matchId,
+      second.matchId,    // first.outPlayerId is NOW here
       first.outPlayerId,
-      second.matchId,
+      first.matchId,     // second.outPlayerId is NOW here
       second.outPlayerId,
       first.sessionId,
     );
