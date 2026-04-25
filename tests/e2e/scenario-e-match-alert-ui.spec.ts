@@ -226,9 +226,9 @@ test.describe("MatchAlert — [A] On-deck base layout", () => {
         timeout: 8_000,
       });
 
-      // Column labels
-      await expect(page.getByText("Your Team", { exact: false })).toBeVisible();
-      await expect(page.getByText("Opponents", { exact: false })).toBeVisible();
+      // Column labels (exact: true — avoids substring match on "Find your team…")
+      await expect(page.getByText("Your Team", { exact: true })).toBeVisible();
+      await expect(page.getByText("Opponents",  { exact: true })).toBeVisible();
 
       // YOU label must appear (one visible occurrence — the organizer's row)
       const youLabels = page.getByText("You", { exact: true });
@@ -296,9 +296,11 @@ test.describe("MatchAlert — [C] In-progress card shows court name", () => {
       // Eyebrow copy
       await expect(page.getByText(/it'?s your turn/i)).toBeVisible({ timeout: 5_000 });
 
-      // Team labels still present
-      await expect(page.getByText("Your Team", { exact: false })).toBeVisible();
-      await expect(page.getByText("Opponents",  { exact: false })).toBeVisible();
+      // Team labels still present — scoped to the alert card to avoid
+      // other "Your Team" labels that may appear in sibling UI (e.g. ScoreInputCard)
+      const inProgressCard = page.getByRole("alert").first();
+      await expect(inProgressCard.getByText("Your Team", { exact: true })).toBeVisible();
+      await expect(inProgressCard.getByText("Opponents",  { exact: true })).toBeVisible();
     } finally {
       await context.close();
     }
@@ -325,8 +327,13 @@ test.describe("MatchAlert — [D] VIP tag visible on organizer row", () => {
       // Wait for the card to be visible
       await expect(page.getByRole("alert").first()).toBeVisible({ timeout: 12_000 });
 
-      // MVP tag should be in the DOM
-      await expect(page.getByText("MVP")).toBeVisible({ timeout: 8_000 });
+      // MVP tag should be in the DOM.
+      // VipTag renders 2 spans per instance (dark/light mode), and the player
+      // header also shows the tag — filter to the first visible occurrence
+      // (the holo light-mode span, since Playwright runs Chromium in light mode).
+      await expect(page.getByText("MVP").filter({ visible: true }).first()).toBeVisible({
+        timeout: 8_000,
+      });
     } finally {
       await context.close();
     }
