@@ -136,7 +136,9 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     : "bg-slate-300";
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50 dark:bg-background">
+    <div className="min-h-screen bg-slate-50 dark:bg-background md:flex md:justify-center">
+    {/* On md+ screens, constrain to a phone-width column centred on the page */}
+    <div className="flex flex-col w-full min-h-screen md:max-w-md md:border-x md:border-slate-200 dark:md:border-border">
       {/* ── Header ──────────────────────────────────────────── */}
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80
                          dark:bg-background/95 dark:border-border">
@@ -314,6 +316,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
           </div>
         )}
       </main>
+    </div>
     </div>
   );
 }

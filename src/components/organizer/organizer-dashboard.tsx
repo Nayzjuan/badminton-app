@@ -386,7 +386,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     <div className={`min-h-screen ${SURFACE_BG}`}>
       {/* Top Header */}
       <header className={`sticky top-0 z-20 ${HEADER_BG} shadow-lg dark:border-b dark:border-border`}>
-        <div className="max-w-7xl mx-auto px-3 md:px-6 py-3 md:py-4">
+        <div className="max-w-7xl mx-auto px-3 lg:px-6 py-3 lg:py-4">
 
           {/* ── Row 1: back link + mobile controls ── */}
           <div className="mb-2 flex items-center justify-between">
@@ -402,7 +402,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
             {/* Mobile-only: mini auto toggle + more-options menu */}
             {!isClosed && (
-              <div className="flex items-center gap-2 md:hidden">
+              <div className="flex items-center gap-2 lg:hidden">
                 {/* Mini auto-matchmaking toggle */}
                 <button
                   onClick={handleToggleAuto}
@@ -479,7 +479,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
           </div>
 
           {/* ── Row 2: title (left) + desktop action strip (right) ── */}
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-y-2 gap-x-6">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-y-2 gap-x-6">
 
             {/* Title + profile name + closed badge */}
             <div className="flex items-center gap-3 min-w-0">
@@ -492,7 +492,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                                 ? "hover:bg-white/10 cursor-pointer"
                                 : "cursor-default"}`}
                 >
-                  <h1 className="text-lg md:text-xl font-bold text-white truncate">{session.name}</h1>
+                  <h1 className="text-lg lg:text-xl font-bold text-white truncate">{session.name}</h1>
                   {otherSessions.length > 0 && (
                     <ChevronDown className={`h-4 w-4 text-white/60 shrink-0 transition-transform
                                              ${switcherOpen ? "rotate-180" : ""}`} />
@@ -560,7 +560,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
             {/* Desktop action strip (hidden on mobile) */}
             {!isClosed && (
-              <div className="hidden md:flex items-center gap-2 text-sm text-white/70 shrink-0">
+              <div className="hidden lg:flex items-center gap-2 text-sm text-white/70 shrink-0">
                 {/* Stats cluster */}
                 <span className="text-white/60 tabular-nums">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
                 <span className="text-white/40">·</span>
@@ -637,7 +637,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
           {/* Mobile stats row — visible only below md */}
           {!isClosed && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-white/50 md:hidden">
+            <div className="mt-2 flex items-center gap-2 text-xs text-white/50 lg:hidden">
               <span>{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
               <span className="text-white/40">·</span>
               <span>{queue.length} in queue</span>
@@ -651,7 +651,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
         </div>
 
         {/* ── Tab Navigation — horizontally scrollable on mobile ── */}
-        <div className="max-w-7xl mx-auto px-3 md:px-6">
+        <div className="max-w-7xl mx-auto px-3 lg:px-6">
           <nav
             className="flex overflow-x-auto gap-1 pt-2
                        [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
@@ -666,7 +666,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 aria-selected={activeTab === tab.key}
                 aria-controls={`tabpanel-${tab.key}`}
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative shrink-0 whitespace-nowrap px-4 md:px-5 py-2.5 text-sm
+                className={`relative shrink-0 whitespace-nowrap px-4 lg:px-5 py-2.5 text-sm
                             font-medium transition-colors
                             ${
                               activeTab === tab.key
@@ -722,7 +722,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
       )}
 
       {/* Content */}
-      <main className="max-w-7xl mx-auto px-3 md:px-6 py-4 md:py-6">
+      <main className="max-w-7xl mx-auto px-3 lg:px-6 py-4 lg:py-6">
         <div
           role="tabpanel"
           id={`tabpanel-${activeTab}`}

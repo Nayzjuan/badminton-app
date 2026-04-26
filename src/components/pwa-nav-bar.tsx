@@ -99,7 +99,7 @@ export function PwaNavBar() {
       <button
         onClick={() => router.back()}
         aria-label="Go back"
-        className="shrink-0 h-8 w-8 flex items-center justify-center
+        className="shrink-0 h-10 w-10 flex items-center justify-center
                    rounded-lg text-muted-foreground
                    hover:bg-accent hover:text-foreground transition-colors"
       >
@@ -124,7 +124,7 @@ export function PwaNavBar() {
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="none"
-            className="w-full h-8 rounded-lg border border-primary/50 bg-background
+            className="w-full h-10 rounded-lg border border-primary/50 bg-background
                        px-2.5 text-xs text-foreground
                        focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
@@ -132,7 +132,7 @@ export function PwaNavBar() {
           <button
             onClick={openEditor}
             title="Tap to edit URL"
-            className="w-full h-8 flex items-center gap-1.5
+            className="w-full h-10 flex items-center gap-1.5
                        rounded-lg bg-accent/60 hover:bg-accent
                        px-2.5 text-left transition-colors"
           >
@@ -149,7 +149,7 @@ export function PwaNavBar() {
         <button
           onClick={handleNavigate}
           aria-label="Navigate to URL"
-          className="shrink-0 h-8 px-2.5 flex items-center gap-1
+          className="shrink-0 h-10 px-3 flex items-center gap-1
                      rounded-lg bg-primary text-primary-foreground
                      text-xs font-semibold hover:bg-primary/90 transition-colors"
         >
@@ -160,7 +160,7 @@ export function PwaNavBar() {
         <button
           onClick={() => router.push("/play")}
           aria-label="Go home"
-          className="shrink-0 h-8 w-8 flex items-center justify-center
+          className="shrink-0 h-10 w-10 flex items-center justify-center
                      rounded-lg text-muted-foreground
                      hover:bg-accent hover:text-foreground transition-colors"
         >

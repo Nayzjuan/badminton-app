@@ -251,7 +251,7 @@ export function LeaderboardPage({
             onClick={handleRefresh}
             disabled={activeLoading}
             aria-label="Refresh leaderboard"
-            className="flex items-center justify-center w-10 h-10 rounded-lg
+            className="flex items-center justify-center w-11 h-11 rounded-lg
                        border border-slate-200 dark:border-border
                        hover:bg-muted/50 transition-colors
                        disabled:opacity-40 disabled:cursor-not-allowed"

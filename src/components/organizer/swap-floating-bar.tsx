@@ -111,13 +111,13 @@ export function SwapFloatingBar({
         <button
           onClick={onCancel}
           aria-label="Cancel swap"
-          className="flex h-7 w-7 items-center justify-center rounded-full
+          className="flex h-11 w-11 items-center justify-center rounded-full
                      border border-amber-300 dark:border-amber-700
                      text-amber-600 dark:text-amber-400
                      hover:bg-amber-100 dark:hover:bg-amber-900/50
                      transition-colors"
         >
-          <X className="h-3.5 w-3.5" />
+          <X className="h-4 w-4" />
         </button>
       </div>
     </div>

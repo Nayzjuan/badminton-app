@@ -15,7 +15,10 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/play",
     scope: "/",
     display: "standalone",
-    orientation: "portrait",
+    // "any" allows both portrait and landscape so organizers can rotate their
+    // iPad courtside. Players on phones will still default to portrait since
+    // that is the natural phone orientation; the app adapts at any rotation.
+    orientation: "any",
     background_color: "#1D3A6F",
     theme_color: "#1D3A6F",
     categories: ["sports", "social"],
