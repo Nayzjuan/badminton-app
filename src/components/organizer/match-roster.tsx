@@ -188,13 +188,18 @@ function PlayerRowLight({
         aria-label={`Swap ${player.display_name}`}
         // Prevent dnd-kit from treating a tap-to-swap click as a drag start
         data-no-dnd="true"
+        data-testid={`player-pill-${player.player_id}`}
       >
         {inner}
       </button>
     );
   }
 
-  return <div className={classes}>{inner}</div>;
+  return (
+    <div className={classes} data-testid={`player-pill-${player.player_id}`}>
+      {inner}
+    </div>
+  );
 }
 
 // ── Internal: player row — dark / active court ─────────────────
