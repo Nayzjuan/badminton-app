@@ -25,7 +25,7 @@
 // ============================================================
 
 import { test, expect } from "@playwright/test";
-import { createClient } from "@supabase/supabase-js";
+import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
@@ -39,16 +39,6 @@ import {
 // Load .env.test secrets before any test runs
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
-
-// ── DB assertion helper ────────────────────────────────────────
-// Uses the service-role client to inspect DB state post-action.
-function adminDb() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
 
 // ── One-time global setup ──────────────────────────────────────
 // Creates the organizer bot account if it doesn't exist.
@@ -92,146 +82,143 @@ test.describe("Tap-to-Swap — Happy Path", () => {
     const page = await context.newPage();
 
     try {
-      // ── 1. Navigate to the organizer dashboard ──────────────
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
-
-      // Wait for the courts tab (active by default) to load
-      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
-
-      // ── 2. Verify the on-deck card is visible ───────────────
-      // The OnDeckPanel renders on the courts tab alongside ActiveCourts.
-      await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
-
-      // ── 3. Click Alice's player pill to open the SwapSheet ──
+      // Lazy locator declarations — Playwright resolves these at the moment
+      // each action runs, so defining them before the step blocks is fine.
       const alicePill = page.locator(
         `[data-testid="player-pill-${seeded.players.alice.userId}"]`
       );
-      await expect(alicePill).toBeVisible({ timeout: 5_000 });
-      await alicePill.click();
-
-      // ── 4. v2: picking mode → floating bar → open SwapSheet ──
-      // Tap-to-Swap v2: first tap enters picking mode (floating amber bar).
-      // "Pick from Bench" opens the legacy SwapSheet dialog.
-      await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
-      await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Pick from Bench" })
-        .click();
-
-      // ── 5. Assert SwapSheet is open ─────────────────────────
-      // The sheet's title is "Swap Player"
-      await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
-      await expect(page.getByText("Swap Player")).toBeVisible();
-
-      // The outgoing player is shown in the sheet header
-      // Scope to the dialog to avoid strict-mode violation with the player
-      // pill (which also contains "E2E_Alice") still visible in the background.
-      await expect(page.getByRole("dialog").getByText("E2E_Alice")).toBeVisible();
-
-      // ── 6. Eve should appear as an available candidate ──────
       const eveCandidate = page.locator(
         `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
       );
-      await expect(eveCandidate).toBeVisible({ timeout: 5_000 });
-
-      // Alice, Bob, Cara, Dan are in the match — they must NOT appear
-      // as candidates (the sheet filters out current match players)
-      await expect(
-        page.locator(`[data-testid="swap-candidate-${seeded.players.alice.userId}"]`)
-      ).not.toBeVisible();
-      await expect(
-        page.locator(`[data-testid="swap-candidate-${seeded.players.bob.userId}"]`)
-      ).not.toBeVisible();
-
-      // ── 7. Confirm button disabled before selection ─────────
       const confirmBtn = page.locator('[data-testid="swap-confirm"]');
-      await expect(confirmBtn).toBeDisabled();
 
-      // ── 8. Select Eve ───────────────────────────────────────
-      await eveCandidate.click();
+      // ── Steps 1–2 ───────────────────────────────────────────
+      await test.step("1–2 · Navigate to dashboard and verify on-deck card", async () => {
+        await page.goto(
+          `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
+        );
+        // Wait for the courts tab (active by default) to load
+        await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+        // The OnDeckPanel renders on the courts tab alongside ActiveCourts.
+        await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
+      });
 
-      // Confirm button should now be enabled
-      await expect(confirmBtn).toBeEnabled({ timeout: 3_000 });
+      // ── Steps 3–5 ───────────────────────────────────────────
+      await test.step("3–5 · Open swap sheet via Tap-to-Swap picking mode", async () => {
+        // Tap-to-Swap v2: first tap enters picking mode (floating amber bar).
+        await expect(alicePill).toBeVisible({ timeout: 5_000 });
+        await alicePill.click();
 
-      // No mismatch warning (all players are intermediate)
-      await expect(page.getByText("mixed-level match")).not.toBeVisible();
+        // "Pick from Bench" escalates from picking mode to the legacy SwapSheet dialog.
+        await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
+        await page.getByTestId("swap-floating-bar")
+          .getByRole("button", { name: "Pick from Bench" })
+          .click();
 
-      // ── 9. Confirm the swap ─────────────────────────────────
-      await confirmBtn.click();
+        // Sheet is open and shows the outgoing player.
+        // Scope to the dialog to avoid strict-mode violation with the player
+        // pill (which also contains "E2E_Alice") still visible in the background.
+        await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
+        await expect(page.getByText("Swap Player")).toBeVisible();
+        await expect(page.getByRole("dialog").getByText("E2E_Alice")).toBeVisible();
+      });
 
-      // ── 10. UI assertions post-swap ─────────────────────────
-      // Sheet should close
-      await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5_000 });
+      // ── Steps 6–8 ───────────────────────────────────────────
+      await test.step("6–8 · Select Eve; verify in-match players are excluded", async () => {
+        // Eve (waiting) must appear; Alice/Bob (in match) must NOT appear as candidates.
+        await expect(eveCandidate).toBeVisible({ timeout: 5_000 });
+        await expect(
+          page.locator(`[data-testid="swap-candidate-${seeded.players.alice.userId}"]`)
+        ).not.toBeVisible();
+        await expect(
+          page.locator(`[data-testid="swap-candidate-${seeded.players.bob.userId}"]`)
+        ).not.toBeVisible();
 
-      // Sonner "Swap complete" toast should appear
-      // Sonner renders toasts with data-sonner-toast attribute
-      await expect(
-        page.locator('[data-sonner-toast]').filter({ hasText: "Swapped" })
-      ).toBeVisible({ timeout: 5_000 });
+        // Confirm is disabled before a selection is made.
+        await expect(confirmBtn).toBeDisabled();
 
-      // On-deck card: Eve is now shown (use testid to avoid matching toast text)
-      await expect(
-        page.getByTestId(`player-pill-${seeded.players.eve.userId}`)
-      ).toBeVisible({ timeout: 5_000 });
+        await eveCandidate.click();
 
-      // On-deck card: Alice is NO LONGER shown (she's back in waiting queue)
-      // Use testid to avoid matching toast text ("Swapped E2E_Alice → E2E_Eve").
-      await expect(
-        page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
-      ).not.toBeVisible({ timeout: 3_000 });
+        // Confirm enabled; no mismatch warning (all players are intermediate).
+        await expect(confirmBtn).toBeEnabled({ timeout: 3_000 });
+        await expect(page.getByText("mixed-level match")).not.toBeVisible();
+      });
 
-      // ── 11. DB assertions ───────────────────────────────────
-      const matchId = seeded.matchId!;
+      // ── Step 9 ──────────────────────────────────────────────
+      await test.step("9 · Confirm the swap", async () => {
+        await confirmBtn.click();
+      });
 
-      // 10a. match_players: Eve in, Alice out (same team = "a")
-      const { data: matchPlayers } = await db
-        .from("match_players")
-        .select("player_id, team")
-        .eq("match_id", matchId);
+      // ── Step 10 ─────────────────────────────────────────────
+      await test.step("10 · UI: sheet closed, toast shown, on-deck card updated", async () => {
+        // Sheet should close automatically after successful swap.
+        await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5_000 });
 
-      const playerIds = (matchPlayers ?? []).map((p) => p.player_id);
-      expect(playerIds).toContain(seeded.players.eve.userId);
-      expect(playerIds).not.toContain(seeded.players.alice.userId);
-      expect(playerIds).toContain(seeded.players.bob.userId);
-      expect(playerIds).toContain(seeded.players.cara.userId);
-      expect(playerIds).toContain(seeded.players.dan.userId);
-      expect(matchPlayers).toHaveLength(4);
+        // Sonner toast confirms the swap (data-sonner-toast is Sonner's DOM marker).
+        await expect(
+          page.locator('[data-sonner-toast]').filter({ hasText: "Swapped" })
+        ).toBeVisible({ timeout: 5_000 });
 
-      // 10b. Eve is on Team A (same slot Alice vacated)
-      const eveRow = (matchPlayers ?? []).find(
-        (p) => p.player_id === seeded.players.eve.userId
-      );
-      expect(eveRow?.team).toBe("a");
+        // On-deck card: Eve is now shown (testid avoids matching toast text).
+        await expect(
+          page.getByTestId(`player-pill-${seeded.players.eve.userId}`)
+        ).toBeVisible({ timeout: 5_000 });
 
-      // 10c. queue_entries: Eve = on_deck, Alice = waiting
-      const { data: queueEntries } = await db
-        .from("queue_entries")
-        .select("player_id, status")
-        .eq("session_id", seeded.sessionId)
-        .in("player_id", [
-          seeded.players.alice.userId,
-          seeded.players.eve.userId,
-        ]);
+        // Alice is back in the waiting queue — her pill must be gone from the card.
+        await expect(
+          page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
+        ).not.toBeVisible({ timeout: 3_000 });
+      });
 
-      const eveQueue = queueEntries?.find(
-        (q) => q.player_id === seeded.players.eve.userId
-      );
-      const aliceQueue = queueEntries?.find(
-        (q) => q.player_id === seeded.players.alice.userId
-      );
+      // ── Step 11 ─────────────────────────────────────────────
+      await test.step("11 · DB: match_players, queue_entries, and is_mixed_level", async () => {
+        const matchId = seeded.matchId!;
 
-      expect(eveQueue?.status).toBe("on_deck");
-      expect(aliceQueue?.status).toBe("waiting");
+        // match_players: Eve in, Alice out — roster still 4 players.
+        const { data: matchPlayers } = await db
+          .from("match_players")
+          .select("player_id, team")
+          .eq("match_id", matchId);
 
-      // 10d. matches.is_mixed_level should be false (all intermediate)
-      const { data: matchRow } = await db
-        .from("matches")
-        .select("is_mixed_level")
-        .eq("id", matchId)
-        .single();
+        const playerIds = (matchPlayers ?? []).map((p) => p.player_id);
+        expect(playerIds).toContain(seeded.players.eve.userId);
+        expect(playerIds).not.toContain(seeded.players.alice.userId);
+        expect(playerIds).toContain(seeded.players.bob.userId);
+        expect(playerIds).toContain(seeded.players.cara.userId);
+        expect(playerIds).toContain(seeded.players.dan.userId);
+        expect(matchPlayers).toHaveLength(4);
 
-      expect(matchRow?.is_mixed_level).toBe(false);
+        // Eve inherits Alice's team slot ("a").
+        const eveRow = (matchPlayers ?? []).find(
+          (p) => p.player_id === seeded.players.eve.userId
+        );
+        expect(eveRow?.team).toBe("a");
+
+        // queue_entries: Eve promoted to on_deck; Alice demoted to waiting.
+        const { data: queueEntries } = await db
+          .from("queue_entries")
+          .select("player_id, status")
+          .eq("session_id", seeded.sessionId)
+          .in("player_id", [
+            seeded.players.alice.userId,
+            seeded.players.eve.userId,
+          ]);
+
+        const eveQueue  = queueEntries?.find((q) => q.player_id === seeded.players.eve.userId);
+        const aliceQueue = queueEntries?.find((q) => q.player_id === seeded.players.alice.userId);
+
+        expect(eveQueue?.status).toBe("on_deck");
+        expect(aliceQueue?.status).toBe("waiting");
+
+        // is_mixed_level must be false — all four remaining players are intermediate.
+        const { data: matchRow } = await db
+          .from("matches")
+          .select("is_mixed_level")
+          .eq("id", matchId)
+          .single();
+
+        expect(matchRow?.is_mixed_level).toBe(false);
+      });
     } finally {
       await context.close();
     }

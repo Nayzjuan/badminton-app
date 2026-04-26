@@ -163,8 +163,9 @@ describe("promoteOnDeckMatchInternal", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/no on-deck/i);
-    // Only the initial fetch was attempted
+    // Only the initial matches fetch was attempted — nothing else queried
     expect(mock.from).toHaveBeenCalledTimes(1);
+    expect(mock.queriedTables).toEqual(["matches"]);
   });
 
   it("returns success:false with the same message on a DB error during fetch", async () => {
@@ -198,8 +199,9 @@ describe("promoteOnDeckMatchInternal", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/already promoted/i);
-    // Stopped after the failed CAS update
+    // Stopped after the failed CAS update — only matches queried twice (fetch + update attempt)
     expect(mock.from).toHaveBeenCalledTimes(2);
+    expect(mock.queriedTables).toEqual(["matches", "matches"]);
   });
 
   it("returns success:false with error detail on a DB error during the CAS update", async () => {
@@ -239,8 +241,14 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.matchId).toBe("match-1");
     expect(result.teamA).toEqual([]);
     expect(result.teamB).toEqual([]);
-    // 5 queries: fetch, update, courts, match_players, profiles
-    expect(mock.from).toHaveBeenCalledTimes(5);
+    // Full query sequence: fetch pending → CAS update → courts update → match_players → profiles
+    expect(mock.queriedTables).toEqual([
+      "matches",       // fetch pending on-deck match
+      "matches",       // CAS status update
+      "courts",        // mark court occupied
+      "match_players", // load match player list (empty)
+      "profiles",      // resolve display names (empty)
+    ]);
   });
 
   it("succeeds and resolves player names into teamA and teamB", async () => {
@@ -264,7 +272,15 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.success).toBe(true);
     expect(result.teamA).toEqual(["Alice", "Bob"]);
     expect(result.teamB).toEqual(["Charlie", "Diana"]);
-    expect(mock.from).toHaveBeenCalledTimes(6);
+    // Full query sequence includes queue_entries update (players moved from waiting → playing)
+    expect(mock.queriedTables).toEqual([
+      "matches",        // fetch pending on-deck match
+      "matches",        // CAS status update
+      "courts",         // mark court occupied
+      "match_players",  // load match player list (non-empty → triggers queue_entries update)
+      "queue_entries",  // mark matched players status = in_match
+      "profiles",       // resolve display names
+    ]);
   });
 
   it("passes through is_mixed_level=true from the match row", async () => {

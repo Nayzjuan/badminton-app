@@ -54,7 +54,7 @@
 // ============================================================
 
 import { test, expect } from "@playwright/test";
-import { createClient } from "@supabase/supabase-js";
+import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
@@ -68,15 +68,6 @@ import {
 // Load secrets from .env.test (Vercel URL, session ID, service key)
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
-
-// ── Service-role DB client for assertions ─────────────────────
-function adminDb() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
 
 // ── Helper: normalize a team's player_ids to a sorted joined string ──
 // Used to compare partnership pairs as unordered sets so that "team A

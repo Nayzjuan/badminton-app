@@ -24,7 +24,7 @@
 // ============================================================
 
 import { test, expect } from "@playwright/test";
-import { createClient } from "@supabase/supabase-js";
+import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
@@ -37,15 +37,6 @@ import {
 
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
-
-// ── DB helper ─────────────────────────────────────────────────
-function adminDb() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
-}
 
 function sandboxSessionId(): string {
   const id = process.env.TEST_SESSION_ID!;
