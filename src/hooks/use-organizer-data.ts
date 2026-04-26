@@ -60,12 +60,14 @@ import {
   type SwapMatchPlayersResult,
 } from "@/app/actions/swap-player";
 import { togglePlayerPause } from "@/app/actions/queue";
+import { updateSessionSettings } from "@/app/actions/sessions";
 import type {
   Court,
   Match,
   MatchPlayer,
   Profile,
   QueueWithWaitTime,
+  Session,
 } from "@/types/database";
 
 /** A match enriched with its player profiles + court info. */
@@ -75,6 +77,8 @@ export interface EnrichedMatch extends Match {
 }
 
 export interface UseOrganizerDataResult {
+  /** Live session record — updates in real-time when settings change. */
+  session: Session;
   courts: Court[];
   queue: QueueWithWaitTime[];
   /** All active matches (pending + in_progress). */
@@ -120,10 +124,16 @@ export interface UseOrganizerDataResult {
   // -- Queue actions --
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
   pausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
+  // -- Session settings --
+  updateTimeLimit: (minutes: number | null) => Promise<{ error?: string }>;
 }
 
-export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
+export function useOrganizerData(
+  sessionId: string,
+  initialSession: Session
+): UseOrganizerDataResult {
   const supabase = useMemo(() => createClient(), []);
+  const [session, setSession] = useState<Session>(initialSession);
   const [courts, setCourts] = useState<Court[]>([]);
   const [queue, setQueue] = useState<QueueWithWaitTime[]>([]);
   const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
@@ -137,6 +147,11 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
   // caused subscriptions to tear down on every court update.
   // ------------------------------------------------------------------
   const courtsRef = useRef<Court[]>([]);
+
+  // Captures the last confirmed court_time_limit_minutes before an optimistic
+  // update so that a failed save reverts to the right value — not the stale
+  // initialSession value captured at mount time.
+  const prevTimeLimitRef = useRef<number | null>(initialSession.court_time_limit_minutes);
   useEffect(() => {
     courtsRef.current = courts;
   }, [courts]);
@@ -318,6 +333,24 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
   fetchActiveMatchesRef.current = fetchActiveMatches;
 
   useEffect(() => {
+    // Session settings channel — filtered to this session ID.
+    // Handles court_time_limit_minutes changes made by the organizer.
+    const sessionChannel = supabase
+      .channel(`session-settings:${sessionId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "sessions",
+          filter: `id=eq.${sessionId}`,
+        },
+        (payload) => {
+          setSession((prev) => ({ ...prev, ...(payload.new as Partial<Session>) }));
+        }
+      )
+      .subscribe();
+
     const unsubs = [
       subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current()),
       subscribeToQueue(supabase, sessionId, () => fetchQueueRef.current()),
@@ -330,7 +363,10 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
         fetchActiveMatchesRef.current();
       }),
     ];
-    return () => unsubs.forEach((u) => u());
+    return () => {
+      supabase.removeChannel(sessionChannel);
+      unsubs.forEach((u) => u());
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId]); // Intentionally omit the fetch refs — they are kept current via the ref pattern above.
 
@@ -523,11 +559,34 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     [fetchActiveMatches]
   );
 
+  // ---- Session settings action ----
+
+  const updateTimeLimit = useCallback(
+    async (minutes: number | null) => {
+      // Capture current value before overwriting — used for revert on failure.
+      // Using a setState callback guarantees we read the latest state value
+      // even if React has batched multiple updates since the last render.
+      setSession((prev) => {
+        prevTimeLimitRef.current = prev.court_time_limit_minutes;
+        return { ...prev, court_time_limit_minutes: minutes };
+      });
+      const result = await updateSessionSettings(sessionId, { court_time_limit_minutes: minutes });
+      if (result.error) {
+        // Revert to the last confirmed value, not the stale initialSession value
+        setSession((prev) => ({ ...prev, court_time_limit_minutes: prevTimeLimitRef.current }));
+        return { error: result.error };
+      }
+      return {};
+    },
+    [sessionId]
+  );
+
   // Derived splits — avoids the dashboard needing to filter itself.
   const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
   const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
 
   return {
+    session,
     courts,
     queue,
     activeMatches,
@@ -548,5 +607,6 @@ export function useOrganizerData(sessionId: string): UseOrganizerDataResult {
     swapMatchPlayers,
     removeFromQueue,
     pausePlayer,
+    updateTimeLimit,
   };
 }

@@ -20,11 +20,12 @@
 //   TeamsGrid roster (from match-roster.tsx).
 // ============================================================
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, Trophy, XCircle, Swords, Trash2 } from "lucide-react";
 import { ScoreModal } from "./score-modal";
 import { TeamsGrid } from "@/components/organizer/match-roster";
 import { MatchTimer } from "@/components/ui/match-timer";
+import { CourtTimePopover } from "@/components/ui/court-time-popover";
 import type { Court } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
@@ -34,6 +35,9 @@ import type { MatchmakingResult } from "@/app/actions/matchmaking";
 interface ActiveCourtsProps {
   courts: Court[];
   activeMatches: EnrichedMatch[];
+  /** Per-session court time limit in minutes; null = no limit. */
+  timeLimitMinutes: number | null;
+  onUpdateTimeLimit: (minutes: number | null) => Promise<{ error?: string }>;
   onAddCourt: (name: string) => Promise<{ error?: string }>;
   onUpdateCourtStatus: (
     courtId: string,
@@ -58,9 +62,12 @@ interface Toast {
 
 // ─── CourtCard ────────────────────────────────────────────────
 
+type AlertTier = "normal" | "warning" | "critical";
+
 interface CourtCardProps {
   court: Court;
   match: EnrichedMatch | undefined;
+  timeLimitMinutes: number | null;
   isMatchmaking: boolean;
   isConfirmingCancel: boolean;
   isCancelling: boolean;
@@ -79,6 +86,7 @@ interface CourtCardProps {
 function CourtCard({
   court,
   match,
+  timeLimitMinutes,
   isMatchmaking,
   isConfirmingCancel,
   isCancelling,
@@ -109,6 +117,26 @@ function CourtCard({
   // When a match is live, the card flips to a dark navy surface.
   const isActive = cardState === "in_progress";
 
+  // ── Court time alert tier ──────────────────────────────────
+  // Recomputed every 30 s — only care about minute-level changes.
+  // normal   → emerald glow (existing)
+  // warning  → amber glow (at or past limit)
+  // critical → red glow (limit + 10 min exceeded)
+  const [alertTier, setAlertTier] = useState<AlertTier>("normal");
+
+  useEffect(() => {
+    function computeTier(): AlertTier {
+      if (!isActive || !timeLimitMinutes || !match?.started_at) return "normal";
+      const elapsed = (Date.now() - new Date(match.started_at).getTime()) / 60_000;
+      if (elapsed >= timeLimitMinutes + 10) return "critical";
+      if (elapsed >= timeLimitMinutes) return "warning";
+      return "normal";
+    }
+    setAlertTier(computeTier());
+    const id = setInterval(() => setAlertTier(computeTier()), 30_000);
+    return () => clearInterval(id);
+  }, [isActive, timeLimitMinutes, match?.started_at]);
+
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {
     matchmaking: {
@@ -131,6 +159,8 @@ function CourtCard({
 
   return (
     <div
+      data-testid={`court-card-${court.id}`}
+      data-alert-tier={alertTier}
       className={[
         "flex flex-col rounded-2xl shadow-md overflow-hidden transition-all",
         !isActive ? "bg-white dark:bg-card" : "",
@@ -139,8 +169,11 @@ function CourtCard({
         isActive
           ? {
               background: "#0D1B2A",
-              boxShadow:
-                "0 0 0 1px rgba(16,185,129,0.3), 0 0 40px rgba(16,185,129,0.12)",
+              boxShadow: alertTier === "critical"
+                ? "0 0 0 1px rgba(239,68,68,0.5), 0 0 40px rgba(239,68,68,0.2)"
+                : alertTier === "warning"
+                ? "0 0 0 1px rgba(245,158,11,0.5), 0 0 40px rgba(245,158,11,0.18)"
+                : "0 0 0 1px rgba(16,185,129,0.3), 0 0 40px rgba(16,185,129,0.12)",
             }
           : undefined
       }
@@ -157,7 +190,13 @@ function CourtCard({
           "flex flex-wrap items-center justify-between gap-y-2 px-5 pt-4 pb-3",
           isActive ? "border-b" : "",
         ].join(" ")}
-        style={isActive ? { borderColor: "rgba(255,255,255,0.1)" } : undefined}
+        style={isActive ? {
+          borderColor: alertTier === "critical"
+            ? "rgba(239,68,68,0.25)"
+            : alertTier === "warning"
+            ? "rgba(245,158,11,0.25)"
+            : "rgba(255,255,255,0.1)"
+        } : undefined}
       >
         {/* Left group — court name + mixed-level badge */}
         <div className="flex items-center gap-2">
@@ -399,6 +438,8 @@ function CourtCard({
 export function ActiveCourts({
   courts,
   activeMatches,
+  timeLimitMinutes,
+  onUpdateTimeLimit,
   onAddCourt,
   onUpdateCourtStatus,
   onRemoveCourt,
@@ -576,26 +617,36 @@ export function ActiveCourts({
       )}
 
       {/* ── Add court bar ──────────────────────────────────────── */}
-      <div className="flex gap-3">
-        <input
-          type="text"
-          value={newCourtName}
-          onChange={(e) => setNewCourtName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleAddCourt()}
-          placeholder="Court name (e.g. Court 3)"
-          className="flex-1 rounded-xl border border-input bg-white dark:bg-input px-4 py-2.5
-                     text-sm placeholder:text-muted-foreground focus:outline-none
-                     focus:ring-2 focus:ring-ring shadow-sm"
-        />
-        <button
-          onClick={handleAddCourt}
-          disabled={adding || !newCourtName.trim()}
-          className="whitespace-nowrap rounded-xl bg-primary px-5 py-2.5 text-sm
-                     font-semibold text-primary-foreground hover:bg-primary/90
-                     disabled:cursor-not-allowed disabled:opacity-50 transition-colors shadow-sm"
-        >
-          {adding ? "Adding…" : "+ Add Court"}
-        </button>
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={newCourtName}
+            onChange={(e) => setNewCourtName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAddCourt()}
+            placeholder="Court name (e.g. Court 3)"
+            className="flex-1 rounded-xl border border-input bg-white dark:bg-input px-4 py-2.5
+                       text-sm placeholder:text-muted-foreground focus:outline-none
+                       focus:ring-2 focus:ring-ring shadow-sm"
+          />
+          <button
+            onClick={handleAddCourt}
+            disabled={adding || !newCourtName.trim()}
+            className="whitespace-nowrap rounded-xl bg-primary px-5 py-2.5 text-sm
+                       font-semibold text-primary-foreground hover:bg-primary/90
+                       disabled:cursor-not-allowed disabled:opacity-50 transition-colors shadow-sm"
+          >
+            {adding ? "Adding…" : "+ Add Court"}
+          </button>
+        </div>
+        {/* Time limit picker */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Court time limit:</span>
+          <CourtTimePopover
+            timeLimitMinutes={timeLimitMinutes}
+            onSave={onUpdateTimeLimit}
+          />
+        </div>
       </div>
 
       {/* ── Courts grid ────────────────────────────────────────── */}
@@ -622,6 +673,7 @@ export function ActiveCourts({
                 key={court.id}
                 court={court}
                 match={match}
+                timeLimitMinutes={timeLimitMinutes}
                 isMatchmaking={matchmakingCourt === court.id}
                 isConfirmingCancel={confirmingCancel.has(court.id)}
                 isCancelling={cancellingCourt.has(court.id)}

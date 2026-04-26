@@ -262,6 +262,44 @@ export async function toggleAutoMatchmaking(
   };
 }
 
+// ── updateSessionSettings ─────────────────────────────────────
+
+/**
+ * Updates mutable session settings (e.g. court_time_limit_minutes).
+ * Caller must be an organizer of the session.
+ */
+export async function updateSessionSettings(
+  sessionId: string,
+  updates: { court_time_limit_minutes?: number | null }
+): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: "Not authenticated." };
+
+  // Verify organizer access
+  const { data: org } = await supabase
+    .from("session_organizers")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!org) return { error: "Not an organizer of this session." };
+
+  // Explicitly allowlist updatable fields — prevents a crafted call from
+  // updating sensitive columns (is_active, organizer_passcode, created_by, etc.)
+  // even though TypeScript narrows `updates` at compile time.
+  // Each allowed field is destructured and re-assembled into a typed object.
+  if (updates.court_time_limit_minutes === undefined) return {};
+
+  const { error } = await supabase
+    .from("sessions")
+    .update({ court_time_limit_minutes: updates.court_time_limit_minutes })
+    .eq("id", sessionId);
+
+  if (error) return { error: error.message };
+  return {};
+}
+
 export interface CloseSessionResult {
   success: boolean;
   message: string;

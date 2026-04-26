@@ -149,6 +149,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   }, []);
 
   const {
+    session: liveSession,
     courts,
     queue,
     activeMatches,
@@ -168,7 +169,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     swapMatchPlayers,
     removeFromQueue,
     pausePlayer,
-  } = useOrganizerData(session.id);
+    updateTimeLimit,
+  } = useOrganizerData(session.id, session);
 
   // ── Layer 2 — Frontend Race Condition Guard ─────────────────
   // When a match transitions from pending → in_progress (promoted
@@ -739,6 +741,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
             <ActiveCourts
               courts={courts}
               activeMatches={activeMatches}
+              timeLimitMinutes={liveSession.court_time_limit_minutes}
               onAddCourt={addCourt}
               onUpdateCourtStatus={updateCourtStatus}
               onRemoveCourt={removeCourt}
@@ -746,6 +749,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               onEndMatch={endMatch}
               onCancelMatch={cancelMatch}
               onClearOnDeckMatch={clearOnDeckMatch}
+              onUpdateTimeLimit={updateTimeLimit}
             />
           </div>
         )}

@@ -42,6 +42,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Clock, GripVertical, Trash2 } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
+import { H2HStrip } from "@/components/organizer/h2h-strip";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { SkillLevel } from "@/types/database";
 
@@ -259,6 +260,13 @@ function SortableCard({
         isSwapModeActive={isSwapModeActive}
         labelA="Your Team"
         labelB="Opponents"
+      />
+
+      {/* ── H2H record strip ─────────────────────────────────── */}
+      <H2HStrip
+        teamAIds={teamA.map((p) => p.player_id)}
+        teamBIds={teamB.map((p) => p.player_id)}
+        sessionId={match.session_id}
       />
 
       {/* ── Footer — hint + Clear button ──────────────────── */}

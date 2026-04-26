@@ -80,8 +80,17 @@ export type Session = {
   scoring: ScoringFormat;
   is_active: boolean;
   is_auto_matchmaking_on: boolean; // organizer toggle — auto-fill courts on match completion
+  court_time_limit_minutes: number | null; // per-session court time cap; null = no limit
   created_at: string;
   ended_at: string | null;
+};
+
+/** Head-to-head record for an exact 2v2 team pairing */
+export type H2HRecord = {
+  alltime_a: number;
+  alltime_b: number;
+  session_a: number;
+  session_b: number;
 };
 
 /** session_organizers table */
@@ -208,7 +217,7 @@ export type SessionInsert = Pick<Session, "name" | "created_by"> &
   Partial<Pick<Session, "organizer_passcode" | "scoring">>;
 
 export type SessionUpdate = Partial<
-  Pick<Session, "name" | "organizer_passcode" | "scoring" | "is_active" | "is_auto_matchmaking_on" | "ended_at" | "created_by">
+  Pick<Session, "name" | "organizer_passcode" | "scoring" | "is_active" | "is_auto_matchmaking_on" | "court_time_limit_minutes" | "ended_at" | "created_by">
 >;
 
 export type CourtInsert = Pick<Court, "session_id" | "name"> &
@@ -472,6 +481,19 @@ export type Database = {
       compute_session_wrapped: {
         Args: { p_session_id: string };
         Returns: void;
+      };
+      get_h2h_record: {
+        Args: {
+          p_team_a:     string[];
+          p_team_b:     string[];
+          p_session_id: string;
+        };
+        Returns: {
+          alltime_a: number;
+          alltime_b: number;
+          session_a: number;
+          session_b: number;
+        }[];
       };
     };
     Enums: {
