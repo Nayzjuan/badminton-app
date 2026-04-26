@@ -186,6 +186,7 @@ function PlayerRowLight({
         className={classes}
         onClick={onSwapClick}
         aria-label={`Swap ${player.display_name}`}
+        aria-pressed={isSelected ?? false}
         // Prevent dnd-kit from treating a tap-to-swap click as a drag start
         data-no-dnd="true"
         data-testid={`player-pill-${player.player_id}`}
