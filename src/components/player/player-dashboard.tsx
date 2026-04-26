@@ -143,11 +143,11 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-lg font-bold text-slate-900 truncate">
+              <h1 className="text-lg font-bold text-slate-900 dark:text-foreground truncate">
                 {session.name}
               </h1>
               <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-slate-500 dark:text-muted-foreground">
                   {profile.display_name}
                 </span>
                 {profile.vip_tag && profile.vip_theme && (
@@ -586,7 +586,7 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
 
         {/* Error */}
         {error && (
-          <p className="text-center text-xs text-red-600">{error}</p>
+          <p className="text-center text-xs text-red-600 dark:text-red-400">{error}</p>
         )}
 
         {/* Submit */}

@@ -36,8 +36,8 @@ export function LiveCourtsTab({
   if (hasNothing) {
     return (
       <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-white dark:bg-card px-6 py-12 text-center">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
-          <Swords className="h-5 w-5 text-slate-400" />
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
+          <Swords className="h-5 w-5 text-slate-400 dark:text-muted-foreground" />
         </div>
         <p className="text-sm font-medium text-slate-600 dark:text-foreground">No active matches</p>
         <p className="mt-1 text-xs text-muted-foreground">
