@@ -157,8 +157,9 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                 {profile.pin && (
                   <button
                     onClick={() => setPinVisible((v) => !v)}
-                    className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px]
-                               font-mono text-slate-500 hover:bg-slate-200 transition-colors"
+                    className="flex items-center gap-1 rounded-full bg-slate-100 dark:bg-muted px-3 py-2
+                               min-h-[36px] text-[10px] font-mono text-slate-500 dark:text-muted-foreground
+                               hover:bg-slate-200 dark:hover:bg-muted/80 transition-colors"
                     title={pinVisible ? "Hide PIN" : "Show PIN"}
                   >
                     <span>{pinVisible ? profile.pin : `***${profile.pin.slice(-1)}`}</span>
@@ -192,8 +193,8 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <button
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium
-                               text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                    className="flex items-center gap-1 rounded-lg px-3 py-2.5 min-h-[44px] text-xs font-medium
+                               text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
                     title="Leave this session"
                   >
                     <LogOut className="h-3.5 w-3.5" />
@@ -230,18 +231,22 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
         </div>
 
         {/* ── Tab Bar — 4 tabs, mobile-stretch ────────────── */}
-        <div className="grid grid-cols-4 border-t border-slate-200 dark:border-border">
+        <div role="tablist" aria-label="Session navigation" className="grid grid-cols-4 border-t border-slate-200 dark:border-border">
           {TABS.map(({ key, label, icon: Icon }) => {
             const isActive = activeTab === key;
             return (
               <button
                 key={key}
+                role="tab"
+                aria-selected={isActive}
+                aria-controls={`tabpanel-${key}`}
+                id={`tab-${key}`}
                 onClick={() => setActiveTab(key)}
                 className={`flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold
                             transition-colors
                             ${
                               isActive
-                                ? "text-slate-900 border-b-2 border-slate-900 dark:text-[hsl(300_100%_70%)] dark:border-[hsl(300_100%_60%)]"
+                                ? "text-slate-900 border-b-2 border-slate-900 dark:text-primary dark:border-primary"
                                 : "text-slate-400 hover:text-slate-600 dark:text-muted-foreground dark:hover:text-foreground"
                             }`}
               >
@@ -260,45 +265,53 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
       {/* ── Content ─────────────────────────────────────────── */}
       <main className="flex-1 px-4 py-5 pb-8">
         {activeTab === "status" && (
-          <MyStatusTab
-            profile={profile}
-            session={session}
-            hasActiveMatch={hasActiveMatch}
-            currentMatch={currentMatch}
-            isInQueue={isInQueue}
-            myEntry={myEntry}
-            myPosition={myPosition}
-            myWaitMinutes={myWaitMinutes}
-            totalWaiting={totalWaiting}
-            queueLoading={queueLoading}
-            matchLoading={matchLoading}
-            joinQueue={joinQueue}
-            leaveQueue={leaveQueue}
-          />
+          <div role="tabpanel" id="tabpanel-status" aria-labelledby="tab-status">
+            <MyStatusTab
+              profile={profile}
+              session={session}
+              hasActiveMatch={hasActiveMatch}
+              currentMatch={currentMatch}
+              isInQueue={isInQueue}
+              myEntry={myEntry}
+              myPosition={myPosition}
+              myWaitMinutes={myWaitMinutes}
+              totalWaiting={totalWaiting}
+              queueLoading={queueLoading}
+              matchLoading={matchLoading}
+              joinQueue={joinQueue}
+              leaveQueue={leaveQueue}
+            />
+          </div>
         )}
 
         {activeTab === "courts" && (
-          <LiveCourtsTab
-            inProgressMatches={inProgressMatches}
-            onDeckMatches={onDeckMatches}
-            loading={sessionLoading}
-          />
+          <div role="tabpanel" id="tabpanel-courts" aria-labelledby="tab-courts">
+            <LiveCourtsTab
+              inProgressMatches={inProgressMatches}
+              onDeckMatches={onDeckMatches}
+              loading={sessionLoading}
+            />
+          </div>
         )}
 
         {activeTab === "waitlist" && (
-          <WaitlistTab
-            waitlist={waitlist}
-            myPlayerId={profile.id}
-            loading={sessionLoading}
-          />
+          <div role="tabpanel" id="tabpanel-waitlist" aria-labelledby="tab-waitlist">
+            <WaitlistTab
+              waitlist={waitlist}
+              myPlayerId={profile.id}
+              loading={sessionLoading}
+            />
+          </div>
         )}
 
         {activeTab === "leaderboard" && (
-          <LeaderboardPage
-            sessionId={session.id}
-            currentUserId={profile.id}
-            variant="player-panel"
-          />
+          <div role="tabpanel" id="tabpanel-leaderboard" aria-labelledby="tab-leaderboard">
+            <LeaderboardPage
+              sessionId={session.id}
+              currentUserId={profile.id}
+              variant="player-panel"
+            />
+          </div>
         )}
       </main>
     </div>
@@ -384,7 +397,7 @@ function MyStatusTab({
   // ── Loading ─────────────────────────────────────────────────
   if (queueLoading || matchLoading) {
     return (
-      <div className="py-16 text-center text-sm text-slate-400">
+      <div className="py-16 text-center text-sm text-muted-foreground">
         Loading...
       </div>
     );
@@ -393,14 +406,14 @@ function MyStatusTab({
   return (
     <div className="space-y-5">
       {/* Sub-tabs: Queue / History */}
-      <div className="flex rounded-xl bg-slate-100 p-1">
+      <div className="flex rounded-xl bg-slate-100 dark:bg-muted p-1">
         <button
           onClick={() => setSubTab("queue")}
           className={`flex-1 rounded-lg py-2 text-xs font-semibold transition-colors
                       ${
                         subTab === "queue"
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-500 hover:text-slate-700"
+                          ? "bg-white dark:bg-background text-slate-900 dark:text-foreground shadow-sm"
+                          : "text-slate-500 dark:text-muted-foreground hover:text-slate-700 dark:hover:text-foreground"
                       }`}
         >
           Queue
@@ -410,8 +423,8 @@ function MyStatusTab({
           className={`flex-1 rounded-lg py-2 text-xs font-semibold transition-colors
                       ${
                         subTab === "history"
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-slate-500 hover:text-slate-700"
+                          ? "bg-white dark:bg-background text-slate-900 dark:text-foreground shadow-sm"
+                          : "text-slate-500 dark:text-muted-foreground hover:text-slate-700 dark:hover:text-foreground"
                       }`}
         >
           History
@@ -506,8 +519,8 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
 
   if (submitted) {
     return (
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-center">
-        <p className="text-sm font-semibold text-emerald-700">
+      <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20 px-5 py-4 text-center">
+        <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
           ✅ Score submitted! Returning you to queue…
         </p>
       </div>
@@ -515,10 +528,10 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <div className="rounded-2xl border border-slate-200 dark:border-border bg-white dark:bg-card shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
-        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+      <div className="border-b border-slate-100 dark:border-border bg-slate-50 dark:bg-muted px-4 py-3">
+        <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
           📊 Submit Final Score
         </p>
       </div>
@@ -528,7 +541,7 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
         <div className="flex items-center gap-3">
           {/* My team score */}
           <div className="flex-1 text-center space-y-1">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
               {myScoreLabel}
             </p>
             <input
@@ -540,18 +553,18 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
               onChange={(e) => handleMyScore(e.target.value)}
               disabled={isPending}
               placeholder="0"
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3
-                         text-center text-2xl font-black tabular-nums text-slate-900
-                         focus:outline-none focus:ring-2 focus:ring-emerald-400
+              className="w-full rounded-xl border border-slate-200 dark:border-border bg-white dark:bg-background px-3 py-3
+                         text-center text-2xl font-black tabular-nums text-slate-900 dark:text-foreground
+                         focus:outline-none focus:ring-2 focus:ring-emerald-400 dark:focus:ring-emerald-500
                          disabled:opacity-50"
             />
           </div>
 
-          <span className="text-lg font-bold text-slate-300 mt-5">–</span>
+          <span className="text-lg font-bold text-slate-300 dark:text-muted-foreground mt-5">–</span>
 
           {/* Their team score */}
           <div className="flex-1 text-center space-y-1">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
               {theirScoreLabel}
             </p>
             <input
@@ -563,9 +576,9 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
               onChange={(e) => handleTheirScore(e.target.value)}
               disabled={isPending}
               placeholder="0"
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3
-                         text-center text-2xl font-black tabular-nums text-slate-900
-                         focus:outline-none focus:ring-2 focus:ring-slate-400
+              className="w-full rounded-xl border border-slate-200 dark:border-border bg-white dark:bg-background px-3 py-3
+                         text-center text-2xl font-black tabular-nums text-slate-900 dark:text-foreground
+                         focus:outline-none focus:ring-2 focus:ring-slate-400 dark:focus:ring-slate-500
                          disabled:opacity-50"
             />
           </div>
@@ -598,7 +611,7 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
           )}
         </button>
 
-        <p className="text-center text-[10px] text-slate-400">
+        <p className="text-center text-[10px] text-muted-foreground">
           Any player in the match can submit. This ends the match for everyone.
         </p>
       </div>
@@ -625,13 +638,13 @@ function QueueSubTab({
   if (isInQueue && myEntry?.is_paused) {
     return (
       <div className="space-y-5">
-        <div className="rounded-2xl border-2 border-slate-300 dark:border-slate-600
-                        bg-slate-50 dark:bg-slate-800/30 p-6 text-center">
+        <div className="rounded-2xl border-2 border-slate-300 dark:border-border
+                        bg-slate-50 dark:bg-muted/50 p-6 text-center">
           <div className="flex justify-center mb-3 text-3xl" aria-hidden="true">⏸</div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
             Paused by Organizer
           </p>
-          <p className="mt-1 text-lg font-bold text-slate-700 dark:text-slate-200">
+          <p className="mt-1 text-lg font-bold text-slate-700 dark:text-foreground">
             You are taking a break
           </p>
           <p className="mt-2 text-sm text-slate-500 dark:text-muted-foreground">
@@ -673,17 +686,17 @@ function QueueSubTab({
   // ── Not in queue ────────────────────────────────────────────
   return (
     <div className="space-y-5">
-      <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center">
-        <p className="text-base font-semibold text-slate-700">
+      <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-white dark:bg-card p-8 text-center">
+        <p className="text-base font-semibold text-slate-700 dark:text-foreground">
           You&apos;re not in the queue
         </p>
-        <p className="text-sm text-slate-400 mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           {totalWaiting > 0
             ? `${totalWaiting} player${totalWaiting !== 1 ? "s" : ""} currently waiting.`
             : "Be the first to join!"}
         </p>
         {myEntry && myEntry.games_played > 0 && (
-          <p className="text-xs text-slate-400 mt-3">
+          <p className="text-xs text-muted-foreground mt-3">
             {myEntry.games_played} game{myEntry.games_played !== 1 ? "s" : ""}{" "}
             played this session.
           </p>

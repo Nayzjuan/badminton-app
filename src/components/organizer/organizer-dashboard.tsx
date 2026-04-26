@@ -408,6 +408,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   onClick={handleToggleAuto}
                   disabled={togglingAuto}
                   aria-pressed={autoMatchmaking}
+                  title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
                   className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5
                               text-[11px] font-semibold transition-colors border
                               ${autoMatchmaking
@@ -562,9 +563,9 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               <div className="hidden md:flex items-center gap-2 text-sm text-white/70 shrink-0">
                 {/* Stats cluster */}
                 <span className="text-white/60 tabular-nums">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
-                <span className="text-white/30">·</span>
+                <span className="text-white/40">·</span>
                 <span className="text-white/60 tabular-nums">{queue.length} in queue</span>
-                <span className="text-white/30">·</span>
+                <span className="text-white/40">·</span>
                 <span className="text-white/60 tabular-nums">{activeMatches.length} in play</span>
 
                 {/* Visual divider between stats and action buttons */}
@@ -583,7 +584,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                                 : "bg-white/10 border-white/20 text-white/50 hover:bg-white/15"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
-                  title={autoMatchmaking ? "Auto-matchmaking is ON — click to pause" : "Auto-matchmaking is PAUSED — click to enable"}
+                  title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
                 >
                   <span className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`} />
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
@@ -638,11 +639,11 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
           {!isClosed && (
             <div className="mt-2 flex items-center gap-2 text-xs text-white/50 md:hidden">
               <span>{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
-              <span className="text-white/30">·</span>
+              <span className="text-white/40">·</span>
               <span>{queue.length} in queue</span>
-              <span className="text-white/30">·</span>
+              <span className="text-white/40">·</span>
               <span>{activeMatches.length} active</span>
-              <span className="text-white/30">·</span>
+              <span className="text-white/40">·</span>
               <ThemeToggle className="text-white/50 hover:text-white hover:bg-white/10
                                       dark:text-primary dark:hover:bg-primary/10 -my-1" />
             </div>

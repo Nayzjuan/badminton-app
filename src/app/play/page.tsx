@@ -73,11 +73,12 @@ export default async function PlayPage() {
           <SessionList sessions={activeSessions} />
         ) : (
           <div className="rounded-xl border border-dashed border-border p-8 text-center">
-            <p className="text-muted-foreground text-sm">
-              No active sessions right now.
-            </p>
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+              <span className="text-xl" aria-hidden="true">🏸</span>
+            </div>
+            <p className="text-sm font-semibold text-foreground">No active sessions yet</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Ask an organizer to create one, or check back shortly.
+              Ask an organizer to start one, or check back in a moment.
             </p>
           </div>
         )}

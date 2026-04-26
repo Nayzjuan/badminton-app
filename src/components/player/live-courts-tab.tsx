@@ -25,7 +25,7 @@ export function LiveCourtsTab({
 }: LiveCourtsTabProps) {
   if (loading) {
     return (
-      <div className="py-16 text-center text-sm text-slate-400">
+      <div className="py-16 text-center text-sm text-muted-foreground">
         Loading courts...
       </div>
     );
@@ -35,12 +35,12 @@ export function LiveCourtsTab({
 
   if (hasNothing) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center">
+      <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-white dark:bg-card px-6 py-12 text-center">
         <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
           <Swords className="h-5 w-5 text-slate-400" />
         </div>
-        <p className="text-sm font-medium text-slate-600">No active matches</p>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="text-sm font-medium text-slate-600 dark:text-foreground">No active matches</p>
+        <p className="mt-1 text-xs text-muted-foreground">
           Matches will appear here once the organizer starts them.
         </p>
       </div>
@@ -57,10 +57,10 @@ export function LiveCourtsTab({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
             </span>
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
               Now Playing
             </h2>
-            <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+            <span className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
               {inProgressMatches.length}
             </span>
           </div>
@@ -81,10 +81,10 @@ export function LiveCourtsTab({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
             </span>
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
               On Deck
             </h2>
-            <span className="rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+            <span className="rounded-full bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
               {onDeckMatches.length}
             </span>
           </div>

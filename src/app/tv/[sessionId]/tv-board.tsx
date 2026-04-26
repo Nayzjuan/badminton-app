@@ -115,8 +115,8 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
           <SectionLabel
             label="Active Courts"
             count={inProgress.length}
-            dotColor="bg-blue-500"
-            badgeClass="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+            dotColor="bg-emerald-500 animate-pulse"
+            badgeClass="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
           />
           {inProgress.length === 0 ? (
             <EmptyState message="No courts in play right now" />
@@ -285,7 +285,7 @@ function getSkillBucket(level: SkillLevel): SkillBucket {
 const TV_SKILL_CONFIG: Record<SkillBucket, { dot: string; abbr: string }> = {
   beginner:     { dot: "bg-emerald-500", abbr: "Beg" },
   intermediate: { dot: "bg-sky-500",     abbr: "Int" },
-  advanced:     { dot: "bg-violet-500",  abbr: "Adv" },
+  advanced:     { dot: "bg-purple-500",  abbr: "Adv" },
 };
 
 function TvTeamsGrid({
@@ -395,7 +395,11 @@ function TvPlayerRow({
       <div className="flex items-center gap-2 overflow-hidden">
         <span
           className={`shrink min-w-0 truncate text-xl font-bold leading-tight ${
-            dark ? teamColor : "text-slate-800 dark:text-slate-100"
+            dark
+              ? teamColor
+              : teamColor === "text-sky-200"
+                ? "text-sky-800 dark:text-sky-200"
+                : "text-amber-800 dark:text-amber-200"
           }`}
         >
           {player.display_name}

@@ -219,7 +219,7 @@ export function LeaderboardPage({
             onClick={handleRefresh}
             disabled={activeLoading}
             aria-label="Refresh leaderboard"
-            className="flex items-center justify-center w-8 h-8 rounded-lg
+            className="flex items-center justify-center w-10 h-10 rounded-lg
                        border border-slate-200 dark:border-border
                        hover:bg-muted/50 transition-colors
                        disabled:opacity-40 disabled:cursor-not-allowed"
@@ -315,7 +315,7 @@ export function LeaderboardPage({
             setSessionRows([]);
           }}
           className="flex items-center gap-1 text-xs text-muted-foreground
-                     hover:text-foreground transition-colors"
+                     hover:text-foreground transition-colors py-2 -my-2"
         >
           <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
           Change session
