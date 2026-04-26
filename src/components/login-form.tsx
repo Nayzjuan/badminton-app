@@ -36,6 +36,17 @@ const SKILL_DESCRIPTORS: Record<string, string> = {
   advanced: "Tournament level",
 };
 
+// Tier indicator dot — maps to the same 3-group color language as SkillBadge:
+//   emerald = new player  |  sky/blue = developing  |  amber = competitive  |  purple = elite
+const SKILL_TIER_DOT: Record<string, string> = {
+  beginner:           "bg-emerald-400 dark:bg-emerald-500",
+  lower_intermediate: "bg-sky-400 dark:bg-sky-500",
+  intermediate:       "bg-sky-400 dark:bg-sky-500",
+  upper_intermediate: "bg-amber-400 dark:bg-amber-500",
+  lower_advanced:     "bg-amber-400 dark:bg-amber-500",
+  advanced:           "bg-purple-400 dark:bg-purple-500",
+};
+
 export function LoginForm({ sessionId }: LoginFormProps = {}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -134,8 +145,8 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
                             gap-0.5 rounded-lg border-2 px-3 py-2.5 transition-colors
                             ${
                               skillLevel === level.value
-                                ? "border-primary bg-primary/10"
-                                : "border-input bg-background hover:bg-accent"
+                                ? "border-amber-500 bg-amber-50 dark:border-amber-400 dark:bg-amber-950/30"
+                                : "border-input bg-background hover:bg-amber-50/50 dark:hover:bg-amber-950/10"
                             }`}
               >
                 <input
@@ -146,6 +157,11 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
                   onChange={() => setSkillLevel(level.value)}
                   disabled={isPending}
                   className="sr-only"
+                />
+                {/* Tier indicator dot — top-right corner */}
+                <span
+                  className={`absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full ${SKILL_TIER_DOT[level.value]}`}
+                  aria-hidden="true"
                 />
                 <span className="text-sm font-semibold leading-tight text-foreground">
                   {level.label}
@@ -218,8 +234,8 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           type="submit"
           disabled={isPending}
           className="flex min-h-[52px] w-full cursor-pointer items-center justify-center
-                     gap-2 rounded-lg bg-primary px-4 py-4 text-base font-semibold
-                     text-primary-foreground transition-colors hover:bg-primary/90
+                     gap-2 rounded-lg bg-amber-500 px-4 py-4 text-base font-semibold
+                     text-[#0E1C3A] transition-colors hover:bg-amber-600
                      disabled:cursor-not-allowed disabled:opacity-70"
         >
           {isPending && <Spinner />}
@@ -233,7 +249,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           onClick={() => setShowReconnect(true)}
           className="flex min-h-[44px] cursor-pointer items-center justify-center
                      text-sm text-muted-foreground underline transition-colors
-                     hover:text-foreground"
+                     hover:text-foreground dark:text-amber-400/60 dark:hover:text-amber-400"
         >
           Already have a PIN? Reconnect
         </button>
@@ -442,8 +458,8 @@ function ReconnectModal({
             onClick={handleReconnect}
             disabled={isPending || !name.trim() || pin.length !== 4}
             className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg
-                       bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground
-                       transition-colors hover:bg-primary/90
+                       bg-amber-500 px-4 py-3 text-sm font-semibold text-[#0E1C3A]
+                       transition-colors hover:bg-amber-600
                        disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isPending && <Spinner />}

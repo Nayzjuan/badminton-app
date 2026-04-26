@@ -36,11 +36,12 @@ export default async function HomePage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-6 py-12">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[#FAFAF7] dark:bg-background px-6 py-12">
       <div className="w-full max-w-sm sm:max-w-md space-y-8 text-center">
         {/* Branding */}
         <div className="space-y-2">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl
+                          bg-amber-500 text-[#0E1C3A] ring-4 ring-amber-500/20 dark:ring-amber-400/20">
             <Feather className="h-7 w-7" aria-hidden="true" />
           </div>
           <h1 className="text-3xl font-black tracking-tight text-foreground">
