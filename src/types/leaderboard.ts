@@ -108,6 +108,19 @@ export type GetAllTimeLeaderboardResult = {
   error: string;
 };
 
+/**
+ * Return type for getPlayerStats().
+ * row = null means the player has zero games in this scope (no row in the view).
+ * row.rank = 0 means the player has games but hasn't hit the minimum GP threshold.
+ */
+export type GetPlayerStatsResult = {
+  success: true;
+  row: LeaderboardRow | null;
+} | {
+  success: false;
+  error: string;
+};
+
 // ------------------------------------------------------------
 // Leaderboard Variant (controls which features render)
 // ------------------------------------------------------------

@@ -25,6 +25,7 @@ import type {
   LeaderboardRow,
   GetSessionLeaderboardResult,
   GetAllTimeLeaderboardResult,
+  GetPlayerStatsResult,
 } from "@/types/leaderboard";
 
 // ── Constants ─────────────────────────────────────────────────
@@ -275,6 +276,107 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[getAllTimeLeaderboard] unexpected error:", message);
+    return { success: false, error: message };
+  }
+}
+
+// ============================================================
+// getPlayerStats
+// ============================================================
+// Fetches a single player's raw stats regardless of the MIN_GP
+// threshold. Used exclusively by LeaderboardHeroCard to show
+// below-threshold and zero-games states for the logged-in user.
+//
+// Design notes:
+//   • rank is set to 0 — the player is not on the ranked board.
+//   • win_streak is set to 0 — the hero card only shows streak
+//     in the qualified state, where the main board's myRow (which
+//     already carries the real streak) takes precedence.
+//   • vip_tag/vip_theme are set to null for the same reason —
+//     VIP badges are only rendered in the qualified state.
+//   • maybeSingle() → null means the player has zero games in
+//     this scope, so the hero card shows its zero-games state.
+// ============================================================
+export async function getPlayerStats(
+  playerId: string,
+  sessionId: string | null   // null = all-time scope
+): Promise<GetPlayerStatsResult> {
+  try {
+    const supabase = await createClient();
+
+    if (sessionId) {
+      // ── Session scope ────────────────────────────────────────
+      const { data, error } = await supabase
+        .from("v_session_leaderboard")
+        .select("*")
+        .eq("session_id", sessionId)
+        .eq("player_id", playerId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("[getPlayerStats] session error:", error);
+        return { success: false, error: error.message };
+      }
+
+      if (!data) return { success: true, row: null }; // zero games this session
+
+      const entry = data as SessionLeaderboardEntry;
+      const row: LeaderboardRow = {
+        player_id:      entry.player_id,
+        display_name:   entry.display_name,
+        games_played:   entry.games_played,
+        wins:           entry.wins,
+        losses:         entry.losses,
+        points_for:     entry.points_for,
+        points_against: entry.points_against,
+        point_diff:     entry.point_diff,
+        win_pct:        entry.win_pct,
+        rank:           0,    // not on ranked board
+        win_streak:     0,    // not shown in below-threshold state
+        rank_movement:  null,
+        vip_tag:        null, // not shown in below-threshold state
+        vip_theme:      null,
+      };
+
+      return { success: true, row };
+    } else {
+      // ── All-time scope ───────────────────────────────────────
+      const { data, error } = await supabase
+        .from("v_alltime_leaderboard_mat")
+        .select("*")
+        .eq("player_id", playerId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("[getPlayerStats] alltime error:", error);
+        return { success: false, error: error.message };
+      }
+
+      if (!data) return { success: true, row: null }; // zero all-time games
+
+      const entry = data as AllTimeLeaderboardEntry;
+      const row: LeaderboardRow = {
+        player_id:      entry.player_id,
+        display_name:   entry.display_name,
+        games_played:   entry.games_played,
+        wins:           entry.wins,
+        losses:         entry.losses,
+        points_for:     entry.points_for,
+        points_against: entry.points_against,
+        point_diff:     entry.point_diff,
+        win_pct:        entry.win_pct,
+        rank:           0,    // not on ranked board
+        win_streak:     0,    // not shown in below-threshold state
+        rank_movement:  null,
+        vip_tag:        null, // not shown in below-threshold state
+        vip_theme:      null,
+      };
+
+      return { success: true, row };
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[getPlayerStats] unexpected error:", message);
     return { success: false, error: message };
   }
 }

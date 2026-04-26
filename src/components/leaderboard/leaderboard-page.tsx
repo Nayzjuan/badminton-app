@@ -30,15 +30,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Trophy, RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { LeaderboardTable } from "./leaderboard-table";
+import { LeaderboardHeroCard } from "./leaderboard-hero-card";
 import { AdvancedStatsToggle } from "./advanced-stats-toggle";
-import { VipTag } from "@/components/ui/vip-tag";
-import { getSessionLeaderboard, getAllTimeLeaderboard } from "@/app/actions/leaderboard";
+import { getSessionLeaderboard, getAllTimeLeaderboard, getPlayerStats } from "@/app/actions/leaderboard";
 import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
 
 const MIN_SESSION_GP = 3;
 const MIN_ALLTIME_GP = 10;
-
-const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
 // ── Props ─────────────────────────────────────────────────────
 
@@ -100,6 +98,9 @@ export function LeaderboardPage({
   const [error,            setError]          = useState<string | null>(null);
   const [showAdvanced,     setShowAdvanced]   = useState(false);
   const [flashedIds,       setFlashedIds]     = useState<Set<string>>(new Set());
+  /** Raw stats for the current user regardless of MIN_GP — drives LeaderboardHeroCard */
+  const [myStats,          setMyStats]        = useState<LeaderboardRow | null>(null);
+  const [myStatsLoading,   setMyStatsLoading] = useState(false);
 
   // Track previous row IDs to detect new entrants for flash effect.
   const prevIdsRef = useRef<Set<string>>(new Set());
@@ -155,11 +156,42 @@ export function LeaderboardPage({
     }
   }, [scopeTab, alltimeFetched, alltimeLoading, fetchAllTime]);
 
+  // ── Fetch current user's raw stats for the hero card ──────
+  // Runs in parallel with the main board fetch whenever scope or
+  // session changes. Returns a rank-0 LeaderboardRow so the hero
+  // card can show the below-threshold state even when the user
+  // isn't in the qualified rows.  Cancelled on unmount / dep change
+  // via the cleanup flag so stale responses are never applied.
+  useEffect(() => {
+    if (!currentUserId) return;
+    if (scopeTab === "session" && !activeSessionId) {
+      // Session picker is showing — clear stale data and bail.
+      setMyStats(null);
+      return;
+    }
+
+    let cancelled = false;
+    setMyStats(null);          // clear stale immediately while loading
+    setMyStatsLoading(true);
+
+    getPlayerStats(
+      currentUserId,
+      scopeTab === "session" ? activeSessionId! : null,
+    ).then((result) => {
+      if (cancelled) return;
+      setMyStatsLoading(false);
+      if (result.success) setMyStats(result.row);
+    });
+
+    return () => { cancelled = true; };
+  }, [currentUserId, scopeTab, activeSessionId]);
+
   // ── Session picker handler ────────────────────────────────
   const handleSessionPick = useCallback((s: LeaderboardSessionOption) => {
     setActiveSessionId(s.id);
     setActiveSessionName(s.name);
     setSessionRows([]); // clear stale rows immediately
+    setMyStats(null);   // clear stale hero card data
   }, []);
 
   // ── Derived state ─────────────────────────────────────────
@@ -329,76 +361,23 @@ export function LeaderboardPage({
         </button>
       )}
 
-      {/* ── Hero card — pinned rank, only shown when off-screen (rank > 7) ──
-           For ranks 1-7 the user can see their row immediately in the table
-           without scrolling; the hero card adds noise rather than value.
-           For rank 8+ it prevents the user from having to hunt for themselves.
+      {/* ── Hero card — always visible for logged-in users ─────
+           Three states handled by LeaderboardHeroCard:
+             qualified       → rank + GP + W/L + win% + streak
+             below threshold → "Play N more games to appear"
+             zero games      → "You haven't played yet"
+           myRow  = user's row from qualified board (has real rank)
+           myStats = raw stats fetched without the MIN_GP filter
+           Prefer myRow so the real rank is always shown when
+           available; fall back to myStats for below-threshold.
       */}
-      {myRow && !activeLoading && !showSessionPicker && myRow.rank > 7 && (
-        <div
-          className="rounded-xl border-2 border-amber-300 dark:border-amber-500/60
-                     bg-amber-50/70 dark:bg-amber-950/20
-                     px-3 py-2.5 flex items-center gap-3"
-          aria-label={`Your rank: #${myRow.rank}`}
-        >
-          {/* Rank / medal */}
-          <div className="w-7 shrink-0 text-center">
-            {MEDALS[myRow.rank] ? (
-              <span className="text-base leading-none">{MEDALS[myRow.rank]}</span>
-            ) : (
-              <span className="text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
-                #{myRow.rank}
-              </span>
-            )}
-          </div>
-
-          {/* Name + VIP tag + streak */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <p className="text-sm font-semibold text-foreground truncate">
-                {myRow.display_name}
-              </p>
-              {myRow.vip_tag && myRow.vip_theme && (
-                <VipTag tag={myRow.vip_tag} theme={myRow.vip_theme} />
-              )}
-              <span className="text-xs font-normal text-amber-500 dark:text-amber-400">
-                (you)
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {myRow.wins}W–{myRow.losses}L ·{" "}
-              {myRow.win_pct.toFixed(1)}% win rate
-              {myRow.win_streak >= 3 && (
-                <span className="ml-1 text-orange-500">
-                  {myRow.win_streak === 3
-                    ? "🔥🔥🔥"
-                    : `🔥×${myRow.win_streak}`}
-                </span>
-              )}
-            </p>
-          </div>
-
-          {/* Rank movement (all-time tab only) */}
-          {showRankMov && myRow.rank_movement !== undefined && (
-            <div className="shrink-0 text-right">
-              {myRow.rank_movement === null ? (
-                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500">
-                  NEW
-                </span>
-              ) : myRow.rank_movement > 0 ? (
-                <span className="text-xs font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  ↑{myRow.rank_movement}
-                </span>
-              ) : myRow.rank_movement < 0 ? (
-                <span className="text-xs font-bold tabular-nums text-red-500 dark:text-red-400">
-                  ↓{Math.abs(myRow.rank_movement)}
-                </span>
-              ) : (
-                <span className="text-xs text-muted-foreground">—</span>
-              )}
-            </div>
-          )}
-        </div>
+      {currentUserId && !showSessionPicker && (
+        <LeaderboardHeroCard
+          row={myRow ?? myStats}
+          totalPlayers={activeRows.length}
+          scope={scopeTab}
+          loading={activeLoading || myStatsLoading}
+        />
       )}
 
       {/* ── Leaderboard table — hidden during picker ───────── */}
