@@ -444,7 +444,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                         rel="noopener noreferrer"
                         onClick={() => setMoreMenuOpen(false)}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm
-                                   text-slate-700 hover:bg-slate-50 transition-colors"
+                                   text-slate-700 hover:bg-slate-50 dark:text-foreground dark:hover:bg-muted transition-colors"
                       >
                         <Tv2 className="h-4 w-4 text-slate-400 shrink-0" />
                         TV Scoreboard
@@ -454,7 +454,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                       <button
                         onClick={() => { setMoreMenuOpen(false); setShareOpen(true); }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
-                                   text-slate-700 hover:bg-slate-50 transition-colors"
+                                   text-slate-700 hover:bg-slate-50 dark:text-foreground dark:hover:bg-muted transition-colors"
                       >
                         <Share2 className="h-4 w-4 text-slate-400 shrink-0" />
                         Share Session
@@ -466,7 +466,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                       <button
                         onClick={() => { setMoreMenuOpen(false); setCloseOpen(true); }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
-                                   text-red-600 hover:bg-red-50 transition-colors"
+                                   text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20 transition-colors"
                       >
                         <Power className="h-4 w-4 shrink-0" />
                         Close Session
@@ -502,9 +502,9 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 {/* Session switcher dropdown */}
                 {switcherOpen && otherSessions.length > 0 && (
                   <div className="absolute left-0 top-full mt-2 w-72 rounded-xl border border-slate-200
-                                  bg-white shadow-xl z-50 overflow-hidden
+                                  dark:border-border bg-white dark:bg-card shadow-xl z-50 overflow-hidden
                                   animate-in fade-in slide-in-from-top-1 duration-150">
-                    <div className="px-3 py-2 bg-slate-50 border-b border-slate-100">
+                    <div className="px-3 py-2 bg-slate-50 dark:bg-muted border-b border-slate-100 dark:border-border">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         Switch Session
                       </p>
@@ -515,13 +515,13 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                           key={s.id}
                           onClick={() => { setSwitcherOpen(false); router.push(`/organizer/${s.id}`); }}
                           className="flex items-center gap-3 w-full px-3 py-2.5 text-left
-                                     hover:bg-slate-50 transition-colors"
+                                     hover:bg-slate-50 dark:hover:bg-muted transition-colors"
                         >
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-muted">
                             <Repeat className="h-3.5 w-3.5 text-slate-500" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-slate-800 truncate">{s.name}</p>
+                            <p className="text-sm font-semibold text-slate-800 dark:text-foreground truncate">{s.name}</p>
                             <p className="text-[10px] text-slate-400">
                               Created {new Date(s.created_at).toLocaleDateString("en-US", {
                                 weekday: "short", month: "short", day: "numeric",
@@ -531,11 +531,11 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                         </button>
                       ))}
                     </div>
-                    <div className="border-t border-slate-100 px-3 py-2">
+                    <div className="border-t border-slate-100 dark:border-border px-3 py-2">
                       <button
                         onClick={() => { setSwitcherOpen(false); router.push("/organizer"); }}
                         className="flex items-center gap-2 w-full text-xs font-medium text-blue-600
-                                   hover:text-blue-800 transition-colors py-1"
+                                   dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors py-1"
                       >
                         <ArrowLeft className="h-3 w-3" />
                         View all sessions & create new
