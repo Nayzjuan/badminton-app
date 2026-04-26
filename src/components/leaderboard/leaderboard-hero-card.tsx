@@ -55,7 +55,7 @@ export function LeaderboardHeroCard({
   if (loading) {
     return (
       <div
-        className="h-14 rounded-2xl border-2 border-indigo-200/50 dark:border-amber-900/30
+        className="h-14 rounded-xl border-2 border-amber-200/50 dark:border-amber-900/30
                    bg-slate-100 dark:bg-muted animate-pulse"
         aria-hidden="true"
       />
@@ -63,8 +63,8 @@ export function LeaderboardHeroCard({
   }
 
   const baseCard =
-    "rounded-2xl border-2 border-indigo-300 dark:border-amber-500/60 " +
-    "bg-indigo-50 dark:bg-amber-950/30 shadow-md dark:shadow-amber-900/20 " +
+    "rounded-xl border-2 border-amber-300 dark:border-amber-500/60 " +
+    "bg-amber-50 dark:bg-amber-950/30 shadow-md dark:shadow-amber-900/20 " +
     "px-4 py-3";
 
   // ── Zero games state ────────────────────────────────────────
@@ -76,11 +76,11 @@ export function LeaderboardHeroCard({
       >
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
-                          bg-indigo-100 dark:bg-amber-900/40">
-            <Trophy className="h-4 w-4 text-indigo-400 dark:text-amber-500" />
+                          bg-amber-100 dark:bg-amber-900/40">
+            <Trophy className="h-4 w-4 text-amber-500 dark:text-amber-400" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-indigo-700 dark:text-amber-400">
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
               You haven&apos;t played yet this session
             </p>
             <p className="text-xs text-muted-foreground">
@@ -88,7 +88,7 @@ export function LeaderboardHeroCard({
             </p>
           </div>
           <span className="text-[10px] font-bold uppercase tracking-widest
-                           text-indigo-500 dark:text-amber-500 shrink-0">
+                           text-amber-500 shrink-0">
             ★ YOU
           </span>
         </div>
@@ -106,11 +106,11 @@ export function LeaderboardHeroCard({
       >
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
-                          bg-indigo-100 dark:bg-amber-900/40">
-            <Trophy className="h-4 w-4 text-indigo-400 dark:text-amber-500" />
+                          bg-amber-100 dark:bg-amber-900/40">
+            <Trophy className="h-4 w-4 text-amber-500 dark:text-amber-400" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-indigo-700 dark:text-amber-400">
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
               Play {gamesNeeded} more game{gamesNeeded !== 1 ? "s" : ""} to appear on the board
             </p>
             <p className="text-xs text-muted-foreground">
@@ -118,7 +118,7 @@ export function LeaderboardHeroCard({
             </p>
           </div>
           <span className="text-[10px] font-bold uppercase tracking-widest
-                           text-indigo-500 dark:text-amber-500 shrink-0">
+                           text-amber-500 shrink-0">
             ★ YOU
           </span>
         </div>
@@ -137,7 +137,7 @@ export function LeaderboardHeroCard({
       <div className="flex items-center gap-3">
         {/* Rank number — visually large */}
         <div className="shrink-0 text-3xl font-black tabular-nums leading-none
-                        text-indigo-700 dark:text-amber-400 min-w-[2.5rem] text-center">
+                        text-amber-700 dark:text-amber-400 min-w-[2.5rem] text-center">
           #{row.rank}
         </div>
 
@@ -177,7 +177,7 @@ export function LeaderboardHeroCard({
         {/* "of N" count + YOU label */}
         <div className="shrink-0 text-right">
           <span className="text-[10px] font-bold uppercase tracking-widest
-                           text-indigo-500 dark:text-amber-500 block">
+                           text-amber-500 block">
             ★ YOU
           </span>
           <span className="text-[10px] text-muted-foreground tabular-nums">

@@ -28,7 +28,7 @@
 // ============================================================
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Trophy, RefreshCw, ChevronLeft } from "lucide-react";
+import { Trophy, RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { LeaderboardTable } from "./leaderboard-table";
 import { AdvancedStatsToggle } from "./advanced-stats-toggle";
 import { VipTag } from "@/components/ui/vip-tag";
@@ -262,9 +262,16 @@ export function LeaderboardPage({
 
       {/* ── Error banner ───────────────────────────────────── */}
       {error && !activeLoading && (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5
-                        px-4 py-3 text-sm text-destructive">
-          Failed to load: {error}
+        <div className="rounded-xl border border-destructive/50 bg-destructive/10
+                        px-3 py-3 text-sm text-destructive flex items-start gap-2">
+          <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+          <span className="flex-1">Failed to load leaderboard data.</span>
+          <button
+            onClick={handleRefresh}
+            className="shrink-0 text-xs font-medium underline hover:no-underline"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -322,11 +329,15 @@ export function LeaderboardPage({
         </button>
       )}
 
-      {/* ── Hero card — current user's rank pinned at top ──── */}
-      {myRow && !activeLoading && !showSessionPicker && (
+      {/* ── Hero card — pinned rank, only shown when off-screen (rank > 7) ──
+           For ranks 1-7 the user can see their row immediately in the table
+           without scrolling; the hero card adds noise rather than value.
+           For rank 8+ it prevents the user from having to hunt for themselves.
+      */}
+      {myRow && !activeLoading && !showSessionPicker && myRow.rank > 7 && (
         <div
-          className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800
-                     bg-indigo-50/70 dark:bg-indigo-950/20
+          className="rounded-xl border-2 border-amber-300 dark:border-amber-500/60
+                     bg-amber-50/70 dark:bg-amber-950/20
                      px-3 py-2.5 flex items-center gap-3"
           aria-label={`Your rank: #${myRow.rank}`}
         >
@@ -335,7 +346,7 @@ export function LeaderboardPage({
             {MEDALS[myRow.rank] ? (
               <span className="text-base leading-none">{MEDALS[myRow.rank]}</span>
             ) : (
-              <span className="text-sm font-bold tabular-nums text-indigo-600 dark:text-indigo-400">
+              <span className="text-sm font-bold tabular-nums text-amber-600 dark:text-amber-400">
                 #{myRow.rank}
               </span>
             )}
@@ -350,7 +361,7 @@ export function LeaderboardPage({
               {myRow.vip_tag && myRow.vip_theme && (
                 <VipTag tag={myRow.vip_tag} theme={myRow.vip_theme} />
               )}
-              <span className="text-xs font-normal text-indigo-500 dark:text-indigo-400">
+              <span className="text-xs font-normal text-amber-500 dark:text-amber-400">
                 (you)
               </span>
             </div>
@@ -407,8 +418,8 @@ export function LeaderboardPage({
       {!activeLoading && !showSessionPicker && activeRows.length > 0 && (
         <p className="text-[10px] text-muted-foreground text-center">
           {scopeTab === "session"
-            ? `Min. ${MIN_SESSION_GP} completed games to appear · Session stats only`
-            : `Min. ${MIN_ALLTIME_GP} completed games to appear · All sessions combined`}
+            ? `Min. ${MIN_SESSION_GP} GP to appear · Ranked by confidence-weighted win rate`
+            : `Min. ${MIN_ALLTIME_GP} GP to appear · Ranked by confidence-weighted win rate`}
         </p>
       )}
     </div>

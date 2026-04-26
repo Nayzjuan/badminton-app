@@ -104,7 +104,7 @@ export function LeaderboardRow({
         "transition-colors duration-150",
         "hover:bg-slate-50/80 dark:hover:bg-muted/30",
         isCurrentUser
-          ? "bg-indigo-50/50 dark:bg-amber-950/15"
+          ? "bg-amber-50/60 dark:bg-amber-950/20"
           : "",
       ]
         .filter(Boolean)
@@ -123,7 +123,7 @@ export function LeaderboardRow({
 
       {/* Player name + VIP tag + streak */}
       <div className="flex-1 min-w-0 flex items-center gap-1.5 pl-2">
-        <span className="text-sm font-medium text-foreground truncate">
+        <span className="text-sm font-semibold text-foreground truncate">
           {row.display_name}
         </span>
         {row.vip_tag && row.vip_theme && (
@@ -159,7 +159,7 @@ export function LeaderboardRow({
 
       {/* Win% */}
       <div className="w-16 shrink-0 text-right">
-        <span className="text-sm tabular-nums font-bold text-foreground">
+        <span className="text-sm tabular-nums font-semibold text-muted-foreground">
           {row.win_pct.toFixed(1)}%
         </span>
       </div>

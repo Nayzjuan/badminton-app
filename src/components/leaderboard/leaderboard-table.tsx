@@ -59,62 +59,62 @@ export function LeaderboardTable({
   return (
     <div
       id="advanced-stats-columns"
-      className="rounded-2xl border border-slate-200 dark:border-border
+      className="rounded-xl border border-slate-200 dark:border-border
                  bg-white dark:bg-card shadow-sm overflow-hidden"
     >
-      {/* Column header */}
+      {/* Column header — role="row" so screen readers get column context */}
       <div
+        role="row"
         className="flex items-center min-h-[36px] px-3
                    bg-muted/60 dark:bg-muted/40
-                   border-b-2 border-slate-200 dark:border-border"
-        aria-hidden="true"
+                   border-b border-slate-200 dark:border-border"
       >
-        <div className="w-7 shrink-0 text-center">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <div className="w-7 shrink-0 text-center" role="columnheader" aria-label="Rank">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
             #
           </span>
         </div>
-        <div className="flex-1 min-w-0 pl-2">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <div className="flex-1 min-w-0 pl-2" role="columnheader" aria-label="Player">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
             Player
           </span>
         </div>
-        <div className="w-8 shrink-0 text-right">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <div className="w-8 shrink-0 text-right" role="columnheader" aria-label="Games Played">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
             GP
           </span>
         </div>
-        <div className="w-14 shrink-0 text-right">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <div className="w-14 shrink-0 text-right" role="columnheader" aria-label="Wins and Losses">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
             W–L
           </span>
         </div>
-        <div className="w-16 shrink-0 text-right">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+        <div className="w-16 shrink-0 text-right" role="columnheader" aria-label="Win Rate — ranked by confidence-weighted win rate (more games played earns more weight)">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
             Win%
           </span>
         </div>
         {showRankMovement && (
-          <div className="w-11 shrink-0 text-right">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          <div className="w-11 shrink-0 text-right" role="columnheader" aria-label="Rank change this week">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
               Δ
             </span>
           </div>
         )}
         {showAdvanced && (
           <>
-            <div className="w-10 shrink-0 text-right">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            <div className="w-10 shrink-0 text-right" role="columnheader" aria-label="Points For">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
                 PF
               </span>
             </div>
-            <div className="w-10 shrink-0 text-right">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            <div className="w-10 shrink-0 text-right" role="columnheader" aria-label="Points Against">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
                 PA
               </span>
             </div>
-            <div className="w-10 shrink-0 text-right">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            <div className="w-10 shrink-0 text-right" role="columnheader" aria-label="Point Differential">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground" aria-hidden="true">
                 +/−
               </span>
             </div>

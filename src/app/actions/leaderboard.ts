@@ -28,17 +28,34 @@ import type {
 } from "@/types/leaderboard";
 
 // ── Constants ─────────────────────────────────────────────────
-const MIN_SESSION_GP = 3;   // minimum games to appear on session board
-const MIN_ALLTIME_GP = 10;  // minimum games to appear on all-time board
-const RANK_MOVEMENT_DAYS = 7; // compare current rank vs. N days ago
+const MIN_SESSION_GP = 3;          // minimum games to appear on session board
+const MIN_ALLTIME_GP = 10;         // minimum games to appear on all-time board
+const RANK_MOVEMENT_DAYS = 7;      // compare current rank vs. N days ago
+const SESSION_CONFIDENCE_K = 3;    // confidence smoothing constant for session ranking
+const ALLTIME_CONFIDENCE_K = 10;   // confidence smoothing constant for all-time ranking
+
+// ── Confidence-Weighted Score ─────────────────────────────────
+// Adjusts raw win% to reward playing more games.
+// Formula: win% × GP / (GP + k)
+//   - A player with 100% win rate across 3 GP (k=3) scores 50.0
+//   - A player with  80% win rate across 10 GP (k=3) scores 61.5
+// This prevents a player who played the minimum games and won all of
+// them from outranking a veteran with a strong long-term record.
+function computeConfidenceScore(win_pct: number, games_played: number, k: number): number {
+  return (win_pct * games_played) / (games_played + k);
+}
 
 // ── Tie-Breaker Sort ─────────────────────────────────────────
-// Wins DESC → Win% DESC → Point Diff DESC → Points For DESC → Name ASC
-function sortLeaderboard<T extends { wins: number; win_pct: number; point_diff: number; points_for: number; display_name: string }>(
-  rows: T[]
+// Primary: confidence-weighted win rate DESC
+// Then:    raw win% DESC → point diff DESC → points for DESC → name ASC
+function sortLeaderboard<T extends { wins: number; win_pct: number; games_played: number; point_diff: number; points_for: number; display_name: string }>(
+  rows: T[],
+  confidenceK: number
 ): T[] {
   return [...rows].sort((a, b) => {
-    if (b.wins !== a.wins) return b.wins - a.wins;
+    const scoreA = computeConfidenceScore(a.win_pct, a.games_played, confidenceK);
+    const scoreB = computeConfidenceScore(b.win_pct, b.games_played, confidenceK);
+    if (Math.abs(scoreB - scoreA) > 0.001) return scoreB - scoreA;
     if (b.win_pct !== a.win_pct) return b.win_pct - a.win_pct;
     if (b.point_diff !== a.point_diff) return b.point_diff - a.point_diff;
     if (b.points_for !== a.points_for) return b.points_for - a.points_for;
@@ -48,18 +65,21 @@ function sortLeaderboard<T extends { wins: number; win_pct: number; point_diff: 
 
 // ── Rank Assignment ───────────────────────────────────────────
 // Assigns 1-based ranks. Ties share the same rank (dense rank).
-function assignRanks<T extends { wins: number; win_pct: number; point_diff: number; points_for: number }>(
-  sorted: T[]
+function assignRanks<T extends { wins: number; win_pct: number; games_played: number; point_diff: number; points_for: number }>(
+  sorted: T[],
+  confidenceK: number
 ): (T & { rank: number })[] {
   let currentRank = 1;
   return sorted.map((row, i) => {
     if (i > 0) {
       const prev = sorted[i - 1];
+      const scoreRow  = computeConfidenceScore(row.win_pct,  row.games_played,  confidenceK);
+      const scorePrev = computeConfidenceScore(prev.win_pct, prev.games_played, confidenceK);
       const tied =
-        row.wins === prev.wins &&
-        row.win_pct === prev.win_pct &&
-        row.point_diff === prev.point_diff &&
-        row.points_for === prev.points_for;
+        Math.abs(scoreRow - scorePrev) <= 0.001 &&
+        row.win_pct     === prev.win_pct &&
+        row.point_diff  === prev.point_diff &&
+        row.points_for  === prev.points_for;
       if (!tied) currentRank = i + 1;
     }
     return { ...row, rank: currentRank };
@@ -124,8 +144,8 @@ export async function getSessionLeaderboard(
     const streakMap = buildStreakMap((streaksResult.data ?? []) as PlayerStreak[]);
 
     // Sort, assign ranks, merge streaks
-    const sorted = sortLeaderboard(rawStats);
-    const ranked = assignRanks(sorted);
+    const sorted = sortLeaderboard(rawStats, SESSION_CONFIDENCE_K);
+    const ranked = assignRanks(sorted, SESSION_CONFIDENCE_K);
 
     // Batch-fetch VIP fields for all qualified players
     const vipMap = await buildVipMap(supabase, ranked.map((r) => r.player_id));
@@ -207,16 +227,16 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
     const streakMap = buildStreakMap((streaksResult.data ?? []) as PlayerStreak[]);
 
     // Sort + rank current stats
-    const sortedCurrent = sortLeaderboard(currentStats);
-    const rankedCurrent = assignRanks(sortedCurrent);
+    const sortedCurrent = sortLeaderboard(currentStats, ALLTIME_CONFIDENCE_K);
+    const rankedCurrent = assignRanks(sortedCurrent, ALLTIME_CONFIDENCE_K);
 
     // Build previous rank map (player_id → rank)
     const previousRankMap = new Map<string, number>();
     if (!previousResult.error && previousResult.data) {
       const prevStats = previousResult.data as AllTimeLeaderboardEntry[];
       const filteredPrev = prevStats.filter((r) => r.games_played >= MIN_ALLTIME_GP);
-      const sortedPrev = sortLeaderboard(filteredPrev);
-      const rankedPrev = assignRanks(sortedPrev);
+      const sortedPrev = sortLeaderboard(filteredPrev, ALLTIME_CONFIDENCE_K);
+      const rankedPrev = assignRanks(sortedPrev, ALLTIME_CONFIDENCE_K);
       rankedPrev.forEach((r) => previousRankMap.set(r.player_id, r.rank));
     }
 

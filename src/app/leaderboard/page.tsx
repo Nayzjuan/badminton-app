@@ -36,7 +36,7 @@ export default async function LobbyLeaderboardPage() {
                       bg-background/95 backdrop-blur px-4 py-3">
         <Link
           href="/play"
-          className="flex items-center justify-center h-9 w-9 rounded-lg
+          className="flex items-center justify-center h-11 w-11 rounded-lg
                      border border-border hover:bg-muted/50 transition-colors"
           aria-label="Back to lobby"
         >
