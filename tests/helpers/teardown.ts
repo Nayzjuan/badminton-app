@@ -227,7 +227,9 @@ export type QueuePreset =
   | "first_match_on_deck"     // alice/bob/cara/dan in a pending match; eve waiting
   | "first_match_in_progress" // alice/bob/cara/dan in active match; eve waiting
   | "soft_gate"               // alice/bob/cara/dan in active match; eve/frank/grace/henry waiting (4 = GATE_POOL_THRESHOLD)
-  | "two_matches_on_deck";    // match1: alice/bob vs cara/dan (pending); match2: eve/frank vs grace/henry (pending)
+  | "two_matches_on_deck"     // match1: alice/bob vs cara/dan (pending); match2: eve/frank vs grace/henry (pending)
+  | "diversity_pool_8"        // 8 intermediates waiting + 1 COMPLETED match (alice/bob vs cara/dan); used by scenario-h [H-1]
+  | "diversity_pool_4";       // ONLY alice/bob/cara/dan waiting (mixed skills) + 1 COMPLETED match; used by scenario-h [H-2]
 
 export async function seedSession(
   preset: QueuePreset = "first_match_on_deck"
@@ -588,6 +590,243 @@ export async function seedSession(
       .update({ status: "on_deck" })
       .eq("session_id", sessionId)
       .in("player_id", [bots.eve.userId, extraPlayers.frank.userId, extraPlayers.grace.userId, extraPlayers.henry.userId]);
+  }
+
+  if (preset === "diversity_pool_8") {
+    // ── Diversity Pool 8 Preset ──────────────────────────────────
+    // Purpose: scenario-h [H-1] — verify the engine avoids the recently
+    // played 4-player roster when the waiting pool has fresh alternatives.
+    //
+    // Layout:
+    //   8 intermediate players (alice–henry), all waiting (positions 1–8)
+    //   2 courts available, no in-progress match
+    //   1 COMPLETED match: Team A=alice/bob, Team B=cara/dan
+    //   alice/bob/cara/dan have games_played=1 (they played the completed match)
+    //   eve/frank/grace/henry have games_played=0 (fresh)
+    //
+    // With this setup, the engine picks any of the 8 as anchor; companions
+    // are scored by overlap-with-anchor. Since alice/bob/cara/dan have
+    // overlap=1 with each other, the engine prefers fresh players, and the
+    // first proposed group should have ≤ 2 players from the completed roster.
+
+    // ── Create 3 extra bot players (frank, grace, henry) ─────────
+    const extraDefs = [
+      { key: "frank", name: "E2E_Frank", skill: "intermediate" as const },
+      { key: "grace", name: "E2E_Grace", skill: "intermediate" as const },
+      { key: "henry", name: "E2E_Henry", skill: "intermediate" as const },
+    ];
+
+    for (const def of extraDefs) {
+      const { data: userData, error: userErr } = await db.auth.admin.createUser({
+        email: `${def.name.toLowerCase()}@playwright.local`,
+        email_confirm: true,
+        user_metadata: { display_name: def.name },
+      });
+
+      if (userErr || !userData.user) {
+        throw new Error(`[seed:diversity_pool_8] Failed to create user ${def.name}: ${userErr?.message}`);
+      }
+
+      const userId = userData.user.id;
+
+      const { error: profileErr } = await db.from("profiles").upsert(
+        { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
+        { onConflict: "id" }
+      );
+      if (profileErr) {
+        throw new Error(`[seed:diversity_pool_8] Failed to upsert profile ${def.name}: ${profileErr.message}`);
+      }
+
+      extraPlayers[def.key] = {
+        userId,
+        profileId: userId,
+        displayName: def.name,
+        skill: def.skill,
+      };
+    }
+
+    // ── Add frank/grace/henry to queue at positions 6-8 ──────────
+    // Note: alice–eve were inserted in a separate batch earlier and share
+    // a single statement-timestamp `joined_at`. frank/grace/henry are
+    // inserted now in their own batch and get a slightly later joined_at.
+    // Combined with the priorityScore=0 floor for everyone (alice/bob/cara/dan
+    // floored from -12 by GAME_PENALTY, eve/frank/grace/henry naturally 0),
+    // the engine's joined_at-ASC tiebreak picks one of {alice…eve} as anchor.
+    // Either anchor still produces a diverse first match because:
+    //   • If anchor is alice/bob/cara/dan: the 3 lowest-overlap companions
+    //     (overlap=1 → score 10_000) are dominated by 4 fresh choices
+    //     (overlap=0 → score 0), so the group ends up with 1 from the
+    //     completed roster and 3 fresh.
+    //   • If anchor is eve: all 7 candidates have overlap=0; the engine's
+    //     stable sort then picks the first 3 by query order — still a
+    //     mix that keeps overlap with the completed roster ≤ 2.
+    const extraQueueInserts = [
+      { session_id: sessionId, player_id: extraPlayers.frank.userId, status: "waiting" as const, games_played: 0, position: 6 },
+      { session_id: sessionId, player_id: extraPlayers.grace.userId, status: "waiting" as const, games_played: 0, position: 7 },
+      { session_id: sessionId, player_id: extraPlayers.henry.userId, status: "waiting" as const, games_played: 0, position: 8 },
+    ];
+
+    const { error: extraQueueErr } = await db.from("queue_entries").insert(extraQueueInserts);
+    if (extraQueueErr) {
+      throw new Error(`[seed:diversity_pool_8] Failed to create extra queue entries: ${extraQueueErr.message}`);
+    }
+
+    // ── Create the COMPLETED match: alice/bob vs cara/dan ────────
+    // started 11 min ago, completed 1 min ago — well within the
+    // ANTI_REPEAT_LOOKBACK window the engine reads.
+    const { data: completedMatch, error: completedErr } = await db
+      .from("matches")
+      .insert({
+        session_id: sessionId,
+        court_id: null,
+        status: "completed",
+        is_mixed_level: false,
+        sort_order: 0,
+        team_a_score: 21,
+        team_b_score: 19,
+        started_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+        completed_at: new Date(Date.now() - 60_000).toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (completedErr || !completedMatch) {
+      throw new Error(`[seed:diversity_pool_8] Failed to create completed match: ${completedErr?.message}`);
+    }
+
+    matchId = completedMatch.id;
+
+    const { error: completedMpErr } = await db.from("match_players").insert([
+      { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.bob.userId,   team: "a" as const },
+      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId,   team: "b" as const },
+    ]);
+    if (completedMpErr) {
+      throw new Error(`[seed:diversity_pool_8] Failed to create completed match players: ${completedMpErr.message}`);
+    }
+
+    // ── Bump games_played for the 4 who played the completed match ──
+    // Their priority drops to floor(0 - 1×12, 0) = 0 (same as fresh players),
+    // but the overlap penalty in scoreCandidates makes the engine prefer
+    // pairing fresh anchors with fresh companions.
+    const { error: gpErr } = await db
+      .from("queue_entries")
+      .update({ games_played: 1 })
+      .eq("session_id", sessionId)
+      .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId]);
+    if (gpErr) {
+      throw new Error(`[seed:diversity_pool_8] Failed to bump games_played: ${gpErr.message}`);
+    }
+  }
+
+  if (preset === "diversity_pool_4") {
+    // ── Diversity Pool 4 Preset ──────────────────────────────────
+    // Purpose: scenario-h [H-2] — verify rotatedDraft fires when the
+    // engine is forced to repeat the same 4 players (no fresh alternatives).
+    //
+    // Layout:
+    //   ONLY alice/bob/cara/dan waiting (eve removed from queue)
+    //   Skills span ±2 so the engine's normal window admits the group:
+    //     alice = lower_intermediate (skill_int=2)
+    //     bob   = intermediate       (skill_int=3)
+    //     cara  = intermediate       (skill_int=3)
+    //     dan   = upper_intermediate (skill_int=4)
+    //   Variance: max(4) - min(2) = 2 ≤ SKILL_VARIANCE_MAX
+    //   2 courts available, no in-progress match (so soft gate cannot fire)
+    //   1 COMPLETED match: Team A=alice/dan (skill 2+4=6), Team B=bob/cara (3+3=6)
+    //
+    // Engine flow:
+    //   - Pool size = 4 → effectiveLookback=2, but only 1 completed match exists
+    //   - Anchor = whoever's first by joined_at tiebreak (priority 0 across the board)
+    //   - Group = the other 3 (only choice)
+    //   - isDiversityViolation([all 4]) = true (4-of-4 overlap with completed)
+    //   - Tier 1 swap: swapPool empty (no other players) → fail
+    //   - Tier 2 expand: widerEligible empty (all 4 already in group) → fail
+    //   - Tier 3 rotatedDraft: repeatCount=1 → splitIndex=1 → "top pair vs bottom pair"
+    //
+    // The rotated split with sorted-DESC-by-skill input (dan, bob/cara, alice)
+    // produces partnership pairs that DIFFER from {alice+dan, bob+cara}.
+    // Both possible tie-breaks (bob first or cara first) yield a different
+    // partnership set than the completed match — see scenario-h [H-2] assertion.
+
+    // ── Override skills for alice and dan ────────────────────────
+    const { error: aliceSkillErr } = await db
+      .from("profiles")
+      .update({ skill_level: "lower_intermediate" })
+      .eq("id", bots.alice.userId);
+    if (aliceSkillErr) {
+      throw new Error(`[seed:diversity_pool_4] Failed to update alice skill: ${aliceSkillErr.message}`);
+    }
+
+    const { error: danSkillErr } = await db
+      .from("profiles")
+      .update({ skill_level: "upper_intermediate" })
+      .eq("id", bots.dan.userId);
+    if (danSkillErr) {
+      throw new Error(`[seed:diversity_pool_4] Failed to update dan skill: ${danSkillErr.message}`);
+    }
+
+    bots.alice.skill = "lower_intermediate";
+    bots.dan.skill = "upper_intermediate";
+
+    // ── Remove eve from the queue (her profile/auth user remain) ──
+    const { error: eveDelErr } = await db
+      .from("queue_entries")
+      .delete()
+      .eq("session_id", sessionId)
+      .eq("player_id", bots.eve.userId);
+    if (eveDelErr) {
+      throw new Error(`[seed:diversity_pool_4] Failed to remove eve from queue: ${eveDelErr.message}`);
+    }
+
+    // ── Create the COMPLETED match: alice+dan vs bob+cara ────────
+    // Skill sums: A=2+4=6, B=3+3=6 → balanced.
+    // Partnership pairs: {alice+dan, bob+cara}.
+    // After rotatedDraft (splitIndex=1), the new partnership pair will be
+    // {dan+top-int, alice+bottom-int} which differs from above regardless
+    // of whether bob or cara wins the stable-sort tie.
+    const { data: completedMatch, error: completedErr } = await db
+      .from("matches")
+      .insert({
+        session_id: sessionId,
+        court_id: null,
+        status: "completed",
+        is_mixed_level: false,
+        sort_order: 0,
+        team_a_score: 21,
+        team_b_score: 18,
+        started_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+        completed_at: new Date(Date.now() - 60_000).toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (completedErr || !completedMatch) {
+      throw new Error(`[seed:diversity_pool_4] Failed to create completed match: ${completedErr?.message}`);
+    }
+
+    matchId = completedMatch.id;
+
+    const { error: completedMpErr } = await db.from("match_players").insert([
+      { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.dan.userId,   team: "a" as const },
+      { match_id: matchId, player_id: bots.bob.userId,   team: "b" as const },
+      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
+    ]);
+    if (completedMpErr) {
+      throw new Error(`[seed:diversity_pool_4] Failed to create completed match players: ${completedMpErr.message}`);
+    }
+
+    // ── Bump games_played for all 4 (they played the completed match) ──
+    const { error: gpErr } = await db
+      .from("queue_entries")
+      .update({ games_played: 1 })
+      .eq("session_id", sessionId)
+      .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId]);
+    if (gpErr) {
+      throw new Error(`[seed:diversity_pool_4] Failed to bump games_played: ${gpErr.message}`);
+    }
   }
 
   return {
