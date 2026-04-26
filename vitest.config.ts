@@ -23,11 +23,15 @@ export default defineConfig({
         "**/node_modules/**",
       ],
 
-      // Thresholds are set just below the current actuals so CI catches
-      // regressions without failing on day one.
-      // Current: stmts ~59%, branches ~47%, functions ~63%, lines ~60%.
-      // Raise these incrementally as coverage improves.
+      // perFile: true enforces each file in include[] must independently
+      // meet the thresholds. Without it, a well-covered file can mask a
+      // poorly-covered one when include[] grows beyond one entry.
       thresholds: {
+        perFile: true,
+        // Set just below the current actuals so CI catches regressions
+        // without failing on day one.
+        // Current: stmts ~59%, branches ~47%, functions ~63%, lines ~60%.
+        // Raise these incrementally as coverage improves.
         lines: 55,
         functions: 60,
         branches: 40,

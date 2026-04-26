@@ -164,7 +164,6 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/no on-deck/i);
     // Only the initial matches fetch was attempted — nothing else queried
-    expect(mock.from).toHaveBeenCalledTimes(1);
     expect(mock.queriedTables).toEqual(["matches"]);
   });
 
@@ -200,7 +199,6 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/already promoted/i);
     // Stopped after the failed CAS update — only matches queried twice (fetch + update attempt)
-    expect(mock.from).toHaveBeenCalledTimes(2);
     expect(mock.queriedTables).toEqual(["matches", "matches"]);
   });
 
@@ -348,7 +346,6 @@ describe("runEngineForSession", () => {
     await runEngineForSession("session-1");
 
     // Only the sessions toggle check was made
-    expect(mock.from).toHaveBeenCalledTimes(1);
     expect(mock.queriedTables).toEqual(["sessions"]);
   });
 
@@ -375,9 +372,8 @@ describe("runEngineForSession", () => {
 
     await runEngineForSession("session-1");
 
-    // Only sessions + courts: no pending-match count queried
-    expect(mock.from).toHaveBeenCalledTimes(2);
-    expect(mock.queriedTables).not.toContain("matches");
+    // Only sessions + courts queried: engine exits before the pending count check
+    expect(mock.queriedTables).toEqual(["sessions", "courts"]);
   });
 
   it("stops filling when on-deck is already at capacity", async () => {
@@ -392,9 +388,8 @@ describe("runEngineForSession", () => {
 
     await runEngineForSession("session-1");
 
-    // sessions + courts + pending count = 3 from() calls; no queue fetch
-    expect(mock.from).toHaveBeenCalledTimes(3);
-    expect(mock.queriedTables).not.toContain("v_queue_with_wait_time");
+    // Engine exits after the pending count: no queue/algorithm queries fired
+    expect(mock.queriedTables).toEqual(["sessions", "courts", "matches"]);
   });
 
   it("returns gracefully when the session DB read fails", async () => {
@@ -403,9 +398,9 @@ describe("runEngineForSession", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    // Should not throw
+    // Should not throw; only the sessions read was attempted before the error exit
     await expect(runEngineForSession("session-1")).resolves.toBeUndefined();
-    expect(mock.from).toHaveBeenCalledTimes(1);
+    expect(mock.queriedTables).toEqual(["sessions"]);
   });
 
   it("handles RPC failure in executeMatch without throwing — engine logs and exits cleanly", async () => {

@@ -23,10 +23,6 @@ npm run test:unit:coverage
 | `tests/unit/matchmaking-core.test.ts` | 70 tests | All 10 pure algorithm functions (scoring, drafts, diversity, lookback) |
 | `tests/unit/matchmaking-engine.test.ts` | 19 tests | `promoteOnDeckMatchInternal`, `runEngineForSession`, `callNextMatch` with mocked Supabase |
 
-### Shared helpers
-
-`tests/helpers/admin-db.ts` — exports `adminDb()`, the service-role Supabase client used for DB seeding and assertions in E2E tests.
-
 ### Coverage thresholds
 
 Enforced via `vitest.config.ts`. Current baseline for `matchmaking.ts`:
@@ -107,6 +103,10 @@ tests/
     ├── teardown.ts                           # SAFETY-CRITICAL: DB wipe + seed
     └── init-sandbox.ts                       # One-time sandbox session setup
 ```
+
+### Shared E2E helpers
+
+`tests/helpers/admin-db.ts` — exports `adminDb()`, a service-role Supabase client that bypasses RLS. Used exclusively by E2E tests for DB seeding and post-action state assertions. **Do not call `adminDb()` from unit tests** — unit tests mock Supabase via `vi.mock()` and never hit the real database.
 
 ### The Setup/Teardown Loop
 
