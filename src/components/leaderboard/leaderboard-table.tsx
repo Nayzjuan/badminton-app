@@ -59,6 +59,8 @@ export function LeaderboardTable({
   return (
     <div
       id="advanced-stats-columns"
+      role="grid"
+      aria-label="Leaderboard"
       className="rounded-xl border border-slate-200 dark:border-border
                  bg-white dark:bg-card shadow-sm overflow-hidden"
     >

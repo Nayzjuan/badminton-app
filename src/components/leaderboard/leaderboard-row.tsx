@@ -97,6 +97,7 @@ export function LeaderboardRow({
 
   return (
     <div
+      role="row"
       data-flash={flash ? "true" : undefined}
       className={[
         "flex items-center min-h-[44px] px-3",
@@ -111,7 +112,7 @@ export function LeaderboardRow({
         .join(" ")}
     >
       {/* Rank */}
-      <div className="w-7 shrink-0 text-center">
+      <div role="gridcell" className="w-7 shrink-0 text-center">
         {medal ? (
           <span className="text-base leading-none">{medal}</span>
         ) : (
@@ -122,7 +123,7 @@ export function LeaderboardRow({
       </div>
 
       {/* Player name + VIP tag + streak */}
-      <div className="flex-1 min-w-0 flex items-center gap-1.5 pl-2">
+      <div role="gridcell" className="flex-1 min-w-0 flex items-center gap-1.5 pl-2">
         <span className="text-sm font-semibold text-foreground truncate">
           {row.display_name}
         </span>
@@ -140,14 +141,14 @@ export function LeaderboardRow({
       </div>
 
       {/* GP */}
-      <div className="w-8 shrink-0 text-right">
+      <div role="gridcell" className="w-8 shrink-0 text-right">
         <span className="text-xs tabular-nums text-muted-foreground">
           {row.games_played}
         </span>
       </div>
 
       {/* W–L */}
-      <div className="w-14 shrink-0 text-right">
+      <div role="gridcell" className="w-14 shrink-0 text-right">
         <span className="text-sm tabular-nums font-semibold">
           <span className="text-emerald-600 dark:text-emerald-400">
             {row.wins}W
@@ -158,7 +159,7 @@ export function LeaderboardRow({
       </div>
 
       {/* Win% */}
-      <div className="w-16 shrink-0 text-right">
+      <div role="gridcell" className="w-16 shrink-0 text-right">
         <span className="text-sm tabular-nums font-semibold text-muted-foreground">
           {row.win_pct.toFixed(1)}%
         </span>
@@ -166,7 +167,7 @@ export function LeaderboardRow({
 
       {/* Rank movement (all-time tab only) */}
       {showRankMovement && movement && (
-        <div className="w-11 shrink-0 text-right">
+        <div role="gridcell" className="w-11 shrink-0 text-right">
           <span className={movement.className}>{movement.label}</span>
         </div>
       )}
@@ -174,17 +175,17 @@ export function LeaderboardRow({
       {/* Advanced stats — PF / PA / +/- */}
       {showAdvanced && (
         <>
-          <div className="w-10 shrink-0 text-right">
+          <div role="gridcell" className="w-10 shrink-0 text-right">
             <span className="text-xs tabular-nums text-muted-foreground">
               {row.points_for}
             </span>
           </div>
-          <div className="w-10 shrink-0 text-right">
+          <div role="gridcell" className="w-10 shrink-0 text-right">
             <span className="text-xs tabular-nums text-muted-foreground">
               {row.points_against}
             </span>
           </div>
-          <div className="w-10 shrink-0 text-right">
+          <div role="gridcell" className="w-10 shrink-0 text-right">
             <span className={`text-xs ${pointDiff!.className}`}>
               {pointDiff!.label}
             </span>

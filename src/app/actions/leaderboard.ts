@@ -48,7 +48,7 @@ function computeConfidenceScore(win_pct: number, games_played: number, k: number
 // ── Tie-Breaker Sort ─────────────────────────────────────────
 // Primary: confidence-weighted win rate DESC
 // Then:    raw win% DESC → point diff DESC → points for DESC → name ASC
-function sortLeaderboard<T extends { wins: number; win_pct: number; games_played: number; point_diff: number; points_for: number; display_name: string }>(
+function sortLeaderboard<T extends { win_pct: number; games_played: number; point_diff: number; points_for: number; display_name: string }>(
   rows: T[],
   confidenceK: number
 ): T[] {
@@ -64,8 +64,10 @@ function sortLeaderboard<T extends { wins: number; win_pct: number; games_played
 }
 
 // ── Rank Assignment ───────────────────────────────────────────
-// Assigns 1-based ranks. Ties share the same rank (dense rank).
-function assignRanks<T extends { wins: number; win_pct: number; games_played: number; point_diff: number; points_for: number }>(
+// Assigns 1-based ranks using standard (competition) ranking:
+// two players tied at position 1 both receive rank 1, and the
+// next distinct player receives rank 3 — not rank 2 (dense).
+function assignRanks<T extends { win_pct: number; games_played: number; point_diff: number; points_for: number }>(
   sorted: T[],
   confidenceK: number
 ): (T & { rank: number })[] {
