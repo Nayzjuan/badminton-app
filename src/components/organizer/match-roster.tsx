@@ -64,7 +64,7 @@ function SkillDot({ level }: { level: SkillLevel }) {
   return (
     <div className="flex shrink-0 items-center gap-1" aria-label={level}>
       <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden="true" />
-      <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 leading-none">
+      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 leading-none">
         {abbr}
       </span>
     </div>
@@ -76,7 +76,7 @@ function SkillDotDark({ level }: { level: SkillLevel }) {
   return (
     <div className="flex shrink-0 items-center gap-1" aria-label={level}>
       <span className={`h-2 w-2 rounded-full ${dot} opacity-80`} aria-hidden="true" />
-      <span className="text-[9px] font-bold uppercase tracking-wide text-white/40 leading-none">
+      <span className="text-[10px] font-bold uppercase tracking-wide text-white/40 leading-none">
         {abbr}
       </span>
     </div>
@@ -166,7 +166,7 @@ function PlayerRowLight({
       <div className="mt-1 flex items-center gap-1.5">
         <SkillDot level={player.skill_level} />
         {/* invisible spacer keeps line-2 height consistent */}
-        <span className="invisible text-[9px] leading-none" aria-hidden="true">
+        <span className="invisible text-[10px] leading-none" aria-hidden="true">
           _
         </span>
         {onSwapClick && (
@@ -242,7 +242,7 @@ function PlayerRowDark({ player, teamColor }: PlayerRowDarkProps) {
       {/* Line 2 — skill */}
       <div className="mt-1 flex items-center gap-1.5">
         <SkillDotDark level={player.skill_level} />
-        <span className="invisible text-[9px] leading-none" aria-hidden="true">
+        <span className="invisible text-[10px] leading-none" aria-hidden="true">
           _
         </span>
       </div>
@@ -296,7 +296,7 @@ export function TeamsGrid({
       {/* Row 1 — column labels */}
       <div style={{ gridColumn: 1, gridRow: 1 }}>
         <span
-          className={`text-[9px] font-black uppercase tracking-widest ${
+          className={`text-[10px] font-black uppercase tracking-widest ${
             dark ? "text-sky-400/70" : "text-sky-600 dark:text-sky-400"
           }`}
         >
@@ -306,7 +306,7 @@ export function TeamsGrid({
       <div style={{ gridColumn: 2, gridRow: 1 }} aria-hidden="true" />
       <div style={{ gridColumn: 3, gridRow: 1 }} className="text-right">
         <span
-          className={`text-[9px] font-black uppercase tracking-widest ${
+          className={`text-[10px] font-black uppercase tracking-widest ${
             dark ? "text-amber-400/70" : "text-amber-600 dark:text-amber-400"
           }`}
         >

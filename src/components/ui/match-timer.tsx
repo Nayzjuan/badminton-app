@@ -95,7 +95,7 @@ export function MatchTimer({
   if (variant === "live" && !endedAt) {
     return (
       <span
-        className={`inline-flex items-center gap-1.5 font-mono tabular-nums
+        className={`inline-flex items-center gap-1.5 tabular-nums
                     text-xs font-semibold
                     text-emerald-700
                     dark:text-[hsl(80_100%_62%)]
@@ -117,7 +117,7 @@ export function MatchTimer({
   // ── Static variant (history / completed) ─────────────────
   return (
     <span
-      className={`font-mono tabular-nums text-xs
+      className={`tabular-nums text-xs
                   text-slate-400 dark:text-muted-foreground
                   ${className}`}
     >

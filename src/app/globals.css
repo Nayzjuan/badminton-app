@@ -5,6 +5,13 @@
 
 /* ── Custom semantic tokens (mapped from CSS vars below) ─────── */
 @theme inline {
+  /* Wire Space Grotesk as the default sans stack.
+     --font-space-grotesk is emitted by next/font via the .variable class
+     on <html>. With this mapping, Tailwind's font-sans utility (and any
+     component that uses it — including Sonner toasts) always resolves to
+     Space Grotesk instead of the OS system font stack. */
+  --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, -apple-system, sans-serif;
+
   --color-background:           hsl(var(--background));
   --color-foreground:           hsl(var(--foreground));
   --color-card:                 hsl(var(--card));
@@ -91,6 +98,12 @@
 
   body {
     @apply bg-background text-foreground;
+    /* Space Grotesk OpenType features:
+       cv01 — single-story 'a' (more geometric, matches the brand's sporty tone)
+       cv02 — single-story 'g' (same rationale — avoids the double-bowl look)
+       Both are subtle but cumulatively make the type feel more considered. */
+    font-feature-settings: "cv01" 1, "cv02" 1;
+    text-rendering: optimizeLegibility;
   }
 
   /* ── Leaderboard rank-change flash ──────────────────────── */

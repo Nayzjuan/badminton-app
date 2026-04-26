@@ -125,7 +125,7 @@ export function PwaNavBar() {
             autoCorrect="off"
             autoCapitalize="none"
             className="w-full h-8 rounded-lg border border-primary/50 bg-background
-                       px-2.5 text-xs font-mono text-foreground
+                       px-2.5 text-xs text-foreground
                        focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         ) : (
@@ -137,7 +137,7 @@ export function PwaNavBar() {
                        px-2.5 text-left transition-colors"
           >
             <Globe className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-            <span className="truncate text-xs font-mono text-muted-foreground">
+            <span className="truncate text-xs text-muted-foreground">
               {displayUrl}
             </span>
           </button>

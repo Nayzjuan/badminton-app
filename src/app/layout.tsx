@@ -8,7 +8,16 @@ import "./globals.css";
 
 // Space Grotesk: geometric, slightly editorial — fits a fast-paced sports context
 // better than neutral Inter while staying completely legible.
-const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], weight: ["300", "400", "500", "600", "700"] });
+//
+// `variable` exposes --font-space-grotesk so globals.css can wire it to
+// Tailwind's --font-sans. This makes font-sans resolve to Space Grotesk
+// everywhere (including Sonner toasts), not the system fallback.
+// Weight 300 removed — it is loaded but never used in any component.
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-space-grotesk",
+});
 
 export const metadata: Metadata = {
   title: "Chillax Badminton",
@@ -54,7 +63,7 @@ export default function RootLayout({
     // suppressHydrationWarning prevents React from warning about the
     // class/style mismatch next-themes causes on the <html> element
     // between SSR and the first client render.
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={spaceGrotesk.variable}>
       <body className={`${spaceGrotesk.className} antialiased pb-12`}>
         <ThemeProvider
           attribute="class"

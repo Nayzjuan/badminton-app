@@ -504,7 +504,7 @@ function LiveClock() {
   }, []);
 
   return (
-    <span className="text-sm font-mono font-medium tabular-nums text-white/70 dark:text-primary/80">
+    <span className="text-sm font-medium tabular-nums text-white/70 dark:text-primary/80">
       {time}
     </span>
   );

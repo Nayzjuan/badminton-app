@@ -77,7 +77,7 @@ function SkillIndicator({ skill, dark }: { skill: string; dark?: boolean }) {
   return (
     <div className="flex shrink-0 items-center gap-1">
       <div className={`h-2 w-2 rounded-full ${dark ? cfg.darkColor : cfg.color}`} />
-      <span className={`text-[9px] font-bold uppercase tracking-wide leading-none
+      <span className={`text-[10px] font-bold uppercase tracking-wide leading-none
         ${dark ? "text-slate-500" : "text-slate-400"}`}>
         {cfg.abbr}
       </span>
@@ -150,14 +150,14 @@ function PlayerRow({
         <div className="flex items-center gap-1">
           {isMe ? (
             <span
-              className={`text-[9px] font-black uppercase tracking-widest leading-none
+              className={`text-[10px] font-black uppercase tracking-widest leading-none
                 ${dark ? "text-emerald-400" : "text-amber-600"}`}
             >
               You
             </span>
           ) : (
             /* Invisible spacer — matches the height of the YOU label */
-            <span className="invisible text-[9px] leading-none" aria-hidden="true">
+            <span className="invisible text-[10px] leading-none" aria-hidden="true">
               You
             </span>
           )}
@@ -207,7 +207,7 @@ function TeamsGrid({ dark }: { dark?: boolean }) {
       {/* ── Row 1: column labels ───────────────────────────── */}
       <p
         className={`col-start-1 row-start-1
-                    text-center text-[9px] font-black uppercase tracking-widest
+                    text-center text-[10px] font-black uppercase tracking-widest
                     ${dark ? "text-emerald-400" : "text-emerald-600"}`}
       >
         Your Team
@@ -215,7 +215,7 @@ function TeamsGrid({ dark }: { dark?: boolean }) {
       <div className="col-start-2 row-start-1" aria-hidden="true" />
       <p
         className={`col-start-3 row-start-1
-                    text-center text-[9px] font-black uppercase tracking-widest
+                    text-center text-[10px] font-black uppercase tracking-widest
                     ${dark ? "text-rose-400" : "text-rose-500"}`}
       >
         Opponents

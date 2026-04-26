@@ -67,7 +67,7 @@ function SkillIndicator({ level }: { level: SkillLevel }) {
   return (
     <div className="flex shrink-0 items-center gap-1">
       <div className={`h-2 w-2 rounded-full ${cfg.dot}`} />
-      <span className="text-[9px] font-bold uppercase tracking-wide leading-none
+      <span className="text-[10px] font-bold uppercase tracking-wide leading-none
                        text-slate-500 dark:text-slate-400">
         {cfg.abbr}
       </span>
@@ -134,7 +134,7 @@ function PlayerRow({
         <div className="flex items-center gap-1.5">
           {isMe ? (
             <span
-              className={`text-[9px] font-black uppercase tracking-widest leading-none
+              className={`text-[10px] font-black uppercase tracking-widest leading-none
                 ${accentColor === "amber"
                   ? "text-amber-600 dark:text-amber-400"
                   : "text-emerald-600 dark:text-emerald-400"
@@ -144,7 +144,7 @@ function PlayerRow({
             </span>
           ) : (
             /* Invisible spacer — preserves row height uniformly */
-            <span className="invisible text-[9px] leading-none" aria-hidden="true">
+            <span className="invisible text-[10px] leading-none" aria-hidden="true">
               You
             </span>
           )}
@@ -181,7 +181,7 @@ function EmptyRow() {
                     dark:bg-white/[0.02] px-3 py-2.5">
       <p className="invisible text-[14px] font-bold leading-snug">·</p>
       <div className="mt-0.5 flex items-center justify-between">
-        <span className="invisible text-[9px] leading-none">You</span>
+        <span className="invisible text-[10px] leading-none">You</span>
       </div>
     </div>
   );
@@ -214,7 +214,7 @@ function TeamsGrid({ me, teammates, opponents, accentColor }: TeamsGridProps) {
       {/* ── Row 1: column labels ──────────────────────────── */}
       <p
         className={`col-start-1 row-start-1
-                    text-center text-[9px] font-black uppercase tracking-widest
+                    text-center text-[10px] font-black uppercase tracking-widest
                     ${accentColor === "emerald"
                       ? "text-emerald-600 dark:text-emerald-400"
                       : "text-amber-600 dark:text-amber-400"
@@ -224,7 +224,7 @@ function TeamsGrid({ me, teammates, opponents, accentColor }: TeamsGridProps) {
       </p>
       <div className="col-start-2 row-start-1" aria-hidden="true" />
       <p className="col-start-3 row-start-1
-                    text-center text-[9px] font-black uppercase tracking-widest
+                    text-center text-[10px] font-black uppercase tracking-widest
                     text-rose-500 dark:text-rose-400">
         Opponents
       </p>
