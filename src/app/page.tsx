@@ -9,6 +9,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { LoginForm } from "@/components/login-form";
+import { Feather } from "lucide-react";
 
 export default async function HomePage() {
   const supabase = await createClient();
@@ -36,16 +37,16 @@ export default async function HomePage() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm space-y-8 text-center">
+      <div className="w-full max-w-sm sm:max-w-md space-y-8 text-center">
         {/* Branding */}
         <div className="space-y-2">
-          <div className="mx-auto h-16 w-16 rounded-2xl bg-primary flex items-center justify-center">
-            <span className="text-2xl">&#127992;</span>
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
+            <Feather className="h-7 w-7" aria-hidden="true" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+          <h1 className="text-3xl font-black tracking-tight text-foreground">
             Badminton Queue
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground leading-relaxed">
             Enter your name and skill level to get started.
           </p>
         </div>

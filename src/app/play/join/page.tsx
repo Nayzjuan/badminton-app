@@ -87,12 +87,17 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12">
-      {/* Session banner */}
-      <div className="mb-8 text-center">
-        <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-1">
-          Joining session
-        </p>
-        <h1 className="text-2xl font-bold text-foreground">{session.name}</h1>
+      {/* Session banner — distinct amber container so players know exactly what they're joining */}
+      <div className="mb-8 w-full max-w-sm sm:max-w-md">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center
+                        dark:border-amber-800/50 dark:bg-amber-950/20">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">
+            Joining Session
+          </p>
+          <h1 className="text-xl font-black tracking-tight text-foreground">
+            {session.name}
+          </h1>
+        </div>
       </div>
 
       {/* Registration form — pre-wired to this session */}

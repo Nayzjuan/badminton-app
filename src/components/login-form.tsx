@@ -10,6 +10,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
 import { SKILL_LEVELS } from "@/types/database";
 import {
@@ -25,22 +26,34 @@ interface LoginFormProps {
   sessionId?: string;
 }
 
+// Short descriptor shown beneath each skill level label in the radio card grid.
+const SKILL_DESCRIPTORS: Record<string, string> = {
+  beginner: "Just starting out",
+  lower_intermediate: "Getting consistent",
+  intermediate: "Solid rallies",
+  upper_intermediate: "Match-ready",
+  lower_advanced: "Competitive play",
+  advanced: "Tournament level",
+};
+
 export function LoginForm({ sessionId }: LoginFormProps = {}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [showReconnect, setShowReconnect] = useState(false);
   const [nameValue, setNameValue] = useState("");
+  const [skillLevel, setSkillLevel] = useState("beginner");
+  const [showPin, setShowPin] = useState(false);
 
   // Prefetch /play so the redirect after login is instant.
   useEffect(() => {
     router.prefetch(sessionId ? `/play/${sessionId}` : "/play");
   }, [router, sessionId]);
 
-  // Auto-dismiss error toast after 5 seconds.
+  // Auto-dismiss error toast after 8 s — courtside, player may be looking away.
   useEffect(() => {
     if (error) {
-      const id = setTimeout(() => setError(null), 5000);
+      const id = setTimeout(() => setError(null), 8000);
       return () => clearTimeout(id);
     }
   }, [error]);
@@ -57,12 +70,12 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
 
   return (
     <>
-      <form action={handleSubmit} className="w-full max-w-sm space-y-5">
-        {/* Name Input */}
+      <form action={handleSubmit} className="w-full max-w-sm sm:max-w-md space-y-5">
+        {/* ── Name ─────────────────────────────────────────── */}
         <div className="space-y-2">
           <label
             htmlFor="display_name"
-            className="block text-sm font-medium text-foreground"
+            className="block text-sm font-semibold text-foreground"
           >
             Your Name
           </label>
@@ -73,87 +86,126 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             required
             autoFocus
             disabled={isPending}
-            maxLength={20}
+            maxLength={30}
             value={nameValue}
             onChange={(e) => setNameValue(e.target.value)}
-            placeholder="e.g. Smash King, Net Ninja..."
+            placeholder="e.g. Smash King, Net Ninja…"
             autoComplete="nickname"
             className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
                        placeholder:text-muted-foreground focus:outline-none focus:ring-2
                        focus:ring-ring focus:ring-offset-2 disabled:opacity-50"
           />
           <div className="flex items-start justify-between gap-2">
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              This is your official player account and login name. Pick a name
-              you won&apos;t mind your friends shouting across the court!
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Pick a name you won&apos;t mind your friends shouting across the
+              court!
             </p>
             <span
               className={`shrink-0 text-xs font-mono tabular-nums ${
-                nameValue.length === 20
+                nameValue.length === 30
                   ? "font-semibold text-red-500"
-                  : nameValue.length >= 15
+                  : nameValue.length >= 25
                   ? "text-amber-500"
                   : "text-muted-foreground"
               }`}
             >
-              {nameValue.length}/20
+              {nameValue.length}/30
             </span>
           </div>
         </div>
 
-        {/* Skill Level Select */}
-        <div className="space-y-2">
-          <label
-            htmlFor="skill_level"
-            className="block text-sm font-medium text-foreground"
-          >
+        {/* ── Skill Level — radio card grid ─────────────────── */}
+        {/* fieldset/legend is the semantic group label for screen readers */}
+        <fieldset className="space-y-2 border-0 p-0 m-0">
+          <legend className="block text-sm font-semibold text-foreground">
             Skill Level
-          </label>
-          <select
-            id="skill_level"
-            name="skill_level"
-            required
-            disabled={isPending}
-            defaultValue="beginner"
-            className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
-                       text-foreground focus:outline-none focus:ring-2 focus:ring-ring
-                       focus:ring-offset-2 appearance-none disabled:opacity-50"
+          </legend>
+          {/* Hidden input carries the controlled value into FormData */}
+          <input type="hidden" name="skill_level" value={skillLevel} />
+          <div
+            className={`grid grid-cols-2 gap-2 ${
+              isPending ? "pointer-events-none opacity-50" : ""
+            }`}
           >
             {SKILL_LEVELS.map((level) => (
-              <option key={level.value} value={level.value}>
-                {level.label}
-              </option>
+              <label
+                key={level.value}
+                className={`relative flex min-h-[56px] cursor-pointer flex-col justify-center
+                            gap-0.5 rounded-lg border-2 px-3 py-2.5 transition-colors
+                            ${
+                              skillLevel === level.value
+                                ? "border-primary bg-primary/10"
+                                : "border-input bg-background hover:bg-accent"
+                            }`}
+              >
+                <input
+                  type="radio"
+                  name="skill_level_radio"
+                  value={level.value}
+                  checked={skillLevel === level.value}
+                  onChange={() => setSkillLevel(level.value)}
+                  disabled={isPending}
+                  className="sr-only"
+                />
+                <span className="text-sm font-semibold leading-tight text-foreground">
+                  {level.label}
+                </span>
+                <span className="text-xs leading-tight text-muted-foreground">
+                  {SKILL_DESCRIPTORS[level.value]}
+                </span>
+              </label>
             ))}
-          </select>
-        </div>
+          </div>
+        </fieldset>
 
-        {/* 4-digit PIN */}
+        {/* ── 4-digit PIN ───────────────────────────────────── */}
         <div className="space-y-2">
           <label
             htmlFor="pin"
-            className="block text-sm font-medium text-foreground"
+            className="block text-sm font-semibold text-foreground"
           >
             4-Digit PIN
           </label>
-          <p className="text-xs text-muted-foreground">
-            Remember this — you&apos;ll need it to reconnect if your browser closes.
+          <div className="relative">
+            <input
+              id="pin"
+              name="pin"
+              type={showPin ? "tel" : "password"}
+              inputMode="numeric"
+              pattern="\d{4}"
+              maxLength={4}
+              required
+              disabled={isPending}
+              placeholder="1234"
+              autoComplete="off"
+              className="w-full rounded-lg border border-input bg-background px-4 py-3 pr-12
+                         text-base tracking-[0.3em] text-center font-mono
+                         placeholder:text-muted-foreground placeholder:tracking-normal
+                         focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
+                         disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPin((v) => !v)}
+              aria-label={showPin ? "Hide PIN" : "Show PIN"}
+              aria-pressed={showPin}
+              aria-controls="pin"
+              disabled={isPending}
+              className="absolute right-0 top-0 flex h-full min-w-[44px] cursor-pointer
+                         items-center justify-center px-3 text-muted-foreground
+                         transition-colors hover:text-foreground disabled:pointer-events-none"
+            >
+              {showPin ? (
+                <EyeOff className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Eye className="h-4 w-4" aria-hidden="true" />
+              )}
+            </button>
+          </div>
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Your PIN lets you rejoin if you disconnect. Pick something
+            you&apos;ll remember.
           </p>
-          <input
-            id="pin"
-            name="pin"
-            type="tel"
-            inputMode="numeric"
-            pattern="\d{4}"
-            maxLength={4}
-            required
-            disabled={isPending}
-            placeholder="e.g. 1234"
-            className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
-                       tracking-[0.3em] text-center font-mono
-                       placeholder:text-muted-foreground placeholder:tracking-normal
-                       focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
-                       disabled:opacity-50"
-          />
         </div>
 
         {/* Hidden session_id — routes the redirect to /play/[id] after login */}
@@ -161,27 +213,29 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           <input type="hidden" name="session_id" value={sessionId} />
         )}
 
-        {/* Submit */}
+        {/* ── Submit ───────────────────────────────────────── */}
         <button
           type="submit"
           disabled={isPending}
-          className="w-full rounded-lg bg-primary px-4 py-3 text-base font-semibold
+          className="flex min-h-[52px] w-full cursor-pointer items-center justify-center
+                     gap-2 rounded-lg bg-primary px-4 py-4 text-base font-semibold
                      text-primary-foreground transition-colors hover:bg-primary/90
-                     disabled:opacity-70 disabled:cursor-not-allowed
-                     flex items-center justify-center gap-2"
+                     disabled:cursor-not-allowed disabled:opacity-70"
         >
           {isPending && <Spinner />}
-          {isPending ? "Joining..." : "Enter"}
+          {isPending ? "Joining…" : sessionId ? "Join Session" : "Join Queue"}
         </button>
       </form>
 
-      {/* Reconnect link */}
+      {/* ── Reconnect link ───────────────────────────────── */}
       <div className="mt-4">
         <button
           onClick={() => setShowReconnect(true)}
-          className="text-sm text-muted-foreground hover:text-foreground underline transition-colors"
+          className="flex min-h-[44px] cursor-pointer items-center justify-center
+                     text-sm text-muted-foreground underline transition-colors
+                     hover:text-foreground"
         >
-          Returning player? Reconnect
+          Already have a PIN? Reconnect
         </button>
       </div>
 
@@ -194,17 +248,40 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
       {/* Error toast — fixed at bottom */}
       {error && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white shadow-lg">
-            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <div className="flex items-center gap-2 rounded-xl bg-destructive px-4 py-3 text-sm font-medium text-destructive-foreground shadow-lg">
+            <svg
+              className="h-4 w-4 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
             </svg>
             <span>{error}</span>
             <button
               onClick={() => setError(null)}
-              className="ml-2 rounded-full p-0.5 hover:bg-white/20 transition-colors"
+              aria-label="Dismiss error"
+              className="ml-2 cursor-pointer rounded-full p-0.5 transition-colors hover:bg-destructive-foreground/20"
             >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.5}
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
           </div>
@@ -265,7 +342,15 @@ function ReconnectModal({
   return (
     // Radix Dialog provides: focus trap, aria-modal, role="dialog",
     // Escape-to-close, and scroll-lock — no custom backdrop needed.
-    <Dialog open={open} onOpenChange={(isOpen) => { if (!isOpen) { onClose(); setLocalError(null); } }}>
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) {
+          onClose();
+          setLocalError(null);
+        }
+      }}
+    >
       <DialogContent className="w-full max-w-sm p-6 space-y-5">
         <DialogHeader>
           <DialogTitle>Reconnect</DialogTitle>
@@ -276,7 +361,10 @@ function ReconnectModal({
 
         {/* Player Name */}
         <div className="space-y-2">
-          <label htmlFor="reconnect_name" className="block text-sm font-medium text-foreground">
+          <label
+            htmlFor="reconnect_name"
+            className="block text-sm font-semibold text-foreground"
+          >
             Player Name
           </label>
           <input
@@ -295,7 +383,10 @@ function ReconnectModal({
 
         {/* PIN */}
         <div className="space-y-2">
-          <label htmlFor="reconnect_pin" className="block text-sm font-medium text-foreground">
+          <label
+            htmlFor="reconnect_pin"
+            className="block text-sm font-semibold text-foreground"
+          >
             PIN
           </label>
           <input
@@ -317,9 +408,20 @@ function ReconnectModal({
 
         {/* Inline error — always visible inside the modal */}
         {localError && (
-          <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-400">
-            <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive dark:border-destructive/50 dark:bg-destructive/20">
+            <svg
+              className="h-4 w-4 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
             </svg>
             <span>{localError}</span>
           </div>
@@ -330,21 +432,22 @@ function ReconnectModal({
           <button
             onClick={onClose}
             disabled={isPending}
-            className="flex-1 rounded-lg border border-input px-4 py-3 text-sm font-medium
-                       text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+            className="flex-1 cursor-pointer rounded-lg border border-input px-4 py-3 text-sm
+                       font-medium text-foreground transition-colors hover:bg-accent
+                       disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={handleReconnect}
             disabled={isPending || !name.trim() || pin.length !== 4}
-            className="flex-1 rounded-lg bg-primary px-4 py-3 text-sm font-semibold
-                       text-primary-foreground hover:bg-primary/90 transition-colors
-                       disabled:opacity-70 disabled:cursor-not-allowed
-                       flex items-center justify-center gap-2"
+            className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg
+                       bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground
+                       transition-colors hover:bg-primary/90
+                       disabled:cursor-not-allowed disabled:opacity-70"
           >
             {isPending && <Spinner />}
-            {isPending ? "Reconnecting..." : "Reconnect"}
+            {isPending ? "Reconnecting…" : "Reconnect"}
           </button>
         </div>
       </DialogContent>
@@ -363,6 +466,7 @@ function Spinner() {
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24"
+      aria-hidden="true"
     >
       <circle
         className="opacity-25"
