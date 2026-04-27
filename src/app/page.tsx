@@ -71,16 +71,18 @@ export default async function HomePage() {
 // ─────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────
-// Badminton Racket Icon — 45° line-art, 3×3 string grid
+// Badminton Racket Icon — 45° Lucide-style line-art
 // ─────────────────────────────────────────────────────────────
-// The entire racket sits inside a <g transform="rotate(45,12,12)">
-// so head points upper-right, handle lower-left — classic
-// "action pose" you'd see on a sports badge.
-//
-// String endpoints are pre-calculated to land inside the ellipse
-// (cx=12, cy=5.5, rx=3.5, ry=4.5) — no clipPath required.
-// Formula: for vertical strings at x, y_edge = cy ± ry·√(1-((x-cx)/rx)²)
-//          for horizontal strings at y, x_edge = cx ± rx·√(1-((y-cy)/ry)²)
+// Design principles (from .impeccable.md — grounded, confident, gym-smart):
+//   • Icons SUGGEST the object — they don't replicate it at small scale
+//   • At 28px rendered, a 3×3 string grid = visual noise; a single cross
+//     inside the oval reads instantly as "string bed"
+//   • Badminton-specific proportions: tall narrow oval (not round like tennis),
+//     clear V-throat, long handle with curved butt cap
+//   • Entire group rotated 45° CW → head upper-right, handle lower-left
+//     = "action pose" read immediately as sports equipment, not household object
+//   • strokeWidth 1.5 outer / 1.0 strings — same language as Lucide icons
+//   • No clipPath — no ID collision risk when rendered multiple times
 // ─────────────────────────────────────────────────────────────
 
 function BadmintonRacketIcon({ className }: { className?: string }) {
@@ -95,42 +97,31 @@ function BadmintonRacketIcon({ className }: { className?: string }) {
       className={className}
       aria-hidden="true"
     >
-      {/* Whole racket rotated 45° CW: head upper-right, handle lower-left */}
+      {/* Rotate CW 45°: head → upper-right, handle → lower-left */}
       <g transform="rotate(45, 12, 12)">
 
-        {/* ── Head ──────────────────────────────────────── */}
+        {/* ── Head: tall narrow oval, distinctly badminton not tennis ── */}
         <ellipse cx="12" cy="5.5" rx="3.5" ry="4.5" />
 
-        {/* ── String grid (3 vertical × 3 horizontal) ──── */}
-        {/* Endpoints clipped to ellipse boundary via math, no clipPath */}
-        <g strokeWidth="0.75">
-          {/* Vertical strings (x = 10, 12, 14) */}
-          {/* x=10: offset=(10-12)/3.5=-0.571, y±=5.5±4.5·√(1-0.326)=5.5±3.7 */}
-          <line x1="10" y1="1.8" x2="10" y2="9.2" />
-          {/* x=12: centre string, full height */}
-          <line x1="12" y1="1.0" x2="12" y2="10.0" />
-          {/* x=14: mirror of x=10 */}
-          <line x1="14" y1="1.8" x2="14" y2="9.2" />
-
-          {/* Horizontal strings (y = 4, 6, 8) */}
-          {/* y=4: offset=(4-5.5)/4.5=-0.333, x±=12±3.5·√(1-0.111)=12±3.3 */}
-          <line x1="8.7" y1="4" x2="15.3" y2="4" />
-          {/* y=6: offset=(6-5.5)/4.5=0.111, x±=12±3.5·√(1-0.012)=12±3.48 */}
-          <line x1="8.5" y1="6" x2="15.5" y2="6" />
-          {/* y=8: offset=(8-5.5)/4.5=0.556, x±=12±3.5·√(1-0.309)=12±2.9 */}
-          <line x1="9.1" y1="8" x2="14.9" y2="8" />
+        {/* ── Strings: single cross reads as string bed at icon size ── */}
+        {/* At 28px, 9 lines inside an 8px oval = noise; cross = clarity  */}
+        <g strokeWidth="1">
+          {/* Centre vertical — along racket axis */}
+          <line x1="12" y1="1.2" x2="12" y2="9.8" />
+          {/* Centre horizontal — across widest point */}
+          <line x1="8.7" y1="5.5" x2="15.3" y2="5.5" />
         </g>
 
-        {/* ── Throat — V tapers from head bottom to shaft ── */}
-        <line x1="10.2" y1="9.8"  x2="11.2" y2="13.5" />
-        <line x1="13.8" y1="9.8"  x2="12.8" y2="13.5" />
+        {/* ── Throat: V narrows from head edge to shaft ── */}
+        <line x1="9.8"  y1="9.8"  x2="11.2" y2="13.5" />
+        <line x1="14.2" y1="9.8"  x2="12.8" y2="13.5" />
 
-        {/* ── Handle — two parallel lines ──────────────── */}
-        <line x1="11.2" y1="13.5" x2="10.6" y2="22" />
-        <line x1="12.8" y1="13.5" x2="13.4" y2="22" />
+        {/* ── Handle: parallel rails, slight outward flare ── */}
+        <line x1="11.2" y1="13.5" x2="10.7" y2="21.5" />
+        <line x1="12.8" y1="13.5" x2="13.3" y2="21.5" />
 
-        {/* ── Butt cap — curved end of grip ────────────── */}
-        <path d="M10.6 22 Q12 23.5 13.4 22" />
+        {/* ── Butt cap: curved grip end ── */}
+        <path d="M10.7 21.5 Q12 23 13.3 21.5" />
 
       </g>
     </svg>
