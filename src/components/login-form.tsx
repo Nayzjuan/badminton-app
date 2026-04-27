@@ -26,25 +26,49 @@ interface LoginFormProps {
   sessionId?: string;
 }
 
-// Short descriptor shown beneath each skill level label in the radio card grid.
-const SKILL_DESCRIPTORS: Record<string, string> = {
-  beginner: "Just starting out",
-  lower_intermediate: "Getting consistent",
-  intermediate: "Solid rallies",
-  upper_intermediate: "Match-ready",
-  lower_advanced: "Competitive play",
-  advanced: "Tournament level",
-};
-
-// Tier indicator dot — maps to the same 3-group color language as SkillBadge:
-//   emerald = new player  |  sky/blue = developing  |  amber = competitive  |  purple = elite
-const SKILL_TIER_DOT: Record<string, string> = {
-  beginner:           "bg-emerald-400 dark:bg-emerald-500",
-  lower_intermediate: "bg-sky-400 dark:bg-sky-500",
-  intermediate:       "bg-sky-400 dark:bg-sky-500",
-  upper_intermediate: "bg-amber-400 dark:bg-amber-500",
-  lower_advanced:     "bg-amber-400 dark:bg-amber-500",
-  advanced:           "bg-purple-400 dark:bg-purple-500",
+// Per-level color config — each skill level gets a distinct color so players
+// can self-identify at a glance. Spectrum runs cool→warm with difficulty:
+//   emerald → teal → sky → indigo → amber → purple
+const SKILL_COLORS: Record<
+  string,
+  { descriptor: string; dot: string; idle: string; active: string }
+> = {
+  beginner: {
+    descriptor: "Just starting out",
+    dot:    "bg-emerald-400 dark:bg-emerald-500",
+    idle:   "border-emerald-200 bg-emerald-50/60 hover:bg-emerald-50 dark:border-emerald-800/40 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/30",
+    active: "border-emerald-500 bg-emerald-100 dark:border-emerald-400 dark:bg-emerald-950/50",
+  },
+  lower_intermediate: {
+    descriptor: "Getting consistent",
+    dot:    "bg-teal-400 dark:bg-teal-500",
+    idle:   "border-teal-200 bg-teal-50/60 hover:bg-teal-50 dark:border-teal-800/40 dark:bg-teal-950/20 dark:hover:bg-teal-950/30",
+    active: "border-teal-500 bg-teal-100 dark:border-teal-400 dark:bg-teal-950/50",
+  },
+  intermediate: {
+    descriptor: "Solid rallies",
+    dot:    "bg-sky-400 dark:bg-sky-500",
+    idle:   "border-sky-200 bg-sky-50/60 hover:bg-sky-50 dark:border-sky-800/40 dark:bg-sky-950/20 dark:hover:bg-sky-950/30",
+    active: "border-sky-500 bg-sky-100 dark:border-sky-400 dark:bg-sky-950/50",
+  },
+  upper_intermediate: {
+    descriptor: "Match-ready",
+    dot:    "bg-indigo-400 dark:bg-indigo-500",
+    idle:   "border-indigo-200 bg-indigo-50/60 hover:bg-indigo-50 dark:border-indigo-800/40 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/30",
+    active: "border-indigo-500 bg-indigo-100 dark:border-indigo-400 dark:bg-indigo-950/50",
+  },
+  lower_advanced: {
+    descriptor: "Competitive play",
+    dot:    "bg-amber-400 dark:bg-amber-500",
+    idle:   "border-amber-200 bg-amber-50/60 hover:bg-amber-50 dark:border-amber-800/40 dark:bg-amber-950/20 dark:hover:bg-amber-950/30",
+    active: "border-amber-500 bg-amber-100 dark:border-amber-400 dark:bg-amber-950/50",
+  },
+  advanced: {
+    descriptor: "Tournament level",
+    dot:    "bg-purple-400 dark:bg-purple-500",
+    idle:   "border-purple-200 bg-purple-50/60 hover:bg-purple-50 dark:border-purple-800/40 dark:bg-purple-950/20 dark:hover:bg-purple-950/30",
+    active: "border-purple-500 bg-purple-100 dark:border-purple-400 dark:bg-purple-950/50",
+  },
 };
 
 export function LoginForm({ sessionId }: LoginFormProps = {}) {
@@ -138,39 +162,39 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
               isPending ? "pointer-events-none opacity-50" : ""
             }`}
           >
-            {SKILL_LEVELS.map((level) => (
-              <label
-                key={level.value}
-                className={`relative flex min-h-[56px] cursor-pointer flex-col justify-center
-                            gap-0.5 rounded-lg border-2 px-3 py-2.5 transition-colors
-                            ${
-                              skillLevel === level.value
-                                ? "border-amber-500 bg-amber-50 dark:border-amber-400 dark:bg-amber-950/30"
-                                : "border-input bg-background hover:bg-amber-50/50 dark:hover:bg-amber-950/10"
-                            }`}
-              >
-                <input
-                  type="radio"
-                  name="skill_level_radio"
-                  value={level.value}
-                  checked={skillLevel === level.value}
-                  onChange={() => setSkillLevel(level.value)}
-                  disabled={isPending}
-                  className="sr-only"
-                />
-                {/* Tier indicator dot — top-right corner */}
-                <span
-                  className={`absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full ${SKILL_TIER_DOT[level.value]}`}
-                  aria-hidden="true"
-                />
-                <span className="text-sm font-semibold leading-tight text-foreground">
-                  {level.label}
-                </span>
-                <span className="text-xs leading-tight text-muted-foreground">
-                  {SKILL_DESCRIPTORS[level.value]}
-                </span>
-              </label>
-            ))}
+            {SKILL_LEVELS.map((level) => {
+              const colors = SKILL_COLORS[level.value];
+              const isSelected = skillLevel === level.value;
+              return (
+                <label
+                  key={level.value}
+                  className={`relative flex min-h-[56px] cursor-pointer flex-col justify-center
+                              gap-0.5 rounded-lg border-2 px-3 py-2.5 transition-colors
+                              ${isSelected ? colors.active : colors.idle}`}
+                >
+                  <input
+                    type="radio"
+                    name="skill_level_radio"
+                    value={level.value}
+                    checked={isSelected}
+                    onChange={() => setSkillLevel(level.value)}
+                    disabled={isPending}
+                    className="sr-only"
+                  />
+                  {/* Per-level color dot — top-right corner */}
+                  <span
+                    className={`absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full ${colors.dot}`}
+                    aria-hidden="true"
+                  />
+                  <span className="text-sm font-semibold leading-tight text-foreground">
+                    {level.label}
+                  </span>
+                  <span className="text-xs leading-tight text-muted-foreground">
+                    {colors.descriptor}
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </fieldset>
 
