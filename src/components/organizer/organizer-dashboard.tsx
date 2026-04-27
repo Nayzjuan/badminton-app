@@ -21,6 +21,7 @@ import { DevTools } from "./dev-tools";
 import { ShareSessionDialog } from "./share-session-dialog";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
+import { joinQueueAction } from "@/app/actions/queue";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -171,6 +172,18 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     pausePlayer,
     updateTimeLimit,
   } = useOrganizerData(session.id, session);
+
+  // ── Organizer self-join ─────────────────────────────────────
+  // Allows the organizer to add themselves to the queue directly from
+  // the organizer dashboard — useful when running a session and also
+  // wanting to play. joinQueueAction uses the caller's auth session to
+  // resolve the player_id, so no extra arguments are needed.
+  const joinQueue = useCallback(async () => {
+    const result = await joinQueueAction(session.id);
+    if (result.error) {
+      toast.error(result.error);
+    }
+  }, [session.id]);
 
   // ── Layer 2 — Frontend Race Condition Guard ─────────────────
   // When a match transitions from pending → in_progress (promoted
@@ -762,6 +775,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
             onCreateManualMatch={createManualMatch}
             onRemoveFromQueue={removeFromQueue}
             onPausePlayer={pausePlayer}
+            organizerPlayerId={profile.id}
+            onJoinQueue={joinQueue}
           />
         )}
 

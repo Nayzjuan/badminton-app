@@ -41,6 +41,14 @@ interface QueueControlProps {
   ) => Promise<{ error?: string }>;
   onRemoveFromQueue: (playerId: string) => Promise<{ error?: string }>;
   onPausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
+  /**
+   * The organizer's own player_id. When provided, a "Join Queue" nudge is
+   * shown whenever the organizer is not already in the queue. Lets the
+   * organizer play in their own session without switching devices.
+   */
+  organizerPlayerId?: string;
+  /** Called when the organizer clicks "Join Queue". */
+  onJoinQueue?: () => Promise<void>;
 }
 
 export function QueueControl({
@@ -49,10 +57,13 @@ export function QueueControl({
   onCreateManualMatch,
   onRemoveFromQueue,
   onPausePlayer,
+  organizerPlayerId,
+  onJoinQueue,
 }: QueueControlProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [joiningQueue, setJoiningQueue] = useState(false);
 
   function togglePlayer(playerId: string) {
     setSelected((prev) => {
@@ -127,6 +138,17 @@ export function QueueControl({
     setCreating(false);
   }
 
+  async function handleJoinQueue() {
+    if (!onJoinQueue) return;
+    setJoiningQueue(true);
+    await onJoinQueue();
+    setJoiningQueue(false);
+  }
+
+  // Is the organizer already in the queue (any status)?
+  const organizerInQueue =
+    !!organizerPlayerId && queue.some((q) => q.player_id === organizerPlayerId);
+
   // Paused players always sink to the bottom; active order is preserved.
   const sortedQueue = [...queue].sort((a, b) => {
     if (a.is_paused && !b.is_paused) return 1;
@@ -186,6 +208,34 @@ export function QueueControl({
           <p className="text-sm text-destructive mt-2">{error}</p>
         )}
       </div>
+
+      {/* Organizer self-join nudge ─────────────────────────────
+          Shown only when: organizerPlayerId is provided AND the
+          organizer is not already in the queue.
+          Lets the organizer play in their own session from the
+          same device without needing to navigate to the player view. */}
+      {organizerPlayerId && onJoinQueue && !organizerInQueue && (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-800/40 dark:bg-amber-950/20">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+              You&apos;re not in the queue
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Join to play in your own session
+            </p>
+          </div>
+          <button
+            onClick={handleJoinQueue}
+            disabled={joiningQueue}
+            className="shrink-0 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold
+                       text-[#0E1C3A] transition-colors hover:bg-amber-600
+                       disabled:cursor-not-allowed disabled:opacity-50
+                       min-h-[44px] flex items-center"
+          >
+            {joiningQueue ? "Joining…" : "Join Queue"}
+          </button>
+        </div>
+      )}
 
       {/* Queue Table */}
       {queue.length === 0 ? (

@@ -370,21 +370,62 @@ export async function reconnectPlayer(
     return { success: false, error: "Failed to migrate match history. Please try again." };
   }
 
+  // ── Active-organizer guard ────────────────────────────────────────────────
+  // If the old user is currently the PRIMARY organizer of an active session,
+  // they may be running the organizer dashboard on another device (e.g. iPad).
+  // Migrating sessions.created_by and then deleting the old auth user would
+  // invalidate that device's cookie on the next request — effectively logging
+  // them out of the organizer dashboard mid-session.
+  //
+  // Fix: when oldUserId owns an active session, skip Steps 4.5, 5, and 6.
+  // The new user (phone) gets all player data (queue_entries, match_players,
+  // wrapped_stats migrated in Steps 3, 4, 4.6). The old user remains alive
+  // purely as the organizer identity — their sessions.created_by is preserved.
+  //
+  // Trade-off: the old profile becomes a shell with no queue_entries, but the
+  // organizer dashboard only needs the auth session to be valid, not the queue.
+  //
+  // Note: co-organizers (session_organizers table) are not yet guarded here —
+  // that is a future enhancement. Only the primary organizer (created_by) is
+  // protected in this pass.
+  // ─────────────────────────────────────────────────────────────────────────
+  const { data: activeOrgSessions } = await service
+    .from("sessions")
+    .select("id")
+    .eq("created_by", oldUserId)
+    .eq("is_active", true)
+    .limit(1);
+
+  const isActiveOrganizer = !!(activeOrgSessions && activeOrgSessions.length > 0);
+
+  if (isActiveOrganizer) {
+    console.log(
+      "[reconnectPlayer] Old user is the primary organizer of an active session — " +
+      "skipping sessions.created_by migration, profile delete, and auth user delete " +
+      "to preserve the organizer's live session on their other device.",
+      { oldUserId, newUserId }
+    );
+  }
+
   // Step 4.5: Reassign sessions.created_by so the old profile can be deleted.
   // sessions.created_by has a FK → profiles.id. If the player ever created a
   // session under the old ID, deleting the old profile would fail with a FK
   // violation. This step clears that blocker before Step 5.
-  const { error: sessionsMigrateErr } = await service
-    .from("sessions")
-    .update({ created_by: newUserId })
-    .eq("created_by", oldUserId);
+  // SKIPPED when isActiveOrganizer — we deliberately keep sessions.created_by
+  // on the old ID so the organizer's existing session remains valid.
+  if (!isActiveOrganizer) {
+    const { error: sessionsMigrateErr } = await service
+      .from("sessions")
+      .update({ created_by: newUserId })
+      .eq("created_by", oldUserId);
 
-  if (sessionsMigrateErr) {
-    console.error(
-      "[reconnectPlayer] sessions.created_by migration failed — Step 5 delete may fail:",
-      sessionsMigrateErr.message,
-      { oldUserId, newUserId }
-    );
+    if (sessionsMigrateErr) {
+      console.error(
+        "[reconnectPlayer] sessions.created_by migration failed — Step 5 delete may fail:",
+        sessionsMigrateErr.message,
+        { oldUserId, newUserId }
+      );
+    }
   }
 
   // Step 4.6: Migrate session_wrapped_stats to new user ID.
@@ -432,24 +473,90 @@ export async function reconnectPlayer(
     }
   }
 
-  // Step 5: Delete old profile (all FK references now point to newUserId).
-  // sessions.created_by was migrated in Step 4.5, so this should never fail
-  // on a FK violation. Log if it does so ghosts are visible in server logs.
-  const { error: deleteOldProfileErr } = await service
-    .from("profiles")
-    .delete()
-    .eq("id", oldUserId);
+  // Step 4.7: Migrate session_organizers rows from old to new user.
+  // session_organizers has user_id FK → profiles.id ON DELETE CASCADE.
+  // Without this migration, deleting the old profile in Step 5 would
+  // cascade-delete the player's co-organizer rows, silently revoking
+  // their organizer access on any session they co-managed.
+  //
+  // The generated Update type is Record<string, never> (user_id is part
+  // of the logical key, so Supabase doesn't expose it as updatable).
+  // We use delete + re-insert instead.
+  //
+  // UNCONDITIONAL and non-fatal:
+  //   • Primary organizers:  no session_organizers rows (their access comes
+  //     from sessions.created_by), so the select returns empty — no-op.
+  //   • Co-organizers: re-inserts their rows under newUserId so the
+  //     CASCADE delete in Step 5 never touches them.
+  {
+    const { data: oldCoOrgRows, error: readCoOrgErr } = await service
+      .from("session_organizers")
+      .select("session_id, granted_at")
+      .eq("user_id", oldUserId);
 
-  if (deleteOldProfileErr) {
-    console.error(
-      "[reconnectPlayer] Failed to delete old profile — ghost may remain:",
-      deleteOldProfileErr.message,
-      { oldUserId, newUserId }
-    );
+    if (readCoOrgErr) {
+      console.warn(
+        "[reconnectPlayer] session_organizers read failed (non-fatal):",
+        readCoOrgErr.message,
+        { oldUserId }
+      );
+    } else if (oldCoOrgRows && oldCoOrgRows.length > 0) {
+      // Re-insert under new user ID.
+      const newCoOrgRows = oldCoOrgRows.map((row) => ({
+        session_id: row.session_id,
+        user_id: newUserId,
+      }));
+
+      const { error: insertCoOrgErr } = await service
+        .from("session_organizers")
+        .insert(newCoOrgRows);
+
+      if (insertCoOrgErr) {
+        console.warn(
+          "[reconnectPlayer] session_organizers re-insert failed (non-fatal):",
+          insertCoOrgErr.message,
+          { oldUserId, newUserId }
+        );
+      } else {
+        // Delete old rows only after successful re-insert.
+        await service
+          .from("session_organizers")
+          .delete()
+          .eq("user_id", oldUserId);
+      }
+    }
+  }
+
+  // Step 5: Delete old profile (all FK references now point to newUserId).
+  // sessions.created_by was migrated in Step 4.5 (unless isActiveOrganizer).
+  // session_organizers.user_id was migrated in Step 4.7 (always).
+  // Log if it does so ghosts are visible in server logs.
+  //
+  // SKIPPED when isActiveOrganizer — the old profile stays alive as the
+  // organizer's identity. It becomes a shell (no queue_entries/match_players),
+  // but that is acceptable: the organizer dashboard never reads those tables
+  // through the profile to render its UI.
+  if (!isActiveOrganizer) {
+    const { error: deleteOldProfileErr } = await service
+      .from("profiles")
+      .delete()
+      .eq("id", oldUserId);
+
+    if (deleteOldProfileErr) {
+      console.error(
+        "[reconnectPlayer] Failed to delete old profile — ghost may remain:",
+        deleteOldProfileErr.message,
+        { oldUserId, newUserId }
+      );
+    }
   }
 
   // Step 6: Delete old auth user to clean up orphaned auth record.
-  await service.auth.admin.deleteUser(oldUserId);
+  // SKIPPED when isActiveOrganizer — keeping the auth user alive is the
+  // entire point of the guard. The organizer's device cookie must remain valid.
+  if (!isActiveOrganizer) {
+    await service.auth.admin.deleteUser(oldUserId);
+  }
 
   // ── Offline Wrapped redirect ────────────────────────────────
   // If the player isn't rejoining an active session, check whether
