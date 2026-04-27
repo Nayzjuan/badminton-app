@@ -38,29 +38,30 @@ export interface RosterPlayer {
 }
 
 // ── Skill config ───────────────────────────────────────────────
-// Maps 6-tier SkillLevel to 3 visual buckets.
-// beginner                                       → emerald
-// lower_intermediate / intermediate / upper_int  → sky
-// lower_advanced / advanced                      → violet
+// All 6 levels shown distinctly — no bucket collapsing.
+// Dot colours match the login-form SKILL_COLORS palette so the
+// same player looks identical across every surface.
+// Abbreviations mirror SkillBadge labels (shortened for small UI):
+//   Beginner       → Beg
+//   Lower Int.     → L.Int
+//   Intermediate   → Int
+//   Upper Int.     → U.Int
+//   Lower Adv.     → L.Adv
+//   Advanced       → Adv
 
-type SkillBucket = "beginner" | "intermediate" | "advanced";
-
-function getSkillBucket(level: SkillLevel): SkillBucket {
-  if (level === "beginner") return "beginner";
-  if (level === "lower_advanced" || level === "advanced") return "advanced";
-  return "intermediate";
-}
-
-const SKILL_CONFIG: Record<SkillBucket, { dot: string; abbr: string }> = {
-  beginner:     { dot: "bg-emerald-500", abbr: "Beg" },
-  intermediate: { dot: "bg-sky-500",     abbr: "Int" },
-  advanced:     { dot: "bg-violet-500",  abbr: "Adv" },
+const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
+  beginner:           { dot: "bg-emerald-500", abbr: "Beg"   },
+  lower_intermediate: { dot: "bg-teal-500",    abbr: "L.Int" },
+  intermediate:       { dot: "bg-sky-500",     abbr: "Int"   },
+  upper_intermediate: { dot: "bg-indigo-500",  abbr: "U.Int" },
+  lower_advanced:     { dot: "bg-amber-500",   abbr: "L.Adv" },
+  advanced:           { dot: "bg-purple-500",  abbr: "Adv"   },
 };
 
 // ── Internal: skill indicators ─────────────────────────────────
 
 function SkillDot({ level }: { level: SkillLevel }) {
-  const { dot, abbr } = SKILL_CONFIG[getSkillBucket(level)];
+  const { dot, abbr } = SKILL_CONFIG[level] ?? { dot: "bg-slate-400", abbr: "?" };
   return (
     <div className="flex shrink-0 items-center gap-1" aria-label={level}>
       <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden="true" />
@@ -72,7 +73,7 @@ function SkillDot({ level }: { level: SkillLevel }) {
 }
 
 function SkillDotDark({ level }: { level: SkillLevel }) {
-  const { dot, abbr } = SKILL_CONFIG[getSkillBucket(level)];
+  const { dot, abbr } = SKILL_CONFIG[level] ?? { dot: "bg-slate-400", abbr: "?" };
   return (
     <div className="flex shrink-0 items-center gap-1" aria-label={level}>
       <span className={`h-2 w-2 rounded-full ${dot} opacity-80`} aria-hidden="true" />

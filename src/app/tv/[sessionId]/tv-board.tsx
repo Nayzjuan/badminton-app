@@ -275,17 +275,14 @@ interface TvPlayerInfo {
   vip_theme: string | null;
 }
 
-// Skill bucket → dot + abbreviation (same 3-tier mapping as match-roster.tsx)
-type SkillBucket = "beginner" | "intermediate" | "advanced";
-function getSkillBucket(level: SkillLevel): SkillBucket {
-  if (level === "beginner") return "beginner";
-  if (level === "lower_advanced" || level === "advanced") return "advanced";
-  return "intermediate";
-}
-const TV_SKILL_CONFIG: Record<SkillBucket, { dot: string; abbr: string }> = {
-  beginner:     { dot: "bg-emerald-500", abbr: "Beg" },
-  intermediate: { dot: "bg-sky-500",     abbr: "Int" },
-  advanced:     { dot: "bg-purple-500",  abbr: "Adv" },
+// All 6 levels shown distinctly — mirrors match-roster.tsx and login-form palette.
+const TV_SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
+  beginner:           { dot: "bg-emerald-500", abbr: "Beg"   },
+  lower_intermediate: { dot: "bg-teal-500",    abbr: "L.Int" },
+  intermediate:       { dot: "bg-sky-500",     abbr: "Int"   },
+  upper_intermediate: { dot: "bg-indigo-500",  abbr: "U.Int" },
+  lower_advanced:     { dot: "bg-amber-500",   abbr: "L.Adv" },
+  advanced:           { dot: "bg-purple-500",  abbr: "Adv"   },
 };
 
 function TvTeamsGrid({
@@ -382,7 +379,7 @@ function TvPlayerRow({
   teamColor: string;
 }) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
-  const { dot, abbr } = TV_SKILL_CONFIG[getSkillBucket(player.skill_level)];
+  const { dot, abbr } = TV_SKILL_CONFIG[player.skill_level] ?? { dot: "bg-slate-400", abbr: "?" };
 
   return (
     <div

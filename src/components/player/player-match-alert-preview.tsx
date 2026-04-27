@@ -54,12 +54,12 @@ const MOCK = {
 // Replaces the wide skill pill — takes ~40px instead of ~70px,
 // giving the name enough room on its own line.
 const SKILL_MAP: Record<string, { color: string; darkColor: string; abbr: string }> = {
-  "beginner":          { color: "bg-emerald-500", darkColor: "bg-emerald-400", abbr: "Beg"  },
-  "lower_intermediate":{ color: "bg-sky-500",     darkColor: "bg-sky-400",     abbr: "LI"   },
-  "intermediate":      { color: "bg-sky-500",     darkColor: "bg-sky-400",     abbr: "Int"  },
-  "upper_intermediate":{ color: "bg-sky-600",     darkColor: "bg-sky-400",     abbr: "UI"   },
-  "lower_advanced":    { color: "bg-purple-500",  darkColor: "bg-purple-400",  abbr: "LA"   },
-  "advanced":          { color: "bg-purple-500",  darkColor: "bg-purple-400",  abbr: "Adv"  },
+  "beginner":           { color: "bg-emerald-500", darkColor: "bg-emerald-400", abbr: "Beg"   },
+  "lower_intermediate": { color: "bg-teal-500",    darkColor: "bg-teal-400",    abbr: "L.Int" },
+  "intermediate":       { color: "bg-sky-500",     darkColor: "bg-sky-400",     abbr: "Int"   },
+  "upper_intermediate": { color: "bg-indigo-500",  darkColor: "bg-indigo-400",  abbr: "U.Int" },
+  "lower_advanced":     { color: "bg-amber-500",   darkColor: "bg-amber-400",   abbr: "L.Adv" },
+  "advanced":           { color: "bg-purple-500",  darkColor: "bg-purple-400",  abbr: "Adv"   },
 };
 
 // Sandbox-safe lookup: match by label since mock uses display strings
