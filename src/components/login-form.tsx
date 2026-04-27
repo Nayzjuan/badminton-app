@@ -28,7 +28,8 @@ interface LoginFormProps {
 
 // Per-level color config — each skill level gets a distinct color so players
 // can self-identify at a glance. Spectrum runs cool→warm with difficulty:
-//   emerald → teal → sky → indigo → amber → purple
+//   emerald → teal → sky → indigo → fuchsia → purple
+//   (amber avoided — reserved for the app's pending/warning semantic)
 const SKILL_COLORS: Record<
   string,
   { descriptor: string; dot: string; idle: string; active: string }
@@ -59,9 +60,9 @@ const SKILL_COLORS: Record<
   },
   lower_advanced: {
     descriptor: "Competitive play",
-    dot:    "bg-amber-400 dark:bg-amber-500",
-    idle:   "border-amber-200 bg-amber-50/60 hover:bg-amber-50 dark:border-amber-800/40 dark:bg-amber-950/20 dark:hover:bg-amber-950/30",
-    active: "border-amber-500 bg-amber-100 dark:border-amber-400 dark:bg-amber-950/50",
+    dot:    "bg-fuchsia-400 dark:bg-fuchsia-500",
+    idle:   "border-fuchsia-200 bg-fuchsia-50/60 hover:bg-fuchsia-50 dark:border-fuchsia-800/40 dark:bg-fuchsia-950/20 dark:hover:bg-fuchsia-950/30",
+    active: "border-fuchsia-500 bg-fuchsia-100 dark:border-fuchsia-400 dark:bg-fuchsia-950/50",
   },
   advanced: {
     descriptor: "Tournament level",

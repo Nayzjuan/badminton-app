@@ -275,14 +275,16 @@ interface TvPlayerInfo {
   vip_theme: string | null;
 }
 
-// All 6 levels shown distinctly — mirrors match-roster.tsx and login-form palette.
+// All 6 levels shown distinctly — mirrors match-roster.tsx palette.
+// fuchsia for lower_advanced (not amber) avoids semantic collision with
+// the app's amber = "pending / on-deck / warning" usage.
 const TV_SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner:           { dot: "bg-emerald-500", abbr: "Beg"   },
-  lower_intermediate: { dot: "bg-teal-500",    abbr: "L.Int" },
-  intermediate:       { dot: "bg-sky-500",     abbr: "Int"   },
-  upper_intermediate: { dot: "bg-indigo-500",  abbr: "U.Int" },
-  lower_advanced:     { dot: "bg-amber-500",   abbr: "L.Adv" },
-  advanced:           { dot: "bg-purple-500",  abbr: "Adv"   },
+  beginner:           { dot: "bg-emerald-500 dark:bg-emerald-400", abbr: "Beg"   },
+  lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400",    abbr: "L.Int" },
+  intermediate:       { dot: "bg-sky-500     dark:bg-sky-400",     abbr: "Int"   },
+  upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400",  abbr: "U.Int" },
+  lower_advanced:     { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
+  advanced:           { dot: "bg-purple-500  dark:bg-purple-400",  abbr: "Adv"   },
 };
 
 function TvTeamsGrid({

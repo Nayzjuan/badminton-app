@@ -58,7 +58,7 @@ const SKILL_MAP: Record<string, { color: string; darkColor: string; abbr: string
   "lower_intermediate": { color: "bg-teal-500",    darkColor: "bg-teal-400",    abbr: "L.Int" },
   "intermediate":       { color: "bg-sky-500",     darkColor: "bg-sky-400",     abbr: "Int"   },
   "upper_intermediate": { color: "bg-indigo-500",  darkColor: "bg-indigo-400",  abbr: "U.Int" },
-  "lower_advanced":     { color: "bg-amber-500",   darkColor: "bg-amber-400",   abbr: "L.Adv" },
+  "lower_advanced":     { color: "bg-fuchsia-500", darkColor: "bg-fuchsia-400", abbr: "L.Adv" },
   "advanced":           { color: "bg-purple-500",  darkColor: "bg-purple-400",  abbr: "Adv"   },
 };
 

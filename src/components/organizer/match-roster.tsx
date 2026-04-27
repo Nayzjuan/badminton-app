@@ -39,8 +39,13 @@ export interface RosterPlayer {
 
 // ── Skill config ───────────────────────────────────────────────
 // All 6 levels shown distinctly — no bucket collapsing.
-// Dot colours match the login-form SKILL_COLORS palette so the
-// same player looks identical across every surface.
+// Two maps: SKILL_CONFIG for themed surfaces (light/dark via dark:),
+// SKILL_CONFIG_DARK for the always-dark navy court visualization.
+//
+// lower_advanced uses fuchsia (not amber) to avoid colliding with
+// the app's amber semantic for "pending / on-deck / warning" — an
+// amber dot inside an amber-themed on-deck card had no contrast.
+//
 // Abbreviations mirror SkillBadge labels (shortened for small UI):
 //   Beginner       → Beg
 //   Lower Int.     → L.Int
@@ -50,12 +55,24 @@ export interface RosterPlayer {
 //   Advanced       → Adv
 
 const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner:           { dot: "bg-emerald-500", abbr: "Beg"   },
-  lower_intermediate: { dot: "bg-teal-500",    abbr: "L.Int" },
-  intermediate:       { dot: "bg-sky-500",     abbr: "Int"   },
-  upper_intermediate: { dot: "bg-indigo-500",  abbr: "U.Int" },
-  lower_advanced:     { dot: "bg-amber-500",   abbr: "L.Adv" },
-  advanced:           { dot: "bg-purple-500",  abbr: "Adv"   },
+  beginner:           { dot: "bg-emerald-500 dark:bg-emerald-400", abbr: "Beg"   },
+  lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400",    abbr: "L.Int" },
+  intermediate:       { dot: "bg-sky-500     dark:bg-sky-400",     abbr: "Int"   },
+  upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400",  abbr: "U.Int" },
+  lower_advanced:     { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
+  advanced:           { dot: "bg-purple-500  dark:bg-purple-400",  abbr: "Adv"   },
+};
+
+// Always-dark navy court (Active Courts visualization, On Deck cards) —
+// use brighter -400 variants directly since dark: would not fire when the
+// user's theme is light but the surface is still dark navy.
+const SKILL_CONFIG_DARK: Record<SkillLevel, { dot: string; abbr: string }> = {
+  beginner:           { dot: "bg-emerald-400", abbr: "Beg"   },
+  lower_intermediate: { dot: "bg-teal-400",    abbr: "L.Int" },
+  intermediate:       { dot: "bg-sky-400",     abbr: "Int"   },
+  upper_intermediate: { dot: "bg-indigo-400",  abbr: "U.Int" },
+  lower_advanced:     { dot: "bg-fuchsia-400", abbr: "L.Adv" },
+  advanced:           { dot: "bg-purple-400",  abbr: "Adv"   },
 };
 
 // ── Internal: skill indicators ─────────────────────────────────
@@ -73,11 +90,11 @@ function SkillDot({ level }: { level: SkillLevel }) {
 }
 
 function SkillDotDark({ level }: { level: SkillLevel }) {
-  const { dot, abbr } = SKILL_CONFIG[level] ?? { dot: "bg-slate-400", abbr: "?" };
+  const { dot, abbr } = SKILL_CONFIG_DARK[level] ?? { dot: "bg-slate-400", abbr: "?" };
   return (
     <div className="flex shrink-0 items-center gap-1" aria-label={level}>
-      <span className={`h-2 w-2 rounded-full ${dot} opacity-80`} aria-hidden="true" />
-      <span className="text-[10px] font-bold uppercase tracking-wide text-white/40 leading-none">
+      <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden="true" />
+      <span className="text-[10px] font-bold uppercase tracking-wide text-white/60 leading-none">
         {abbr}
       </span>
     </div>

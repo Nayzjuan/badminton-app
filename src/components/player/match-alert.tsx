@@ -58,7 +58,7 @@ const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
   lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400",    abbr: "L.Int" },
   intermediate:       { dot: "bg-sky-500     dark:bg-sky-400",     abbr: "Int"   },
   upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400",  abbr: "U.Int" },
-  lower_advanced:     { dot: "bg-amber-500   dark:bg-amber-400",   abbr: "L.Adv" },
+  lower_advanced:     { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
   advanced:           { dot: "bg-purple-500  dark:bg-purple-400",  abbr: "Adv"   },
 };
 
