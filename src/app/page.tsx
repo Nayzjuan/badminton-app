@@ -70,6 +70,19 @@ export default async function HomePage() {
 // don't bleed outside the head outline.
 // ─────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────
+// Badminton Racket Icon — 45° line-art, 3×3 string grid
+// ─────────────────────────────────────────────────────────────
+// The entire racket sits inside a <g transform="rotate(45,12,12)">
+// so head points upper-right, handle lower-left — classic
+// "action pose" you'd see on a sports badge.
+//
+// String endpoints are pre-calculated to land inside the ellipse
+// (cx=12, cy=5.5, rx=3.5, ry=4.5) — no clipPath required.
+// Formula: for vertical strings at x, y_edge = cy ± ry·√(1-((x-cx)/rx)²)
+//          for horizontal strings at y, x_edge = cx ± rx·√(1-((y-cy)/ry)²)
+// ─────────────────────────────────────────────────────────────
+
 function BadmintonRacketIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -82,38 +95,44 @@ function BadmintonRacketIcon({ className }: { className?: string }) {
       className={className}
       aria-hidden="true"
     >
-      <defs>
-        {/* Clip string lines to the oval head */}
-        <clipPath id="racket-head-clip">
-          <ellipse cx="12" cy="5.5" rx="4" ry="4.5" />
-        </clipPath>
-      </defs>
+      {/* Whole racket rotated 45° CW: head upper-right, handle lower-left */}
+      <g transform="rotate(45, 12, 12)">
 
-      {/* ── Head ─────────────────────────────────────── */}
-      <ellipse cx="12" cy="5.5" rx="4" ry="4.5" />
+        {/* ── Head ──────────────────────────────────────── */}
+        <ellipse cx="12" cy="5.5" rx="3.5" ry="4.5" />
 
-      {/* ── String grid (thinner strokes, clipped) ───── */}
-      <g clipPath="url(#racket-head-clip)" strokeWidth="0.75">
-        {/* 3 vertical strings */}
-        <line x1="10"  y1="0" x2="10"  y2="11" />
-        <line x1="12"  y1="0" x2="12"  y2="11" />
-        <line x1="14"  y1="0" x2="14"  y2="11" />
-        {/* 3 horizontal strings */}
-        <line x1="6" y1="4"   x2="18" y2="4"   />
-        <line x1="6" y1="6"   x2="18" y2="6"   />
-        <line x1="6" y1="8"   x2="18" y2="8"   />
+        {/* ── String grid (3 vertical × 3 horizontal) ──── */}
+        {/* Endpoints clipped to ellipse boundary via math, no clipPath */}
+        <g strokeWidth="0.75">
+          {/* Vertical strings (x = 10, 12, 14) */}
+          {/* x=10: offset=(10-12)/3.5=-0.571, y±=5.5±4.5·√(1-0.326)=5.5±3.7 */}
+          <line x1="10" y1="1.8" x2="10" y2="9.2" />
+          {/* x=12: centre string, full height */}
+          <line x1="12" y1="1.0" x2="12" y2="10.0" />
+          {/* x=14: mirror of x=10 */}
+          <line x1="14" y1="1.8" x2="14" y2="9.2" />
+
+          {/* Horizontal strings (y = 4, 6, 8) */}
+          {/* y=4: offset=(4-5.5)/4.5=-0.333, x±=12±3.5·√(1-0.111)=12±3.3 */}
+          <line x1="8.7" y1="4" x2="15.3" y2="4" />
+          {/* y=6: offset=(6-5.5)/4.5=0.111, x±=12±3.5·√(1-0.012)=12±3.48 */}
+          <line x1="8.5" y1="6" x2="15.5" y2="6" />
+          {/* y=8: offset=(8-5.5)/4.5=0.556, x±=12±3.5·√(1-0.309)=12±2.9 */}
+          <line x1="9.1" y1="8" x2="14.9" y2="8" />
+        </g>
+
+        {/* ── Throat — V tapers from head bottom to shaft ── */}
+        <line x1="10.2" y1="9.8"  x2="11.2" y2="13.5" />
+        <line x1="13.8" y1="9.8"  x2="12.8" y2="13.5" />
+
+        {/* ── Handle — two parallel lines ──────────────── */}
+        <line x1="11.2" y1="13.5" x2="10.6" y2="22" />
+        <line x1="12.8" y1="13.5" x2="13.4" y2="22" />
+
+        {/* ── Butt cap — curved end of grip ────────────── */}
+        <path d="M10.6 22 Q12 23.5 13.4 22" />
+
       </g>
-
-      {/* ── Throat — tapers inward from head to shaft ─ */}
-      <line x1="10"    y1="10"   x2="11.25" y2="14" />
-      <line x1="14"    y1="10"   x2="12.75" y2="14" />
-
-      {/* ── Handle — long and narrow ─────────────────── */}
-      <line x1="11.25" y1="14"   x2="10.75" y2="21.5" />
-      <line x1="12.75" y1="14"   x2="13.25" y2="21.5" />
-
-      {/* ── Butt cap ──────────────────────────────────── */}
-      <path d="M10.75 21.5 Q12 23 13.25 21.5" />
     </svg>
   );
 }
