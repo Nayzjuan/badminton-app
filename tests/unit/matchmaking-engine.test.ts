@@ -124,6 +124,12 @@ function makeMockClient(
   return { from, rpc, queriedTables };
 }
 
+// ── Test fixture UUIDs ─────────────────────────────────────────
+// Valid v4 UUID format required so they pass the isValidUUID guard
+// added in Wave 1 to callNextMatch and runEngineForSession.
+const SESSION_ID = "00000000-0000-4000-8000-000000000001";
+const COURT_ID   = "00000000-0000-4000-8000-000000000002";
+
 // Convenience for the most common match object returned by the pending query
 const MOCK_MATCH = { id: "match-1", is_mixed_level: false };
 const MOCK_MATCH_PLAYERS = [
@@ -157,8 +163,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(false);
@@ -174,8 +180,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(false);
@@ -192,8 +198,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(false);
@@ -210,8 +216,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(false);
@@ -231,8 +237,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(true);
@@ -263,8 +269,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(true);
@@ -293,8 +299,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(true);
@@ -319,8 +325,8 @@ describe("promoteOnDeckMatchInternal", () => {
 
     const result = await promoteOnDeckMatchInternal(
       mock as never,
-      "session-1",
-      "court-1"
+      SESSION_ID,
+      COURT_ID
     );
 
     expect(result.success).toBe(true);
@@ -343,7 +349,7 @@ describe("runEngineForSession", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    await runEngineForSession("session-1");
+    await runEngineForSession(SESSION_ID);
 
     // Only the sessions toggle check was made
     expect(mock.queriedTables).toEqual(["sessions"]);
@@ -356,7 +362,7 @@ describe("runEngineForSession", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    await runEngineForSession("session-1");
+    await runEngineForSession(SESSION_ID);
 
     // At least sessions + courts queried
     expect(mock.queriedTables).toContain("sessions");
@@ -370,7 +376,7 @@ describe("runEngineForSession", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    await runEngineForSession("session-1");
+    await runEngineForSession(SESSION_ID);
 
     // Only sessions + courts queried: engine exits before the pending count check
     expect(mock.queriedTables).toEqual(["sessions", "courts"]);
@@ -386,7 +392,7 @@ describe("runEngineForSession", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    await runEngineForSession("session-1");
+    await runEngineForSession(SESSION_ID);
 
     // Engine exits after the pending count: no queue/algorithm queries fired
     expect(mock.queriedTables).toEqual(["sessions", "courts", "matches"]);
@@ -399,7 +405,7 @@ describe("runEngineForSession", () => {
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
     // Should not throw; only the sessions read was attempted before the error exit
-    await expect(runEngineForSession("session-1")).resolves.toBeUndefined();
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
     expect(mock.queriedTables).toEqual(["sessions"]);
   });
 
@@ -417,7 +423,7 @@ describe("runEngineForSession", () => {
     //   → rpc fails → engine exits cleanly
     const fourPlayers = Array.from({ length: 4 }, (_, i) => ({
       id: `entry-p${i}`,
-      session_id: "session-1",
+      session_id: SESSION_ID,
       player_id: `p${i}`,
       joined_at: new Date(Date.now() - 10 * 60_000).toISOString(),
       games_played: 0,
@@ -449,7 +455,7 @@ describe("runEngineForSession", () => {
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
     // Engine should not throw even when rpc fails
-    await expect(runEngineForSession("session-1")).resolves.toBeUndefined();
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
     // rpc was called — engine reached executeMatch before failing
     expect(mock.rpc).toHaveBeenCalledTimes(1);
     expect(mock.rpc).toHaveBeenCalledWith("create_match_with_players", expect.any(Object));
@@ -482,7 +488,7 @@ describe("callNextMatch", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    const result = await callNextMatch("session-1", "court-1");
+    const result = await callNextMatch(SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(true);
     expect(result.matchId).toBe("match-1");
@@ -503,7 +509,7 @@ describe("callNextMatch", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    await callNextMatch("session-1", "court-1");
+    await callNextMatch(SESSION_ID, COURT_ID);
 
     // The 6th query (index 5) must be "courts", NOT "sessions".
     // "sessions" would appear here if runEngineForSession (toggle check) was called.
@@ -520,7 +526,7 @@ describe("callNextMatch", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    const result = await callNextMatch("session-1", "court-1");
+    const result = await callNextMatch(SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/paused|auto-matchmaking/i);
@@ -547,7 +553,7 @@ describe("callNextMatch", () => {
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
 
-    const result = await callNextMatch("session-1", "court-1");
+    const result = await callNextMatch(SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not enough players/i);

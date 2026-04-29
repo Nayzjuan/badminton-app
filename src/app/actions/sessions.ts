@@ -13,6 +13,7 @@ import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastSessionClosed } from "@/lib/broadcast";
+import { isValidUUID } from "@/lib/validate";
 import type { ScoringFormat } from "@/types/database";
 
 // ── Passcode auto-generation ──────────────────────────────────
@@ -63,6 +64,16 @@ export async function createSession(opts: {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
+  // ── Input validation ──────────────────────────────────────
+  const trimmedName = opts.name.trim();
+  if (!trimmedName) return { success: false, message: "Session name is required." };
+  if (trimmedName.length > 60) {
+    return { success: false, message: "Session name must be 60 characters or less." };
+  }
+  if (opts.passcode && opts.passcode.trim().length > 20) {
+    return { success: false, message: "Passcode must be 20 characters or less." };
+  }
+
   const service = createServiceClient();
 
   // Determine the passcode to use
@@ -71,12 +82,14 @@ export async function createSession(opts: {
   if (opts.passcode && opts.passcode.trim()) {
     finalPasscode = opts.passcode.trim().toUpperCase();
 
-    // Uniqueness check — no active session may share this passcode
+    // Uniqueness check — no active session may share this passcode.
+    // Use exact match (.eq) — ILIKE would allow SQL wildcard characters
+    // like % or _ to match unintended sessions.
     const { data: conflict } = await service
       .from("sessions")
       .select("id")
       .eq("is_active", true)
-      .ilike("organizer_passcode", finalPasscode)
+      .eq("organizer_passcode", finalPasscode)
       .maybeSingle();
 
     if (conflict) {
@@ -95,7 +108,7 @@ export async function createSession(opts: {
         .from("sessions")
         .select("id")
         .eq("is_active", true)
-        .ilike("organizer_passcode", candidate)
+        .eq("organizer_passcode", candidate)
         .maybeSingle();
       if (!conflict) break;
       attempts++;
@@ -107,7 +120,7 @@ export async function createSession(opts: {
   const { data: session, error: insertError } = await service
     .from("sessions")
     .insert({
-      name: opts.name.trim(),
+      name: trimmedName,
       created_by: user.id,
       scoring: opts.scoring,
       organizer_passcode: finalPasscode,
@@ -116,6 +129,16 @@ export async function createSession(opts: {
     .single();
 
   if (insertError || !session) {
+    // 23505 = unique_violation — the partial unique index on
+    // (organizer_passcode) WHERE is_active = true fired.
+    // This is the authoritative DB guard against the TOCTOU window
+    // between the app-layer uniqueness check above and this INSERT.
+    if (insertError?.code === "23505") {
+      return {
+        success: false,
+        message: "This passcode is currently in use by another active session. Please choose a different one.",
+      };
+    }
     return {
       success: false,
       message: insertError?.message ?? "Failed to create session.",
@@ -165,11 +188,14 @@ export async function joinAsCoOrganizer(
   // Service client — bypass RLS so we can search all active sessions
   const service = createServiceClient();
 
+  // Exact match — ILIKE would allow SQL wildcard characters (%, _) to
+  // match unintended sessions. The passcode is already normalised to
+  // uppercase so case-insensitivity is not needed here.
   const { data: session } = await service
     .from("sessions")
     .select("id, created_by")
     .eq("is_active", true)
-    .ilike("organizer_passcode", normalized)
+    .eq("organizer_passcode", normalized)
     .maybeSingle();
 
   if (!session) return { success: false, message: INVALID };
@@ -220,6 +246,10 @@ export interface ToggleAutoMatchmakingResult {
 export async function toggleAutoMatchmaking(
   sessionId: string
 ): Promise<ToggleAutoMatchmakingResult> {
+  if (!isValidUUID(sessionId)) {
+    return { success: false, isOn: false, message: "Invalid session ID." };
+  }
+
   // Auth gate
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -227,26 +257,43 @@ export async function toggleAutoMatchmaking(
 
   const service = createServiceClient();
 
-  // Read current value
-  const { data: session, error: fetchErr } = await service
+  // Verify caller is an organizer of this session (primary or co-organizer).
+  // Uses the two-path check: sessions.created_by first, then session_organizers.
+  const { data: sessionMeta } = await service
     .from("sessions")
-    .select("is_auto_matchmaking_on")
+    .select("created_by")
     .eq("id", sessionId)
     .single();
 
-  if (fetchErr || !session) {
+  if (!sessionMeta) {
     return { success: false, isOn: false, message: "Session not found." };
   }
 
-  const newValue = !session.is_auto_matchmaking_on;
+  if (sessionMeta.created_by !== user.id) {
+    const { data: coOrg } = await service
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
 
-  const { error: updateErr } = await service
-    .from("sessions")
-    .update({ is_auto_matchmaking_on: newValue })
-    .eq("id", sessionId);
+    if (!coOrg) {
+      return { success: false, isOn: false, message: "Not authorized. Organizer access required." };
+    }
+  }
 
-  if (updateErr) {
-    return { success: false, isOn: session.is_auto_matchmaking_on, message: updateErr.message };
+  // Atomic flip via DB function — eliminates the read→write
+  // lost-update race that existed when we did SELECT then UPDATE.
+  const { data: newValue, error: rpcErr } = await service.rpc(
+    "toggle_auto_matchmaking",
+    { p_session_id: sessionId }
+  );
+
+  if (rpcErr) {
+    return { success: false, isOn: false, message: rpcErr.message };
+  }
+  if (newValue === null || newValue === undefined) {
+    return { success: false, isOn: false, message: "Session not found." };
   }
 
   // If toggled ON, immediately run the engine so the on-deck queue
@@ -272,6 +319,8 @@ export async function updateSessionSettings(
   sessionId: string,
   updates: { court_time_limit_minutes?: number | null }
 ): Promise<{ error?: string }> {
+  if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
@@ -291,6 +340,14 @@ export async function updateSessionSettings(
   // Each allowed field is destructured and re-assembled into a typed object.
   if (updates.court_time_limit_minutes === undefined) return {};
 
+  // Validate bounds: null disables the time limit; integers must be 5–180 min.
+  if (updates.court_time_limit_minutes !== null) {
+    const mins = updates.court_time_limit_minutes;
+    if (!Number.isInteger(mins) || mins < 5 || mins > 180) {
+      return { error: "Court time limit must be between 5 and 180 minutes." };
+    }
+  }
+
   const { error } = await supabase
     .from("sessions")
     .update({ court_time_limit_minutes: updates.court_time_limit_minutes })
@@ -308,6 +365,16 @@ export interface CloseSessionResult {
 }
 
 export async function closeSession(sessionId: string): Promise<CloseSessionResult> {
+  if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
+
+  // ── Auth gate ────────────────────────────────────────────────
+  // closeSession is a destructive operation — all callers must be an
+  // organizer of the session. Without this check any authenticated user
+  // who learns a session UUID can close it (service client bypasses RLS).
+  const userClient = await createClient();
+  const { data: { user } } = await userClient.auth.getUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
   let supabase: ReturnType<typeof createServiceClient>;
   try {
     supabase = createServiceClient();
@@ -316,10 +383,11 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     return { success: false, message: msg };
   }
 
-  // Verify the session exists and is currently active.
+  // Verify the session exists and is currently active, and capture
+  // created_by for the organizer check below.
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, is_active")
+    .select("id, is_active, created_by")
     .eq("id", sessionId)
     .single();
 
@@ -328,6 +396,21 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   }
   if (!session.is_active) {
     return { success: false, message: "Session is already closed." };
+  }
+
+  // ── Organizer check ──────────────────────────────────────────
+  // Two-path check mirrors toggleAutoMatchmaking: primary organizer
+  // (created_by) OR any co-organizer row in session_organizers.
+  if (session.created_by !== user.id) {
+    const { data: coOrg } = await supabase
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!coOrg) {
+      return { success: false, message: "Not authorized. Organizer access required." };
+    }
   }
 
   // ── 0. Pre-compute Wrapped stats ────────────────────────────
@@ -365,21 +448,14 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     }
   }
 
-  // ── 1. Cancel any lingering on_deck / in_progress matches ───
-  const { data: activeMatches } = await supabase
+  // ── 1. Cancel any lingering pending / in_progress matches ────
+  // Direct filtered UPDATE — skipping the SELECT avoids the gap
+  // where new matches could be inserted between SELECT and UPDATE.
+  const { count: cancelledCount } = await supabase
     .from("matches")
-    .select("id")
+    .update({ status: "cancelled" as const }, { count: "exact" })
     .eq("session_id", sessionId)
     .in("status", ["pending", "in_progress"]);
-
-  const matchIds = (activeMatches ?? []).map((m) => m.id);
-
-  if (matchIds.length > 0) {
-    await supabase
-      .from("matches")
-      .update({ status: "cancelled" as const })
-      .in("id", matchIds);
-  }
 
   // ── 2. Remove all remaining queue entries ───────────────────
   // Mark everyone as "left" so their history is preserved.
@@ -414,7 +490,7 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
 
   return {
     success: true,
-    message: `Session closed. ${matchIds.length} match(es) cancelled, all players removed from queue.`,
+    message: `Session closed. ${cancelledCount ?? 0} match(es) cancelled, all players removed from queue.`,
     wrappedReady,
   };
 }

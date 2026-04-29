@@ -7,7 +7,7 @@
 // Visually highlights players exceeding the 20-min threshold.
 // ============================================================
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { BOTTLENECK_THRESHOLD_MINUTES } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
 import type { QueueWithWaitTime } from "@/types/database";
@@ -18,6 +18,10 @@ interface WaitTimeMonitorProps {
 }
 
 export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorProps) {
+  // Track which player is currently being removed so the button is
+  // disabled during the async call — prevents double-tap on a destructive action.
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
   // Sort by wait time descending (longest first).
   const sorted = useMemo(
     () => [...queue].sort((a, b) => b.wait_minutes - a.wait_minutes),
@@ -110,14 +114,24 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
 
                   {/* Remove */}
                   <button
-                    onClick={() => onRemoveFromQueue(entry.player_id)}
+                    onClick={async () => {
+                      if (removingId === entry.player_id) return; // already removing this player
+                      setRemovingId(entry.player_id);
+                      try {
+                        await onRemoveFromQueue(entry.player_id);
+                      } finally {
+                        setRemovingId(null);
+                      }
+                    }}
+                    disabled={removingId === entry.player_id}
                     className="flex items-center justify-center text-sm text-muted-foreground
                                hover:text-destructive transition-colors
-                               px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg hover:bg-muted"
+                               px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg hover:bg-muted
+                               disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Remove from queue"
                     aria-label={`Remove ${entry.display_name} from queue`}
                   >
-                    &times;
+                    {removingId === entry.player_id ? "…" : "×"}
                   </button>
                 </div>
 

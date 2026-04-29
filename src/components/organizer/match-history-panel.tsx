@@ -131,8 +131,44 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
 
   if (loading) {
     return (
-      <div className="py-16 text-center text-sm text-slate-400">
-        Loading match history...
+      <div className="space-y-4" aria-busy="true" aria-label="Loading match history">
+        {/* Title row */}
+        <div className="flex items-center justify-between">
+          <div className="h-3 w-28 rounded-full bg-slate-200 dark:bg-muted/60 animate-pulse" />
+          <div className="h-5 w-24 rounded-full bg-slate-200 dark:bg-muted/60 animate-pulse" />
+        </div>
+        {/* Three card-shaped pulse skeletons */}
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="rounded-2xl border border-slate-200 dark:border-border bg-white dark:bg-card shadow-sm overflow-hidden"
+            >
+              {/* Header bar */}
+              <div className="flex items-center justify-between bg-slate-50 dark:bg-muted/50 px-4 py-2.5 border-b border-slate-100 dark:border-border">
+                <div className="h-3.5 w-24 rounded-full bg-slate-200 dark:bg-muted animate-pulse" />
+                <div className="h-3.5 w-16 rounded-full bg-slate-200 dark:bg-muted animate-pulse" />
+              </div>
+              {/* Score row + two-column teams */}
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-center gap-4">
+                  <div className="h-8 w-7 rounded bg-slate-200 dark:bg-muted animate-pulse" />
+                  <div className="h-4 w-3 rounded bg-slate-100 dark:bg-muted/50 animate-pulse" />
+                  <div className="h-8 w-7 rounded bg-slate-200 dark:bg-muted animate-pulse" />
+                </div>
+                <div className="flex gap-3">
+                  {[0, 1].map((t) => (
+                    <div key={t} className="flex-1 rounded-xl bg-slate-50 dark:bg-muted/50 p-3 space-y-2">
+                      <div className="h-2.5 w-14 rounded-full bg-slate-200 dark:bg-muted animate-pulse mx-auto" />
+                      <div className="h-4 w-20 rounded-full bg-slate-200 dark:bg-muted animate-pulse mx-auto" />
+                      <div className="h-3.5 w-16 rounded-full bg-slate-100 dark:bg-muted/60 animate-pulse mx-auto" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -442,11 +478,12 @@ function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDia
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <button
-          className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium
+          className="flex items-center gap-1 rounded-lg px-3 py-2 min-h-[44px] text-[11px] font-medium
                      text-slate-400 hover:text-slate-700 hover:bg-slate-100
                      dark:text-muted-foreground dark:hover:text-foreground dark:hover:bg-muted
                      transition-colors"
           title="Edit scores or revert match"
+          aria-label="Edit match scores"
         >
           <Pencil className="h-3 w-3" />
           Edit

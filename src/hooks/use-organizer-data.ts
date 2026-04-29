@@ -70,6 +70,11 @@ import type {
   Session,
 } from "@/types/database";
 
+// Number of table channels tracked for the realtimeConnected health indicator.
+// Declared at module scope so useCallback([]) can reference it without
+// needing to list it in the dep array.
+const REALTIME_CHANNEL_COUNT = 5; // courts, queue_entries, matches, match_players, profiles
+
 /** A match enriched with its player profiles + court info. */
 export interface EnrichedMatch extends Match {
   court: Court | null;
@@ -89,6 +94,14 @@ export interface UseOrganizerDataResult {
   inProgressMatches: EnrichedMatch[];
   profiles: Map<string, Profile>;
   loading: boolean;
+  /**
+   * True when all five realtime channels (courts, queue, matches,
+   * match_players, profiles) have confirmed SUBSCRIBED status.
+   * False if any channel reports CHANNEL_ERROR or TIMED_OUT.
+   * Starts true so the indicator doesn't flash on initial load;
+   * channels report their status within ~1 second of mounting.
+   */
+  realtimeConnected: boolean;
   // -- Court actions --
   addCourt: (name: string) => Promise<{ error?: string }>;
   updateCourtStatus: (courtId: string, status: Court["status"]) => Promise<{ error?: string }>;
@@ -139,6 +152,19 @@ export function useOrganizerData(
   const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map());
   const [loading, setLoading] = useState(true);
+  // Starts true — channels report SUBSCRIBED within ~1 s of mounting, so
+  // there's no "flash" of the indicator on load. Flips to false the moment
+  // any channel reports CHANNEL_ERROR or TIMED_OUT.
+  const [realtimeConnected, setRealtimeConnected] = useState(true);
+
+  // ── Realtime health tracking ──────────────────────────────────
+  // Tracks which channel IDs have confirmed SUBSCRIBED. Using a Set
+  // (keyed by channel name) rather than a bare counter prevents
+  // double-counting when a channel fires SUBSCRIBED twice on reconnect:
+  //   counter approach: SUBSCRIBED → SUBSCRIBED → count=2 for 1 channel ✗
+  //   Set approach:     SUBSCRIBED → SUBSCRIBED → size=1 (idempotent) ✓
+  // The Set is cleared on cleanup so each mount starts fresh.
+  const connectedChannelIds = useRef(new Set<string>());
 
   // ------------------------------------------------------------------
   // Stable ref that always mirrors `courts` state.
@@ -332,9 +358,31 @@ export function useOrganizerData(
   fetchQueueRef.current = fetchQueue;
   fetchActiveMatchesRef.current = fetchActiveMatches;
 
+  // Stable callback that counts SUBSCRIBED/error events across all five
+  // table channels and flips realtimeConnected accordingly.
+  // Defined outside the effect so it never changes identity — the effect
+  // only re-runs when supabase/sessionId change, not on every render.
+  const handleChannelStatus = useCallback(
+    (channelId: string, connected: boolean) => {
+      if (connected) {
+        connectedChannelIds.current.add(channelId);
+      } else {
+        connectedChannelIds.current.delete(channelId);
+      }
+      setRealtimeConnected(connectedChannelIds.current.size === REALTIME_CHANNEL_COUNT);
+    },
+    [] // deliberately stable — only accesses connectedChannelIds (ref, stable identity)
+       // and setRealtimeConnected (stable setState dispatcher)
+  );
+
   useEffect(() => {
+    // Clear the Set so each new subscription cycle starts from zero.
+    connectedChannelIds.current.clear();
+
     // Session settings channel — filtered to this session ID.
     // Handles court_time_limit_minutes changes made by the organizer.
+    // Not included in the health counter — it's a metadata channel, not
+    // a player-data channel, so we don't need it to be "live" for gameplay.
     const sessionChannel = supabase
       .channel(`session-settings:${sessionId}`)
       .on(
@@ -352,23 +400,23 @@ export function useOrganizerData(
       .subscribe();
 
     const unsubs = [
-      subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current()),
-      subscribeToQueue(supabase, sessionId, () => fetchQueueRef.current()),
-      subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current()),
-      subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current()),
+      subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current(), undefined, handleChannelStatus),
+      subscribeToQueue(supabase, sessionId, () => fetchQueueRef.current(), undefined, handleChannelStatus),
+      subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current(), undefined, handleChannelStatus),
+      subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current(), undefined, handleChannelStatus),
       // Profile changes (e.g. skill override) → re-fetch queue (view includes
       // skill_level from profiles) and active matches (embedded profiles).
       subscribeToProfiles(supabase, sessionId, () => {
         fetchQueueRef.current();
         fetchActiveMatchesRef.current();
-      }),
+      }, undefined, handleChannelStatus),
     ];
     return () => {
       supabase.removeChannel(sessionChannel);
       unsubs.forEach((u) => u());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supabase, sessionId]); // Intentionally omit the fetch refs — they are kept current via the ref pattern above.
+  }, [supabase, sessionId, handleChannelStatus]); // Intentionally omit the fetch refs — they are kept current via the ref pattern above.
 
   // ---- Court actions ----
   // Each mutation explicitly calls fetchCourts() after a successful write
@@ -594,6 +642,7 @@ export function useOrganizerData(
     inProgressMatches,
     profiles,
     loading,
+    realtimeConnected,
     addCourt,
     updateCourtStatus,
     removeCourt,

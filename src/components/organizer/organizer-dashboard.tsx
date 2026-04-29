@@ -32,7 +32,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ChevronDown, ArrowLeft, Repeat, Power, Tv2, Share2, MoreVertical } from "lucide-react";
+import { ChevronDown, ArrowLeft, Repeat, Power, Tv2, Share2, MoreVertical, WifiOff } from "lucide-react";
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
@@ -157,6 +157,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     onDeckMatches,
     profiles,
     loading,
+    realtimeConnected,
     addCourt,
     updateCourtStatus,
     removeCourt,
@@ -580,6 +581,18 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 <span className="text-white/60 tabular-nums">{queue.length} in queue</span>
                 <span className="text-white/40">·</span>
                 <span className="text-white/60 tabular-nums">{activeMatches.length} in play</span>
+                {!realtimeConnected && (
+                  <>
+                    <span className="text-white/40">·</span>
+                    <span
+                      className="inline-flex items-center gap-1 text-amber-400/90"
+                      title="Realtime channels disconnected — displayed data may be stale. Reconnecting…"
+                    >
+                      <WifiOff className="h-3 w-3" aria-hidden="true" />
+                      <span>Sync offline</span>
+                    </span>
+                  </>
+                )}
 
                 {/* Visual divider between stats and action buttons */}
                 <span className="h-4 w-px bg-white/20 mx-1 shrink-0" aria-hidden="true" />
@@ -656,6 +669,18 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               <span>{queue.length} in queue</span>
               <span className="text-white/40">·</span>
               <span>{activeMatches.length} active</span>
+              {!realtimeConnected && (
+                <>
+                  <span className="text-white/40">·</span>
+                  <span
+                    className="inline-flex items-center gap-1 text-amber-400/90"
+                    title="Realtime channels disconnected — displayed data may be stale. Reconnecting…"
+                  >
+                    <WifiOff className="h-3 w-3" aria-hidden="true" />
+                    Sync offline
+                  </span>
+                </>
+              )}
               <span className="text-white/40">·</span>
               <ThemeToggle className="text-white/50 hover:text-white hover:bg-white/10
                                       dark:text-primary dark:hover:bg-primary/10 -my-1" />

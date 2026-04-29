@@ -50,7 +50,21 @@ import {
   type ScoredPlayer,
 } from "@/lib/matchmaking-core";
 import type { QueueWithWaitTime } from "@/types/database";
+import { isValidUUID } from "@/lib/validate";
 
+// ── Process-level concurrency guard ──────────────────────────
+// Tracks session IDs for which the engine is currently running
+// within this process. If a second invocation arrives for the
+// same session while the first is still in-flight (e.g. two
+// players join within milliseconds of each other), the second
+// call is a no-op — the first run will already produce the
+// correct on-deck state when it finishes.
+//
+// Scope: single Node.js process. For multi-process deployments a
+// Postgres advisory lock (pg_try_advisory_xact_lock) is the
+// correct cross-instance serialization primitive, but the Set is
+// sufficient for the current single-worker setup and is cheap.
+const engineRunningFor = new Set<string>();
 
 export interface MatchmakingResult {
   success: boolean;
@@ -76,6 +90,9 @@ export async function callNextMatch(
   sessionId: string,
   courtId: string
 ): Promise<MatchmakingResult> {
+  if (!isValidUUID(sessionId) || !isValidUUID(courtId)) {
+    return { success: false, message: "Invalid session or court ID." };
+  }
   const supabase = await createClient();
 
   // 1. Try to promote an existing on-deck match.
@@ -121,24 +138,38 @@ export async function callNextMatch(
 // Checks the toggle itself — callers need not check it first.
 
 export async function runEngineForSession(sessionId: string): Promise<void> {
-  const supabase = await createClient();
-  const { data: session, error: sessionErr } = await supabase
-    .from("sessions")
-    .select("is_auto_matchmaking_on")
-    .eq("id", sessionId)
-    .single();
+  if (!isValidUUID(sessionId)) return; // malformed ID — silently no-op (internal helper)
 
-  if (sessionErr) {
-    console.error(`[engine] runEngineForSession: failed to read session ${sessionId} — ${sessionErr.message}`);
+  // Concurrency guard: skip if another invocation is already running
+  // for this session in this process (e.g. two simultaneous queue joins).
+  if (engineRunningFor.has(sessionId)) {
+    console.log(`[engine] runEngineForSession: already in-flight for ${sessionId} — skipping`);
     return;
   }
-  if (!session?.is_auto_matchmaking_on) {
-    console.log(`[engine] runEngineForSession: toggle is OFF for session ${sessionId} — skipping`);
-    return;
-  }
+  engineRunningFor.add(sessionId);
 
-  console.log(`[engine] runEngineForSession: toggle ON for session ${sessionId} — starting engine`);
-  await runEngineInternal(supabase, sessionId);
+  try {
+    const supabase = await createClient();
+    const { data: session, error: sessionErr } = await supabase
+      .from("sessions")
+      .select("is_auto_matchmaking_on")
+      .eq("id", sessionId)
+      .single();
+
+    if (sessionErr) {
+      console.error(`[engine] runEngineForSession: failed to read session ${sessionId} — ${sessionErr.message}`);
+      return;
+    }
+    if (!session?.is_auto_matchmaking_on) {
+      console.log(`[engine] runEngineForSession: toggle is OFF for session ${sessionId} — skipping`);
+      return;
+    }
+
+    console.log(`[engine] runEngineForSession: toggle ON for session ${sessionId} — starting engine`);
+    await runEngineInternal(supabase, sessionId);
+  } finally {
+    engineRunningFor.delete(sessionId);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

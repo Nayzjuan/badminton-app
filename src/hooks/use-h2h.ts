@@ -47,8 +47,9 @@ export function useH2H(
           setLoading(false);
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (!cancelled) {
+          console.error("[useH2H] getH2HRecord failed:", err);
           setRecord(null);
           setError(true);
           setLoading(false);

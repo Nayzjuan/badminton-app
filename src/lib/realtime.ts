@@ -24,13 +24,22 @@ type ChangeHandler<T extends Record<string, unknown>> = (
 /**
  * Subscribe to all changes on a table, filtered by session_id.
  * Returns a cleanup function that removes the channel.
+ *
+ * @param onStatus  Optional callback invoked whenever the channel's
+ *                  connection state changes. Receives the channel's
+ *                  unique name and `true` (SUBSCRIBED) or `false`
+ *                  (CHANNEL_ERROR / TIMED_OUT). Passing the channel ID
+ *                  lets callers track per-channel state in a Set rather
+ *                  than a bare counter — preventing double-count when a
+ *                  channel fires SUBSCRIBED twice on reconnect.
  */
 function subscribeToTable<T extends Record<string, unknown>>(
   supabase: TypedClient,
   table: string,
   sessionId: string,
   onChange: ChangeHandler<T>,
-  channelPrefix?: string
+  channelPrefix?: string,
+  onStatus?: (channelId: string, connected: boolean) => void
 ): () => void {
   const channelName = channelPrefix
     ? `${channelPrefix}:${table}:${sessionId}`
@@ -58,6 +67,7 @@ function subscribeToTable<T extends Record<string, unknown>>(
         // the event server-side, but if the channel itself fails you'll
         // see it here.
         console.error(`[realtime] ${channelName} subscription error:`, err);
+        onStatus?.(channelName, false);
       } else {
         console.log(`[realtime] ${channelName} →`, status);
         // Expected statuses:
@@ -65,6 +75,11 @@ function subscribeToTable<T extends Record<string, unknown>>(
         //   CHANNEL_ERROR   — something went wrong (check err above)
         //   TIMED_OUT       — no response from server within timeout
         //   CLOSED          — channel removed (cleanup called)
+        if (status === "SUBSCRIBED") {
+          onStatus?.(channelName, true);
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          onStatus?.(channelName, false);
+        }
       }
     });
 
@@ -79,34 +94,38 @@ export function subscribeToCourts(
   supabase: TypedClient,
   sessionId: string,
   onChange: ChangeHandler<Database["public"]["Tables"]["courts"]["Row"]>,
-  channelPrefix?: string
+  channelPrefix?: string,
+  onStatus?: (channelId: string, connected: boolean) => void
 ) {
-  return subscribeToTable(supabase, "courts", sessionId, onChange, channelPrefix);
+  return subscribeToTable(supabase, "courts", sessionId, onChange, channelPrefix, onStatus);
 }
 
 export function subscribeToQueue(
   supabase: TypedClient,
   sessionId: string,
   onChange: ChangeHandler<Database["public"]["Tables"]["queue_entries"]["Row"]>,
-  channelPrefix?: string
+  channelPrefix?: string,
+  onStatus?: (channelId: string, connected: boolean) => void
 ) {
-  return subscribeToTable(supabase, "queue_entries", sessionId, onChange, channelPrefix);
+  return subscribeToTable(supabase, "queue_entries", sessionId, onChange, channelPrefix, onStatus);
 }
 
 export function subscribeToMatches(
   supabase: TypedClient,
   sessionId: string,
   onChange: ChangeHandler<Database["public"]["Tables"]["matches"]["Row"]>,
-  channelPrefix?: string
+  channelPrefix?: string,
+  onStatus?: (channelId: string, connected: boolean) => void
 ) {
-  return subscribeToTable(supabase, "matches", sessionId, onChange, channelPrefix);
+  return subscribeToTable(supabase, "matches", sessionId, onChange, channelPrefix, onStatus);
 }
 
 export function subscribeToMatchPlayers(
   supabase: TypedClient,
   sessionId: string,
   onChange: ChangeHandler<Database["public"]["Tables"]["match_players"]["Row"]>,
-  channelPrefix?: string
+  channelPrefix?: string,
+  onStatus?: (channelId: string, connected: boolean) => void
 ) {
   // match_players has no session_id column, so we subscribe broadly
   // and let the callback + state refresh handle filtering.
@@ -127,8 +146,14 @@ export function subscribeToMatchPlayers(
     .subscribe((status, err) => {
       if (err) {
         console.error(`[realtime] ${channelName} subscription error:`, err);
+        onStatus?.(channelName, false);
       } else {
         console.log(`[realtime] ${channelName} →`, status);
+        if (status === "SUBSCRIBED") {
+          onStatus?.(channelName, true);
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          onStatus?.(channelName, false);
+        }
       }
     });
 
@@ -234,7 +259,8 @@ export function subscribeToProfiles(
   supabase: TypedClient,
   sessionId: string,
   onChange: ChangeHandler<Database["public"]["Tables"]["profiles"]["Row"]>,
-  channelPrefix?: string
+  channelPrefix?: string,
+  onStatus?: (channelId: string, connected: boolean) => void
 ) {
   const channelName = channelPrefix
     ? `${channelPrefix}:profiles:${sessionId}`
@@ -253,8 +279,14 @@ export function subscribeToProfiles(
     .subscribe((status, err) => {
       if (err) {
         console.error(`[realtime] ${channelName} subscription error:`, err);
+        onStatus?.(channelName, false);
       } else {
         console.log(`[realtime] ${channelName} →`, status);
+        if (status === "SUBSCRIBED") {
+          onStatus?.(channelName, true);
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          onStatus?.(channelName, false);
+        }
       }
     });
 

@@ -72,10 +72,19 @@ export function MatchTimer({
     }
 
     const start = new Date(startedAt).getTime();
+    // Guard against invalid ISO strings — formatElapsed(NaN) would render "NaN:NaN".
+    if (isNaN(start)) {
+      setDisplay("");
+      return;
+    }
 
     // STATIC mode — fixed diff, no interval.
     if (endedAt) {
       const end = new Date(endedAt).getTime();
+      if (isNaN(end)) {
+        setDisplay("");
+        return;
+      }
       setDisplay(formatElapsed(end - start));
       return;
     }

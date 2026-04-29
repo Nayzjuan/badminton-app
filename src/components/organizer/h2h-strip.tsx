@@ -27,9 +27,10 @@ interface H2HStripProps {
 export function H2HStrip({ teamAIds, teamBIds, sessionId }: H2HStripProps) {
   const { record, loading, error } = useH2H(teamAIds, teamBIds, sessionId);
 
-  // Load silently — no skeleton avoids layout shift for first-meeting pairs.
-  // Errors also return null: a missing H2H strip is better than a broken one.
-  if (loading || error) return null;
+  // No skeleton while loading — avoids layout shift for first-meeting pairs.
+  if (loading) return null;
+  // Error already logged in useH2H; render nothing rather than a broken strip.
+  if (error) return null;
 
   const totalAllTime = (record?.alltime_a ?? 0) + (record?.alltime_b ?? 0);
 

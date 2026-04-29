@@ -343,8 +343,46 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
 
   if (loading) {
     return (
-      <div className="py-12 text-center text-sm text-muted-foreground">
-        Loading history…
+      <div className="space-y-6" aria-busy="true" aria-label="Loading match history">
+        {[0, 1].map((i) => (
+          <div key={i} className="space-y-3">
+            {/* Session header row skeleton */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded bg-muted animate-pulse" />
+                <div className="h-4 w-44 rounded-full bg-muted animate-pulse" />
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-6 rounded-full bg-muted animate-pulse" />
+                <div className="h-3 w-6 rounded-full bg-muted animate-pulse" />
+                <div className="h-5 w-10 rounded-full bg-muted animate-pulse" />
+              </div>
+            </div>
+            {/* One match-card skeleton per group */}
+            <div className="pl-4 border-l-2 border-border space-y-3">
+              <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+                {/* Card header */}
+                <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/40 dark:bg-muted/30">
+                  <div className="h-3 w-24 rounded-full bg-muted animate-pulse" />
+                  <div className="h-4 w-12 rounded-full bg-muted animate-pulse" />
+                </div>
+                {/* Score + players */}
+                <div className="px-4 py-3 space-y-3">
+                  <div className="flex items-center justify-center gap-3">
+                    <div className="h-8 w-7 rounded bg-muted animate-pulse" />
+                    <div className="h-4 w-3 rounded bg-muted/50 animate-pulse" />
+                    <div className="h-8 w-7 rounded bg-muted animate-pulse" />
+                  </div>
+                  <div className="flex items-center justify-center gap-4">
+                    <div className="h-3.5 w-20 rounded-full bg-muted animate-pulse" />
+                    <div className="h-3 w-4 rounded bg-muted/50 animate-pulse" />
+                    <div className="h-3.5 w-20 rounded-full bg-muted animate-pulse" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     );
   }

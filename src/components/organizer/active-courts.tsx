@@ -201,7 +201,7 @@ function CourtCard({
         {/* Left group — court name + mixed-level badge */}
         <div className="flex items-center gap-2">
           <h3
-            className={`text-base font-bold ${
+            className={`truncate text-base font-bold ${
               isActive ? "text-white" : "text-gray-900 dark:text-foreground"
             }`}
           >
@@ -625,6 +625,7 @@ export function ActiveCourts({
             onChange={(e) => setNewCourtName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAddCourt()}
             placeholder="Court name (e.g. Court 3)"
+            maxLength={40}
             className="flex-1 rounded-xl border border-input bg-white dark:bg-input px-4 py-2.5
                        text-sm placeholder:text-muted-foreground focus:outline-none
                        focus:ring-2 focus:ring-ring shadow-sm"
