@@ -34,6 +34,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { runEngineForSession } from "@/app/actions/matchmaking";
+import { isValidUUID } from "@/lib/validate";
 
 // ── Checkout ──────────────────────────────────────────────────
 // Marks the calling player's queue_entries row as "left" for a
@@ -64,6 +65,9 @@ export async function togglePlayerPause(
   playerId: string,
   isPaused: boolean
 ): Promise<TogglePlayerPauseResult> {
+  if (!isValidUUID(sessionId) || !isValidUUID(playerId)) {
+    return { success: false, error: "Invalid session or player ID." };
+  }
   const supabase = await createClient();
 
   const {
@@ -89,6 +93,7 @@ export async function togglePlayerPause(
 }
 
 export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult> {
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
   const supabase = await createClient();
 
   const {
@@ -117,6 +122,7 @@ export interface JoinQueueResult {
 }
 
 export async function joinQueueAction(sessionId: string): Promise<JoinQueueResult> {
+  if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
   const supabase = await createClient();
 
   // Resolve caller identity server-side — client cannot spoof player_id.

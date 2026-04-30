@@ -18,6 +18,7 @@
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
+import { isValidUUID } from "@/lib/validate";
 import type {
   SessionLeaderboardEntry,
   AllTimeLeaderboardEntry,
@@ -120,6 +121,7 @@ async function buildVipMap(
 export async function getSessionLeaderboard(
   sessionId: string
 ): Promise<GetSessionLeaderboardResult> {
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
   try {
     const supabase = await createClient();
 
@@ -301,6 +303,10 @@ export async function getPlayerStats(
   playerId: string,
   sessionId: string | null   // null = all-time scope
 ): Promise<GetPlayerStatsResult> {
+  if (!isValidUUID(playerId)) return { success: false, error: "Invalid player ID." };
+  if (sessionId !== null && !isValidUUID(sessionId)) {
+    return { success: false, error: "Invalid session ID." };
+  }
   try {
     const supabase = await createClient();
 

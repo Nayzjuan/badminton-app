@@ -32,6 +32,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { isValidUUID } from "@/lib/validate";
 
 // ── Return types ──────────────────────────────────────────────
 
@@ -97,6 +98,9 @@ export async function swapPlayerInMatch(
   outPlayerId: string,
   inPlayerId: string
 ): Promise<SwapResult> {
+  if (!isValidUUID(matchId) || !isValidUUID(outPlayerId) || !isValidUUID(inPlayerId)) {
+    return { success: false, message: "Invalid match or player ID." };
+  }
   // Use RLS client for auth verification, service client for all DB writes
   // so Row Level Security doesn't interfere with cross-user mutations.
   const supabase = await createClient();
@@ -232,6 +236,15 @@ export async function swapMatchPlayers(
   bPlayerId: string,
   sessionId: string,
 ): Promise<SwapMatchPlayersResult> {
+  if (
+    !isValidUUID(aMatchId)  ||
+    !isValidUUID(aPlayerId) ||
+    !isValidUUID(bMatchId)  ||
+    !isValidUUID(bPlayerId) ||
+    !isValidUUID(sessionId)
+  ) {
+    return { success: false, message: "Invalid match, player, or session ID." };
+  }
   const supabase = await createClient();
   const db = createServiceClient();
 

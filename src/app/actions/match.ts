@@ -34,6 +34,7 @@ import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { isValidUUID } from "@/lib/validate";
 
 // Service client singleton for this module — bypasses RLS for writes.
 // Auth is always verified at the JS layer before any service client write.
@@ -145,6 +146,7 @@ export async function endMatchAction(
   teamAScore: number,
   teamBScore: number
 ): Promise<MatchActionResult> {
+  if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   const supabase = await createClient();
   const db = getServiceClient();
 
@@ -310,6 +312,7 @@ export async function updateMatchDetails(
   teamBScore: number,
   revertToActive = false
 ): Promise<MatchActionResult> {
+  if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   const supabase = await createClient();
 
   // P0-3: Organizer-only action.
@@ -420,6 +423,7 @@ export async function updateMatchDetails(
 // cancelMatchAction
 // ============================================================
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
+  if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   const supabase = await createClient();
   const db = getServiceClient();
 
@@ -544,6 +548,13 @@ export async function createManualMatchAction(
   teamAPlayerIds: string[],
   teamBPlayerIds: string[]
 ): Promise<CreateManualMatchResult> {
+  if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
+  // Validate each player ID in both arrays before any DB call.
+  // (allPlayerIds is also used later in the function; a different name avoids redeclaration.)
+  const combinedPlayerIds = [...teamAPlayerIds, ...teamBPlayerIds];
+  if (combinedPlayerIds.length === 0 || combinedPlayerIds.some((id) => !isValidUUID(id))) {
+    return { success: false, message: "Invalid player ID in match." };
+  }
   const supabase = await createClient();
 
   // Auth + organizer check.
@@ -621,6 +632,7 @@ export async function createManualMatchAction(
 // the match is already in_progress, completed, or cancelled.
 // ============================================================
 export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResult> {
+  if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   // Auth + organizer check — caller must be authenticated and an organizer
   // for the session this match belongs to.
   const supabase = await createClient();
@@ -725,6 +737,10 @@ export async function reorderOnDeckMatches(
   sessionId: string,
   orderedMatchIds: string[]
 ): Promise<MatchActionResult> {
+  if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
+  if (orderedMatchIds.some((id) => !isValidUUID(id))) {
+    return { success: false, message: "Invalid match ID in reorder list." };
+  }
   const db = await createClient();
 
   const user = await getAuthUser(db);

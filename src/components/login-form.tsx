@@ -125,7 +125,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             maxLength={30}
             value={nameValue}
             onChange={(e) => setNameValue(e.target.value)}
-            placeholder="e.g. Smash King, Net Ninja…"
+            placeholder="e.g. Miggy, Stelle, Carlo B"
             autoComplete="nickname"
             className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
                        placeholder:text-muted-foreground focus:outline-none focus:ring-2

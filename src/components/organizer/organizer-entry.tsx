@@ -448,6 +448,7 @@ function CreateSessionForm({
           value={sessionName}
           onChange={(e) => setSessionName(e.target.value)}
           placeholder="e.g. Saturday Open Play"
+          maxLength={60}
           className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
                      text-slate-900 placeholder:text-slate-400
                      focus:outline-none focus:ring-2 focus:ring-ring shadow-sm"
@@ -476,6 +477,7 @@ function CreateSessionForm({
             onChange={(e) => setPasscode(e.target.value.toUpperCase())}
             placeholder="Auto-generated if blank"
             autoComplete="off"
+            maxLength={20}
             className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm
                        font-mono tracking-widest uppercase text-slate-900
                        placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
@@ -528,6 +530,7 @@ function JoinAsCoOrgForm({
           placeholder="e.g. BIRDIE3 or SMASH7"
           autoComplete="off"
           spellCheck={false}
+          maxLength={20}
           className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-base
                      font-mono tracking-widest uppercase text-slate-900
                      placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal

@@ -14,6 +14,7 @@
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
+import { isValidUUID } from "@/lib/validate";
 
 // ── dismissWrappedIntro ───────────────────────────────────────
 
@@ -34,6 +35,9 @@ export async function dismissWrappedIntro(
   sessionId: string,
   playerId:  string,
 ): Promise<DismissWrappedIntroResult> {
+  if (!isValidUUID(sessionId) || !isValidUUID(playerId)) {
+    return { success: false, error: "Invalid session or player ID." };
+  }
   const supabase = await createClient();
 
   const { error } = await supabase

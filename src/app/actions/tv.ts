@@ -10,6 +10,7 @@
 // ============================================================
 
 import { createServiceClient } from "@/utils/supabase/service";
+import { isValidUUID } from "@/lib/validate";
 import type { SkillLevel } from "@/types/database";
 
 /** Slim session info for the TV header */
@@ -42,6 +43,7 @@ export async function getTvData(sessionId: string): Promise<{
   session: TvSession | null;
   matches: TvMatch[];
 }> {
+  if (!isValidUUID(sessionId)) return { session: null, matches: [] };
   const supabase = createServiceClient();
 
   // Fetch session info
