@@ -514,6 +514,7 @@ function ReconnectModal({
         {/* Actions */}
         <div className="flex gap-3">
           <button
+            type="button"
             onClick={onClose}
             disabled={isPending}
             className="flex-1 cursor-pointer rounded-lg border border-input px-4 py-3 text-sm
