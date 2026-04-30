@@ -270,6 +270,15 @@ export type SessionWrappedStatsInsert = Omit<SessionWrappedStats, "id" | "point_
 
 export type SessionWrappedStatsUpdate = Partial<Omit<SessionWrappedStats, "id" | "session_id" | "player_id" | "point_diff">>;
 
+/** identity_migrations table — audit log of every old → new UUID reconnect */
+export type IdentityMigration = {
+  id: string;
+  old_id: string;
+  new_id: string;
+  display_name: string;
+  migrated_at: string;
+};
+
 /** push_subscriptions table */
 export type PushSubscription = {
   id: string;
@@ -365,6 +374,12 @@ export type Database = {
         Row: SessionWrappedStats;
         Insert: SessionWrappedStatsInsert;
         Update: SessionWrappedStatsUpdate;
+        Relationships: [];
+      };
+      identity_migrations: {
+        Row: IdentityMigration;
+        Insert: Omit<IdentityMigration, "id" | "migrated_at">;
+        Update: Record<string, never>; // append-only, no updates allowed
         Relationships: [];
       };
     };
@@ -494,6 +509,18 @@ export type Database = {
           session_a: number;
           session_b: number;
         }[];
+      };
+      // ── Wave 2 atomicity RPCs (migration 20260429000000) ────────
+      toggle_auto_matchmaking: {
+        Args: { p_session_id: string };
+        /** Returns the NEW value of is_auto_matchmaking_on, or null if the session doesn't exist. */
+        Returns: boolean | null;
+      };
+      migrate_player_identity: {
+        Args: { p_old_user_id: string; p_new_user_id: string };
+        /** Returns true when the old user is the primary organizer of an active session
+         *  (server action must NOT delete their auth user). */
+        Returns: boolean;
       };
     };
     Enums: {
