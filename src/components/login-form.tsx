@@ -361,6 +361,14 @@ function ReconnectModal({
   // the error to render behind the modal.
   const [localError, setLocalError] = useState<string | null>(null);
 
+  // Auto-dismiss local error after 8 s — matches main form behaviour.
+  useEffect(() => {
+    if (localError) {
+      const id = setTimeout(() => setLocalError(null), 8000);
+      return () => clearTimeout(id);
+    }
+  }, [localError]);
+
   function handleReconnect() {
     setLocalError(null);
     if (!name.trim() || !pin.trim()) {
@@ -457,7 +465,12 @@ function ReconnectModal({
 
         {/* Inline error — always visible inside the modal */}
         {localError && (
-          <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive dark:border-destructive/50 dark:bg-destructive/20">
+          <div
+            role="alert"
+            className="flex items-center gap-2 rounded-lg border border-destructive/30
+                       bg-destructive/10 px-3 py-2.5 text-sm text-destructive
+                       dark:border-destructive/50 dark:bg-destructive/20"
+          >
             <svg
               className="h-4 w-4 shrink-0"
               fill="none"
@@ -473,6 +486,28 @@ function ReconnectModal({
               />
             </svg>
             <span>{localError}</span>
+            <button
+              type="button"
+              onClick={() => setLocalError(null)}
+              aria-label="Dismiss error"
+              className="ml-auto cursor-pointer rounded-full p-0.5 transition-colors
+                         hover:bg-destructive/20"
+            >
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.5}
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
           </div>
         )}
 
