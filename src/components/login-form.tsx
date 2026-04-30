@@ -136,17 +136,19 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
               Pick a name you won&apos;t mind your friends shouting across the
               court!
             </p>
-            <span
-              className={`shrink-0 text-xs font-mono tabular-nums ${
-                nameValue.length === 30
-                  ? "font-semibold text-red-500"
-                  : nameValue.length >= 25
-                  ? "text-amber-500"
-                  : "text-muted-foreground"
-              }`}
-            >
-              {nameValue.length}/30
-            </span>
+            {nameValue.length > 0 && (
+              <span
+                className={`shrink-0 text-xs font-mono tabular-nums ${
+                  nameValue.length === 30
+                    ? "font-semibold text-red-500"
+                    : nameValue.length >= 25
+                    ? "text-amber-500"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {nameValue.length}/30
+              </span>
+            )}
           </div>
         </div>
 
@@ -190,7 +192,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
                   <span className="text-sm font-semibold leading-tight text-foreground">
                     {level.label}
                   </span>
-                  <span className="text-xs leading-tight text-muted-foreground">
+                  <span className="text-xs leading-snug text-muted-foreground">
                     {colors.descriptor}
                   </span>
                 </label>
@@ -200,7 +202,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
         </fieldset>
 
         {/* ── 4-digit PIN ───────────────────────────────────── */}
-        <div className="space-y-2">
+        <div className="space-y-2 pt-3">
           <label
             htmlFor="pin"
             className="block text-sm font-semibold text-foreground"
@@ -254,42 +256,14 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           <input type="hidden" name="session_id" value={sessionId} />
         )}
 
-        {/* ── Submit ───────────────────────────────────────── */}
-        <button
-          type="submit"
-          disabled={isPending}
-          className="flex min-h-[52px] w-full cursor-pointer items-center justify-center
-                     gap-2 rounded-lg bg-amber-500 px-4 py-4 text-base font-semibold
-                     text-[#0E1C3A] transition-colors hover:bg-amber-600
-                     disabled:cursor-not-allowed disabled:opacity-70"
-        >
-          {isPending && <Spinner />}
-          {isPending ? "Joining…" : sessionId ? "Join Session" : "Join Queue"}
-        </button>
-      </form>
-
-      {/* ── Reconnect link ───────────────────────────────── */}
-      <div className="mt-4">
-        <button
-          onClick={() => setShowReconnect(true)}
-          className="flex min-h-[44px] cursor-pointer items-center justify-center
-                     text-sm text-muted-foreground underline transition-colors
-                     hover:text-foreground dark:text-amber-400/60 dark:hover:text-amber-400"
-        >
-          Already have a PIN? Reconnect
-        </button>
-      </div>
-
-      {/* Reconnect Modal — Radix Dialog provides focus trap, aria-modal, Escape to close */}
-      <ReconnectModal
-        open={showReconnect}
-        onClose={() => setShowReconnect(false)}
-      />
-
-      {/* Error toast — fixed at bottom */}
-      {error && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
-          <div className="flex items-center gap-2 rounded-xl bg-destructive px-4 py-3 text-sm font-medium text-destructive-foreground shadow-lg">
+        {/* ── Inline error ─────────────────────────────────── */}
+        {error && (
+          <div
+            role="alert"
+            className="flex items-center gap-2 rounded-lg border border-destructive/30
+                       bg-destructive/10 px-3 py-2.5 text-sm text-destructive
+                       dark:border-destructive/50 dark:bg-destructive/20"
+          >
             <svg
               className="h-4 w-4 shrink-0"
               fill="none"
@@ -306,9 +280,11 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             </svg>
             <span>{error}</span>
             <button
+              type="button"
               onClick={() => setError(null)}
               aria-label="Dismiss error"
-              className="ml-2 cursor-pointer rounded-full p-0.5 transition-colors hover:bg-destructive-foreground/20"
+              className="ml-auto cursor-pointer rounded-full p-0.5 transition-colors
+                         hover:bg-destructive/20"
             >
               <svg
                 className="h-3.5 w-3.5"
@@ -326,8 +302,40 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
               </svg>
             </button>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* ── Submit ───────────────────────────────────────── */}
+        <button
+          type="submit"
+          disabled={isPending}
+          className="flex min-h-[52px] w-full cursor-pointer items-center justify-center
+                     gap-2 rounded-lg bg-amber-500 px-4 py-4 text-base font-semibold
+                     text-[#0E1C3A] transition-colors hover:bg-amber-600
+                     disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          {isPending && <Spinner />}
+          {isPending ? "Joining…" : sessionId ? "Join Session" : "Join Queue"}
+        </button>
+      </form>
+
+      {/* ── Reconnect link ───────────────────────────────── */}
+      <div className="mt-6">
+        <button
+          onClick={() => setShowReconnect(true)}
+          className="flex min-h-[44px] cursor-pointer items-center justify-center
+                     text-sm text-muted-foreground underline transition-colors
+                     hover:text-foreground dark:text-amber-400/60 dark:hover:text-amber-400"
+        >
+          Already have a PIN? Reconnect
+        </button>
+      </div>
+
+      {/* Reconnect Modal — Radix Dialog provides focus trap, aria-modal, Escape to close */}
+      <ReconnectModal
+        open={showReconnect}
+        onClose={() => setShowReconnect(false)}
+      />
+
     </>
   );
 }
