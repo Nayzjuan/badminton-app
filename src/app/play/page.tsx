@@ -1,7 +1,8 @@
 // ============================================================
 // Session Picker — Choose which game session to join
 // ============================================================
-// Lists active sessions. If there's only one, auto-redirects.
+// Lists active sessions and lets the player pick one.
+// Direct entry only happens via the QR/share link (/play/join).
 // Also allows updating profile (name/skill) from here.
 // ============================================================
 
@@ -40,11 +41,6 @@ export default async function PlayPage() {
     .order("created_at", { ascending: false });
 
   const activeSessions = sessions ?? [];
-
-  // Auto-redirect if exactly one session.
-  if (activeSessions.length === 1) {
-    redirect(`/play/${activeSessions[0].id}`);
-  }
 
   return (
     <main className="flex min-h-screen flex-col px-4 py-6">
