@@ -183,13 +183,28 @@ export function useOrganizerData(
   }, [courts]);
 
   // ------------------------------------------------------------------
-  // Sequence counter for fetchActiveMatches.
-  // Prevents stale concurrent calls from overwriting newer results.
-  // Each invocation captures `mySeq = ++counter` on entry and
-  // checks `mySeq === counter` before every setState. If a newer
-  // call has started since, the current call silently aborts.
+  // Sequence counters — shared guard pattern for any fetch that makes
+  // multiple async round-trips before calling setState.
+  //
+  // How it works: each invocation captures `mySeq = ++counter.current`
+  // on entry. Before every setState (or between async phases), it checks
+  // `mySeq === counter.current`. If a newer call has started since, the
+  // current call silently aborts — preventing a slow stale call from
+  // overwriting the correct result of a faster newer call.
+  //
+  // fetchQueue needs this because it does TWO sequential queries:
+  //   Phase 1: SELECT * FROM v_queue_with_wait_time
+  //   Phase 2: SELECT player_id, is_paused FROM queue_entries  (pause merge)
+  // Without the guard, a stale Phase 2 completing after a newer call's
+  // setQueue will overwrite the correct state with old data.
+  //
+  // When one match ends and the engine fires, up to 8 concurrent
+  // fetchQueue calls can be in flight (4 "return to waiting" events +
+  // 4 "promoted to on_deck" events). The guard ensures only the
+  // last-started call wins.
   // ------------------------------------------------------------------
   const fetchActiveMatchesSeq = useRef(0);
+  const fetchQueueSeq = useRef(0);
 
   // ---- Fetch functions ----
 
@@ -206,6 +221,11 @@ export function useOrganizerData(
   }, [supabase, sessionId]);
 
   const fetchQueue = useCallback(async () => {
+    // Capture sequence number up-front. Any newer fetchQueue call will
+    // increment fetchQueueSeq.current, making our mySeq stale.
+    const mySeq = ++fetchQueueSeq.current;
+
+    // ── Phase 1: fetch waiting players from the view ──────────────
     const { data, error } = await supabase
       .from("v_queue_with_wait_time")
       .select("*")
@@ -213,16 +233,27 @@ export function useOrganizerData(
       // Must match the matchmaking sort so the organizer sees the real queue order.
       .order("games_played", { ascending: true })
       .order("joined_at", { ascending: true });
+
+    // Abort if a newer call started while Phase 1 was in flight.
+    if (mySeq !== fetchQueueSeq.current) return;
+
     if (error) {
       console.error("[useOrganizerData] fetchQueue error:", error);
     }
     if (data) {
-      // Supplement: v_queue_with_wait_time doesn't expose is_paused until the view
-      // is recreated. Fetch it directly from queue_entries and merge in-memory.
+      // ── Phase 2: merge is_paused flag ─────────────────────────────
+      // v_queue_with_wait_time doesn't expose is_paused; fetch it
+      // directly from queue_entries and merge in-memory.
       const { data: pauseData } = await supabase
         .from("queue_entries")
         .select("player_id, is_paused")
         .eq("session_id", sessionId);
+
+      // Abort if a newer call started while Phase 2 was in flight.
+      // Without this guard a slow stale Phase 2 can overwrite the
+      // correct newer setQueue with old player data.
+      if (mySeq !== fetchQueueSeq.current) return;
+
       const pauseMap = new Map((pauseData ?? []).map((r) => [r.player_id, r.is_paused]));
       setQueue(data.map((row) => ({ ...row, is_paused: pauseMap.get(row.player_id) ?? false })));
     }
