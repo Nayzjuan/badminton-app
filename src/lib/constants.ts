@@ -97,3 +97,25 @@ export const ON_DECK_LOOKAHEAD = 1;
  * cap only gates new generation.
  */
 export const MAX_ON_DECK_MATCHES = 2;
+
+/**
+ * Minimum number of waiting players that must remain in the free pool
+ * after each on-deck match is generated (applies from the 2nd slot onwards).
+ *
+ * Before filling on-deck slot N (N ≥ 1), the engine checks:
+ *   estimatedWaiting >= PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK
+ *
+ * Set to PLAYERS_PER_MATCH (4) so that after one on-deck generation,
+ * at least 4 players remain free. When those players return from a court,
+ * the pool grows back to 8 — enough for diverse scheduling without
+ * forcing the same group to re-play.
+ *
+ * Why first slot (i=0) is exempt: the engine must always be able to queue
+ * at least one match, otherwise the session stalls when the pool is small
+ * (e.g., 4 players waiting and no active courts). The soft gate already
+ * handles the "wait for returning players" case; this cap handles the
+ * "don't pre-commit more matches than the pool can support" case.
+ *
+ * Organizer bypass (callNextMatch with bypassGate=true) skips this cap.
+ */
+export const MIN_FREE_POOL_FOR_ON_DECK = 4;

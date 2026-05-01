@@ -38,6 +38,7 @@ import {
   GATE_HOLD_MINUTES,
   ON_DECK_LOOKAHEAD,
   MAX_ON_DECK_MATCHES,
+  MIN_FREE_POOL_FOR_ON_DECK,
 } from "@/lib/constants";
 import {
   computePriorityScore,
@@ -234,18 +235,32 @@ async function runEngineInternal(
     return;
   }
 
-  // ── Soft gate: defer on-deck when pool is too small for cross-court mixing ──
-  // When only GATE_POOL_THRESHOLD (4) or fewer players are waiting AND at least
-  // one match is still active, hold on-deck generation so that the players
-  // currently playing will return to the queue and enable a larger, more diverse
-  // scheduling pool (avoids the "same 4 cycle" problem).
+  // ── Soft gate + pool diversity cap ───────────────────────────
   //
-  // Gate releases automatically when:
-  //   a) Any waiting player has queued ≥ GATE_HOLD_MINUTES (timeout — player
-  //      has waited long enough; schedule from whatever is available)
-  //   b) Any waiting player is in the Red Zone (≥ CRITICAL_WAIT_MINUTES)
-  //   c) No active matches exist (nothing to wait for)
-  //   d) bypassGate = true (organizer explicitly called "Call Next Match")
+  // Both checks share the same `v_queue_with_wait_time` query, so
+  // it is fetched once inside the `!bypassGate` block and used for
+  // both purposes. When bypassGate = true (organizer explicitly
+  // clicked "Call Next Match"), both checks are skipped entirely.
+  //
+  // Soft gate: defer on-deck when pool is too small for cross-court mixing.
+  //   When only GATE_POOL_THRESHOLD (4) or fewer players are waiting AND
+  //   at least one match is still active, hold on-deck generation so that
+  //   players currently playing will return and enable a larger, more
+  //   diverse scheduling pool ("same 4 cycle" prevention).
+  //   Releases when:
+  //     a) Any waiting player has queued ≥ GATE_HOLD_MINUTES (timeout)
+  //     b) Any waiting player is in the Red Zone (≥ CRITICAL_WAIT_MINUTES)
+  //     c) No active matches exist (nothing to wait for)
+  //
+  // Pool diversity cap (Fix 1): applied from the 2nd on-deck slot onwards.
+  //   Before filling slot i≥1, the engine checks:
+  //     estimatedWaiting >= PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK
+  //   i.e., 8 players must still be waiting before committing another 4.
+  //   Slot 0 is always exempt so the session never stalls on a small pool.
+  //   After each successful generation, estimatedWaiting decrements by 4.
+
+  let estimatedWaiting = 0; // populated below if !bypassGate
+
   if (!bypassGate) {
     const { data: waitingRows, error: waitErr } = await supabase
       .from("v_queue_with_wait_time")
@@ -254,10 +269,12 @@ async function runEngineInternal(
       .eq("status", "waiting");
 
     if (!waitErr && waitingRows) {
-      const waitingCount = waitingRows.length;
+      estimatedWaiting = waitingRows.length;
+      const waitingCount = estimatedWaiting;
+
       if (waitingCount > 0 && waitingCount <= GATE_POOL_THRESHOLD) {
         const maxWait = Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0));
-        const hasRedZone  = maxWait >= CRITICAL_WAIT_MINUTES;
+        const hasRedZone   = maxWait >= CRITICAL_WAIT_MINUTES;
         const gateTimedOut = maxWait >= GATE_HOLD_MINUTES;
 
         if (!hasRedZone && !gateTimedOut) {
@@ -281,12 +298,29 @@ async function runEngineInternal(
   }
 
   // Pre-fetch recent rosters once for the entire fill loop.
-  // recentRosters only contains COMPLETED matches, which don't change while
-  // we're filling on-deck slots — safe to share across all iterations and
-  // avoids (2 × slotsAvailable − 2) redundant DB queries per engine run.
+  // Includes completed, in_progress, and pending matches (Fix 2) — all
+  // represent real pairings worth tracking for diversity. This snapshot
+  // is stable enough for the fill loop: pending matches don't change
+  // ownership mid-run and the process-level guard prevents concurrent
+  // engine runs for the same session.
   const recentRosters = await fetchRecentRosters(supabase, sessionId);
 
   for (let i = 0; i < slotsAvailable; i++) {
+    // Pool diversity cap: from the 2nd slot onwards, ensure enough players
+    // remain in the free pool after this generation so the next court finish
+    // doesn't collapse diversity (Fix 1). Slot 0 is always exempt — the
+    // session must never stall entirely on a small pool.
+    if (!bypassGate && i > 0) {
+      const minPool = PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK; // 8
+      if (estimatedWaiting < minPool) {
+        console.log(
+          `[engine] Pool diversity cap at slot ${i + 1}: ` +
+          `estimatedWaiting=${estimatedWaiting} < ${minPool} — stopping to preserve pool`
+        );
+        break;
+      }
+    }
+
     const { created, message } = await createOneOnDeckMatch(supabase, sessionId, recentRosters);
     if (!created) {
       // Surface the reason so it's visible in Vercel logs.
@@ -298,6 +332,15 @@ async function runEngineInternal(
         console.log(`[matchmaking] runEngineInternal: stopping at slot ${i + 1} — ${message}`);
       }
       break;
+    }
+
+    // Match created — 4 players are now locked in on-deck.
+    // Track the estimated remaining free pool so the next iteration's
+    // cap check uses an up-to-date estimate without a redundant DB query.
+    // Only meaningful when !bypassGate (estimatedWaiting is 0/meaningless
+    // in bypass mode since the cap check is also gated on !bypassGate).
+    if (!bypassGate) {
+      estimatedWaiting -= PLAYERS_PER_MATCH;
     }
   }
 }
@@ -720,13 +763,20 @@ async function runAlgorithm(
 // ─────────────────────────────────────────────────────────────
 // HELPER: fetchRecentRosters
 // ─────────────────────────────────────────────────────────────
-// Returns the last ANTI_REPEAT_LOOKBACK completed match rosters as
-// arrays of player IDs. Used by the diversity-violation check.
+// Returns the last ANTI_REPEAT_LOOKBACK match rosters (completed,
+// in_progress, and pending) as arrays of player IDs. Used by the
+// diversity-violation check.
 //
-// This data is stable within a single engine run (completed matches
-// don't change while filling on-deck slots), so runEngineInternal
-// pre-fetches it once and passes it to each runAlgorithm call rather
-// than re-fetching per slot.
+// Fix 2: including in_progress and pending matches means the engine
+// sees players who are CURRENTLY paired together, not only those who
+// have already finished. This prevents the engine from forming the
+// same pairing "again" just because the first game is still live.
+//
+// This snapshot is stable enough for a single engine run: the
+// process-level concurrency guard prevents concurrent engine runs
+// for the same session, and match ownership doesn't change mid-run.
+// runEngineInternal pre-fetches this once and passes it to each
+// runAlgorithm call rather than re-fetching per slot.
 
 async function fetchRecentRosters(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -736,8 +786,8 @@ async function fetchRecentRosters(
     .from("matches")
     .select("id")
     .eq("session_id", sessionId)
-    .eq("status", "completed")
-    .order("completed_at", { ascending: false })
+    .in("status", ["completed", "in_progress", "pending"])
+    .order("created_at", { ascending: false })
     .limit(ANTI_REPEAT_LOOKBACK);
 
   const recentMatchIds = (recentMatchRows ?? []).map((m) => m.id);
@@ -765,9 +815,24 @@ async function fetchRecentRosters(
 // ─────────────────────────────────────────────────────────────
 // HELPER: buildOverlapMap
 // ─────────────────────────────────────────────────────────────
-// Returns a Map<player_id, count> of how many completed matches
-// each player has shared with the anchor in this session.
-// Used to apply anti-repeat overlap penalties in scoreCandidates.
+// Returns a Map<player_id, weight> representing how "familiar"
+// each co-player is to the anchor across recent matches in this
+// session. Used by scoreCandidates to apply anti-repeat penalties.
+//
+// Fix 3 — Team-aware weighting:
+//   Teammate appearance  → weight += 2  (same side; stronger familiarity)
+//   Opponent appearance  → weight += 1  (opposing; weaker familiarity)
+//
+// Rationale: playing alongside the same partner is more repetitive
+// than facing the same opponent — the feel of a match changes more
+// when your partner changes than when your opponent does.
+//
+// Implementation: 3-step join to avoid relying on v_recent_pairings
+// (which lacks team data and only tracks completed matches).
+//   Step 1 — find the anchor's match IDs (global, via match_players)
+//   Step 2 — filter to session + recent statuses (Fix 2: includes
+//             in_progress and pending alongside completed)
+//   Step 3 — fetch all co-players + teams, compute weighted map
 
 async function buildOverlapMap(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -776,21 +841,87 @@ async function buildOverlapMap(
 ): Promise<Map<string, number>> {
   const overlapMap = new Map<string, number>();
 
-  const { data: pairings, error } = await supabase
-    .from("v_recent_pairings")
-    .select("player_a, player_b")
-    .eq("session_id", sessionId)
-    .or(`player_a.eq.${anchorPlayerId},player_b.eq.${anchorPlayerId}`);
+  // Step 1: Find all match IDs the anchor has participated in.
+  // match_players has no session_id column, so we start here and
+  // filter to the correct session in Step 2.
+  // Safety cap: limit to 200 rows so the allAnchorMatchIds array
+  // stays bounded for the .in() clause in Step 2. A prolific player
+  // attending twice a week for a year accumulates ~1 000 match rows;
+  // 200 is enough to capture all recent-session matches (sessions
+  // rarely exceed 20 matches each) while keeping the PostgREST URL
+  // parameter well within reasonable length limits.
+  const { data: anchorRows, error: anchorErr } = await supabase
+    .from("match_players")
+    .select("match_id")
+    .eq("player_id", anchorPlayerId)
+    .limit(200);
 
-  if (error || !pairings) {
-    console.warn("[matchmaking] buildOverlapMap failed:", error?.message);
+  if (anchorErr || !anchorRows || anchorRows.length === 0) {
+    if (anchorErr) {
+      console.warn("[matchmaking] buildOverlapMap: anchor query failed:", anchorErr.message);
+    }
+    return overlapMap; // First-time player or error — no overlap data
+  }
+
+  const allAnchorMatchIds = anchorRows.map((r) => r.match_id);
+
+  // Step 2: Filter to this session's recent matches (completed +
+  // in_progress + pending) that actually include the anchor.
+  const { data: sessionMatches, error: sessionErr } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .in("status", ["completed", "in_progress", "pending"])
+    .in("id", allAnchorMatchIds)
+    .order("created_at", { ascending: false })
+    .limit(ANTI_REPEAT_LOOKBACK);
+
+  if (sessionErr || !sessionMatches || sessionMatches.length === 0) {
+    if (sessionErr) {
+      console.warn("[matchmaking] buildOverlapMap: session filter failed:", sessionErr.message);
+    }
     return overlapMap;
   }
 
-  for (const row of pairings) {
-    const otherPlayer =
-      row.player_a === anchorPlayerId ? row.player_b : row.player_a;
-    overlapMap.set(otherPlayer, (overlapMap.get(otherPlayer) ?? 0) + 1);
+  const recentMatchIds = sessionMatches.map((m) => m.id);
+
+  // Step 3: Fetch all players + teams for those matches.
+  // This gives us both the anchor's team per match and every co-player's team.
+  const { data: allPlayers, error: playersErr } = await supabase
+    .from("match_players")
+    .select("match_id, player_id, team")
+    .in("match_id", recentMatchIds);
+
+  if (playersErr || !allPlayers) {
+    if (playersErr) {
+      console.warn("[matchmaking] buildOverlapMap: co-players query failed:", playersErr.message);
+    }
+    return overlapMap;
+  }
+
+  // Build a map of match_id → anchor's team assignment.
+  // Only store when team is a non-null string (pending matches may not
+  // have team assignments yet; null-vs-null compares equal in JS and
+  // would incorrectly score unknown co-players as "teammates").
+  const anchorTeamByMatch = new Map<string, string>();
+  for (const row of allPlayers) {
+    if (row.player_id === anchorPlayerId && row.team != null) {
+      anchorTeamByMatch.set(row.match_id, row.team);
+    }
+  }
+
+  // Apply team-weighted overlap for every co-player.
+  for (const row of allPlayers) {
+    if (row.player_id === anchorPlayerId) continue;
+    const anchorTeam = anchorTeamByMatch.get(row.match_id);
+    // Skip if anchor's team is unknown for this match (not stored above
+    // because team was null, or anchor wasn't in this match at all).
+    if (anchorTeam === undefined) continue;
+    // Also skip if co-player's team is null — can't determine relationship.
+    if (row.team == null) continue;
+    // Teammate (same team) is weighted 2×; opponent 1×.
+    const weight = row.team === anchorTeam ? 2 : 1;
+    overlapMap.set(row.player_id, (overlapMap.get(row.player_id) ?? 0) + weight);
   }
 
   return overlapMap;

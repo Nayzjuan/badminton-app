@@ -98,9 +98,12 @@ function makeBuilder(response: MockResponse) {
  * can assert the order-of-queries (e.g. verify toggle bypass by checking
  * "sessions" does not appear after a successful promotion).
  *
- * NOTE: `v_recent_pairings` (used by buildOverlapMap) is only queried when
- * the pool has ≥4 active players. Tests with empty queues will never reach
- * that query — no need to add a response for it in those cases.
+ * NOTE: buildOverlapMap uses a 3-step join — NOT the old v_recent_pairings view.
+ * Step 1: from("match_players").eq("player_id", anchor)          — anchor's match IDs
+ * Step 2: from("matches").in("id", ...).eq("session_id", ...)    — filter to session
+ * Step 3: from("match_players").in("match_id", ...)              — co-players + teams
+ * Steps 2 and 3 are only reached when the anchor has prior matches (Step 1 non-empty).
+ * Tests with empty queues will never reach any of these — no mock responses needed.
  */
 function makeMockClient(
   fromResponses: MockResponse[],
@@ -415,12 +418,15 @@ describe("runEngineForSession", () => {
     // runEngineInternal logs the error and breaks the fill loop.
     // runEngineForSession returns void — no crash, no rethrow.
     //
-    // Queue sequence:
-    //   sessions(ON) → courts(2) → pending(0, need 1 slot)
-    //   → [soft gate] v_queue_with_wait_time(4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8 → gateTimedOut, no active-courts query)
-    //   → fetchRecentRosters(empty) → v_queue_with_wait_time(4 players) → queue_entries paused(0)
-    //   → v_recent_pairings(0 pairings for buildOverlapMap)
-    //   → rpc fails → engine exits cleanly
+    // Queue sequence (all queries are bypassGate=false):
+    //   sessions(ON) → courts(2) → pending(0, slotsAvailable=2)
+    //   → [soft gate] v_queue_with_wait_time(4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
+    //      → gateTimedOut → gate releases, no active-courts query; estimatedWaiting=4)
+    //   → fetchRecentRosters: matches(completed/in_progress/pending → []) [Fix 2]
+    //   → slot 0: no diversity cap (i=0 is exempt)
+    //      → v_queue_with_wait_time(4 players) → queue_entries paused(0)
+    //      → match_players(buildOverlapMap step 1: anchor → no prior matches → early return) [Fix 3]
+    //   → rpc fails → engine exits cleanly (slot 1 never reached)
     const fourPlayers = Array.from({ length: 4 }, (_, i) => ({
       id: `entry-p${i}`,
       session_id: SESSION_ID,
@@ -441,14 +447,15 @@ describe("runEngineForSession", () => {
     const mock = makeMockClient(
       [
         { data: { is_auto_matchmaking_on: true }, error: null },  // sessions
-        { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2 → capacity=3)
-        { count: 0, data: null, error: null },                    // pending count → 0 (fill 1 slot)
-        { data: fourPlayers, error: null },                       // [soft gate] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases
-        { data: [], error: null },                                 // fetchRecentRosters: recent completed → []
-        // (match_players not queried — recentMatchIds is empty)
-        { data: fourPlayers, error: null },                       // v_queue_with_wait_time → 4 players
+        { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2 → capacity=2)
+        { count: 0, data: null, error: null },                    // pending count → 0 (slotsAvailable=2)
+        { data: fourPlayers, error: null },                       // [soft gate] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4)
+        { data: [], error: null },                                 // fetchRecentRosters: recent matches (completed/in_progress/pending) → []
+        // (match_players not queried since recentMatchIds is empty)
+        { data: fourPlayers, error: null },                       // runAlgorithm: v_queue_with_wait_time → 4 players
         { data: [], error: null },                                 // queue_entries paused → []
-        { data: [], error: null },                                 // v_recent_pairings (buildOverlapMap) → []
+        { data: [], error: null },                                 // buildOverlapMap step 1: match_players (anchor → no prior matches → early return)
+        // Slot 1 never fires: RPC already failed and loop broke
       ],
       [{ data: null, error: { message: "unique constraint violation" } }] // rpc → error
     );
@@ -459,6 +466,55 @@ describe("runEngineForSession", () => {
     // rpc was called — engine reached executeMatch before failing
     expect(mock.rpc).toHaveBeenCalledTimes(1);
     expect(mock.rpc).toHaveBeenCalledWith("create_match_with_players", expect.any(Object));
+  });
+
+  it("pool diversity cap limits second on-deck slot when remaining pool falls below threshold", async () => {
+    // Fix 1: pool diversity cap prevents over-committing the free pool.
+    // slotsAvailable = 2 (2 courts, 0 pending → room for 2 on-deck matches).
+    // waitingCount = 8: soft gate not triggered (8 > GATE_POOL_THRESHOLD=4).
+    //
+    // Slot 0 (i=0): exempt from cap → fires → RPC succeeds → estimatedWaiting = 4.
+    // Slot 1 (i=1): cap check: i>0 && estimatedWaiting(4) < PLAYERS_PER_MATCH(4)+MIN_FREE_POOL(4)=8
+    //               → cap fires → break.
+    //
+    // Result: only 1 match created even though 2 slots were available.
+    const eightPlayers = Array.from({ length: 8 }, (_, i) => ({
+      id: `entry-p${i}`,
+      session_id: SESSION_ID,
+      player_id: `p${i}`,
+      joined_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+      games_played: 0,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: `Player ${i}`,
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 5,
+      is_bottleneck: false,
+    }));
+
+    const mock = makeMockClient(
+      [
+        { data: { is_auto_matchmaking_on: true }, error: null },  // sessions
+        { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2 → capacity=2)
+        { count: 0, data: null, error: null },                    // pending count → 0 (slotsAvailable=2)
+        { data: eightPlayers, error: null },                      // v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4, not triggered)
+        { data: [], error: null },                                 // fetchRecentRosters: recent matches → []
+        { data: eightPlayers, error: null },                      // runAlgorithm slot 0: v_queue_with_wait_time
+        { data: [], error: null },                                 // queue_entries paused → []
+        { data: [], error: null },                                 // buildOverlapMap step 1: match_players (anchor → [])
+        // No more DB calls — diversity cap fires for slot 1 (estimatedWaiting=4 < 8)
+      ],
+      [{ data: "new-match-id", error: null }]  // rpc → success for slot 0
+    );
+    vi.mocked(createClient).mockResolvedValue(mock as never);
+
+    await runEngineForSession(SESSION_ID);
+
+    // Slot 0 created a match, slot 1 was blocked by the pool diversity cap.
+    expect(mock.rpc).toHaveBeenCalledTimes(1);
   });
 });
 
