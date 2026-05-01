@@ -14,7 +14,11 @@
 
 import type { SupabaseClient, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import type { OrganizerInterventionPayload, SessionClosedPayload } from "@/lib/broadcast";
+import type {
+  OrganizerInterventionPayload,
+  SessionClosedPayload,
+  AutoMatchmakingToggledPayload,
+} from "@/lib/broadcast";
 
 type TypedClient = SupabaseClient<Database>;
 type ChangeHandler<T extends Record<string, unknown>> = (
@@ -220,7 +224,8 @@ export function subscribeToOrganizerBroadcast(
   supabase: TypedClient,
   sessionId: string,
   onIntervention: (payload: OrganizerInterventionPayload) => void,
-  onSessionClosed?: (payload: SessionClosedPayload) => void
+  onSessionClosed?: (payload: SessionClosedPayload) => void,
+  onAutoMatchmakingToggled?: (payload: AutoMatchmakingToggledPayload) => void
 ): () => void {
   const channelName = `session-events:${sessionId}`;
 
@@ -240,6 +245,14 @@ export function subscribeToOrganizerBroadcast(
       (msg: { payload: SessionClosedPayload }) => {
         console.log(`[realtime] ${channelName} session_closed:`, msg.payload);
         onSessionClosed?.(msg.payload);
+      }
+    )
+    .on(
+      "broadcast",
+      { event: "auto_matchmaking_toggled" },
+      (msg: { payload: AutoMatchmakingToggledPayload }) => {
+        console.log(`[realtime] ${channelName} auto_matchmaking_toggled:`, msg.payload);
+        onAutoMatchmakingToggled?.(msg.payload);
       }
     )
     .subscribe((status, err) => {

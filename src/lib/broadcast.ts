@@ -92,6 +92,37 @@ export async function broadcastSessionClosed(sessionId: string): Promise<void> {
   );
 }
 
+// ── auto_matchmaking_toggled ──────────────────────────────
+
+export interface AutoMatchmakingToggledPayload {
+  /** The new state of the auto-matchmaking toggle after the flip. */
+  isOn: boolean;
+}
+
+/**
+ * Notify all organizers in a session that the auto-matchmaking
+ * toggle has changed.
+ *
+ * This uses Broadcast (not postgres_changes) so it bypasses the
+ * RLS SELECT check on the sessions table. Co-organizers who are
+ * not the session creator would otherwise never receive the UPDATE
+ * event because their JWT fails the RLS SELECT policy.
+ *
+ * Channel: session-events:{sessionId}
+ * Event:   auto_matchmaking_toggled
+ */
+export async function broadcastAutoMatchmakingToggled(
+  sessionId: string,
+  isOn: boolean
+): Promise<void> {
+  const payload: AutoMatchmakingToggledPayload = { isOn };
+  await postBroadcast(
+    `realtime:session-events:${sessionId}`,
+    "auto_matchmaking_toggled",
+    payload
+  );
+}
+
 /**
  * Notify all players in a session that the organizer has
  * intervened (cleared an On Deck match or cancelled an

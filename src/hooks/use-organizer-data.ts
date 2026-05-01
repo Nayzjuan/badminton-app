@@ -41,7 +41,9 @@ import {
   subscribeToMatches,
   subscribeToMatchPlayers,
   subscribeToProfiles,
+  subscribeToOrganizerBroadcast,
 } from "@/lib/realtime";
+import type { AutoMatchmakingToggledPayload } from "@/lib/broadcast";
 import {
   callNextMatch as callNextMatchAction,
   type MatchmakingResult,
@@ -414,6 +416,12 @@ export function useOrganizerData(
     // Handles court_time_limit_minutes changes made by the organizer.
     // Not included in the health counter — it's a metadata channel, not
     // a player-data channel, so we don't need it to be "live" for gameplay.
+    //
+    // NOTE: is_auto_matchmaking_on is intentionally NOT synced through
+    // this channel. The sessions table RLS SELECT policy only grants access
+    // to the session creator, so co-organizers (non-creators) would never
+    // receive this UPDATE event — the channel fires silently for them.
+    // Auto-toggle state is synced via the Broadcast channel below instead.
     const sessionChannel = supabase
       .channel(`session-settings:${sessionId}`)
       .on(
@@ -425,10 +433,39 @@ export function useOrganizerData(
           filter: `id=eq.${sessionId}`,
         },
         (payload) => {
-          setSession((prev) => ({ ...prev, ...(payload.new as Partial<Session>) }));
+          // Apply all session field changes EXCEPT is_auto_matchmaking_on.
+          // That field is synced via the Broadcast channel so co-organizers
+          // (who fail the sessions RLS SELECT check) also receive updates.
+          // Excluding it here prevents a race where the primary organizer
+          // sees a stale postgres_changes value overwrite the fresh broadcast.
+          const next = payload.new as Partial<Session>;
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { is_auto_matchmaking_on: _, ...rest } = next;
+          setSession((prev) => ({ ...prev, ...rest }));
         }
       )
       .subscribe();
+
+    // Auto-matchmaking toggle sync via Broadcast (bypasses RLS).
+    // When any organizer flips the toggle, toggleAutoMatchmaking emits
+    // "auto_matchmaking_toggled" on session-events:{sessionId}.
+    // All co-organizers on this channel receive it immediately,
+    // regardless of their RLS SELECT access on the sessions table.
+    const unsubBroadcast = subscribeToOrganizerBroadcast(
+      supabase,
+      sessionId,
+      // organizer_intervention handler — not used here (players handle it),
+      // but the function signature requires it.
+      () => {},
+      // session_closed handler — not used by organizer dashboard.
+      undefined,
+      (payload: AutoMatchmakingToggledPayload) => {
+        setSession((prev) => ({
+          ...prev,
+          is_auto_matchmaking_on: payload.isOn,
+        }));
+      }
+    );
 
     const unsubs = [
       subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current(), undefined, handleChannelStatus),
@@ -444,6 +481,7 @@ export function useOrganizerData(
     ];
     return () => {
       supabase.removeChannel(sessionChannel);
+      unsubBroadcast();
       unsubs.forEach((u) => u());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

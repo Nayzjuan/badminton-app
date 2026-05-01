@@ -162,6 +162,29 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   );
 
   // ----------------------------------------------------------
+  // STEP 1b — Active-match guard (early return before any DB write)
+  //
+  // If the player is currently on_deck or playing, refuse the join.
+  // Re-queuing them would reset their queue entry to "waiting",
+  // evicting them from their assigned match slot and potentially
+  // creating a duplicate-in-queue appearance when the match ends.
+  //
+  // This most commonly surfaces when a player reconnects on a new
+  // device mid-match — the reconnect flow migrates their DB row,
+  // the page loads, and the UI may prompt "Join Queue" before the
+  // match state has propagated.  Block it cleanly here.
+  // ----------------------------------------------------------
+  if (existing && (existing.status === "on_deck" || existing.status === "playing")) {
+    console.log(
+      `[joinQueueAction] BLOCKED — player=${playerId} is currently ` +
+      `status=${existing.status} and cannot re-join until their match ends.`
+    );
+    return {
+      error: "You're currently in a match — wait for it to finish before rejoining the queue.",
+    };
+  }
+
+  // ----------------------------------------------------------
   // STEP 2 — Query the session floor (MIN games_played)
   //          Run this for BOTH first-time and returning players.
   //          This is the key fix for the line-jumping bug.
@@ -188,11 +211,14 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   );
 
   // ----------------------------------------------------------
-  // STEP 3a — RETURNING PLAYER: row exists (any prior status)
+  // STEP 3a — RETURNING PLAYER: row exists (waiting or left status)
   //
-  // BUG FIX: previously we kept existing.games_played unchanged.
-  // If that value is BELOW the session floor (e.g., player has 0
-  // games played but everyone else has 3), they would jump to #1.
+  // Note: on_deck / playing are caught by the early guard in Step 1b.
+  // By the time we reach here, existing (if set) is always waiting/left.
+  //
+  // BUG FIX (games_played): previously we kept existing.games_played
+  // unchanged.  If that value is BELOW the session floor (e.g., player
+  // has 0 games played but everyone else has 3), they would jump to #1.
   //
   // Fix: use MAX(existing.games_played, sessionFloor).
   // This preserves hard-earned games (never reduce), but prevents

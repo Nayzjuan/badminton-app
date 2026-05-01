@@ -9,7 +9,7 @@
 // on-deck alert UI.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
 import type { Match, MatchPlayer, Court, Profile, Team } from "@/types/database";
@@ -49,7 +49,22 @@ export function usePlayerMatch(
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createClient(), []);
 
+  // ── Sequence guard ────────────────────────────────────────────
+  // fetchMyMatch makes 5–6 sequential DB queries. When two Realtime
+  // events fire in rapid succession (e.g., sort_order reorder AND
+  // match_players update from a swap), two concurrent calls race.
+  // The earlier call can finish AFTER the later one and overwrite
+  // the correct fresh state with stale data.
+  //
+  // Guard: increment on entry, check before every setState. If a
+  // newer call has started (seq advanced), silently discard.
+  // Mirrors the fetchActiveMatchesSeq pattern in use-organizer-data.ts
+  // and the fetchQueueSeq pattern in use-organizer-data.ts.
+  const fetchMyMatchSeq = useRef(0);
+
   const fetchMyMatch = useCallback(async () => {
+    const mySeq = ++fetchMyMatchSeq.current;
+
     // Find match_players rows for this player in this session's active matches.
     // P1-6: Scope by session_id via a join filter so we don't pull stale
     // assignments from historical sessions when a player reconnects.
@@ -58,6 +73,8 @@ export function usePlayerMatch(
       .select("match_id, team, matches!inner(session_id)")
       .eq("player_id", playerId)
       .eq("matches.session_id", sessionId);
+
+    if (mySeq !== fetchMyMatchSeq.current) return;
 
     if (!myAssignments || myAssignments.length === 0) {
       setCurrentMatch(null);
@@ -76,6 +93,8 @@ export function usePlayerMatch(
       .in("status", ["pending", "in_progress"])
       .order("created_at", { ascending: false })
       .limit(1);
+
+    if (mySeq !== fetchMyMatchSeq.current) return;
 
     if (!matches || matches.length === 0) {
       setCurrentMatch(null);
@@ -115,6 +134,8 @@ export function usePlayerMatch(
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
 
+      if (mySeq !== fetchMyMatchSeq.current) return;
+
       if (pendingMatches && pendingMatches.length > 0) {
         totalOnDeck = pendingMatches.length;
         const idx = pendingMatches.findIndex((m) => m.id === match.id);
@@ -128,6 +149,8 @@ export function usePlayerMatch(
       .select("player_id, team")
       .eq("match_id", match.id);
 
+    if (mySeq !== fetchMyMatchSeq.current) return;
+
     if (!allPlayers) {
       setCurrentMatch(null);
       setLoading(false);
@@ -140,6 +163,8 @@ export function usePlayerMatch(
       .from("profiles")
       .select("*")
       .in("id", playerIds);
+
+    if (mySeq !== fetchMyMatchSeq.current) return;
 
     const profileMap = new Map(
       (profiles ?? []).map((p) => [p.id, p])

@@ -12,7 +12,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { broadcastSessionClosed } from "@/lib/broadcast";
+import { broadcastSessionClosed, broadcastAutoMatchmakingToggled } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
 import type { ScoringFormat } from "@/types/database";
 
@@ -301,6 +301,15 @@ export async function toggleAutoMatchmaking(
   if (newValue) {
     await runEngineForSession(sessionId);
   }
+
+  // Broadcast the new toggle state to all co-organizers on this session.
+  // Uses Broadcast (not postgres_changes) so it bypasses the sessions
+  // table RLS SELECT policy — co-organizers (non-creators) would
+  // otherwise never receive the Realtime UPDATE event.
+  // Fire-and-forget: broadcast failure does not affect the DB result.
+  broadcastAutoMatchmakingToggled(sessionId, newValue).catch((err) => {
+    console.warn("[toggleAutoMatchmaking] broadcast failed (non-fatal):", err);
+  });
 
   return {
     success: true,

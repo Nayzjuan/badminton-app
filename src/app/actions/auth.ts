@@ -380,6 +380,72 @@ export async function reconnectPlayer(
     }
   }
 
+  // ── Post-migration reconciliation ──────────────────────────
+  // Race condition: if a match ended (endMatchAction) at the exact
+  // moment migrate_player_identity was moving match_players from
+  // oldUserId → newUserId, endMatchAction's re-queue step operated
+  // on oldUserId and found 0 rows (already migrated). The player's
+  // newUserId queue entry stays stuck as "playing" or "on_deck"
+  // even though the match is already completed or cancelled.
+  //
+  // Fix: after migration, check the player's queue entry for the
+  // active session. If the entry is "playing"/"on_deck" but the
+  // associated match is no longer in_progress/pending, reset the
+  // entry to "waiting" so the player is re-queued correctly.
+  //
+  // This runs only when we know the player was in an active session
+  // (targetSessionId is set). Non-fatal: any error is logged and
+  // silently swallowed — the reconnect itself already succeeded.
+  if (targetSessionId) {
+    try {
+      const { data: queueEntry } = await service
+        .from("queue_entries")
+        .select("id, status")
+        .eq("session_id", targetSessionId)
+        .eq("player_id", newUserId)
+        .in("status", ["playing", "on_deck"])
+        .maybeSingle();
+
+      if (queueEntry) {
+        // Player's queue entry is stuck in a match-related status.
+        // Verify whether they have an active match in THIS session.
+        //
+        // Query via matches (has session_id) joined to match_players so
+        // the result is scoped to the current session. An unscoped
+        // match_players query could return a historical in_progress row
+        // from a different session and falsely conclude the match is live.
+        const { data: activeMatch } = await service
+          .from("matches")
+          .select("id, status, match_players!inner(player_id)")
+          .eq("session_id", targetSessionId)
+          .in("status", ["pending", "in_progress"])
+          .eq("match_players.player_id", newUserId)
+          .maybeSingle();
+
+        const matchIsStillActive = !!activeMatch;
+
+        if (!matchIsStillActive) {
+          // Match ended while migration was in flight — reset entry to "waiting".
+          console.log(
+            "[reconnectPlayer] Post-migration reconciliation: " +
+            `queue entry stuck as "${queueEntry.status}" with no active match — ` +
+            `resetting to "waiting".`,
+            { newUserId, sessionId: targetSessionId }
+          );
+          await service
+            .from("queue_entries")
+            .update({ status: "waiting" as const })
+            .eq("id", queueEntry.id);
+        }
+      }
+    } catch (reconcileErr) {
+      console.warn(
+        "[reconnectPlayer] Post-migration reconciliation failed (non-fatal):",
+        reconcileErr
+      );
+    }
+  }
+
   // ── Offline Wrapped redirect ────────────────────────────────
   // If the player isn't rejoining an active session, check whether
   // their most recently closed session has Wrapped stats available.
