@@ -37,6 +37,7 @@ import {
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
   ON_DECK_LOOKAHEAD,
+  MAX_ON_DECK_MATCHES,
 } from "@/lib/constants";
 import {
   computePriorityScore,
@@ -176,8 +177,10 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
 // Capacity-limited on-deck filler.
-// Cap = courtCount + ON_DECK_LOOKAHEAD (default 1):
-//   2 courts → 3 on-deck, 3 courts → 4 on-deck.
+// capacity = min(courtCount + ON_DECK_LOOKAHEAD, MAX_ON_DECK_MATCHES)
+//   1 court  → 2 on-deck  (1 + 1, at cap)
+//   2 courts → 2 on-deck  (3, capped to 2)
+//   3 courts → 2 on-deck  (4, capped to 2)
 // Fills slots up to capacity, stopping when queue is exhausted.
 
 async function runEngineInternal(
@@ -202,12 +205,16 @@ async function runEngineInternal(
     return;
   }
 
-  // capacity = courts + lookahead: 2 courts → 3 on-deck, 3 courts → 4, etc.
-  // The extra slot means there is always one match queued beyond the number
-  // of active courts, so a second court finishing right after the first
-  // never idles while the engine refills. The fill loop stops gracefully
-  // when the player pool is exhausted, so this never creates phantom matches.
-  const capacity = courtCount + ON_DECK_LOOKAHEAD;
+  // capacity = min(courts + lookahead, MAX_ON_DECK_MATCHES).
+  // The lookahead (default 1) means there is always one match queued beyond
+  // the active court count so a second court finishing right after the first
+  // never idles. The hard cap (default 2) prevents the engine from
+  // speculating too far ahead: pre-forming 3-5 matches on a busy night locks
+  // players into specific partners before new arrivals can be included,
+  // making the organizer's queue list confusingly short.
+  // The fill loop stops gracefully when the pool is exhausted, so neither
+  // the lookahead nor the cap ever creates phantom matches.
+  const capacity = Math.min(courtCount + ON_DECK_LOOKAHEAD, MAX_ON_DECK_MATCHES);
 
   const { count: existingOnDeck, error: deckErr } = await supabase
     .from("matches")

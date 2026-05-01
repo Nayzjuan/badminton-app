@@ -69,12 +69,12 @@ export const GATE_HOLD_MINUTES = 8;
 
 /**
  * Extra on-deck slots generated beyond the number of open courts.
- * capacity = courtCount + ON_DECK_LOOKAHEAD
+ * capacity = courtCount + ON_DECK_LOOKAHEAD, capped at MAX_ON_DECK_MATCHES.
  *
- * With the default of 1:
- *   1 court  → 2 on-deck
- *   2 courts → 3 on-deck  (was 2 — fixes the 17-player / 2-court scenario)
- *   3 courts → 4 on-deck
+ * With the default of 1 and a cap of 2:
+ *   1 court  → 2 on-deck  (1 + 1 = 2, at cap)
+ *   2 courts → 2 on-deck  (2 + 1 = 3, capped to 2)
+ *   3 courts → 2 on-deck  (3 + 1 = 4, capped to 2)
  *
  * The lookahead match absorbs the gap between a court finishing and the
  * engine refilling: even if two courts end almost simultaneously, there is
@@ -83,3 +83,17 @@ export const GATE_HOLD_MINUTES = 8;
  * so this never creates phantom matches.
  */
 export const ON_DECK_LOOKAHEAD = 1;
+
+/**
+ * Hard ceiling on the number of on-deck (pending) matches the engine will
+ * auto-generate. The uncapped formula (courtCount + ON_DECK_LOOKAHEAD) can
+ * produce 3-5 on-deck matches for 2-4 courts, which makes the queue list
+ * confusingly short and commits too many players to specific partners before
+ * new players arrive.
+ *
+ * Set to 2 so the organizer always sees at least 2 matches queued but the
+ * engine never speculates further than one match beyond what is immediately
+ * needed. Existing on-deck matches at session runtime are not affected — the
+ * cap only gates new generation.
+ */
+export const MAX_ON_DECK_MATCHES = 2;
