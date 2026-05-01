@@ -11,6 +11,17 @@ import { useMemo, useState } from "react";
 import { BOTTLENECK_THRESHOLD_MINUTES } from "@/lib/constants";
 import { SKILL_LEVELS } from "@/types/database";
 import type { QueueWithWaitTime } from "@/types/database";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 interface WaitTimeMonitorProps {
   queue: QueueWithWaitTime[];
@@ -112,27 +123,47 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                     )}
                   </div>
 
-                  {/* Remove */}
-                  <button
-                    onClick={async () => {
-                      if (removingId === entry.player_id) return; // already removing this player
-                      setRemovingId(entry.player_id);
-                      try {
-                        await onRemoveFromQueue(entry.player_id);
-                      } finally {
-                        setRemovingId(null);
-                      }
-                    }}
-                    disabled={removingId === entry.player_id}
-                    className="flex items-center justify-center text-sm text-muted-foreground
-                               hover:text-destructive transition-colors
-                               px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg hover:bg-muted
-                               disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Remove from queue"
-                    aria-label={`Remove ${entry.display_name} from queue`}
-                  >
-                    {removingId === entry.player_id ? "…" : "×"}
-                  </button>
+                  {/* Remove — guarded by an AlertDialog to prevent accidental taps */}
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        disabled={removingId === entry.player_id}
+                        className="flex items-center justify-center text-sm text-muted-foreground
+                                   hover:text-destructive transition-colors
+                                   px-3 py-2 min-h-[44px] min-w-[44px] rounded-lg hover:bg-muted
+                                   disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Remove from queue"
+                        aria-label={`Remove ${entry.display_name} from queue`}
+                      >
+                        {removingId === entry.player_id ? "…" : "×"}
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Remove {entry.display_name}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will remove them from the wait-time queue. They can rejoin
+                          the session using their name and PIN.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={async () => {
+                            setRemovingId(entry.player_id);
+                            try {
+                              await onRemoveFromQueue(entry.player_id);
+                            } finally {
+                              setRemovingId(null);
+                            }
+                          }}
+                          className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                        >
+                          Remove
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
 
                 {/* Wait Time Bar */}

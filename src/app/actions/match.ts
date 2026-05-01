@@ -239,6 +239,12 @@ export async function endMatchAction(
   // 4. Re-queue all players: read real games_played from queue_entries
   //    (NOT from v_queue_with_wait_time — that view excludes "playing" status),
   //    increment by 1, reset to "waiting" with a fresh timestamp.
+  //
+  //    Status guard: only update rows where status is NOT "left".
+  //    Without this guard, players who explicitly checked out while
+  //    their match was in_progress would be silently re-added to the
+  //    queue every time the match ended — creating ghost "waiting"
+  //    entries for people who physically left the gym.
   const now = new Date().toISOString();
   if (matchPlayers && matchPlayers.length > 0) {
     await Promise.all(
@@ -248,9 +254,13 @@ export async function endMatchAction(
           .select("games_played")
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
+          .neq("status", "left")          // skip players who already left
           .maybeSingle();
 
-        const updatedGames = (entry?.games_played ?? 0) + 1;
+        // entry is null when the player's status is "left" — skip them.
+        if (!entry) return;
+
+        const updatedGames = (entry.games_played ?? 0) + 1;
 
         return db
           .from("queue_entries")
@@ -260,7 +270,8 @@ export async function endMatchAction(
             joined_at: now,
           })
           .eq("session_id", match.session_id)
-          .eq("player_id", mp.player_id);
+          .eq("player_id", mp.player_id)
+          .neq("status", "left");         // double-guard against race condition
       })
     );
   }
@@ -484,6 +495,11 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   // 3. Return players to queue WITHOUT incrementing games_played.
   //    Done BEFORE running the engine so returned players are visible
   //    to the matchmaker and can be included in new on-deck matches.
+  //
+  //    Status guard: only restore players whose current status is NOT
+  //    "left". A player who manually checked out while on_deck / in a
+  //    pending match should not be pulled back into the queue just
+  //    because the organizer later cancelled the match.
   const { data: matchPlayers } = await db
     .from("match_players")
     .select("player_id")
@@ -496,7 +512,8 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       .from("queue_entries")
       .update({ status: "waiting" as const })
       .eq("session_id", match.session_id)
-      .in("player_id", playerIds);
+      .in("player_id", playerIds)
+      .neq("status", "left");             // skip players who already checked out
   }
 
   // 4. PIPELINE: promote oldest on-deck match to the freed court.
@@ -684,12 +701,17 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   //    joined_at and games_played are intentionally left unchanged —
   //    their original queue position and play count are preserved
   //    as if this on-deck match never happened.
+  //
+  //    Status guard: skip players whose status is "left". A player who
+  //    manually checked out while sitting on-deck should not be pulled
+  //    back into the queue when the organizer clears the match.
   if (playerIds.length > 0) {
     const { error: restoreError } = await db
       .from("queue_entries")
       .update({ status: "waiting" as const })
       .eq("session_id", match.session_id)
-      .in("player_id", playerIds);
+      .in("player_id", playerIds)
+      .neq("status", "left");   // skip players who already checked out
 
     if (restoreError) {
       return { success: false, message: `Failed to restore players to queue: ${restoreError.message}` };
