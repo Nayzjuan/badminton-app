@@ -272,7 +272,14 @@ export async function reconnectPlayer(
   const oldUserId = targetProfile.id;
 
   // Create a new anonymous auth session for this browser.
+  // IMPORTANT: signInAnonymously returns the EXISTING user unchanged when a
+  // session is already present (Supabase documented behaviour). If that happens,
+  // newUserId === oldUserId and migrate_player_identity throws its same-UUID
+  // safety guard → "Failed to migrate". Sign out first to guarantee a fresh
+  // identity is minted, regardless of whether the player still has a cookie.
   const supabase = await createClient();
+  await supabase.auth.signOut();
+
   const { data: authData, error: authError } = await supabase.auth.signInAnonymously({
     options: {
       data: {
@@ -287,6 +294,21 @@ export async function reconnectPlayer(
   }
 
   const newUserId = authData.user.id;
+
+  // Defense-in-depth: if signOut() failed to clear the server-side cookie
+  // (e.g. hosting environment quirk), signInAnonymously could still return
+  // the existing session, making newUserId === oldUserId.  The SQL function
+  // has a same-UUID guard that would throw, but catching it here first gives
+  // a cleaner error path and keeps the orphaned new-auth-user cleanup in JS
+  // rather than relying on the SQL rollback to surface it.
+  if (newUserId === oldUserId) {
+    console.error(
+      "[reconnectPlayer] signInAnonymously returned the same UUID as the target profile — " +
+      "sign-out did not clear the session. Player should retry.",
+      { oldUserId }
+    );
+    return { success: false, error: "Session conflict — please sign out and try again." };
+  }
 
   // ── Migrate all references from old ID to new ID (atomic) ──
   // Steps 1–5 run inside migrate_player_identity(), a single
