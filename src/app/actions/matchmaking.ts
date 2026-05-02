@@ -26,6 +26,7 @@
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import {
   SKILL_VARIANCE_TARGET,
   SKILL_VARIANCE_MAX,
@@ -77,6 +78,13 @@ export interface MatchmakingResult {
   teamB?: string[];
   /** True when the time-based fallback was triggered. */
   isMixedLevel?: boolean;
+  /**
+   * Draft Mode: true when there are no published on-deck matches to
+   * promote because all pending matches are drafts. Callers surface
+   * an amber "review drafts" warning toast instead of the normal
+   * "no match available" message.
+   */
+  hasDraftsBlocking?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -95,6 +103,39 @@ export async function callNextMatch(
   if (!isValidUUID(sessionId) || !isValidUUID(courtId)) {
     return { success: false, message: "Invalid session or court ID." };
   }
+
+  // ── Organizer authorization gate ──────────────────────────────
+  // Without this, any authenticated user could POST to this server
+  // action with an arbitrary sessionId/courtId and force the engine
+  // to run + promote a match on a court they have no rights to.
+  // The downstream engine now uses the service-role client (see
+  // runEngineForSession) so RLS no longer rescues us — the gate
+  // must live here, in the public entry point.
+  const userClient = await createClient();
+  const { data: { user } } = await userClient.auth.getUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const service = createServiceClient();
+  const { data: sessionMeta } = await service
+    .from("sessions")
+    .select("created_by")
+    .eq("id", sessionId)
+    .single();
+  if (!sessionMeta) return { success: false, message: "Session not found." };
+
+  if (sessionMeta.created_by !== user.id) {
+    const { data: coOrg } = await service
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!coOrg) {
+      return { success: false, message: "Not authorized. Organizer access required." };
+    }
+  }
+  // ── End auth gate ─────────────────────────────────────────────
+
   const supabase = await createClient();
 
   // 1. Try to promote an existing on-deck match.
@@ -151,7 +192,33 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
   engineRunningFor.add(sessionId);
 
   try {
-    const supabase = await createClient();
+    // Use the SERVICE-ROLE client for the entire engine pipeline.
+    //
+    // Why: every caller of this function (toggleAutoMatchmaking, joinQueue,
+    // endMatch, callNextMatch, clearOnDeck) already authenticates the user
+    // and verifies they may operate on this session.  Once that check has
+    // passed, the engine itself is internal infrastructure that needs full
+    // read/write visibility into queue_entries, v_queue_with_wait_time,
+    // matches, match_players, and courts — across rows whose RLS may not
+    // grant SELECT to the calling user (e.g. anonymous queue history or
+    // co-organizer-owned rows).
+    //
+    // Using the user-context client (createClient) caused a hard-to-spot
+    // bug in production: when toggleAutoMatchmaking enabled auto, the
+    // engine read 0 waiting players from v_queue_with_wait_time even
+    // though 30 were inserted, because the view's underlying RLS hid
+    // them from the organizer's anon-equivalent JWT in some deployment
+    // configs.  No INSERT INTO matches happened, the toggle silently
+    // produced no on-deck matches, and the only signal in the UI was an
+    // empty on-deck panel.  Switching to service role makes the engine
+    // observable behavior match its specification: given waiting players
+    // and open courts, it produces matches.
+    //
+    // Safety: this client never touches user-context state.  Authorization
+    // is the caller's responsibility — do NOT call runEngineForSession
+    // from anywhere that hasn't already gated the user.
+    const supabase = createServiceClient();
+
     const { data: session, error: sessionErr } = await supabase
       .from("sessions")
       .select("is_auto_matchmaking_on")
@@ -370,16 +437,41 @@ export async function promoteOnDeckMatchInternal(
   // Order by sort_order first (drag-and-drop priority), fall back to
   // created_at for new matches that haven't been manually reordered yet
   // (sort_order is NULL until the organizer drags a card).
+  // Draft Mode: only promote published matches — drafts are hidden from
+  // the court promotion pipeline until the organizer explicitly publishes.
   const { data: pending, error } = await supabase
     .from("matches")
     .select("*")
     .eq("session_id", sessionId)
     .eq("status", "pending")
+    .eq("is_published", true)
     .order("sort_order", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true })
     .limit(1);
 
-  if (error || !pending || pending.length === 0) {
+  if (error) {
+    // Real DB error — don't mask it as a draft-blocking message.
+    return { success: false, message: `Failed to fetch on-deck matches: ${error.message}` };
+  }
+
+  if (!pending || pending.length === 0) {
+    // Empty result — check whether drafts are blocking the queue so callers
+    // can surface a contextual "review drafts" warning to the organizer.
+    const { count: draftCount, error: draftCountError } = await supabase
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", sessionId)
+      .eq("status", "pending")
+      .eq("is_published", false);
+
+    if (!draftCountError && (draftCount ?? 0) > 0) {
+      return {
+        success: false,
+        message: `Court freed — ${draftCount} draft match${draftCount !== 1 ? "es need" : " needs"} review before the next game can start.`,
+        hasDraftsBlocking: true,
+      };
+    }
+
     return { success: false, message: "No on-deck match available." };
   }
 
@@ -391,6 +483,8 @@ export async function promoteOnDeckMatchInternal(
   // same on-deck match, only the FIRST UPDATE wins. The second will affect
   // 0 rows (promotedMatch = null) and returns early, preventing the same
   // match from being assigned to two courts at once.
+  // Also guard is_published=true so a draft that was un-published between
+  // the SELECT and this UPDATE cannot be accidentally promoted.
   const { data: promotedMatch, error: updateError } = await supabase
     .from("matches")
     .update({
@@ -399,7 +493,8 @@ export async function promoteOnDeckMatchInternal(
       started_at: now,
     })
     .eq("id", match.id)
-    .eq("status", "pending")   // ← Atomic guard
+    .eq("status", "pending")    // ← Atomic guard
+    .eq("is_published", true)   // ← Draft guard
     .select("id")
     .single();
 
@@ -968,6 +1063,7 @@ async function executeMatch(
       p_is_on_deck:     isOnDeck,
       p_team_a_ids:     teamA.map((p) => p.player_id),
       p_team_b_ids:     teamB.map((p) => p.player_id),
+      p_origin:         "auto" as const,
     }
   );
 

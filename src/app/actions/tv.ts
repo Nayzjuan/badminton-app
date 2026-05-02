@@ -56,11 +56,12 @@ export async function getTvData(sessionId: string): Promise<{
   if (!session) return { session: null, matches: [] };
 
   // Fetch active matches (in_progress = on a court, pending = on deck)
+  // Draft Mode firewall: pending matches are only shown when is_published=true.
   const { data: matches } = await supabase
     .from("matches")
     .select("id, status, court_id, is_mixed_level, created_at, started_at")
     .eq("session_id", sessionId)
-    .in("status", ["in_progress", "pending"]);
+    .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)");
 
   if (!matches?.length) return { session, matches: [] };
 

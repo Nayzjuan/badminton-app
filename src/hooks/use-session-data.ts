@@ -95,11 +95,14 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const fetchActiveMatches = useCallback(async () => {
     const mySeq = ++fetchSeq.current;
 
+    // Draft Mode firewall: in_progress matches are always visible;
+    // pending matches are only visible when is_published=true.
+    // This prevents players and the TV from seeing engine drafts.
     const { data: matches } = await supabase
       .from("matches")
       .select("*")
       .eq("session_id", sessionId)
-      .in("status", ["pending", "in_progress"])
+      .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)")
       .order("created_at", { ascending: true });
 
     if (mySeq !== fetchSeq.current) return;

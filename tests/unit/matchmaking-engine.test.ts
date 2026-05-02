@@ -466,6 +466,11 @@ describe("runEngineForSession", () => {
     // rpc was called — engine reached executeMatch before failing
     expect(mock.rpc).toHaveBeenCalledTimes(1);
     expect(mock.rpc).toHaveBeenCalledWith("create_match_with_players", expect.any(Object));
+    // Origin tracking: engine always passes p_origin: "auto"
+    expect(mock.rpc).toHaveBeenCalledWith(
+      "create_match_with_players",
+      expect.objectContaining({ p_origin: "auto" })
+    );
   });
 
   it("pool diversity cap limits second on-deck slot when remaining pool falls below threshold", async () => {

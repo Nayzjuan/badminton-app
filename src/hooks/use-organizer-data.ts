@@ -54,6 +54,8 @@ import {
   createManualMatchAction,
   clearOnDeckMatch as clearOnDeckMatchAction,
   reorderOnDeckMatches as reorderOnDeckMatchesAction,
+  publishMatchAction,
+  publishAllDraftMatchesAction,
 } from "@/app/actions/match";
 import {
   swapPlayerInMatch as swapPlayerInMatchAction,
@@ -92,6 +94,16 @@ export interface UseOrganizerDataResult {
   activeMatches: EnrichedMatch[];
   /** Pending matches — formed but waiting for a court (on-deck). */
   onDeckMatches: EnrichedMatch[];
+  /**
+   * Draft Mode: pending matches that are NOT yet published (hidden from
+   * players and TV). Only the organizer can see and publish these.
+   */
+  draftMatches: EnrichedMatch[];
+  /**
+   * Draft Mode: pending matches that are published and visible to players
+   * and the TV view.
+   */
+  publishedOnDeckMatches: EnrichedMatch[];
   /** In-progress matches — assigned to a court, currently playing. */
   inProgressMatches: EnrichedMatch[];
   profiles: Map<string, Profile>;
@@ -123,6 +135,9 @@ export interface UseOrganizerDataResult {
   cancelMatch: (matchId: string) => Promise<{ error?: string }>;
   clearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   reorderOnDeckMatches: (orderedMatchIds: string[]) => Promise<{ error?: string }>;
+  // -- Draft Mode --
+  publishMatch: (matchId: string) => Promise<{ error?: string }>;
+  publishAllDrafts: () => Promise<{ error?: string; publishedCount?: number }>;
   // -- Swap actions --
   swapPlayer: (
     matchId: string,
@@ -700,7 +715,29 @@ export function useOrganizerData(
 
   // Derived splits — avoids the dashboard needing to filter itself.
   const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
+  const draftMatches = onDeckMatches.filter((m) => !m.is_published);
+  const publishedOnDeckMatches = onDeckMatches.filter((m) => m.is_published);
   const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
+
+  // ── Draft Mode actions ────────────────────────────────────────
+
+  const publishMatch = useCallback(
+    async (matchId: string): Promise<{ error?: string }> => {
+      const result = await publishMatchAction(matchId);
+      return result.success ? {} : { error: result.message };
+    },
+    []
+  );
+
+  const publishAllDrafts = useCallback(
+    async (): Promise<{ error?: string; publishedCount?: number }> => {
+      const result = await publishAllDraftMatchesAction(sessionId);
+      return result.success
+        ? { publishedCount: result.publishedCount }
+        : { error: result.message };
+    },
+    [sessionId]
+  );
 
   return {
     session,
@@ -708,6 +745,8 @@ export function useOrganizerData(
     queue,
     activeMatches,
     onDeckMatches,
+    draftMatches,
+    publishedOnDeckMatches,
     inProgressMatches,
     profiles,
     loading,
@@ -721,6 +760,8 @@ export function useOrganizerData(
     cancelMatch,
     clearOnDeckMatch,
     reorderOnDeckMatches,
+    publishMatch,
+    publishAllDrafts,
     swapPlayer,
     swapMatchPlayers,
     removeFromQueue,

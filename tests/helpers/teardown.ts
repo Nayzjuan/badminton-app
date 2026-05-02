@@ -231,6 +231,73 @@ export type QueuePreset =
   | "diversity_pool_8"        // 8 intermediates waiting + 1 COMPLETED match (alice/bob vs cara/dan); used by scenario-h [H-1]
   | "diversity_pool_4";       // ONLY alice/bob/cara/dan waiting (mixed skills) + 1 COMPLETED match; used by scenario-h [H-2]
 
+// ── softResetSandboxSession ───────────────────────────────────
+// Clears all match/queue/court data for the sandbox session but
+// does NOT delete bot user accounts.  Use this in beforeEach when
+// you have already created users in beforeAll and want to avoid
+// the 4-5 second sequential auth-API overhead of recreating them
+// on every test.
+//
+// Full cleanup (including users) is still done by resetSandboxSession()
+// which should be called in afterAll.
+export async function softResetSandboxSession(): Promise<void> {
+  const db = getAdminClient();
+  const sessionId = getSessionId();
+
+  // Guard: must be a sandbox session
+  const { data: session, error: sessionErr } = await db
+    .from("sessions")
+    .select("id, name")
+    .eq("id", sessionId)
+    .single();
+
+  if (sessionErr || !session) {
+    throw new Error(
+      `[soft-teardown] Could not fetch session ${sessionId}: ${sessionErr?.message ?? "not found"}`
+    );
+  }
+
+  if (!session.name.startsWith("🤖 E2E SANDBOX")) {
+    throw new Error(
+      `[soft-teardown] Session "${session.name}" is not a sandbox. Refusing.`
+    );
+  }
+
+  // Step 1: Collect match IDs
+  const { data: matches } = await db
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId);
+  const matchIds = (matches ?? []).map((m) => m.id);
+
+  // Step 2: Delete match_players
+  if (matchIds.length > 0) {
+    await db.from("match_players").delete().in("match_id", matchIds);
+  }
+
+  // Step 3: Delete matches
+  await db.from("matches").delete().eq("session_id", sessionId);
+
+  // Step 4: Delete queue_entries
+  await db.from("queue_entries").delete().eq("session_id", sessionId);
+
+  // Step 5: Delete courts
+  await db.from("courts").delete().eq("session_id", sessionId);
+
+  // Step 6: Delete session_wrapped_stats
+  await db.from("session_wrapped_stats").delete().eq("session_id", sessionId);
+
+  // Step 7: Reset session row to clean state
+  await db
+    .from("sessions")
+    .update({
+      is_active: true,
+      is_auto_matchmaking_on: false,
+      ended_at: null,
+    })
+    .eq("id", sessionId);
+}
+
 export async function seedSession(
   preset: QueuePreset = "first_match_on_deck"
 ): Promise<SeedResult> {

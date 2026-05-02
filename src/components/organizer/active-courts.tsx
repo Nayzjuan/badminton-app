@@ -29,6 +29,7 @@ import { CourtTimePopover } from "@/components/ui/court-time-popover";
 import type { Court } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
+import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 
 // ─── Prop types ───────────────────────────────────────────────
 
@@ -55,7 +56,7 @@ interface ActiveCourtsProps {
 }
 
 interface Toast {
-  type: "success" | "error";
+  type: "success" | "error" | "warning";
   title: string;
   body: string;
 }
@@ -163,7 +164,7 @@ function CourtCard({
       data-alert-tier={alertTier}
       className={[
         "flex flex-col rounded-2xl shadow-md overflow-hidden transition-all",
-        !isActive ? "bg-white dark:bg-card" : "",
+        !isActive ? "bg-white dark:bg-card border border-gray-200 dark:border-border" : "",
       ].join(" ")}
       style={
         isActive
@@ -180,15 +181,16 @@ function CourtCard({
     >
       {/* ── Header ─────────────────────────────────────────── */}
       {/*
-        Grouped flex-wrap: left group (name + mixed badge) and right group
-        (timer + status badge) stay paired. On narrow viewports the two
-        groups wrap onto separate lines rather than the court name truncating.
-        gap-y-2 keeps the rows from collapsing when they do wrap.
+        Single-row layout: left group (name + mixed badge + origin tag) gets
+        min-w-0 so the court name can truncate before the right group is
+        pushed to a second line. The right group (timer + status badge) is
+        always shrink-0 and stays in place. This eliminates the 30px height
+        discrepancy that occurred when Mixed Level badge caused flex-wrap.
       */}
       <div
         className={[
-          "flex flex-wrap items-center justify-between gap-y-2 px-5 pt-4 pb-3",
-          isActive ? "border-b" : "",
+          "flex items-center justify-between gap-2 px-5 pt-4 pb-3",
+          isActive ? "border-b" : "border-b border-gray-200 dark:border-border",
         ].join(" ")}
         style={isActive ? {
           borderColor: alertTier === "critical"
@@ -198,8 +200,8 @@ function CourtCard({
             : "rgba(255,255,255,0.1)"
         } : undefined}
       >
-        {/* Left group — court name + mixed-level badge */}
-        <div className="flex items-center gap-2">
+        {/* Left group — min-w-0 allows court name to truncate instead of wrapping */}
+        <div className="flex items-center gap-2 min-w-0">
           <h3
             className={`truncate text-base font-bold ${
               isActive ? "text-white" : "text-gray-900 dark:text-foreground"
@@ -217,6 +219,7 @@ function CourtCard({
               Mixed Level
             </span>
           )}
+          {match && <MatchOriginTag origin={match.origin} />}
         </div>
         {/* Right group — live timer + status badge; never shrinks or wraps internally */}
         <div className="flex items-center gap-2 shrink-0">
@@ -294,8 +297,10 @@ function CourtCard({
       )}
 
       {/* ── Footer ─────────────────────────────────────────── */}
+      {/* pt-3 is uniform across all card states so buttons sit at the same
+          depth in the grid row regardless of which state is active. */}
       <div
-        className={`px-4 pb-4 space-y-2 ${isActive ? "border-t" : ""}`}
+        className={`px-4 pt-3 pb-4 space-y-2 ${isActive ? "border-t" : ""}`}
         style={isActive ? { borderColor: "rgba(255,255,255,0.1)" } : undefined}
       >
         {/* Inline error */}
@@ -358,7 +363,7 @@ function CourtCard({
                   </div>
                 ) : (
                   /* Normal in-progress actions */
-                  <div className="flex items-center justify-end gap-2 pt-2">
+                  <div className="flex items-center justify-end gap-2">
                     <button
                       onClick={onCancelRequest}
                       disabled={isCancelling}
@@ -392,7 +397,7 @@ function CourtCard({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={onCallNextMatch}
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5
+              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 min-h-[44px]
                          text-sm font-semibold text-white hover:bg-emerald-700
                          transition-colors shadow-sm"
             >
@@ -513,6 +518,15 @@ export function ActiveCourts({
         title: "Match Created!",
         body: `${result.teamA?.join(" & ")} vs ${result.teamB?.join(" & ")}`,
       });
+    } else if (result.hasDraftsBlocking) {
+      // Draft Mode: no published on-deck match to promote — drafts are blocking.
+      // Use amber warning (not red error) to distinguish a "needs action" state
+      // from a true failure.
+      showToast({
+        type: "warning",
+        title: "Drafts Waiting for Approval",
+        body: result.message,
+      });
     } else {
       showToast({ type: "error", title: "No Match Found", body: result.message });
     }
@@ -583,24 +597,34 @@ export function ActiveCourts({
                       shadow-xl animate-in slide-in-from-top-2 fade-in duration-300
                       ${
                         toast.type === "success"
-                          ? "border-emerald-400 bg-emerald-50"
-                          : "border-red-400 bg-red-50"
+                          ? "border-emerald-400 bg-emerald-50 dark:border-emerald-500/60 dark:bg-emerald-950/40"
+                          : toast.type === "warning"
+                          ? "border-amber-400 bg-amber-50 dark:border-amber-500/60 dark:bg-amber-950/40"
+                          : "border-red-400 bg-red-50 dark:border-red-500/60 dark:bg-red-950/40"
                       }`}
         >
           <div className="flex items-start gap-3">
             <span className="mt-0.5 text-xl">
-              {toast.type === "success" ? "✅" : "⚠️"}
+              {toast.type === "success" ? "✅" : toast.type === "warning" ? "🟡" : "⚠️"}
             </span>
             <div className="flex-1 min-w-0">
               <p
                 className={`text-sm font-semibold
-                    ${toast.type === "success" ? "text-emerald-900" : "text-red-900"}`}
+                    ${toast.type === "success"
+                      ? "text-emerald-900 dark:text-emerald-300"
+                      : toast.type === "warning"
+                      ? "text-amber-900 dark:text-amber-300"
+                      : "text-red-900 dark:text-red-300"}`}
               >
                 {toast.title}
               </p>
               <p
                 className={`mt-0.5 text-xs
-                    ${toast.type === "success" ? "text-emerald-700" : "text-red-700"}`}
+                    ${toast.type === "success"
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : toast.type === "warning"
+                      ? "text-amber-700 dark:text-amber-400"
+                      : "text-red-700 dark:text-red-400"}`}
               >
                 {toast.body}
               </p>

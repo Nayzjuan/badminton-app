@@ -30,11 +30,16 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
   const supabase = await createClient();
 
   // Verify the session exists and is still active.
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("id, name, is_active")
-    .eq("id", sessionId)
-    .single();
+  //
+  // We call a SECURITY DEFINER RPC instead of querying `sessions` directly
+  // so that anonymous visitors (the entire QR-code audience) can resolve
+  // the session without us granting anon SELECT on the underlying table —
+  // which would expose `organizer_passcode` and `created_by`.  The RPC
+  // returns only (id, name, is_active) for active sessions and nothing
+  // for inactive or non-existent ones.
+  const { data: lookup } = await supabase
+    .rpc("lookup_active_session", { p_session_id: sessionId });
+  const session = lookup?.[0] ?? null;
 
   if (!session || !session.is_active) {
     redirect("/play");

@@ -25,6 +25,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import type { Match, MatchPlayer, Profile } from "@/types/database";
 
 interface CompletedMatch extends Match {
@@ -243,6 +244,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                         &middot; {match.courtName}
                       </span>
                     )}
+                    <MatchOriginTag origin={match.origin} />
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400 dark:text-muted-foreground">{completedAt}</span>
@@ -315,6 +317,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                       Mixed Level
                     </span>
                   )}
+                  <MatchOriginTag origin={match.origin} />
                 </div>
                 <div className="flex items-center gap-3">
                   {/* Static game-duration timer */}

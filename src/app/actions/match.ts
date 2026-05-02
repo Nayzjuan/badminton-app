@@ -599,6 +599,10 @@ export async function createManualMatchAction(
   }
 
   // 1. Create the match row — goes On Deck (pending, no court).
+  //    origin: "manual" so the organizer's intentional composition is
+  //    always distinguishable from engine-generated matches.
+  //    is_published: true — manual matches bypass Draft Mode review; the
+  //    organizer chose the composition themselves, so it publishes instantly.
   const { data: match, error: matchError } = await supabase
     .from("matches")
     .insert({
@@ -606,6 +610,8 @@ export async function createManualMatchAction(
       court_id: null,
       status: "pending" as const,
       started_at: null,
+      origin: "manual" as const,
+      is_published: true,
     })
     .select()
     .single();
@@ -789,4 +795,89 @@ export async function reorderOnDeckMatches(
   }
 
   return { success: true, message: "Order saved." };
+}
+
+// ============================================================
+// publishMatchAction
+// ============================================================
+// Transitions a single draft (is_published=false, status=pending)
+// match to published (is_published=true). Once published the match
+// becomes visible to players and the TV view, and is eligible for
+// court promotion by promoteOnDeckMatchInternal.
+//
+// The UPDATE is guarded by .eq("status", "pending") so a match that
+// has already been promoted or cancelled cannot be accidentally
+// republished.
+
+export async function publishMatchAction(
+  matchId: string
+): Promise<{ success: boolean; message: string }> {
+  if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
+
+  const db = await createClient();
+  const user = await getAuthUser(db);
+  if (!user) return { success: false, message: "Unauthorized" };
+
+  // Verify organizer role — load the match to get session_id first.
+  const { data: match } = await db
+    .from("matches")
+    .select("session_id, status, is_published")
+    .eq("id", matchId)
+    .single();
+
+  if (!match) return { success: false, message: "Match not found." };
+  if (match.status !== "pending") return { success: false, message: "Only pending (on-deck) matches can be published." };
+  if (match.is_published) return { success: true, message: "Already published." };
+
+  const isOrganizer = await isSessionOrganizer(db, user.id, match.session_id);
+  if (!isOrganizer) return { success: false, message: "Forbidden" };
+
+  const { error } = await db
+    .from("matches")
+    .update({ is_published: true })
+    .eq("id", matchId)
+    .eq("status", "pending")     // Atomic guard — cannot publish promoted match
+    .eq("is_published", false);  // Idempotency guard
+
+  if (error) return { success: false, message: error.message };
+  return { success: true, message: "Match published." };
+}
+
+// ============================================================
+// publishAllDraftMatchesAction
+// ============================================================
+// Publishes ALL draft (is_published=false, status=pending) matches
+// for a session in a single UPDATE. Used by the "Publish All" banner
+// in the On-Deck panel.
+
+export async function publishAllDraftMatchesAction(
+  sessionId: string
+): Promise<{ success: boolean; message: string; publishedCount?: number }> {
+  if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
+
+  const db = await createClient();
+  const user = await getAuthUser(db);
+  if (!user) return { success: false, message: "Unauthorized" };
+
+  const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
+  if (!isOrganizer) return { success: false, message: "Forbidden" };
+
+  const { data, error } = await db
+    .from("matches")
+    .update({ is_published: true })
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_published", false)
+    .select("id");
+
+  if (error) return { success: false, message: error.message };
+
+  const publishedCount = data?.length ?? 0;
+  return {
+    success: true,
+    message: publishedCount > 0
+      ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.`
+      : "No drafts to publish.",
+    publishedCount,
+  };
 }

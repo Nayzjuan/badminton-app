@@ -17,9 +17,19 @@
 // SwapContext mode:
 //   "picking"  — first tap registered, waiting for second target
 //   "sheet"    — legacy bench-swap sheet opened (tap "Pick from Bench")
+//
+// Draft Mode:
+//   Engine-generated matches start as is_published=false (drafts).
+//   Drafts are visible ONLY to the organizer in this panel.
+//   Players and the TV see nothing until the organizer publishes.
+//   Two sections render independently:
+//     - Drafts section  — amber-dashed border cards + Publish button
+//     - On Deck section — solid amber border cards (published)
+//   Both sections share the same DnD context and sort_order so the
+//   organizer can freely reorder across draft/published boundaries.
 // ============================================================
 
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef, useCallback } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -40,9 +50,10 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Clock, GripVertical, Trash2 } from "lucide-react";
+import { CheckCircle, Clock, EyeOff, GripVertical, Trash2 } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
 import { H2HStrip } from "@/components/organizer/h2h-strip";
+import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { SkillLevel } from "@/types/database";
 
@@ -85,6 +96,10 @@ interface OnDeckPanelProps {
   onReorderMatches: (orderedMatchIds: string[]) => Promise<{ error?: string }>;
   /** Called when a player badge is tapped — drives both picking and sheet modes. */
   onPlayerTap: (ctx: Omit<SwapContext, "mode">) => void;
+  /** Draft Mode: publish a single draft match. */
+  onPublishMatch: (matchId: string) => Promise<{ error?: string }>;
+  /** Draft Mode: publish all draft matches for this session. */
+  onPublishAllDrafts: () => Promise<{ error?: string; publishedCount?: number }>;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -125,21 +140,31 @@ function minutesSince(dateStr: string) {
 
 interface SortableCardProps {
   match: EnrichedMatch;
-  index: number;
+  /** Position label within its own section (draft or published). */
+  sectionIndex: number;
+  isDraft: boolean;
   isClearing: boolean;
+  isPublishing: boolean;
+  /** Optimistic: true while the publish animation is in-flight. */
+  isOptimisticPublished: boolean;
   error?: string;
   swapContext: SwapContext | null;
   onClear: (id: string) => void;
+  onPublish: (id: string) => void;
   onPlayerTap: (ctx: Omit<SwapContext, "mode">) => void;
 }
 
 function SortableCard({
   match,
-  index,
+  sectionIndex,
+  isDraft,
   isClearing,
+  isPublishing,
+  isOptimisticPublished,
   error,
   swapContext,
   onClear,
+  onPublish,
   onPlayerTap,
 }: SortableCardProps) {
   const {
@@ -163,11 +188,6 @@ function SortableCard({
   };
 
   // ── Derive swap visual state for this card ─────────────────
-  // selectedPlayerId: the pill in THIS match that is currently selected
-  //   (amber ring treatment in TeamsGrid).
-  // isSwapModeActive: any picking-mode selection is active, so all
-  //   OTHER pills show the valid-target (hover-amber) treatment.
-
   const isPickingMode = swapContext?.mode === "picking";
   const selectedPlayerId =
     isPickingMode && swapContext.matchId === match.id
@@ -175,8 +195,12 @@ function SortableCard({
       : undefined;
   const isSwapModeActive = isPickingMode;
 
+  // Optimistic transition: once the organizer clicks Publish the card
+  // visually transitions from draft (dashed) to published (solid) even
+  // before the server round-trip completes.
+  const effectivelyDraft = isDraft && !isOptimisticPublished;
+
   // Build SwapContext from a player row tap.
-  // All profile data is pre-fetched in EnrichedMatch — no extra calls needed.
   function handlePlayerTap(player: RosterPlayer, team: "a" | "b") {
     onPlayerTap({
       matchId: match.id,
@@ -198,21 +222,28 @@ function SortableCard({
       ref={setNodeRef}
       style={style}
       className={[
-        "relative rounded-2xl border bg-white dark:bg-card shadow-sm overflow-hidden transition-all",
-        // Highlight card border when the selected player is in this card
-        selectedPlayerId
-          ? "border-amber-400 dark:border-amber-500/60 shadow-amber-200 dark:shadow-amber-500/20 shadow-md"
-          : "border-amber-100 dark:border-amber-500/20",
+        "relative rounded-2xl border-2 shadow-sm overflow-hidden",
+        // Animate the border/bg change for the publish transition
+        "transition-colors duration-[250ms] ease-out",
+        // Draft: dashed slate border — indicates "hidden from players"
+        // Published: solid amber border — indicates "visible / on deck"
+        effectivelyDraft
+          ? "border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-card"
+          : selectedPlayerId
+          ? "border-amber-400 dark:border-amber-500/60 shadow-amber-200 dark:shadow-amber-500/20 shadow-md bg-white dark:bg-card"
+          : "border-amber-200 dark:border-amber-500/30 bg-white dark:bg-card",
       ].join(" ")}
     >
       {/* ── Card header row ────────────────────────────────── */}
       <div
-        className="flex items-center gap-1
-                    bg-amber-50/70 dark:bg-amber-500/10
-                    px-2 py-2.5 border-b border-amber-100 dark:border-amber-500/20"
+        className={[
+          "flex items-center gap-1 px-2 py-2.5 border-b transition-colors duration-[250ms] ease-out",
+          effectivelyDraft
+            ? "bg-slate-50 dark:bg-muted/30 border-slate-200 dark:border-slate-700"
+            : "bg-amber-50/70 dark:bg-amber-500/10 border-amber-100 dark:border-amber-500/20",
+        ].join(" ")}
       >
-        {/* DRAG HANDLE — suppressHydrationWarning prevents SSR/CSR
-            aria-describedby counter mismatch from dnd-kit's global counter */}
+        {/* DRAG HANDLE */}
         <div
           ref={setActivatorNodeRef}
           {...attributes}
@@ -223,15 +254,28 @@ function SortableCard({
                      hover:bg-amber-100/60 dark:hover:bg-amber-800/30 transition-colors"
           aria-label="Drag to reorder"
         >
-          <GripVertical className="h-5 w-5 text-amber-400 dark:text-amber-500 shrink-0" />
+          <GripVertical
+            className={[
+              "h-5 w-5 shrink-0 transition-colors duration-[250ms]",
+              effectivelyDraft
+                ? "text-slate-400 dark:text-slate-500"
+                : "text-amber-400 dark:text-amber-500",
+            ].join(" ")}
+          />
         </div>
 
-        {/* NON-DRAGGABLE label + badge */}
+        {/* Label + badges + origin tag */}
         <div className="pointer-events-none select-none flex flex-1 items-center justify-between min-w-0 pl-1">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
-              On Deck #{index + 1}
-            </span>
+            {effectivelyDraft ? (
+              <span className="text-sm font-bold text-slate-500 dark:text-slate-400">
+                Draft #{sectionIndex + 1}
+              </span>
+            ) : (
+              <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
+                On Deck #{sectionIndex + 1}
+              </span>
+            )}
             {match.is_mixed_level && (
               <span
                 className="rounded-full border px-2 py-0.5
@@ -244,14 +288,22 @@ function SortableCard({
                 Mixed Level
               </span>
             )}
+            <MatchOriginTag origin={match.origin} />
           </div>
-          <span className="text-xs text-amber-600 dark:text-amber-400 font-medium shrink-0">
+          <span
+            className={[
+              "text-xs font-medium shrink-0 transition-colors duration-[250ms]",
+              effectivelyDraft
+                ? "text-slate-400 dark:text-slate-500"
+                : "text-amber-600 dark:text-amber-400",
+            ].join(" ")}
+          >
             {mins === 0 ? "Just formed" : `${mins}m ago`}
           </span>
         </div>
       </div>
 
-      {/* ── Teams grid — replaces BadmintonCourt ─────────────── */}
+      {/* ── Teams grid ─────────────────────────────────────── */}
       <TeamsGrid
         teamA={teamA}
         teamB={teamB}
@@ -269,25 +321,45 @@ function SortableCard({
         sessionId={match.session_id}
       />
 
-      {/* ── Footer — hint + Clear button ──────────────────── */}
-      <div className="px-4 py-2.5 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-3">
-        <p className="text-xs text-slate-400 dark:text-muted-foreground">
-          {isPickingMode && selectedPlayerId
+      {/* ── Footer ──────────────────────────────────────────── */}
+      <div className="px-3 py-2 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-2">
+        <p className="text-xs text-slate-400 dark:text-muted-foreground min-w-0 truncate">
+          {effectivelyDraft
+            ? "Hidden from players — publish to reveal"
+            : isPickingMode && selectedPlayerId
             ? "Tap another player to swap"
             : "Tap any player to start a swap"}
         </p>
-        <button
-          onClick={() => onClear(match.id)}
-          disabled={isClearing || isPickingMode}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200
-                     bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700
-                     hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
-                     dark:text-red-400 dark:hover:bg-red-950/60
-                     disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          <Trash2 className="h-3 w-3" />
-          {isClearing ? "Clearing…" : "Clear"}
-        </button>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Publish button — only shown for drafts */}
+          {effectivelyDraft && (
+            <button
+              onClick={() => onPublish(match.id)}
+              disabled={isPublishing || isPickingMode}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700
+                         transition-colors px-3 min-h-[44px] text-xs font-semibold text-white
+                         disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+              {isPublishing ? "Publishing…" : "Publish"}
+            </button>
+          )}
+
+          {/* Clear button */}
+          <button
+            onClick={() => onClear(match.id)}
+            disabled={isClearing || isPickingMode}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200
+                       bg-red-50 px-3 min-h-[44px] text-xs font-semibold text-red-700
+                       hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
+                       dark:text-red-400 dark:hover:bg-red-950/60
+                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Trash2 className="h-4 w-4 shrink-0" />
+            {isClearing ? "Clearing…" : "Clear"}
+          </button>
+        </div>
       </div>
 
       {/* ── Inline error ───────────────────────────────────── */}
@@ -301,50 +373,87 @@ function SortableCard({
 // ── OverlayCard — pure visual, NO dnd hooks ──────────────────
 // Rendered inside <DragOverlay>. Never calls useSortable.
 
-function OverlayCard({ match, index }: { match: EnrichedMatch; index: number }) {
+function OverlayCard({
+  match,
+  sectionIndex,
+  isDraft,
+}: {
+  match: EnrichedMatch;
+  sectionIndex: number;
+  isDraft: boolean;
+}) {
   const { teamA, teamB } = getTeams(match);
   const mins = minutesSince(match.created_at);
 
   return (
-    <div className="rounded-2xl border border-amber-100 dark:border-amber-500/20 bg-white dark:bg-card shadow-2xl overflow-hidden rotate-1">
-      <div className="flex items-center gap-1 bg-amber-50/70 dark:bg-amber-500/10 px-2 py-2.5 border-b border-amber-100 dark:border-amber-500/20">
+    <div
+      className={[
+        "rounded-2xl border-2 shadow-2xl overflow-hidden rotate-1",
+        isDraft
+          ? "border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-card"
+          : "border-amber-200 dark:border-amber-500/30 bg-white dark:bg-card",
+      ].join(" ")}
+    >
+      <div
+        className={[
+          "flex items-center gap-1 px-2 py-2.5 border-b",
+          isDraft
+            ? "bg-slate-50 dark:bg-muted/30 border-slate-200 dark:border-slate-700"
+            : "bg-amber-50/70 dark:bg-amber-500/10 border-amber-100 dark:border-amber-500/20",
+        ].join(" ")}
+      >
         <div className="touch-none select-none cursor-grabbing flex items-center justify-center p-1 rounded">
-          <GripVertical className="h-5 w-5 text-amber-400 dark:text-amber-500 shrink-0" />
+          <GripVertical
+            className={[
+              "h-5 w-5 shrink-0",
+              isDraft
+                ? "text-slate-400 dark:text-slate-500"
+                : "text-amber-400 dark:text-amber-500",
+            ].join(" ")}
+          />
         </div>
         <div className="pointer-events-none select-none flex flex-1 items-center justify-between min-w-0 pl-1">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
-              On Deck #{index + 1}
-            </span>
+            {isDraft ? (
+              <span className="text-sm font-bold text-slate-500 dark:text-slate-400">
+                Draft #{sectionIndex + 1}
+              </span>
+            ) : (
+              <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
+                On Deck #{sectionIndex + 1}
+              </span>
+            )}
             {match.is_mixed_level && (
               <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 border-amber-300 text-amber-800 dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]">
                 Mixed Level
               </span>
             )}
+            <MatchOriginTag origin={match.origin} />
           </div>
-          <span className="text-xs text-amber-600 dark:text-amber-400 font-medium shrink-0">
+          <span
+            className={[
+              "text-xs font-medium shrink-0",
+              isDraft
+                ? "text-slate-400 dark:text-slate-500"
+                : "text-amber-600 dark:text-amber-400",
+            ].join(" ")}
+          >
             {mins === 0 ? "Just formed" : `${mins}m ago`}
           </span>
         </div>
       </div>
 
-      {/* No onPlayerTap on overlay — purely visual during drag */}
-      <TeamsGrid
-        teamA={teamA}
-        teamB={teamB}
-        labelA="Your Team"
-        labelB="Opponents"
-      />
+      <TeamsGrid teamA={teamA} teamB={teamB} labelA="Your Team" labelB="Opponents" />
 
-      <div className="px-4 py-2.5 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-3">
+      <div className="px-3 py-2 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-2">
         <p className="text-xs text-slate-400 dark:text-muted-foreground">
-          Tap any player to start a swap
+          {isDraft ? "Hidden from players — publish to reveal" : "Tap any player to start a swap"}
         </p>
         <button
           disabled
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 opacity-50 cursor-not-allowed"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 min-h-[44px] text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 opacity-50 cursor-not-allowed"
         >
-          <Trash2 className="h-3 w-3" />
+          <Trash2 className="h-4 w-4" />
           Clear
         </button>
       </div>
@@ -353,10 +462,6 @@ function OverlayCard({ match, index }: { match: EnrichedMatch; index: number }) 
 }
 
 // ── Main panel ────────────────────────────────────────────────
-// Wrapped in React.memo: swapContext state lives in
-// OrganizerDashboard. Since onPlayerTap is stabilised with
-// useCallback there (via ref pattern), this component re-renders
-// only when matches or swapContext changes — not on every state update.
 
 function OnDeckPanelInner({
   matches,
@@ -364,12 +469,19 @@ function OnDeckPanelInner({
   onClearOnDeckMatch,
   onReorderMatches,
   onPlayerTap,
+  onPublishMatch,
+  onPublishAllDrafts,
 }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
+  const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
+  // Optimistic set: matchIds that have been published client-side
+  // before the server round-trip completes. Used for transition animation.
+  const [optimisticPublishedIds, setOptimisticPublishedIds] = useState<Set<string>>(new Set());
+  const [isPublishingAll, setIsPublishingAll] = useState(false);
+  const [publishAllError, setPublishAllError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Suppress real-time prop updates during an active drag to avoid
-  // disrupting dnd-kit's internal rect measurements.
+  // Suppress real-time prop updates during an active drag.
   const isDraggingRef = useRef(false);
   const [orderedMatches, setOrderedMatches] = useState<EnrichedMatch[]>(matches);
 
@@ -384,6 +496,17 @@ function OnDeckPanelInner({
 
     if (!setsEqual) {
       setOrderedMatches(matches);
+      // Clear optimistic state for any matches that were removed
+      setOptimisticPublishedIds((prev) => {
+        const next = new Set(prev);
+        [...prev].forEach((id) => {
+          if (!incomingIds.has(id)) next.delete(id);
+        });
+        return next;
+      });
+      // Clear any stale Publish All error — the draft set has changed so
+      // the previous failure no longer applies to the new batch.
+      setPublishAllError(null);
     } else {
       setOrderedMatches((prev) =>
         prev.map((old) => matches.find((m) => m.id === old.id) ?? old)
@@ -452,6 +575,86 @@ function OnDeckPanelInner({
     }
   }
 
+  // ── Publish handler ────────────────────────────────────────
+
+  async function handlePublish(matchId: string) {
+    setPublishingIds((prev) => new Set(prev).add(matchId));
+    // Optimistic: immediately animate the card to published state
+    setOptimisticPublishedIds((prev) => new Set(prev).add(matchId));
+    setErrors((prev) => {
+      const e = { ...prev };
+      delete e[matchId];
+      return e;
+    });
+
+    const result = await onPublishMatch(matchId);
+
+    setPublishingIds((prev) => {
+      const s = new Set(prev);
+      s.delete(matchId);
+      return s;
+    });
+
+    if (result.error) {
+      // Revert optimistic state on failure
+      setOptimisticPublishedIds((prev) => {
+        const s = new Set(prev);
+        s.delete(matchId);
+        return s;
+      });
+      setErrors((prev) => ({ ...prev, [matchId]: result.error! }));
+    }
+    // On success the realtime subscription will update the match's
+    // is_published flag and the optimistic entry will be cleared
+    // naturally by the useEffect above.
+  }
+
+  // ── Publish All handler ────────────────────────────────────
+
+  const handlePublishAll = useCallback(async () => {
+    setIsPublishingAll(true);
+    setPublishAllError(null);
+    // Only include matches that are still truly draft (exclude any already in
+    // optimisticPublishedIds from a concurrent per-card publish in-flight).
+    // This prevents a failing Publish All from reverting a separate in-flight
+    // individual publish that happened to overlap.
+    const draftIds = orderedMatches
+      .filter((m) => !m.is_published && !optimisticPublishedIds.has(m.id))
+      .map((m) => m.id);
+    setOptimisticPublishedIds((prev) => {
+      const next = new Set(prev);
+      draftIds.forEach((id) => next.add(id));
+      return next;
+    });
+
+    const result = await onPublishAllDrafts();
+    setIsPublishingAll(false);
+
+    if (result.error) {
+      // Revert all optimistic entries for drafts that failed to publish
+      setOptimisticPublishedIds((prev) => {
+        const next = new Set(prev);
+        draftIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      // Surface error on the banner — no per-card context available.
+      setPublishAllError(result.error);
+    }
+    // On success, realtime will resolve final is_published=true state;
+    // optimistic IDs will be cleaned up naturally by the useEffect above.
+  }, [orderedMatches, optimisticPublishedIds, onPublishAllDrafts]);
+
+  // ── Derived section lists ──────────────────────────────────
+  // Both sections reference orderedMatches so drag across the
+  // draft/published boundary preserves the global sort order.
+  const draftMatches = orderedMatches.filter(
+    (m) => !m.is_published && !optimisticPublishedIds.has(m.id)
+  );
+  const publishedMatches = orderedMatches.filter(
+    (m) => m.is_published || optimisticPublishedIds.has(m.id)
+  );
+  const draftCount = draftMatches.length;
+
   // ── Empty state ──────────────────────────────────────────────
 
   if (orderedMatches.length === 0) {
@@ -473,27 +676,43 @@ function OnDeckPanelInner({
   // ── Render ───────────────────────────────────────────────────
 
   return (
-    <div className="space-y-3">
-      {/* Section header */}
-      <div className="flex items-center gap-2.5">
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
-        </span>
-        <h2 className="text-sm font-bold text-slate-700 dark:text-foreground uppercase tracking-wider">
-          On Deck
-        </h2>
-        <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:text-[hsl(var(--amber-accent-hsl))] dark:ring-1 dark:ring-[hsl(var(--amber-accent-hsl))]/50">
-          {orderedMatches.length} match{orderedMatches.length !== 1 ? "es" : ""} ready
-        </span>
-        {orderedMatches.length > 1 && (
-          <span className="text-xs text-slate-400 dark:text-muted-foreground hidden sm:block">
-            — drag to reprioritize
-          </span>
-        )}
-      </div>
+    <div className="space-y-4">
+      {/* ── Publish All banner ── shown when there are drafts ── */}
+      {draftCount > 0 && (
+        <div
+          role="status"
+          aria-label={`${draftCount} on-deck match${draftCount !== 1 ? "es" : ""} waiting for approval`}
+          className="rounded-xl border border-amber-200 dark:border-amber-500/30
+                     bg-amber-50/80 dark:bg-amber-500/10
+                     animate-in slide-in-from-top-1 fade-in duration-200"
+        >
+          <div className="flex items-center justify-between gap-3 px-4 py-2">
+            <div className="flex items-center gap-2 text-sm text-amber-900 dark:text-amber-300 min-w-0">
+              <EyeOff className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span className="font-medium">
+                <span className="font-bold">{draftCount}</span>{" "}
+                on-deck match{draftCount !== 1 ? "es" : ""} waiting for approval
+              </span>
+            </div>
+            <button
+              onClick={handlePublishAll}
+              disabled={isPublishingAll}
+              className="shrink-0 flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700
+                         transition-colors px-4 min-h-[44px] text-sm font-semibold text-white
+                         disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isPublishingAll ? "Publishing…" : "Publish All"}
+            </button>
+          </div>
+          {publishAllError && (
+            <p role="alert" className="px-4 pb-2 text-xs text-red-600 dark:text-red-400">
+              {publishAllError}
+            </p>
+          )}
+        </div>
+      )}
 
-      {/* Sortable grid */}
+      {/* ── Shared DnD context — drafts and published in one zone ── */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -505,31 +724,109 @@ function OnDeckPanelInner({
           items={orderedMatches.map((m) => m.id)}
           strategy={rectSortingStrategy}
         >
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {orderedMatches.map((match, idx) => (
-              <SortableCard
-                key={match.id}
-                match={match}
-                index={idx}
-                isClearing={clearingIds.has(match.id)}
-                error={errors[match.id]}
-                swapContext={swapContext}
-                onClear={handleClear}
-                onPlayerTap={onPlayerTap}
-              />
-            ))}
-          </div>
+          {/* ── Drafts section ─────────────────────────────── */}
+          {draftMatches.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Drafts
+                </span>
+                <span className="text-xs text-slate-400 dark:text-muted-foreground">
+                  — hidden from players
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {draftMatches.map((match, idx) => (
+                  <SortableCard
+                    key={match.id}
+                    match={match}
+                    sectionIndex={idx}
+                    isDraft={true}
+                    isClearing={clearingIds.has(match.id)}
+                    isPublishing={publishingIds.has(match.id)}
+                    isOptimisticPublished={optimisticPublishedIds.has(match.id)}
+                    error={errors[match.id]}
+                    swapContext={swapContext}
+                    onClear={handleClear}
+                    onPublish={handlePublish}
+                    onPlayerTap={onPlayerTap}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Section divider ─────────────────────────────── */}
+          {draftMatches.length > 0 && publishedMatches.length > 0 && (
+            <div className="pointer-events-none flex items-center gap-3 py-1">
+              <div className="flex-1 border-t border-dashed border-slate-200 dark:border-slate-700" />
+              <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                ↑ Hidden from players · ↓ Visible on deck
+              </span>
+              <div className="flex-1 border-t border-dashed border-slate-200 dark:border-slate-700" />
+            </div>
+          )}
+
+          {/* ── Published / On Deck section ────────────────── */}
+          {publishedMatches.length > 0 && (
+            <div className="space-y-3">
+              {/* Section header — always shown for published matches */}
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+                </span>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-foreground">
+                  On Deck
+                </span>
+                <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:text-[hsl(var(--amber-accent-hsl))] dark:ring-1 dark:ring-[hsl(var(--amber-accent-hsl))]/50">
+                  {publishedMatches.length} match{publishedMatches.length !== 1 ? "es" : ""} ready
+                </span>
+                {publishedMatches.length > 1 && draftMatches.length === 0 && (
+                  <span className="text-xs text-slate-400 dark:text-muted-foreground hidden sm:block">
+                    — drag to reprioritize
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {publishedMatches.map((match, idx) => (
+                  <SortableCard
+                    key={match.id}
+                    match={match}
+                    sectionIndex={idx}
+                    isDraft={false}
+                    isClearing={clearingIds.has(match.id)}
+                    isPublishing={publishingIds.has(match.id)}
+                    isOptimisticPublished={false}
+                    error={errors[match.id]}
+                    swapContext={swapContext}
+                    onClear={handleClear}
+                    onPublish={handlePublish}
+                    onPlayerTap={onPlayerTap}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </SortableContext>
 
         <DragOverlay dropAnimation={{ duration: 200, easing: "ease" }}>
-          {activeMatch ? (
-            <OverlayCard
-              match={activeMatch}
-              index={orderedMatches.findIndex((m) => m.id === activeMatch.id)}
-            />
-          ) : null}
+          {activeMatch ? (() => {
+            const isDraft = !activeMatch.is_published && !optimisticPublishedIds.has(activeMatch.id);
+            const sectionMatches = isDraft ? draftMatches : publishedMatches;
+            const sectionIndex = sectionMatches.findIndex((m) => m.id === activeMatch.id);
+            return (
+              <OverlayCard
+                match={activeMatch}
+                sectionIndex={sectionIndex >= 0 ? sectionIndex : 0}
+                isDraft={isDraft}
+              />
+            );
+          })() : null}
         </DragOverlay>
       </DndContext>
+
     </div>
   );
 }

@@ -113,23 +113,31 @@ test.describe("Engine Flow: Auto ON", () => {
       // ── 2. Click the toggle to turn Auto ON ─────────────────
       await toggleBtn.click();
 
-      // Toggle should update to "Auto On" (confirms action completed)
+      // Toggle should update to "Auto On" (OPTIMISTIC — see comment below)
       await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
 
-      // ── 3. Wait for the engine to generate an on-deck match ─
-      // The engine runs synchronously inside toggleAutoMatchmaking and
-      // writes the pending match to DB immediately. However, the Vercel
-      // deployment uses Supabase read replicas: the Next.js server render
-      // and client-side Realtime subscription may read stale replica data
-      // for several seconds after the primary write.
-      //
-      // Strategy:
-      //   a) Poll the primary DB via adminDb() until the pending match
-      //      appears — this is authoritative and fast (~1–2s).
-      //   b) Wait 2s for read replicas to catch up.
-      //   c) Reload the page so the server-side render and client-side
-      //      fetchActiveMatches both read fresh replica data.
+      // The button text update is optimistic (handleToggleAuto sets state
+      // before awaiting the server action).  Confirm the DB toggle truly
+      // committed before polling for engine output, otherwise a flaky
+      // server action can leave the optimistic UI green while the engine
+      // never actually ran.
       const db = adminDb();
+      await expect.poll(
+        async () => {
+          const { data } = await db
+            .from("sessions")
+            .select("is_auto_matchmaking_on")
+            .eq("id", seeded.sessionId)
+            .single();
+          return data?.is_auto_matchmaking_on ?? false;
+        },
+        { timeout: 10_000 }
+      ).toBe(true);
+
+      // ── 3. Wait for the engine to generate an on-deck match ─
+      // The engine runs synchronously inside toggleAutoMatchmaking but the
+      // serverless cold start + read-replica lag can stretch the round trip
+      // past the previous 10 s window.  20 s gives enough headroom.
       await expect.poll(
         async () => {
           const { data } = await db
@@ -139,7 +147,7 @@ test.describe("Engine Flow: Auto ON", () => {
             .eq("status", "pending");
           return data?.length ?? 0;
         },
-        { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
+        { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
       ).toBeGreaterThan(0);
 
       // Give read replicas time to sync with the primary write.
@@ -241,6 +249,42 @@ test.describe("Engine Flow: Red Zone escalation", () => {
       const toggleBtn = page.getByTestId("toggle-auto-matchmaking");
       await toggleBtn.click();
       await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
+
+      // The button text update is OPTIMISTIC.  Confirm the DB toggle
+      // actually committed before polling for engine output, otherwise
+      // a flaky server action (e.g. Vercel cold start mid-toggle) can
+      // produce a state where the optimistic UI says ON but the engine
+      // never ran — the test then times out checking for matches the
+      // engine had no chance to create.
+      await expect.poll(
+        async () => {
+          const { data } = await db
+            .from("sessions")
+            .select("is_auto_matchmaking_on")
+            .eq("id", seeded.sessionId)
+            .single();
+          return data?.is_auto_matchmaking_on ?? false;
+        },
+        { timeout: 10_000 }
+      ).toBe(true);
+
+      // Wait for the engine to write a pending Mixed Level match.
+      // The engine has to: read the queue + paused, score candidates,
+      // detect Red Zone (Alice waited 26 min), trigger the time-based
+      // fallback that builds the Mixed Level group, and INSERT via
+      // create_match_with_players RPC.  On a cold-started Vercel
+      // function this can take 8–12 s end-to-end.
+      await expect.poll(
+        async () => {
+          const { data } = await db
+            .from("matches")
+            .select("id")
+            .eq("session_id", seeded.sessionId)
+            .eq("status", "pending");
+          return data?.length ?? 0;
+        },
+        { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
+      ).toBeGreaterThan(0);
 
       // ── Wait for an on-deck match to appear ──────────────────
       // Realtime delivery is unreliable on Vercel infra; reload to

@@ -205,20 +205,29 @@ export async function signInOrganizerBot(
   // automatically. No action needed here.
   //
   // Strategy B (fallback, 23-hour window): VERCEL_SHARE_URL is set —
-  // navigate to it once to get the _vercel_jwt cookie, then proceed.
-  // Regenerate: ask the Vercel MCP tool for get_access_to_vercel_url.
+  // append _vercel_share=TOKEN directly to the /play URL so Vercel
+  // validates the token AND serves the app page in a single request.
+  //
+  // ⚠️  Why not navigate to the share URL first?
+  // The share URL redirect chains through vercel.com (auth domain), so
+  // the _vercel_jwt cookie gets set on vercel.com — NOT on the
+  // deployment subdomain. A subsequent navigation to /play then hits
+  // Vercel auth again because the deployment domain has no cookie.
+  // Appending the token to /play avoids this cross-domain cookie split.
+  let playUrl = `${baseURL}/play`;
   const shareUrl = process.env.VERCEL_SHARE_URL;
   if (!process.env.VERCEL_BYPASS_SECRET && shareUrl) {
-    console.log("[auth] Navigating to Vercel share URL to get bypass cookie…");
-    await page.goto(shareUrl, { waitUntil: "load", timeout: 20_000 });
-    // The redirect sets _vercel_jwt cookie automatically; now we can proceed.
-    console.log("[auth] Vercel bypass cookie acquired.");
+    const token = new URL(shareUrl).searchParams.get("_vercel_share");
+    if (token) {
+      playUrl = `${baseURL}/play?_vercel_share=${token}`;
+      console.log("[auth] Appending _vercel_share token to /play URL to bypass Vercel auth…");
+    }
   }
 
   // Navigate to /play — middleware will validate cookies and redirect
   // appropriately. The organizer bot has no active queue entry, so it
   // should land on /play (session picker).
-  await page.goto(`${baseURL}/play`, { waitUntil: "networkidle" });
+  await page.goto(playUrl, { waitUntil: "networkidle" });
 
   // The middleware may redirect — wait for any /play or /organizer URL
   await page.waitForURL(/\/(play|organizer)/, { timeout: 20_000 });

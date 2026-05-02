@@ -187,6 +187,14 @@ test.beforeAll(async ({ browser }) => {
   }
 });
 
+// Make every test start from a clean slate.  Without this, the first test
+// in this file can collide with leftover state from a previous test run
+// (e.g. scenario-i seeds 6 courts named Court 1-6 and the unique constraint
+// `courts_session_id_name_key` then rejects this file's "Court 1" insert).
+test.beforeEach(async () => {
+  await resetSandboxSession();
+});
+
 test.afterEach(async () => {
   // Clear any VIP tag set during the test
   await setOrganizerVip(organizerUserId, null, null);

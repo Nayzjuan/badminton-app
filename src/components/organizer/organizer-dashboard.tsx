@@ -155,6 +155,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     queue,
     activeMatches,
     onDeckMatches,
+    draftMatches,
     profiles,
     loading,
     realtimeConnected,
@@ -167,6 +168,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     cancelMatch,
     clearOnDeckMatch,
     reorderOnDeckMatches,
+    publishMatch,
+    publishAllDrafts,
     swapPlayer,
     swapMatchPlayers,
     removeFromQueue,
@@ -372,13 +375,24 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   const isClosed = !session.is_active;
   const bottleneckCount = queue.filter((q) => q.is_bottleneck).length;
 
-  const tabs: { key: Tab; label: string; badge?: number }[] = isClosed
+  // Draft Mode: show an amber badge on the Courts tab when the organizer
+  // is on a different tab and drafts are waiting for approval. When they're
+  // already on the Courts tab the Publish All banner handles the prompt —
+  // no need to double up the indicator.
+  const draftCount = draftMatches.length;
+
+  const tabs: { key: Tab; label: string; badge?: number; badgeVariant?: "default" | "amber" }[] = isClosed
     ? [
         { key: "history", label: "Match History" },
         { key: "leaderboard", label: "Leaderboard" },
       ]
     : [
-        { key: "courts", label: "Active Courts" },
+        {
+          key: "courts",
+          label: "Active Courts",
+          badge: draftCount > 0 && activeTab !== "courts" ? draftCount : undefined,
+          badgeVariant: "amber",
+        },
         { key: "queue", label: "Queue & Match Control" },
         { key: "monitor", label: "Wait Time Monitor", badge: bottleneckCount > 0 ? bottleneckCount : undefined },
         { key: "history", label: "Match History" },
@@ -714,8 +728,16 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               >
                 {tab.label}
                 {tab.badge !== undefined && (
-                  <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-red-500 text-white
-                                   text-xs flex items-center justify-center font-bold animate-pulse">
+                  <span
+                    className={[
+                      "absolute -top-1 -right-1 h-5 w-5 rounded-full text-white",
+                      "text-xs flex items-center justify-center font-bold",
+                      // amber = drafts waiting for approval; red = bottleneck players
+                      tab.badgeVariant === "amber"
+                        ? "bg-amber-500 animate-pulse"
+                        : "bg-red-500 animate-pulse",
+                    ].join(" ")}
+                  >
                     {tab.badge}
                   </span>
                 )}
@@ -775,6 +797,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               onClearOnDeckMatch={clearOnDeckMatch}
               onReorderMatches={reorderOnDeckMatches}
               onPlayerTap={handlePlayerTap}
+              onPublishMatch={publishMatch}
+              onPublishAllDrafts={publishAllDrafts}
             />
 
             <ActiveCourts
