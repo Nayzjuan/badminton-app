@@ -434,19 +434,18 @@ describe("runEngineForSession", () => {
   });
 
   it("stops filling when on-deck is already at capacity", async () => {
-    // 3 total pending (published=3, drafts=0) → MAX_AUTO_DRAFTS(3) − 3 = 0 → skipping
+    // 3 total pending (atomic query) → MAX_AUTO_DRAFTS(3) − 3 = 0 → skipping
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null },  // sessions
       { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2)
-      { count: 3, data: null, error: null },                    // published pending = 3
-      { count: 0, data: null, error: null },                    // draft pending = 0 → totalPending=3 → slotsAvailable=0
+      { count: 3, data: null, error: null },                    // total pending = 3 → slotsAvailable=0
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
-    // Engine exits after both pending counts: no queue/algorithm queries fired
-    expect(mock.queriedTables).toEqual(["sessions", "courts", "matches", "matches"]);
+    // Engine exits after the single pending count: no queue/algorithm queries fired
+    expect(mock.queriedTables).toEqual(["sessions", "courts", "matches"]);
   });
 
   it("returns gracefully when the session DB read fails", async () => {
@@ -469,17 +468,16 @@ describe("runEngineForSession", () => {
     // Query sequence (bypassGate=false):
     //   [0] sessions(ON)
     //   [1] courts(2)
-    //   [2] matches: published pending count=0
-    //   [3] matches: draft pending count=0 → totalPending=0 → slotsAvailable=3
-    //   [4] v_queue_with_wait_time: soft gate — 4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
+    //   [2] matches: total pending count=0 (single atomic query) → slotsAvailable=3
+    //   [3] v_queue_with_wait_time: soft gate — 4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
     //        → gateTimedOut=true → gate releases; no active-courts query; estimatedWaiting=4
-    //   [5] matches: fetchRecentRosters → [] (empty; no match_players query follows)
+    //   [4] matches: fetchRecentRosters → [] (empty; no match_players query follows)
     //   slot 0 (i=0 exempt from pool-diversity cap):
-    //   [6] v_queue_with_wait_time: runAlgorithm raw pool → 4 players
-    //   [7] queue_entries: paused filter → []
+    //   [5] v_queue_with_wait_time: runAlgorithm raw pool → 4 players
+    //   [6] queue_entries: paused filter → []
     //       (activePool=4 ≥ 4 → continues past the "not enough" guard)
-    //   [8] matches: fetchPartnershipCounts → [] (no prior session matches → empty map)
-    //   [9] match_players: buildOverlapMap step 1 (anchor prior matches) → null/undefined
+    //   [7] matches: fetchPartnershipCounts → [] (no prior session matches → empty map)
+    //   [8] match_players: buildOverlapMap step 1 (anchor prior matches) → null/undefined
     //        → anchorRows=null → early return; empty overlapMap
     //   → group built → snakeDraft → executeMatch → rpc FAILS
     //   → loop breaks (slot 1 never reached — estimatedWaiting=4 < MIN_POOL=8)
@@ -504,15 +502,14 @@ describe("runEngineForSession", () => {
       [
         { data: { is_auto_matchmaking_on: true }, error: null },  // [0] sessions
         { data: [{ id: "c1" }, { id: "c2" }], error: null },      // [1] courts (2)
-        { count: 0, data: null, error: null },                    // [2] published pending → 0
-        { count: 0, data: null, error: null },                    // [3] draft pending → 0 → slotsAvailable=3
-        { data: fourPlayers, error: null },                       // [4] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4)
-        { data: [], error: null },                                 // [5] fetchRecentRosters: recent matches → []
+        { count: 0, data: null, error: null },                    // [2] total pending → 0 (atomic) → slotsAvailable=3
+        { data: fourPlayers, error: null },                       // [3] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4)
+        { data: [], error: null },                                 // [4] fetchRecentRosters: recent matches → []
         // (match_players not queried since recentMatchIds is empty)
-        { data: fourPlayers, error: null },                       // [6] runAlgorithm: v_queue_with_wait_time → 4 players
-        { data: [], error: null },                                 // [7] queue_entries paused → []
-        { data: [], error: null },                                 // [8] fetchPartnershipCounts: matches (no prior session matches → empty map)
-        // [9] buildOverlapMap step 1: match_players → beyond array → undefined fallback
+        { data: fourPlayers, error: null },                       // [5] runAlgorithm: v_queue_with_wait_time → 4 players
+        { data: [], error: null },                                 // [6] queue_entries paused → []
+        { data: [], error: null },                                 // [7] fetchPartnershipCounts: matches (no prior session matches → empty map)
+        // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback
         //     → anchorRows=null → early return; empty overlapMap
         // rpc fails → loop breaks (slot 1 never reached — estimatedWaiting=4 < MIN_POOL=8)
       ],
@@ -534,7 +531,7 @@ describe("runEngineForSession", () => {
 
   it("pool diversity cap limits second on-deck slot when remaining pool falls below threshold", async () => {
     // Fix 1: pool diversity cap prevents over-committing the free pool.
-    // slotsAvailable = 3 (0 published + 0 drafts → MAX_AUTO_DRAFTS=3 − 0 = 3).
+    // slotsAvailable = 3 (0 total pending → MAX_AUTO_DRAFTS=3 − 0 = 3, single atomic query).
     // waitingCount = 8: soft gate not triggered (8 > GATE_POOL_THRESHOLD=4).
     //
     // Slot 0 (i=0): exempt from pool-diversity cap → fires → RPC succeeds → estimatedWaiting = 4.
@@ -563,14 +560,13 @@ describe("runEngineForSession", () => {
       [
         { data: { is_auto_matchmaking_on: true }, error: null },  // [0] sessions
         { data: [{ id: "c1" }, { id: "c2" }], error: null },      // [1] courts (2)
-        { count: 0, data: null, error: null },                    // [2] published pending → 0
-        { count: 0, data: null, error: null },                    // [3] draft pending → 0 → slotsAvailable=3
-        { data: eightPlayers, error: null },                      // [4] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered)
-        { data: [], error: null },                                 // [5] fetchRecentRosters: recent matches → []
-        { data: eightPlayers, error: null },                      // [6] runAlgorithm slot 0: v_queue_with_wait_time → 8 players
-        { data: [], error: null },                                 // [7] queue_entries paused → []
-        { data: [], error: null },                                 // [8] fetchPartnershipCounts: matches (no prior matches → empty map)
-        // [9] buildOverlapMap step 1: match_players → beyond array → undefined fallback → empty overlapMap
+        { count: 0, data: null, error: null },                    // [2] total pending → 0 (atomic) → slotsAvailable=3
+        { data: eightPlayers, error: null },                      // [3] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered)
+        { data: [], error: null },                                 // [4] fetchRecentRosters: recent matches → []
+        { data: eightPlayers, error: null },                      // [5] runAlgorithm slot 0: v_queue_with_wait_time → 8 players
+        { data: [], error: null },                                 // [6] queue_entries paused → []
+        { data: [], error: null },                                 // [7] fetchPartnershipCounts: matches (no prior matches → empty map)
+        // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback → empty overlapMap
         // rpc succeeds → estimatedWaiting=8-4=4; slot 1: 4 < MIN_POOL(8) → cap fires → break
       ],
       [{ data: "new-match-id", error: null }]  // rpc → success for slot 0
@@ -597,7 +593,7 @@ describe("runEngineForSession", () => {
 
 describe("callNextMatch", () => {
   it("returns success when an on-deck match is promoted successfully", async () => {
-    // promoteOnDeckMatchInternal (5 calls) + runEngineInternal (courts + both pending counts)
+    // promoteOnDeckMatchInternal (5 calls) + runEngineInternal (courts + single pending count)
     // totalPending=3 → MAX_AUTO_DRAFTS(3)−3=0 → slotsAvailable=0 → no fill
     // pending[0] = MOCK_MATCH (non-empty) → no draft-blocking secondary check fires.
     const mock = makeMockClient([
@@ -607,8 +603,7 @@ describe("callNextMatch", () => {
       { data: [], error: null },                  // match_players → empty
       { data: [], error: null },                  // profiles → empty
       { data: [{ id: "c1" }], error: null },      // runEngineInternal: courts query
-      { count: 3, data: null, error: null },      // runEngineInternal: published pending = 3
-      { count: 0, data: null, error: null },      // runEngineInternal: draft pending = 0 → totalPending=3 → slotsAvailable=0
+      { count: 3, data: null, error: null },      // runEngineInternal: total pending = 3 (atomic) → slotsAvailable=0
     ]);
     // Service-role client handles the organizer auth-gate check inside callNextMatch.
     // created_by matches "test-user" from auth.getUser → session_organizers check skipped.
@@ -636,8 +631,7 @@ describe("callNextMatch", () => {
       { data: [], error: null },                  // match_players → empty
       { data: [], error: null },                  // profiles → empty
       { data: [{ id: "c1" }], error: null },      // ← first query AFTER promotion = courts (not sessions)
-      { count: 3, data: null, error: null },      // published pending = 3
-      { count: 0, data: null, error: null },      // draft pending = 0 → totalPending=3 → slotsAvailable=0
+      { count: 3, data: null, error: null },      // total pending = 3 (atomic) → slotsAvailable=0
     ]);
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // sessions → organizer ownership check
@@ -650,8 +644,10 @@ describe("callNextMatch", () => {
     // The 6th query (index 5) must be "courts", NOT "sessions".
     // "sessions" would appear here if runEngineForSession (toggle check) was called.
     expect(mock.queriedTables[5]).toBe("courts");
-    // "sessions" should NOT appear after the 5 promotion calls
+    // "sessions" should NOT appear after the 5 promotion calls.
+    // Post-promotion: courts + matches(total pending count) = 2 entries, no "sessions".
     const postPromotionTables = mock.queriedTables.slice(5);
+    expect(postPromotionTables).toEqual(["courts", "matches"]);
     expect(postPromotionTables).not.toContain("sessions");
   });
 
@@ -675,30 +671,71 @@ describe("callNextMatch", () => {
     expect(result.message).toMatch(/paused|auto-matchmaking/i);
   });
 
+  it("propagates hasDraftsBlocking when drafts are blocking after engine inline run", async () => {
+    // Finding 3 fix: when the engine runs but can't form a match (empty queue), and the
+    // second promoteOnDeckMatchInternal attempt finds drafts are still blocking, callNextMatch
+    // must return hasDraftsBlocking:true rather than the generic "not enough players" string.
+    // Sequence:
+    //   Attempt 1 (promote): no published pending, 2 drafts → hasDraftsBlocking=true
+    //   Toggle check: sessions → ON
+    //   runEngineInternal (bypassGate=true): courts → [c1]
+    //     total pending=2 → slotsAvailable=1 (cap not exhausted — engine tries to fill)
+    //   fetchRecentRosters: matches → [] (empty)
+    //   runAlgorithm: v_queue_with_wait_time → [] (empty queue) → "Not enough active players"
+    //   Attempt 2 (promote retry): no published pending, 2 drafts → hasDraftsBlocking=true
+    //   callNextMatch propagates hasDraftsBlocking:true ← this is the fix
+    const mock = makeMockClient([
+      { data: [], error: null },                                 // (0) promote attempt 1: no published pending
+      { count: 2, data: null, error: null },                    // (1) draft-blocking check → 2 drafts → hasDraftsBlocking=true
+      { data: { is_auto_matchmaking_on: true }, error: null },  // (2) sessions → toggle ON
+      { data: [{ id: "c1" }], error: null },                    // (3) courts (1 court)
+      { count: 2, data: null, error: null },                    // (4) total pending → 2 (atomic) → slotsAvailable=1
+      { data: [], error: null },                                 // (5) fetchRecentRosters: recent matches → []
+      { data: [], error: null },                                 // (6) v_queue_with_wait_time → [] (empty queue)
+      { data: [], error: null },                                 // (7) queue_entries paused → []
+      // activePool.length=0 < 4 → engine stops; no match created
+      { data: [], error: null },                                 // (8) promote attempt 2: no published pending
+      { count: 2, data: null, error: null },                    // (9) draft-blocking check → 2 drafts → hasDraftsBlocking=true
+    ]);
+    const serviceMock = makeMockClient([
+      { data: { created_by: "test-user" }, error: null }, // sessions → organizer ownership check
+    ]);
+    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
+
+    const result = await callNextMatch(SESSION_ID, COURT_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.hasDraftsBlocking).toBe(true);
+    // Must NOT return the generic message when drafts are the real reason
+    expect(result.message).not.toMatch(/not enough players/i);
+    expect(result.message).toMatch(/draft/i);
+  });
+
   it("returns 'not enough players' when toggle is ON but queue is empty", async () => {
     // Sequence:
     //   Attempt 1 (promote): matches → [] (no on-deck) + draft check → 0 drafts
     //   Toggle check: sessions → ON
     //   runEngineInternal (bypassGate=true): courts → [c1]
-    //     published pending=0 + draft pending=0 → slotsAvailable=3
+    //     total pending=0 (atomic) → slotsAvailable=3
     //   fetchRecentRosters: matches → [] (empty → no match_players query)
     //   runAlgorithm: v_queue_with_wait_time → [] (empty queue), queue_entries paused → []
     //   → activePool.length 0 < 4 → "Not enough active players" → engine stops
     //   Attempt 2 (promote retry): matches → [] still + draft check → 0 drafts
+    //   hasDraftsBlocking=false → callNextMatch returns "not enough players"
     const mock = makeMockClient([
       { data: [], error: null },                                 // (0) promote attempt 1: no pending
       { count: 0, data: null, error: null },                    // (1) draft-blocking check → 0 drafts
       { data: { is_auto_matchmaking_on: true }, error: null },  // (2) sessions → toggle ON
       { data: [{ id: "c1" }], error: null },                    // (3) courts (1 court)
-      { count: 0, data: null, error: null },                    // (4) published pending → 0
-      { count: 0, data: null, error: null },                    // (5) draft pending → 0 → slotsAvailable=3
-      { data: [], error: null },                                 // (6) fetchRecentRosters: recent matches → []
+      { count: 0, data: null, error: null },                    // (4) total pending → 0 (atomic) → slotsAvailable=3
+      { data: [], error: null },                                 // (5) fetchRecentRosters: recent matches → []
       // (match_players not queried since recentMatchIds is empty)
-      { data: [], error: null },                                 // (7) v_queue_with_wait_time → [] (empty queue)
-      { data: [], error: null },                                 // (8) queue_entries paused → []
+      { data: [], error: null },                                 // (6) v_queue_with_wait_time → [] (empty queue)
+      { data: [], error: null },                                 // (7) queue_entries paused → []
       // activePool.length=0 < 4 → returns before fetchPartnershipCounts/buildOverlapMap
-      { data: [], error: null },                                 // (9) promote attempt 2: still no pending
-      { count: 0, data: null, error: null },                    // (10) draft-blocking check → 0 drafts
+      { data: [], error: null },                                 // (8) promote attempt 2: still no pending
+      { count: 0, data: null, error: null },                    // (9) draft-blocking check → 0 drafts
     ]);
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // sessions → organizer ownership check

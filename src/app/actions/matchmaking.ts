@@ -175,6 +175,9 @@ export async function callNextMatch(
   await runEngineInternal(supabase, sessionId, true);
   promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
   if (promoted.success) return promoted;
+  // Surface the draft-blocking signal so the organizer sees "review drafts"
+  // rather than the generic "not enough players" when drafts are the real reason.
+  if (promoted.hasDraftsBlocking) return promoted;
 
   return {
     success: false,
@@ -254,13 +257,15 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
 // Dynamic draft filler. Generates on-deck matches until the combined
-// total of published + unpublished pending matches reaches MAX_AUTO_DRAFTS.
+// total of pending matches (published + unpublished) reaches MAX_AUTO_DRAFTS.
 //
-// slotsAvailable = max(0, MAX_AUTO_DRAFTS − published − drafts)
-//   0 approved + 0 drafts → up to 3 slots (pool diversity cap applies)
-//   2 approved + 0 drafts → 1 slot (on-deck crowding prevention)
-//   2 approved + 1 draft  → 0 slots (at cap)
-//   3 total pending       → 0 slots (at cap)
+// slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)
+//   totalPending is fetched in a single atomic query (no race between
+//   published and draft sub-counts).
+//   0 pending → up to 3 slots (pool diversity cap applies)
+//   1 pending → up to 2 slots
+//   2 pending → 1 slot
+//   3 pending → 0 slots (at cap)
 // Fills slots up to slotsAvailable, stopping when queue is exhausted.
 
 async function runEngineInternal(
@@ -285,43 +290,27 @@ async function runEngineInternal(
     return;
   }
 
-  // Count published pending matches (approved by organizer, eligible for court promotion).
-  const { count: existingOnDeck, error: deckErr } = await supabase
+  // Count all pending matches (published + unpublished) in one atomic query.
+  // Using a single query rather than two sequential published/draft sub-counts
+  // eliminates a narrow race window: if a draft were published between the two
+  // queries, totalPending could be underestimated by 1, allowing a spurious
+  // extra draft. The single query reads a consistent snapshot.
+  const { count: totalPendingRaw, error: totalErr } = await supabase
     .from("matches")
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId)
-    .eq("status", "pending")
-    .eq("is_published", true);
+    .eq("status", "pending");
 
-  if (deckErr) {
-    console.error(`[engine] runEngineInternal: published pending count failed — ${deckErr.message}`);
+  if (totalErr) {
+    console.error(`[engine] runEngineInternal: pending count failed — ${totalErr.message}`);
     return;
   }
 
-  // Count unpublished draft matches (generated but not yet approved by organizer).
-  // Previously invisible to the capacity check — caused up to 7+ drafts accumulating
-  // across successive court-finish triggers before the organizer reviewed any of them.
-  const { count: existingDrafts, error: draftErr } = await supabase
-    .from("matches")
-    .select("id", { count: "exact", head: true })
-    .eq("session_id", sessionId)
-    .eq("status", "pending")
-    .eq("is_published", false);
-
-  if (draftErr) {
-    console.error(`[engine] runEngineInternal: draft count failed — ${draftErr.message}`);
-    return;
-  }
-
-  // Dynamic cap: total pending (approved + draft) must stay below MAX_AUTO_DRAFTS.
-  // Naturally reduces draft output when the organizer has approved matches:
-  //   2 approved + 0 drafts → 1 new slot; 2 approved + 1 draft → 0 slots.
-  const totalPending   = (existingOnDeck ?? 0) + (existingDrafts ?? 0);
+  const totalPending   = totalPendingRaw ?? 0;
   const slotsAvailable = Math.max(0, MAX_AUTO_DRAFTS - totalPending);
 
   console.log(
     `[engine] runEngineInternal: courts=${courtCount} ` +
-    `published=${existingOnDeck ?? 0} drafts=${existingDrafts ?? 0} ` +
     `total=${totalPending} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
   );
   if (slotsAvailable <= 0) {
