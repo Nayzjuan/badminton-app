@@ -489,6 +489,8 @@ export type Database = {
           p_in_player_id:  string;
           p_session_id:    string;
           p_team:          "a" | "b";
+          /** Optional — DB default true; pass false when swapping inside an unpublished draft. */
+          p_is_published?: boolean;
         };
         Returns: void;
       };
@@ -513,6 +515,9 @@ export type Database = {
           p_team_b_ids:     string[];
           /** Optional — DB default 'auto' is used when omitted. */
           p_origin?:        MatchOrigin;
+          /** Optional — DB default false. Pass false (or omit) for engine drafts;
+           *  queue_entries update is suppressed until publishMatchAction fires. */
+          p_is_published?:  boolean;
         };
         Returns: string; // UUID of the new match
       };

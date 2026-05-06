@@ -832,6 +832,33 @@ export async function publishMatchAction(
   const isOrganizer = await isSessionOrganizer(db, user.id, match.session_id);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
+  // BUG-002 fix (layer 1): validate that no player in this draft has left
+  // the session since the match was generated. A 'left' player would be
+  // silently re-promoted to 'playing' on court assignment (BUG-002 layer 3).
+  const svc = createServiceClient();
+  const { data: matchPlayerRows } = await svc
+    .from("match_players")
+    .select("player_id")
+    .eq("match_id", matchId);
+
+  const playerIds = (matchPlayerRows ?? []).map((r) => r.player_id);
+
+  if (playerIds.length > 0) {
+    const { data: leftPlayers } = await svc
+      .from("queue_entries")
+      .select("player_id")
+      .eq("session_id", match.session_id)
+      .in("player_id", playerIds)
+      .eq("status", "left");
+
+    if (leftPlayers && leftPlayers.length > 0) {
+      return {
+        success: false,
+        message: `Cannot publish — ${leftPlayers.length} player${leftPlayers.length !== 1 ? "s have" : " has"} left the session. Clear this draft and let the engine regenerate.`,
+      };
+    }
+  }
+
   const { error } = await db
     .from("matches")
     .update({ is_published: true })
@@ -840,6 +867,20 @@ export async function publishMatchAction(
     .eq("is_published", false);  // Idempotency guard
 
   if (error) return { success: false, message: error.message };
+
+  // BUG-001 fix (TypeScript side): now that the match is published, promote
+  // all 4 players from 'waiting' to 'on_deck'. This is the deferred step
+  // that the RPC skipped when creating the draft, and is what triggers the
+  // ON_DECK_WARNING alert on each player's device at the right moment.
+  if (playerIds.length > 0) {
+    await svc
+      .from("queue_entries")
+      .update({ status: "on_deck" as const })
+      .eq("session_id", match.session_id)
+      .in("player_id", playerIds)
+      .eq("status", "waiting");  // only promote players still waiting (idempotent)
+  }
+
   return { success: true, message: "Match published." };
 }
 
@@ -852,7 +893,7 @@ export async function publishMatchAction(
 
 export async function publishAllDraftMatchesAction(
   sessionId: string
-): Promise<{ success: boolean; message: string; publishedCount?: number }> {
+): Promise<{ success: boolean; message: string; publishedCount?: number; skippedCount?: number }> {
   if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
 
   const db = await createClient();
@@ -862,22 +903,107 @@ export async function publishAllDraftMatchesAction(
   const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
+  const svc = createServiceClient();
+
+  // BUG-002 fix (Publish All path): mirror the 'left' player guard from
+  // publishMatchAction. Find all draft matches, identify which contain a
+  // player whose queue_entries.status = 'left', and skip those matches.
+  // Clean drafts are published; tainted drafts are returned as skippedCount.
+  const { data: draftMatches, error: draftErr } = await svc
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_published", false);
+
+  if (draftErr) return { success: false, message: draftErr.message };
+
+  const allDraftIds = (draftMatches ?? []).map((m) => m.id);
+  if (allDraftIds.length === 0) {
+    return { success: true, message: "No drafts to publish.", publishedCount: 0 };
+  }
+
+  const { data: matchPlayerRows } = await svc
+    .from("match_players")
+    .select("match_id, player_id")
+    .in("match_id", allDraftIds);
+
+  const allPlayerIds = [...new Set((matchPlayerRows ?? []).map((r) => r.player_id))];
+
+  let taintedMatchIdSet = new Set<string>();
+  if (allPlayerIds.length > 0) {
+    const { data: leftEntries } = await svc
+      .from("queue_entries")
+      .select("player_id")
+      .eq("session_id", sessionId)
+      .in("player_id", allPlayerIds)
+      .eq("status", "left");
+
+    if (leftEntries && leftEntries.length > 0) {
+      const leftPlayerSet = new Set(leftEntries.map((e) => e.player_id));
+      for (const row of matchPlayerRows ?? []) {
+        if (leftPlayerSet.has(row.player_id)) taintedMatchIdSet.add(row.match_id);
+      }
+    }
+  }
+
+  const publishableIds = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
+  const skippedCount = taintedMatchIdSet.size;
+
+  if (publishableIds.length === 0) {
+    return {
+      success: false,
+      message: `All ${allDraftIds.length} draft match${allDraftIds.length !== 1 ? "es have" : " has"} players who left — clear them and let the engine regenerate.`,
+      publishedCount: 0,
+      skippedCount,
+    };
+  }
+
   const { data, error } = await db
     .from("matches")
     .update({ is_published: true })
-    .eq("session_id", sessionId)
-    .eq("status", "pending")
-    .eq("is_published", false)
+    .in("id", publishableIds)
+    .eq("status", "pending")    // Atomic guard — cannot publish promoted match
+    .eq("is_published", false)  // Idempotency guard
     .select("id");
 
   if (error) return { success: false, message: error.message };
 
   const publishedCount = data?.length ?? 0;
+
+  // BUG-001 fix (Publish All path): promote all players in the just-published
+  // drafts from 'waiting' to 'on_deck'. This fires ON_DECK_WARNING alerts
+  // for all 4 × N players simultaneously — one bulk UPDATE via service client.
+  if (publishedCount > 0) {
+    const publishedMatchIds = new Set(data.map((m) => m.id));
+    const publishedPlayerIds = [
+      ...new Set(
+        (matchPlayerRows ?? [])
+          .filter((r) => publishedMatchIds.has(r.match_id))
+          .map((r) => r.player_id)
+      ),
+    ];
+
+    if (publishedPlayerIds.length > 0) {
+      await svc
+        .from("queue_entries")
+        .update({ status: "on_deck" as const })
+        .eq("session_id", sessionId)
+        .in("player_id", publishedPlayerIds)
+        .eq("status", "waiting");
+    }
+  }
+
+  const skippedMsg = skippedCount > 0
+    ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
+    : "";
+
   return {
     success: true,
     message: publishedCount > 0
-      ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.`
-      : "No drafts to publish.",
+      ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.${skippedMsg}`
+      : `No drafts published.${skippedMsg}`,
     publishedCount,
+    skippedCount,
   };
 }

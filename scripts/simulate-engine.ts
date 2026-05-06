@@ -206,7 +206,10 @@ function runEngine(
     const ids = four.map((p) => p.player_id);
     if (isDiversityViolation(ids, slicedRosters)) {
       if (log) console.log(Y(`     ⚠ diversity violation — 3+ players met recently. Attempting forced rotation…`));
-      const { teamA, teamB } = rotatedDraft(four as ScoredPlayer[], slicedRosters);
+      // Simulation does not enforce the partner cap — null is unreachable here.
+      const rotated = rotatedDraft(four as ScoredPlayer[], slicedRosters);
+      if (!rotated) continue;
+      const { teamA, teamB } = rotated;
       const match: SimMatch = {
         id: crypto.randomUUID(),
         teamA: teamA as SimPlayer[],
@@ -221,7 +224,10 @@ function runEngine(
       continue;
     }
 
-    const { teamA, teamB } = snakeDraft(four as ScoredPlayer[]);
+    // Simulation does not enforce the partner cap — null is unreachable here.
+    const draft = snakeDraft(four as ScoredPlayer[]);
+    if (!draft) continue;
+    const { teamA, teamB } = draft;
     const match: SimMatch = {
       id: crypto.randomUUID(),
       teamA: teamA as SimPlayer[],

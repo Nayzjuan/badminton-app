@@ -114,9 +114,12 @@ export async function swapPlayerInMatch(
 
   // ── Guard 2: Match status — must still be pending ─────────
   // Read via service client so RLS doesn't block.
+  // BUG-001 fix: fetch is_published so we can pass it to the swap RPC.
+  // For draft matches (is_published=false), the RPC skips step c so the
+  // incoming player stays 'waiting' and no ON_DECK_WARNING alert fires.
   const { data: match } = await db
     .from("matches")
-    .select("id, status, session_id")
+    .select("id, status, session_id, is_published")
     .eq("id", matchId)
     .single();
 
@@ -185,6 +188,7 @@ export async function swapPlayerInMatch(
     p_in_player_id:  inPlayerId,
     p_session_id:    match.session_id,
     p_team:          outPlayerRow.team,
+    p_is_published:  match.is_published,
   });
 
   if (swapError) {
