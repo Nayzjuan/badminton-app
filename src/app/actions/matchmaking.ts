@@ -66,10 +66,17 @@ import { isValidUUID } from "@/lib/validate";
 // call is a no-op — the first run will already produce the
 // correct on-deck state when it finishes.
 //
-// Scope: single Node.js process. For multi-process deployments a
-// Postgres advisory lock (pg_try_advisory_xact_lock) is the
-// correct cross-instance serialization primitive, but the Set is
-// sufficient for the current single-worker setup and is cheap.
+// Scope: single Node.js process only — this Set has no effect in
+// multi-process or serverless deployments (e.g. Vercel, where each
+// request may land on a different worker).
+//
+// Cross-process serialisation is now enforced at the DB layer:
+// create_match_with_players (migration 20260507000000) acquires a
+// row-level lock (SELECT … FOR UPDATE ORDER BY player_id) on the
+// target queue_entries rows before checking for conflicts in
+// match_players. A second concurrent transaction blocks at the lock
+// and then hits the conflict check — returning NULL — once the first
+// commits. executeMatch treats NULL as a graceful slot-skip.
 const engineRunningFor = new Set<string>();
 
 export interface MatchmakingResult {
@@ -1220,17 +1227,22 @@ async function executeMatch(
 ): Promise<MatchmakingResult> {
   // ── Atomic write: match + players + queue statuses + court ──
   // All steps run inside a single Postgres transaction via the
-  // create_match_with_players RPC (migration 20260421000000).
+  // create_match_with_players RPC.
   //
-  // Previously: 3 sequential writes with only partial compensation
-  //   — Write 3 (queue status update) had no error check, meaning
-  //     a failure left matched players stuck as "waiting" and the
-  //     engine could create a duplicate match for them on the next tick.
-  //   — A server crash between Write 1 and Write 2 produced a ghost
-  //     match row with 0 players visible across the TV board and
-  //     leaderboard queries.
+  // RPC evolution:
+  //   20260421000000 — initial atomic write (3 sequential writes → 1 RPC)
+  //   20260506000000 — adds p_is_published for Draft Mode (BUG-001)
+  //   20260507000000 — adds TOCTOU guards (Guard 0 + Guard 1 + Guard 2)
   //
-  // Now: Postgres rolls back the entire transaction on any failure.
+  // NULL return convention:
+  //   The RPC returns RETURNS uuid (scalar). When any guard detects a
+  //   conflict or a player no longer 'waiting', it returns NULL instead
+  //   of raising an exception. The Supabase JS client surfaces this as
+  //   { data: null, error: null } — distinct from a hard error
+  //   ({ data: null, error: PostgrestError }). The split checks below
+  //   rely on this scalar-NULL contract; if the RPC were ever changed to
+  //   RETURNS SETOF uuid, PostgREST would wrap null as [] and this
+  //   detection would break silently.
   const now = new Date().toISOString();
 
   // BUG-001 fix: pass p_is_published=false so the RPC skips the
@@ -1253,10 +1265,29 @@ async function executeMatch(
     }
   );
 
-  if (rpcError || !matchId) {
+  if (rpcError) {
+    // Hard DB error — surface as a genuine failure.
     return {
       success: false,
-      message: `Failed to create match: ${rpcError?.message ?? "Unknown error"}`,
+      message: `Failed to create match: ${rpcError.message}`,
+    };
+  }
+
+  if (!matchId) {
+    // RPC returned NULL: the DB-level TOCTOU guard detected that a
+    // concurrent transaction already committed one or more of the
+    // proposed players into an active match. This is not an error —
+    // it's the correct serialised outcome. Log a warning so operators
+    // can monitor frequency, then signal a graceful slot-skip to the
+    // caller (runEngineInternal logs the skip and moves to the next slot).
+    console.warn(
+      "[matchmaking] executeMatch: RPC returned NULL — concurrent matchmaking " +
+      "run already committed one or more of these players. Skipping slot gracefully.",
+      { sessionId, teamA: teamA.map((p) => p.display_name), teamB: teamB.map((p) => p.display_name) }
+    );
+    return {
+      success: false,
+      message: "Slot skipped: player already committed by a concurrent matchmaking run.",
     };
   }
 
