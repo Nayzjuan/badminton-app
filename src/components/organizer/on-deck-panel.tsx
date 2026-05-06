@@ -50,11 +50,13 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { CheckCircle, Clock, EyeOff, GripVertical, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, EyeOff, GripVertical, Trash2, X } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
 import { H2HStrip } from "@/components/organizer/h2h-strip";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
+import type { CapSaturationPayload } from "@/lib/broadcast";
+import { MAX_PARTNERSHIP_REPEATS } from "@/lib/constants";
 import type { SkillLevel } from "@/types/database";
 
 // ── SwapContext ───────────────────────────────────────────────
@@ -100,6 +102,13 @@ interface OnDeckPanelProps {
   onPublishMatch: (matchId: string) => Promise<{ error?: string }>;
   /** Draft Mode: publish all draft matches for this session. */
   onPublishAllDrafts: () => Promise<{ error?: string; publishedCount?: number }>;
+  /**
+   * Non-null when the partner-pair cap blocked the last match attempt.
+   * Renders a dismissable notice above the draft banner.
+   */
+  capSaturation?: CapSaturationPayload | null;
+  /** Dismiss handler — clears the capSaturation notice from the hook state. */
+  onDismissCapSaturation?: () => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -461,6 +470,92 @@ function OverlayCard({
   );
 }
 
+// ── CapSaturationNotice ───────────────────────────────────────
+// Extracted to avoid duplicating the same JSX in both the empty-
+// state and non-empty-state render paths. Returns null when
+// capSaturation is null so callers need no extra guard.
+
+function CapSaturationNotice({
+  capSaturation,
+  onDismiss,
+}: {
+  capSaturation: CapSaturationPayload | null;
+  onDismiss?: () => void;
+}) {
+  if (!capSaturation) return null;
+
+  const isRedZone = capSaturation.type === "red_zone";
+
+  return (
+    <div
+      role="alert"
+      aria-label="Partner-pair cap notice"
+      className={[
+        "rounded-xl border animate-in slide-in-from-top-1 fade-in duration-200",
+        isRedZone
+          ? "border-red-300 dark:border-red-700/60 bg-red-50 dark:bg-red-950/40"
+          : "border-orange-200 dark:border-orange-500/30 bg-orange-50/80 dark:bg-orange-500/10",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3 px-4 py-3">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <AlertTriangle
+            className={[
+              "h-4 w-4 mt-0.5 shrink-0",
+              isRedZone
+                ? "text-red-600 dark:text-red-400"
+                : "text-orange-500 dark:text-orange-400",
+            ].join(" ")}
+          />
+          <div className="min-w-0">
+            <p
+              className={[
+                "text-sm font-semibold",
+                isRedZone
+                  ? "text-red-900 dark:text-red-300"
+                  : "text-orange-900 dark:text-orange-300",
+              ].join(" ")}
+            >
+              Partner-pair cap reached
+              {isRedZone && (
+                <span className="ml-1.5 text-xs font-bold uppercase tracking-wider">
+                  — urgent
+                </span>
+              )}
+            </p>
+            <p
+              className={[
+                "text-xs mt-0.5 leading-relaxed",
+                isRedZone
+                  ? "text-red-700 dark:text-red-400"
+                  : "text-orange-700 dark:text-orange-400",
+              ].join(" ")}
+            >
+              {isRedZone
+                ? `${capSaturation.anchorPlayerName} has been waiting over 25 min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
+                : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`}
+            </p>
+          </div>
+        </div>
+        {onDismiss && (
+          <button
+            onClick={onDismiss}
+            aria-label="Dismiss partner-pair cap notice"
+            className={[
+              "shrink-0 rounded-md p-1 transition-colors",
+              isRedZone
+                ? "text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50"
+                : "text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30",
+            ].join(" ")}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main panel ────────────────────────────────────────────────
 
 function OnDeckPanelInner({
@@ -471,6 +566,8 @@ function OnDeckPanelInner({
   onPlayerTap,
   onPublishMatch,
   onPublishAllDrafts,
+  capSaturation = null,
+  onDismissCapSaturation,
 }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
@@ -656,19 +753,28 @@ function OnDeckPanelInner({
   const draftCount = draftMatches.length;
 
   // ── Empty state ──────────────────────────────────────────────
+  // NOTE: still wraps in space-y-4 so the cap saturation notice can
+  // appear alongside the empty state — the most common scenario for
+  // cap_saturation firing is when no on-deck matches exist at all.
 
   if (orderedMatches.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-card/50 px-6 py-8 text-center">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
-          <Clock className="h-5 w-5 text-slate-400 dark:text-muted-foreground" />
+      <div className="space-y-4">
+        <CapSaturationNotice
+          capSaturation={capSaturation}
+          onDismiss={onDismissCapSaturation}
+        />
+        <div className="rounded-xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-card/50 px-6 py-8 text-center">
+          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
+            <Clock className="h-5 w-5 text-slate-400 dark:text-muted-foreground" />
+          </div>
+          <p className="text-sm font-medium text-slate-600 dark:text-foreground">
+            No matches on deck
+          </p>
+          <p className="mt-1 text-xs text-slate-400 dark:text-muted-foreground">
+            The engine fills this automatically, or create one manually in Queue &amp; Match Control.
+          </p>
         </div>
-        <p className="text-sm font-medium text-slate-600 dark:text-foreground">
-          No matches on deck
-        </p>
-        <p className="mt-1 text-xs text-slate-400 dark:text-muted-foreground">
-          The engine fills this automatically, or create one manually in Queue &amp; Match Control.
-        </p>
       </div>
     );
   }
@@ -677,6 +783,12 @@ function OnDeckPanelInner({
 
   return (
     <div className="space-y-4">
+      {/* ── Cap saturation notice ── shown when pair cap blocked a match ── */}
+      <CapSaturationNotice
+        capSaturation={capSaturation}
+        onDismiss={onDismissCapSaturation}
+      />
+
       {/* ── Publish All banner ── shown when there are drafts ── */}
       {draftCount > 0 && (
         <div

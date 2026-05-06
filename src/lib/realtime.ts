@@ -18,6 +18,7 @@ import type {
   OrganizerInterventionPayload,
   SessionClosedPayload,
   AutoMatchmakingToggledPayload,
+  CapSaturationPayload,
 } from "@/lib/broadcast";
 
 type TypedClient = SupabaseClient<Database>;
@@ -225,7 +226,8 @@ export function subscribeToOrganizerBroadcast(
   sessionId: string,
   onIntervention: (payload: OrganizerInterventionPayload) => void,
   onSessionClosed?: (payload: SessionClosedPayload) => void,
-  onAutoMatchmakingToggled?: (payload: AutoMatchmakingToggledPayload) => void
+  onAutoMatchmakingToggled?: (payload: AutoMatchmakingToggledPayload) => void,
+  onCapSaturation?: (payload: CapSaturationPayload) => void
 ): () => void {
   const channelName = `session-events:${sessionId}`;
 
@@ -253,6 +255,14 @@ export function subscribeToOrganizerBroadcast(
       (msg: { payload: AutoMatchmakingToggledPayload }) => {
         console.log(`[realtime] ${channelName} auto_matchmaking_toggled:`, msg.payload);
         onAutoMatchmakingToggled?.(msg.payload);
+      }
+    )
+    .on(
+      "broadcast",
+      { event: "cap_saturation" },
+      (msg: { payload: CapSaturationPayload }) => {
+        console.log(`[realtime] ${channelName} cap_saturation:`, msg.payload);
+        onCapSaturation?.(msg.payload);
       }
     )
     .subscribe((status, err) => {

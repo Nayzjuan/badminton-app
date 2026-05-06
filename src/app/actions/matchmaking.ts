@@ -27,6 +27,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
+import { broadcastCapSaturation } from "@/lib/broadcast";
 import {
   SKILL_VARIANCE_TARGET,
   SKILL_VARIANCE_MAX,
@@ -40,6 +41,7 @@ import {
   ON_DECK_LOOKAHEAD,
   MAX_ON_DECK_MATCHES,
   MIN_FREE_POOL_FOR_ON_DECK,
+  MAX_PARTNERSHIP_REPEATS,
 } from "@/lib/constants";
 import {
   computePriorityScore,
@@ -50,6 +52,7 @@ import {
   getEffectiveLookback,
   scoreCandidates,
   buildCombinationGroup,
+  pairKey,
   type ScoredPlayer,
 } from "@/lib/matchmaking-core";
 import type { QueueWithWaitTime } from "@/types/database";
@@ -284,11 +287,15 @@ async function runEngineInternal(
   // the lookahead nor the cap ever creates phantom matches.
   const capacity = Math.min(courtCount + ON_DECK_LOOKAHEAD, MAX_ON_DECK_MATCHES);
 
+  // BUG-003 fix: count only published pending matches toward capacity.
+  // Unpublished drafts are not promotable, so counting them would freeze
+  // the engine as soon as the draft cap is reached — silencing Red Zone.
   const { count: existingOnDeck, error: deckErr } = await supabase
     .from("matches")
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .eq("is_published", true);
 
   if (deckErr) {
     console.error(`[engine] runEngineInternal: pending count query failed — ${deckErr.message}`);
@@ -522,11 +529,15 @@ export async function promoteOnDeckMatchInternal(
 
   if (matchPlayers && matchPlayers.length > 0) {
     const playerIds = matchPlayers.map((mp) => mp.player_id);
+    // BUG-002 fix: guard against overwriting a 'left' player's status.
+    // If the organizer removed a player between publish and promote,
+    // their queue_entries row should remain 'left', not flip to 'playing'.
     await supabase
       .from("queue_entries")
       .update({ status: "playing" as const })
       .eq("session_id", sessionId)
-      .in("player_id", playerIds);
+      .in("player_id", playerIds)
+      .neq("status", "left");
   }
 
   const playerIds = (matchPlayers ?? []).map((mp) => mp.player_id);
@@ -611,6 +622,11 @@ async function runAlgorithm(
     };
   }
 
+  // ── 1c. Fetch session-scoped partnership counts ───────────
+  // Session-scoped (not anchor-specific), so we hoist it here before
+  // anchor selection. One fetch per runAlgorithm call — not per candidate.
+  const partnershipCounts = await fetchPartnershipCounts(supabase, sessionId);
+
   // ── 2. Enrich pool with priorityScore, sort DESC ──────────
   // Primary: priorityScore DESC — most urgent player anchors.
   // Tiebreaker: joined_at ASC — among equal-score players (common in
@@ -653,8 +669,30 @@ async function runAlgorithm(
   // (callNextMatch inline engine, or direct court assignment).
   const recentRosters = cachedRecentRosters ?? await fetchRecentRosters(supabase, sessionId);
 
-  // Candidates = everyone except the anchor (already priority-sorted).
-  const candidates = pool.slice(1);
+  // Candidates = everyone except the anchor (already priority-sorted),
+  // pre-filtered to remove any player who has already reached the hard
+  // partner-pair cap with the anchor. This single filter is the universal
+  // enforcement point — it propagates through every downstream path:
+  // skill expansion, Tier-1/2 diversity swap, Tier-3 rotation, and the
+  // last-resort fallback. No waiver logic anywhere in the call stack.
+  const candidates = pool.slice(1).filter(
+    (c) =>
+      (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
+      MAX_PARTNERSHIP_REPEATS
+  );
+
+  // Track whether the cap reduced the candidate pool.
+  // Used at the no-match return to decide whether to fire the saturation signal.
+  const capWasActive = pool.length - 1 > candidates.length;
+
+  if (process.env.DEBUG_MATCHMAKING === "true") {
+    const filtered = pool.length - 1 - candidates.length;
+    if (filtered > 0) {
+      console.log(
+        `[matchmaking] Partner-cap pre-filter: removed ${filtered} candidate(s) at cap with anchor ${anchor.display_name}`
+      );
+    }
+  }
 
   // ── 6. Last-resort time fallback (> 15 min, non-Red Zone path) ──
   // Fires only when the anchor has waited > FALLBACK_WAIT_MINUTES
@@ -743,14 +781,22 @@ async function runAlgorithm(
 
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (!isDiversityViolation(swappedIds, activeRosters)) {
+              const draft = snakeDraft([anchor, ...swapGroup], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+              if (!draft) {
+                if (process.env.DEBUG_MATCHMAKING === "true") {
+                  console.log(
+                    `[matchmaking] Tier-1 swap: all team splits capped for ${candidate.display_name} — skipping`
+                  );
+                }
+                continue;
+              }
               if (process.env.DEBUG_MATCHMAKING === "true") {
                 console.log(`[matchmaking] Tier-1 swap succeeded — replaced with ${candidate.display_name}`);
               }
-              const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
               // Inherit isMixed from the current window — swap doesn't change
               // the skill spread, only the 3rd companion.
               const isMixedSwap = maxVariance > SKILL_VARIANCE_MAX;
-              return executeMatch(supabase, sessionId, courtId, teamA, teamB, isMixedSwap, isOnDeck);
+              return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, isMixedSwap, isOnDeck);
             }
           }
 
@@ -776,14 +822,22 @@ async function runAlgorithm(
 
                 const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
                 if (!isDiversityViolation(swappedIds, activeRosters)) {
+                  const draft = snakeDraft([anchor, ...swapGroup], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+                  if (!draft) {
+                    if (process.env.DEBUG_MATCHMAKING === "true") {
+                      console.log(
+                        `[matchmaking] Tier-2 expanded swap: all team splits capped for ${candidate.display_name} — skipping`
+                      );
+                    }
+                    continue;
+                  }
                   if (process.env.DEBUG_MATCHMAKING === "true") {
                     console.log(
                       `[matchmaking] Tier-2 expanded swap (±${SKILL_VARIANCE_MAX}) — replaced with ${candidate.display_name}`
                     );
                   }
-                  const { teamA, teamB } = snakeDraft([anchor, ...swapGroup]);
                   // ±SKILL_VARIANCE_MAX is still within normal parameters (not mixed).
-                  return executeMatch(supabase, sessionId, courtId, teamA, teamB, false, isOnDeck);
+                  return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, false, isOnDeck);
                 }
               }
             }
@@ -794,25 +848,47 @@ async function runAlgorithm(
           // rotatedDraft cycles through 3 team-split configurations so that
           // partners change on each forced repeat, providing variety even
           // when the opponent group cannot be changed.
+          // If every split is also capped, treat as slot failure and expand.
+          const isMixedRotation = maxVariance > SKILL_VARIANCE_MAX;
+          const rotatedResult = rotatedDraft(
+            [anchor, ...group],
+            recentRosters,
+            partnershipCounts,
+            MAX_PARTNERSHIP_REPEATS
+          );
+          if (!rotatedResult) {
+            if (process.env.DEBUG_MATCHMAKING === "true") {
+              console.warn(
+                "[matchmaking] Tier-3 rotation: all team splits capped — expanding skill window"
+              );
+            }
+            continue;
+          }
           console.warn(
             "[matchmaking] No diverse swap found — applying partner rotation (forced repeat)"
           );
-          const isMixedRotation = maxVariance > SKILL_VARIANCE_MAX;
-          const { teamA, teamB } = rotatedDraft([anchor, ...group], recentRosters);
-          return executeMatch(supabase, sessionId, courtId, teamA, teamB, isMixedRotation, isOnDeck);
+          return executeMatch(supabase, sessionId, courtId, rotatedResult.teamA, rotatedResult.teamB, isMixedRotation, isOnDeck);
         }
       }
 
       const isMixed = maxVariance > SKILL_VARIANCE_MAX;
+      const allFour = [anchor, ...group];
+      const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+      if (!draft) {
+        if (process.env.DEBUG_MATCHMAKING === "true") {
+          console.log(
+            `[matchmaking] ±${maxVariance} window: group valid but all team splits capped — expanding`
+          );
+        }
+        continue;
+      }
       if (process.env.DEBUG_MATCHMAKING === "true") {
         console.log(
           `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +
           (isMixed ? " (mixed level)" : "")
         );
       }
-      const allFour = [anchor, ...group];
-      const { teamA, teamB } = snakeDraft(allFour);
-      return executeMatch(supabase, sessionId, courtId, teamA, teamB, isMixed, isOnDeck);
+      return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, isMixed, isOnDeck);
     }
 
     if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -841,9 +917,37 @@ async function runAlgorithm(
     
     if (fallbackGroup.length >= 3) {
       const allFour = [anchor, ...fallbackGroup];
-      const { teamA, teamB } = snakeDraft(allFour);
-      return executeMatch(supabase, sessionId, courtId, teamA, teamB, true, isOnDeck);
+      const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+      if (draft) {
+        return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, true, isOnDeck);
+      }
+      // All team splits capped even in last resort — fall through to no-match.
+      if (process.env.DEBUG_MATCHMAKING === "true") {
+        console.log("[matchmaking] LAST-RESORT FALLBACK: all team splits capped — no match formed");
+      }
     }
+  }
+
+  // ── Cap saturation signal ──────────────────────────────────────
+  // Fire only when the cap was the reason the candidate pool shrank
+  // AND no match was formed despite that. This pinpoints cap saturation
+  // as the culprit so the organizer can act (manual override or wait for
+  // existing matches to complete and free up the pair constraint).
+  // Fire-and-forget: broadcast failure must never block the no-match return.
+  if (capWasActive) {
+    if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.log(
+        `[matchmaking] Cap saturation signal: anchor=${anchor.display_name} ` +
+        `type=${anchorIsRedZone ? "red_zone" : "general"} — emitting broadcast`
+      );
+    }
+    broadcastCapSaturation(sessionId, {
+      type: anchorIsRedZone ? "red_zone" : "general",
+      anchorPlayerId: anchor.player_id,
+      anchorPlayerName: anchor.display_name,
+    }).catch((err) => {
+      console.warn("[matchmaking] broadcastCapSaturation failed (non-fatal):", err);
+    });
   }
 
   return {
@@ -905,6 +1009,83 @@ async function fetchRecentRosters(
   return recentMatchIds
     .map((id) => rosterMap.get(id) ?? [])
     .filter((r) => r.length > 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// HELPER: fetchPartnershipCounts
+// ─────────────────────────────────────────────────────────────
+// Returns a Map<pairKey, count> of how many times each same-team
+// pair has played together in this session. Covers all match statuses
+// that represent a committed team assignment (completed, in_progress,
+// pending — including unpublished drafts) so the cap applies the
+// moment a draft match is created, not only after publish.
+//
+// Called once per runAlgorithm invocation (hoisted above the anchor
+// selection loop) so it is NOT re-fetched per candidate scan.
+
+async function fetchPartnershipCounts(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  sessionId: string
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+
+  // Step 1: all match IDs for this session with committed statuses.
+  const { data: sessionMatches, error: matchErr } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .in("status", ["completed", "in_progress", "pending"]);
+
+  if (matchErr || !sessionMatches || sessionMatches.length === 0) {
+    if (matchErr) {
+      console.warn("[matchmaking] fetchPartnershipCounts: match query failed:", matchErr.message);
+    }
+    return counts;
+  }
+
+  const matchIds = sessionMatches.map((m) => m.id);
+
+  // Step 2: all match_players rows for those matches.
+  const { data: rows, error: rowsErr } = await supabase
+    .from("match_players")
+    .select("match_id, player_id, team")
+    .in("match_id", matchIds);
+
+  if (rowsErr || !rows || rows.length === 0) {
+    if (rowsErr) {
+      console.warn("[matchmaking] fetchPartnershipCounts: players query failed:", rowsErr.message);
+    }
+    return counts;
+  }
+
+  // Step 3: group by (match_id, team), count all same-team pairs.
+  // Using a composite key avoids a nested match_id lookup on each row.
+  const byMatchTeam = new Map<string, string[]>();
+  for (const row of rows) {
+    if (row.team == null) continue;
+    const key = `${row.match_id}:${row.team}`;
+    const group = byMatchTeam.get(key) ?? [];
+    group.push(row.player_id);
+    byMatchTeam.set(key, group);
+  }
+
+  for (const teammates of byMatchTeam.values()) {
+    for (let i = 0; i < teammates.length; i++) {
+      for (let j = i + 1; j < teammates.length; j++) {
+        const key = pairKey(teammates[i], teammates[j]);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+  }
+
+  if (process.env.DEBUG_MATCHMAKING === "true") {
+    console.log(
+      `[matchmaking] fetchPartnershipCounts: ${counts.size} tracked pair(s) across ` +
+      `${sessionMatches.length} match(es) for session ${sessionId}`
+    );
+  }
+
+  return counts;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1052,6 +1233,10 @@ async function executeMatch(
   // Now: Postgres rolls back the entire transaction on any failure.
   const now = new Date().toISOString();
 
+  // BUG-001 fix: pass p_is_published=false so the RPC skips the
+  // queue_entries update for engine drafts. Players stay 'waiting'
+  // until publishMatchAction promotes them to 'on_deck', preventing
+  // the ON_DECK_WARNING alert from firing for an invisible match.
   const { data: matchId, error: rpcError } = await supabase.rpc(
     "create_match_with_players",
     {
@@ -1064,6 +1249,7 @@ async function executeMatch(
       p_team_a_ids:     teamA.map((p) => p.player_id),
       p_team_b_ids:     teamB.map((p) => p.player_id),
       p_origin:         "auto" as const,
+      p_is_published:   false,
     }
   );
 

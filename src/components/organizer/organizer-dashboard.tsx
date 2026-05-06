@@ -175,6 +175,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     removeFromQueue,
     pausePlayer,
     updateTimeLimit,
+    capSaturation,
+    dismissCapSaturation,
   } = useOrganizerData(session.id, session);
 
   // ── Organizer self-join ─────────────────────────────────────
@@ -799,6 +801,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               onPlayerTap={handlePlayerTap}
               onPublishMatch={publishMatch}
               onPublishAllDrafts={publishAllDrafts}
+              capSaturation={capSaturation}
+              onDismissCapSaturation={dismissCapSaturation}
             />
 
             <ActiveCourts

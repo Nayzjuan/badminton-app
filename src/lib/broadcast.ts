@@ -123,6 +123,41 @@ export async function broadcastAutoMatchmakingToggled(
   );
 }
 
+// ── cap_saturation ────────────────────────────────────────
+
+export interface CapSaturationPayload {
+  /**
+   * "general"  — anchor is waiting but not yet Red Zone;
+   *              the UI surfaces an informational notice.
+   * "red_zone" — anchor has waited ≥ CRITICAL_WAIT_MINUTES;
+   *              the UI surfaces an urgent alert.
+   */
+  type: "general" | "red_zone";
+  anchorPlayerId: string;
+  anchorPlayerName: string;
+}
+
+/**
+ * Notify organizers that the partner-pair cap prevented the engine
+ * from forming a match for the anchor player.
+ *
+ * Fire-and-forget: failures are logged but never surfaced to the
+ * caller — the no-match return already communicates the outcome.
+ *
+ * Channel: session-events:{sessionId}
+ * Event:   cap_saturation
+ */
+export async function broadcastCapSaturation(
+  sessionId: string,
+  payload: CapSaturationPayload
+): Promise<void> {
+  await postBroadcast(
+    `realtime:session-events:${sessionId}`,
+    "cap_saturation",
+    payload
+  );
+}
+
 /**
  * Notify all players in a session that the organizer has
  * intervened (cleared an On Deck match or cancelled an

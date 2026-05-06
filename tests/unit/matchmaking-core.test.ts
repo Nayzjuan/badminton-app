@@ -26,12 +26,14 @@ import {
   buildCombinationGroup,
   getEffectiveLookback,
   rotatedDraft,
+  pairKey,
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
   GAME_PENALTY_MINUTES,
   RED_ZONE_SCORE_FLOOR,
   SKILL_VARIANCE_MAX,
+  MAX_PARTNERSHIP_REPEATS,
 } from "@/lib/constants";
 import type { ScoredPlayer } from "@/lib/matchmaking-core";
 import type { QueueWithWaitTime } from "@/types/database";
@@ -265,7 +267,10 @@ describe("snakeDraft", () => {
       makePlayer("3", { skillInt: 4 }),
       makePlayer("4", { skillInt: 3 }),
     ];
-    const { teamA, teamB } = snakeDraft(players);
+    // No cap args → always returns the balanced split (never null).
+    const result = snakeDraft(players);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
     expect(teamA).toHaveLength(2);
     expect(teamB).toHaveLength(2);
   });
@@ -277,10 +282,12 @@ describe("snakeDraft", () => {
     const p3 = makePlayer("3", { skillInt: 3 });
 
     // Pass in shuffled order — snakeDraft sorts internally
-    const { teamA, teamB } = snakeDraft([p3, p6, p4, p5]);
+    const result = snakeDraft([p3, p6, p4, p5]);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
 
-    const teamASkills = teamA.map((p) => p.skill_level_int).sort((a, b) => a - b);
-    const teamBSkills = teamB.map((p) => p.skill_level_int).sort((a, b) => a - b);
+    const teamASkills = teamA.map((p: ScoredPlayer) => p.skill_level_int).sort((a: number, b: number) => a - b);
+    const teamBSkills = teamB.map((p: ScoredPlayer) => p.skill_level_int).sort((a: number, b: number) => a - b);
 
     // teamA gets [6, 3], teamB gets [5, 4]
     expect(teamASkills).toEqual([3, 6]);
@@ -295,9 +302,11 @@ describe("snakeDraft", () => {
       makePlayer("3", { skillInt: 5 }),
       makePlayer("4", { skillInt: 6 }),
     ];
-    const { teamA, teamB } = snakeDraft(players);
-    const sumA = teamA.reduce((s, p) => s + p.skill_level_int, 0);
-    const sumB = teamB.reduce((s, p) => s + p.skill_level_int, 0);
+    const result = snakeDraft(players);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
+    const sumA = teamA.reduce((s: number, p: ScoredPlayer) => s + p.skill_level_int, 0);
+    const sumB = teamB.reduce((s: number, p: ScoredPlayer) => s + p.skill_level_int, 0);
     expect(sumA).toBe(sumB);
   });
 
@@ -320,7 +329,9 @@ describe("snakeDraft", () => {
       makePlayer("3", { skillInt: 4 }),
       makePlayer("4", { skillInt: 4 }),
     ];
-    const { teamA, teamB } = snakeDraft(players);
+    const result = snakeDraft(players);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
     expect(teamA).toHaveLength(2);
     expect(teamB).toHaveLength(2);
     // All IDs should be accounted for with no duplicates
@@ -776,7 +787,10 @@ describe("rotatedDraft", () => {
 
   it("splitIndex=0 (no repeats): teamA=[highest+lowest], teamB=[2nd+3rd] — same as snakeDraft", () => {
     const { p6, p5, p4, p3 } = makeFour();
-    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], []);
+    // No cap args → always returns the natural split (never null).
+    const result = rotatedDraft([p6, p5, p4, p3], []);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
     // Sorted DESC: [p6(0), p5(1), p4(2), p3(3)]
     // teamA = [p6, p3], teamB = [p5, p4]
     expect(teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
@@ -787,7 +801,9 @@ describe("rotatedDraft", () => {
     const { p6, p5, p4, p3 } = makeFour();
     const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
     // Exactly 1 roster containing all 4 → repeatCount=1 → splitIndex=1
-    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], [allFourIds]);
+    const result = rotatedDraft([p6, p5, p4, p3], [allFourIds]);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
     // teamA = [p6, p5], teamB = [p4, p3]
     expect(teamA.map((p) => p.player_id).sort()).toEqual(["p5", "p6"]);
     expect(teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p4"]);
@@ -797,7 +813,9 @@ describe("rotatedDraft", () => {
     const { p6, p5, p4, p3 } = makeFour();
     const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
     // 2 rosters both containing all 4 → repeatCount=2 → splitIndex=2
-    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], [allFourIds, allFourIds]);
+    const result = rotatedDraft([p6, p5, p4, p3], [allFourIds, allFourIds]);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
     // teamA = [p6, p4], teamB = [p5, p3]
     expect(teamA.map((p) => p.player_id).sort()).toEqual(["p4", "p6"]);
     expect(teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p5"]);
@@ -807,10 +825,12 @@ describe("rotatedDraft", () => {
     const { p6, p5, p4, p3 } = makeFour();
     const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
     // 3 full-repeat rosters → repeatCount=3 → splitIndex=0 (snakeDraft)
-    const { teamA, teamB } = rotatedDraft(
+    const result = rotatedDraft(
       [p6, p5, p4, p3],
       [allFourIds, allFourIds, allFourIds]
     );
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
     expect(teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
     expect(teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
   });
@@ -823,7 +843,9 @@ describe("rotatedDraft", () => {
       ["p6", "p5", "p3", "outsider2"],  // missing p4
       ["p6", "p4", "p3", "outsider3"],  // missing p5
     ];
-    const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], partialRosters);
+    const result = rotatedDraft([p6, p5, p4, p3], partialRosters);
+    expect(result).not.toBeNull();
+    const { teamA, teamB } = result!;
     // repeatCount=0 → splitIndex=0 → snakeDraft output
     expect(teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
     expect(teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
@@ -835,7 +857,9 @@ describe("rotatedDraft", () => {
 
     for (const rosterCount of [0, 1, 2]) {
       const recentRosters = Array.from({ length: rosterCount }, () => allFourIds);
-      const { teamA, teamB } = rotatedDraft([p6, p5, p4, p3], recentRosters);
+      const result = rotatedDraft([p6, p5, p4, p3], recentRosters);
+      expect(result).not.toBeNull();
+      const { teamA, teamB } = result!;
       expect(teamA).toHaveLength(2);
       expect(teamB).toHaveLength(2);
       // No duplicates across teams
@@ -857,9 +881,280 @@ describe("rotatedDraft", () => {
     // Pass in shuffled order; result should be same as sorted order
     const shuffled = rotatedDraft([p3, p6, p4, p5], []);
     const sorted  = rotatedDraft([p6, p5, p4, p3], []);
-    expect(shuffled.teamA.map((p) => p.player_id).sort())
-      .toEqual(sorted.teamA.map((p) => p.player_id).sort());
-    expect(shuffled.teamB.map((p) => p.player_id).sort())
-      .toEqual(sorted.teamB.map((p) => p.player_id).sort());
+    expect(shuffled).not.toBeNull();
+    expect(sorted).not.toBeNull();
+    expect(shuffled!.teamA.map((p) => p.player_id).sort())
+      .toEqual(sorted!.teamA.map((p) => p.player_id).sort());
+    expect(shuffled!.teamB.map((p) => p.player_id).sort())
+      .toEqual(sorted!.teamB.map((p) => p.player_id).sort());
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// pairKey
+// ─────────────────────────────────────────────────────────────
+// Returns a canonical symmetric key for a same-team pair so that
+// pairKey(a, b) === pairKey(b, a). The lexicographically smaller
+// ID always sorts to the left of the colon.
+
+describe("pairKey", () => {
+  it("is symmetric: pairKey(a, b) === pairKey(b, a)", () => {
+    expect(pairKey("alice", "bob")).toBe(pairKey("bob", "alice"));
+  });
+
+  it("places the lexicographically smaller ID first", () => {
+    // "alice" < "bob" alphabetically → "alice:bob"
+    expect(pairKey("alice", "bob")).toBe("alice:bob");
+  });
+
+  it("places the lexicographically larger ID second", () => {
+    // "zzz" > "aaa" → result is "aaa:zzz"
+    expect(pairKey("zzz", "aaa")).toBe("aaa:zzz");
+  });
+
+  it("handles UUID-shaped strings consistently", () => {
+    const u1 = "00000000-0000-0000-0000-000000000001";
+    const u2 = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+    // u1 < u2 lexicographically
+    expect(pairKey(u1, u2)).toBe(`${u1}:${u2}`);
+    expect(pairKey(u2, u1)).toBe(`${u1}:${u2}`);
+  });
+
+  it("is idempotent: same ID on both sides returns 'id:id'", () => {
+    expect(pairKey("p1", "p1")).toBe("p1:p1");
+  });
+
+  it("produces distinct keys for different pairs", () => {
+    // Ensure there is no accidental collision between (a,b) and (a,c)
+    expect(pairKey("a", "b")).not.toBe(pairKey("a", "c"));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// snakeDraft — cap enforcement
+// ─────────────────────────────────────────────────────────────
+// With cap args, snakeDraft tries 3 splits in descending
+// skill-balance order (0→2→1) and returns the first that has
+// both team pairs below the cap. Returns null if all are capped.
+//
+// Reference splits for players sorted DESC [a(6), b(5), c(4), d(3)]:
+//   Split 0 (most balanced): teamA=[a,d], teamB=[b,c]
+//     pairKey("a","d") = "a:d",  pairKey("b","c") = "b:c"
+//   Split 2 (cross):          teamA=[a,c], teamB=[b,d]
+//     pairKey("a","c") = "a:c",  pairKey("b","d") = "b:d"
+//   Split 1 (least balanced): teamA=[a,b], teamB=[c,d]
+//     pairKey("a","b") = "a:b",  pairKey("c","d") = "c:d"
+
+describe("snakeDraft — cap enforcement", () => {
+  // Shared 4-player fixture with distinct skills a>b>c>d.
+  // IDs a<b<c<d alphabetically so pairKey results are predictable.
+  function makeFourAlpha() {
+    const a = makePlayer("a", { skillInt: 6 });
+    const b = makePlayer("b", { skillInt: 5 });
+    const c = makePlayer("c", { skillInt: 4 });
+    const d = makePlayer("d", { skillInt: 3 });
+    return { a, b, c, d };
+  }
+
+  it("backward compat: no cap args → always returns Split 0, never null", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    const result = snakeDraft([a, b, c, d]);
+    expect(result).not.toBeNull();
+    // Split 0: teamA=[a,d], teamB=[b,c]
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("returns Split 0 when no pairs are at the cap", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // All pairs at count 1 — below cap of 2
+    const counts = new Map([
+      ["a:d", 1], ["b:c", 1],
+      ["a:c", 1], ["b:d", 1],
+      ["a:b", 1], ["c:d", 1],
+    ]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Most balanced split wins
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("skips Split 0 when its teamA pair is at cap, returns Split 2 instead", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // pairKey("a","d") = "a:d" — capped at MAX_PARTNERSHIP_REPEATS
+    const counts = new Map([["a:d", MAX_PARTNERSHIP_REPEATS]]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Tries Split 2 next (more balanced than Split 1)
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("skips Split 0 when its teamB pair is at cap, returns Split 2 instead", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // pairKey("b","c") = "b:c" — capped
+    const counts = new Map([["b:c", MAX_PARTNERSHIP_REPEATS]]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Split 0's teamB is capped → skipped → try Split 2
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("skips Splits 0 and 2, returns Split 1 when both prior teamA pairs are capped", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    const counts = new Map([
+      ["a:d", MAX_PARTNERSHIP_REPEATS], // Split 0 teamA capped
+      ["a:c", MAX_PARTNERSHIP_REPEATS], // Split 2 teamA capped
+    ]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Only Split 1 remains: teamA=[a,b], teamB=[c,d]
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+  });
+
+  it("returns null when all 3 splits have at least one capped pair", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // Cap the teamA pair of every split — each split immediately fails
+    const counts = new Map([
+      ["a:d", MAX_PARTNERSHIP_REPEATS], // Split 0 teamA capped
+      ["a:c", MAX_PARTNERSHIP_REPEATS], // Split 2 teamA capped
+      ["a:b", MAX_PARTNERSHIP_REPEATS], // Split 1 teamA capped
+    ]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).toBeNull();
+  });
+
+  it("treats count < cap as allowed (cap is exclusive upper bound)", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // count = cap - 1 → strictly below cap → Split 0 should be returned
+    const counts = new Map([
+      ["a:d", MAX_PARTNERSHIP_REPEATS - 1],
+      ["b:c", MAX_PARTNERSHIP_REPEATS - 1],
+    ]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+  });
+
+  it("treats count === cap as capped (count < cap is false at equality)", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // Every pair except Split 1's pairs is at cap — Split 1 is the only valid option
+    const counts = new Map([
+      ["a:d", MAX_PARTNERSHIP_REPEATS],     // Split 0 teamA capped
+      ["b:c", MAX_PARTNERSHIP_REPEATS],     // Split 0 teamB also capped (belt & suspenders)
+      ["a:c", MAX_PARTNERSHIP_REPEATS],     // Split 2 teamA capped
+      ["b:d", MAX_PARTNERSHIP_REPEATS],     // Split 2 teamB also capped
+      // Split 1 pairs ("a:b" and "c:d") are absent → count=0 < cap=2 ✓
+    ]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// rotatedDraft — cap enforcement
+// ─────────────────────────────────────────────────────────────
+// With cap args, rotatedDraft starts from the natural splitIndex
+// (determined by repeatCount % 3) and cycles through all 3 splits,
+// returning the first that satisfies the cap for both teams.
+// Returns null if every split is capped.
+//
+// Same player fixture and split-to-pair mapping as above.
+
+describe("rotatedDraft — cap enforcement", () => {
+  function makeFourAlpha() {
+    const a = makePlayer("a", { skillInt: 6 });
+    const b = makePlayer("b", { skillInt: 5 });
+    const c = makePlayer("c", { skillInt: 4 });
+    const d = makePlayer("d", { skillInt: 3 });
+    return { a, b, c, d };
+  }
+
+  it("backward compat: no cap args → returns natural rotation split, never null", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // 0 repeats → splitIndex=0 → snakeDraft equivalent
+    const result = rotatedDraft([a, b, c, d], []);
+    expect(result).not.toBeNull();
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("returns the natural rotation split when no pairs are capped", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // 1 repeat → splitIndex=1 → top vs bottom
+    const allFourIds = [a, b, c, d].map((p) => p.player_id);
+    const counts = new Map<string, number>(); // all pairs at count 0 < cap
+    const result = rotatedDraft([a, b, c, d], [allFourIds], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // splitIndex=1: teamA=[a,b], teamB=[c,d]
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+  });
+
+  it("falls back to the next split when the natural rotation split is capped (splitIndex=0→next=split 1)", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // 0 repeats → natural splitIndex=0 (teamA=[a,d], teamB=[b,c])
+    // Cap split 0's teamA pair → must advance to split 1 (index (0+1)%3=1)
+    const counts = new Map([["a:d", MAX_PARTNERSHIP_REPEATS]]);
+    const result = rotatedDraft([a, b, c, d], [], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Split 1: teamA=[a,b], teamB=[c,d]
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+  });
+
+  it("falls back across two splits (splitIndex=1, splits 1 and 2 capped → returns split 0)", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // 1 repeat → splitIndex=1 (teamA=[a,b]). Cap splits 1 and 2:
+    //   split 1 teamA pair "a:b" capped → skip
+    //   split 2 = (1+1)%3=2 teamA pair "a:c" capped → skip
+    //   split 0 = (1+2)%3=0 teamA pair "a:d" not capped → return split 0
+    const allFourIds = [a, b, c, d].map((p) => p.player_id);
+    const counts = new Map([
+      ["a:b", MAX_PARTNERSHIP_REPEATS], // split 1 teamA capped
+      ["a:c", MAX_PARTNERSHIP_REPEATS], // split 2 teamA capped
+    ]);
+    const result = rotatedDraft([a, b, c, d], [allFourIds], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Split 0: teamA=[a,d], teamB=[b,c]
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("returns null when all 3 splits are capped regardless of starting splitIndex", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // Cap the teamA pair of every split → all 3 fail the cap check
+    const counts = new Map([
+      ["a:d", MAX_PARTNERSHIP_REPEATS], // split 0 teamA
+      ["a:b", MAX_PARTNERSHIP_REPEATS], // split 1 teamA
+      ["a:c", MAX_PARTNERSHIP_REPEATS], // split 2 teamA
+    ]);
+    // Test with multiple starting splitIndices to ensure cycling always exhausts
+    for (const repeatCount of [0, 1, 2]) {
+      const rosters = Array.from(
+        { length: repeatCount },
+        () => [a, b, c, d].map((p) => p.player_id)
+      );
+      expect(
+        rotatedDraft([a, b, c, d], rosters, counts, MAX_PARTNERSHIP_REPEATS)
+      ).toBeNull();
+    }
+  });
+
+  it("preserves natural split when only the teamB pair of an alternate split is capped", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // Natural splitIndex=0: teamA=[a,d] not capped, teamB=[b,c] not capped → return immediately
+    // Cap split 2's teamB pair to ensure it doesn't bleed into split 0's evaluation
+    const counts = new Map([["b:d", MAX_PARTNERSHIP_REPEATS]]);
+    const result = rotatedDraft([a, b, c, d], [], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Should still be split 0 — split 0 pairs are uncapped
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 });

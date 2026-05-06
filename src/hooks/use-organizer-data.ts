@@ -43,7 +43,7 @@ import {
   subscribeToProfiles,
   subscribeToOrganizerBroadcast,
 } from "@/lib/realtime";
-import type { AutoMatchmakingToggledPayload } from "@/lib/broadcast";
+import type { AutoMatchmakingToggledPayload, CapSaturationPayload } from "@/lib/broadcast";
 import {
   callNextMatch as callNextMatchAction,
   type MatchmakingResult,
@@ -156,6 +156,14 @@ export interface UseOrganizerDataResult {
   pausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
   // -- Session settings --
   updateTimeLimit: (minutes: number | null) => Promise<{ error?: string }>;
+  // -- Cap saturation --
+  /**
+   * Non-null when the partner-pair cap blocked the last match attempt.
+   * The UI renders a dismissable notice/alert in the On Deck panel.
+   */
+  capSaturation: CapSaturationPayload | null;
+  /** Clears the capSaturation notice. */
+  dismissCapSaturation: () => void;
 }
 
 export function useOrganizerData(
@@ -173,6 +181,7 @@ export function useOrganizerData(
   // there's no "flash" of the indicator on load. Flips to false the moment
   // any channel reports CHANNEL_ERROR or TIMED_OUT.
   const [realtimeConnected, setRealtimeConnected] = useState(true);
+  const [capSaturation, setCapSaturation] = useState<CapSaturationPayload | null>(null);
 
   // ── Realtime health tracking ──────────────────────────────────
   // Tracks which channel IDs have confirmed SUBSCRIBED. Using a Set
@@ -479,6 +488,9 @@ export function useOrganizerData(
           ...prev,
           is_auto_matchmaking_on: payload.isOn,
         }));
+      },
+      (payload: CapSaturationPayload) => {
+        setCapSaturation(payload);
       }
     );
 
@@ -719,6 +731,12 @@ export function useOrganizerData(
   const publishedOnDeckMatches = onDeckMatches.filter((m) => m.is_published);
   const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
 
+  // ── Cap saturation ────────────────────────────────────────────
+
+  const dismissCapSaturation = useCallback(() => {
+    setCapSaturation(null);
+  }, []);
+
   // ── Draft Mode actions ────────────────────────────────────────
 
   const publishMatch = useCallback(
@@ -767,5 +785,7 @@ export function useOrganizerData(
     removeFromQueue,
     pausePlayer,
     updateTimeLimit,
+    capSaturation,
+    dismissCapSaturation,
   };
 }

@@ -29,6 +29,18 @@ export type ScoredCandidate = {
 };
 
 // ─────────────────────────────────────────────────────────────
+// EXPORT: pairKey
+// ─────────────────────────────────────────────────────────────
+// Canonical symmetric key for a same-team pair of player UUIDs.
+// Sorts alphabetically so pairKey(a, b) === pairKey(b, a).
+// Used by fetchPartnershipCounts (matchmaking.ts) and the pair-aware
+// draft functions to look up session-scoped partnership counts.
+
+export function pairKey(a: string, b: string): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+// ─────────────────────────────────────────────────────────────
 // EXPORT: computePriorityScore
 // ─────────────────────────────────────────────────────────────
 // RED ZONE (wait ≥ 25 min): 1000 + waitMinutes → absolute urgency.
@@ -75,22 +87,54 @@ export function isGroupValid(
 // ─────────────────────────────────────────────────────────────
 // EXPORT: snakeDraft
 // ─────────────────────────────────────────────────────────────
-// Sort all 4 players DESC by skill, then:
-//   Team A = [highest (pos 0) + lowest (pos 3)]
-//   Team B = [2nd highest (pos 1) + 3rd highest (pos 2)]
-// Snake distribution minimises aggregate skill gap between teams.
+// Sort all 4 players DESC by skill, then find the most skill-balanced
+// team split that does not violate the partner-pair cap.
+//
+// The 3 splits tried in descending skill-balance order:
+//   Split 0 — [0,3] vs [1,2]: highest+lowest vs 2nd+3rd (snake default, most balanced)
+//   Split 2 — [0,2] vs [1,3]: alternating cross-split
+//   Split 1 — [0,1] vs [2,3]: top pair vs bottom pair (least balanced)
+//
+// Returns null if every split puts at least one team pair at or above
+// the cap — the caller must treat this as a slot failure and either
+// try another candidate group or return no-match.
+//
+// When partnershipCounts / cap are omitted, the function behaves
+// exactly as before (always returns the balanced Split 0).
 
-export function snakeDraft(allFour: ScoredPlayer[]): {
-  teamA: ScoredPlayer[];
-  teamB: ScoredPlayer[];
-} {
+export function snakeDraft(
+  allFour: ScoredPlayer[],
+  partnershipCounts?: Map<string, number>,
+  cap?: number
+): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
   const sorted = [...allFour].sort(
     (a, b) => b.skill_level_int - a.skill_level_int
   );
-  return {
-    teamA: [sorted[0], sorted[3]],
-    teamB: [sorted[1], sorted[2]],
-  };
+
+  // Without cap enforcement, always return the balanced default.
+  if (!partnershipCounts || cap === undefined) {
+    return {
+      teamA: [sorted[0], sorted[3]],
+      teamB: [sorted[1], sorted[2]],
+    };
+  }
+
+  // Try splits from most to least skill-balanced.
+  const splits: Array<{ teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }> = [
+    { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] },
+    { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] },
+    { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] },
+  ];
+
+  for (const split of splits) {
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA < cap && countB < cap) return split;
+  }
+
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -253,10 +297,14 @@ export function buildCombinationGroup(
 //   Split 1 — [0,1] vs [2,3]: top pair vs bottom pair
 //   Split 2 — [0,2] vs [1,3]: alternating cross-split
 //
-// splitIndex = repeatCount % 3, where repeatCount is the number
-// of recent rosters that contain all 4 of these players. This is
-// derivable from the recentRosters data already in scope at the
-// call site — no extra DB query required.
+// splitIndex = repeatCount % 3. When cap enforcement is active,
+// the function tries splits starting from splitIndex, cycling
+// through all 3, returning the first that satisfies the cap.
+// Returns null if every split puts at least one team pair at or
+// above the cap — the caller must treat this as a slot failure.
+//
+// When partnershipCounts / cap are omitted, behaviour is identical
+// to before: always returns the split at splitIndex (never null).
 //
 // Limitation: recentRosters is bounded by ANTI_REPEAT_LOOKBACK (5),
 // so repeatCount saturates at 5. After 5+ repeats the cycle may
@@ -265,8 +313,10 @@ export function buildCombinationGroup(
 
 export function rotatedDraft(
   allFour: ScoredPlayer[],
-  recentRosters: string[][]
-): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } {
+  recentRosters: string[][],
+  partnershipCounts?: Map<string, number>,
+  cap?: number
+): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
   const sorted = [...allFour].sort(
     (a, b) => b.skill_level_int - a.skill_level_int
   );
@@ -278,23 +328,32 @@ export function rotatedDraft(
     return playerIds.every((id) => rosterSet.has(id));
   }).length;
 
-  // Advance the split index one step beyond the last used split so
-  // this match uses a different configuration than the previous one.
   const splitIndex = repeatCount % 3;
 
-  switch (splitIndex) {
-    case 0:
-      // snakeDraft default: highest+lowest vs 2nd+3rd
-      return { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] };
-    case 1:
-      // Top pair vs bottom pair
-      return { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] };
-    case 2:
-      // Alternating cross-split
-      return { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] };
-    default:
-      // Unreachable — default to snakeDraft
-      return { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] };
+  // All 3 splits indexed to match the original switch semantics.
+  const splits: Array<{ teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }> = [
+    { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] }, // 0: snake default
+    { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] }, // 1: top vs bottom
+    { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] }, // 2: cross-split
+  ];
+
+  // Without cap enforcement, return the natural rotation split unconditionally.
+  if (!partnershipCounts || cap === undefined) {
+    return splits[splitIndex];
   }
+
+  // With cap enforcement, try splits starting from the natural rotation index
+  // and cycling through all 3. This preserves rotation semantics (the natural
+  // split is always tried first) while falling back when it is capped.
+  for (let i = 0; i < 3; i++) {
+    const split = splits[(splitIndex + i) % 3];
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA < cap && countB < cap) return split;
+  }
+
+  return null;
 }
 

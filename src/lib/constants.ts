@@ -119,3 +119,15 @@ export const MAX_ON_DECK_MATCHES = 2;
  * Organizer bypass (callNextMatch with bypassGate=true) skips this cap.
  */
 export const MIN_FREE_POOL_FOR_ON_DECK = 4;
+
+/**
+ * Hard cap on the number of times two players may appear on the same
+ * team within a single session. Once a pair reaches this count they are
+ * excluded from every team-assignment path (snakeDraft / rotatedDraft).
+ *
+ * No waivers — Red Zone urgency, last-resort fallback, and tier isolation
+ * do NOT bypass this cap. If no valid team split exists, the slot returns
+ * no-match and a saturation signal fires so the organizer can intervene.
+ * Manual organizer assignment is the only bypass.
+ */
+export const MAX_PARTNERSHIP_REPEATS = 2;

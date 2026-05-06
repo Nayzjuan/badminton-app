@@ -31,7 +31,12 @@ vi.mock("@/utils/supabase/server", () => ({
   createClient: vi.fn(),
 }));
 
+vi.mock("@/utils/supabase/service", () => ({
+  createServiceClient: vi.fn(),
+}));
+
 import { createClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import {
   promoteOnDeckMatchInternal,
   runEngineForSession,
@@ -70,7 +75,10 @@ function makeBuilder(response: MockResponse) {
   // .single() returns a new Promise — same resolved value
   b["single"] = () => Promise.resolve(response);
 
-  // All query chain methods return `b` unchanged
+  // All query chain methods return `b` unchanged.
+  // NOTE: maybeSingle() must be here — callNextMatch uses it on the
+  // session_organizers co-organizer lookup. Omitting it causes
+  // TypeError if a test ever reaches that branch.
   for (const method of [
     "select",
     "eq",
@@ -82,6 +90,7 @@ function makeBuilder(response: MockResponse) {
     "update",
     "upsert",
     "insert",
+    "maybeSingle",
   ]) {
     b[method] = (..._args: unknown[]) => b;
   }
@@ -124,7 +133,16 @@ function makeMockClient(
     return Promise.resolve(result);
   });
 
-  return { from, rpc, queriedTables };
+  // auth mock: needed by callNextMatch which calls userClient.auth.getUser()
+  // before operating on the session. Returns a valid "test-user" by default.
+  const auth = {
+    getUser: vi.fn().mockResolvedValue({
+      data: { user: { id: "test-user", email: "test@example.com" } },
+      error: null,
+    }),
+  };
+
+  return { from, rpc, queriedTables, auth };
 }
 
 // ── Test fixture UUIDs ─────────────────────────────────────────
@@ -161,7 +179,8 @@ beforeEach(() => {
 describe("promoteOnDeckMatchInternal", () => {
   it("returns success:false when there is no pending match (empty array)", async () => {
     const mock = makeMockClient([
-      { data: [], error: null }, // matches fetch → empty
+      { data: [], error: null },              // matches fetch → empty
+      { count: 0, data: null, error: null }, // draft-blocking secondary check → 0 unpublished drafts
     ]);
 
     const result = await promoteOnDeckMatchInternal(
@@ -172,13 +191,18 @@ describe("promoteOnDeckMatchInternal", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/no on-deck/i);
-    // Only the initial matches fetch was attempted — nothing else queried
-    expect(mock.queriedTables).toEqual(["matches"]);
+    // Initial pending fetch + secondary draft-blocking check both query "matches"
+    expect(mock.queriedTables).toEqual(["matches", "matches"]);
   });
 
-  it("returns success:false with the same message on a DB error during fetch", async () => {
+  it("returns hasDraftsBlocking:true when unpublished drafts are blocking the queue", async () => {
+    // Draft Mode: when no published pending matches exist but there ARE unpublished drafts,
+    // the organizer needs a contextual "review your drafts" signal rather than a generic
+    // "no on-deck" message. Production sets hasDraftsBlocking=true so the UI can render
+    // an amber warning toast instead of the default empty-state message.
     const mock = makeMockClient([
-      { data: null, error: { message: "connection timeout" } }, // matches fetch error
+      { data: [], error: null },              // matches fetch → 0 published pending
+      { count: 2, data: null, error: null }, // draft check → 2 unpublished drafts blocking
     ]);
 
     const result = await promoteOnDeckMatchInternal(
@@ -188,7 +212,30 @@ describe("promoteOnDeckMatchInternal", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.message).toMatch(/no on-deck/i);
+    expect(result.hasDraftsBlocking).toBe(true);
+    // Message includes the draft count so the organizer knows how many to review
+    expect(result.message).toMatch(/draft/i);
+    expect(result.message).toContain("2");
+    expect(mock.queriedTables).toEqual(["matches", "matches"]);
+  });
+
+  it("returns success:false with the DB error message surfaced (not masked as no-on-deck)", async () => {
+    // A real DB error on the initial fetch is returned verbatim so the organizer
+    // can distinguish a connectivity issue from an empty queue.
+    // Production path: if (error) return { ..., message: `Failed to fetch on-deck matches: ${error.message}` }
+    const mock = makeMockClient([
+      { data: null, error: { message: "connection timeout" } }, // matches fetch → DB error
+    ]);
+
+    const result = await promoteOnDeckMatchInternal(
+      mock as never,
+      SESSION_ID,
+      COURT_ID
+    );
+
+    expect(result.success).toBe(false);
+    // Error path returns the real DB message — NOT the "no on-deck" fallback
+    expect(result.message).toMatch(/failed to fetch/i);
   });
 
   it("returns success:false with 'already promoted' message on CAS race condition", async () => {
@@ -350,7 +397,8 @@ describe("runEngineForSession", () => {
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: false }, error: null }, // sessions
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    // runEngineForSession uses createServiceClient (service-role) internally — not createClient.
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
@@ -363,7 +411,7 @@ describe("runEngineForSession", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
       { data: [], error: null },                               // courts → 0 courts
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
@@ -377,7 +425,7 @@ describe("runEngineForSession", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
       { data: [], error: null },                               // courts → 0
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
@@ -393,7 +441,7 @@ describe("runEngineForSession", () => {
       { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2)
       { count: 3, data: null, error: null },                    // pending count = 3 → at capacity
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
@@ -405,7 +453,7 @@ describe("runEngineForSession", () => {
     const mock = makeMockClient([
       { data: null, error: { message: "Table not found" } }, // sessions error
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     // Should not throw; only the sessions read was attempted before the error exit
     await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
@@ -418,15 +466,22 @@ describe("runEngineForSession", () => {
     // runEngineInternal logs the error and breaks the fill loop.
     // runEngineForSession returns void — no crash, no rethrow.
     //
-    // Queue sequence (all queries are bypassGate=false):
-    //   sessions(ON) → courts(2) → pending(0, slotsAvailable=2)
-    //   → [soft gate] v_queue_with_wait_time(4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
-    //      → gateTimedOut → gate releases, no active-courts query; estimatedWaiting=4)
-    //   → fetchRecentRosters: matches(completed/in_progress/pending → []) [Fix 2]
-    //   → slot 0: no diversity cap (i=0 is exempt)
-    //      → v_queue_with_wait_time(4 players) → queue_entries paused(0)
-    //      → match_players(buildOverlapMap step 1: anchor → no prior matches → early return) [Fix 3]
-    //   → rpc fails → engine exits cleanly (slot 1 never reached)
+    // Query sequence (bypassGate=false):
+    //   [0] sessions(ON)
+    //   [1] courts(2 → capacity=2)
+    //   [2] matches(pending count=0 → slotsAvailable=2)
+    //   [3] v_queue_with_wait_time: soft gate — 4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
+    //        → gateTimedOut=true → gate releases; no active-courts query; estimatedWaiting=4
+    //   [4] matches: fetchRecentRosters → [] (empty; no match_players query follows)
+    //   slot 0 (i=0 exempt from pool-diversity cap):
+    //   [5] v_queue_with_wait_time: runAlgorithm raw pool → 4 players
+    //   [6] queue_entries: paused filter → []
+    //       (activePool=4 ≥ 4 → continues past the "not enough" guard)
+    //   [7] matches: fetchPartnershipCounts → [] (no prior session matches → empty map)
+    //   [8] match_players: buildOverlapMap step 1 (anchor prior matches) → null/undefined
+    //        → anchorRows=null → early return; empty overlapMap
+    //   → group built → snakeDraft → executeMatch → rpc FAILS
+    //   → loop breaks (slot 1 never reached)
     const fourPlayers = Array.from({ length: 4 }, (_, i) => ({
       id: `entry-p${i}`,
       session_id: SESSION_ID,
@@ -452,14 +507,16 @@ describe("runEngineForSession", () => {
         { data: fourPlayers, error: null },                       // [soft gate] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4)
         { data: [], error: null },                                 // fetchRecentRosters: recent matches (completed/in_progress/pending) → []
         // (match_players not queried since recentMatchIds is empty)
-        { data: fourPlayers, error: null },                       // runAlgorithm: v_queue_with_wait_time → 4 players
-        { data: [], error: null },                                 // queue_entries paused → []
-        { data: [], error: null },                                 // buildOverlapMap step 1: match_players (anchor → no prior matches → early return)
-        // Slot 1 never fires: RPC already failed and loop broke
+        { data: fourPlayers, error: null },                       // [5] runAlgorithm: v_queue_with_wait_time → 4 players
+        { data: [], error: null },                                 // [6] queue_entries paused → []
+        { data: [], error: null },                                 // [7] fetchPartnershipCounts: matches (no prior session matches → empty map)
+        // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback
+        //     → anchorRows=null → early return; empty overlapMap
+        // rpc fails → loop breaks (slot 1 never reached)
       ],
       [{ data: null, error: { message: "unique constraint violation" } }] // rpc → error
     );
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     // Engine should not throw even when rpc fails
     await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
@@ -507,14 +564,15 @@ describe("runEngineForSession", () => {
         { count: 0, data: null, error: null },                    // pending count → 0 (slotsAvailable=2)
         { data: eightPlayers, error: null },                      // v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4, not triggered)
         { data: [], error: null },                                 // fetchRecentRosters: recent matches → []
-        { data: eightPlayers, error: null },                      // runAlgorithm slot 0: v_queue_with_wait_time
-        { data: [], error: null },                                 // queue_entries paused → []
-        { data: [], error: null },                                 // buildOverlapMap step 1: match_players (anchor → [])
-        // No more DB calls — diversity cap fires for slot 1 (estimatedWaiting=4 < 8)
+        { data: eightPlayers, error: null },                      // [5] runAlgorithm slot 0: v_queue_with_wait_time → 8 players
+        { data: [], error: null },                                 // [6] queue_entries paused → []
+        { data: [], error: null },                                 // [7] fetchPartnershipCounts: matches (no prior matches → empty map)
+        // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback → empty overlapMap
+        // rpc succeeds → estimatedWaiting=8-4=4; slot 1: 4 < MIN_POOL(8) → cap fires → break
       ],
       [{ data: "new-match-id", error: null }]  // rpc → success for slot 0
     );
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
@@ -538,8 +596,9 @@ describe("callNextMatch", () => {
   it("returns success when an on-deck match is promoted successfully", async () => {
     // promoteOnDeckMatchInternal (5 calls) + runEngineInternal (courts[1] + pending at cap[2])
     // 1 court → capacity = courtCount + ON_DECK_LOOKAHEAD = 2; count=2 → slotsAvailable=0 → no fill
+    // pending[0] = MOCK_MATCH (non-empty) → no draft-blocking secondary check fires.
     const mock = makeMockClient([
-      { data: [MOCK_MATCH], error: null },        // matches fetch
+      { data: [MOCK_MATCH], error: null },        // matches fetch (non-empty → no draft check)
       { data: { id: "match-1" }, error: null },   // matches update (CAS)
       { data: null, error: null },                // courts update
       { data: [], error: null },                  // match_players → empty
@@ -547,7 +606,13 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null },      // runEngineInternal: courts query
       { count: 2, data: null, error: null },      // runEngineInternal: pending count = 2 → at capacity
     ]);
+    // Service-role client handles the organizer auth-gate check inside callNextMatch.
+    // created_by matches "test-user" from auth.getUser → session_organizers check skipped.
+    const serviceMock = makeMockClient([
+      { data: { created_by: "test-user" }, error: null }, // sessions → organizer ownership check
+    ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     const result = await callNextMatch(SESSION_ID, COURT_ID);
 
@@ -559,8 +624,9 @@ describe("callNextMatch", () => {
     // If callNextMatch went through runEngineForSession, it would query "sessions" first.
     // If it calls runEngineInternal directly, the next table after promotion is "courts".
     // 1 court → capacity = 2; count=2 → slotsAvailable=0 → engine exits after pending check (no gate query).
+    // pending[0] = MOCK_MATCH (non-empty) → no draft-blocking secondary check fires.
     const mock = makeMockClient([
-      { data: [MOCK_MATCH], error: null },        // matches fetch (promotion)
+      { data: [MOCK_MATCH], error: null },        // matches fetch (non-empty → no draft check)
       { data: { id: "match-1" }, error: null },   // matches update (CAS)
       { data: null, error: null },                // courts update
       { data: [], error: null },                  // match_players → empty
@@ -568,7 +634,11 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null },      // ← first query AFTER promotion = courts (not sessions)
       { count: 2, data: null, error: null },      // pending count = 2 → at capacity (1 court + lookahead)
     ]);
+    const serviceMock = makeMockClient([
+      { data: { created_by: "test-user" }, error: null }, // sessions → organizer ownership check
+    ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     await callNextMatch(SESSION_ID, COURT_ID);
 
@@ -581,11 +651,18 @@ describe("callNextMatch", () => {
   });
 
   it("returns 'paused' message when no on-deck match exists and toggle is OFF", async () => {
+    // When pending is empty, promoteOnDeckMatchInternal fires a secondary "matches" query
+    // to check whether unpublished drafts are blocking the queue (Draft Mode feature).
     const mock = makeMockClient([
-      { data: [], error: null },                                   // matches fetch → empty
-      { data: { is_auto_matchmaking_on: false }, error: null },   // sessions → toggle OFF
+      { data: [], error: null },                                   // (0) matches fetch → empty
+      { count: 0, data: null, error: null },                      // (1) draft-blocking check → 0 drafts
+      { data: { is_auto_matchmaking_on: false }, error: null },   // (2) sessions → toggle OFF
+    ]);
+    const serviceMock = makeMockClient([
+      { data: { created_by: "test-user" }, error: null }, // sessions → organizer ownership check
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     const result = await callNextMatch(SESSION_ID, COURT_ID);
 
@@ -595,24 +672,32 @@ describe("callNextMatch", () => {
 
   it("returns 'not enough players' when toggle is ON but queue is empty", async () => {
     // Sequence:
-    //   Attempt 1 (promote): matches → [] (no on-deck)
+    //   Attempt 1 (promote): matches → [] (no on-deck) + draft check → 0 drafts
     //   Toggle check: sessions → ON
-    //   runEngineInternal: courts → [c1], pending → 0 slots, recent rosters → []
+    //   runEngineInternal (bypassGate=true): courts → [c1], pending → 0 slots
+    //   fetchRecentRosters: matches → [] (empty → no match_players query)
     //   runAlgorithm: v_queue_with_wait_time → [] (empty queue), queue_entries paused → []
-    //   → "Not enough players" → engine stops, no match created
-    //   Attempt 2 (promote retry): matches → [] still (nothing was created)
+    //   → activePool.length 0 < 4 → "Not enough active players" → engine stops
+    //   Attempt 2 (promote retry): matches → [] still + draft check → 0 drafts
     const mock = makeMockClient([
-      { data: [], error: null },                                 // promote attempt 1: no pending
-      { data: { is_auto_matchmaking_on: true }, error: null },  // sessions → toggle ON
-      { data: [{ id: "c1" }], error: null },                    // courts (1 court)
-      { count: 0, data: null, error: null },                    // pending count → 0 slots available
-      { data: [], error: null },                                 // recent completed matches
+      { data: [], error: null },                                 // (0) promote attempt 1: no pending
+      { count: 0, data: null, error: null },                    // (1) draft-blocking check → 0 drafts
+      { data: { is_auto_matchmaking_on: true }, error: null },  // (2) sessions → toggle ON
+      { data: [{ id: "c1" }], error: null },                    // (3) courts (1 court → capacity=2)
+      { count: 0, data: null, error: null },                    // (4) pending count → 0 (slotsAvailable=2)
+      { data: [], error: null },                                 // (5) fetchRecentRosters: recent matches → []
       // (match_players not queried since recentMatchIds is empty)
-      { data: [], error: null },                                 // v_queue_with_wait_time → []
-      { data: [], error: null },                                 // queue_entries paused → []
-      { data: [], error: null },                                 // promote attempt 2: still no pending
+      { data: [], error: null },                                 // (6) v_queue_with_wait_time → [] (empty queue)
+      { data: [], error: null },                                 // (7) queue_entries paused → []
+      // activePool.length=0 < 4 → returns before fetchPartnershipCounts/buildOverlapMap
+      { data: [], error: null },                                 // (8) promote attempt 2: still no pending
+      { count: 0, data: null, error: null },                    // (9) draft-blocking check → 0 drafts
+    ]);
+    const serviceMock = makeMockClient([
+      { data: { created_by: "test-user" }, error: null }, // sessions → organizer ownership check
     ]);
     vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     const result = await callNextMatch(SESSION_ID, COURT_ID);
 
