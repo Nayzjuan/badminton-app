@@ -79,8 +79,8 @@ function PodiumCell({ row, position }: PodiumCellProps) {
 
       {/* Player name */}
       <div
-        className={`${barlowFont} font-bold text-[13px] tracking-[.03em] uppercase
-                     truncate mt-1 text-[#111827] dark:text-white
+        className={`${barlowFont} font-bold dark:font-extrabold text-[13px] tracking-[.03em] uppercase
+                     truncate mt-1 text-[#111827] dark:text-amber-50
                      ${isFirst ? "text-[14px]" : ""}`}
       >
         {row.display_name}

@@ -99,8 +99,8 @@ export function StadiumLeaderboardRow({
 
         {/* Player name */}
         <span
-          className={`${barlowFont} font-bold text-[18px] tracking-[.02em]
-                       truncate text-[#111827] dark:text-white`}
+          className={`${barlowFont} font-bold dark:font-extrabold text-[18px] tracking-[.02em]
+                       truncate text-[#111827] dark:text-amber-50`}
         >
           {row.display_name}
         </span>
