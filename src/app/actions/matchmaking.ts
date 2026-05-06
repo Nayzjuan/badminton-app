@@ -38,8 +38,7 @@ import {
   CRITICAL_WAIT_MINUTES,
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
-  ON_DECK_LOOKAHEAD,
-  MAX_ON_DECK_MATCHES,
+  MAX_AUTO_DRAFTS,
   MIN_FREE_POOL_FOR_ON_DECK,
   MAX_PARTNERSHIP_REPEATS,
 } from "@/lib/constants";
@@ -254,12 +253,15 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
-// Capacity-limited on-deck filler.
-// capacity = min(courtCount + ON_DECK_LOOKAHEAD, MAX_ON_DECK_MATCHES)
-//   1 court  → 2 on-deck  (1 + 1, at cap)
-//   2 courts → 2 on-deck  (3, capped to 2)
-//   3 courts → 2 on-deck  (4, capped to 2)
-// Fills slots up to capacity, stopping when queue is exhausted.
+// Dynamic draft filler. Generates on-deck matches until the combined
+// total of published + unpublished pending matches reaches MAX_AUTO_DRAFTS.
+//
+// slotsAvailable = max(0, MAX_AUTO_DRAFTS − published − drafts)
+//   0 approved + 0 drafts → up to 3 slots (pool diversity cap applies)
+//   2 approved + 0 drafts → 1 slot (on-deck crowding prevention)
+//   2 approved + 1 draft  → 0 slots (at cap)
+//   3 total pending       → 0 slots (at cap)
+// Fills slots up to slotsAvailable, stopping when queue is exhausted.
 
 async function runEngineInternal(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -283,20 +285,7 @@ async function runEngineInternal(
     return;
   }
 
-  // capacity = min(courts + lookahead, MAX_ON_DECK_MATCHES).
-  // The lookahead (default 1) means there is always one match queued beyond
-  // the active court count so a second court finishing right after the first
-  // never idles. The hard cap (default 2) prevents the engine from
-  // speculating too far ahead: pre-forming 3-5 matches on a busy night locks
-  // players into specific partners before new arrivals can be included,
-  // making the organizer's queue list confusingly short.
-  // The fill loop stops gracefully when the pool is exhausted, so neither
-  // the lookahead nor the cap ever creates phantom matches.
-  const capacity = Math.min(courtCount + ON_DECK_LOOKAHEAD, MAX_ON_DECK_MATCHES);
-
-  // BUG-003 fix: count only published pending matches toward capacity.
-  // Unpublished drafts are not promotable, so counting them would freeze
-  // the engine as soon as the draft cap is reached — silencing Red Zone.
+  // Count published pending matches (approved by organizer, eligible for court promotion).
   const { count: existingOnDeck, error: deckErr } = await supabase
     .from("matches")
     .select("id", { count: "exact", head: true })
@@ -305,14 +294,40 @@ async function runEngineInternal(
     .eq("is_published", true);
 
   if (deckErr) {
-    console.error(`[engine] runEngineInternal: pending count query failed — ${deckErr.message}`);
+    console.error(`[engine] runEngineInternal: published pending count failed — ${deckErr.message}`);
     return;
   }
 
-  const slotsAvailable = capacity - (existingOnDeck ?? 0);
-  console.log(`[engine] runEngineInternal: courts=${courtCount} capacity=${capacity} onDeck=${existingOnDeck ?? 0} slots=${slotsAvailable}`);
+  // Count unpublished draft matches (generated but not yet approved by organizer).
+  // Previously invisible to the capacity check — caused up to 7+ drafts accumulating
+  // across successive court-finish triggers before the organizer reviewed any of them.
+  const { count: existingDrafts, error: draftErr } = await supabase
+    .from("matches")
+    .select("id", { count: "exact", head: true })
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_published", false);
+
+  if (draftErr) {
+    console.error(`[engine] runEngineInternal: draft count failed — ${draftErr.message}`);
+    return;
+  }
+
+  // Dynamic cap: total pending (approved + draft) must stay below MAX_AUTO_DRAFTS.
+  // Naturally reduces draft output when the organizer has approved matches:
+  //   2 approved + 0 drafts → 1 new slot; 2 approved + 1 draft → 0 slots.
+  const totalPending   = (existingOnDeck ?? 0) + (existingDrafts ?? 0);
+  const slotsAvailable = Math.max(0, MAX_AUTO_DRAFTS - totalPending);
+
+  console.log(
+    `[engine] runEngineInternal: courts=${courtCount} ` +
+    `published=${existingOnDeck ?? 0} drafts=${existingDrafts ?? 0} ` +
+    `total=${totalPending} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
+  );
   if (slotsAvailable <= 0) {
-    console.log(`[engine] runEngineInternal: on-deck at capacity (${existingOnDeck}/${capacity}) — skipping`);
+    console.log(
+      `[engine] runEngineInternal: draft cap reached (${totalPending}/${MAX_AUTO_DRAFTS}) — skipping`
+    );
     return;
   }
 

@@ -99,6 +99,25 @@ export const ON_DECK_LOOKAHEAD = 1;
 export const MAX_ON_DECK_MATCHES = 2;
 
 /**
+ * Hard cap on the combined total of published + unpublished pending matches
+ * the engine will auto-generate across successive runs.
+ *
+ * Previously the engine counted only published matches toward capacity, so
+ * unpublished drafts were invisible — each court-finish trigger generated up
+ * to 2 more drafts regardless of how many already existed, reaching 7+ drafts
+ * before the organizer could review any of them.
+ *
+ * Formula: slotsAvailable = max(0, MAX_AUTO_DRAFTS − published − drafts)
+ *
+ * Dynamic behaviour:
+ *   0 approved + 0 drafts → up to 3 new drafts (pool diversity cap applies)
+ *   2 approved + 0 drafts → 1 new draft  (prevents on-deck crowding)
+ *   2 approved + 1 draft  → 0            (at cap)
+ *   0 approved + 3 drafts → 0            (at cap)
+ */
+export const MAX_AUTO_DRAFTS = 3;
+
+/**
  * Minimum number of waiting players that must remain in the free pool
  * after each on-deck match is generated (applies from the 2nd slot onwards).
  *
