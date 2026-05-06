@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk } from "next/font/google";
+import { Space_Grotesk, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SerwistRegister } from "@/components/serwist-register";
@@ -17,6 +17,26 @@ const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   variable: "--font-space-grotesk",
+});
+
+// Barlow Condensed: heavy condensed display type for the Stadium leaderboard.
+// Used exclusively inside the leaderboard tab — section title (52px italic 900),
+// podium rank numerals (68–88px), player names in rows (18px), win% (16px italic).
+// Exposed as --font-barlow-condensed; accessed via Tailwind arbitrary font-family.
+const barlowCondensed = Barlow_Condensed({
+  subsets: ["latin"],
+  weight: ["700", "800", "900"],
+  style: ["normal", "italic"],
+  variable: "--font-barlow-condensed",
+});
+
+// JetBrains Mono: monospaced for all stat columns in the Stadium leaderboard.
+// Ensures numeric columns align perfectly (tabular-nums is built in for mono).
+// Used for: rank #, GP, W-L, column headers, filter chips, movement delta, YOU tag.
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-jetbrains-mono",
 });
 
 export const metadata: Metadata = {
@@ -63,7 +83,7 @@ export default function RootLayout({
     // suppressHydrationWarning prevents React from warning about the
     // class/style mismatch next-themes causes on the <html> element
     // between SSR and the first client render.
-    <html lang="en" suppressHydrationWarning className={spaceGrotesk.variable}>
+    <html lang="en" suppressHydrationWarning className={`${spaceGrotesk.variable} ${barlowCondensed.variable} ${jetbrainsMono.variable}`}>
       <body className={`${spaceGrotesk.className} antialiased pb-12`}>
         <ThemeProvider
           attribute="class"
