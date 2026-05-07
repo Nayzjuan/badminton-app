@@ -7,12 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test:unit": "vitest run",
     "test:unit:coverage": "vitest run --coverage",
     "test:setup": "npx tsx tests/helpers/init-sandbox.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "prepare": "husky"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -38,6 +41,10 @@
     "web-push": "^3.6.7",
     "zod": "^4.3.6"
   },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": "prettier --write",
+    "*.{json,css,md}": "prettier --write"
+  },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
@@ -48,6 +55,9 @@
     "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.2",
+    "prettier": "^3.8.3",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.4"

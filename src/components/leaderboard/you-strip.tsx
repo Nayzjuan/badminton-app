@@ -15,6 +15,8 @@
 // current player can see their rank without scrolling.
 // ============================================================
 
+import { cn } from "@/lib/utils";
+import { barlowFont, monoFont } from "@/lib/fonts";
 import type { LeaderboardRow } from "@/types/leaderboard";
 
 interface YouStripProps {
@@ -31,8 +33,6 @@ function movementLabel(n: number | null): { label: string; className: string } {
 // ── Module-level sub-component ────────────────────────────────
 // Defined outside YouStrip so React's reconciler sees a stable
 // component identity across renders and never unmounts/remounts it.
-const monoFont = "font-[family-name:var(--font-jetbrains-mono)]";
-
 function YouTag() {
   return (
     <span
@@ -47,38 +47,27 @@ function YouTag() {
 
 export function YouStrip({ row, loading = false }: YouStripProps) {
   // ── Shared outer classes ──────────────────────────────────────
-  const outerCls =
-    "flex items-center gap-2.5 px-4 border-b" +
-    " bg-amber-50 dark:bg-gradient-to-r dark:from-[hsl(38_92%_52%/0.12)] dark:to-transparent" +
-    " border-amber-200 dark:border-[hsl(38_92%_52%/0.22)]";
-
-  // monoFont is the module-level constant (avoids re-declaring on every render)
-  const barlowFont = "font-[family-name:var(--font-barlow-condensed)]";
+  const outerCls = cn(
+    "flex items-center gap-2.5 px-4 border-b",
+    "bg-amber-50 dark:bg-gradient-to-r dark:from-[hsl(38_92%_52%/0.12)] dark:to-transparent",
+    "border-amber-200 dark:border-[hsl(38_92%_52%/0.22)]"
+  );
 
   // ── Loading state ─────────────────────────────────────────────
   if (loading) {
-    return (
-      <div
-        className={`${outerCls} h-11 animate-pulse`}
-        aria-hidden="true"
-      />
-    );
+    return <div className={`${outerCls} h-11 animate-pulse`} aria-hidden="true" />;
   }
 
   // ── Zero-games / no-data state ────────────────────────────────
   if (!row || row.games_played === 0) {
     return (
-      <div
-        className={`${outerCls} py-2.5`}
-        aria-label="Your status: no games played yet"
-      >
+      <div className={`${outerCls} py-2.5`} aria-label="Your status: no games played yet">
         <YouTag />
         <span
           className={`${barlowFont} font-black italic text-[22px] leading-none tracking-[.01em]
                        flex-shrink-0 text-amber-700 dark:text-[hsl(38_92%_52%)]`}
         >
-          {/* en-dash matches the qualified state's rank prefix style */}
-          –
+          {/* en-dash matches the qualified state's rank prefix style */}–
         </span>
         <span
           className={`${barlowFont} font-bold text-[18px] tracking-[.02em] flex-1 min-w-0
@@ -92,11 +81,7 @@ export function YouStrip({ row, loading = false }: YouStripProps) {
         >
           0W–0L
         </span>
-        <span
-          className={`${monoFont} text-[11px] font-bold flex-shrink-0 opacity-30`}
-        >
-          ·
-        </span>
+        <span className={`${monoFont} text-[11px] font-bold flex-shrink-0 opacity-30`}>·</span>
       </div>
     );
   }
@@ -146,7 +131,11 @@ export function YouStrip({ row, loading = false }: YouStripProps) {
       {/* Movement delta */}
       <span
         className={`${monoFont} text-[11px] font-bold flex-shrink-0 ${mv.className}`}
-        aria-label={mv.label === "·" ? "No change" : `Rank ${mv.label.startsWith("▲") ? "up" : "down"} ${mv.label.slice(1)}`}
+        aria-label={
+          mv.label === "·"
+            ? "No change"
+            : `Rank ${mv.label.startsWith("▲") ? "up" : "down"} ${mv.label.slice(1)}`
+        }
       >
         {mv.label}
       </span>

@@ -19,6 +19,8 @@
 // organizer-panel and standalone variants.
 // ============================================================
 
+import { cn } from "@/lib/utils";
+import { barlowFont, monoFont } from "@/lib/fonts";
 import type { LeaderboardRow } from "@/types/leaderboard";
 import { Bolts } from "./bolt-icons";
 
@@ -29,8 +31,7 @@ interface StadiumLeaderboardRowProps {
 }
 
 function movementDisplay(n: number | null): { label: string; cls: string } {
-  if (n === null || n === 0)
-    return { label: "·", cls: "opacity-[.28]" };
+  if (n === null || n === 0) return { label: "·", cls: "opacity-[.28]" };
   if (n > 0)
     return {
       label: `▲${n}`,
@@ -42,27 +43,19 @@ function movementDisplay(n: number | null): { label: string; cls: string } {
   };
 }
 
-export function StadiumLeaderboardRow({
-  row,
-  isCurrentUser,
-  flash,
-}: StadiumLeaderboardRowProps) {
-  const monoFont = "font-[family-name:var(--font-jetbrains-mono)]";
-  const barlowFont = "font-[family-name:var(--font-barlow-condensed)]";
+export function StadiumLeaderboardRow({ row, isCurrentUser, flash }: StadiumLeaderboardRowProps) {
   const mv = movementDisplay(row.rank_movement ?? null);
 
   // YOU row shifts padding-left to 13px to visually clear the 2px left-border
-  const gridCls = [
+  const gridCls = cn(
     "grid items-center py-[11px]",
     "border-b border-[#f3f4f6] dark:border-[hsl(217_18%_12%)] last:border-b-0",
     "transition-colors duration-150",
     isCurrentUser
       ? "bg-amber-50 dark:bg-[hsl(38_92%_52%/0.10)] border-l-2 border-amber-400 dark:border-l-[hsl(38_92%_52%)] pr-4 pl-[13px]"
       : "px-4 hover:bg-[#f9fafb] dark:hover:bg-[hsl(217_25%_12%)]",
-    flash ? "animate-[flash_1.2s_ease-out]" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+    flash && "animate-[flash_1.2s_ease-out]"
+  );
 
   return (
     <div
@@ -81,10 +74,7 @@ export function StadiumLeaderboardRow({
       </div>
 
       {/* PLAYER — name + optional YOU tag + optional streak */}
-      <div
-        role="gridcell"
-        className="flex items-center gap-1.5 min-w-0"
-      >
+      <div role="gridcell" className="flex items-center gap-1.5 min-w-0">
         {/* YOU inline tag */}
         {isCurrentUser && (
           <span
@@ -112,8 +102,7 @@ export function StadiumLeaderboardRow({
                          text-amber-600 dark:text-[hsl(38_92%_52%)]`}
             aria-label={`Win streak: ${row.win_streak}`}
           >
-            <Bolts n={row.win_streak} />
-            ×{row.win_streak}
+            <Bolts n={row.win_streak} />×{row.win_streak}
           </span>
         )}
       </div>
@@ -132,13 +121,9 @@ export function StadiumLeaderboardRow({
         role="gridcell"
         className={`${monoFont} text-[11px] font-semibold text-right tracking-[.01em]`}
       >
-        <span className="text-[#15803d] dark:text-[hsl(142_58%_55%)]">
-          {row.wins}W
-        </span>
+        <span className="text-[#15803d] dark:text-[hsl(142_58%_55%)]">{row.wins}W</span>
         <span className="opacity-30 mx-[1px]">–</span>
-        <span className="text-[#dc2626] dark:text-[hsl(0_68%_60%)]">
-          {row.losses}L
-        </span>
+        <span className="text-[#dc2626] dark:text-[hsl(0_68%_60%)]">{row.losses}L</span>
       </div>
 
       {/* WIN% */}

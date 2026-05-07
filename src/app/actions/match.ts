@@ -54,7 +54,9 @@ export interface MatchActionResult {
  * Returns the user object or null.
  */
 async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   return user;
 }
 
@@ -214,7 +216,7 @@ export async function endMatchAction(
       completed_at: new Date().toISOString(),
     })
     .eq("id", matchId)
-    .eq("status", "in_progress")   // ← Atomic guard (CAS)
+    .eq("status", "in_progress") // ← Atomic guard (CAS)
     .select("id");
 
   if (matchUpdateError) {
@@ -254,7 +256,7 @@ export async function endMatchAction(
           .select("games_played")
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
-          .neq("status", "left")          // skip players who already left
+          .neq("status", "left") // skip players who already left
           .maybeSingle();
 
         // entry is null when the player's status is "left" — skip them.
@@ -271,7 +273,7 @@ export async function endMatchAction(
           })
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
-          .neq("status", "left");         // double-guard against race condition
+          .neq("status", "left"); // double-guard against race condition
       })
     );
   }
@@ -387,10 +389,7 @@ export async function updateMatchDetails(
         .eq("id", match.court_id);
     } else {
       // Another match occupies or the court is closed — detach.
-      await supabase
-        .from("matches")
-        .update({ court_id: null })
-        .eq("id", matchId);
+      await supabase.from("matches").update({ court_id: null }).eq("id", matchId);
     }
   }
 
@@ -482,14 +481,17 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       completed_at: new Date().toISOString(),
     })
     .eq("id", matchId)
-    .in("status", ["pending", "in_progress"])  // ← Atomic guard (CAS)
+    .in("status", ["pending", "in_progress"]) // ← Atomic guard (CAS)
     .select("id");
 
   if (matchUpdateError) {
     return { success: false, message: `Failed to cancel match: ${matchUpdateError.message}` };
   }
   if (!cancelledRows || cancelledRows.length === 0) {
-    return { success: false, message: "Match was already cancelled or completed by another request." };
+    return {
+      success: false,
+      message: "Match was already cancelled or completed by another request.",
+    };
   }
 
   // 3. Return players to queue WITHOUT incrementing games_played.
@@ -513,7 +515,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       .update({ status: "waiting" as const })
       .eq("session_id", match.session_id)
       .in("player_id", playerIds)
-      .neq("status", "left");             // skip players who already checked out
+      .neq("status", "left"); // skip players who already checked out
   }
 
   // 4. PIPELINE: promote oldest on-deck match to the freed court.
@@ -536,11 +538,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   // 6. Notify affected players via Realtime Broadcast so their dashboards
   //    show a friendly explanation instead of a silent state change.
   if (playerIds.length > 0) {
-    await broadcastOrganizerIntervention(
-      match.session_id,
-      "match_cancelled",
-      playerIds
-    );
+    await broadcastOrganizerIntervention(match.session_id, "match_cancelled", playerIds);
   }
 
   return { success: true, message: "Match cancelled. Players returned to queue." };
@@ -635,7 +633,13 @@ export async function createManualMatchAction(
 
   // 3. Mark all players as "on_deck" — removes them from the
   //    waiting pool so they can't be double-booked by the auto-algo.
-  await supabase
+  //    Must use the service client here: the same RLS policies that block
+  //    queue_entries writes for non-self rows would silently no-op this
+  //    update for players the organizer doesn't own, leaving them "waiting"
+  //    while already assigned to a match (the bug that caused Jackie B /
+  //    Carlo to appear in both states simultaneously).
+  const svc = getServiceClient();
+  await svc
     .from("queue_entries")
     .update({ status: "on_deck" as const })
     .eq("session_id", sessionId)
@@ -698,7 +702,10 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
     .eq("match_id", matchId);
 
   if (playersError || !matchPlayers) {
-    return { success: false, message: `Failed to fetch match players: ${playersError?.message ?? "unknown"}` };
+    return {
+      success: false,
+      message: `Failed to fetch match players: ${playersError?.message ?? "unknown"}`,
+    };
   }
 
   const playerIds = matchPlayers.map((mp) => mp.player_id);
@@ -717,19 +724,19 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
       .update({ status: "waiting" as const })
       .eq("session_id", match.session_id)
       .in("player_id", playerIds)
-      .neq("status", "left");   // skip players who already checked out
+      .neq("status", "left"); // skip players who already checked out
 
     if (restoreError) {
-      return { success: false, message: `Failed to restore players to queue: ${restoreError.message}` };
+      return {
+        success: false,
+        message: `Failed to restore players to queue: ${restoreError.message}`,
+      };
     }
   }
 
   // 4. Delete the pending match row — it never played, so deletion
   //    is cleaner than marking it "cancelled" (no history entry needed).
-  const { error: deleteError } = await db
-    .from("matches")
-    .delete()
-    .eq("id", matchId);
+  const { error: deleteError } = await db.from("matches").delete().eq("id", matchId);
 
   if (deleteError) {
     return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
@@ -740,11 +747,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   //    broadcast ensures they see a friendly explanation toast rather
   //    than a confusing silent state change.
   if (playerIds.length > 0) {
-    await broadcastOrganizerIntervention(
-      match.session_id,
-      "on_deck_cleared",
-      playerIds
-    );
+    await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", playerIds);
   }
 
   // 6. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
@@ -826,7 +829,8 @@ export async function publishMatchAction(
     .single();
 
   if (!match) return { success: false, message: "Match not found." };
-  if (match.status !== "pending") return { success: false, message: "Only pending (on-deck) matches can be published." };
+  if (match.status !== "pending")
+    return { success: false, message: "Only pending (on-deck) matches can be published." };
   if (match.is_published) return { success: true, message: "Already published." };
 
   const isOrganizer = await isSessionOrganizer(db, user.id, match.session_id);
@@ -863,8 +867,8 @@ export async function publishMatchAction(
     .from("matches")
     .update({ is_published: true })
     .eq("id", matchId)
-    .eq("status", "pending")     // Atomic guard — cannot publish promoted match
-    .eq("is_published", false);  // Idempotency guard
+    .eq("status", "pending") // Atomic guard — cannot publish promoted match
+    .eq("is_published", false); // Idempotency guard
 
   if (error) return { success: false, message: error.message };
 
@@ -878,7 +882,7 @@ export async function publishMatchAction(
       .update({ status: "on_deck" as const })
       .eq("session_id", match.session_id)
       .in("player_id", playerIds)
-      .eq("status", "waiting");  // only promote players still waiting (idempotent)
+      .eq("status", "waiting"); // only promote players still waiting (idempotent)
   }
 
   return { success: true, message: "Match published." };
@@ -963,8 +967,8 @@ export async function publishAllDraftMatchesAction(
     .from("matches")
     .update({ is_published: true })
     .in("id", publishableIds)
-    .eq("status", "pending")    // Atomic guard — cannot publish promoted match
-    .eq("is_published", false)  // Idempotency guard
+    .eq("status", "pending") // Atomic guard — cannot publish promoted match
+    .eq("is_published", false) // Idempotency guard
     .select("id");
 
   if (error) return { success: false, message: error.message };
@@ -994,15 +998,17 @@ export async function publishAllDraftMatchesAction(
     }
   }
 
-  const skippedMsg = skippedCount > 0
-    ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
-    : "";
+  const skippedMsg =
+    skippedCount > 0
+      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
+      : "";
 
   return {
     success: true,
-    message: publishedCount > 0
-      ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.${skippedMsg}`
-      : `No drafts published.${skippedMsg}`,
+    message:
+      publishedCount > 0
+        ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.${skippedMsg}`
+        : `No drafts published.${skippedMsg}`,
     publishedCount,
     skippedCount,
   };

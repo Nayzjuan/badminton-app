@@ -37,7 +37,13 @@ import { AdvancedStatsToggle } from "./advanced-stats-toggle";
 import { YouStrip } from "./you-strip";
 import { LeaderboardPodium } from "./leaderboard-podium";
 import { StadiumLeaderboardRow } from "./stadium-leaderboard-row";
-import { getSessionLeaderboard, getAllTimeLeaderboard, getPlayerStats } from "@/app/actions/leaderboard";
+import { cn } from "@/lib/utils";
+import { barlowFont, monoFont } from "@/lib/fonts";
+import {
+  getSessionLeaderboard,
+  getAllTimeLeaderboard,
+  getPlayerStats,
+} from "@/app/actions/leaderboard";
 import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
 
 const MIN_SESSION_GP = 3;
@@ -88,29 +94,29 @@ export function LeaderboardPage({
   currentUserId,
   variant = "player-panel",
 }: LeaderboardPageProps) {
-  const isCompact       = variant === "player-panel";
+  const isCompact = variant === "player-panel";
   // organizer-panel and standalone keep their existing showAdvanced toggle;
   // player-panel uses the Stadium layout which has no advanced stats.
-  const showAdvToggle   = variant === "organizer-panel" || variant === "standalone";
-  const isCentered      = variant === "standalone";
+  const showAdvToggle = variant === "organizer-panel" || variant === "standalone";
+  const isCentered = variant === "standalone";
 
   // ── State ──────────────────────────────────────────────────
   // Default to all-time tab when no session is pre-selected (lobby use case).
-  const [scopeTab,          setScopeTab]        = useState<ScopeTab>(sessionId ? "session" : "alltime");
+  const [scopeTab, setScopeTab] = useState<ScopeTab>(sessionId ? "session" : "alltime");
   // Tracks the currently selected session (may differ from the prop after picker interaction).
-  const [activeSessionId,   setActiveSessionId]  = useState<string | null>(sessionId ?? null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId ?? null);
   const [activeSessionName, setActiveSessionName] = useState<string | undefined>(sessionName);
-  const [sessionRows,       setSessionRows]       = useState<LeaderboardRow[]>([]);
-  const [alltimeRows,       setAlltimeRows]       = useState<LeaderboardRow[]>([]);
-  const [sessionLoading,    setSessionLoading]    = useState(!!sessionId);
-  const [alltimeLoading,    setAlltimeLoading]    = useState(false);
-  const [alltimeFetched,    setAlltimeFetched]    = useState(false);
-  const [error,             setError]             = useState<string | null>(null);
-  const [showAdvanced,      setShowAdvanced]      = useState(false);
-  const [flashedIds,        setFlashedIds]        = useState<Set<string>>(new Set());
+  const [sessionRows, setSessionRows] = useState<LeaderboardRow[]>([]);
+  const [alltimeRows, setAlltimeRows] = useState<LeaderboardRow[]>([]);
+  const [sessionLoading, setSessionLoading] = useState(!!sessionId);
+  const [alltimeLoading, setAlltimeLoading] = useState(false);
+  const [alltimeFetched, setAlltimeFetched] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [flashedIds, setFlashedIds] = useState<Set<string>>(new Set());
   /** Raw stats for the current user regardless of MIN_GP — drives YouStrip / LeaderboardHeroCard */
-  const [myStats,           setMyStats]           = useState<LeaderboardRow | null>(null);
-  const [myStatsLoading,    setMyStatsLoading]    = useState(false);
+  const [myStats, setMyStats] = useState<LeaderboardRow | null>(null);
+  const [myStatsLoading, setMyStatsLoading] = useState(false);
 
   // Stadium-specific: sort key for the rows below the podium
   const [sortKey, setSortKey] = useState<StadiumSort>("rank");
@@ -160,7 +166,9 @@ export function LeaderboardPage({
 
   // ── Initial load ──────────────────────────────────────────
   // fetchSession re-memoizes when activeSessionId changes, which re-triggers this effect.
-  useEffect(() => { fetchSession(); }, [fetchSession]);
+  useEffect(() => {
+    fetchSession();
+  }, [fetchSession]);
 
   // ── Lazy load all-time on first tab visit ─────────────────
   useEffect(() => {
@@ -181,16 +189,17 @@ export function LeaderboardPage({
     setMyStats(null);
     setMyStatsLoading(true);
 
-    getPlayerStats(
-      currentUserId,
-      scopeTab === "session" ? activeSessionId! : null,
-    ).then((result) => {
-      if (cancelled) return;
-      setMyStatsLoading(false);
-      if (result.success) setMyStats(result.row);
-    });
+    getPlayerStats(currentUserId, scopeTab === "session" ? activeSessionId! : null).then(
+      (result) => {
+        if (cancelled) return;
+        setMyStatsLoading(false);
+        if (result.success) setMyStats(result.row);
+      }
+    );
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [currentUserId, scopeTab, activeSessionId]);
 
   // ── Session picker handler ────────────────────────────────
@@ -202,14 +211,12 @@ export function LeaderboardPage({
   }, []);
 
   // ── Derived state ─────────────────────────────────────────
-  const activeRows    = scopeTab === "session" ? sessionRows    : alltimeRows;
+  const activeRows = scopeTab === "session" ? sessionRows : alltimeRows;
   const activeLoading = scopeTab === "session" ? sessionLoading : alltimeLoading;
-  const minGP         = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
-  const showRankMov   = scopeTab === "alltime";
+  const minGP = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
+  const showRankMov = scopeTab === "alltime";
   const showSessionPicker = scopeTab === "session" && !activeSessionId && !!sessions?.length;
-  const myRow         = currentUserId
-    ? activeRows.find((r) => r.player_id === currentUserId)
-    : null;
+  const myRow = currentUserId ? activeRows.find((r) => r.player_id === currentUserId) : null;
 
   const handleRefresh = () => {
     if (scopeTab === "session" && activeSessionId) fetchSession();
@@ -221,23 +228,19 @@ export function LeaderboardPage({
   // The sort key only applies to rows 4+ in the list below.
   const { podiumRows, sortedRestRows } = useMemo(() => {
     const byRank = [...activeRows].sort((a, b) => a.rank - b.rank);
-    const top3   = byRank.slice(0, 3);
-    const rest   = byRank.slice(3);
+    const top3 = byRank.slice(0, 3);
+    const rest = byRank.slice(3);
     const sorted =
       sortKey === "rank"
         ? rest
         : [...rest].sort((a, b) => {
-            if (sortKey === "pct")    return b.win_pct - a.win_pct;
-            if (sortKey === "w")      return b.wins - a.wins;
+            if (sortKey === "pct") return b.win_pct - a.win_pct;
+            if (sortKey === "w") return b.wins - a.wins;
             if (sortKey === "streak") return b.win_streak - a.win_streak;
             return 0;
           });
     return { podiumRows: top3, sortedRestRows: sorted };
   }, [activeRows, sortKey]);
-
-  // ── Fonts (used inside Stadium layout) ────────────────────
-  const monoFont   = "font-[family-name:var(--font-jetbrains-mono)]";
-  const barlowFont = "font-[family-name:var(--font-barlow-condensed)]";
 
   // ═════════════════════════════════════════════════════════════
   // STADIUM LAYOUT — player-panel only
@@ -245,7 +248,6 @@ export function LeaderboardPage({
   if (isCompact) {
     return (
       <div className="min-h-full">
-
         {/* ── 1. Section header ──────────────────────────────── */}
         <div
           className="px-4 pt-[18px] pb-[14px] flex items-end justify-between
@@ -260,8 +262,8 @@ export function LeaderboardPage({
               {activeSessionName
                 ? activeSessionName.toUpperCase()
                 : scopeTab === "alltime"
-                ? "ALL-TIME STANDINGS"
-                : "LEADERBOARD"}
+                  ? "ALL-TIME STANDINGS"
+                  : "LEADERBOARD"}
             </div>
             {/* Large italic title */}
             <div
@@ -329,10 +331,7 @@ export function LeaderboardPage({
 
         {/* ── 3. YOU strip ──────────────────────────────────── */}
         {currentUserId && !showSessionPicker && (
-          <YouStrip
-            row={myRow ?? myStats}
-            loading={activeLoading || myStatsLoading}
-          />
+          <YouStrip row={myRow ?? myStats} loading={activeLoading || myStatsLoading} />
         )}
 
         {/* ── 4. Filter chips: THIS SESSION / ALL-TIME / LAST 30 ── */}
@@ -340,8 +339,8 @@ export function LeaderboardPage({
           {(
             [
               { k: "session", label: "THIS SESSION", disabled: false },
-              { k: "alltime", label: "ALL-TIME",     disabled: false },
-              { k: "30d",     label: "LAST 30",      disabled: true  },
+              { k: "alltime", label: "ALL-TIME", disabled: false },
+              { k: "30d", label: "LAST 30", disabled: true },
             ] as const
           ).map(({ k, label, disabled }) => (
             <button
@@ -352,17 +351,15 @@ export function LeaderboardPage({
                   setScopeTab(k);
                 }
               }}
-              className={[
+              className={cn(
                 monoFont,
                 "text-[9.5px] tracking-[.14em] font-semibold",
                 "border px-[11px] py-1.5 uppercase whitespace-nowrap transition-all",
                 scopeTab === k && !disabled
-                  ? "bg-[#111827] text-amber-400 border-[#111827]" +
-                    " dark:bg-[hsl(38_92%_52%)] dark:text-[hsl(217_28%_8%)] dark:border-transparent"
-                  : "text-[#6b7280] border-[#d1d5db]" +
-                    " dark:text-[hsl(220_10%_40%)] dark:border-[hsl(217_18%_18%)]",
-                disabled ? "opacity-30 cursor-not-allowed" : "cursor-pointer",
-              ].join(" ")}
+                  ? "bg-[#111827] text-amber-400 border-[#111827] dark:bg-[hsl(38_92%_52%)] dark:text-[hsl(217_28%_8%)] dark:border-transparent"
+                  : "text-[#6b7280] border-[#d1d5db] dark:text-[hsl(220_10%_40%)] dark:border-[hsl(217_18%_18%)]",
+                disabled ? "opacity-30 cursor-not-allowed" : "cursor-pointer"
+              )}
             >
               {label}
             </button>
@@ -378,65 +375,66 @@ export function LeaderboardPage({
         {/* Only shown when there are rows outside the podium (rank 4+) or
             fewer than 3 qualified players (no podium shown), so the sort
             controls are never orphaned above an empty row list.           */}
-        {!showSessionPicker && (sortedRestRows.length > 0 || (activeRows.length > 0 && podiumRows.length < 3)) && (
-          <div
-            className="flex items-center gap-0.5 px-4 py-2.5
+        {!showSessionPicker &&
+          (sortedRestRows.length > 0 || (activeRows.length > 0 && podiumRows.length < 3)) && (
+            <div
+              className="flex items-center gap-0.5 px-4 py-2.5
                        border-t border-[#f3f4f6] dark:border-[hsl(217_18%_13%)]"
-          >
-            <span
-              className={`${monoFont} text-[9px] tracking-[.18em] uppercase mr-1.5
-                           text-[#9ca3af] dark:text-[hsl(220_10%_36%)]`}
             >
-              SORT
-            </span>
-            {(
-              [
-                { k: "rank",   label: "RANK"   },
-                { k: "pct",    label: "WIN%"   },
-                { k: "w",      label: "WINS"   },
-                { k: "streak", label: "STREAK" },
-              ] as const
-            ).map(({ k, label }) => (
-              <button
-                key={k}
-                onClick={() => setSortKey(k)}
-                className={[
-                  barlowFont,
-                  "font-bold text-[13px] tracking-[.06em] uppercase",
-                  "bg-transparent border-none cursor-pointer px-[7px] py-1 transition-colors",
-                  sortKey === k
-                    ? "text-[#111827] border-b-2 border-amber-600" +
-                      " dark:text-[hsl(38_92%_52%)] dark:border-[hsl(38_92%_52%)]"
-                    : "text-[#6b7280] dark:text-[hsl(220_10%_38%)]",
-                ].join(" ")}
+              <span
+                className={`${monoFont} text-[9px] tracking-[.18em] uppercase mr-1.5
+                           text-[#9ca3af] dark:text-[hsl(220_10%_36%)]`}
               >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+                SORT
+              </span>
+              {(
+                [
+                  { k: "rank", label: "RANK" },
+                  { k: "pct", label: "WIN%" },
+                  { k: "w", label: "WINS" },
+                  { k: "streak", label: "STREAK" },
+                ] as const
+              ).map(({ k, label }) => (
+                <button
+                  key={k}
+                  onClick={() => setSortKey(k)}
+                  className={cn(
+                    barlowFont,
+                    "font-bold text-[13px] tracking-[.06em] uppercase",
+                    "bg-transparent border-none cursor-pointer px-[7px] py-1 transition-colors",
+                    sortKey === k
+                      ? "text-[#111827] border-b-2 border-amber-600 dark:text-[hsl(38_92%_52%)] dark:border-[hsl(38_92%_52%)]"
+                      : "text-[#6b7280] dark:text-[hsl(220_10%_38%)]"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
         {/* ── 7. Column headers (6-col grid) ────────────────── */}
         {/* Same gate as sort bar — only render when rows will follow. */}
-        {!showSessionPicker && (sortedRestRows.length > 0 || (activeRows.length > 0 && podiumRows.length < 3)) && (
-          <div
-            className={`${monoFont} text-[9px] tracking-[.16px] uppercase font-bold
+        {!showSessionPicker &&
+          (sortedRestRows.length > 0 || (activeRows.length > 0 && podiumRows.length < 3)) && (
+            <div
+              className={`${monoFont} text-[9px] tracking-[.16px] uppercase font-bold
                          grid px-4 py-[7px]
                          border-t border-b border-slate-200 dark:border-[hsl(217_18%_13%)]
                          bg-[#f9fafb] dark:bg-[hsl(217_25%_10%)]
                          text-[#6b7280] dark:text-[hsl(220_10%_32%)]`}
-            style={{ gridTemplateColumns: "34px 1fr 30px 64px 52px 26px", gap: "6px" }}
-            role="row"
-            aria-label="Column headers"
-          >
-            <span className="text-right">#</span>
-            <span>PLAYER</span>
-            <span className="text-right">GP</span>
-            <span className="text-right">W–L</span>
-            <span className="text-right">WIN%</span>
-            <span className="text-right">Δ</span>
-          </div>
-        )}
+              style={{ gridTemplateColumns: "34px 1fr 30px 64px 52px 26px", gap: "6px" }}
+              role="row"
+              aria-label="Column headers"
+            >
+              <span className="text-right">#</span>
+              <span>PLAYER</span>
+              <span className="text-right">GP</span>
+              <span className="text-right">W–L</span>
+              <span className="text-right">WIN%</span>
+              <span className="text-right">Δ</span>
+            </div>
+          )}
 
         {/* ── 8. Rows ────────────────────────────────────────── */}
         {!showSessionPicker && (
@@ -476,10 +474,14 @@ export function LeaderboardPage({
             {/* Empty state */}
             {!activeLoading && activeRows.length === 0 && (
               <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-                <p className={`${monoFont} text-[11px] tracking-[.08em] text-[#9ca3af] dark:text-[hsl(220_10%_40%)]`}>
+                <p
+                  className={`${monoFont} text-[11px] tracking-[.08em] text-[#9ca3af] dark:text-[hsl(220_10%_40%)]`}
+                >
                   NO PLAYERS QUALIFIED YET
                 </p>
-                <p className={`${monoFont} text-[10px] text-[#9ca3af] dark:text-[hsl(220_10%_36%)] mt-1.5`}>
+                <p
+                  className={`${monoFont} text-[10px] text-[#9ca3af] dark:text-[hsl(220_10%_36%)] mt-1.5`}
+                >
                   NEED {minGP}+ COMPLETED GAMES TO APPEAR
                 </p>
               </div>
@@ -504,7 +506,9 @@ export function LeaderboardPage({
         {/* ── Session picker (fallback when sessionId is null) ── */}
         {showSessionPicker && (
           <div className="px-4 py-4 space-y-3">
-            <p className={`${monoFont} text-[10px] tracking-[.08em] text-[#9ca3af] dark:text-[hsl(220_10%_40%)]`}>
+            <p
+              className={`${monoFont} text-[10px] tracking-[.08em] text-[#9ca3af] dark:text-[hsl(220_10%_40%)]`}
+            >
               CHOOSE A SESSION
             </p>
             <div className="space-y-2">
@@ -516,12 +520,12 @@ export function LeaderboardPage({
                              px-4 py-3 hover:bg-muted/50 transition-colors"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-foreground truncate">
-                      {s.name}
-                    </span>
+                    <span className="text-sm font-semibold text-foreground truncate">{s.name}</span>
                     {s.is_active && (
-                      <span className="text-[10px] font-bold uppercase tracking-wider
-                                       text-emerald-600 dark:text-emerald-400 shrink-0">
+                      <span
+                        className="text-[10px] font-bold uppercase tracking-wider
+                                       text-emerald-600 dark:text-emerald-400 shrink-0"
+                      >
                         ● Live
                       </span>
                     )}
@@ -529,8 +533,8 @@ export function LeaderboardPage({
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {new Date(s.created_at).toLocaleDateString("en-US", {
                       weekday: "short",
-                      month:   "short",
-                      day:     "numeric",
+                      month: "short",
+                      day: "numeric",
                     })}
                   </p>
                 </button>
@@ -556,30 +560,18 @@ export function LeaderboardPage({
   // CLASSIC LAYOUT — organizer-panel and standalone (unchanged)
   // ═════════════════════════════════════════════════════════════
 
-  const wrapperClass = [
-    "space-y-4",
-    "px-4 py-6",
-    isCentered ? "max-w-2xl mx-auto" : "",
-  ].filter(Boolean).join(" ");
+  const wrapperClass = cn("space-y-4 px-4 py-6", isCentered && "max-w-2xl mx-auto");
 
   return (
     <div className={wrapperClass}>
-
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <Trophy
-            className="h-5 w-5 text-amber-500 shrink-0"
-            aria-hidden="true"
-          />
+          <Trophy className="h-5 w-5 text-amber-500 shrink-0" aria-hidden="true" />
           <div className="min-w-0">
-            <h2 className="text-base font-semibold text-foreground leading-tight">
-              Leaderboard
-            </h2>
+            <h2 className="text-base font-semibold text-foreground leading-tight">Leaderboard</h2>
             {activeSessionName && scopeTab === "session" && (
-              <p className="text-xs text-muted-foreground truncate">
-                {activeSessionName}
-              </p>
+              <p className="text-xs text-muted-foreground truncate">{activeSessionName}</p>
             )}
           </div>
         </div>
@@ -601,9 +593,7 @@ export function LeaderboardPage({
                        disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <RefreshCw
-              className={`h-3.5 w-3.5 text-muted-foreground ${
-                activeLoading ? "animate-spin" : ""
-              }`}
+              className={`h-3.5 w-3.5 text-muted-foreground ${activeLoading ? "animate-spin" : ""}`}
               aria-hidden="true"
             />
           </button>
@@ -636,8 +626,10 @@ export function LeaderboardPage({
 
       {/* ── Error banner ───────────────────────────────────── */}
       {error && !activeLoading && (
-        <div className="rounded-xl border border-destructive/50 bg-destructive/10
-                        px-3 py-3 text-sm text-destructive flex items-start gap-2">
+        <div
+          className="rounded-xl border border-destructive/50 bg-destructive/10
+                        px-3 py-3 text-sm text-destructive flex items-start gap-2"
+        >
           <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
           <span className="flex-1">Failed to load leaderboard data.</span>
           <button
@@ -652,9 +644,7 @@ export function LeaderboardPage({
       {/* ── Session picker — shown when no session is selected ── */}
       {showSessionPicker && (
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Choose a session to view its leaderboard
-          </p>
+          <p className="text-xs text-muted-foreground">Choose a session to view its leaderboard</p>
           <div className="space-y-2">
             {sessions!.map((s) => (
               <button
@@ -664,12 +654,12 @@ export function LeaderboardPage({
                            px-4 py-3 hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-foreground truncate">
-                    {s.name}
-                  </span>
+                  <span className="text-sm font-semibold text-foreground truncate">{s.name}</span>
                   {s.is_active && (
-                    <span className="text-[10px] font-bold uppercase tracking-wider
-                                     text-emerald-600 dark:text-emerald-400 shrink-0">
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wider
+                                     text-emerald-600 dark:text-emerald-400 shrink-0"
+                    >
                       ● Live
                     </span>
                   )}
@@ -677,8 +667,8 @@ export function LeaderboardPage({
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {new Date(s.created_at).toLocaleDateString("en-US", {
                     weekday: "short",
-                    month:   "short",
-                    day:     "numeric",
+                    month: "short",
+                    day: "numeric",
                   })}
                 </p>
               </button>
