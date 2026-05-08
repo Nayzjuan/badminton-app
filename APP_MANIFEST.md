@@ -1,4 +1,5 @@
 # APP_MANIFEST.md — Badminton Queue & Matchmaking App
+
 ### The Living Document · Principal Tech Lead Reference
 
 ---
@@ -6,6 +7,7 @@
 ## ⚠️ AI INSTRUCTIONS: ALWAYS KEEP THIS UPDATED
 
 > **Any AI assistant working in this codebase MUST update this document whenever:**
+>
 > - A feature is added, changed, or removed
 > - A database table, column, or enum is altered
 > - A new Server Action, RPC, or route is created
@@ -19,33 +21,33 @@
 
 ## 1. Core Architecture & Tech Stack
 
-| Layer | Tool | Notes |
-|---|---|---|
-| Framework | **Next.js 16 App Router** | Breaking changes vs. earlier versions — read `node_modules/next/dist/docs/` before using any Next API. Server Components by default; add `"use client"` only at the boundary that needs it. |
-| Database | **Supabase** (Postgres + Realtime) | Anonymous auth flow. Service-role client bypasses RLS — use only inside Server Actions. |
-| Auth | `@supabase/ssr` | Cookie: `sb-{projectRef}-auth-token`, chunked at 3180 chars as `.0`, `.1`, etc. |
-| Input Validation | **Zod** | Auth schemas in `src/lib/schemas/auth.ts`. UUID guards in `src/lib/validate.ts`. |
-| UI Primitives | **Shadcn UI** | Radix-based: Dialog, AlertDialog, Sheet, DropdownMenu, etc. |
-| Styling | **Tailwind CSS v4** | CSS-variable token system in `globals.css`. No `tailwind.config.js` — config is inline via `@theme`. |
-| Drag & Drop | **dnd-kit** | Strict isolation rules — see §6 Architectural Patterns. |
-| Toasts | **Sonner** | Wired to Space Grotesk via `--font-sans` token so toasts match the app font. |
-| Font | **Space Grotesk** (via `next/font`) | OpenType features: `cv01` (single-story a), `cv02` (single-story g). |
-| Push Notifications | **Web Push / VAPID** | `src/lib/notifications/push-client.ts` + `src/app/actions/notifications.ts`. VAPID keys required in env. |
-| PWA | **Serwist** (service worker) | `src/components/serwist-register.tsx`. Offline fallback at `/offline`. |
-| Unit Tests | **Vitest ^4.1.4** | Pure-logic only in `tests/unit/`. No DB, no network. |
-| E2E Tests | **Playwright ^1.59.1** | Zero-local — runs against live Vercel deployment. Bypass header: `x-vercel-protection-bypass`. |
-| Package Manager | **npm** | |
-| Deployment | **Vercel** | |
+| Layer              | Tool                                | Notes                                                                                                                                                                                       |
+| ------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework          | **Next.js 16 App Router**           | Breaking changes vs. earlier versions — read `node_modules/next/dist/docs/` before using any Next API. Server Components by default; add `"use client"` only at the boundary that needs it. |
+| Database           | **Supabase** (Postgres + Realtime)  | Anonymous auth flow. Service-role client bypasses RLS — use only inside Server Actions.                                                                                                     |
+| Auth               | `@supabase/ssr`                     | Cookie: `sb-{projectRef}-auth-token`, chunked at 3180 chars as `.0`, `.1`, etc.                                                                                                             |
+| Input Validation   | **Zod**                             | Auth schemas in `src/lib/schemas/auth.ts`. UUID guards in `src/lib/validate.ts`.                                                                                                            |
+| UI Primitives      | **Shadcn UI**                       | Radix-based: Dialog, AlertDialog, Sheet, DropdownMenu, etc.                                                                                                                                 |
+| Styling            | **Tailwind CSS v4**                 | CSS-variable token system in `globals.css`. No `tailwind.config.js` — config is inline via `@theme`.                                                                                        |
+| Drag & Drop        | **dnd-kit**                         | Strict isolation rules — see §6 Architectural Patterns.                                                                                                                                     |
+| Toasts             | **Sonner**                          | Wired to Space Grotesk via `--font-sans` token so toasts match the app font.                                                                                                                |
+| Font               | **Space Grotesk** (via `next/font`) | OpenType features: `cv01` (single-story a), `cv02` (single-story g).                                                                                                                        |
+| Push Notifications | **Web Push / VAPID**                | `src/lib/notifications/push-client.ts` + `src/app/actions/notifications.ts`. VAPID keys required in env.                                                                                    |
+| PWA                | **Serwist** (service worker)        | `src/components/serwist-register.tsx`. Offline fallback at `/offline`.                                                                                                                      |
+| Unit Tests         | **Vitest ^4.1.4**                   | Pure-logic only in `tests/unit/`. No DB, no network.                                                                                                                                        |
+| E2E Tests          | **Playwright ^1.59.1**              | Zero-local — runs against live Vercel deployment. Bypass header: `x-vercel-protection-bypass`.                                                                                              |
+| Package Manager    | **npm**                             |                                                                                                                                                                                             |
+| Deployment         | **Vercel**                          |                                                                                                                                                                                             |
 
 ### Supabase Client Variants
 
 ```ts
 // RLS-respecting — use for auth lookups and player-facing reads
-createBrowserClient()            // client components
-createServerClient()             // server components / actions
+createBrowserClient(); // client components
+createServerClient(); // server components / actions
 
 // Bypasses RLS — use only for cross-user mutations in server actions
-createServiceClient()            // uses service role key
+createServiceClient(); // uses service role key
 ```
 
 **Rule:** `supabase` (RLS client) is used only for `getUser()` and `isSessionOrganizer()` checks. All `.from(...)` reads and writes inside mutations use `db` (service client).
@@ -53,6 +55,7 @@ createServiceClient()            // uses service role key
 ### Broadcast System
 
 `src/lib/broadcast.ts` — Server-side REST broadcast helpers (no WebSocket opened from the server). Sends ephemeral messages to topic `"realtime:session-events:{sessionId}"`. Four event types:
+
 - `organizer_intervention` — `{ type: "on_deck_cleared" | "match_cancelled", affectedPlayerIds }` → triggers player-side toast via `useOrganizerBroadcast`.
 - `session_closed` — redirects all connected players to `/wrapped/{sessionId}/{playerId}`.
 - `auto_matchmaking_toggled` — `{ isOn: boolean }` → syncs auto-matchmaking state to all co-organizers (bypasses the sessions RLS SELECT policy that would silently drop postgres_changes for non-creator organizers).
@@ -65,157 +68,163 @@ createServiceClient()            // uses service role key
 ### Tables
 
 #### `profiles`
+
 Mirrors `auth.users` 1:1 — the UUID is the `auth.users.id`.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` PK | = `auth.users.id` — never auto-generate |
-| `display_name` | `text` | Player name shown everywhere |
-| `skill_level` | `skill_level` enum | See enum table below |
-| `pin` | `text \| null` | 4-digit reconnect PIN |
-| `vip_tag` | `text \| null` | Short label shown as badge (e.g. "MVP"). Set via Supabase dashboard only. |
-| `vip_theme` | `text \| null` | Key into `VIP_THEMES` in `src/lib/vip-config.ts`. Controls neon/holo rendering. |
-| `created_at` | `timestamptz` | |
-| `updated_at` | `timestamptz` | |
+| Column         | Type               | Notes                                                                           |
+| -------------- | ------------------ | ------------------------------------------------------------------------------- |
+| `id`           | `uuid` PK          | = `auth.users.id` — never auto-generate                                         |
+| `display_name` | `text`             | Player name shown everywhere                                                    |
+| `skill_level`  | `skill_level` enum | See enum table below                                                            |
+| `pin`          | `text \| null`     | 4-digit reconnect PIN                                                           |
+| `vip_tag`      | `text \| null`     | Short label shown as badge (e.g. "MVP"). Set via Supabase dashboard only.       |
+| `vip_theme`    | `text \| null`     | Key into `VIP_THEMES` in `src/lib/vip-config.ts`. Controls neon/holo rendering. |
+| `created_at`   | `timestamptz`      |                                                                                 |
+| `updated_at`   | `timestamptz`      |                                                                                 |
 
 **Trigger:** `on_auth_user_created` → `handle_new_user()` — auto-creates a profile row from `raw_user_meta_data.display_name` and `raw_user_meta_data.skill_level` when a new auth user is inserted.
 
 #### `sessions`
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` PK | |
-| `name` | `text` | Display name of the session |
-| `created_by` | `uuid → profiles.id` | Primary organizer |
-| `organizer_passcode` | `text \| null` | Passcode for additional organizers to elevate via `elevate_to_organizer()` RPC |
-| `scoring` | `scoring_format` enum | `single` \| `best_of_3` \| `best_of_5` |
-| `is_active` | `bool` | `false` when session is closed |
-| `is_auto_matchmaking_on` | `bool` | Engine toggle — auto-fills on-deck when `true` |
-| `court_time_limit_minutes` | `int \| null` | Per-court time cap; `null` = unlimited |
-| `created_at` | `timestamptz` | |
-| `ended_at` | `timestamptz \| null` | Set when session is closed |
+| Column                     | Type                  | Notes                                                                          |
+| -------------------------- | --------------------- | ------------------------------------------------------------------------------ |
+| `id`                       | `uuid` PK             |                                                                                |
+| `name`                     | `text`                | Display name of the session                                                    |
+| `created_by`               | `uuid → profiles.id`  | Primary organizer                                                              |
+| `organizer_passcode`       | `text \| null`        | Passcode for additional organizers to elevate via `elevate_to_organizer()` RPC |
+| `scoring`                  | `scoring_format` enum | `single` \| `best_of_3` \| `best_of_5`                                         |
+| `is_active`                | `bool`                | `false` when session is closed                                                 |
+| `is_auto_matchmaking_on`   | `bool`                | Engine toggle — auto-fills on-deck when `true`                                 |
+| `court_time_limit_minutes` | `int \| null`         | Per-court time cap; `null` = unlimited                                         |
+| `created_at`               | `timestamptz`         |                                                                                |
+| `ended_at`                 | `timestamptz \| null` | Set when session is closed                                                     |
 
 **Trigger:** `on_session_created` → `handle_new_session()` — auto-inserts a `session_organizers` row for `created_by`.
 
 #### `session_organizers`
+
 Append-only access-control table. Never DELETE or UPDATE rows — presence of a row = permission granted.
 
-| Column | Type |
-|---|---|
-| `id` | `uuid` PK |
+| Column       | Type                 |
+| ------------ | -------------------- |
+| `id`         | `uuid` PK            |
 | `session_id` | `uuid → sessions.id` |
-| `user_id` | `uuid → profiles.id` |
-| `granted_at` | `timestamptz` |
+| `user_id`    | `uuid → profiles.id` |
+| `granted_at` | `timestamptz`        |
 
 #### `courts`
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` PK | |
-| `session_id` | `uuid → sessions.id` | |
-| `name` | `text` | e.g. "Court 1" |
-| `status` | `court_status` enum | `available` \| `in_use` \| `closed` |
-| `created_at` | `timestamptz` | |
+| Column       | Type                 | Notes                               |
+| ------------ | -------------------- | ----------------------------------- |
+| `id`         | `uuid` PK            |                                     |
+| `session_id` | `uuid → sessions.id` |                                     |
+| `name`       | `text`               | e.g. "Court 1"                      |
+| `status`     | `court_status` enum  | `available` \| `in_use` \| `closed` |
+| `created_at` | `timestamptz`        |                                     |
 
 #### `queue_entries`
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` PK | |
-| `session_id` | `uuid → sessions.id` | |
-| `player_id` | `uuid → profiles.id` | |
-| `joined_at` | `timestamptz` | Queue join time — used as tiebreaker |
-| `games_played` | `int` | Incremented on match completion; NOT on cancellation |
-| `status` | `queue_status` enum | See enum below |
-| `position` | `int \| null` | Display position; nullable |
-| `is_paused` | `bool` | Soft-pause: player visible in queue list but excluded from matchmaking |
-| `created_at` | `timestamptz` | |
+| Column         | Type                 | Notes                                                                  |
+| -------------- | -------------------- | ---------------------------------------------------------------------- |
+| `id`           | `uuid` PK            |                                                                        |
+| `session_id`   | `uuid → sessions.id` |                                                                        |
+| `player_id`    | `uuid → profiles.id` |                                                                        |
+| `joined_at`    | `timestamptz`        | Queue join time — used as tiebreaker                                   |
+| `games_played` | `int`                | Incremented on match completion; NOT on cancellation                   |
+| `status`       | `queue_status` enum  | See enum below                                                         |
+| `position`     | `int \| null`        | Display position; nullable                                             |
+| `is_paused`    | `bool`               | Soft-pause: player visible in queue list but excluded from matchmaking |
+| `created_at`   | `timestamptz`        |                                                                        |
 
 #### `matches`
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` PK | |
-| `session_id` | `uuid → sessions.id` | |
-| `court_id` | `uuid → courts.id \| null` | **`null` = on-deck (pending) match not yet assigned** |
-| `status` | `match_status` enum | See enum below |
-| `team_a_score` | `int \| null` | Populated on completion |
-| `team_b_score` | `int \| null` | Populated on completion |
-| `is_mixed_level` | `bool` | `true` when skill variance > `SKILL_VARIANCE_TARGET` |
-| `sort_order` | `int \| null` | On-deck display order |
-| `origin` | `match_origin` enum | `auto` \| `manual` \| `modified` — sticky: `manual` is never demoted |
-| `is_published` | `bool` | `false` = draft (hidden from players/TV). Auto-engine matches start as drafts. Manual matches start published. |
-| `created_at` | `timestamptz` | |
-| `started_at` | `timestamptz \| null` | Set when promoted to active court |
-| `completed_at` | `timestamptz \| null` | Set on end/cancel |
+| Column           | Type                       | Notes                                                                                                          |
+| ---------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `id`             | `uuid` PK                  |                                                                                                                |
+| `session_id`     | `uuid → sessions.id`       |                                                                                                                |
+| `court_id`       | `uuid → courts.id \| null` | **`null` = on-deck (pending) match not yet assigned**                                                          |
+| `status`         | `match_status` enum        | See enum below                                                                                                 |
+| `team_a_score`   | `int \| null`              | Populated on completion                                                                                        |
+| `team_b_score`   | `int \| null`              | Populated on completion                                                                                        |
+| `is_mixed_level` | `bool`                     | `true` when skill variance > `SKILL_VARIANCE_TARGET`                                                           |
+| `sort_order`     | `int \| null`              | On-deck display order                                                                                          |
+| `origin`         | `match_origin` enum        | `auto` \| `manual` \| `modified` — sticky: `manual` is never demoted                                           |
+| `is_published`   | `bool`                     | `false` = draft (hidden from players/TV). Auto-engine matches start as drafts. Manual matches start published. |
+| `created_at`     | `timestamptz`              |                                                                                                                |
+| `started_at`     | `timestamptz \| null`      | Set when promoted to active court                                                                              |
+| `completed_at`   | `timestamptz \| null`      | Set on end/cancel                                                                                              |
 
 #### `match_players`
+
 Junction table — 4 rows per match (2 per team).
 
-| Column | Type |
-|---|---|
-| `id` | `uuid` PK |
-| `match_id` | `uuid → matches.id` |
+| Column      | Type                 |
+| ----------- | -------------------- |
+| `id`        | `uuid` PK            |
+| `match_id`  | `uuid → matches.id`  |
 | `player_id` | `uuid → profiles.id` |
-| `team` | `"a"` \| `"b"` |
+| `team`      | `"a"` \| `"b"`       |
 
 #### `match_games`
+
 Multi-set scoring sub-records (used with `best_of_3` / `best_of_5`).
 
-| Column | Type |
-|---|---|
-| `id` | `uuid` PK |
-| `match_id` | `uuid → matches.id` |
-| `game_number` | `int` |
-| `team_a_score` | `int` |
-| `team_b_score` | `int` |
-| `completed_at` | `timestamptz` |
+| Column         | Type                |
+| -------------- | ------------------- |
+| `id`           | `uuid` PK           |
+| `match_id`     | `uuid → matches.id` |
+| `game_number`  | `int`               |
+| `team_a_score` | `int`               |
+| `team_b_score` | `int`               |
+| `completed_at` | `timestamptz`       |
 
 #### `session_wrapped_stats`
+
 Computed once per session per player via `compute_session_wrapped()` RPC.
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` PK | |
-| `session_id` | `uuid → sessions.id` | |
-| `player_id` | `uuid → profiles.id` | |
-| `computed_at` | `timestamptz` | |
-| `games_played` | `int` | |
-| `wins` | `int` | |
-| `losses` | `int` | |
-| `points_for` | `int` | |
-| `points_against` | `int` | |
-| `point_diff` | `int` | **GENERATED ALWAYS** as `points_for - points_against` |
-| `win_pct` | `numeric` | Stored as string-numeric (e.g. `"60.00"`) |
-| `win_streak` | `int` | |
-| `session_rank` | `int \| null` | Rank within the session |
-| `earned_awards` | `text[]` | Array of award slug strings |
-| `award_data` | `jsonb` | Nested metadata per award (e.g. nemesis player name, streak count) |
-| `intro_dismissed_at` | `timestamptz \| null` | When the "Wrapped" intro overlay was dismissed (cross-device) |
+| Column               | Type                  | Notes                                                              |
+| -------------------- | --------------------- | ------------------------------------------------------------------ |
+| `id`                 | `uuid` PK             |                                                                    |
+| `session_id`         | `uuid → sessions.id`  |                                                                    |
+| `player_id`          | `uuid → profiles.id`  |                                                                    |
+| `computed_at`        | `timestamptz`         |                                                                    |
+| `games_played`       | `int`                 |                                                                    |
+| `wins`               | `int`                 |                                                                    |
+| `losses`             | `int`                 |                                                                    |
+| `points_for`         | `int`                 |                                                                    |
+| `points_against`     | `int`                 |                                                                    |
+| `point_diff`         | `int`                 | **GENERATED ALWAYS** as `points_for - points_against`              |
+| `win_pct`            | `numeric`             | Stored as string-numeric (e.g. `"60.00"`)                          |
+| `win_streak`         | `int`                 |                                                                    |
+| `session_rank`       | `int \| null`         | Rank within the session                                            |
+| `earned_awards`      | `text[]`              | Array of award slug strings                                        |
+| `award_data`         | `jsonb`               | Nested metadata per award (e.g. nemesis player name, streak count) |
+| `intro_dismissed_at` | `timestamptz \| null` | When the "Wrapped" intro overlay was dismissed (cross-device)      |
 
 #### `identity_migrations`
+
 Append-only audit log. Records every old → new UUID reconnect (anonymous re-auth).
 
-| Column | Type |
-|---|---|
-| `id` | `uuid` PK |
-| `old_id` | `uuid` |
-| `new_id` | `uuid` |
-| `display_name` | `text` |
-| `migrated_at` | `timestamptz` |
+| Column         | Type          |
+| -------------- | ------------- |
+| `id`           | `uuid` PK     |
+| `old_id`       | `uuid`        |
+| `new_id`       | `uuid`        |
+| `display_name` | `text`        |
+| `migrated_at`  | `timestamptz` |
 
 #### `push_subscriptions`
 
-| Column | Type | Notes |
-|---|---|---|
-| `id` | `uuid` PK | |
-| `user_id` | `uuid → profiles.id` | |
-| `endpoint` | `text` | Browser push endpoint URL |
-| `p256dh` | `text` | ECDH public key (base64) — **required** |
-| `auth_key` | `text` | HMAC auth key (base64) — **required** |
-| `user_agent` | `text \| null` | |
-| `created_at` | `timestamptz` | |
-| `updated_at` | `timestamptz` | |
+| Column       | Type                 | Notes                                   |
+| ------------ | -------------------- | --------------------------------------- |
+| `id`         | `uuid` PK            |                                         |
+| `user_id`    | `uuid → profiles.id` |                                         |
+| `endpoint`   | `text`               | Browser push endpoint URL               |
+| `p256dh`     | `text`               | ECDH public key (base64) — **required** |
+| `auth_key`   | `text`               | HMAC auth key (base64) — **required**   |
+| `user_agent` | `text \| null`       |                                         |
+| `created_at` | `timestamptz`        |                                         |
+| `updated_at` | `timestamptz`        |                                         |
 
 All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web Push call fails silently.
 
@@ -223,47 +232,47 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 
 ### Enums
 
-| Enum | Values |
-|---|---|
-| `skill_level` | `beginner` → `lower_intermediate` → `intermediate` → `upper_intermediate` → `lower_advanced` → `advanced` (mapped to ints 1–6) |
-| `court_status` | `available` \| `in_use` \| `closed` |
-| `queue_status` | `waiting` \| `on_deck` \| `playing` \| `left` |
-| `match_status` | `pending` (on-deck) \| `in_progress` (active court) \| `completed` \| `cancelled` |
-| `match_origin` | `auto` \| `manual` \| `modified` |
-| `scoring_format` | `single` \| `best_of_3` \| `best_of_5` |
+| Enum             | Values                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `skill_level`    | `beginner` → `lower_intermediate` → `intermediate` → `upper_intermediate` → `lower_advanced` → `advanced` (mapped to ints 1–6) |
+| `court_status`   | `available` \| `in_use` \| `closed`                                                                                            |
+| `queue_status`   | `waiting` \| `on_deck` \| `playing` \| `left`                                                                                  |
+| `match_status`   | `pending` (on-deck) \| `in_progress` (active court) \| `completed` \| `cancelled`                                              |
+| `match_origin`   | `auto` \| `manual` \| `modified`                                                                                               |
+| `scoring_format` | `single` \| `best_of_3` \| `best_of_5`                                                                                         |
 
 ---
 
 ### Views
 
-| View | Purpose |
-|---|---|
-| `v_queue_with_wait_time` | Queue entries joined with profiles; computes `wait_minutes`, `is_bottleneck`, `skill_level_int` |
-| `v_match_history` | Matches + players + scores with team arrays and `game_scores` JSON |
-| `v_recent_pairings` | Recent co-player pairs per player; **no longer used by `buildOverlapMap`** (replaced by 3-step manual join with team-aware weighting in `matchmaking.ts`; view still exists in DB but is not queried by the engine) |
-| `v_session_leaderboard` | Per-session GP, W, L, Win%, PF, PA, +/- |
-| `v_alltime_leaderboard_mat` | Materialized all-time leaderboard (same columns, no session filter) |
+| View                        | Purpose                                                                                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `v_queue_with_wait_time`    | Queue entries joined with profiles; computes `wait_minutes`, `is_bottleneck`, `skill_level_int`                                                                                                                     |
+| `v_match_history`           | Matches + players + scores with team arrays and `game_scores` JSON                                                                                                                                                  |
+| `v_recent_pairings`         | Recent co-player pairs per player; **no longer used by `buildOverlapMap`** (replaced by 3-step manual join with team-aware weighting in `matchmaking.ts`; view still exists in DB but is not queried by the engine) |
+| `v_session_leaderboard`     | Per-session GP, W, L, Win%, PF, PA, +/-                                                                                                                                                                             |
+| `v_alltime_leaderboard_mat` | Materialized all-time leaderboard (same columns, no session filter)                                                                                                                                                 |
 
 ---
 
 ### Postgres Functions (RPCs)
 
-| Function | Purpose |
-|---|---|
-| `elevate_to_organizer(p_session_id, p_passcode)` | Passcode-gated organizer promotion → inserts `session_organizers` row |
-| `rejoin_queue(p_session_id)` | Player self-rejoin after leaving |
-| `skill_level_to_int(lvl)` | Enum → numeric (1–6) |
-| `get_player_streaks(p_session_id?)` | Win-streak per player for current session or all-time |
-| `get_alltime_snapshot_before(p_cutoff)` | All-time stats as of a timestamp |
-| `refresh_alltime_leaderboard()` | Refreshes the materialized view |
-| `swap_player_in_match(...)` | Atomic bench→on-deck swap; recomputes `is_mixed_level` |
-| `swap_match_players(...)` | Cross-match atomic swap between two on-deck matches |
-| `create_match_with_players(...)` | Atomic match + match_players insert; `RETURNS uuid`. Returns **`NULL`** (not an error) when a TOCTOU guard detects a concurrent commit — `{ data: null, error: null }` from Supabase JS = graceful slot-skip. RPC evolution: `20260421000000` → `20260506000000` (Draft Mode `p_is_published`) → `20260507000000` (3 TOCTOU guards). |
-| `compute_session_wrapped(p_session_id)` | Computes and upserts all `session_wrapped_stats` for a session |
-| `get_h2h_record(p_team_a, p_team_b, p_session_id)` | Head-to-head wins for exact 2v2 team pairing (all-time + tonight) |
-| `toggle_auto_matchmaking(p_session_id)` | Atomic toggle; returns new boolean value |
-| `migrate_player_identity(p_old_user_id, p_new_user_id)` | Reconnect identity migration; returns `true` if old user is primary organizer |
-| `lookup_active_session(p_session_id)` | Safe public lookup for QR-code join (`/play/join`) — no RLS exposure |
+| Function                                                | Purpose                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `elevate_to_organizer(p_session_id, p_passcode)`        | Passcode-gated organizer promotion → inserts `session_organizers` row                                                                                                                                                                                                                                                                |
+| `rejoin_queue(p_session_id)`                            | Player self-rejoin after leaving                                                                                                                                                                                                                                                                                                     |
+| `skill_level_to_int(lvl)`                               | Enum → numeric (1–6)                                                                                                                                                                                                                                                                                                                 |
+| `get_player_streaks(p_session_id?)`                     | Win-streak per player for current session or all-time                                                                                                                                                                                                                                                                                |
+| `get_alltime_snapshot_before(p_cutoff)`                 | All-time stats as of a timestamp                                                                                                                                                                                                                                                                                                     |
+| `refresh_alltime_leaderboard()`                         | Refreshes the materialized view                                                                                                                                                                                                                                                                                                      |
+| `swap_player_in_match(...)`                             | Atomic bench→on-deck swap; recomputes `is_mixed_level`                                                                                                                                                                                                                                                                               |
+| `swap_match_players(...)`                               | Cross-match atomic swap between two on-deck matches                                                                                                                                                                                                                                                                                  |
+| `create_match_with_players(...)`                        | Atomic match + match_players insert; `RETURNS uuid`. Returns **`NULL`** (not an error) when a TOCTOU guard detects a concurrent commit — `{ data: null, error: null }` from Supabase JS = graceful slot-skip. RPC evolution: `20260421000000` → `20260506000000` (Draft Mode `p_is_published`) → `20260507000000` (3 TOCTOU guards). |
+| `compute_session_wrapped(p_session_id)`                 | Computes and upserts all `session_wrapped_stats` for a session                                                                                                                                                                                                                                                                       |
+| `get_h2h_record(p_team_a, p_team_b, p_session_id)`      | Head-to-head wins for exact 2v2 team pairing (all-time + tonight)                                                                                                                                                                                                                                                                    |
+| `toggle_auto_matchmaking(p_session_id)`                 | Atomic toggle; returns new boolean value                                                                                                                                                                                                                                                                                             |
+| `migrate_player_identity(p_old_user_id, p_new_user_id)` | Reconnect identity migration; returns `true` if old user is primary organizer                                                                                                                                                                                                                                                        |
+| `lookup_active_session(p_session_id)`                   | Safe public lookup for QR-code join (`/play/join`) — no RLS exposure                                                                                                                                                                                                                                                                 |
 
 ---
 
@@ -276,20 +285,25 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 The engine is a **pure on-deck filler** — it never places players directly onto courts. Court assignment only happens via `promoteOnDeckMatchInternal` when a court frees.
 
 #### Priority Scoring (`computePriorityScore`)
+
 ```
 Red Zone (wait ≥ 25 min):   priorityScore = 1000 + waitMinutes   [absolute urgency]
 Normal   (wait < 25 min):   priorityScore = max(0, waitMinutes − (gamesPlayed × 12))
 ```
+
 Floor at 0: game debt holds players back but never drops them below a brand-new joiner.
 
 #### Candidate Scoring (`scoreCandidates`)
+
 ```
 Normal candidate:   candidateScore = -priorityScore + overlapCount × 10,000
 Red Zone candidate: candidateScore = -priorityScore + overlapCount × 100
 ```
+
 Sorted ascending (lowest score = highest priority). Red Zone overlap penalty is capped at 100× so a Red Zone player with 1 recent overlap still beats a Normal player with 0.
 
 #### Group Assembly (`buildCombinationGroup`) — N-choose-3 Combination Search
+
 Replaced the former greedy algorithm. Iterates all C(n,3) triples of scored candidates and returns the first triple where all 3 + the anchor form a valid group (`isGroupValid`). Breaks immediately — the first valid combo found IS the optimal one since candidates are pre-sorted by priority. Worst case: C(30,3) = 4,060 iterations.
 
 #### Partnership Cap Enforcement
@@ -301,11 +315,14 @@ Replaced the former greedy algorithm. Iterates all C(n,3) triples of scored cand
 `pairKey(a, b)` — pure helper in `matchmaking-core.ts`. Returns a canonical symmetric key `"lesser-uuid:greater-uuid"` so `pairKey(a,b) === pairKey(b,a)`.
 
 #### Team Draft (`snakeDraft` / `rotatedDraft`)
+
 Sort all 4 players DESC by skill, then:
+
 - **snakeDraft** (normal): tries splits in skill-balance order → `[0,3] vs [1,2]` → `[0,2] vs [1,3]` → `[0,1] vs [2,3]`. Returns **`null`** if every split would put either team pair at or above `MAX_PARTNERSHIP_REPEATS` — callers must null-guard.
 - **rotatedDraft** (forced repeat): cycles through 3 split configurations based on `repeatCount % 3` to vary team composition across forced repeats. Also returns **`null`** when cap enforcement prevents every split.
 
 #### Anti-Repeat / Diversity Logic
+
 - `buildOverlapMap(anchorId)` — called per-tick (once per anchor per engine slot), anchor-specific. **No longer uses `v_recent_pairings`.** Does a 3-step manual join:
   1. Fetch all `match_players` rows for the anchor (limit 200)
   2. Filter to this session's recent matches (`completed`, `in_progress`, **`pending`** — Fix 2: sees live pairings, not just finished games)
@@ -315,42 +332,46 @@ Sort all 4 players DESC by skill, then:
 - `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → 5) to prevent small-tier starvation.
 
 #### Engine Constants (`src/lib/constants.ts`)
-| Constant | Value | Meaning |
-|---|---|---|
-| `PLAYERS_PER_MATCH` | 4 | Doubles only — fixed |
-| `SKILL_VARIANCE_TARGET` | 1 | Preferred max skill gap |
-| `SKILL_VARIANCE_MAX` | 2 | Hard max skill gap |
-| `FALLBACK_WAIT_MINUTES` | 15 | Bypass skill windows entirely |
-| `CRITICAL_WAIT_MINUTES` | 25 | Red Zone threshold |
-| `GAME_PENALTY_MINUTES` | 12 | Minutes deducted per game played from priority score |
-| `RED_ZONE_SCORE_FLOOR` | 1000 | Sentinel — any score ≥ this = Red Zone |
-| `BOTTLENECK_THRESHOLD_MINUTES` | 20 | Wait-time monitor flag threshold |
-| `ANTI_REPEAT_LOOKBACK` | 5 | Recent matches checked for diversity |
-| `GATE_POOL_THRESHOLD` | 4 | Pool size that triggers cross-court mixing deferral |
-| `GATE_HOLD_MINUTES` | 8 | Minutes before gate auto-releases |
-| `ON_DECK_LOOKAHEAD` | 1 | *Deprecated from engine capacity* — still in `constants.ts`, referenced only by `simulate-engine.ts`. The live engine uses `MAX_AUTO_DRAFTS` instead. |
-| `MAX_ON_DECK_MATCHES` | 2 | *Deprecated from engine capacity* — still in `constants.ts`, no longer imported by `matchmaking.ts`. Superseded by `MAX_AUTO_DRAFTS`. |
-| `MIN_FREE_POOL_FOR_ON_DECK` | 4 | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards) |
-| `MAX_AUTO_DRAFTS` | 3 | **Unified draft cap** (added 20260507). Engine generates at most this many total `pending` matches (published + unpublished combined). Formula: `slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)`. Fixes the 7+ draft accumulation bug where unpublished drafts were invisible to the old `courtCount + ON_DECK_LOOKAHEAD` capacity check. |
-| `MAX_PARTNERSHIP_REPEATS` | 2 | Max same-team appearances per session pair; no waivers |
+
+| Constant                       | Value | Meaning                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PLAYERS_PER_MATCH`            | 4     | Doubles only — fixed                                                                                                                                                                                                                                                                                                                               |
+| `SKILL_VARIANCE_TARGET`        | 1     | Preferred max skill gap                                                                                                                                                                                                                                                                                                                            |
+| `SKILL_VARIANCE_MAX`           | 2     | Hard max skill gap                                                                                                                                                                                                                                                                                                                                 |
+| `FALLBACK_WAIT_MINUTES`        | 15    | Bypass skill windows entirely                                                                                                                                                                                                                                                                                                                      |
+| `CRITICAL_WAIT_MINUTES`        | 25    | Red Zone threshold                                                                                                                                                                                                                                                                                                                                 |
+| `GAME_PENALTY_MINUTES`         | 12    | Minutes deducted per game played from priority score                                                                                                                                                                                                                                                                                               |
+| `RED_ZONE_SCORE_FLOOR`         | 1000  | Sentinel — any score ≥ this = Red Zone                                                                                                                                                                                                                                                                                                             |
+| `BOTTLENECK_THRESHOLD_MINUTES` | 20    | Wait-time monitor flag threshold                                                                                                                                                                                                                                                                                                                   |
+| `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches checked for diversity                                                                                                                                                                                                                                                                                                               |
+| `GATE_POOL_THRESHOLD`          | 4     | Pool size that triggers cross-court mixing deferral                                                                                                                                                                                                                                                                                                |
+| `GATE_HOLD_MINUTES`            | 8     | Minutes before gate auto-releases                                                                                                                                                                                                                                                                                                                  |
+| `ON_DECK_LOOKAHEAD`            | 1     | _Deprecated from engine capacity_ — still in `constants.ts`, referenced only by `simulate-engine.ts`. The live engine uses `MAX_AUTO_DRAFTS` instead.                                                                                                                                                                                              |
+| `MAX_ON_DECK_MATCHES`          | 2     | _Deprecated from engine capacity_ — still in `constants.ts`, no longer imported by `matchmaking.ts`. Superseded by `MAX_AUTO_DRAFTS`.                                                                                                                                                                                                              |
+| `MIN_FREE_POOL_FOR_ON_DECK`    | 4     | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards)                                                                                                                                                                                                                                      |
+| `MAX_AUTO_DRAFTS`              | 3     | **Unified draft cap** (added 20260507). Engine generates at most this many total `pending` matches (published + unpublished combined). Formula: `slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)`. Fixes the 7+ draft accumulation bug where unpublished drafts were invisible to the old `courtCount + ON_DECK_LOOKAHEAD` capacity check. |
+| `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                                                                                                                                                             |
 
 #### Engine Capacity (`runEngineInternal`) — Updated Formula
 
 **Replaces the old `courtCount + ON_DECK_LOOKAHEAD` logic (migration 20260507):**
+
 ```
 totalPending   = COUNT(*) WHERE status = 'pending'   ← single atomic query (published + unpublished)
 slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)
 ```
+
 The old approach counted only **published** matches, so unpublished drafts were invisible — each court-finish trigger saw `0 published → slots free` and generated up to 2 more drafts, accumulating 7+ before the organizer could review any. The single-query cap eliminates that race window.
 
-| State | slotsAvailable |
-|---|---|
-| 0 pending | up to 3 (pool diversity cap may reduce) |
-| 1 pending | up to 2 |
-| 2 pending | 1 |
-| 3+ pending | 0 — engine skips |
+| State      | slotsAvailable                          |
+| ---------- | --------------------------------------- |
+| 0 pending  | up to 3 (pool diversity cap may reduce) |
+| 1 pending  | up to 2                                 |
+| 2 pending  | 1                                       |
+| 3+ pending | 0 — engine skips                        |
 
 #### Engine Flow
+
 ```
 1. Count totalPending (single atomic query — all 'pending' matches, published + unpublished)
 2. slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)  [skip if ≤ 0]
@@ -378,13 +399,14 @@ The old approach counted only **published** matches, so unpublished drafts were 
 
 **Fix:** Three guards inside the RPC transaction, executed sequentially within the same Postgres transaction:
 
-| Guard | Mechanism | Trigger condition | Action |
-|---|---|---|---|
-| **Guard 0** — Pre-flight | `COUNT(*) WHERE status='waiting' AND player_id = ANY(all_ids)` | Count < total players | Return `NULL` immediately, before acquiring locks |
-| **Guard 1** — Row lock | `SELECT … FOR UPDATE ORDER BY player_id` on `queue_entries`; `SET LOCAL lock_timeout = '3s'` | Second concurrent transaction | Blocks until first commits; then Guard 2 runs |
-| **Guard 2** — Conflict | `COUNT(*) FROM match_players JOIN matches WHERE status IN ('pending','in_progress')` | Any player already in active match | Return `NULL` |
+| Guard                    | Mechanism                                                                                    | Trigger condition                  | Action                                            |
+| ------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------- |
+| **Guard 0** — Pre-flight | `COUNT(*) WHERE status='waiting' AND player_id = ANY(all_ids)`                               | Count < total players              | Return `NULL` immediately, before acquiring locks |
+| **Guard 1** — Row lock   | `SELECT … FOR UPDATE ORDER BY player_id` on `queue_entries`; `SET LOCAL lock_timeout = '3s'` | Second concurrent transaction      | Blocks until first commits; then Guard 2 runs     |
+| **Guard 2** — Conflict   | `COUNT(*) FROM match_players JOIN matches WHERE status IN ('pending','in_progress')`         | Any player already in active match | Return `NULL`                                     |
 
 **NULL-return convention (critical):**
+
 - RPC `RETURNS uuid` (scalar). Supabase JS: `{ data: null, error: null }` = Guard triggered.
 - `executeMatch` separates the two failure modes:
   - `rpcError` → genuine DB error, surface to caller as failure
@@ -431,11 +453,13 @@ The old approach counted only **published** matches, so unpublished drafts were 
 Two swap modes:
 
 **Bench → On-deck (intra-match)**: Replace one player in an on-deck match with a waiting queue player.
+
 - Guards: match must be `pending`, out-player must still be in `match_players`, in-player must be `waiting`.
 - Execution: single atomic Postgres transaction via `swap_player_in_match` RPC (DELETE + INSERT + UPDATE × 2 + recompute `is_mixed_level`).
 - Error codes: `MATCH_STARTED` → close sheet; `PLAYER_UNAVAILABLE` → keep sheet open for re-pick; `PLAYER_NOT_IN_MATCH` → close sheet + info toast.
 
 **Cross-match / Tap-to-Swap v2 (between two on-deck matches)**: Direct match-player swap without needing a bench player.
+
 - Triggered by selecting a player in one match card, then a player in another (via `swap-floating-bar.tsx` cross-match picker).
 - Uses `swap_match_players` RPC — both matches must still be `pending`.
 - Undo is supported — reversal corrects the `matchId` direction explicitly.
@@ -447,10 +471,10 @@ Two swap modes:
 
 Draft Mode is a **publish gate** for auto-generated on-deck matches.
 
-| State | `is_published` | Visible to players / TV? | Organizer sees? |
-|---|---|---|---|
-| Draft (auto-engine) | `false` | ❌ | ✅ (review mode card styling) |
-| Published (manual or explicitly published) | `true` | ✅ | ✅ |
+| State                                      | `is_published` | Visible to players / TV? | Organizer sees?               |
+| ------------------------------------------ | -------------- | ------------------------ | ----------------------------- |
+| Draft (auto-engine)                        | `false`        | ❌                       | ✅ (review mode card styling) |
+| Published (manual or explicitly published) | `true`         | ✅                       | ✅                            |
 
 - **Auto-engine matches** are inserted with `is_published = false`. Organizer reviews the proposed pairing, optionally swaps players, then publishes.
 - **Manual matches** bypass draft and insert with `is_published = true`.
@@ -468,6 +492,7 @@ Draft Mode is a **publish gate** for auto-generated on-deck matches.
 **Amber Courts-tab badge**: The organizer dashboard shows an amber badge on the **Courts** tab whenever `drafts > 0` (count of on-deck matches with `is_published = false`). This is a persistent visual signal that unpublished draft matches are waiting for review, even when the organizer is on a different tab.
 
 **Three-layer server firewall (RLS-level enforcement):**
+
 1. `matches` RLS `SELECT` policy: `is_published = true OR creator_id = auth.uid()` — non-organizer users can only query published matches.
 2. `match_players` RLS `SELECT` policy: joined through matches, inherits the `is_published` filter — players cannot even discover they are assigned to a draft.
 3. Realtime channel: player-side and TV-view subscriptions receive only `is_published = true` rows, so drafts are invisible at the subscription level without requiring client-side filtering.
@@ -480,20 +505,21 @@ Draft Mode is a **publish gate** for auto-generated on-deck matches.
 
 10 preset themes. DB stores only the key string (`vip_theme`). All visual logic is code-side.
 
-| Theme Key | Label |
-|---|---|
-| `cyber-neon` | Cyber Neon |
-| `gold-prestige` | Gold Prestige |
-| `crimson-elite` | Crimson Elite |
-| `violet-spark` | Violet Spark |
+| Theme Key        | Label          |
+| ---------------- | -------------- |
+| `cyber-neon`     | Cyber Neon     |
+| `gold-prestige`  | Gold Prestige  |
+| `crimson-elite`  | Crimson Elite  |
+| `violet-spark`   | Violet Spark   |
 | `emerald-legend` | Emerald Legend |
-| `solar-flare` | Solar Flare |
-| `arctic-ice` | Arctic Ice |
-| `rose-titan` | Rose Titan |
-| `toxic-lime` | Toxic Lime |
+| `solar-flare`    | Solar Flare    |
+| `arctic-ice`     | Arctic Ice     |
+| `rose-titan`     | Rose Titan     |
+| `toxic-lime`     | Toxic Lime     |
 | `silver-phantom` | Silver Phantom |
 
 **Rendering rules:**
+
 - **Dark mode** → `neonClass`: colored text + layered CSS `text-shadow` glow (3 layers: close glow, mid glow, wide spread).
 - **Light mode** → `holoClass`: gradient background clipped to text (`bg-clip-text`) for a holographic shimmer effect. Animated via `vip-holo-shimmer` keyframes in `globals.css`.
 - VIP tags appear inline on player pills in active court cards (`TeamsGrid`) and in match alert cards.
@@ -510,6 +536,7 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 **Computation**: `compute_session_wrapped(p_session_id)` RPC runs server-side, computing all stats and upsert-ing `session_wrapped_stats` rows for every player in the session. Triggered when the organizer closes the session.
 
 **Intro Overlay** (`wrapped-intro.tsx` / `SessionWrappedIntro` component):
+
 - Full-screen dark navy takeover (`#0E1C3A` background) with staged CSS animation sequence:
   1. Overlay fades in (`wi-fade`)
   2. Shuttlecock icon scales in with rotation (`wi-icon`)
@@ -524,19 +551,53 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 - Tracks `intro_dismissed_at` on the `session_wrapped_stats` row — cross-device: once dismissed, stays dismissed on every device.
 
 **Award Cards** (`wrapped-award-card.tsx`):
+
 - Each award rendered with rarity-coded background tint, emoji, title, personalized subtitle.
 - Rarity tiers: `common | uncommon | rare | legendary`.
 - Inline styles only (no `dark:` Tailwind variants) — compatible with `html-to-image` capture.
 - Staggered entrance animations via CSS custom property.
 
 **Award Metadata** (`src/lib/wrapped-awards.ts`):
-- `AWARD_META: Record<string, AwardMeta>` — maps every slug to `{ emoji, title, subtitle, rarity }`.
+
+- `AWARD_META: Record<string, AwardMeta>` — maps every slug to `{ emoji, title, subtitle, rarity }`. **51 total awards** across 8 categories (expanded from 27 in migration `20260508000000`).
 - Subtitle templates use `{value}` tokens replaced at render time from `award_data` jsonb.
 - `renderSubtitle(meta, awardData)` handles token replacement.
+- `sortAwardsByRarity(slugs)` — orders rarest-first for display (legendary → rare → uncommon → common).
+- `topAwardsByRarity(slugs, n=6)` — display cap helper used by `WrappedShell` to render at most 6 awards on the player's Wrapped page; the header copy switches to "Top 6 of N Awards" when there are more.
+
+**Award catalogue (51 awards across 8 categories):**
+
+| Category                  | Awards                                                                                                                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Performance               | undefeated_champion, dominant_night, solid_outing, glass_half_full, session_mvp, **comeback_kid**, **the_closer**, **ice_cold**, **clean_sweep** (replaces sunset_surge), **back_to_back** |
+| Scoring                   | point_machine, shutout_artist, top_scorer, point_diff_king                                                                                                                                 |
+| Margin / Dominance (NEW)  | **blowout_king**, **heartless** (3+ wins by ≥8 pts), **sniper** (3+ wins by 5–7 pts — refined to be mutually exclusive with heartless), **defensive_wall**                                 |
+| Streaks (tiered)          | hot_streak → on_fire → unstoppable                                                                                                                                                         |
+| Volume (tiered)           | battle_tested → marathon_night → court_hermit, most_active                                                                                                                                 |
+| Resilience                | grinds → never_say_die, sunset_surge, fast_starter                                                                                                                                         |
+| Nemesis / H2H             | my_nemesis, kryptonite, **the_rematch**, **redemption_arc**, **friendly_fire**                                                                                                             |
+| Social / Partner (NEW)    | **social_butterfly**, **loyal_partner**, **mixed_master**                                                                                                                                  |
+| Score-based Flavor        | close_call_survivor, heartbreaker, deuce_magnet                                                                                                                                            |
+| Comedic / Personality     | participation_trophy, the_punching_bag, scoreboard_decorator, **benchwarmer**, **the_warmup_act**, **own_worst_enemy**, just_getting_started (fallback)                                    |
+| Special / Milestone (NEW) | **century_club** (legendary, ≥100 all-time games), **the_veteran**, **night_cap**, **early_bird**, **skill_slayer**, **double_trouble**                                                    |
+
+(Bolded = added or refined in `20260508000000_expand_wrapped_awards.sql`.)
+
+**RPC mechanics — what the migration changed:**
+
+- `PERFORM refresh_alltime_leaderboard()` runs at the top so `century_club` (≥100 all-time games) and `the_veteran` (top-3 all-time games among players active tonight) read fresh data.
+- `_wrapped_stats` temp table extended with ~25 new computed columns: `won_last`, `lost_first_two`, `wins_after_first_two`, `last3_total`, `distinct_win_streaks_2plus`, `avg_winning_margin`, `avg_loss_margin`, `wins_by_8_or_more`, `wins_by_5_to_7`, `avg_pa_per_game`, `mixed_wins`, `played_first_match`, `played_last_match`, `max_rematch_count`, `redemption_count`, `unique_partners`, `max_same_partner_count`, `top_partner_id` / `top_partner_name`, `friendly_fire_overlap`, `own_worst_enemy_id` / `own_worst_enemy_name`, `skill_slayer_wins`, `alltime_games`, `is_alltime_top3`, `has_streak_partner`.
+- New supporting CTEs: `match_opponent_pairs` + `opp_pair_summary` (rematch / redemption), `partner_counts` + `partner_aggregates` + `top_partner_per_player` + `partner_summary`, `partners` / `opponents` + `friendly_fire_counts`, `own_worst_enemy_pairs` + `own_worst_enemy_summary`, `player_skills` + `match_opponent_skill` + `skill_slayer_counts`, `alltime_top3`.
+- Tier replacement: `clean_sweep` removes `sunset_surge` from the player's award array (won 3-of-3 last is a strict superset of won 2+-of-3 last).
+- Tier replacement: `the_warmup_act` removes `participation_trophy` before adding itself — a player who qualifies for warmup_act (0 wins, ≥3 games, avg loss margin ≥6) was otherwise receiving both awards simultaneously (migration `20260509`).
+- `sniper` was rebanded from "≥5 pt margin" to "5–7 pt margin" so it does not overlap with the new `heartless` (≥8 pt margin) award.
+- **Threshold tweaks (migration `20260509000000`):** `the_closer` requires `games_played >= 3` (was 2); `friendly_fire` requires `friendly_fire_overlap >= 2` (was 1, fired for ~80% of players in small sessions).
 
 **Archetype Cards**: Players receive a personality archetype (e.g. "The Grinder", "The Sniper") based on their session stats pattern.
 
-**Delivery pipeline**: Organizer closes session → `compute_session_wrapped` RPC fires → `session_closed` broadcast fires → all connected players redirect to `/wrapped/{sessionId}/{playerId}` automatically.
+**Delivery pipeline**: Organizer closes session → `compute_session_wrapped` RPC fires (refreshes alltime leaderboard internally) → `session_closed` broadcast fires → all connected players redirect to `/wrapped/{sessionId}/{playerId}` automatically.
+
+**PG17 compatibility note:** All `v_awards` appends use `array_append(v_awards, 'X'::text)` rather than `v_awards || 'X'`. Postgres 17's stricter type coercion treats `text[] || 'unqualified-string'` as ambiguous and tries to parse the literal as an array, raising "malformed array literal". Always use `array_append` for plpgsql append patterns.
 
 ---
 
@@ -558,6 +619,7 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 **Files:** `src/components/leaderboard/`, `src/hooks/use-leaderboard.ts`, `src/app/actions/leaderboard.ts`, `src/types/leaderboard.ts`
 
 Two leaderboard modes:
+
 - **Session leaderboard**: reads `v_session_leaderboard` — live stats for the current session. Shown on the organizer dashboard leaderboard tab and at `/leaderboard/[sessionId]`.
 - **All-time leaderboard**: reads `v_alltime_leaderboard_mat` (materialized view). Refreshed via `refresh_alltime_leaderboard()` RPC after each session. Accessible at `/leaderboard`.
 
@@ -616,6 +678,7 @@ Hybrid notification system — Web Push + in-app audio.
 **File:** `src/components/organizer/queue-control.tsx`, queue entry `is_paused` column
 
 Organizer can soft-pause any player in the queue. Paused players:
+
 - Remain visible in the queue list (position preserved)
 - Are excluded from matchmaking candidate pool
 - Can be un-paused at any time (single click)
@@ -656,10 +719,12 @@ Organizers do not need a persistent account. The organizer landing page auto-dis
 **File:** `src/lib/validate.ts`
 
 Every server action validates all incoming UUIDs **before any database call**:
+
 ```ts
 import { isValidUUID } from "@/lib/validate";
 if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID" };
 ```
+
 `isValidUUID(s)` is a type-narrowing guard — passes only lowercase hex UUIDs matching `[0-9a-f]{8}-...-[0-9a-f]{12}`. Malformed IDs return a clean error; they never reach PostgREST.
 
 Also: `src/lib/schemas/auth.ts` — Zod schema for `display_name` (3–30 chars, letters/numbers/spaces only, internal spaces collapsed).
@@ -677,6 +742,7 @@ Two paths to exit a session:
 **Organizer-initiated checkout**: Organizer clicks the checkout action in the queue control table. Uses the same `checkoutPlayer` action with the target player's ID via the service-role client (cross-user mutation). Wrapped in `AlertDialog` confirmation to prevent accidental removals.
 
 **Post-checkout state:**
+
 - `queue_entries.status` → `"left"`.
 - Matchmaking engine excludes `left` players from all candidate pools.
 - If the player was assigned to an unpublished draft match, the draft is not automatically cleared — the organizer must discard it manually (BUG-002 in `publishMatchAction` will block publishing if a draft contains a `left` player).
@@ -695,6 +761,7 @@ A real-time list of all players whose `wait_minutes ≥ BOTTLENECK_THRESHOLD_MIN
 **Data source:** `v_queue_with_wait_time` view — the same view the engine reads for priority scoring. The `is_bottleneck` flag is computed in the view (`wait_minutes >= 20`).
 
 **Organizer actions from the monitor panel:**
+
 - **Remove from queue**: Checkout the bottlenecked player (AlertDialog-confirmed). Calls `checkoutPlayer`.
 - The monitor is a visibility and emergency-intervention tool — the engine's Red Zone logic (`CRITICAL_WAIT_MINUTES = 25`) already handles long waits automatically by elevating those players' priority above all normal candidates.
 
@@ -709,6 +776,7 @@ A real-time list of all players whose `wait_minutes ≥ BOTTLENECK_THRESHOLD_MIN
 **Font:** Space Grotesk — geometric, sporty, readable at small sizes. OpenType `cv01` + `cv02` enabled globally. Weight 300 removed (too light for readability). Wired as `--font-sans` so Sonner toasts inherit it.
 
 **Dark mode token values (CSS custom properties):**
+
 ```
 --background:    217 28% 8%    (deep navy court floor)
 --card:          217 25% 11%   (lifted navy panel)
@@ -728,29 +796,29 @@ A real-time list of all players whose `wait_minutes ≥ BOTTLENECK_THRESHOLD_MIN
 
 ### 4.2 Color Semantic Language
 
-| Color | Meaning | Never use for anything else |
-|---|---|---|
-| Emerald | Available / success / confirmed | |
-| Amber | Pending / warning / mixed-level | |
-| Red / Destructive | Danger / cancel / remove | |
-| Slate / Muted | Neutral / secondary text | |
-| Sky | Team A identity (on court cards) | |
-| Amber (team) | Team B identity (on court cards) | |
-| Cyan (`--court-cyan`) | Court lines, net, structural accents | |
-| Lime (`--court-lime`) | Player name pills in active court (dark mode) | |
+| Color                 | Meaning                                       | Never use for anything else |
+| --------------------- | --------------------------------------------- | --------------------------- |
+| Emerald               | Available / success / confirmed               |                             |
+| Amber                 | Pending / warning / mixed-level               |                             |
+| Red / Destructive     | Danger / cancel / remove                      |                             |
+| Slate / Muted         | Neutral / secondary text                      |                             |
+| Sky                   | Team A identity (on court cards)              |                             |
+| Amber (team)          | Team B identity (on court cards)              |                             |
+| Cyan (`--court-cyan`) | Court lines, net, structural accents          |                             |
+| Lime (`--court-lime`) | Player name pills in active court (dark mode) |                             |
 
 ---
 
 ### 4.3 Typography Hierarchy
 
-| Element | Treatment |
-|---|---|
-| Section headers | `text-sm font-semibold uppercase tracking-wider text-muted-foreground` |
-| Card headings | `text-base font-semibold` |
-| Body / labels | `text-sm` — minimum 14px, never smaller in production UI |
-| Score displays | `text-3xl font-black tabular-nums` — `tabular-nums` prevents layout shift |
-| Stat numbers | `tabular-nums` always, to prevent jitter on Realtime updates |
-| Badges / tags | `text-xs font-medium` |
+| Element         | Treatment                                                                 |
+| --------------- | ------------------------------------------------------------------------- |
+| Section headers | `text-sm font-semibold uppercase tracking-wider text-muted-foreground`    |
+| Card headings   | `text-base font-semibold`                                                 |
+| Body / labels   | `text-sm` — minimum 14px, never smaller in production UI                  |
+| Score displays  | `text-3xl font-black tabular-nums` — `tabular-nums` prevents layout shift |
+| Stat numbers    | `tabular-nums` always, to prevent jitter on Realtime updates              |
+| Badges / tags   | `text-xs font-medium`                                                     |
 
 ---
 
@@ -777,15 +845,15 @@ A real-time list of all players whose `wait_minutes ≥ BOTTLENECK_THRESHOLD_MIN
 
 These are hard bans — never reintroduce:
 
-| Pattern | Why banned |
-|---|---|
-| Gradient CTAs (`bg-gradient-to-r from-X to-Y` on buttons) | #1 AI slop signal — breaks visual credibility |
-| Neon glow on non-VIP elements | `dark:[text-shadow:...]` on ordinary elements is wasteful; reserved for VIP tags only |
-| `border-left: 4px solid` accent stripe on cards/list items | Overused dashboard pattern — never intentional |
-| Gradient text (`bg-clip-text + gradient`) for non-VIP elements | Reserved exclusively for VIP holo effect |
-| Glassmorphism (`backdrop-blur` cards) | Not in the design language |
-| Pure black / pure white | Always tinted — dark mode text is `hsl(220 12% 92%)`, not `#FFF` |
-| DevTools in production | `DevTools` component must be wrapped in `process.env.NODE_ENV === "development"` |
+| Pattern                                                        | Why banned                                                                            |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Gradient CTAs (`bg-gradient-to-r from-X to-Y` on buttons)      | #1 AI slop signal — breaks visual credibility                                         |
+| Neon glow on non-VIP elements                                  | `dark:[text-shadow:...]` on ordinary elements is wasteful; reserved for VIP tags only |
+| `border-left: 4px solid` accent stripe on cards/list items     | Overused dashboard pattern — never intentional                                        |
+| Gradient text (`bg-clip-text + gradient`) for non-VIP elements | Reserved exclusively for VIP holo effect                                              |
+| Glassmorphism (`backdrop-blur` cards)                          | Not in the design language                                                            |
+| Pure black / pure white                                        | Always tinted — dark mode text is `hsl(220 12% 92%)`, not `#FFF`                      |
+| DevTools in production                                         | `DevTools` component must be wrapped in `process.env.NODE_ENV === "development"`      |
 
 ---
 
@@ -813,6 +881,7 @@ Always wrapped in `AlertDialog` with explicit cancel + confirm. The only excepti
 `disabled:opacity-50 disabled:cursor-not-allowed` on every interactive element — no exceptions.
 
 **Skill badge (`src/components/ui/skill-badge.tsx`):**
+
 - Light: `bg-{color}-100 text-{color}-800`
 - Dark: `dark:bg-{color}-900/40 dark:text-{color}-300`
 - 6 distinct colors: Beginner → emerald, Lower Intermediate → teal, Intermediate → blue, Upper Intermediate → indigo, Lower Advanced → purple, Advanced → rose
@@ -829,15 +898,14 @@ Never collapse to a 3-bucket system. Each of the 6 enum values must render in it
 Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 
 **Health-monitored (contribute to `realtimeConnected` indicator):**
+
 1. `courts` — court status / name changes
 2. `queue_entries` — player queue changes (via `v_queue_with_wait_time` view refresh)
 3. `matches` — match status changes
 4. `match_players` — roster changes (swap, manual assignment)
 5. `profiles` — skill override / display name changes (triggers queue + match re-fetch)
 
-**Non-health ancillary:**
-6. `session-settings:{sessionId}` — sessions table UPDATE filtered to this session. Handles `court_time_limit_minutes` changes. **Intentionally excludes `is_auto_matchmaking_on`** — sessions RLS SELECT only grants access to the session creator, so co-organizer postgres_changes events are silently dropped. The toggle is synced via broadcast instead.
-7. `session-events:{sessionId}` (broadcast) — ephemeral server-to-client messages: `organizer_intervention`, `session_closed`, `auto_matchmaking_toggled`, `cap_saturation`. Handled by `useOrganizerBroadcast` (player side) and inline in `useOrganizerData` (organizer side).
+**Non-health ancillary:** 6. `session-settings:{sessionId}` — sessions table UPDATE filtered to this session. Handles `court_time_limit_minutes` changes. **Intentionally excludes `is_auto_matchmaking_on`** — sessions RLS SELECT only grants access to the session creator, so co-organizer postgres_changes events are silently dropped. The toggle is synced via broadcast instead. 7. `session-events:{sessionId}` (broadcast) — ephemeral server-to-client messages: `organizer_intervention`, `session_closed`, `auto_matchmaking_toggled`, `cap_saturation`. Handled by `useOrganizerBroadcast` (player side) and inline in `useOrganizerData` (organizer side).
 
 **Ref-based callback pattern:** All fetch functions stored in refs (`fetchCourtsRef`, `fetchQueueRef`, etc.). Subscriptions capture the ref, not the function value. This prevents the `useEffect` that wires subscriptions from re-running on every state update — channels stay stable.
 
@@ -852,6 +920,7 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 ## 6. Architectural Patterns & Rules
 
 ### Server Action Convention
+
 - All mutations: `"use server"` in `src/app/actions/`.
 - Return shape: `{ success: boolean; message: string; error?: string }` — never throw.
 - Auth check always first: `getUser()` via RLS client → `isSessionOrganizer()` → then proceed.
@@ -859,27 +928,34 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 - **UUID validation always before DB call**: `isValidUUID(id)` guard on every incoming UUID parameter.
 
 ### dnd-kit Isolation
+
 Two guards required on every interactive element inside a draggable container:
+
 ```tsx
 data-no-dnd="true"                          // on the element
 onPointerDown={(e) => e.stopPropagation()}   // on the element
 ```
+
 Missing either guard causes dnd-kit to intercept clicks on buttons, checkboxes, and inputs.
 
 ### TypeScript Convention
+
 - **All DB row types must be `type` aliases, never `interface`.** Supabase's generic system requires sealed types.
 - Leaderboard-specific types live in `src/types/leaderboard.ts` (separate from `database.ts` to keep the DB file focused).
 - Every table/view entry in `Database` type must include `Relationships: []`.
 - `tsc --noEmit` is the authoritative type check — IDE errors can lag.
 
 ### Service Client Rule
+
 Any cross-user write (swap, matchmaking, match end/cancel, session close) must use `createServiceClient()`. The primary organizer (`sessions.created_by`) has no `session_organizers` row — write-side RLS silently returns 0 rows for them if the RLS client is used.
 
 ### PostgREST Gotchas
+
 - `UPDATE` matching 0 rows returns an **empty array**, not null. Using `.single()` on it throws. Use array + length check for atomic CAS guards.
 - `INSERT` with `.select().single()` is safe — always returns exactly one row or an error.
 
 ### Null-guard on Draft Functions
+
 `snakeDraft()` and `rotatedDraft()` return `null` when `MAX_PARTNERSHIP_REPEATS` cap prevents every possible team split. All callers must null-guard and treat `null` as a slot failure.
 
 ---
@@ -887,19 +963,21 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 ## 7. Testing
 
 ### Unit Tests (Vitest)
+
 - **Location:** `tests/unit/`
 - **Run:** `npm run test:unit`
 - **Scope:** Pure logic only — no DB, no network.
 
-| File | Covers |
-|---|---|
-| `matchmaking-core.test.ts` | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation` — regression suite |
-| `matchmaking-engine.test.ts` | Full engine flow integration (mocked DB), anti-repeat, Red Zone, partner cap |
-| `session-simulation.test.ts` | Multi-round session simulations — 30-player load, diversity saturation |
-| `queue-actions.test.ts` | Queue join/leave/rejoin guards, ghost re-queue prevention |
-| `match-origin-tracking.test.ts` | `origin` enum transitions — `auto` → `modified`, stickiness of `manual` |
+| File                            | Covers                                                                                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `matchmaking-core.test.ts`      | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation` — regression suite |
+| `matchmaking-engine.test.ts`    | Full engine flow integration (mocked DB), anti-repeat, Red Zone, partner cap                                                                |
+| `session-simulation.test.ts`    | Multi-round session simulations — 30-player load, diversity saturation                                                                      |
+| `queue-actions.test.ts`         | Queue join/leave/rejoin guards, ghost re-queue prevention                                                                                   |
+| `match-origin-tracking.test.ts` | `origin` enum transitions — `auto` → `modified`, stickiness of `manual`                                                                     |
 
 ### E2E Tests (Playwright)
+
 - **Location:** `tests/e2e/`
 - **Run:** `npm run test:e2e`
 - **Target:** Live Vercel deployment — **not localhost**.
@@ -907,19 +985,20 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 - **Sandbox safety (teardown.ts):** Two hard guards before any DELETE: `TEST_SESSION_ID` env var must be defined AND `sessions.name` must start with `"🤖 E2E SANDBOX"`.
 - **Locator best practice:** Scope to dialog/container — `page.getByRole("dialog").getByText("E2E_Alice")` not `page.getByText("E2E_Alice")` (names can appear in Sonner toasts).
 
-| Scenario | File | Covers |
-|---|---|---|
-| A — Swap | `scenario-a-swap.spec.ts` | Bench→on-deck swap, undo, player unavailable error |
-| B — Engine flows | `scenario-b-engine-flows.spec.ts` | Auto-matchmaking on/off, on-deck cap, gate logic |
-| C — Tap-to-Swap v2 | `scenario-c-tap-to-swap-v2.spec.ts` | Cross-match direct player swap, 11 test cases |
-| D — Wrapped dismiss | `scenario-d-session-wrapped-dismiss.spec.ts` | Intro overlay dismiss, `intro_dismissed_at` persisted |
-| E — Match alert UI | `scenario-e-match-alert-ui.spec.ts` | Player match alert card rendering with VIP tags |
-| F — Court time alert | `scenario-f-court-time-alert.spec.ts` | Timer warning when court exceeds `court_time_limit_minutes` |
-| G — H2H records | `scenario-g-h2h-records.spec.ts` | H2H strip appears after first meeting, counts correctly |
-| H — Diversity | `scenario-h-diversity.spec.ts` | Anti-repeat enforcement, rotated draft cycling |
-| I — 30-player sim | `scenario-i-thirty-player-simulation.spec.ts` | Full session simulation, engine under load |
+| Scenario             | File                                          | Covers                                                      |
+| -------------------- | --------------------------------------------- | ----------------------------------------------------------- |
+| A — Swap             | `scenario-a-swap.spec.ts`                     | Bench→on-deck swap, undo, player unavailable error          |
+| B — Engine flows     | `scenario-b-engine-flows.spec.ts`             | Auto-matchmaking on/off, on-deck cap, gate logic            |
+| C — Tap-to-Swap v2   | `scenario-c-tap-to-swap-v2.spec.ts`           | Cross-match direct player swap, 11 test cases               |
+| D — Wrapped dismiss  | `scenario-d-session-wrapped-dismiss.spec.ts`  | Intro overlay dismiss, `intro_dismissed_at` persisted       |
+| E — Match alert UI   | `scenario-e-match-alert-ui.spec.ts`           | Player match alert card rendering with VIP tags             |
+| F — Court time alert | `scenario-f-court-time-alert.spec.ts`         | Timer warning when court exceeds `court_time_limit_minutes` |
+| G — H2H records      | `scenario-g-h2h-records.spec.ts`              | H2H strip appears after first meeting, counts correctly     |
+| H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling              |
+| I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session simulation, engine under load                  |
 
 ### Test Helpers
+
 - `tests/helpers/teardown.ts` — `resetSandboxSession()`, `seedSession()` — sandbox cleanup and seeding
 - `tests/helpers/init-sandbox.ts` — One-time sandbox session setup
 - `tests/helpers/admin-db.ts` — Direct DB access for test assertions
@@ -1120,7 +1199,7 @@ scripts/
 backups/
   run_backup.py                  # Stdlib-only Supabase backup — run anytime with python3
 
-supabase/migrations/             # Chronological Postgres migrations (20260417 → 20260507)
+supabase/migrations/             # Chronological Postgres migrations (20260417 → 20260509)
 
 MEMORY.md                        # Architectural index (dense LLM reference — read before coding)
 APP_MANIFEST.md                  # This file — the living document
@@ -1155,3 +1234,63 @@ APP_MANIFEST.md                  # This file — the living document
 23. **`MAX_AUTO_DRAFTS` replaces the old capacity formula** — `MAX_ON_DECK_MATCHES` and `ON_DECK_LOOKAHEAD` are no longer imported by `matchmaking.ts` (still in `constants.ts` for `simulate-engine.ts`). The live engine uses `slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)` where `totalPending` is a single atomic query counting **all** `pending` matches (published + unpublished). Do not add a separate published/draft count query — that reintroduces the race window.
 24. **`create_match_with_players` returns `NULL` on TOCTOU conflict** — `{ data: null, error: null }` from the Supabase JS client means a DB guard fired, not a hard error. Always check `rpcError` and `!matchId` **separately**: `rpcError` = DB error (fail loudly); `!matchId` with no error = graceful slot-skip (log warning, continue). If the RPC is ever changed from `RETURNS uuid` to `RETURNS SETOF uuid`, the `!matchId` detection breaks silently.
 25. **`engineRunningFor` Set is process-local only** — it prevents double-runs within a single Node.js process (e.g. two simultaneous queue joins), but is completely ineffective in Vercel serverless where each request may land on a different worker. Cross-process serialization is enforced exclusively by the DB-level TOCTOU guards inside `create_match_with_players` (migration `20260507000000`).
+
+---
+
+## 10. Digital Twin — Interactive Architecture Documentation
+
+**Location:** `digital-twin/` (sibling directory to the main Next.js app)
+**URL (dev):** `http://localhost:4321` · **Build:** `cd digital-twin && npm run build`
+**Stack:** Astro 5 · Tailwind v4 (CSS-first `@theme {}`) · Mermaid 11 (CDN) · Pagefind · D3 v7 · Shiki
+
+### Purpose
+
+A self-contained, interactive documentation site that visually explains every architectural layer of this codebase. Auto-regenerates `src/data/manifest.json` from live host-app source files via a watched extraction pipeline. Intended as onboarding infrastructure for new contributors and a permanent architectural reference.
+
+### Pages (all live as of 2026-05-09)
+
+| Route         | Phase | What it contains                                                                                                            |
+| ------------- | ----- | --------------------------------------------------------------------------------------------------------------------------- |
+| `/`           | 1     | Hero, stats, Mermaid system-overview diagram, 7-step onboarding guide, StartHereRail                                        |
+| `/database`   | 2     | All 11 tables, 6 enums, 5 views, 14 RPCs with column-level notes                                                            |
+| `/actions`    | 3     | 13 action files × exported functions; curated annotations; VS Code deep links                                               |
+| `/engine`     | 4     | `runEngineInternal` Mermaid flowchart; interactive priority calculator; partnership-cap visualizer; TOCTOU sequence diagram |
+| `/realtime`   | 5     | 7-channel map; ref-callback pattern side-by-side Shiki diff; race-condition demo (vanilla JS)                               |
+| `/components` | 6     | D3 force-directed graph (33 nodes, 43 edges, 4 edge types); node inspector side drawer                                      |
+| `/flows`      | 7     | 11 Mermaid sequence traces with scrubber + cross-links; Mermaid re-rendered via `window.__mermaid`                          |
+| `/glossary`   | 8     | 27 curated gotchas (sourced from this file §9); severity + category filters; Pagefind-indexed                               |
+| `/about`      | —     | Plain-English product overview                                                                                              |
+
+### Key Architecture Decisions
+
+**Design system:** OKLCH-first color tokens (`oklch(7% 0.012 245)` base, `oklch(76% 0.17 155)` emerald accent). All colors in `src/styles/global.css` `@theme {}` block. Tailwind v4 CSS-first — no `tailwind.config.js`.
+
+**Data extraction pipeline:**
+
+- `scripts/extract.ts` — TypeScript compiler API (AST-based) reads `src/types/database.ts`, `src/lib/constants.ts`, `src/app/actions/*.ts`. Outputs `src/data/manifest.json` in ~20ms.
+- `scripts/watch.ts` — chokidar v4 watches 7 host-app source paths with 200ms debounce.
+- Run: `npm run dev:full` (watch + Astro dev) or `npm run watch:extract` standalone.
+- `CURATED_GOTCHAS` constant in `extract.ts` provides the 27 gotchas from §9 above into the manifest.
+
+**Pagefind search:** Post-build static index via `pagefind --site dist`. `data-pagefind-body` on main content blocks; `data-pagefind-ignore` on filter controls. Cmd-K palette in `BaseLayout.astro` loads Pagefind lazily via runtime URL construction (`window.location.origin + '/pagefind/pagefind.js'`) to prevent Vite/Rollup from attempting static resolution.
+
+**VS Code deep links:** `vscode://file{HOST_ROOT}/{relPath}` computed at Astro build time via `import.meta.url` + `path.resolve`. Appear in `/actions` card footers and `/components` side drawer. `HOST_ROOT` injected to client via `<script is:inline define:vars={{ HOST_ROOT }}>`.
+
+**D3 component graph (`/components`):** Full D3 v7 force simulation, 4 semantic edge types (renders/prop-drill/realtime/action), zoom-to-fit on simulation end, animated slide-in side drawer.
+
+**Mermaid re-rendering (`/flows`):** `window.__mermaid` exposed by BaseLayout's CDN module script. `/flows` page polls for it (20×80ms), then calls `mermaid.run({ nodes: [el] })` on trace switch. Diagrams defined as template-literal strings in the `TRACES` array.
+
+### Known Dev-Mode Quirk
+
+`<script is:inline define:vars={...}>` followed by a regular `<script>` in the same Astro component can cause Vite module cache invalidation in the dev server if the script tag type is changed mid-session. **Impact:** D3 graph may not render in dev after such changes until `astro dev` is restarted or a cold browser reload is done. **No impact on built output** — `npm run build` always produces the correct static output.
+
+### Build & Dev Commands
+
+```bash
+cd digital-twin
+npm run dev          # Astro dev server only
+npm run dev:full     # Astro dev + file watcher (recommended)
+npm run build        # Production build + Pagefind indexing
+npm run watch:extract # Re-run extraction on host-app source changes
+npx tsx scripts/extract.ts  # One-shot extraction
+```

@@ -1,0 +1,107 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+---
+
+<BaseLayout title="About" description="What the Badminton Queue App is and what this Digital Twin is.">
+  <PageHeader
+    title="About"
+    subtitle="What this app does, and what this documentation site is."
+  />
+
+  <div class="px-8 py-10 max-w-2xl space-y-10">
+
+    <section>
+      <h2 class="text-lg font-bold text-ink mb-3">What is the Badminton Queue App?</h2>
+      <div class="text-sm text-ink-3 space-y-3 leading-relaxed">
+        <p>
+          The Badminton Queue App is a real-time session management tool for badminton gym sessions.
+          An organizer creates a session, players join anonymously via QR code, and the app automatically
+          assembles fair 2v2 matches from the waiting queue.
+        </p>
+        <p>
+          The matchmaking engine balances three competing concerns: <span class="text-ink-2">wait fairness</span>
+          (players who've waited longer get higher priority), <span class="text-ink-2">skill balance</span>
+          (pairs are capped at a 2-level spread), and <span class="text-ink-2">variety</span>
+          (anti-repeat logic ensures you're not playing with the same people every match).
+        </p>
+        <p>
+          When a match finishes, scores are submitted by any player on the court, the court frees up,
+          and the engine automatically drafts the next match. The organizer can review, edit, and publish
+          draft matches before players are notified — this is <em>Draft Mode</em>.
+        </p>
+        <p>
+          At the end of a session, every player gets a <em>Session Wrapped</em> screen with their stats,
+          win streak, head-to-head records, and awards.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-lg font-bold text-ink mb-3">What is this Digital Twin?</h2>
+      <div class="text-sm text-ink-3 space-y-3 leading-relaxed">
+        <p>
+          This site is an interactive architecture reference — a "living document" that auto-updates
+          when the source files change. It visually explains every layer of the codebase: the database
+          schema, server action surface, matchmaking engine pipeline, Supabase Realtime fan-out pattern,
+          and component hierarchy.
+        </p>
+        <p>
+          The headline feature is <a href="/flows" class="text-accent hover:text-accent-hi transition-colors underline underline-offset-2">Flows & Traces</a>
+          — 11 animated sequence diagrams that let you pick a user gesture and trace it from tap, through
+          the server action, into Postgres, through Realtime, and back to the re-rendering UI component.
+        </p>
+        <p>
+          It was built by <span class="text-ink-2 font-medium">nayzjuan</span> as a personal architectural
+          reference, but designed to be shareable with anyone curious about how the app works.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-lg font-bold text-ink mb-3">Tech stack</h2>
+      <div class="dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr><th>Layer</th><th>Tool</th><th>Why</th></tr>
+          </thead>
+          <tbody>
+            {[
+              ['Framework',   'Astro 5',                      'Static-first with per-page islands. Docs sites should not ship JS for static content.'],
+              ['Styling',     'Tailwind CSS v4',               'CSS-first config via @theme. No tailwind.config.js. Matches host app.'],
+              ['Diagrams',    'Mermaid 11',                    'Sequence, flowchart, and state diagrams with a consistent dark theme.'],
+              ['Search',      'Pagefind',                      'Build-time search index. No server. Works offline.'],
+              ['Code',        'Shiki (github-dark-dimmed)',    'Build-time syntax highlighting. Zero runtime cost.'],
+              ['Font',        'Barlow Semi Condensed + Geist + Geist Mono', 'Display headings + precise body + cohesive code family.'],
+              ['Extraction',  'chokidar + tsx',               'Watches host app source files and regenerates manifest.json on save.'],
+            ].map(([layer, tool, why]) => (
+              <tr>
+                <td class="text-xs text-ink-3">{layer}</td>
+                <td class="text-xs font-semibold text-accent font-mono">{tool}</td>
+                <td class="text-xs text-ink-3">{why}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="text-lg font-bold text-ink mb-3">Source</h2>
+      <p class="text-sm text-ink-3">
+        The host application lives at
+        <a
+          href="https://github.com/nayzjuan/badminton-app"
+          target="_blank"
+          rel="noopener"
+          class="text-accent hover:text-accent-hi transition-colors underline underline-offset-2"
+        >
+          github.com/nayzjuan/badminton-app ↗
+        </a>.
+        This Digital Twin lives in the <code class="font-mono text-accent text-xs">digital-twin/</code>
+        subdirectory of the same repository.
+      </p>
+    </section>
+
+  </div>
+</BaseLayout>

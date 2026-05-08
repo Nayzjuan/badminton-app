@@ -1,48 +1,103 @@
 # MEMORY.md — Badminton App Architectural Index
+
 <!-- LLM-optimized: dense, structured, no prose padding. Read this before writing any code. -->
 <!-- Short-term memory: session tracker + handoff doc. Long-term truth: APP_MANIFEST.md -->
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-07)
+## SESSION STATE (Last Updated: 2026-05-09)
 
-### What Was Accomplished This Session
-- **Autopilot Memory System**: Completely rewrote `CLAUDE.md` — 83 lines of stale feature list → 30-line directive-only format with explicit mandate to update both `APP_MANIFEST.md` (long-term) and `MEMORY.md` (short-term) before exiting any workflow.
-- **APP_MANIFEST.md full sync**: Added §3.19 (Checkout / Leave Session) and §3.20 (Wait-time Monitor). Synced all new features: Draft Mode, Partnership Cap, Tap-to-Swap v2, Session Wrapped, H2H Strip, LeaderboardHeroCard, Push Notifications, VIP Tags, TV Scoreboard, QR join, Court Time Alert, Soft Pause, Player Self-Scoring, Match History, UUID validation guard.
-- **Latest code sync (20260507)**: Updated engine capacity formula (`MAX_AUTO_DRAFTS` replaces `ON_DECK_LOOKAHEAD`/`MAX_ON_DECK_MATCHES`), documented 3 TOCTOU guards in `create_match_with_players` RPC (migration `20260507000000`), documented `buildOverlapMap` 3-step join replacing `v_recent_pairings`, propagation fix for `hasDraftsBlocking` in `callNextMatch`, atomic single-query draft cap.
+### What Was Accomplished This Session (Digital Twin — All 10 Phases COMPLETE)
+
+**Digital Twin v1.0 shipped.** `digital-twin/` is a fully built, self-contained Astro 5 + Tailwind v4 documentation site. All 10 phases complete. Summary:
+
+- **Phase 1** — OKLCH design system: emerald accent (`oklch(76% 0.17 155)`), OLED canvas (`oklch(7% 0.012 245)`), Barlow Semi Condensed + Geist fonts, global CSS `@theme {}` token system.
+- **Phase 2** — TypeScript AST extraction pipeline. `scripts/extract.ts` reads host-app source and emits `src/data/manifest.json` in ~20ms. chokidar watcher with 200ms debounce.
+- **Phase 3** — `/actions`: 13 action files × curated annotations × VS Code deep links.
+- **Phase 4** — `/engine`: `runEngineInternal` Mermaid flowchart, interactive priority calculator (vanilla JS island), partnership-cap visualizer, TOCTOU sequence diagram.
+- **Phase 5** — `/realtime`: channel map, ref-callback Shiki side-by-side diff, race-condition demo with monotonic seq counter.
+- **Phase 6** — `/components`: D3 v7 force-directed graph (33 nodes, 43 edges, 4 edge types), zoom-to-fit, slide-in node inspector drawer.
+- **Phase 7** — `/flows`: 11 Mermaid sequence traces, scrubber with emerald track, cross-links to all views. `window.__mermaid` CDN caching pattern.
+- **Phase 8** — `/glossary`: 27 curated gotchas from APP_MANIFEST §9 in manifest.json. Text + severity + category filters (vanilla JS, 60ms debounce). Pagefind-indexed.
+- **Phase 9** — Cmd-K search palette in BaseLayout. Pagefind loaded via runtime URL (`window.location.origin + '/pagefind/pagefind.js'`) to bypass Vite static analysis. `is:inline` script pattern.
+- **Phase 10** — 7-step "How to read this" onboarding on `/`. VS Code deep links via `HOST_ROOT` at build time. Fragment audit (19 links verified; `/database#tables` was only broken one, fixed). Zero mobile overflow at 375px across all pages.
+
+**Independent code review (all phases):** 9 issues found and fixed, including a critical TypeScript `as HTMLElement` cast in an `is:inline` script (silent SyntaxError), 8 broken fragment cross-links, and 2 OKLCH violations (hex in DOM styles).
+
+**Tech debt to note:**
+
+- **Vite dev cache quirk with `is:inline` + `define:vars`** — if a script tag in an Astro component is changed from `<script>` to `<script is:inline define:vars={...}>` mid-session, Vite's module cache can hold a stale reference. Workaround: `astro dev` restart or cold browser reload. No impact on built output.
+- **`/components` D3 graph doesn't render in Astro dev** after the `HOST_ROOT` inline injection change (same cause). Built output works correctly. If this causes friction, move HOST_ROOT injection to a `<script>` with `define:vars` (accept the D3 bundle inlining cost) or read it from a data attribute.
+- **Pagefind indexes 6 pages** (those with `data-pagefind-body`). As more pages gain `data-pagefind-body`, the index will grow automatically on next build.
+- **Digital Twin nav live flags**: all 8 built pages are `live: true`. If new phases are added, update `src/components/Nav.astro` to add the route with `live: false` until built.
+
+### What Was Accomplished (Previous Session — Wrapped Awards)
+
+- **Wrapped RPC threshold tweaks + overlap fix** (migration `20260509000000_wrapped_awards_threshold_tweaks.sql`):
+  - `the_closer`: `games_played >= 2` → `>= 3` (prevents 1-of-2 winners from getting the award)
+  - `friendly_fire`: `friendly_fire_overlap >= 1` → `>= 2` (was firing for ~80% of players in small sessions)
+  - `the_warmup_act` now tier-replaces `participation_trophy` via `array_remove` + `v_award_data - 'participation_trophy'` before adding itself (previously both could coexist for the same player)
+  - All 3 fixes verified live via parity SQL against `pg_proc`. `npx tsc --noEmit` clean.
+  - Local baseline `20260508000000_expand_wrapped_awards.sql` also updated to reflect final intended state.
+- **Code Review Gate root cause & prevention**: Stop hook didn't visibly fire after the previous session's implementation; session concluded without independent review. Added mental checkpoint: before any "task complete" declaration, must confirm "Code Review Gate verdict visible? If no → spawn review agent before summarising."
+
+### What Was Accomplished (Previous Session, 2026-05-08)
+
+- **Session Wrapped award catalogue expanded 27 → 51** (migration `20260508000000_expand_wrapped_awards.sql`):
+  - 24 new awards across 6 categories: Performance (`comeback_kid`, `the_closer`, `ice_cold`, `clean_sweep`, `back_to_back`), Margin/Dominance (`blowout_king`, `heartless`, `defensive_wall`, refined `sniper`), Social (`social_butterfly`, `loyal_partner`, `mixed_master`), Rivalry (`the_rematch`, `redemption_arc`, `friendly_fire`), Comedic (`benchwarmer`, `the_warmup_act`, `own_worst_enemy`, `the_veteran`), Special (`century_club`, `night_cap`, `early_bird`, `skill_slayer`, `double_trouble`).
+  - Tier replacement: `clean_sweep` removes `sunset_surge` (won 3-of-3 last is strict superset of won 2+-of-3 last).
+  - `sniper` rebanded from "≥5 pt margin" to "5–7 pt margin" so it's mutually exclusive with new `heartless` (≥8 pt margin).
+  - `compute_session_wrapped` RPC now starts with `PERFORM refresh_alltime_leaderboard()` so `century_club` / `the_veteran` see fresh all-time data.
+  - `_wrapped_stats` temp table extended with ~25 new computed columns + 6 new supporting CTEs (`opp_pair_summary`, `partner_summary`, `friendly_fire_counts`, `own_worst_enemy_summary`, `skill_slayer_counts`, `alltime_top3`) + `has_streak_partner` precompute for `double_trouble` (since `partner_counts` CTE goes out of scope after temp table is materialized).
+- **Top-6-by-rarity display cap** added via `topAwardsByRarity(slugs, n=6)` in `src/lib/wrapped-awards.ts`. `WrappedShell` switches header copy to "Top 6 of N Awards" when there are more.
+- **Earlier this session: Autopilot Memory System** locked in. `CLAUDE.md` rewritten to mandate reading `src/types/database.ts` + `APP_MANIFEST.md` + `MEMORY.md` + `@AGENTS.md` and updating both living docs before exiting any workflow.
+- **Earlier this session: Digital Twin project** (`digital-twin/`): Astro 5 + Tailwind v4 (OKLCH) + Mermaid + Pagefind + Shiki. 9 pages, OKLCH design system (emerald `oklch(76% 0.17 155)`, OLED canvas `oklch(7% 0.012 245)`), TypeScript compiler API extraction of schema/constants/actions.
+
+### Bugs Discovered & Fixed (this session, mid-flight)
+
+- **PG17 `text[] || 'literal'` ambiguity**: All 52 `v_awards := v_awards || 'X'` patterns broke in PG17 with "malformed array literal". Fixed by switching every append to `array_append(v_awards, 'X'::text)`.
+- **`MAX(uuid)` doesn't exist**: Initial `opp_pair_summary` CTE had `MAX(opp_a) / MAX(opp_b)` aggregates on UUID columns. Removed; `opp_pair_key` (text) is sufficient downstream.
+- **CTE scope leak**: `partner_counts` inside the `_wrapped_stats` CTE chain is unavailable from the per-player loop. Resolved by precomputing `has_streak_partner` (bool) as a column on `_wrapped_stats` while `partner_counts` is still in scope.
 
 ### Known Bugs / Technical Debt
+
 - `v_recent_pairings` view still exists in DB but is **no longer queried** by the engine — `buildOverlapMap` uses a 3-step manual join instead. The view is unused dead weight; safe to drop in a future migration if desired.
 - `ON_DECK_LOOKAHEAD` and `MAX_ON_DECK_MATCHES` still in `constants.ts` but not imported by `matchmaking.ts` — only used by `simulate-engine.ts`. Consider removing when `simulate-engine.ts` is updated.
 - Dashboard UX audit (DASHBOARD_UX_AUDIT.md) identifies P0 issues: header buttons below 44px touch target, tab nav missing tablist/tab ARIA roles, gradient on "Call Next Match" button. Not yet fixed in code.
 - `score-input-modal.tsx` uses violet accent (`bg-violet-600`, etc.) which is not in the design token system. P1 fix pending.
 - Skill badge has no dark mode variant — renders washed out on dark navy. P1 fix pending.
+- `match_opponent_pairs` CTE in the Wrapped RPC still SELECTs `opp_a` / `opp_b` columns from `LEAST/GREATEST` even though they're not aggregated downstream. Postgres optimizes these out, but tidy-up could remove them.
+- 3 incremental fix migrations were applied to Supabase dev (`expand_wrapped_awards`, `fix_wrapped_awards_uuid_max`, `fix_wrapped_awards_array_append`, `fix_wrapped_awards_double_trouble_scope`). The local migration file `20260508000000_expand_wrapped_awards.sql` is the consolidated final version that also incorporates the `20260509` threshold tweaks. If migrations are ever replayed from scratch, only the consolidated `20260508` version + the `20260509` patch run; intermediate fix names won't reappear.
 
 ### Immediate Next Steps
+
+- (Optional) Add new Wrapped award metadata to `tests/unit/` or scaffold a per-award smoke test that verifies trigger conditions against a synthetic session.
+- (Optional) Leaderboard Direction A — plan exists at `~/.claude/plans/idempotent-meandering-wigderson.md`. Fonts, YouStrip, LeaderboardPodium, StadiumLeaderboardRow, leaderboard-page.tsx Stadium branch — all new files, no existing files modified.
 - Apply the P0–P1 UX fixes from DASHBOARD_UX_AUDIT.md: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
 - Update `simulate-engine.ts` to use `MAX_AUTO_DRAFTS` instead of `ON_DECK_LOOKAHEAD`/`MAX_ON_DECK_MATCHES`, then deprecate the two old constants.
 - Optional: drop `v_recent_pairings` view from DB in a new migration.
+- Optional: clean up unused `opp_a` / `opp_b` columns in the Wrapped RPC's `match_opponent_pairs` CTE.
 
 ---
 
 ## TECH STACK
 
-| Layer | Tool | Notes |
-|-------|------|-------|
-| Framework | Next.js 16 App Router | Breaking changes vs training data — read `node_modules/next/dist/docs/` before using Next APIs |
-| Database | Supabase (Postgres + Realtime) | Anonymous auth; service-role client bypasses RLS |
-| Auth | `@supabase/ssr` | Cookie: `sb-{projectRef}-auth-token`, plain JSON, chunked at 3180 chars as `.0`, `.1` |
-| Input Validation | Zod | Auth schemas in `src/lib/schemas/auth.ts`. UUID guards in `src/lib/validate.ts`. |
-| UI | Tailwind v4 + Shadcn UI | Radix primitives: Dialog, Sheet, AlertDialog, etc. |
-| Font | Space Grotesk (via next/font) | `cv01` + `cv02` OpenType features; wired as `--font-sans` so Sonner toasts inherit it |
-| Drag & Drop | dnd-kit | Strict isolation rules — see Core Patterns section |
-| Toasts | Sonner | |
-| Push Notifications | Web Push / VAPID | `src/lib/notifications/push-client.ts` + `src/app/actions/notifications.ts` |
-| PWA | Serwist (service worker) | Offline fallback at `/offline` |
-| Unit Tests | Vitest ^4.1.4 | Pure logic only (`tests/unit/`) |
-| E2E Tests | Playwright ^1.59.1 | Zero-local — runs against live Vercel deployment |
-| Package Manager | npm | |
-| Deployment | Vercel | Protection bypass via `x-vercel-protection-bypass` header |
+| Layer              | Tool                           | Notes                                                                                          |
+| ------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------- |
+| Framework          | Next.js 16 App Router          | Breaking changes vs training data — read `node_modules/next/dist/docs/` before using Next APIs |
+| Database           | Supabase (Postgres + Realtime) | Anonymous auth; service-role client bypasses RLS                                               |
+| Auth               | `@supabase/ssr`                | Cookie: `sb-{projectRef}-auth-token`, plain JSON, chunked at 3180 chars as `.0`, `.1`          |
+| Input Validation   | Zod                            | Auth schemas in `src/lib/schemas/auth.ts`. UUID guards in `src/lib/validate.ts`.               |
+| UI                 | Tailwind v4 + Shadcn UI        | Radix primitives: Dialog, Sheet, AlertDialog, etc.                                             |
+| Font               | Space Grotesk (via next/font)  | `cv01` + `cv02` OpenType features; wired as `--font-sans` so Sonner toasts inherit it          |
+| Drag & Drop        | dnd-kit                        | Strict isolation rules — see Core Patterns section                                             |
+| Toasts             | Sonner                         |                                                                                                |
+| Push Notifications | Web Push / VAPID               | `src/lib/notifications/push-client.ts` + `src/app/actions/notifications.ts`                    |
+| PWA                | Serwist (service worker)       | Offline fallback at `/offline`                                                                 |
+| Unit Tests         | Vitest ^4.1.4                  | Pure logic only (`tests/unit/`)                                                                |
+| E2E Tests          | Playwright ^1.59.1             | Zero-local — runs against live Vercel deployment                                               |
+| Package Manager    | npm                            |                                                                                                |
+| Deployment         | Vercel                         | Protection bypass via `x-vercel-protection-bypass` header                                      |
 
 ---
 
@@ -114,41 +169,43 @@ v_alltime_leaderboard_mat   — materialized all-time stats (same columns, no se
 
 ### Postgres RPCs
 
-| Function | Notes |
-|----------|-------|
-| `create_match_with_players(...)` | `RETURNS uuid`. Returns **NULL** (not error) on TOCTOU conflict. Three DB-level guards (migration 20260507000000). ⚠️ Do NOT change to `RETURNS SETOF uuid` — breaks NULL detection. |
-| `swap_player_in_match(...)` | Bench→deck swap — atomic DELETE+INSERT+UPDATE×2+recompute |
-| `swap_match_players(...)` | Cross-match direct swap (Tap-to-Swap v2) |
-| `elevate_to_organizer(p_session_id, p_passcode)` | Passcode-gated organizer promotion |
-| `rejoin_queue(p_session_id)` | Reset queue status to "waiting", preserve games_played |
-| `migrate_player_identity(p_old_user_id, p_new_user_id)` | PIN reconnect identity migration |
-| `compute_session_wrapped(p_session_id)` | Computes+upserts session_wrapped_stats for all players |
-| `get_h2h_record(p_team_a, p_team_b, p_session_id)` | H2H wins for exact 2v2 pairing |
-| `toggle_auto_matchmaking(p_session_id)` | Atomic toggle, returns new bool value |
-| `lookup_active_session(p_session_id)` | Safe public lookup for QR-code join — no RLS exposure |
-| `skill_level_to_int(lvl)` | Enum → numeric 1–6 |
-| `refresh_alltime_leaderboard()` | Refreshes materialized view |
-| `get_player_streaks(p_session_id?)` | Win-streak per player |
+| Function                                                | Notes                                                                                                                                                                                |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create_match_with_players(...)`                        | `RETURNS uuid`. Returns **NULL** (not error) on TOCTOU conflict. Three DB-level guards (migration 20260507000000). ⚠️ Do NOT change to `RETURNS SETOF uuid` — breaks NULL detection. |
+| `swap_player_in_match(...)`                             | Bench→deck swap — atomic DELETE+INSERT+UPDATE×2+recompute                                                                                                                            |
+| `swap_match_players(...)`                               | Cross-match direct swap (Tap-to-Swap v2)                                                                                                                                             |
+| `elevate_to_organizer(p_session_id, p_passcode)`        | Passcode-gated organizer promotion                                                                                                                                                   |
+| `rejoin_queue(p_session_id)`                            | Reset queue status to "waiting", preserve games_played                                                                                                                               |
+| `migrate_player_identity(p_old_user_id, p_new_user_id)` | PIN reconnect identity migration                                                                                                                                                     |
+| `compute_session_wrapped(p_session_id)`                 | Computes+upserts session_wrapped_stats for all players                                                                                                                               |
+| `get_h2h_record(p_team_a, p_team_b, p_session_id)`      | H2H wins for exact 2v2 pairing                                                                                                                                                       |
+| `toggle_auto_matchmaking(p_session_id)`                 | Atomic toggle, returns new bool value                                                                                                                                                |
+| `lookup_active_session(p_session_id)`                   | Safe public lookup for QR-code join — no RLS exposure                                                                                                                                |
+| `skill_level_to_int(lvl)`                               | Enum → numeric 1–6                                                                                                                                                                   |
+| `refresh_alltime_leaderboard()`                         | Refreshes materialized view                                                                                                                                                          |
+| `get_player_streaks(p_session_id?)`                     | Win-streak per player                                                                                                                                                                |
 
 ---
 
 ## DATABASE RULES & GOTCHAS
 
-| Table | Behaviour | Rule |
-|-------|-----------|------|
-| `profiles` | `id` = `auth.users.uuid` | Use `auth.uid()` as PK; auto-created by `handle_new_user()` trigger — never insert manually |
-| `sessions` | trigger auto-inserts `session_organizers` row for `created_by` | Do NOT insert organizer row manually |
-| `session_organizers` | Append-only | NEVER DELETE or UPDATE; presence = permission granted |
-| `matches` | `court_id` is nullable | `null` = on-deck/pending; non-null = assigned to court |
-| `matches.is_published` | Draft gate | `false` = hidden from players/TV; engine sets `false`; manual matches set `true` |
-| `push_subscriptions` | Requires 3 Web Push fields | `endpoint`, `p256dh`, `auth_key` — all required; missing any = silent failure |
+| Table                  | Behaviour                                                      | Rule                                                                                        |
+| ---------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `profiles`             | `id` = `auth.users.uuid`                                       | Use `auth.uid()` as PK; auto-created by `handle_new_user()` trigger — never insert manually |
+| `sessions`             | trigger auto-inserts `session_organizers` row for `created_by` | Do NOT insert organizer row manually                                                        |
+| `session_organizers`   | Append-only                                                    | NEVER DELETE or UPDATE; presence = permission granted                                       |
+| `matches`              | `court_id` is nullable                                         | `null` = on-deck/pending; non-null = assigned to court                                      |
+| `matches.is_published` | Draft gate                                                     | `false` = hidden from players/TV; engine sets `false`; manual matches set `true`            |
+| `push_subscriptions`   | Requires 3 Web Push fields                                     | `endpoint`, `p256dh`, `auth_key` — all required; missing any = silent failure               |
 
 ### Supabase Type System
+
 - `Relationships: []` is **required** on every table entry in `database.ts` — including tables with no FK.
 - Use `type` aliases (NOT `interface`) for all DB row types — Supabase generic constraint.
 - `tsc --noEmit` is authoritative — IDE red squiggles can be stale.
 
 ### PostgREST Rules
+
 - `UPDATE` that matches 0 rows returns **empty array**, not null. `.single()` on it throws. Use array + length check.
 - `INSERT` with `.select().single()` is safe.
 - RLS enforced on `anon` and `authenticated`. Service-role bypasses all RLS.
@@ -161,15 +218,17 @@ v_alltime_leaderboard_mat   — materialized all-time stats (same columns, no se
 
 ```ts
 // RLS-respecting — use for auth lookups only
-createBrowserClient()      // client components
-createServerClient()       // server components / actions
+createBrowserClient(); // client components
+createServerClient(); // server components / actions
 
 // Bypasses RLS — use ONLY inside server actions for cross-user mutations
-createServiceClient()      // uses service role key
+createServiceClient(); // uses service role key
 ```
+
 **Rule:** `supabase` = RLS client for `getUser()` / `isSessionOrganizer()` only. `db` = service client for all `.from(...)` reads and writes in mutations.
 
 ### 2. State Management — `useOrganizerData`
+
 **File:** `src/hooks/use-organizer-data.ts`
 
 - **Ref-based callbacks** (`fetchCourtsRef`, `fetchQueueRef`, `fetchActiveMatchesRef`): subscriptions capture the ref, not the function — prevents channel teardown on every render.
@@ -179,13 +238,16 @@ createServiceClient()      // uses service role key
 - `is_auto_matchmaking_on` intentionally excluded from postgres_changes — synced via broadcast instead (sessions RLS SELECT only grants access to session creator; co-organizer events would be silently dropped).
 
 ### 3. Drag-and-Drop — dnd-kit Isolation
+
 Both guards required on every interactive element inside a draggable:
+
 ```tsx
 data-no-dnd="true"
 onPointerDown={(e) => e.stopPropagation()}
 ```
 
 ### 4. Server Actions Pattern
+
 - All mutations: `"use server"` in `src/app/actions/`.
 - Return shape: `{ success: boolean; message?: string; error?: string }` — never throw.
 - UUID validation ALWAYS first: `isValidUUID(id)` before any DB call.
@@ -193,8 +255,10 @@ onPointerDown={(e) => e.stopPropagation()}
 - All `.from(...)` reads and writes via `createServiceClient()`.
 
 ### 5. Broadcast System
+
 **File:** `src/lib/broadcast.ts` — server-side REST broadcast (no WebSocket from server).
 Topic: `"realtime:session-events:{sessionId}"`. Event types:
+
 - `organizer_intervention` — `{ type: "on_deck_cleared" | "match_cancelled", affectedPlayerIds }`
 - `session_closed` — redirects all players to `/wrapped/{sessionId}/{playerId}`
 - `auto_matchmaking_toggled` — `{ isOn: boolean }` — syncs toggle to co-organizers
@@ -207,51 +271,58 @@ Topic: `"realtime:session-events:{sessionId}"`. Event types:
 **Files:** `src/lib/matchmaking-core.ts` (pure), `src/app/actions/matchmaking.ts` (async/DB)
 
 ### Constants (`src/lib/constants.ts`)
+
 ```ts
-BOTTLENECK_THRESHOLD_MINUTES = 20
-SKILL_VARIANCE_TARGET = 1           // preferred window
-SKILL_VARIANCE_MAX = 2              // hard max
-PLAYERS_PER_MATCH = 4
-ANTI_REPEAT_LOOKBACK = 5
-FALLBACK_WAIT_MINUTES = 15
-CRITICAL_WAIT_MINUTES = 25
-GAME_PENALTY_MINUTES = 12
-RED_ZONE_SCORE_FLOOR = 1000
-GATE_POOL_THRESHOLD = 4
-GATE_HOLD_MINUTES = 8
-MIN_FREE_POOL_FOR_ON_DECK = 4
-MAX_PARTNERSHIP_REPEATS = 2
+BOTTLENECK_THRESHOLD_MINUTES = 20;
+SKILL_VARIANCE_TARGET = 1; // preferred window
+SKILL_VARIANCE_MAX = 2; // hard max
+PLAYERS_PER_MATCH = 4;
+ANTI_REPEAT_LOOKBACK = 5;
+FALLBACK_WAIT_MINUTES = 15;
+CRITICAL_WAIT_MINUTES = 25;
+GAME_PENALTY_MINUTES = 12;
+RED_ZONE_SCORE_FLOOR = 1000;
+GATE_POOL_THRESHOLD = 4;
+GATE_HOLD_MINUTES = 8;
+MIN_FREE_POOL_FOR_ON_DECK = 4;
+MAX_PARTNERSHIP_REPEATS = 2;
 
 // ⚠️ DEPRECATED from engine capacity (still in constants.ts for simulate-engine.ts only):
-ON_DECK_LOOKAHEAD = 1
-MAX_ON_DECK_MATCHES = 2
+ON_DECK_LOOKAHEAD = 1;
+MAX_ON_DECK_MATCHES = 2;
 
 // NEW (20260507) — replaces ON_DECK_LOOKAHEAD/MAX_ON_DECK_MATCHES:
-MAX_AUTO_DRAFTS = 3                 // hard cap on total pending matches (published + unpublished)
+MAX_AUTO_DRAFTS = 3; // hard cap on total pending matches (published + unpublished)
 ```
 
 ### Priority Scoring (`computePriorityScore`)
+
 ```
 Red Zone (wait ≥ 25 min):  score = 1000 + waitMinutes
 Normal   (wait < 25 min):  score = max(0, waitMinutes − (gamesPlayed × 12))
 ```
 
 ### Candidate Scoring (`scoreCandidates`)
+
 ```
 Normal:    candidateScore = -priorityScore + overlapCount × 10,000
 Red Zone:  candidateScore = -priorityScore + overlapCount × 100
 ```
+
 Sorted ascending (most negative = best). Red Zone urgency wins over 1 recent overlap.
 
 ### Group Assembly (`buildCombinationGroup`) — N-choose-3
+
 Full combination search replacing greedy algorithm. Iterates all C(n,3) triples of scored candidates; returns first triple where all 3 + anchor form a valid group. Worst case: C(30,3) = 4,060 iterations.
 
 ### Partnership Cap Enforcement
+
 `fetchPartnershipCounts(supabase, sessionId)` — hoisted once per `runAlgorithm` invocation. Counts same-team pairings across `completed`, `in_progress`, **and `pending` (including unpublished drafts)**. Cap applies at draft creation, not publish. `MAX_PARTNERSHIP_REPEATS = 2` — no waivers, no Red Zone bypass.
 
 `snakeDraft()` / `rotatedDraft()` return **`null`** when cap blocks all splits. All callers must null-guard.
 
 ### Anti-Repeat / Diversity Logic
+
 - `buildOverlapMap(anchorId)` — per-tick, anchor-specific. **Does NOT use `v_recent_pairings`.**
   - 3-step manual join: (1) fetch match_players for anchor → (2) filter to session's recent matches (completed + in_progress + pending) → (3) fetch co-players + build weighted map
   - Teammate appearances = 2×, opponent appearances = 1× (teammate repetition penalised more)
@@ -260,13 +331,16 @@ Full combination search replacing greedy algorithm. Iterates all C(n,3) triples 
 - `getEffectiveLookback(eligiblePoolSize)` — scales lookback to pool size (≤5→2, ≤9→3, ≤15→4, 16+→5).
 
 ### Engine Capacity (Updated 20260507)
+
 ```
 totalPending   = COUNT(*) WHERE status = 'pending'   ← single atomic query (all pending matches)
 slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)
 ```
+
 Old formula (`courtCount + ON_DECK_LOOKAHEAD`) only counted published matches — unpublished drafts were invisible, accumulating 7+ before the organizer could review any. Single-query cap eliminates that race window.
 
 ### Engine Flow (`runEngineInternal`)
+
 ```
 1. Single atomic COUNT(*) → totalPending; slotsAvailable = max(0, 3 − totalPending)
 2. Soft gate check: if pool ≤ GATE_POOL_THRESHOLD AND activeCourts > 0
@@ -287,13 +361,14 @@ Old formula (`courtCount + ON_DECK_LOOKAHEAD`) only counted published matches �
 ```
 
 ### DB-Level TOCTOU Guards (`create_match_with_players`, migration `20260507000000`)
+
 Three guards inside the RPC transaction (process-level `engineRunningFor` Set is ineffective in Vercel serverless — DB guards are the primary cross-process serialization):
 
-| Guard | Mechanism | Trigger → Action |
-|-------|-----------|-----------------|
-| Guard 0 — Pre-flight | `COUNT(*) WHERE status='waiting'` | count < players → RETURN NULL |
-| Guard 1 — Row lock | `SELECT FOR UPDATE ORDER BY player_id` + `SET LOCAL lock_timeout='3s'` | second tx blocks → then Guard 2 |
-| Guard 2 — Conflict | `COUNT(*) FROM match_players JOIN matches WHERE status IN ('pending','in_progress')` | any conflict → RETURN NULL |
+| Guard                | Mechanism                                                                            | Trigger → Action                |
+| -------------------- | ------------------------------------------------------------------------------------ | ------------------------------- |
+| Guard 0 — Pre-flight | `COUNT(*) WHERE status='waiting'`                                                    | count < players → RETURN NULL   |
+| Guard 1 — Row lock   | `SELECT FOR UPDATE ORDER BY player_id` + `SET LOCAL lock_timeout='3s'`               | second tx blocks → then Guard 2 |
+| Guard 2 — Conflict   | `COUNT(*) FROM match_players JOIN matches WHERE status IN ('pending','in_progress')` | any conflict → RETURN NULL      |
 
 NULL-return convention: `{ data: null, error: null }` = graceful slot-skip. `{ data: null, error }` = hard DB error. These are checked **separately** in `executeMatch`.
 
@@ -303,47 +378,49 @@ NULL-return convention: `{ data: null, error: null }` = graceful slot-skip. `{ d
 
 ## KEY FEATURES SUMMARY
 
-| Feature | File(s) | Key Detail |
-|---------|---------|-----------|
-| Matchmaking Engine | `matchmaking.ts`, `matchmaking-core.ts` | N-choose-3, Red Zone, anti-repeat, partnership cap, TOCTOU guards |
-| On-Deck Queue | `on-deck-panel.tsx` | Draft Mode cards, publish single/all, H2H strip, cross-match swap |
-| Active Courts | `active-courts.tsx` | Court time alert, TeamsGrid, VIP tags, hasDraftsBlocking propagation fix |
-| Tap-to-Swap v2 | `swap-player.ts`, `swap-floating-bar.tsx` | Bench→deck + cross-match direct swap |
-| Draft / Review Mode | `match.ts` (publish actions) | `is_published` flag, 3-layer RLS firewall, BUG-001 + BUG-002 fixes |
-| VIP Tags | `vip-config.ts`, `vip-tag.tsx` | 10 themes, neon dark / holo light, 3-layer text-shadow |
-| Session Wrapped | `wrapped/`, `wrapped.ts`, `wrapped-awards.ts` | 9-layer animated intro, award cards, archetype, `intro_dismissed_at` cross-device |
-| Player Reconnect | `auth.ts`, `migrate_player_identity` RPC | PIN-based identity migration; signOut() before signInAnonymously() |
-| Leaderboard | `leaderboard/`, `use-leaderboard.ts` | Session + all-time (materialized), LeaderboardHeroCard, rank flash |
-| QR-Code Join | `/play/join?session=` | `lookup_active_session` RPC — safe, no RLS exposure |
-| H2H Strip | `h2h-strip.tsx`, `use-h2h.ts` | Compact strip on on-deck cards; renders null on no prior history |
-| TV Scoreboard | `tv/[sessionId]/` | Public read-only; service-role client, no auth required |
-| Push Notifications | `notifications/`, `push-client.ts` | Web Push/VAPID; all 3 sub fields required (`endpoint`, `p256dh`, `auth_key`) |
-| Soft Pause | `queue-control.tsx`, `is_paused` | Excluded from engine pool, preserved position |
-| Player Self-Scoring | `match-alert.tsx`, `match.ts` | Any player in match can submit score; same cascade as organizer |
-| Checkout / Leave | `queue.ts`, `checkoutPlayer` | Self or organizer-initiated; re-join via `rejoin_queue` RPC |
-| Wait-time Monitor | `wait-time-monitor.tsx` | Bottleneck list (`wait ≥ 20 min`), reads `v_queue_with_wait_time` |
-| UUID Validation | `validate.ts` | `isValidUUID()` on every server action param before any DB call |
-| Session Passcode | `organizer-entry.tsx`, `elevate_to_organizer` | Passcode-gated co-organizer promotion |
-| Court Time Alert | `match-timer.tsx`, `court-time-popover.tsx` | Timer turns red when elapsed ≥ limit; configured by organizer |
-| Broadcast System | `broadcast.ts` | Server REST broadcast (no WebSocket); 4 event types |
+| Feature             | File(s)                                       | Key Detail                                                                        |
+| ------------------- | --------------------------------------------- | --------------------------------------------------------------------------------- |
+| Matchmaking Engine  | `matchmaking.ts`, `matchmaking-core.ts`       | N-choose-3, Red Zone, anti-repeat, partnership cap, TOCTOU guards                 |
+| On-Deck Queue       | `on-deck-panel.tsx`                           | Draft Mode cards, publish single/all, H2H strip, cross-match swap                 |
+| Active Courts       | `active-courts.tsx`                           | Court time alert, TeamsGrid, VIP tags, hasDraftsBlocking propagation fix          |
+| Tap-to-Swap v2      | `swap-player.ts`, `swap-floating-bar.tsx`     | Bench→deck + cross-match direct swap                                              |
+| Draft / Review Mode | `match.ts` (publish actions)                  | `is_published` flag, 3-layer RLS firewall, BUG-001 + BUG-002 fixes                |
+| VIP Tags            | `vip-config.ts`, `vip-tag.tsx`                | 10 themes, neon dark / holo light, 3-layer text-shadow                            |
+| Session Wrapped     | `wrapped/`, `wrapped.ts`, `wrapped-awards.ts` | 9-layer animated intro, award cards, archetype, `intro_dismissed_at` cross-device |
+| Player Reconnect    | `auth.ts`, `migrate_player_identity` RPC      | PIN-based identity migration; signOut() before signInAnonymously()                |
+| Leaderboard         | `leaderboard/`, `use-leaderboard.ts`          | Session + all-time (materialized), LeaderboardHeroCard, rank flash                |
+| QR-Code Join        | `/play/join?session=`                         | `lookup_active_session` RPC — safe, no RLS exposure                               |
+| H2H Strip           | `h2h-strip.tsx`, `use-h2h.ts`                 | Compact strip on on-deck cards; renders null on no prior history                  |
+| TV Scoreboard       | `tv/[sessionId]/`                             | Public read-only; service-role client, no auth required                           |
+| Push Notifications  | `notifications/`, `push-client.ts`            | Web Push/VAPID; all 3 sub fields required (`endpoint`, `p256dh`, `auth_key`)      |
+| Soft Pause          | `queue-control.tsx`, `is_paused`              | Excluded from engine pool, preserved position                                     |
+| Player Self-Scoring | `match-alert.tsx`, `match.ts`                 | Any player in match can submit score; same cascade as organizer                   |
+| Checkout / Leave    | `queue.ts`, `checkoutPlayer`                  | Self or organizer-initiated; re-join via `rejoin_queue` RPC                       |
+| Wait-time Monitor   | `wait-time-monitor.tsx`                       | Bottleneck list (`wait ≥ 20 min`), reads `v_queue_with_wait_time`                 |
+| UUID Validation     | `validate.ts`                                 | `isValidUUID()` on every server action param before any DB call                   |
+| Session Passcode    | `organizer-entry.tsx`, `elevate_to_organizer` | Passcode-gated co-organizer promotion                                             |
+| Court Time Alert    | `match-timer.tsx`, `court-time-popover.tsx`   | Timer turns red when elapsed ≥ limit; configured by organizer                     |
+| Broadcast System    | `broadcast.ts`                                | Server REST broadcast (no WebSocket); 4 event types                               |
 
 ---
 
 ## TESTING CONVENTIONS
 
 ### Unit Tests (Vitest)
+
 **Location:** `tests/unit/` | **Run:** `npm run test:unit`
 **Scope:** Pure function logic only. No DB, no network.
 
-| File | Covers |
-|------|--------|
-| `matchmaking-core.test.ts` | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation` |
-| `matchmaking-engine.test.ts` | Full engine flow (mocked DB), anti-repeat, Red Zone, partner cap |
-| `session-simulation.test.ts` | Multi-round simulations — 30-player load, diversity saturation |
-| `queue-actions.test.ts` | Queue join/leave/rejoin guards, ghost re-queue prevention |
-| `match-origin-tracking.test.ts` | `origin` enum transitions, `manual` stickiness |
+| File                            | Covers                                                                                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `matchmaking-core.test.ts`      | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation` |
+| `matchmaking-engine.test.ts`    | Full engine flow (mocked DB), anti-repeat, Red Zone, partner cap                                                         |
+| `session-simulation.test.ts`    | Multi-round simulations — 30-player load, diversity saturation                                                           |
+| `queue-actions.test.ts`         | Queue join/leave/rejoin guards, ghost re-queue prevention                                                                |
+| `match-origin-tracking.test.ts` | `origin` enum transitions, `manual` stickiness                                                                           |
 
 ### E2E Tests (Playwright)
+
 **Location:** `tests/e2e/` | **Run:** `npm run test:e2e`
 **Target:** Live Vercel deployment — NOT localhost.
 **Auth bypass:** Header `x-vercel-protection-bypass: {VERCEL_BYPASS_SECRET}` in `playwright.config.ts`.
@@ -353,17 +430,17 @@ NULL-return convention: `{ data: null, error: null }` = graceful slot-skip. `{ d
 
 **Locator best practice:** `page.getByRole("dialog").getByText("E2E_Alice")` — scope to container. `page.getByText("E2E_Alice")` fails if name appears in Sonner toasts.
 
-| Scenario | File | Covers |
-|----------|------|--------|
-| A — Swap | `scenario-a-swap.spec.ts` | Bench→deck swap, undo, player unavailable error |
-| B — Engine flows | `scenario-b-engine-flows.spec.ts` | Auto-matchmaking, gate, on-deck cap |
-| C — Tap-to-Swap v2 | `scenario-c-tap-to-swap-v2.spec.ts` | Cross-match direct swap (11 tests) |
-| D — Wrapped dismiss | `scenario-d-session-wrapped-dismiss.spec.ts` | Intro overlay dismiss, `intro_dismissed_at` persisted |
-| E — Match alert UI | `scenario-e-match-alert-ui.spec.ts` | Player match alert card + VIP tags |
-| F — Court time alert | `scenario-f-court-time-alert.spec.ts` | Timer warning when elapsed ≥ limit |
-| G — H2H records | `scenario-g-h2h-records.spec.ts` | H2H strip after first meeting, correct counts |
-| H — Diversity | `scenario-h-diversity.spec.ts` | Anti-repeat enforcement, rotated draft cycling |
-| I — 30-player sim | `scenario-i-thirty-player-simulation.spec.ts` | Full session under load |
+| Scenario             | File                                          | Covers                                                |
+| -------------------- | --------------------------------------------- | ----------------------------------------------------- |
+| A — Swap             | `scenario-a-swap.spec.ts`                     | Bench→deck swap, undo, player unavailable error       |
+| B — Engine flows     | `scenario-b-engine-flows.spec.ts`             | Auto-matchmaking, gate, on-deck cap                   |
+| C — Tap-to-Swap v2   | `scenario-c-tap-to-swap-v2.spec.ts`           | Cross-match direct swap (11 tests)                    |
+| D — Wrapped dismiss  | `scenario-d-session-wrapped-dismiss.spec.ts`  | Intro overlay dismiss, `intro_dismissed_at` persisted |
+| E — Match alert UI   | `scenario-e-match-alert-ui.spec.ts`           | Player match alert card + VIP tags                    |
+| F — Court time alert | `scenario-f-court-time-alert.spec.ts`         | Timer warning when elapsed ≥ limit                    |
+| G — H2H records      | `scenario-g-h2h-records.spec.ts`              | H2H strip after first meeting, correct counts         |
+| H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling        |
+| I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session under load                               |
 
 ---
 

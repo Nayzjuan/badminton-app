@@ -1,0 +1,654 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import { fileURLToPath } from 'url';
+import { resolve, dirname } from 'path';
+
+const _dir      = dirname(fileURLToPath(import.meta.url));
+const HOST_ROOT = resolve(_dir, '../../../');      // digital-twin/src/pages → badminton-app/
+
+const edgeLegend = [
+  { hex: '#354558', label: 'Renders',            desc: 'Parent renders child component.' },
+  { hex: '#2d6fa8', label: 'Prop drilling',      desc: 'Hook-derived data passed as props.' },
+  { hex: '#1dcc78', label: 'Realtime dep',       desc: 'Consumes a live realtime hook.' },
+  { hex: '#c44020', label: 'Server action call', desc: 'Directly invokes a server action.' },
+];
+const nodeLegend = [
+  { hex: '#1dcc78', label: 'Route entry' },
+  { hex: '#3a7fd6', label: 'Organizer' },
+  { hex: '#8b5cf6', label: 'Player' },
+  { hex: '#f97316', label: 'TV' },
+  { hex: '#eab308', label: 'Hook' },
+  { hex: '#64748b', label: 'Shared' },
+  { hex: '#c44020', label: 'Actions' },
+];
+---
+
+<BaseLayout
+  title="Component Hierarchy"
+  description="Interactive D3 force-directed map of every component across the Organizer, Player, and TV routes. Click any node for file path, props, hooks, and server actions."
+>
+  <PageHeader
+    title="Component Hierarchy"
+    subtitle="Force-directed map of 33 components across 3 route entry points. Click any node to inspect file path, props, hooks consumed, and server actions called."
+    phase={6}
+    phaseStatus="live"
+  />
+
+  <!-- ── Legend ──────────────────────────────────────────────────────── -->
+  <div class="px-8 py-4 border-b border-edge-dim flex flex-wrap gap-x-8 gap-y-3 items-center">
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-4 self-center">Edges</span>
+      {edgeLegend.map(e => (
+        <div class="flex items-center gap-1.5" title={e.desc}>
+          <svg width="22" height="10" aria-hidden="true" class="shrink-0">
+            <line x1="0" y1="5" x2="16" y2="5" stroke={e.hex} stroke-width="1.5"/>
+            <polygon points="16,2 22,5 16,8" fill={e.hex}/>
+          </svg>
+          <span class="text-xs text-ink-3">{e.label}</span>
+        </div>
+      ))}
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-4 self-center">Nodes</span>
+      {nodeLegend.map(n => (
+        <div class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0" style={`background:${n.hex}`}></span>
+          <span class="text-xs text-ink-3">{n.label}</span>
+        </div>
+      ))}
+    </div>
+    <span class="ml-auto text-[10px] text-ink-4 hidden sm:block">
+      scroll → zoom &nbsp;·&nbsp; drag canvas → pan &nbsp;·&nbsp; click node → inspect
+    </span>
+  </div>
+
+  <!-- ── Graph canvas ────────────────────────────────────────────────── -->
+  <div class="px-8 py-6" data-pagefind-body>
+    <div
+      id="graph-root"
+      class="rounded-xl overflow-hidden border border-edge relative"
+      style="height:680px"
+    >
+      <div
+        id="graph-loading"
+        class="absolute inset-0 flex items-center justify-center text-xs text-ink-3 font-mono"
+      >
+        Initialising force simulation…
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Drawer backdrop ─────────────────────────────────────────────── -->
+  <div id="drawer-backdrop" class="fixed inset-0 z-40 hidden" aria-hidden="true"></div>
+
+  <!-- ── Side drawer ─────────────────────────────────────────────────── -->
+  <aside id="node-drawer" aria-label="Component details">
+    <div class="h-full flex flex-col overflow-hidden">
+
+      <div class="flex items-start justify-between gap-3 px-5 py-4 border-b border-edge shrink-0">
+        <div class="min-w-0">
+          <div id="drawer-type-badge" class="text-[10px] font-mono font-bold uppercase tracking-widest mb-1"></div>
+          <h3 id="drawer-title" class="text-sm font-bold text-ink font-heading leading-snug"></h3>
+        </div>
+        <button id="drawer-close" aria-label="Close drawer"
+          class="shrink-0 text-ink-4 hover:text-ink transition-colors p-0.5 mt-0.5 rounded"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="px-5 py-3 border-b border-edge-dim bg-surface shrink-0">
+        <div class="text-[10px] text-ink-4 uppercase tracking-wider font-semibold mb-1">File</div>
+        <a id="drawer-file" class="text-[11px] font-mono text-accent leading-relaxed break-all hover:underline" title="Open in VS Code"></a>
+      </div>
+
+      <div class="px-5 py-3 border-b border-edge-dim shrink-0">
+        <p id="drawer-desc" class="text-xs text-ink-3 leading-relaxed"></p>
+      </div>
+
+      <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        <div id="drawer-rt-wrap" class="hidden">
+          <div class="inline-flex items-center gap-2 rounded-lg px-3 py-2 bg-accent-wash border border-accent-ring text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-accent inline-block" style="animation:dt-pulse 2s ease-in-out infinite"></span>
+            <span class="text-accent-hi font-semibold font-mono">realtime subscriber</span>
+          </div>
+        </div>
+        <div id="drawer-props-wrap">
+          <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-2">Props</div>
+          <ul id="drawer-props" class="space-y-1"></ul>
+        </div>
+        <div id="drawer-hooks-wrap">
+          <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-2">Hooks consumed</div>
+          <ul id="drawer-hooks" class="space-y-1"></ul>
+        </div>
+        <div id="drawer-actions-wrap">
+          <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-2">Server actions called</div>
+          <ul id="drawer-actions" class="space-y-1"></ul>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+</BaseLayout>
+
+<!-- ── D3 force graph island ──────────────────────────────────────── -->
+<script is:inline define:vars={{ HOST_ROOT }}>
+  window.__HOST_ROOT__ = HOST_ROOT;
+</script>
+<script>
+import * as d3 from 'd3';
+
+// ── Types ──────────────────────────────────────────────────────────────
+type NodeType = 'entry' | 'component' | 'hook' | 'shared' | 'actions';
+type EdgeType = 'renders' | 'prop-drill' | 'realtime' | 'action';
+type NodeRoot = 'organizer' | 'player' | 'tv' | 'hooks' | 'shared' | 'actions';
+
+interface NodeDatum extends d3.SimulationNodeDatum {
+  id: string; label: string; type: NodeType; root: NodeRoot;
+  file: string; desc: string;
+  props: string[]; hooks: string[]; actions: string[]; realtime: boolean;
+}
+interface EdgeDatum extends d3.SimulationLinkDatum<NodeDatum> {
+  source: string | NodeDatum;
+  target: string | NodeDatum;
+  type: EdgeType;
+}
+
+// ── Graph data ─────────────────────────────────────────────────────────
+const NODES: NodeDatum[] = [
+  // Entry points
+  { id:'organizer-page', label:'OrganizerPage', type:'entry', root:'organizer',
+    file:'src/app/organizer/[sessionId]/page.tsx',
+    desc:'Server component. Authenticates user, fetches session + profile, renders OrganizerDashboard.',
+    props:['params.sessionId: string'], hooks:[], actions:[], realtime:false },
+  { id:'player-page', label:'PlayerPage', type:'entry', root:'player',
+    file:'src/app/play/[sessionId]/page.tsx',
+    desc:'Server component. Authenticates user, fetches session. Redirects to /wrapped if session is closed.',
+    props:['params.sessionId: string'], hooks:[], actions:[], realtime:false },
+  { id:'tv-page', label:'TvPage', type:'entry', root:'tv',
+    file:'src/app/tv/[sessionId]/page.tsx',
+    desc:'Server component. No auth required — public scoreboard. Pre-fetches initial data via getTvData.',
+    props:['params.sessionId: string'], hooks:[], actions:['getTvData'], realtime:false },
+  // Organizer
+  { id:'organizer-dashboard', label:'OrganizerDashboard', type:'component', root:'organizer',
+    file:'src/components/organizer/organizer-dashboard.tsx',
+    desc:'Central organizer hub. Owns tab state, swap context, and cap saturation state. Delegates all realtime + action surface to useOrganizerData.',
+    props:['session: Session','userId: string','userId_role: string'],
+    hooks:['useOrganizerData','useState ×7','useRef ×4','useCallback ×2','useRouter'],
+    actions:['closeSession','toggleAutoMatchmaking','joinQueueAction'], realtime:true },
+  { id:'active-courts', label:'ActiveCourts', type:'component', root:'organizer',
+    file:'src/components/organizer/active-courts.tsx',
+    desc:'Live court grid. Controls ScoreModal open/close. Prevents simultaneous scoring with a hasActiveMatch lock.',
+    props:['courts','activeMatches','timeLimitMinutes','onEndMatch','+5 handlers'],
+    hooks:['useState ×2','useEffect ×1'], actions:[], realtime:false },
+  { id:'queue-control', label:'QueueControl', type:'component', root:'organizer',
+    file:'src/components/organizer/queue-control.tsx',
+    desc:'Multi-select queue table. Checkbox selection (4-player cap), editable skill dropdown, PIN reveal/reset, pause/checkout.',
+    props:['queue','profiles: Map','onCreateManualMatch','onRemoveFromQueue','onPausePlayer'],
+    hooks:['useState ×7'],
+    actions:['updatePlayerSkill','getPlayerPin','resetPlayerPin'], realtime:false },
+  { id:'on-deck-panel', label:'OnDeckPanel', type:'component', root:'organizer',
+    file:'src/components/organizer/on-deck-panel.tsx',
+    desc:'Drag-to-reorder pending matches. Tap-to-Swap v2 state machine (idle → picking → sheet). Wrapped in React.memo.',
+    props:['matches','swapContext','onClearOnDeckMatch','onReorderMatches','onPlayerTap','onPublishMatch'],
+    hooks:['useState ×1','useEffect ×1','useRef ×1','useCallback ×1'],
+    actions:[], realtime:false },
+  { id:'swap-sheet', label:'SwapSheet', type:'component', root:'organizer',
+    file:'src/components/organizer/swap-sheet.tsx',
+    desc:'Bench → on-deck player substitution drawer. Filterable search, skill mismatch warnings, inline error + retry.',
+    props:['context: SwapContext | null','queue','activeMatches','swapPlayer','onClose'],
+    hooks:['useState ×5','useEffect ×1'], actions:[], realtime:false },
+  { id:'wait-time-monitor', label:'WaitTimeMonitor', type:'component', root:'organizer',
+    file:'src/components/organizer/wait-time-monitor.tsx',
+    desc:'Sorted by longest wait first. Highlights players waiting >20 min. Checkout confirmation via AlertDialog.',
+    props:['queue','onRemoveFromQueue'],
+    hooks:['useMemo ×1','useState ×1'], actions:[], realtime:false },
+  { id:'match-history-panel', label:'MatchHistoryPanel', type:'component', root:'organizer',
+    file:'src/components/organizer/match-history-panel.tsx',
+    desc:'Completed + cancelled matches list. Subscribes independently to the matches realtime channel. Edit dialog for match scores.',
+    props:['sessionId: string'],
+    hooks:['useState ×2','useEffect ×1','useMemo ×1','useCallback ×1','useRef ×1','useTransition'],
+    actions:['updateMatchDetails'], realtime:true },
+  { id:'score-modal', label:'ScoreModal', type:'component', root:'organizer',
+    file:'src/components/organizer/score-modal.tsx',
+    desc:'Game score entry dialog. Validates scores and calls endMatch with the result.',
+    props:['match: EnrichedMatch','onSubmit','onCancel'],
+    hooks:['useState ×2'], actions:[], realtime:false },
+  // Player
+  { id:'player-dashboard', label:'PlayerDashboard', type:'component', root:'player',
+    file:'src/components/player/player-dashboard.tsx',
+    desc:'Player view hub. Owns tab state. Consumes 4 realtime hooks. Handles score submission and self-checkout.',
+    props:['session: Session','userId: string','userId_role: string'],
+    hooks:['useQueue','usePlayerMatch','useSessionData','useOrganizerBroadcast','useVisibilityRefresh','useTransition'],
+    actions:['submitMatchScore','checkoutPlayer'], realtime:true },
+  { id:'match-alert', label:'MatchAlert', type:'component', root:'player',
+    file:'src/components/player/match-alert.tsx',
+    desc:'Full-screen takeover card. Two states: pending (amber On-Deck) and in_progress (navy Head-to-Court). Purely presentational.',
+    props:['matchStatus','court','myDisplayName','teammates: Profile[]','opponents: Profile[]','onDeckPosition'],
+    hooks:[], actions:[], realtime:false },
+  { id:'on-deck-alert', label:'OnDeckAlert', type:'component', root:'player',
+    file:'src/components/player/on-deck-alert.tsx',
+    desc:'4-state queue alert: in_progress (violet), pending (amber), approaching pos 1–4 (blue/amber), or null (hidden).',
+    props:['matchStatus','queueStatus','position','teammates','opponents'],
+    hooks:[], actions:[], realtime:false },
+  { id:'queue-toggle', label:'QueueToggle', type:'component', root:'player',
+    file:'src/components/player/queue-toggle.tsx',
+    desc:'Join / Leave queue button with loading and error states.',
+    props:['isInQueue: boolean','onJoin','onLeave'],
+    hooks:['useState ×2'], actions:[], realtime:false },
+  { id:'queue-status', label:'QueueStatus', type:'component', root:'player',
+    file:'src/components/player/queue-status.tsx',
+    desc:'Large ordinal position display (#5, "5th in line"), live wait time, and games played. Purely presentational.',
+    props:['position: number','waitMinutes: number','gamesPlayed: number','totalInQueue: number'],
+    hooks:[], actions:[], realtime:false },
+  { id:'live-courts-tab', label:'LiveCourtsTab', type:'component', root:'player',
+    file:'src/components/player/live-courts-tab.tsx',
+    desc:'Read-only in-progress and on-deck match list. Shares TeamsGrid layout with the organizer view.',
+    props:['inProgressMatches: SessionMatch[]','onDeckMatches: SessionMatch[]','loading: boolean'],
+    hooks:[], actions:[], realtime:false },
+  // TV
+  { id:'tv-board', label:'TvBoard', type:'component', root:'tv',
+    file:'src/app/tv/[sessionId]/tv-board.tsx',
+    desc:'Large-screen scoreboard. Double-layered freshness: realtime subscriptions + 15 s polling fallback via getTvData.',
+    props:['sessionId: string'],
+    hooks:['useState ×2','useRef ×1','useEffect ×1','useCallback ×1','useMemo ×1'],
+    actions:['getTvData'], realtime:true },
+  { id:'tv-court-card', label:'TvCourtCard', type:'component', root:'tv',
+    file:'src/app/tv/[sessionId]/tv-court-card.tsx',
+    desc:'Per-court match card for TV: live score, elapsed time, team roster, mixed-level indicator.',
+    props:['match: Match','court: Court','teams: Profile[]'],
+    hooks:[], actions:[], realtime:false },
+  { id:'tv-on-deck-card', label:'TvOnDeckCard', type:'component', root:'tv',
+    file:'src/app/tv/[sessionId]/tv-on-deck-card.tsx',
+    desc:'Compact pending-match preview for TV, sorted by sort_order.',
+    props:['match: Match','teams: Profile[]'],
+    hooks:[], actions:[], realtime:false },
+  { id:'live-clock', label:'LiveClock', type:'component', root:'tv',
+    file:'src/app/tv/[sessionId]/live-clock.tsx',
+    desc:'Top-corner wall clock for the TV board. Ticks every second via setInterval.',
+    props:[], hooks:['useState ×1','useEffect ×1'], actions:[], realtime:false },
+  // Hooks
+  { id:'use-organizer-data', label:'useOrganizerData', type:'hook', root:'hooks',
+    file:'src/hooks/use-organizer-data.ts',
+    desc:'Central organizer state hub. 5 realtime channels with fetchSeq race guards. Returns 20+ action handlers. Ref-callback pattern on all subscriptions.',
+    props:['sessionId: string','session: Session'],
+    hooks:['useState ×7+','useMemo','useCallback ×8+','useRef ×3','useEffect'],
+    actions:['callNextMatch','endMatch','cancelMatch','createManualMatch','clearOnDeckMatch','reorderOnDeckMatches','publishMatch','swapPlayerInMatch','togglePlayerPause'],
+    realtime:true },
+  { id:'use-player-match', label:'usePlayerMatch', type:'hook', root:'hooks',
+    file:'src/hooks/use-player-match.ts',
+    desc:"Detects current player's on-deck / active match. 6-query sequential fetch chain, guarded by fetchMyMatchSeq to prevent race condition overwrites.",
+    props:['sessionId: string','playerId: string'],
+    hooks:['useState ×2','useMemo','useCallback','useRef','useEffect'],
+    actions:[], realtime:true },
+  { id:'use-queue', label:'useQueue', type:'hook', root:'hooks',
+    file:'src/hooks/use-queue.ts',
+    desc:'Player queue state. Live wait time recalculated every 15 s. Auto-refreshes on page visibility change.',
+    props:['sessionId: string','playerId: string'],
+    hooks:['useState ×2','useMemo','useCallback','useEffect'],
+    actions:['joinQueueAction'], realtime:true },
+  { id:'use-organizer-broadcast', label:'useOrganizerBroadcast', type:'hook', root:'hooks',
+    file:'src/hooks/use-organizer-broadcast.ts',
+    desc:'Listens to the session-events broadcast channel. Handles 4 event types: organizer_intervention, session_closed, auto_matchmaking_toggled, cap_saturation.',
+    props:['sessionId: string'],
+    hooks:['useEffect'], actions:[], realtime:true },
+  // Shared
+  { id:'teams-grid', label:'TeamsGrid', type:'shared', root:'shared',
+    file:'src/components/teams-grid.tsx',
+    desc:'4-player match roster layout (Team A vs Team B). Used by organizer, player, and TV — the one truly shared UI primitive.',
+    props:['matchPlayers: MatchPlayer[]','profiles: Profile[]','layout?: "compact"|"full"'],
+    hooks:[], actions:[], realtime:false },
+  { id:'match-card', label:'MatchCard', type:'shared', root:'shared',
+    file:'src/components/organizer/match-card.tsx',
+    desc:'On-deck match card with dnd-kit drag handle. Shows H2H strip, team grid, origin tag. Handles Tap-to-Swap tap events.',
+    props:['match: EnrichedMatch','swapContext','onPlayerTap','onPublish'],
+    hooks:['useSortable (dnd-kit)'], actions:[], realtime:false },
+  { id:'leaderboard-page', label:'LeaderboardPage', type:'shared', root:'shared',
+    file:'src/components/leaderboard/leaderboard-page.tsx',
+    desc:'Session leaderboard shared between organizer and player views. Hero card, podium top-3, full ranked table with advanced stats toggle.',
+    props:['sessionId: string','playerId: string'],
+    hooks:['useState'], actions:['getSessionLeaderboard'], realtime:false },
+  { id:'match-timer', label:'MatchTimer', type:'shared', root:'shared',
+    file:'src/components/match-timer.tsx',
+    desc:'Elapsed match time display, ticking every second. Used in court cards, TV board, and match history panel.',
+    props:['startedAt: string','timeLimitMinutes?: number'],
+    hooks:['useState ×1','useEffect ×1'], actions:[], realtime:false },
+  { id:'skill-badge', label:'SkillBadge', type:'shared', root:'shared',
+    file:'src/components/ui/skill-badge.tsx',
+    desc:'Color-coded skill level chip (Beginner / Intermediate / Advanced). Editable dropdown variant used in QueueControl.',
+    props:['level: SkillLevel','editable?: boolean','onUpdate?: fn'],
+    hooks:[], actions:[], realtime:false },
+  // Action aggregates
+  { id:'actions-match', label:'match.ts / matchmaking.ts', type:'actions', root:'actions',
+    file:'src/app/actions/match.ts · src/app/actions/matchmaking.ts · src/app/actions/swap-player.ts',
+    desc:'Match lifecycle: score submission, end, cancel, create, publish, draft mode. Engine entry points: callNextMatch → runEngineForSession → runEngineInternal.',
+    props:[], hooks:[], actions:[], realtime:false },
+  { id:'actions-queue', label:'queue.ts', type:'actions', root:'actions',
+    file:'src/app/actions/queue.ts',
+    desc:'Join, leave, and soft-pause a player. Inherited Games floor logic prevents queue-jumping.',
+    props:[], hooks:[], actions:[], realtime:false },
+  { id:'actions-profile', label:'profile.ts / auth.ts', type:'actions', root:'actions',
+    file:'src/app/actions/profile.ts · src/app/actions/auth.ts · src/app/actions/sessions.ts',
+    desc:'Player skill + PIN management. Anonymous session creation, PIN-based identity reconnect, and UUID migration.',
+    props:[], hooks:[], actions:[], realtime:false },
+];
+
+const EDGES: EdgeDatum[] = [
+  // renders
+  { source:'organizer-page',      target:'organizer-dashboard', type:'renders' },
+  { source:'player-page',         target:'player-dashboard',    type:'renders' },
+  { source:'tv-page',             target:'tv-board',            type:'renders' },
+  { source:'organizer-dashboard', target:'active-courts',       type:'renders' },
+  { source:'organizer-dashboard', target:'queue-control',       type:'renders' },
+  { source:'organizer-dashboard', target:'on-deck-panel',       type:'renders' },
+  { source:'organizer-dashboard', target:'wait-time-monitor',   type:'renders' },
+  { source:'organizer-dashboard', target:'match-history-panel', type:'renders' },
+  { source:'organizer-dashboard', target:'leaderboard-page',    type:'renders' },
+  { source:'active-courts',       target:'score-modal',         type:'renders' },
+  { source:'on-deck-panel',       target:'match-card',          type:'renders' },
+  { source:'on-deck-panel',       target:'swap-sheet',          type:'renders' },
+  { source:'player-dashboard',    target:'match-alert',         type:'renders' },
+  { source:'player-dashboard',    target:'on-deck-alert',       type:'renders' },
+  { source:'player-dashboard',    target:'queue-toggle',        type:'renders' },
+  { source:'player-dashboard',    target:'queue-status',        type:'renders' },
+  { source:'player-dashboard',    target:'live-courts-tab',     type:'renders' },
+  { source:'player-dashboard',    target:'leaderboard-page',    type:'renders' },
+  { source:'tv-board',            target:'tv-court-card',       type:'renders' },
+  { source:'tv-board',            target:'tv-on-deck-card',     type:'renders' },
+  { source:'tv-board',            target:'live-clock',          type:'renders' },
+  // prop-drill
+  { source:'active-courts',   target:'teams-grid',  type:'prop-drill' },
+  { source:'active-courts',   target:'match-timer', type:'prop-drill' },
+  { source:'match-card',      target:'teams-grid',  type:'prop-drill' },
+  { source:'live-courts-tab', target:'teams-grid',  type:'prop-drill' },
+  { source:'tv-court-card',   target:'teams-grid',  type:'prop-drill' },
+  { source:'tv-court-card',   target:'match-timer', type:'prop-drill' },
+  { source:'match-alert',     target:'skill-badge', type:'prop-drill' },
+  { source:'queue-control',   target:'skill-badge', type:'prop-drill' },
+  { source:'on-deck-alert',   target:'skill-badge', type:'prop-drill' },
+  // realtime
+  { source:'organizer-dashboard', target:'use-organizer-data',      type:'realtime' },
+  { source:'match-history-panel', target:'use-organizer-data',      type:'realtime' },
+  { source:'player-dashboard',    target:'use-queue',               type:'realtime' },
+  { source:'player-dashboard',    target:'use-player-match',        type:'realtime' },
+  { source:'player-dashboard',    target:'use-organizer-broadcast', type:'realtime' },
+  { source:'tv-board',            target:'use-organizer-broadcast', type:'realtime' },
+  // action
+  { source:'use-organizer-data',  target:'actions-match',   type:'action' },
+  { source:'queue-control',       target:'actions-profile', type:'action' },
+  { source:'player-dashboard',    target:'actions-match',   type:'action' },
+  { source:'player-dashboard',    target:'actions-queue',   type:'action' },
+  { source:'match-history-panel', target:'actions-match',   type:'action' },
+  { source:'use-queue',           target:'actions-queue',   type:'action' },
+  { source:'tv-board',            target:'actions-match',   type:'action' },
+];
+
+// ── Visual constants ─────────────────────────────────────────────────
+const EDGE_COLOR: Record<EdgeType, string> = {
+  'renders':    'oklch(42% 0.018 245)',
+  'prop-drill': 'oklch(52% 0.12 240)',
+  'realtime':   'oklch(68% 0.17 155)',
+  'action':     'oklch(55% 0.20 22)',
+};
+const EDGE_WIDTH: Record<EdgeType, number> = {
+  'renders':1, 'prop-drill':1.5, 'realtime':2, 'action':1.5,
+};
+const TYPE_BADGE_COLOR: Record<NodeType, string> = {
+  entry:     'oklch(66% 0.17 155)',
+  component: 'oklch(55% 0.14 240)',
+  hook:      'oklch(70% 0.16 70)',
+  shared:    'oklch(48% 0.08 245)',
+  actions:   'oklch(55% 0.20 22)',
+};
+
+function nodeColor(n: NodeDatum): string {
+  if (n.type === 'entry')   return 'oklch(66% 0.17 155)';
+  if (n.type === 'hook')    return 'oklch(70% 0.16 70)';
+  if (n.type === 'actions') return 'oklch(55% 0.20 22)';
+  if (n.type === 'shared')  return 'oklch(48% 0.08 245)';
+  if (n.root === 'organizer') return 'oklch(55% 0.14 240)';
+  if (n.root === 'player')    return 'oklch(55% 0.16 285)';
+  if (n.root === 'tv')        return 'oklch(62% 0.14 50)';
+  return 'oklch(50% 0.08 245)';
+}
+function nodeRadius(n: NodeDatum): number {
+  if (n.type === 'entry')   return 18;
+  if (n.type === 'hook')    return 15;
+  if (n.type === 'actions') return 13;
+  if (n.type === 'shared')  return 12;
+  return 13;
+}
+
+// ── Drawer logic ─────────────────────────────────────────────────────
+const drawer   = document.getElementById('node-drawer')!;
+const backdrop = document.getElementById('drawer-backdrop')!;
+
+function chipHtml(text: string, bg: string, fg: string) {
+  return `<li style="list-style:none"><code style="display:inline-block;background:${bg};color:${fg};font-size:10px;font-family:Geist Mono,monospace;padding:2px 8px;border-radius:6px;line-height:1.7;margin-bottom:2px">${text}</code></li>`;
+}
+function populateList(id: string, items: string[], bg: string, fg: string) {
+  const ul = document.getElementById(id)!;
+  ul.innerHTML = items.length
+    ? items.map(i => chipHtml(i, bg, fg)).join('')
+    : '<li style="list-style:none;font-size:11px;color:oklch(42% 0.015 245);font-style:italic">—</li>';
+}
+
+function openDrawer(n: NodeDatum) {
+  const badge = document.getElementById('drawer-type-badge')!;
+  badge.textContent = n.type.toUpperCase();
+  badge.style.color = TYPE_BADGE_COLOR[n.type];
+  document.getElementById('drawer-title')!.textContent = n.label;
+  const fileEl = document.getElementById('drawer-file') as HTMLAnchorElement;
+  // n.file may contain multiple paths (· separated) — link to the first one
+  const primaryFile = n.file.split(' · ')[0].trim();
+  fileEl.textContent = n.file;
+  fileEl.href = `vscode://file${(window as any).__HOST_ROOT__ ?? ''}/${primaryFile}`;
+  document.getElementById('drawer-desc')!.textContent  = n.desc;
+  document.getElementById('drawer-rt-wrap')!.classList.toggle('hidden', !n.realtime);
+  populateList('drawer-props',   n.props,   'oklch(18% 0.020 245)', 'oklch(62% 0.08 245)');
+  populateList('drawer-hooks',   n.hooks,   'oklch(20% 0.030 70)',  'oklch(72% 0.14 70)');
+  populateList('drawer-actions', n.actions, 'oklch(18% 0.025 22)',  'oklch(65% 0.18 22)');
+  drawer.classList.add('open');
+  backdrop.classList.remove('hidden');
+}
+function closeDrawer() {
+  drawer.classList.remove('open');
+  backdrop.classList.add('hidden');
+}
+document.getElementById('drawer-close')!.addEventListener('click', closeDrawer);
+backdrop.addEventListener('click', closeDrawer);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+// ── SVG setup ────────────────────────────────────────────────────────
+const root = document.getElementById('graph-root')!;
+const W = root.clientWidth || 960;
+const H = 680;
+
+const svg = d3.select(root).append('svg')
+  .attr('width', W).attr('height', H)
+  .style('background', 'oklch(7% 0.012 245)');
+
+document.getElementById('graph-loading')!.remove();
+
+// Dot-grid pattern
+const defs = svg.append('defs');
+defs.append('pattern')
+  .attr('id','dot-grid').attr('width',28).attr('height',28)
+  .attr('patternUnits','userSpaceOnUse')
+  .append('circle')
+  .attr('cx',0).attr('cy',0).attr('r',0.9)
+  .attr('fill','oklch(20% 0.018 245)');
+svg.append('rect').attr('width',W).attr('height',H).attr('fill','url(#dot-grid)');
+
+// Arrow markers per edge type
+(['renders','prop-drill','realtime','action'] as EdgeType[]).forEach(t => {
+  defs.append('marker')
+    .attr('id',`arr-${t}`).attr('viewBox','0 -5 10 10')
+    .attr('refX',9).attr('refY',0)
+    .attr('markerWidth',5).attr('markerHeight',5)
+    .attr('orient','auto')
+    .append('path').attr('d','M0,-5L10,0L0,5')
+    .attr('fill', EDGE_COLOR[t]);
+});
+
+// Zoom container
+const g = svg.append('g');
+const zoomBehavior = d3.zoom<SVGSVGElement, unknown>()
+  .scaleExtent([0.25, 3])
+  .on('zoom', ev => g.attr('transform', ev.transform));
+svg.call(zoomBehavior);
+svg.on('click', () => closeDrawer());
+
+// Cluster anchor positions
+const CP: Record<NodeRoot, {x:number;y:number}> = {
+  organizer: { x: W*0.17, y: H*0.44 },
+  player:    { x: W*0.49, y: H*0.44 },
+  tv:        { x: W*0.79, y: H*0.28 },
+  hooks:     { x: W*0.60, y: H*0.82 },
+  shared:    { x: W*0.49, y: H*0.11 },
+  actions:   { x: W*0.84, y: H*0.72 },
+};
+
+// Warm-start positions
+NODES.forEach(n => {
+  const c = CP[n.root];
+  n.x = c.x + (Math.random() - 0.5) * 80;
+  n.y = c.y + (Math.random() - 0.5) * 80;
+});
+
+// ── Cluster labels (rendered under nodes) ────────────────────────────
+const CLUSTERS: {root:NodeRoot;label:string}[] = [
+  {root:'organizer',label:'ORGANIZER'},
+  {root:'player',label:'PLAYER'},
+  {root:'tv',label:'TV'},
+  {root:'hooks',label:'HOOKS'},
+  {root:'shared',label:'SHARED'},
+  {root:'actions',label:'ACTIONS'},
+];
+g.selectAll('.cl').data(CLUSTERS).join('text')
+  .attr('class','cl')
+  .attr('x', d => CP[d.root].x).attr('y', d => CP[d.root].y - 58)
+  .attr('text-anchor','middle')
+  .attr('font-family','Barlow Semi Condensed, system-ui')
+  .attr('font-size',10).attr('font-weight',600)
+  .attr('letter-spacing','0.14em')
+  .attr('fill','oklch(32% 0.018 245)')
+  .attr('pointer-events','none')
+  .text(d => d.label);
+
+// ── Simulation ───────────────────────────────────────────────────────
+const sim = d3.forceSimulation<NodeDatum, EdgeDatum>(NODES)
+  .force('link',
+    d3.forceLink<NodeDatum, EdgeDatum>(EDGES as EdgeDatum[])
+      .id((d:NodeDatum) => d.id).distance(85).strength(0.45))
+  .force('charge',  d3.forceManyBody<NodeDatum>().strength(-220))
+  .force('collide', d3.forceCollide<NodeDatum>((d:NodeDatum) => nodeRadius(d) + 16))
+  .force('cx', d3.forceX<NodeDatum>((d:NodeDatum) => CP[d.root].x).strength(0.28))
+  .force('cy', d3.forceY<NodeDatum>((d:NodeDatum) => CP[d.root].y).strength(0.28))
+  .alphaDecay(0.018);
+
+// ── Edges ─────────────────────────────────────────────────────────────
+const link = g.append('g')
+  .selectAll<SVGLineElement, EdgeDatum>('line')
+  .data(EDGES as EdgeDatum[])
+  .join('line')
+  .attr('stroke',         d => EDGE_COLOR[d.type as EdgeType])
+  .attr('stroke-width',   d => EDGE_WIDTH[d.type as EdgeType])
+  .attr('stroke-opacity', 0.65)
+  .attr('marker-end',     d => `url(#arr-${d.type})`);
+
+// ── Drag behavior ─────────────────────────────────────────────────────
+const drag = d3.drag<SVGGElement, NodeDatum>()
+  .on('start', (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+  .on('drag',  (ev, d) => { d.fx=ev.x; d.fy=ev.y; })
+  .on('end',   (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx=null; d.fy=null; });
+
+// ── Node groups ───────────────────────────────────────────────────────
+const nodeG = g.append('g')
+  .selectAll<SVGGElement, NodeDatum>('g')
+  .data(NODES)
+  .join('g')
+  .attr('class', 'node-group')
+  .call(drag as unknown as (sel: d3.Selection<SVGGElement,NodeDatum,SVGGElement,unknown>) => void)
+  .on('click', (ev, d) => { ev.stopPropagation(); openDrawer(d); });
+
+// Glow ring (shown on hover via CSS)
+nodeG.append('circle').attr('class','node-glow')
+  .attr('r', d => nodeRadius(d) + 6)
+  .attr('fill','none')
+  .attr('stroke', d => nodeColor(d))
+  .attr('stroke-width',2).attr('opacity',0)
+  .attr('pointer-events','none');
+
+// Main node circle
+nodeG.append('circle').attr('class','node-circle')
+  .attr('r', d => nodeRadius(d))
+  .attr('fill', d => nodeColor(d)).attr('fill-opacity', 0.15)
+  .attr('stroke', d => nodeColor(d)).attr('stroke-width', 1.5);
+
+// Label
+nodeG.append('text').attr('class','node-label')
+  .attr('dy', d => nodeRadius(d) + 11)
+  .attr('text-anchor','middle')
+  .attr('font-family','Geist, system-ui, sans-serif')
+  .attr('font-size', d => d.type === 'entry' ? 10 : 9)
+  .attr('font-weight', d => d.type === 'entry' ? 600 : 400)
+  .attr('fill','oklch(60% 0.015 245)')
+  .attr('pointer-events','none')
+  .text(d => d.label);
+
+// ── Tick ───────────────────────────────────────────────────────────────
+sim.on('tick', () => {
+  link
+    .attr('x1', d => (d.source as NodeDatum).x ?? 0)
+    .attr('y1', d => (d.source as NodeDatum).y ?? 0)
+    .attr('x2', d => {
+      const s = d.source as NodeDatum, t = d.target as NodeDatum;
+      const dx=(t.x??0)-(s.x??0), dy=(t.y??0)-(s.y??0);
+      const len=Math.hypot(dx,dy)||1;
+      return (t.x??0) - dx/len*(nodeRadius(t)+9);
+    })
+    .attr('y2', d => {
+      const s = d.source as NodeDatum, t = d.target as NodeDatum;
+      const dx=(t.x??0)-(s.x??0), dy=(t.y??0)-(s.y??0);
+      const len=Math.hypot(dx,dy)||1;
+      return (t.y??0) - dy/len*(nodeRadius(t)+9);
+    });
+  nodeG.attr('transform', d => `translate(${d.x??0},${d.y??0})`);
+});
+
+// Zoom-to-fit once settled
+sim.on('end', () => {
+  const xs=NODES.map(n=>n.x??0), ys=NODES.map(n=>n.y??0);
+  const x0=Math.min(...xs)-50, x1=Math.max(...xs)+70;
+  const y0=Math.min(...ys)-50, y1=Math.max(...ys)+70;
+  const scale=Math.min(0.88, Math.min(W/(x1-x0), H/(y1-y0)));
+  const tx=(W-scale*(x0+x1))/2, ty=(H-scale*(y0+y1))/2;
+  svg.transition().duration(700).call(
+    zoomBehavior.transform, d3.zoomIdentity.translate(tx,ty).scale(scale)
+  );
+});
+</script>
+
+<!-- ── Global styles: drawer animation + SVG hover ─────────────────── -->
+<style is:global>
+  #node-drawer {
+    position: fixed; top: 0; right: 0;
+    height: 100%; width: 320px; z-index: 50;
+    background: oklch(17% 0.020 245);
+    border-left: 1px solid oklch(26% 0.025 245);
+    transform: translateX(100%);
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    overflow: hidden;
+  }
+  #node-drawer.open { transform: translateX(0); }
+  #drawer-backdrop  { background: oklch(5% 0.010 245 / 0.5); }
+
+  .node-group { cursor: pointer; }
+  .node-group:hover .node-glow   { opacity: 1 !important; transition: opacity 0.1s; }
+  .node-group:hover .node-circle { fill-opacity: 0.30 !important; }
+  .node-group:hover .node-label  { fill: oklch(82% 0.015 245) !important; }
+</style>

@@ -1,0 +1,120 @@
+---
+const pathname = Astro.url.pathname;
+
+const sections = [
+  {
+    items: [
+      { href: '/',            label: 'Overview',           live: true  },
+    ]
+  },
+  {
+    heading: 'Architecture',
+    items: [
+      { href: '/database',    label: 'Database',           live: true  },
+      { href: '/actions',     label: 'Server Actions',     live: true  },
+      { href: '/engine',      label: 'Matchmaking Engine', live: true  },
+      { href: '/realtime',    label: 'Realtime & State',   live: true  },
+      { href: '/components',  label: 'Components',         live: true  },
+    ]
+  },
+  {
+    heading: 'Reference',
+    items: [
+      { href: '/flows',       label: 'Flows & Traces',     live: true  },
+      { href: '/glossary',    label: 'Glossary & Gotchas', live: true  },
+    ]
+  },
+];
+
+function isActive(href: string) {
+  if (href === '/') return pathname === '/';
+  return pathname.startsWith(href);
+}
+---
+
+<nav
+  id="side-nav"
+  class="fixed left-0 top-0 bottom-0 w-60 bg-surface border-r border-edge-dim flex flex-col z-40"
+>
+  <!-- Brand -->
+  <a href="/" class="flex flex-col px-5 py-5 border-b border-edge-dim hover:bg-raised transition-colors duration-75 shrink-0">
+    <span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-3 font-sans">Digital Twin</span>
+    <span class="text-sm font-semibold text-ink mt-0.5 leading-snug font-heading tracking-tight">Badminton Queue App</span>
+  </a>
+
+  <!-- Nav items -->
+  <div class="flex-1 overflow-y-auto py-3 space-y-5">
+    {sections.map(section => (
+      <div>
+        {section.heading && (
+          <div class="px-5 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-4">
+            {section.heading}
+          </div>
+        )}
+        <ul class="space-y-0.5 px-2">
+          {section.items.map(item => (
+            <li>
+              <a
+                href={item.href}
+                class:list={[
+                  'flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm transition-colors duration-75',
+                  isActive(item.href)
+                    ? 'bg-lifted text-accent-hi font-medium'
+                    : 'text-ink-3 hover:bg-raised hover:text-ink-2',
+                ]}
+              >
+                <span class="flex items-center gap-2.5">
+                  <span class:list={[
+                    'w-1.5 h-1.5 rounded-full shrink-0 transition-opacity duration-75',
+                    isActive(item.href) ? 'bg-accent' : 'opacity-0',
+                  ]}></span>
+                  {item.label}
+                </span>
+                {!item.live && !isActive(item.href) && (
+                  <span class="text-[10px] text-ink-4 shrink-0">soon</span>
+                )}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ))}
+  </div>
+
+  <!-- Search trigger -->
+  <div class="px-3 pb-2 shrink-0">
+    <button
+      data-search-trigger
+      class="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-mono
+             text-ink-4 bg-raised border border-edge hover:border-edge-hi hover:text-ink-3
+             transition-all duration-75 group"
+      aria-label="Open search (⌘K)"
+    >
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true" class="shrink-0">
+        <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span class="flex-1 text-left">Search…</span>
+      <kbd class="text-[10px] px-1.5 py-0.5 rounded bg-surface border border-edge-dim text-ink-4 leading-none">⌘K</kbd>
+    </button>
+  </div>
+
+  <!-- Footer -->
+  <div class="px-5 py-3 border-t border-edge-dim shrink-0">
+    <a href="/about" class="text-xs text-ink-4 hover:text-ink-3 transition-colors duration-75">
+      About this site
+    </a>
+  </div>
+</nav>
+
+<!-- Mobile top bar -->
+<div class="mobile-top-bar fixed top-0 left-0 right-0 h-12 bg-surface border-b border-edge-dim z-50 items-center justify-between px-4">
+  <a href="/" class="text-sm font-semibold text-ink font-heading tracking-tight">Badminton · Digital Twin</a>
+  <button
+    id="mobile-nav-toggle"
+    class="text-ink-3 hover:text-ink-2 p-1 transition-colors"
+    onclick="document.getElementById('side-nav').classList.toggle('mobile-open'); document.getElementById('side-nav').style.transform = document.getElementById('side-nav').classList.contains('mobile-open') ? 'translateX(0)' : 'translateX(-100%)';"
+  >
+    ☰
+  </button>
+</div>

@@ -1,0 +1,477 @@
+---
+import Nav from '../components/Nav.astro';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'Badminton App · Digital Twin',
+  description = 'Interactive architecture documentation for the Badminton Queue App — tables, engine, realtime, flows.',
+} = Astro.props;
+
+const pageTitle = title === 'Badminton App · Digital Twin'
+  ? title
+  : `${title} — Badminton App · Digital Twin`;
+---
+
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{pageTitle}</title>
+  </head>
+
+  <body class="bg-base text-ink-2 h-full font-sans">
+
+    <Nav />
+
+    <!-- Mobile top bar spacer -->
+    <div class="mobile-top-bar h-12"></div>
+
+    <!-- Main offset for fixed nav -->
+    <div class="nav-offset md:ml-60 flex flex-col min-h-screen">
+      <main class="flex-1">
+        <slot />
+      </main>
+
+      <footer class="border-t border-edge-dim py-4 px-8 text-xs text-ink-3 flex items-center justify-between gap-4 flex-wrap">
+        <span>Badminton Queue App · Digital Twin · v0.1</span>
+        <div class="flex items-center gap-4">
+          <a href="/about" class="hover:text-ink-2 transition-colors">About</a>
+          <a
+            href="https://github.com/nayzjuan/badminton-app"
+            target="_blank"
+            rel="noopener"
+            class="hover:text-ink-2 transition-colors"
+          >
+            GitHub ↗
+          </a>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Mermaid — loaded once globally, renders all .mermaid blocks -->
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: 'base',
+        themeVariables: {
+          /* Surfaces — hex approximations of the OKLCH token values */
+          primaryColor:          '#11202e',   /* overlay  — node fill          */
+          primaryTextColor:      '#eef3f7',   /* ink      — node label         */
+          primaryBorderColor:    '#1dcc78',   /* accent   — node border        */
+          lineColor:             '#1dcc78',   /* accent   — edge lines         */
+          secondaryColor:        '#0c1620',   /* surface  — secondary nodes    */
+          tertiaryColor:         '#070c15',   /* base     — deepest            */
+          background:            '#070c15',   /* base                          */
+          mainBkg:               '#11202e',   /* overlay  — primary node fill  */
+          nodeBorder:            '#1dcc78',   /* accent                        */
+          clusterBkg:            '#0c1620',   /* surface  — subgraph (sunken)  */
+          clusterBorder:         '#1d3345',   /* lifted   — subgraph boundary  */
+          titleColor:            '#eef3f7',   /* ink                           */
+          edgeLabelBackground:   '#11202e',   /* overlay                       */
+          attributeBackgroundColorEven: '#0c1620',
+          attributeBackgroundColorOdd:  '#11202e',
+          fontSize:              '13px',
+          fontFamily:            'Geist, system-ui, sans-serif',
+          /* Sequence diagram overrides */
+          actorBkg:              '#0d1d2b',   /* actor box fill       */
+          actorBorder:           '#1dcc78',   /* actor box border     */
+          actorTextColor:        '#9ab8cc',   /* actor label          */
+          activationBkgColor:    '#142233',   /* activation bar       */
+          activationBorderColor: '#1dcc78',
+          signalColor:           '#4a8eaa',   /* arrow lines          */
+          signalTextColor:       '#7bb8cc',   /* message text         */
+          noteBkgColor:          '#0d1d2b',
+          noteBorderColor:       '#1d3345',
+          noteTextColor:         '#7a9eb5',
+          labelBoxBkgColor:      '#0a1520',
+          labelBoxBorderColor:   '#1d3345',
+          labelTextColor:        '#5a8aa0',
+          loopTextColor:         '#5a8aa0',
+          sequenceNumberColor:   '#1dcc78',
+        },
+        flowchart: { curve: 'basis', padding: 24 },
+        sequence:  { actorMargin: 60, fontSize: 13, showSequenceNumbers: false },
+      });
+      // Expose for pages that need dynamic re-rendering (e.g. /flows)
+      window.__mermaid = mermaid;
+    </script>
+
+    <!-- Mobile nav backdrop close -->
+    <script>
+      document.addEventListener('click', (e) => {
+        const nav    = document.getElementById('side-nav');
+        const toggle = document.getElementById('mobile-nav-toggle');
+        if (nav && toggle && !nav.contains(e.target) && !toggle.contains(e.target)) {
+          nav.classList.remove('mobile-open');
+          nav.style.transform = 'translateX(-100%)';
+        }
+      });
+    </script>
+
+    <!-- ── Cmd-K Search Palette ────────────────────────────────────── -->
+    <div id="sk-backdrop" aria-hidden="true"></div>
+
+    <div
+      id="sk-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Search documentation"
+    >
+      <div id="sk-input-row">
+        <svg id="sk-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <input
+          id="sk-input"
+          type="search"
+          placeholder="Search the Digital Twin…"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Search"
+          aria-autocomplete="list"
+          aria-controls="sk-results"
+        />
+        <kbd id="sk-esc-hint">esc</kbd>
+      </div>
+
+      <div id="sk-results" role="listbox" aria-live="polite"></div>
+
+      <div id="sk-footer" aria-hidden="true">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>↵</kbd> open</span>
+        <span><kbd>esc</kbd> close</span>
+      </div>
+    </div>
+
+    <!-- Search palette logic (is:inline — bypasses Vite, runtime pagefind URL) -->
+    <script is:inline>
+      var _skPf        = null;   // pagefind module (false = unavailable)
+      var _skLoading   = false;
+      var _skActiveIdx = -1;
+      var _skItems     = [];
+      var _skTimer     = null;
+
+      var _skBackdrop  = document.getElementById('sk-backdrop');
+      var _skModal     = document.getElementById('sk-modal');
+      var _skInput     = document.getElementById('sk-input');
+      var _skResults   = document.getElementById('sk-results');
+
+      // ── Pagefind loader ─────────────────────────────────────────────
+      // URL constructed at runtime so no bundler (Vite/Rollup) can try to resolve it
+      async function _skLoad() {
+        if (_skPf !== null || _skLoading) return;
+        _skLoading = true;
+        try {
+          var url = window.location.origin + '/pagefind/pagefind.js';
+          var pf = await import(url);
+          await pf.init();
+          _skPf = pf;
+        } catch (_) {
+          _skPf = false;
+        }
+        _skLoading = false;
+      }
+
+      // ── Open / close ────────────────────────────────────────────────
+      function _skOpen() {
+        _skModal.classList.add('sk-open');
+        _skBackdrop.classList.add('sk-open');
+        document.body.classList.add('sk-lock');
+        requestAnimationFrame(function() { _skInput.focus(); });
+        _skLoad();
+      }
+      function _skClose() {
+        _skModal.classList.remove('sk-open');
+        _skBackdrop.classList.remove('sk-open');
+        document.body.classList.remove('sk-lock');
+        _skInput.value = '';
+        _skResults.innerHTML = '';
+        _skActiveIdx = -1;
+        _skItems = [];
+      }
+
+      // ── Active result ────────────────────────────────────────────────
+      function _skSetActive(i) {
+        if (!_skItems.length) return;
+        var c = Math.max(0, Math.min(i, _skItems.length - 1));
+        _skItems.forEach(function(el, idx) {
+          el.classList.toggle('sk-active', idx === c);
+          el.setAttribute('aria-selected', String(idx === c));
+        });
+        if (_skItems[c]) _skItems[c].scrollIntoView({ block: 'nearest' });
+        _skActiveIdx = c;
+      }
+
+      // ── Search ───────────────────────────────────────────────────────
+      async function _skSearch(q) {
+        if (!q.trim()) {
+          _skResults.innerHTML = '';
+          _skItems = []; _skActiveIdx = -1;
+          return;
+        }
+        if (_skPf === false) {
+          _skResults.innerHTML = '<p class="sk-empty">Search unavailable in dev mode — run <code>npm run build</code> first.</p>';
+          return;
+        }
+        if (!_skPf) {
+          _skResults.innerHTML = '<p class="sk-empty">Loading search index…</p>';
+          await _skLoad();
+          if (!_skPf) {
+            _skResults.innerHTML = '<p class="sk-empty">Search unavailable in dev mode — run <code>npm run build</code> first.</p>';
+            return;
+          }
+        }
+        try {
+          var res  = await _skPf.search(q);
+          var data = await Promise.all(res.results.slice(0, 8).map(function(r) { return r.data(); }));
+          if (!data.length) {
+            _skResults.innerHTML = '<p class="sk-empty">No results for <strong>"' + q + '"</strong></p>';
+            _skItems = []; _skActiveIdx = -1;
+            return;
+          }
+          _skResults.innerHTML = data.map(function(d, i) {
+            return '<a href="' + d.url + '" class="sk-result' + (i === 0 ? ' sk-active' : '') + '" role="option" aria-selected="' + (i === 0) + '">'
+              + '<span class="sk-r-title">' + (d.meta && d.meta.title ? d.meta.title : 'Untitled') + '</span>'
+              + '<span class="sk-r-url">'   + d.url + '</span>'
+              + '<span class="sk-r-excerpt">' + d.excerpt + '</span>'
+              + '</a>';
+          }).join('');
+          _skItems = Array.from(_skResults.querySelectorAll('.sk-result'));
+          _skItems.forEach(function(el) { el.addEventListener('click', _skClose); });
+          _skActiveIdx = 0;
+        } catch (_) {
+          _skResults.innerHTML = '<p class="sk-empty">Search error — please try again.</p>';
+        }
+      }
+
+      // ── Global keyboard handler ──────────────────────────────────────
+      document.addEventListener('keydown', function(e) {
+        var isOpen = _skModal.classList.contains('sk-open');
+
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+          e.preventDefault();
+          isOpen ? _skClose() : _skOpen();
+          return;
+        }
+        if (!isOpen) return;
+
+        switch (e.key) {
+          case 'Escape':    _skClose(); break;
+          case 'ArrowDown': e.preventDefault(); _skSetActive(_skActiveIdx + 1); break;
+          case 'ArrowUp':   e.preventDefault(); _skSetActive(_skActiveIdx - 1); break;
+          case 'Enter':
+            if (_skActiveIdx >= 0 && _skItems[_skActiveIdx]) {
+              e.preventDefault();
+              var href = _skItems[_skActiveIdx].getAttribute('href') || '/';
+              _skClose();
+              window.location.href = href;
+            }
+            break;
+          case 'Tab':
+            e.preventDefault();
+            _skInput.focus();
+            break;
+        }
+      });
+
+      // ── Input ────────────────────────────────────────────────────────
+      _skInput.addEventListener('input', function() {
+        clearTimeout(_skTimer);
+        _skTimer = setTimeout(function() { _skSearch(_skInput.value); }, 150);
+      });
+
+      // ── Backdrop click & trigger buttons ────────────────────────────
+      _skBackdrop.addEventListener('click', _skClose);
+      document.querySelectorAll('[data-search-trigger]').forEach(function(el) {
+        el.addEventListener('click', _skOpen);
+      });
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  /* ── Cmd-K Search Palette ────────────────────────────────────── */
+  #sk-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: oklch(4% 0.008 245 / 0.65);
+    animation: sk-fade 0.12s ease;
+  }
+  #sk-backdrop.sk-open { display: block; }
+
+  #sk-modal {
+    display: none;
+    position: fixed;
+    top: 17%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 101;
+    width: min(580px, calc(100vw - 1.5rem));
+    max-height: 520px;
+    background: oklch(20% 0.022 245);
+    border: 1px solid oklch(30% 0.030 245);
+    border-radius: 14px;
+    overflow: hidden;
+    flex-direction: column;
+    box-shadow: 0 32px 80px oklch(2% 0.004 245 / 0.85);
+    animation: sk-slide 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  #sk-modal.sk-open { display: flex; }
+
+  @keyframes sk-fade  { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes sk-slide {
+    from { opacity: 0; transform: translateX(-50%) translateY(-10px) scale(0.97); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0)     scale(1);    }
+  }
+
+  .sk-lock { overflow: hidden; }
+
+  #sk-input-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid oklch(26% 0.025 245);
+    flex-shrink: 0;
+  }
+  #sk-icon { color: oklch(48% 0.018 245); flex-shrink: 0; }
+
+  #sk-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: oklch(90% 0.010 245);
+    font-family: 'Geist', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  #sk-input::placeholder          { color: oklch(40% 0.016 245); }
+  #sk-input::-webkit-search-cancel-button { display: none; }
+
+  #sk-esc-hint {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-family: 'Geist Mono', monospace;
+    color: oklch(40% 0.014 245);
+    background: oklch(26% 0.022 245);
+    border: 1px solid oklch(34% 0.024 245);
+    border-radius: 5px;
+    padding: 2px 7px;
+    cursor: default;
+  }
+
+  #sk-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+    min-height: 0;
+  }
+  .sk-result {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    text-decoration: none;
+    cursor: pointer;
+    outline: 1px solid transparent;
+    margin-bottom: 2px;
+    transition: background 0.07s, outline-color 0.07s;
+  }
+  .sk-result:hover,
+  .sk-result.sk-active {
+    background: oklch(17% 0.034 155 / 0.55);
+    outline-color: oklch(32% 0.10 155 / 0.45);
+  }
+  .sk-r-title {
+    color: oklch(88% 0.010 245);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: 'Geist', system-ui, sans-serif;
+    line-height: 1.3;
+  }
+  .sk-r-url {
+    color: oklch(48% 0.014 245);
+    font-size: 11px;
+    font-family: 'Geist Mono', monospace;
+    line-height: 1.3;
+  }
+  .sk-r-excerpt {
+    color: oklch(58% 0.012 245);
+    font-size: 12px;
+    font-family: 'Geist', system-ui, sans-serif;
+    line-height: 1.55;
+    margin-top: 2px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+  /* Pagefind wraps matched terms in <mark> */
+  .sk-r-excerpt mark {
+    background: transparent;
+    color: oklch(76% 0.17 155);
+    font-weight: 500;
+  }
+  .sk-empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: oklch(44% 0.015 245);
+    font-size: 13px;
+    font-family: 'Geist', system-ui, sans-serif;
+    margin: 0;
+  }
+  .sk-empty code {
+    font-family: 'Geist Mono', monospace;
+    color: oklch(62% 0.14 155);
+    background: oklch(14% 0.025 155 / 0.5);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+
+  #sk-footer {
+    display: flex;
+    gap: 16px;
+    padding: 8px 14px;
+    border-top: 1px solid oklch(24% 0.022 245);
+    flex-shrink: 0;
+  }
+  #sk-footer span {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: oklch(38% 0.014 245);
+    font-size: 11px;
+    font-family: 'Geist Mono', monospace;
+  }
+  #sk-footer kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    font-size: 10px;
+    font-family: 'Geist Mono', monospace;
+    color: oklch(44% 0.014 245);
+    background: oklch(26% 0.022 245);
+    border: 1px solid oklch(35% 0.024 245);
+    border-radius: 3px;
+    line-height: 1;
+  }
+</style>

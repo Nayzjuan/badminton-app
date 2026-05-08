@@ -1,0 +1,23 @@
+---
+import PhaseBadge from './PhaseBadge.astro';
+
+interface Props {
+  title: string;
+  subtitle?: string;
+  phase?: number;
+  phaseStatus?: 'live' | 'next' | 'upcoming';
+}
+const { title, subtitle, phase, phaseStatus = 'upcoming' } = Astro.props;
+---
+
+<div class="border-b border-edge-dim px-8 py-10">
+  {phase !== undefined && (
+    <div class="mb-3">
+      <PhaseBadge phase={phase} status={phaseStatus} />
+    </div>
+  )}
+  <h1 class="text-3xl font-bold text-ink tracking-tight">{title}</h1>
+  {subtitle && (
+    <p class="text-ink-3 mt-2 text-base max-w-2xl leading-relaxed">{subtitle}</p>
+  )}
+</div>

@@ -1,0 +1,81 @@
+---
+// Dismissible "Start here" rail — for first-time / external visitors.
+// Dismissed state persisted in localStorage so it stays gone on return visits.
+---
+
+<aside
+  id="start-rail"
+  class="start-rail-bg w-72 shrink-0 self-start sticky top-8 rounded-xl border border-accent-ring p-5"
+>
+  <div class="flex items-start justify-between mb-4">
+    <div>
+      <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-accent mb-0.5 font-sans">Start here</div>
+      <p class="text-xs text-ink-3 leading-snug">New to this codebase? Pick your path.</p>
+    </div>
+    <button
+      id="dismiss-rail"
+      title="Dismiss"
+      class="text-ink-3 hover:text-ink-2 transition-colors text-lg leading-none mt-0.5 cursor-pointer"
+    >
+      ×
+    </button>
+  </div>
+
+  <div class="space-y-2">
+    <a
+      href="/about"
+      class="block rounded-lg bg-overlay border border-edge p-3 hover:border-accent-ring transition-colors group"
+    >
+      <div class="text-sm font-semibold text-ink-2 group-hover:text-accent-hi transition-colors">
+        What does this app do?
+      </div>
+      <p class="text-xs text-ink-3 mt-0.5 leading-snug">
+        A 60-second plain-English overview of the product.
+      </p>
+    </a>
+
+    <a
+      href="/flows"
+      class="block rounded-lg bg-overlay border border-edge p-3 hover:border-accent-ring transition-colors group"
+    >
+      <div class="text-sm font-semibold text-ink-2 group-hover:text-accent-hi transition-colors">
+        Show me a real flow
+      </div>
+      <p class="text-xs text-ink-3 mt-0.5 leading-snug">
+        Trace a player joining the queue from tap to re-render.
+      </p>
+    </a>
+
+    <a
+      href="/components"
+      class="block rounded-lg bg-overlay border border-edge p-3 hover:border-accent-ring transition-colors group"
+    >
+      <div class="text-sm font-semibold text-ink-2 group-hover:text-accent-hi transition-colors">
+        How is the code laid out?
+      </div>
+      <p class="text-xs text-ink-3 mt-0.5 leading-snug">
+        Component hierarchy and file map for both dashboards.
+      </p>
+    </a>
+  </div>
+</aside>
+
+<script>
+  const rail = document.getElementById('start-rail');
+  const btn  = document.getElementById('dismiss-rail');
+
+  if (typeof localStorage !== 'undefined' &&
+      localStorage.getItem('dt-rail-dismissed') === 'true') {
+    rail?.remove();
+  }
+
+  btn?.addEventListener('click', () => {
+    localStorage.setItem('dt-rail-dismissed', 'true');
+    if (rail) {
+      rail.style.opacity = '0';
+      rail.style.transform = 'translateX(12px)';
+      rail.style.transition = 'opacity 0.18s ease, transform 0.18s ease';
+      setTimeout(() => rail.remove(), 200);
+    }
+  });
+</script>
