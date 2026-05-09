@@ -582,9 +582,12 @@ export async function createManualMatchAction(
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 
-  // Validate all players are in this session's queue.
   const allPlayerIds = [...teamAPlayerIds, ...teamBPlayerIds];
-  const { data: queueEntries } = await supabase
+  const svc = getServiceClient();
+
+  // Validate all players are in this session's queue (any status).
+  // Gives a clear "not in session" error before hitting the RPC.
+  const { data: queueEntries } = await svc
     .from("queue_entries")
     .select("player_id")
     .eq("session_id", sessionId)
@@ -596,56 +599,58 @@ export async function createManualMatchAction(
     return { success: false, message: "One or more selected players are not in this session." };
   }
 
-  // 1. Create the match row — goes On Deck (pending, no court).
-  //    origin: "manual" so the organizer's intentional composition is
-  //    always distinguishable from engine-generated matches.
-  //    is_published: true — manual matches bypass Draft Mode review; the
-  //    organizer chose the composition themselves, so it publishes instantly.
-  const { data: match, error: matchError } = await supabase
-    .from("matches")
-    .insert({
-      session_id: sessionId,
-      court_id: null,
-      status: "pending" as const,
-      started_at: null,
-      origin: "manual" as const,
-      is_published: true,
-    })
-    .select()
-    .single();
+  // Compute is_mixed_level from player skill levels.
+  const { data: playerProfiles } = await svc
+    .from("profiles")
+    .select("skill_level")
+    .in("id", allPlayerIds);
+  const skillLevels = new Set((playerProfiles ?? []).map((p) => p.skill_level));
+  const isMixedLevel = skillLevels.size > 1;
 
-  if (matchError || !match) {
-    return { success: false, message: matchError?.message ?? "Failed to create match." };
+  // Single atomic write via the create_match_with_players RPC.
+  //
+  // Routing through the RPC gives us all three TOCTOU guards for free:
+  //   Guard 0 — pre-flight: all players must be 'waiting' (blocks 'left',
+  //             'on_deck', 'playing' — prevents assigning an already-committed player)
+  //   Guard 1 — row-level lock on queue_entries, preventing concurrent
+  //             engine/manual runs from double-booking the same player
+  //   Guard 2 — post-lock conflict check: no player may already appear in
+  //             another pending/in_progress match_players row
+  //
+  // The RPC also handles queue promotion atomically: with
+  // p_is_published=true it updates all players to 'on_deck' inside the
+  // same transaction, so the Jackie B / Carlo partial-update bug cannot
+  // recur regardless of which Supabase client was used to invoke it.
+  const { data: matchId, error: rpcError } = await svc.rpc(
+    "create_match_with_players",
+    {
+      p_session_id:     sessionId,
+      p_court_id:       null,
+      p_status:         "pending",
+      p_is_mixed_level: isMixedLevel,
+      p_started_at:     null,
+      p_is_on_deck:     true,
+      p_team_a_ids:     teamAPlayerIds,
+      p_team_b_ids:     teamBPlayerIds,
+      p_origin:         "manual",
+      p_is_published:   true,
+    }
+  );
+
+  if (rpcError) {
+    return { success: false, message: rpcError.message };
   }
 
-  // 2. Assign players to the match.
-  const playerRows = [
-    ...teamAPlayerIds.map((pid) => ({ match_id: match.id, player_id: pid, team: "a" as const })),
-    ...teamBPlayerIds.map((pid) => ({ match_id: match.id, player_id: pid, team: "b" as const })),
-  ];
-
-  const { error: playersError } = await supabase.from("match_players").insert(playerRows);
-  if (playersError) {
-    // Roll back the match row to avoid an orphaned match.
-    await supabase.from("matches").delete().eq("id", match.id);
-    return { success: false, message: playersError.message };
+  if (!matchId) {
+    // RPC returned NULL: Guard 0 or Guard 2 fired — a player is not
+    // 'waiting' or is already committed to another active match.
+    return {
+      success: false,
+      message: "Could not create match — one or more players are unavailable or already assigned to an active match.",
+    };
   }
 
-  // 3. Mark all players as "on_deck" — removes them from the
-  //    waiting pool so they can't be double-booked by the auto-algo.
-  //    Must use the service client here: the same RLS policies that block
-  //    queue_entries writes for non-self rows would silently no-op this
-  //    update for players the organizer doesn't own, leaving them "waiting"
-  //    while already assigned to a match (the bug that caused Jackie B /
-  //    Carlo to appear in both states simultaneously).
-  const svc = getServiceClient();
-  await svc
-    .from("queue_entries")
-    .update({ status: "on_deck" as const })
-    .eq("session_id", sessionId)
-    .in("player_id", allPlayerIds);
-
-  return { success: true, message: "Match added to On Deck.", matchId: match.id };
+  return { success: true, message: "Match added to On Deck.", matchId };
 }
 
 // ============================================================
@@ -861,6 +866,36 @@ export async function publishMatchAction(
         message: `Cannot publish — ${leftPlayers.length} player${leftPlayers.length !== 1 ? "s have" : " has"} left the session. Clear this draft and let the engine regenerate.`,
       };
     }
+
+    // Conflict check: verify no player in this draft is already committed
+    // to a different pending or in_progress match in the same session.
+    // This is an advisory (read-then-write) check — it catches the common
+    // case but does not hold a row-level lock between the SELECT and the
+    // UPDATE. A fully atomic solution would require a DB RPC with FOR UPDATE;
+    // that is deferred. The RPC Guard 2 inside create_match_with_players
+    // already closes this for engine-created drafts; this layer closes it
+    // for the organizer-triggered publish path.
+    const { data: otherActiveMatches } = await svc
+      .from("matches")
+      .select("id")
+      .eq("session_id", match.session_id)
+      .in("status", ["pending", "in_progress"])
+      .neq("id", matchId);
+
+    if (otherActiveMatches && otherActiveMatches.length > 0) {
+      const { data: conflictRows } = await svc
+        .from("match_players")
+        .select("player_id")
+        .in("match_id", otherActiveMatches.map((m) => m.id))
+        .in("player_id", playerIds);
+
+      if (conflictRows && conflictRows.length > 0) {
+        return {
+          success: false,
+          message: `Cannot publish — ${conflictRows.length} player${conflictRows.length !== 1 ? "s are" : " is"} already assigned to another active match. Clear this draft and let the engine regenerate.`,
+        };
+      }
+    }
   }
 
   const { error } = await db
@@ -947,6 +982,41 @@ export async function publishAllDraftMatchesAction(
       const leftPlayerSet = new Set(leftEntries.map((e) => e.player_id));
       for (const row of matchPlayerRows ?? []) {
         if (leftPlayerSet.has(row.player_id)) taintedMatchIdSet.add(row.match_id);
+      }
+    }
+  }
+
+  // Conflict check: also skip any draft whose player appears in a different
+  // pending or in_progress match. This mirrors the check in publishMatchAction
+  // and closes the race where two overlapping drafts are bulk-published
+  // simultaneously, double-booking a shared player.
+  const allPublishableBeforeConflict = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
+  if (allPublishableBeforeConflict.length > 0) {
+    const { data: otherActiveMatches } = await svc
+      .from("matches")
+      .select("id")
+      .eq("session_id", sessionId)
+      .in("status", ["pending", "in_progress"])
+      .not("id", "in", `(${allDraftIds.join(",")})`);
+
+    if (otherActiveMatches && otherActiveMatches.length > 0) {
+      const otherMatchIds = otherActiveMatches.map((m) => m.id);
+      const publishablePlayers = (matchPlayerRows ?? []).filter((r) =>
+        allPublishableBeforeConflict.includes(r.match_id)
+      );
+      const { data: conflictRows } = await svc
+        .from("match_players")
+        .select("player_id, match_id")
+        .in("match_id", otherMatchIds)
+        .in("player_id", publishablePlayers.map((r) => r.player_id));
+
+      if (conflictRows && conflictRows.length > 0) {
+        const conflictPlayerSet = new Set(conflictRows.map((r) => r.player_id));
+        for (const row of publishablePlayers) {
+          if (conflictPlayerSet.has(row.player_id)) {
+            taintedMatchIdSet.add(row.match_id);
+          }
+        }
       }
     }
   }

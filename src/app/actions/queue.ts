@@ -33,6 +33,7 @@
 // ============================================================
 
 import { createClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { isValidUUID } from "@/lib/validate";
 
@@ -114,6 +115,49 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
     return { success: false, error: error.message };
   }
 
+  // Clean up any unpublished draft matches this player is assigned to.
+  // Without this, a draft containing a 'left' player is stuck: it can't
+  // be published (publishMatchAction blocks on 'left' players) and shows
+  // a stale roster to the organizer. We remove the player and auto-cancel
+  // the draft if it falls below 4 players, freeing the slot.
+  const svc = createServiceClient();
+  const { data: draftMatches } = await svc
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_published", false);
+
+  if (draftMatches && draftMatches.length > 0) {
+    const draftMatchIds = draftMatches.map((m) => m.id);
+    const { data: draftEntries } = await svc
+      .from("match_players")
+      .select("match_id")
+      .eq("player_id", user.id)
+      .in("match_id", draftMatchIds);
+
+    for (const entry of draftEntries ?? []) {
+      await svc
+        .from("match_players")
+        .delete()
+        .eq("match_id", entry.match_id)
+        .eq("player_id", user.id);
+
+      const { count } = await svc
+        .from("match_players")
+        .select("*", { count: "exact", head: true })
+        .eq("match_id", entry.match_id);
+
+      if ((count ?? 0) < 4) {
+        await svc
+          .from("matches")
+          .update({ status: "cancelled" as const })
+          .eq("id", entry.match_id)
+          .eq("status", "pending");
+      }
+    }
+  }
+
   return { success: true };
 }
 
@@ -182,6 +226,38 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
     return {
       error: "You're currently in a match — wait for it to finish before rejoining the queue.",
     };
+  }
+
+  // Draft-mode guard: a player's queue_entries.status stays 'waiting' while
+  // in an unpublished draft, so the status check above doesn't catch them.
+  // Query match_players to block a re-join that would corrupt the draft roster.
+  if (existing) {
+    const svcJoin = createServiceClient();
+    const { data: pendingMatchIds } = await svcJoin
+      .from("matches")
+      .select("id")
+      .eq("session_id", sessionId)
+      .in("status", ["pending", "in_progress"]);
+
+    if (pendingMatchIds && pendingMatchIds.length > 0) {
+      const { data: matchEntry } = await svcJoin
+        .from("match_players")
+        .select("match_id")
+        .eq("player_id", playerId)
+        .in("match_id", pendingMatchIds.map((m) => m.id))
+        .limit(1)
+        .maybeSingle();
+
+      if (matchEntry) {
+        console.log(
+          `[joinQueueAction] BLOCKED — player=${playerId} is already ` +
+          `in match_players for match=${matchEntry.match_id}`
+        );
+        return {
+          error: "You're already assigned to a match — wait for it to complete before rejoining the queue.",
+        };
+      }
+    }
   }
 
   // ----------------------------------------------------------

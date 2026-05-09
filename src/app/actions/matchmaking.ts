@@ -145,13 +145,17 @@ export async function callNextMatch(
   }
   // ── End auth gate ─────────────────────────────────────────────
 
+  // Use the regular client only for the session-read (RLS-bound read is fine).
+  // All writes (promote + engine) must use the service client so queue_entries
+  // updates are never silently dropped by RLS for players the organizer doesn't
+  // own — the same fix already applied to endMatchAction (match.ts line ~287).
   const supabase = await createClient();
 
   // 1. Try to promote an existing on-deck match.
-  let promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
+  let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
   if (promoted.success) {
     // Refill the on-deck slot we just consumed.
-    await runEngineInternal(supabase, sessionId);
+    await runEngineInternal(service, sessionId);
     return promoted;
   }
 
@@ -172,8 +176,8 @@ export async function callNextMatch(
   // 3. Toggle ON: run engine now, then retry promotion.
   // bypassGate=true: organizer explicitly requested a match — don't let the
   // soft gate defer it. Serve the best available group immediately.
-  await runEngineInternal(supabase, sessionId, true);
-  promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
+  await runEngineInternal(service, sessionId, true);
+  promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
   if (promoted.success) return promoted;
   // Surface the draft-blocking signal so the organizer sees "review drafts"
   // rather than the generic "not enough players" when drafts are the real reason.
@@ -624,7 +628,32 @@ async function runAlgorithm(
     .eq("is_paused", true);
 
   const pausedSet = new Set((pausedRows ?? []).map((r) => r.player_id));
-  const activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+  let activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+
+  // ── 1c. Exclude players already committed to an active match ──────────────
+  // Draft mode intentionally keeps queue_entries.status='waiting' for
+  // unpublished drafts so players don't receive premature on-deck alerts.
+  // This means 'status=waiting' alone is no longer sufficient to identify
+  // a free player — a player can be 'waiting' AND in match_players for a
+  // pending draft. Without this filter, two consecutive engine runs in the
+  // same multi-slot loop can select the same player for two separate drafts.
+  const { data: activeMatchRows } = await supabase
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .in("status", ["pending", "in_progress"]);
+
+  if (activeMatchRows && activeMatchRows.length > 0) {
+    const { data: committedRows } = await supabase
+      .from("match_players")
+      .select("player_id")
+      .in("match_id", activeMatchRows.map((m) => m.id));
+
+    if (committedRows && committedRows.length > 0) {
+      const committedSet = new Set(committedRows.map((r) => r.player_id));
+      activePool = activePool.filter((p) => !committedSet.has(p.player_id));
+    }
+  }
 
   if (activePool.length < PLAYERS_PER_MATCH) {
     return {
