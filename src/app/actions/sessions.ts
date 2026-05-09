@@ -334,14 +334,27 @@ export async function updateSessionSettings(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
 
-  // Verify organizer access
-  const { data: org } = await supabase
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", user.id)
+  // Two-path organizer check: created_by fast-path first (the primary organizer
+  // never has a session_organizers row), then session_organizers membership.
+  // Uses service client so read-side RLS never blocks either query.
+  const svc = createServiceClient();
+  const { data: sessionMeta } = await svc
+    .from("sessions")
+    .select("created_by")
+    .eq("id", sessionId)
     .maybeSingle();
-  if (!org) return { error: "Not an organizer of this session." };
+
+  const isPrimaryOrganizer = sessionMeta?.created_by === user.id;
+
+  if (!isPrimaryOrganizer) {
+    const { data: org } = await svc
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!org) return { error: "Not an organizer of this session." };
+  }
 
   // Explicitly allowlist updatable fields — prevents a crafted call from
   // updating sensitive columns (is_active, organizer_passcode, created_by, etc.)
@@ -357,12 +370,14 @@ export async function updateSessionSettings(
     }
   }
 
-  const { error } = await supabase
+  // Use service client for the write so the primary organizer's update is
+  // never silently blocked by write-side RLS on the sessions table.
+  const { error } = await svc
     .from("sessions")
     .update({ court_time_limit_minutes: updates.court_time_limit_minutes })
     .eq("id", sessionId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: "Failed to update session settings." };
   return {};
 }
 

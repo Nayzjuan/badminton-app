@@ -76,8 +76,9 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     courtsRef.current = courts;
   }, [courts]);
 
-  // Race-condition guard for fetchActiveMatches.
+  // Race-condition guards for concurrent fetches.
   const fetchSeq = useRef(0);
+  const fetchWaitlistSeq = useRef(0);
 
   // ── Fetch courts ──────────────────────────────────────────
 
@@ -158,6 +159,8 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   // ── Fetch waitlist (waiting queue entries + profiles) ──────
 
   const fetchWaitlist = useCallback(async () => {
+    const mySeq = ++fetchWaitlistSeq.current;
+
     const { data: entries } = await supabase
       .from("queue_entries")
       .select("*")
@@ -165,6 +168,8 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       .eq("status", "waiting")
       .order("games_played", { ascending: true })
       .order("joined_at", { ascending: true });
+
+    if (mySeq !== fetchWaitlistSeq.current) return;
 
     if (!entries || entries.length === 0) {
       setWaitlist([]);
@@ -176,6 +181,8 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       .from("profiles")
       .select("*")
       .in("id", playerIds);
+
+    if (mySeq !== fetchWaitlistSeq.current) return;
 
     const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
 
@@ -211,8 +218,13 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const fetchCourtsRef = useRef(fetchCourts);
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
   const fetchWaitlistRef = useRef(fetchWaitlist);
+  // Synchronous ref-update during render: intentional stable-callback pattern.
+  // The refs are only read inside effects/event handlers, never during render.
+  // eslint-disable-next-line react-hooks/refs
   fetchCourtsRef.current = fetchCourts;
+  // eslint-disable-next-line react-hooks/refs
   fetchActiveMatchesRef.current = fetchActiveMatches;
+  // eslint-disable-next-line react-hooks/refs
   fetchWaitlistRef.current = fetchWaitlist;
 
   useEffect(() => {
@@ -231,7 +243,6 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       }, prefix),
     ];
     return () => unsubs.forEach((u) => u());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId]);
 
   // ── Derived splits ────────────────────────────────────────

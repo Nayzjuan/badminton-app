@@ -13,6 +13,12 @@ import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
 import { displayNameSchema, pinSchema } from "@/lib/schemas/auth";
 
+// Escape ILIKE special characters so a caller-supplied string is always
+// treated as a literal — never as a wildcard pattern.
+function escapeLike(s: string): string {
+  return s.replace(/[%_\\]/g, "\\$&");
+}
+
 // ── Registration ────────────────────────────────────────────
 
 export async function signInAnonymously(formData: FormData) {
@@ -70,7 +76,7 @@ export async function signInAnonymously(formData: FormData) {
     .from("queue_entries")
     .select("player_id, profiles!inner(display_name)")
     .in("status", ["waiting", "on_deck", "playing"])
-    .ilike("profiles.display_name", displayName);
+    .ilike("profiles.display_name", escapeLike(displayName));
 
   if (activeEntries && activeEntries.length > 0) {
     return { error: "Name taken. Add an initial (e.g. \"Miggy L.\")." };
@@ -84,7 +90,7 @@ export async function signInAnonymously(formData: FormData) {
   const { data: existingProfile } = await service
     .from("profiles")
     .select("id")
-    .ilike("display_name", displayName)
+    .ilike("display_name", escapeLike(displayName))
     .eq("pin", pin)
     .limit(1)
     .single();
@@ -176,7 +182,7 @@ export async function reconnectPlayer(
   const { data: profiles } = await service
     .from("profiles")
     .select("*")
-    .ilike("display_name", name)
+    .ilike("display_name", escapeLike(name))
     .eq("pin", pinResult.data);
 
   if (!profiles || profiles.length === 0) {
