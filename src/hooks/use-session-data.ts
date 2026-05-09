@@ -24,13 +24,7 @@ import {
   subscribeToMatchPlayers,
   subscribeToProfiles,
 } from "@/lib/realtime";
-import type {
-  Court,
-  Match,
-  MatchPlayer,
-  Profile,
-  QueueEntry,
-} from "@/types/database";
+import type { Court, Match, MatchPlayer, Profile, QueueEntry } from "@/types/database";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -124,10 +118,7 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
     let profileMap = new Map<string, Profile>();
     if (playerIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from("profiles")
-        .select("*")
-        .in("id", playerIds);
+      const { data: profiles } = await supabase.from("profiles").select("*").in("id", playerIds);
 
       if (mySeq !== fetchSeq.current) return;
       profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
@@ -177,10 +168,7 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     }
 
     const playerIds = entries.map((e) => e.player_id);
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("*")
-      .in("id", playerIds);
+    const { data: profiles } = await supabase.from("profiles").select("*").in("id", playerIds);
 
     if (mySeq !== fetchWaitlistSeq.current) return;
 
@@ -237,10 +225,15 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
       subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
       // Profile changes → re-fetch waitlist (skill badges) and active matches (player profiles).
-      subscribeToProfiles(supabase, sessionId, () => {
-        fetchWaitlistRef.current();
-        fetchActiveMatchesRef.current();
-      }, prefix),
+      subscribeToProfiles(
+        supabase,
+        sessionId,
+        () => {
+          fetchWaitlistRef.current();
+          fetchActiveMatchesRef.current();
+        },
+        prefix
+      ),
     ];
     return () => unsubs.forEach((u) => u());
   }, [supabase, sessionId]);
