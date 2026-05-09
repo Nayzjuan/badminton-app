@@ -23,12 +23,12 @@ export type SkillLevel =
 
 /** Ordered array for UI dropdowns and display. Index = numeric level (0-based). */
 export const SKILL_LEVELS: { value: SkillLevel; label: string; numeric: number }[] = [
-  { value: "beginner",           label: "Beginner",           numeric: 1 },
+  { value: "beginner", label: "Beginner", numeric: 1 },
   { value: "lower_intermediate", label: "Lower Intermediate", numeric: 2 },
-  { value: "intermediate",       label: "Intermediate",       numeric: 3 },
+  { value: "intermediate", label: "Intermediate", numeric: 3 },
   { value: "upper_intermediate", label: "Upper Intermediate", numeric: 4 },
-  { value: "lower_advanced",     label: "Lower Advanced",     numeric: 5 },
-  { value: "advanced",           label: "Advanced",           numeric: 6 },
+  { value: "lower_advanced", label: "Lower Advanced", numeric: 5 },
+  { value: "advanced", label: "Advanced", numeric: 6 },
 ];
 
 /** Convert a SkillLevel enum to its numeric value (1–7). */
@@ -232,17 +232,28 @@ export type RecentPairing = {
 export type ProfileInsert = Pick<Profile, "id" | "display_name"> &
   Partial<Pick<Profile, "skill_level" | "pin">>;
 
-export type ProfileUpdate = Partial<Pick<Profile, "display_name" | "skill_level" | "pin" | "vip_tag" | "vip_theme">>;
+export type ProfileUpdate = Partial<
+  Pick<Profile, "display_name" | "skill_level" | "pin" | "vip_tag" | "vip_theme">
+>;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
   Partial<Pick<Session, "organizer_passcode" | "scoring">>;
 
 export type SessionUpdate = Partial<
-  Pick<Session, "name" | "organizer_passcode" | "scoring" | "is_active" | "is_auto_matchmaking_on" | "court_time_limit_minutes" | "ended_at" | "created_by">
+  Pick<
+    Session,
+    | "name"
+    | "organizer_passcode"
+    | "scoring"
+    | "is_active"
+    | "is_auto_matchmaking_on"
+    | "court_time_limit_minutes"
+    | "ended_at"
+    | "created_by"
+  >
 >;
 
-export type CourtInsert = Pick<Court, "session_id" | "name"> &
-  Partial<Pick<Court, "status">>;
+export type CourtInsert = Pick<Court, "session_id" | "name"> & Partial<Pick<Court, "status">>;
 
 export type CourtUpdate = Partial<Pick<Court, "name" | "status">>;
 
@@ -254,13 +265,30 @@ export type QueueEntryUpdate = Partial<
 >;
 
 export type MatchInsert = Pick<Match, "session_id"> &
-  Partial<Pick<Match, "court_id" | "status" | "started_at" | "is_mixed_level" | "origin" | "is_published">>;
+  Partial<
+    Pick<Match, "court_id" | "status" | "started_at" | "is_mixed_level" | "origin" | "is_published">
+  >;
 
 export type MatchUpdate = Partial<
-  Pick<Match, "court_id" | "status" | "team_a_score" | "team_b_score" | "is_mixed_level" | "sort_order" | "started_at" | "completed_at" | "origin" | "is_published">
+  Pick<
+    Match,
+    | "court_id"
+    | "status"
+    | "team_a_score"
+    | "team_b_score"
+    | "is_mixed_level"
+    | "sort_order"
+    | "started_at"
+    | "completed_at"
+    | "origin"
+    | "is_published"
+  >
 >;
 
-export type MatchGameInsert = Pick<MatchGame, "match_id" | "game_number" | "team_a_score" | "team_b_score">;
+export type MatchGameInsert = Pick<
+  MatchGame,
+  "match_id" | "game_number" | "team_a_score" | "team_b_score"
+>;
 
 export type MatchGameUpdate = Partial<Pick<MatchGame, "team_a_score" | "team_b_score">>;
 
@@ -268,28 +296,61 @@ export type MatchPlayerInsert = Pick<MatchPlayer, "match_id" | "player_id" | "te
 
 /** session_wrapped_stats table */
 export type SessionWrappedStats = {
-  id:                  string;
-  session_id:          string;
-  player_id:           string;
-  computed_at:         string;
-  games_played:        number;
-  wins:                number;
-  losses:              number;
-  points_for:          number;
-  points_against:      number;
-  point_diff:          number;   // GENERATED ALWAYS AS (points_for - points_against)
-  win_pct:             number;
-  win_streak:          number;
-  session_rank:        number | null;
-  earned_awards:       string[];
-  award_data:          Record<string, Record<string, unknown>>;
-  intro_dismissed_at:  string | null;
+  id: string;
+  session_id: string;
+  player_id: string;
+  computed_at: string;
+  games_played: number;
+  wins: number;
+  losses: number;
+  points_for: number;
+  points_against: number;
+  point_diff: number; // GENERATED ALWAYS AS (points_for - points_against)
+  win_pct: number;
+  win_streak: number;
+  session_rank: number | null;
+  earned_awards: string[];
+  award_data: Record<string, Record<string, unknown>>;
+  intro_dismissed_at: string | null;
+  /** Small payload written at session close, read by next session's RPC.
+   *  Shape: { ended_on_win_streak: number, session_win_pct: number, session_id: string } */
+  carry_forward: Record<string, unknown>;
 };
 
-export type SessionWrappedStatsInsert = Omit<SessionWrappedStats, "id" | "point_diff" | "computed_at" | "intro_dismissed_at"> &
-  Partial<Pick<SessionWrappedStats, "computed_at" | "intro_dismissed_at">>;
+export type SessionWrappedStatsInsert = Omit<
+  SessionWrappedStats,
+  "id" | "point_diff" | "computed_at" | "intro_dismissed_at" | "carry_forward"
+> &
+  Partial<Pick<SessionWrappedStats, "computed_at" | "intro_dismissed_at" | "carry_forward">>;
 
-export type SessionWrappedStatsUpdate = Partial<Omit<SessionWrappedStats, "id" | "session_id" | "player_id" | "point_diff">>;
+export type SessionWrappedStatsUpdate = Partial<
+  Omit<SessionWrappedStats, "id" | "session_id" | "player_id" | "point_diff">
+>;
+
+/** player_rivalries table — running all-time H2H ledger between players (directional) */
+export type PlayerRivalry = {
+  player_id: string;
+  rival_id: string;
+  wins_vs: number;
+  losses_vs: number;
+  sessions_faced: number;
+  last_session_id: string | null;
+  last_faced_at: string | null;
+  updated_at: string;
+};
+
+/** player_partnerships table — running all-time partnership ledger between players (directional) */
+export type PlayerPartnership = {
+  player_id: string;
+  partner_id: string;
+  games_together: number;
+  wins_together: number;
+  losses_together: number;
+  sessions_together: number;
+  last_session_id: string | null;
+  last_played_at: string | null;
+  updated_at: string;
+};
 
 /** identity_migrations table — audit log of every old → new UUID reconnect */
 export type IdentityMigration = {
@@ -315,7 +376,8 @@ export type PushSubscription = {
 export type PushSubscriptionInsert = Pick<
   PushSubscription,
   "user_id" | "endpoint" | "p256dh" | "auth_key"
-> & Partial<Pick<PushSubscription, "user_agent">>;
+> &
+  Partial<Pick<PushSubscription, "user_agent">>;
 
 export type PushSubscriptionUpdate = Partial<
   Pick<PushSubscription, "p256dh" | "auth_key" | "user_agent">
@@ -395,6 +457,19 @@ export type Database = {
         Row: SessionWrappedStats;
         Insert: SessionWrappedStatsInsert;
         Update: SessionWrappedStatsUpdate;
+        Relationships: [];
+      };
+      player_rivalries: {
+        Row: PlayerRivalry;
+        Insert: Omit<PlayerRivalry, "updated_at"> & Partial<Pick<PlayerRivalry, "updated_at">>;
+        Update: Partial<Omit<PlayerRivalry, "player_id" | "rival_id">>;
+        Relationships: [];
+      };
+      player_partnerships: {
+        Row: PlayerPartnership;
+        Insert: Omit<PlayerPartnership, "updated_at"> &
+          Partial<Pick<PlayerPartnership, "updated_at">>;
+        Update: Partial<Omit<PlayerPartnership, "player_id" | "partner_id">>;
         Relationships: [];
       };
       identity_migrations: {
@@ -484,11 +559,11 @@ export type Database = {
       };
       swap_player_in_match: {
         Args: {
-          p_match_id:      string;
+          p_match_id: string;
           p_out_player_id: string;
-          p_in_player_id:  string;
-          p_session_id:    string;
-          p_team:          "a" | "b";
+          p_in_player_id: string;
+          p_session_id: string;
+          p_team: "a" | "b";
           /** Optional — DB default true; pass false when swapping inside an unpublished draft. */
           p_is_published?: boolean;
         };
@@ -496,28 +571,28 @@ export type Database = {
       };
       swap_match_players: {
         Args: {
-          p_a_match_id:   string;
-          p_a_player_id:  string;
-          p_b_match_id:   string;
-          p_b_player_id:  string;
+          p_a_match_id: string;
+          p_a_player_id: string;
+          p_b_match_id: string;
+          p_b_player_id: string;
         };
         Returns: void;
       };
       create_match_with_players: {
         Args: {
-          p_session_id:     string;
-          p_court_id:       string | null;
-          p_status:         string;
+          p_session_id: string;
+          p_court_id: string | null;
+          p_status: string;
           p_is_mixed_level: boolean;
-          p_started_at:     string | null;
-          p_is_on_deck:     boolean;
-          p_team_a_ids:     string[];
-          p_team_b_ids:     string[];
+          p_started_at: string | null;
+          p_is_on_deck: boolean;
+          p_team_a_ids: string[];
+          p_team_b_ids: string[];
           /** Optional — DB default 'auto' is used when omitted. */
-          p_origin?:        MatchOrigin;
+          p_origin?: MatchOrigin;
           /** Optional — DB default false. Pass false (or omit) for engine drafts;
            *  queue_entries update is suppressed until publishMatchAction fires. */
-          p_is_published?:  boolean;
+          p_is_published?: boolean;
         };
         Returns: string; // UUID of the new match
       };
@@ -525,10 +600,14 @@ export type Database = {
         Args: { p_session_id: string };
         Returns: void;
       };
+      refresh_cross_session_stats: {
+        Args: { p_session_id: string };
+        Returns: void;
+      };
       get_h2h_record: {
         Args: {
-          p_team_a:     string[];
-          p_team_b:     string[];
+          p_team_a: string[];
+          p_team_b: string[];
           p_session_id: string;
         };
         Returns: {

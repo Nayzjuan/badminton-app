@@ -458,6 +458,25 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   // Runs before broadcast so rows exist when players' browsers
   // receive the session_closed event.
   //
+  // Step 0a: refresh_cross_session_stats populates the all-time
+  // rivalry and partnership ledgers from this session's completed
+  // matches. Must run before compute_session_wrapped so the award
+  // RPC can read up-to-date cross-session data. Non-fatal: a failure
+  // here is logged but does not abort the close or block Wrapped.
+  {
+    const { error: crossErr } = await supabase.rpc("refresh_cross_session_stats", {
+      p_session_id: sessionId,
+    });
+    if (crossErr) {
+      console.warn(
+        "[closeSession] refresh_cross_session_stats failed (non-fatal, cross-session awards may be stale):",
+        crossErr.message
+      );
+    }
+  }
+
+  // Step 0b: compute per-player stats and awards.
+  //
   // NOTE: supabase.rpc() resolves with { data, error } — it never
   // throws. The old try/catch only caught network-level exceptions,
   // not Supabase-level errors. We now check { error } explicitly

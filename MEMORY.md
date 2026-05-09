@@ -7,29 +7,18 @@
 
 ## SESSION STATE (Last Updated: 2026-05-09)
 
-### What Was Accomplished This Session (Digital Twin — All 10 Phases COMPLETE)
+### What Was Accomplished This Session — Cross-Session Awards (B+E) ALL PHASES COMPLETE
 
-**Digital Twin v1.0 shipped.** `digital-twin/` is a fully built, self-contained Astro 5 + Tailwind v4 documentation site. All 10 phases complete. Summary:
+**Cross-session awards (B+E) — all 4 phases shipped.**
 
-- **Phase 1** — OKLCH design system: emerald accent (`oklch(76% 0.17 155)`), OLED canvas (`oklch(7% 0.012 245)`), Barlow Semi Condensed + Geist fonts, global CSS `@theme {}` token system.
-- **Phase 2** — TypeScript AST extraction pipeline. `scripts/extract.ts` reads host-app source and emits `src/data/manifest.json` in ~20ms. chokidar watcher with 200ms debounce.
-- **Phase 3** — `/actions`: 13 action files × curated annotations × VS Code deep links.
-- **Phase 4** — `/engine`: `runEngineInternal` Mermaid flowchart, interactive priority calculator (vanilla JS island), partnership-cap visualizer, TOCTOU sequence diagram.
-- **Phase 5** — `/realtime`: channel map, ref-callback Shiki side-by-side diff, race-condition demo with monotonic seq counter.
-- **Phase 6** — `/components`: D3 v7 force-directed graph (33 nodes, 43 edges, 4 edge types), zoom-to-fit, slide-in node inspector drawer.
-- **Phase 7** — `/flows`: 11 Mermaid sequence traces, scrubber with emerald track, cross-links to all views. `window.__mermaid` CDN caching pattern.
-- **Phase 8** — `/glossary`: 27 curated gotchas from APP_MANIFEST §9 in manifest.json. Text + severity + category filters (vanilla JS, 60ms debounce). Pagefind-indexed.
-- **Phase 9** — Cmd-K search palette in BaseLayout. Pagefind loaded via runtime URL (`window.location.origin + '/pagefind/pagefind.js'`) to bypass Vite static analysis. `is:inline` script pattern.
-- **Phase 10** — 7-step "How to read this" onboarding on `/`. VS Code deep links via `HOST_ROOT` at build time. Fragment audit (19 links verified; `/database#tables` was only broken one, fixed). Zero mobile overflow at 375px across all pages.
+- **Phase 1** — Schema: `player_rivalries` + `player_partnerships` tables (directional, PK composite, `sessions_faced`/`sessions_together` dedup via `last_session_id` guard), `carry_forward jsonb` column on `session_wrapped_stats`, `refresh_cross_session_stats(UUID)` RPC. GRANT SELECT for authenticated. Types in `database.ts`: `PlayerRivalry`, `PlayerPartnership`, `carry_forward` optional in Insert.
+- **Phase 2** — `closeSession` wired: `refresh_cross_session_stats` runs before `compute_session_wrapped` (non-fatal, step 0a). Uses service-role client (only client with EXECUTE).
+- **Phase 3** — `compute_session_wrapped` expanded: 14-CTE `_cross_session_stats` temp table (all-time nemesis, score settled, dynasty victim, serial rivals, session nemesis/kryptonite alltime, cross-session redemption, partnership alltime, prior sessions rolling-3, carry_forward read). `_ended_streaks` temp table computes actual end-of-session streak (not peak). 9 new awards + 4 enhanced subtitles. `carry_forward` written with correct `ended_on_win_streak`.
+- **Phase 4** — 9 new `AWARD_META` entries in `wrapped-awards.ts`. All rarities correct. Subtitle tokens match RPC award_data keys.
 
-**Independent code review (all phases):** 9 issues found and fixed, including a critical TypeScript `as HTMLElement` cast in an `is:inline` script (silent SyntaxError), 8 broken fragment cross-links, and 2 OKLCH violations (hex in DOM styles).
+**Total awards: 60** (51 session-only + 9 cross-session). New slugs: `momentum`, `consistent_dominator`, `bounced_back`, `nemesis_slayer`, `settled_the_score`, `the_dynasty`, `serial_rivals`, `soulmates`, `winning_formula`.
 
-**Tech debt to note:**
-
-- **Vite dev cache quirk with `is:inline` + `define:vars`** — if a script tag in an Astro component is changed from `<script>` to `<script is:inline define:vars={...}>` mid-session, Vite's module cache can hold a stale reference. Workaround: `astro dev` restart or cold browser reload. No impact on built output.
-- **`/components` D3 graph doesn't render in Astro dev** after the `HOST_ROOT` inline injection change (same cause). Built output works correctly. If this causes friction, move HOST_ROOT injection to a `<script>` with `define:vars` (accept the D3 bundle inlining cost) or read it from a data attribute.
-- **Pagefind indexes 6 pages** (those with `data-pagefind-body`). As more pages gain `data-pagefind-body`, the index will grow automatically on next build.
-- **Digital Twin nav live flags**: all 8 built pages are `live: true`. If new phases are added, update `src/components/Nav.astro` to add the route with `live: false` until built.
+**Known worktree issue:** All edits initially landed in the `main` repo directory instead of the worktree (`claude/funny-gates-64ff30`). Files were copied manually via `cp` at end of session. Future sessions should edit worktree-path files directly.
 
 ### What Was Accomplished (Previous Session — Wrapped Awards)
 
