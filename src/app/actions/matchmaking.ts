@@ -121,7 +121,9 @@ export async function callNextMatch(
   // runEngineForSession) so RLS no longer rescues us — the gate
   // must live here, in the public entry point.
   const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
+  const {
+    data: { user },
+  } = await userClient.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
   const service = createServiceClient();
@@ -242,15 +244,21 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
       .single();
 
     if (sessionErr) {
-      console.error(`[engine] runEngineForSession: failed to read session ${sessionId} — ${sessionErr.message}`);
+      console.error(
+        `[engine] runEngineForSession: failed to read session ${sessionId} — ${sessionErr.message}`
+      );
       return;
     }
     if (!session?.is_auto_matchmaking_on) {
-      console.log(`[engine] runEngineForSession: toggle is OFF for session ${sessionId} — skipping`);
+      console.log(
+        `[engine] runEngineForSession: toggle is OFF for session ${sessionId} — skipping`
+      );
       return;
     }
 
-    console.log(`[engine] runEngineForSession: toggle ON for session ${sessionId} — starting engine`);
+    console.log(
+      `[engine] runEngineForSession: toggle ON for session ${sessionId} — starting engine`
+    );
     await runEngineInternal(supabase, sessionId);
   } finally {
     engineRunningFor.delete(sessionId);
@@ -310,12 +318,12 @@ async function runEngineInternal(
     return;
   }
 
-  const totalPending   = totalPendingRaw ?? 0;
+  const totalPending = totalPendingRaw ?? 0;
   const slotsAvailable = Math.max(0, MAX_AUTO_DRAFTS - totalPending);
 
   console.log(
     `[engine] runEngineInternal: courts=${courtCount} ` +
-    `total=${totalPending} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
+      `total=${totalPending} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
   );
   if (slotsAvailable <= 0) {
     console.log(
@@ -363,7 +371,7 @@ async function runEngineInternal(
 
       if (waitingCount > 0 && waitingCount <= GATE_POOL_THRESHOLD) {
         const maxWait = Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0));
-        const hasRedZone   = maxWait >= CRITICAL_WAIT_MINUTES;
+        const hasRedZone = maxWait >= CRITICAL_WAIT_MINUTES;
         const gateTimedOut = maxWait >= GATE_HOLD_MINUTES;
 
         if (!hasRedZone && !gateTimedOut) {
@@ -376,8 +384,8 @@ async function runEngineInternal(
           if (!activeErr && (activeCount ?? 0) > 0) {
             console.log(
               `[engine] Soft gate active: pool=${waitingCount} ≤ ${GATE_POOL_THRESHOLD}, ` +
-              `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
-              `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
+                `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
+                `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
             );
             return;
           }
@@ -404,7 +412,7 @@ async function runEngineInternal(
       if (estimatedWaiting < minPool) {
         console.log(
           `[engine] Pool diversity cap at slot ${i + 1}: ` +
-          `estimatedWaiting=${estimatedWaiting} < ${minPool} — stopping to preserve pool`
+            `estimatedWaiting=${estimatedWaiting} < ${minPool} — stopping to preserve pool`
         );
         break;
       }
@@ -416,7 +424,9 @@ async function runEngineInternal(
       // "Not enough players" is expected and not an error; anything else is.
       const isExpected = message?.includes("Not enough");
       if (!isExpected) {
-        console.error(`[matchmaking] runEngineInternal: slot ${i + 1}/${slotsAvailable} failed — ${message}`);
+        console.error(
+          `[matchmaking] runEngineInternal: slot ${i + 1}/${slotsAvailable} failed — ${message}`
+        );
       } else if (process.env.DEBUG_MATCHMAKING === "true") {
         console.log(`[matchmaking] runEngineInternal: stopping at slot ${i + 1} — ${message}`);
       }
@@ -515,15 +525,17 @@ export async function promoteOnDeckMatchInternal(
       started_at: now,
     })
     .eq("id", match.id)
-    .eq("status", "pending")    // ← Atomic guard
-    .eq("is_published", true)   // ← Draft guard
+    .eq("status", "pending") // ← Atomic guard
+    .eq("is_published", true) // ← Draft guard
     .select("id")
     .single();
 
   if (updateError || !promotedMatch) {
     if (!promotedMatch && !updateError) {
       // Another concurrent request already promoted this match — bail gracefully.
-      console.warn("[matchmaking] promoteOnDeckMatch: match already promoted by concurrent request, skipping.");
+      console.warn(
+        "[matchmaking] promoteOnDeckMatch: match already promoted by concurrent request, skipping."
+      );
       return { success: false, message: "On-deck match was already promoted by another request." };
     }
     return {
@@ -647,7 +659,10 @@ async function runAlgorithm(
     const { data: committedRows } = await supabase
       .from("match_players")
       .select("player_id")
-      .in("match_id", activeMatchRows.map((m) => m.id));
+      .in(
+        "match_id",
+        activeMatchRows.map((m) => m.id)
+      );
 
     if (committedRows && committedRows.length > 0) {
       const committedSet = new Set(committedRows.map((r) => r.player_id));
@@ -691,8 +706,8 @@ async function runAlgorithm(
   if (process.env.DEBUG_MATCHMAKING === "true") {
     console.log(
       `[matchmaking] anchor=${anchor.display_name} skill=${anchorSkill} ` +
-      `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
-      `redZone=${anchorIsRedZone} pool=${pool.length}`
+        `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
+        `redZone=${anchorIsRedZone} pool=${pool.length}`
     );
   }
 
@@ -707,7 +722,7 @@ async function runAlgorithm(
   // (saves 2 DB queries per additional on-deck slot filled in one run).
   // Falls back to a fresh fetch when called from single-match paths
   // (callNextMatch inline engine, or direct court assignment).
-  const recentRosters = cachedRecentRosters ?? await fetchRecentRosters(supabase, sessionId);
+  const recentRosters = cachedRecentRosters ?? (await fetchRecentRosters(supabase, sessionId));
 
   // Candidates = everyone except the anchor (already priority-sorted),
   // pre-filtered to remove any player who has already reached the hard
@@ -715,11 +730,13 @@ async function runAlgorithm(
   // enforcement point — it propagates through every downstream path:
   // skill expansion, Tier-1/2 diversity swap, Tier-3 rotation, and the
   // last-resort fallback. No waiver logic anywhere in the call stack.
-  const candidates = pool.slice(1).filter(
-    (c) =>
-      (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
-      MAX_PARTNERSHIP_REPEATS
-  );
+  const candidates = pool
+    .slice(1)
+    .filter(
+      (c) =>
+        (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
+        MAX_PARTNERSHIP_REPEATS
+    );
 
   // Track whether the cap reduced the candidate pool.
   // Used at the no-match return to decide whether to fire the saturation signal.
@@ -801,7 +818,7 @@ async function runAlgorithm(
           if (process.env.DEBUG_MATCHMAKING === "true") {
             console.warn(
               `[matchmaking] Swap target ${swapTarget.display_name} is Red Zone ` +
-              `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
+                `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
             );
           }
           // Fall through to executeMatch with the original group.
@@ -821,7 +838,11 @@ async function runAlgorithm(
 
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (!isDiversityViolation(swappedIds, activeRosters)) {
-              const draft = snakeDraft([anchor, ...swapGroup], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+              const draft = snakeDraft(
+                [anchor, ...swapGroup],
+                partnershipCounts,
+                MAX_PARTNERSHIP_REPEATS
+              );
               if (!draft) {
                 if (process.env.DEBUG_MATCHMAKING === "true") {
                   console.log(
@@ -831,12 +852,22 @@ async function runAlgorithm(
                 continue;
               }
               if (process.env.DEBUG_MATCHMAKING === "true") {
-                console.log(`[matchmaking] Tier-1 swap succeeded — replaced with ${candidate.display_name}`);
+                console.log(
+                  `[matchmaking] Tier-1 swap succeeded — replaced with ${candidate.display_name}`
+                );
               }
               // Inherit isMixed from the current window — swap doesn't change
               // the skill spread, only the 3rd companion.
               const isMixedSwap = maxVariance > SKILL_VARIANCE_MAX;
-              return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, isMixedSwap, isOnDeck);
+              return executeMatch(
+                supabase,
+                sessionId,
+                courtId,
+                draft.teamA,
+                draft.teamB,
+                isMixedSwap,
+                isOnDeck
+              );
             }
           }
 
@@ -862,7 +893,11 @@ async function runAlgorithm(
 
                 const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
                 if (!isDiversityViolation(swappedIds, activeRosters)) {
-                  const draft = snakeDraft([anchor, ...swapGroup], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+                  const draft = snakeDraft(
+                    [anchor, ...swapGroup],
+                    partnershipCounts,
+                    MAX_PARTNERSHIP_REPEATS
+                  );
                   if (!draft) {
                     if (process.env.DEBUG_MATCHMAKING === "true") {
                       console.log(
@@ -877,7 +912,15 @@ async function runAlgorithm(
                     );
                   }
                   // ±SKILL_VARIANCE_MAX is still within normal parameters (not mixed).
-                  return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, false, isOnDeck);
+                  return executeMatch(
+                    supabase,
+                    sessionId,
+                    courtId,
+                    draft.teamA,
+                    draft.teamB,
+                    false,
+                    isOnDeck
+                  );
                 }
               }
             }
@@ -907,7 +950,15 @@ async function runAlgorithm(
           console.warn(
             "[matchmaking] No diverse swap found — applying partner rotation (forced repeat)"
           );
-          return executeMatch(supabase, sessionId, courtId, rotatedResult.teamA, rotatedResult.teamB, isMixedRotation, isOnDeck);
+          return executeMatch(
+            supabase,
+            sessionId,
+            courtId,
+            rotatedResult.teamA,
+            rotatedResult.teamB,
+            isMixedRotation,
+            isOnDeck
+          );
         }
       }
 
@@ -925,10 +976,18 @@ async function runAlgorithm(
       if (process.env.DEBUG_MATCHMAKING === "true") {
         console.log(
           `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +
-          (isMixed ? " (mixed level)" : "")
+            (isMixed ? " (mixed level)" : "")
         );
       }
-      return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, isMixed, isOnDeck);
+      return executeMatch(
+        supabase,
+        sessionId,
+        courtId,
+        draft.teamA,
+        draft.teamB,
+        isMixed,
+        isOnDeck
+      );
     }
 
     if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -954,7 +1013,7 @@ async function runAlgorithm(
     // Apply overlap penalties so we don't accidentally repeat exact matches
     const scoredFallback = scoreCandidates(candidates, overlapMap);
     const fallbackGroup = scoredFallback.slice(0, 3).map((s) => s.candidate);
-    
+
     if (fallbackGroup.length >= 3) {
       const allFour = [anchor, ...fallbackGroup];
       const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
@@ -978,7 +1037,7 @@ async function runAlgorithm(
     if (process.env.DEBUG_MATCHMAKING === "true") {
       console.log(
         `[matchmaking] Cap saturation signal: anchor=${anchor.display_name} ` +
-        `type=${anchorIsRedZone ? "red_zone" : "general"} — emitting broadcast`
+          `type=${anchorIsRedZone ? "red_zone" : "general"} — emitting broadcast`
       );
     }
     broadcastCapSaturation(sessionId, {
@@ -997,7 +1056,6 @@ async function runAlgorithm(
       "Check the Wait Time Monitor for players needing manual intervention.",
   };
 }
-
 
 // ─────────────────────────────────────────────────────────────
 // HELPER: fetchRecentRosters
@@ -1046,9 +1104,7 @@ async function fetchRecentRosters(
     rosterMap.set(row.match_id, list);
   }
 
-  return recentMatchIds
-    .map((id) => rosterMap.get(id) ?? [])
-    .filter((r) => r.length > 0);
+  return recentMatchIds.map((id) => rosterMap.get(id) ?? []).filter((r) => r.length > 0);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1121,7 +1177,7 @@ async function fetchPartnershipCounts(
   if (process.env.DEBUG_MATCHMAKING === "true") {
     console.log(
       `[matchmaking] fetchPartnershipCounts: ${counts.size} tracked pair(s) across ` +
-      `${sessionMatches.length} match(es) for session ${sessionId}`
+        `${sessionMatches.length} match(es) for session ${sessionId}`
     );
   }
 
@@ -1282,21 +1338,18 @@ async function executeMatch(
   // queue_entries update for engine drafts. Players stay 'waiting'
   // until publishMatchAction promotes them to 'on_deck', preventing
   // the ON_DECK_WARNING alert from firing for an invisible match.
-  const { data: matchId, error: rpcError } = await supabase.rpc(
-    "create_match_with_players",
-    {
-      p_session_id:     sessionId,
-      p_court_id:       isOnDeck ? null : courtId,
-      p_status:         isOnDeck ? "pending" : "in_progress",
-      p_is_mixed_level: isMixedLevel,
-      p_started_at:     isOnDeck ? null : now,
-      p_is_on_deck:     isOnDeck,
-      p_team_a_ids:     teamA.map((p) => p.player_id),
-      p_team_b_ids:     teamB.map((p) => p.player_id),
-      p_origin:         "auto" as const,
-      p_is_published:   false,
-    }
-  );
+  const { data: matchId, error: rpcError } = await supabase.rpc("create_match_with_players", {
+    p_session_id: sessionId,
+    p_court_id: isOnDeck ? null : courtId,
+    p_status: isOnDeck ? "pending" : "in_progress",
+    p_is_mixed_level: isMixedLevel,
+    p_started_at: isOnDeck ? null : now,
+    p_is_on_deck: isOnDeck,
+    p_team_a_ids: teamA.map((p) => p.player_id),
+    p_team_b_ids: teamB.map((p) => p.player_id),
+    p_origin: "auto" as const,
+    p_is_published: false,
+  });
 
   if (rpcError) {
     // Hard DB error — surface as a genuine failure.
@@ -1315,8 +1368,12 @@ async function executeMatch(
     // caller (runEngineInternal logs the skip and moves to the next slot).
     console.warn(
       "[matchmaking] executeMatch: RPC returned NULL — concurrent matchmaking " +
-      "run already committed one or more of these players. Skipping slot gracefully.",
-      { sessionId, teamA: teamA.map((p) => p.display_name), teamB: teamB.map((p) => p.display_name) }
+        "run already committed one or more of these players. Skipping slot gracefully.",
+      {
+        sessionId,
+        teamA: teamA.map((p) => p.display_name),
+        teamB: teamB.map((p) => p.display_name),
+      }
     );
     return {
       success: false,

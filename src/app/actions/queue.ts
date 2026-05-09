@@ -221,7 +221,7 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   if (existing && (existing.status === "on_deck" || existing.status === "playing")) {
     console.log(
       `[joinQueueAction] BLOCKED — player=${playerId} is currently ` +
-      `status=${existing.status} and cannot re-join until their match ends.`
+        `status=${existing.status} and cannot re-join until their match ends.`
     );
     return {
       error: "You're currently in a match — wait for it to finish before rejoining the queue.",
@@ -244,17 +244,21 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
         .from("match_players")
         .select("match_id")
         .eq("player_id", playerId)
-        .in("match_id", pendingMatchIds.map((m) => m.id))
+        .in(
+          "match_id",
+          pendingMatchIds.map((m) => m.id)
+        )
         .limit(1)
         .maybeSingle();
 
       if (matchEntry) {
         console.log(
           `[joinQueueAction] BLOCKED — player=${playerId} is already ` +
-          `in match_players for match=${matchEntry.match_id}`
+            `in match_players for match=${matchEntry.match_id}`
         );
         return {
-          error: "You're already assigned to a match — wait for it to complete before rejoining the queue.",
+          error:
+            "You're already assigned to a match — wait for it to complete before rejoining the queue.",
         };
       }
     }
@@ -283,7 +287,7 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   console.log(
     `[joinQueueAction] session floor=${sessionFloor}` +
-    (floorRow ? ` (from active players)` : ` (session empty, defaulting to 0)`)
+      (floorRow ? ` (from active players)` : ` (session empty, defaulting to 0)`)
   );
 
   // ----------------------------------------------------------
@@ -305,9 +309,9 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
     console.log(
       `[joinQueueAction] RETURNING PLAYER ` +
-      `existing.games_played=${existing.games_played} ` +
-      `sessionFloor=${sessionFloor} ` +
-      `→ will write games_played=${inheritedGames}`
+        `existing.games_played=${existing.games_played} ` +
+        `sessionFloor=${sessionFloor} ` +
+        `→ will write games_played=${inheritedGames}`
     );
 
     const { error: updateError } = await supabase
@@ -341,8 +345,8 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   console.log(
     `[joinQueueAction] FIRST-TIME JOINER ` +
-    `sessionFloor=${sessionFloor} ` +
-    `→ inserting with games_played=${inheritedGames}`
+      `sessionFloor=${sessionFloor} ` +
+      `→ inserting with games_played=${inheritedGames}`
   );
 
   const { error: insertError } = await supabase.from("queue_entries").insert({

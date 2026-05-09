@@ -621,21 +621,18 @@ export async function createManualMatchAction(
   // p_is_published=true it updates all players to 'on_deck' inside the
   // same transaction, so the Jackie B / Carlo partial-update bug cannot
   // recur regardless of which Supabase client was used to invoke it.
-  const { data: matchId, error: rpcError } = await svc.rpc(
-    "create_match_with_players",
-    {
-      p_session_id:     sessionId,
-      p_court_id:       null,
-      p_status:         "pending",
-      p_is_mixed_level: isMixedLevel,
-      p_started_at:     null,
-      p_is_on_deck:     true,
-      p_team_a_ids:     teamAPlayerIds,
-      p_team_b_ids:     teamBPlayerIds,
-      p_origin:         "manual",
-      p_is_published:   true,
-    }
-  );
+  const { data: matchId, error: rpcError } = await svc.rpc("create_match_with_players", {
+    p_session_id: sessionId,
+    p_court_id: null,
+    p_status: "pending",
+    p_is_mixed_level: isMixedLevel,
+    p_started_at: null,
+    p_is_on_deck: true,
+    p_team_a_ids: teamAPlayerIds,
+    p_team_b_ids: teamBPlayerIds,
+    p_origin: "manual",
+    p_is_published: true,
+  });
 
   if (rpcError) {
     return { success: false, message: rpcError.message };
@@ -646,7 +643,8 @@ export async function createManualMatchAction(
     // 'waiting' or is already committed to another active match.
     return {
       success: false,
-      message: "Could not create match — one or more players are unavailable or already assigned to an active match.",
+      message:
+        "Could not create match — one or more players are unavailable or already assigned to an active match.",
     };
   }
 
@@ -886,7 +884,10 @@ export async function publishMatchAction(
       const { data: conflictRows } = await svc
         .from("match_players")
         .select("player_id")
-        .in("match_id", otherActiveMatches.map((m) => m.id))
+        .in(
+          "match_id",
+          otherActiveMatches.map((m) => m.id)
+        )
         .in("player_id", playerIds);
 
       if (conflictRows && conflictRows.length > 0) {
@@ -1008,7 +1009,10 @@ export async function publishAllDraftMatchesAction(
         .from("match_players")
         .select("player_id, match_id")
         .in("match_id", otherMatchIds)
-        .in("player_id", publishablePlayers.map((r) => r.player_id));
+        .in(
+          "player_id",
+          publishablePlayers.map((r) => r.player_id)
+        );
 
       if (conflictRows && conflictRows.length > 0) {
         const conflictPlayerSet = new Set(conflictRows.map((r) => r.player_id));
