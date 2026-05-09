@@ -32,7 +32,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ChevronDown, ArrowLeft, Repeat, Power, Tv2, Share2, MoreVertical, WifiOff } from "lucide-react";
+import {
+  ChevronDown,
+  ArrowLeft,
+  Repeat,
+  Power,
+  Tv2,
+  Share2,
+  MoreVertical,
+  WifiOff,
+} from "lucide-react";
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
@@ -41,7 +50,8 @@ import type { Profile, Session } from "@/types/database";
 // Centralised so a future CSS-variable migration touches one place.
 const HEADER_BG = "bg-[#1D3A6F] dark:bg-[hsl(217_30%_11%)]";
 const SURFACE_BG = "bg-[#FAFAF7] dark:bg-background";
-const ACTIVE_TAB = "border-b-2 border-white text-white font-semibold dark:border-primary dark:text-primary";
+const ACTIVE_TAB =
+  "border-b-2 border-white text-white font-semibold dark:border-primary dark:text-primary";
 
 interface OrganizerDashboardProps {
   profile: Profile;
@@ -51,7 +61,11 @@ interface OrganizerDashboardProps {
 
 type Tab = "courts" | "queue" | "monitor" | "history" | "leaderboard";
 
-export function OrganizerDashboard({ profile, session, otherSessions = [] }: OrganizerDashboardProps) {
+export function OrganizerDashboard({
+  profile,
+  session,
+  otherSessions = [],
+}: OrganizerDashboardProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>(session.is_active ? "courts" : "history");
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -279,7 +293,7 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
       first.outPlayerId,
       second.matchId,
       second.outPlayerId,
-      first.sessionId,
+      first.sessionId
     );
 
     if (result.success) {
@@ -324,11 +338,11 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     second: Omit<SwapContext, "mode">
   ) {
     const result = await swapMatchPlayers(
-      second.matchId,    // first.outPlayerId is NOW here
+      second.matchId, // first.outPlayerId is NOW here
       first.outPlayerId,
-      first.matchId,     // second.outPlayerId is NOW here
+      first.matchId, // second.outPlayerId is NOW here
       second.outPlayerId,
-      first.sessionId,
+      first.sessionId
     );
     if (result.success) {
       toast.success("Swap undone.");
@@ -370,8 +384,8 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     lastSwapRef.current = null;
     const result = await swapPlayer(
       swap.matchId,
-      swap.inPlayerId,   // inPlayer becomes the new "out"
-      swap.outPlayerId   // outPlayer comes back in
+      swap.inPlayerId, // inPlayer becomes the new "out"
+      swap.outPlayerId // outPlayer comes back in
     );
     if (result.success) {
       toast.success("Swap undone.");
@@ -391,23 +405,28 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   // no need to double up the indicator.
   const draftCount = draftMatches.length;
 
-  const tabs: { key: Tab; label: string; badge?: number; badgeVariant?: "default" | "amber" }[] = isClosed
-    ? [
-        { key: "history", label: "Match History" },
-        { key: "leaderboard", label: "Leaderboard" },
-      ]
-    : [
-        {
-          key: "courts",
-          label: "Active Courts",
-          badge: draftCount > 0 && activeTab !== "courts" ? draftCount : undefined,
-          badgeVariant: "amber",
-        },
-        { key: "queue", label: "Queue & Match Control" },
-        { key: "monitor", label: "Wait Time Monitor", badge: bottleneckCount > 0 ? bottleneckCount : undefined },
-        { key: "history", label: "Match History" },
-        { key: "leaderboard", label: "Leaderboard" },
-      ];
+  const tabs: { key: Tab; label: string; badge?: number; badgeVariant?: "default" | "amber" }[] =
+    isClosed
+      ? [
+          { key: "history", label: "Match History" },
+          { key: "leaderboard", label: "Leaderboard" },
+        ]
+      : [
+          {
+            key: "courts",
+            label: "Active Courts",
+            badge: draftCount > 0 && activeTab !== "courts" ? draftCount : undefined,
+            badgeVariant: "amber",
+          },
+          { key: "queue", label: "Queue & Match Control" },
+          {
+            key: "monitor",
+            label: "Wait Time Monitor",
+            badge: bottleneckCount > 0 ? bottleneckCount : undefined,
+          },
+          { key: "history", label: "Match History" },
+          { key: "leaderboard", label: "Leaderboard" },
+        ];
 
   if (loading) {
     return (
@@ -423,9 +442,10 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   return (
     <div className={`min-h-screen ${SURFACE_BG}`}>
       {/* Top Header */}
-      <header className={`sticky top-0 z-20 ${HEADER_BG} shadow-lg dark:border-b dark:border-border`}>
+      <header
+        className={`sticky top-0 z-20 ${HEADER_BG} shadow-lg dark:border-b dark:border-border`}
+      >
         <div className="max-w-7xl mx-auto px-3 lg:px-6 py-3 lg:py-4">
-
           {/* ── Row 1: back link + mobile controls ── */}
           <div className="mb-2 flex items-center justify-between">
             <button
@@ -449,14 +469,17 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
                   className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5
                               text-[11px] font-semibold transition-colors border
-                              ${autoMatchmaking
-                                ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
-                                : "bg-white/10 border-white/20 text-white/50"
+                              ${
+                                autoMatchmaking
+                                  ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
+                                  : "bg-white/10 border-white/20 text-white/50"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0
-                                    ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`} />
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full shrink-0
+                                    ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`}
+                  />
                   {autoMatchmaking ? "Auto" : "Off"}
                 </button>
 
@@ -472,9 +495,11 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   </button>
 
                   {moreMenuOpen && (
-                    <div className="absolute right-0 top-full mt-1.5 w-52 rounded-xl
+                    <div
+                      className="absolute right-0 top-full mt-1.5 w-52 rounded-xl
                                     border border-slate-200 bg-white shadow-xl z-50 overflow-hidden
-                                    animate-in fade-in slide-in-from-top-1 duration-150">
+                                    animate-in fade-in slide-in-from-top-1 duration-150"
+                    >
                       {/* TV View */}
                       <a
                         href={`/tv/${session.id}`}
@@ -490,7 +515,10 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
                       {/* Share Session */}
                       <button
-                        onClick={() => { setMoreMenuOpen(false); setShareOpen(true); }}
+                        onClick={() => {
+                          setMoreMenuOpen(false);
+                          setShareOpen(true);
+                        }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
                                    text-slate-700 hover:bg-slate-50 dark:text-foreground dark:hover:bg-muted transition-colors"
                       >
@@ -502,7 +530,10 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
                       {/* Close Session */}
                       <button
-                        onClick={() => { setMoreMenuOpen(false); setCloseOpen(true); }}
+                        onClick={() => {
+                          setMoreMenuOpen(false);
+                          setCloseOpen(true);
+                        }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
                                    text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20 transition-colors"
                       >
@@ -518,7 +549,6 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
           {/* ── Row 2: title (left) + desktop action strip (right) ── */}
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-y-2 gap-x-6">
-
             {/* Title + profile name + closed badge */}
             <div className="flex items-center gap-3 min-w-0">
               <div className="relative min-w-0" ref={switcherRef}>
@@ -526,22 +556,30 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   onClick={() => otherSessions.length > 0 && setSwitcherOpen(!switcherOpen)}
                   className={`flex items-center gap-2 min-w-0 rounded-lg px-2 py-2 -mx-2 -my-2
                               min-h-[44px] transition-colors
-                              ${otherSessions.length > 0
-                                ? "hover:bg-white/10 cursor-pointer"
-                                : "cursor-default"}`}
+                              ${
+                                otherSessions.length > 0
+                                  ? "hover:bg-white/10 cursor-pointer"
+                                  : "cursor-default"
+                              }`}
                 >
-                  <h1 className="text-lg lg:text-xl font-bold text-white truncate">{session.name}</h1>
+                  <h1 className="text-lg lg:text-xl font-bold text-white truncate">
+                    {session.name}
+                  </h1>
                   {otherSessions.length > 0 && (
-                    <ChevronDown className={`h-4 w-4 text-white/60 shrink-0 transition-transform
-                                             ${switcherOpen ? "rotate-180" : ""}`} />
+                    <ChevronDown
+                      className={`h-4 w-4 text-white/60 shrink-0 transition-transform
+                                             ${switcherOpen ? "rotate-180" : ""}`}
+                    />
                   )}
                 </button>
 
                 {/* Session switcher dropdown */}
                 {switcherOpen && otherSessions.length > 0 && (
-                  <div className="absolute left-0 top-full mt-2 w-72 rounded-xl border border-slate-200
+                  <div
+                    className="absolute left-0 top-full mt-2 w-72 rounded-xl border border-slate-200
                                   dark:border-border bg-white dark:bg-card shadow-xl z-50 overflow-hidden
-                                  animate-in fade-in slide-in-from-top-1 duration-150">
+                                  animate-in fade-in slide-in-from-top-1 duration-150"
+                  >
                     <div className="px-3 py-2 bg-slate-50 dark:bg-muted border-b border-slate-100 dark:border-border">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
                         Switch Session
@@ -551,7 +589,10 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                       {otherSessions.map((s) => (
                         <button
                           key={s.id}
-                          onClick={() => { setSwitcherOpen(false); router.push(`/organizer/${s.id}`); }}
+                          onClick={() => {
+                            setSwitcherOpen(false);
+                            router.push(`/organizer/${s.id}`);
+                          }}
                           className="flex items-center gap-3 w-full px-3 py-2.5 text-left
                                      hover:bg-slate-50 dark:hover:bg-muted transition-colors"
                         >
@@ -559,10 +600,15 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                             <Repeat className="h-3.5 w-3.5 text-slate-500" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-slate-800 dark:text-foreground truncate">{s.name}</p>
+                            <p className="text-sm font-semibold text-slate-800 dark:text-foreground truncate">
+                              {s.name}
+                            </p>
                             <p className="text-[10px] text-slate-400">
-                              Created {new Date(s.created_at).toLocaleDateString("en-US", {
-                                weekday: "short", month: "short", day: "numeric",
+                              Created{" "}
+                              {new Date(s.created_at).toLocaleDateString("en-US", {
+                                weekday: "short",
+                                month: "short",
+                                day: "numeric",
                               })}
                             </p>
                           </div>
@@ -571,7 +617,10 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                     </div>
                     <div className="border-t border-slate-100 dark:border-border px-3 py-2">
                       <button
-                        onClick={() => { setSwitcherOpen(false); router.push("/organizer"); }}
+                        onClick={() => {
+                          setSwitcherOpen(false);
+                          router.push("/organizer");
+                        }}
                         className="flex items-center gap-2 w-full text-xs font-medium text-blue-600
                                    dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors py-1"
                       >
@@ -588,9 +637,11 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               </p>
 
               {isClosed && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-white/15
+                <span
+                  className="inline-flex items-center gap-1 rounded-full bg-white/15
                                  border border-white/30 px-2.5 py-0.5 text-[10px]
-                                 font-bold uppercase tracking-wider text-white/80 shrink-0">
+                                 font-bold uppercase tracking-wider text-white/80 shrink-0"
+                >
                   Closed
                 </span>
               )}
@@ -600,7 +651,9 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
             {!isClosed && (
               <div className="hidden lg:flex items-center gap-2 text-sm text-white/70 shrink-0">
                 {/* Stats cluster */}
-                <span className="text-white/60 tabular-nums">{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
+                <span className="text-white/60 tabular-nums">
+                  {courts.length} court{courts.length !== 1 ? "s" : ""}
+                </span>
                 <span className="text-white/40">·</span>
                 <span className="text-white/60 tabular-nums">{queue.length} in queue</span>
                 <span className="text-white/40">·</span>
@@ -629,22 +682,25 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                   aria-pressed={autoMatchmaking}
                   className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2
                               min-h-[44px] text-xs font-semibold transition-colors border
-                              ${autoMatchmaking
-                                ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30"
-                                : "bg-white/10 border-white/20 text-white/50 hover:bg-white/15"
+                              ${
+                                autoMatchmaking
+                                  ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30"
+                                  : "bg-white/10 border-white/20 text-white/50 hover:bg-white/15"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                   title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
                 >
-                  <span className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`} />
+                  <span
+                    className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`}
+                  />
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
 
-                <ThemeToggle className="text-white/60 hover:text-white hover:bg-white/10
-                                        dark:text-primary dark:hover:bg-primary/10" />
-                {process.env.NODE_ENV === "development" && (
-                  <DevTools sessionId={session.id} />
-                )}
+                <ThemeToggle
+                  className="text-white/60 hover:text-white hover:bg-white/10
+                                        dark:text-primary dark:hover:bg-primary/10"
+                />
+                {process.env.NODE_ENV === "development" && <DevTools sessionId={session.id} />}
 
                 {/* TV View */}
                 <a
@@ -688,7 +744,9 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
           {/* Mobile stats row — visible only below md */}
           {!isClosed && (
             <div className="mt-2 flex items-center gap-2 text-xs text-white/50 lg:hidden">
-              <span>{courts.length} court{courts.length !== 1 ? "s" : ""}</span>
+              <span>
+                {courts.length} court{courts.length !== 1 ? "s" : ""}
+              </span>
               <span className="text-white/40">·</span>
               <span>{queue.length} in queue</span>
               <span className="text-white/40">·</span>
@@ -706,8 +764,10 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
                 </>
               )}
               <span className="text-white/40">·</span>
-              <ThemeToggle className="text-white/50 hover:text-white hover:bg-white/10
-                                      dark:text-primary dark:hover:bg-primary/10 -my-1" />
+              <ThemeToggle
+                className="text-white/50 hover:text-white hover:bg-white/10
+                                      dark:text-primary dark:hover:bg-primary/10 -my-1"
+              />
             </div>
           )}
         </div>
@@ -774,10 +834,9 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
               <AlertDialogHeader>
                 <AlertDialogTitle>Close &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will permanently end the session. All remaining players will be
-                  removed from the queue, any in-progress or on-deck matches will be
-                  cancelled, and courts will be closed. Completed match history will
-                  be preserved.
+                  This will permanently end the session. All remaining players will be removed from
+                  the queue, any in-progress or on-deck matches will be cancelled, and courts will
+                  be closed. Completed match history will be preserved.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -793,73 +852,64 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-3 lg:px-6 py-4 lg:py-6">
-        <div
-          role="tabpanel"
-          id={`tabpanel-${activeTab}`}
-          aria-labelledby={`tab-${activeTab}`}
-        >
-        {activeTab === "courts" && (
-          <div className="space-y-6">
-            {/* On-deck panel — always visible, collapses to empty state when no matches */}
-            <OnDeckPanel
-              matches={onDeckMatches}
-              swapContext={swapContext}
-              onClearOnDeckMatch={clearOnDeckMatch}
-              onReorderMatches={reorderOnDeckMatches}
-              onPlayerTap={handlePlayerTap}
-              onPublishMatch={publishMatch}
-              onPublishAllDrafts={publishAllDrafts}
-              capSaturation={capSaturation}
-              onDismissCapSaturation={dismissCapSaturation}
+        <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
+          {activeTab === "courts" && (
+            <div className="space-y-6">
+              {/* On-deck panel — always visible, collapses to empty state when no matches */}
+              <OnDeckPanel
+                matches={onDeckMatches}
+                swapContext={swapContext}
+                onClearOnDeckMatch={clearOnDeckMatch}
+                onReorderMatches={reorderOnDeckMatches}
+                onPlayerTap={handlePlayerTap}
+                onPublishMatch={publishMatch}
+                onPublishAllDrafts={publishAllDrafts}
+                capSaturation={capSaturation}
+                onDismissCapSaturation={dismissCapSaturation}
+              />
+
+              <ActiveCourts
+                courts={courts}
+                activeMatches={activeMatches}
+                timeLimitMinutes={liveSession.court_time_limit_minutes}
+                onAddCourt={addCourt}
+                onUpdateCourtStatus={updateCourtStatus}
+                onRemoveCourt={removeCourt}
+                onCallNextMatch={callNextMatch}
+                onEndMatch={endMatch}
+                onCancelMatch={cancelMatch}
+                onClearOnDeckMatch={clearOnDeckMatch}
+                onUpdateTimeLimit={updateTimeLimit}
+              />
+            </div>
+          )}
+
+          {activeTab === "queue" && (
+            <QueueControl
+              queue={queue}
+              profiles={profiles}
+              onCreateManualMatch={createManualMatch}
+              onRemoveFromQueue={removeFromQueue}
+              onPausePlayer={pausePlayer}
+              organizerPlayerId={profile.id}
+              onJoinQueue={joinQueue}
             />
+          )}
 
-            <ActiveCourts
-              courts={courts}
-              activeMatches={activeMatches}
-              timeLimitMinutes={liveSession.court_time_limit_minutes}
-              onAddCourt={addCourt}
-              onUpdateCourtStatus={updateCourtStatus}
-              onRemoveCourt={removeCourt}
-              onCallNextMatch={callNextMatch}
-              onEndMatch={endMatch}
-              onCancelMatch={cancelMatch}
-              onClearOnDeckMatch={clearOnDeckMatch}
-              onUpdateTimeLimit={updateTimeLimit}
+          {activeTab === "monitor" && (
+            <WaitTimeMonitor queue={queue} onRemoveFromQueue={removeFromQueue} />
+          )}
+
+          {activeTab === "history" && <MatchHistoryPanel sessionId={session.id} />}
+
+          {activeTab === "leaderboard" && (
+            <LeaderboardPage
+              sessionId={session.id}
+              sessionName={session.name}
+              currentUserId={profile.id}
+              variant="organizer-panel"
             />
-          </div>
-        )}
-
-        {activeTab === "queue" && (
-          <QueueControl
-            queue={queue}
-            profiles={profiles}
-            onCreateManualMatch={createManualMatch}
-            onRemoveFromQueue={removeFromQueue}
-            onPausePlayer={pausePlayer}
-            organizerPlayerId={profile.id}
-            onJoinQueue={joinQueue}
-          />
-        )}
-
-        {activeTab === "monitor" && (
-          <WaitTimeMonitor
-            queue={queue}
-            onRemoveFromQueue={removeFromQueue}
-          />
-        )}
-
-        {activeTab === "history" && (
-          <MatchHistoryPanel sessionId={session.id} />
-        )}
-
-        {activeTab === "leaderboard" && (
-          <LeaderboardPage
-            sessionId={session.id}
-            sessionName={session.name}
-            currentUserId={profile.id}
-            variant="organizer-panel"
-          />
-        )}
+          )}
         </div>
       </main>
 
