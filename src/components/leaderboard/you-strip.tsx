@@ -18,6 +18,7 @@
 import { cn } from "@/lib/utils";
 import { barlowFont, monoFont } from "@/lib/fonts";
 import type { LeaderboardRow } from "@/types/leaderboard";
+import { VipTag } from "@/components/ui/vip-tag";
 
 interface YouStripProps {
   row: LeaderboardRow | null;
@@ -69,12 +70,17 @@ export function YouStrip({ row, loading = false }: YouStripProps) {
         >
           {/* en-dash matches the qualified state's rank prefix style */}–
         </span>
-        <span
-          className={`${barlowFont} font-bold text-[18px] tracking-[.02em] flex-1 min-w-0
-                       truncate text-[#111827] dark:text-white`}
-        >
-          {row?.display_name ?? "–"}
-        </span>
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          <span
+            className={`${barlowFont} font-bold text-[18px] tracking-[.02em] min-w-0
+                         truncate text-[#111827] dark:text-white`}
+          >
+            {row?.display_name ?? "–"}
+          </span>
+          {row?.vip_tag && row?.vip_theme && (
+            <VipTag tag={row.vip_tag} theme={row.vip_theme} />
+          )}
+        </div>
         <span
           className={`${monoFont} text-[10.5px] tracking-[.02em] flex-shrink-0
                        text-[#92400e] dark:text-[hsl(220_10%_52%)]`}
@@ -104,13 +110,18 @@ export function YouStrip({ row, loading = false }: YouStripProps) {
         #{row.rank}
       </span>
 
-      {/* Name */}
-      <span
-        className={`${barlowFont} font-bold text-[18px] tracking-[.02em] flex-1 min-w-0
-                     truncate text-[#111827] dark:text-white`}
-      >
-        {row.display_name.toUpperCase()}
-      </span>
+      {/* Name + VIP tag */}
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        <span
+          className={`${barlowFont} font-bold text-[18px] tracking-[.02em] min-w-0
+                       truncate text-[#111827] dark:text-white`}
+        >
+          {row.display_name.toUpperCase()}
+        </span>
+        {row.vip_tag && row.vip_theme && (
+          <VipTag tag={row.vip_tag} theme={row.vip_theme} />
+        )}
+      </div>
 
       {/* W–L */}
       <span

@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { barlowFont, monoFont } from "@/lib/fonts";
 import type { LeaderboardRow } from "@/types/leaderboard";
 import { Bolts } from "./bolt-icons";
+import { VipTag } from "@/components/ui/vip-tag";
 
 interface LeaderboardPodiumProps {
   /** Exactly 3 rows, rank-sorted ascending (#1 at index 0) */
@@ -100,6 +101,13 @@ function PodiumCell({ row, position }: PodiumCellProps) {
       >
         {row.display_name}
       </div>
+
+      {/* VIP tag */}
+      {row.vip_tag && row.vip_theme && (
+        <div className="mt-1">
+          <VipTag tag={row.vip_tag} theme={row.vip_theme} />
+        </div>
+      )}
 
       {/* Stats: W · Win% */}
       <div className={cn(monoFont, "text-[10px] tracking-[.02em] flex items-center gap-1 mt-0.5")}>
