@@ -179,6 +179,14 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
     dismissCapSaturation,
   } = useOrganizerData(session.id, session);
 
+  // Sync toggle button when another organizer flips it via broadcast.
+  // liveSession.is_auto_matchmaking_on is updated by the broadcast handler
+  // in use-organizer-data, but autoMatchmaking is local useState so it
+  // needs an explicit effect to stay in sync.
+  useEffect(() => {
+    setAutoMatchmaking(liveSession.is_auto_matchmaking_on);
+  }, [liveSession.is_auto_matchmaking_on]);
+
   // ── Organizer self-join ─────────────────────────────────────
   // Allows the organizer to add themselves to the queue directly from
   // the organizer dashboard — useful when running a session and also
