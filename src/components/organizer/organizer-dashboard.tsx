@@ -73,7 +73,7 @@ export function OrganizerDashboard({
   const [shareOpen, setShareOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
   const [closing, setClosing] = useState(false);
-  const [autoMatchmaking, setAutoMatchmaking] = useState(session.is_auto_matchmaking_on);
+  const [pendingAuto, setPendingAuto] = useState<boolean | null>(null);
   const [togglingAuto, setTogglingAuto] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -115,15 +115,16 @@ export function OrganizerDashboard({
 
   async function handleToggleAuto() {
     setTogglingAuto(true);
-    const prev = autoMatchmaking;
-    setAutoMatchmaking(!prev); // optimistic
+    setPendingAuto(!liveSession.is_auto_matchmaking_on); // optimistic
     const result = await toggleAutoMatchmaking(session.id);
-    if (!result.success) {
-      setAutoMatchmaking(prev); // revert on failure
-    } else {
-      setAutoMatchmaking(result.isOn);
-    }
+    // Drop the pending override — liveSession is authoritative.
+    // On success the broadcast has already (or will shortly) update liveSession.
+    // On failure liveSession still holds the pre-toggle value, which is correct.
+    setPendingAuto(null);
     setTogglingAuto(false);
+    if (!result.success) {
+      toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
+    }
   }
 
   // Close switcher on outside click.
@@ -193,13 +194,12 @@ export function OrganizerDashboard({
     dismissCapSaturation,
   } = useOrganizerData(session.id, session);
 
-  // Sync toggle button when another organizer flips it via broadcast.
-  // liveSession.is_auto_matchmaking_on is updated by the broadcast handler
-  // in use-organizer-data, but autoMatchmaking is local useState so it
-  // needs an explicit effect to stay in sync.
-  useEffect(() => {
-    setAutoMatchmaking(liveSession.is_auto_matchmaking_on);
-  }, [liveSession.is_auto_matchmaking_on]);
+  // Derived toggle display value: show the optimistic value while the
+  // server round-trip is in-flight, otherwise use the authoritative
+  // liveSession value (kept live via the broadcast channel in use-organizer-data).
+  // This eliminates the dual-source-of-truth problem where a stale captured
+  // `prev` could overwrite the broadcast-confirmed value on failure.
+  const autoMatchmaking = pendingAuto ?? liveSession.is_auto_matchmaking_on;
 
   // ── Organizer self-join ─────────────────────────────────────
   // Allows the organizer to add themselves to the queue directly from
