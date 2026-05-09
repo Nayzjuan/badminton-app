@@ -63,28 +63,26 @@ async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
 /**
  * Verify that the calling user is an organizer for the given session.
  * Accepts either created_by ownership OR a session_organizers membership row.
+ * Uses the service client so the primary organizer is never blocked by
+ * read-side RLS on sessions or session_organizers.
  */
-async function isSessionOrganizer(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  sessionId: string
-): Promise<boolean> {
-  // Check sessions.created_by first (fast path).
-  const { data: session } = await supabase
+async function isSessionOrganizer(userId: string, sessionId: string): Promise<boolean> {
+  const svc = getServiceClient();
+
+  const { data: session } = await svc
     .from("sessions")
     .select("created_by")
     .eq("id", sessionId)
-    .single();
+    .maybeSingle();
 
   if (session?.created_by === userId) return true;
 
-  // Fall back to session_organizers membership table.
-  const { data: membership } = await supabase
+  const { data: membership } = await svc
     .from("session_organizers")
     .select("id")
     .eq("session_id", sessionId)
     .eq("user_id", userId)
-    .single();
+    .maybeSingle();
 
   return !!membership;
 }
@@ -179,7 +177,7 @@ export async function endMatchAction(
   //    isSessionOrganizer checks sessions.created_by FIRST (fast path),
   //    then falls back to session_organizers membership.
   const [isOrg, playerSlot] = await Promise.all([
-    isSessionOrganizer(supabase, user.id, match.session_id),
+    isSessionOrganizer(user.id, match.session_id),
     db
       .from("match_players")
       .select("id")
@@ -349,7 +347,7 @@ export async function updateMatchDetails(
   }
 
   // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -462,7 +460,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   }
 
   // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -581,7 +579,7 @@ export async function createManualMatchAction(
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
-  const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -690,7 +688,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   }
 
   // Verify caller is an organizer for this session (using the RLS client).
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -785,7 +783,7 @@ export async function reorderOnDeckMatches(
   const user = await getAuthUser(supabase);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  const isOrganizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   // Build individual updates — Supabase JS client doesn't support
@@ -843,7 +841,7 @@ export async function publishMatchAction(
     return { success: false, message: "Only pending (on-deck) matches can be published." };
   if (match.is_published) return { success: true, message: "Already published." };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, match.session_id);
+  const isOrganizer = await isSessionOrganizer(user.id, match.session_id);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   // BUG-002 fix (layer 1): validate that no player in this draft has left
@@ -948,7 +946,7 @@ export async function publishAllDraftMatchesAction(
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   const svc = createServiceClient();
