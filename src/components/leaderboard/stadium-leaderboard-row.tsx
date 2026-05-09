@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { barlowFont, monoFont } from "@/lib/fonts";
 import type { LeaderboardRow } from "@/types/leaderboard";
 import { Bolts } from "./bolt-icons";
+import { VipTag } from "@/components/ui/vip-tag";
 
 interface StadiumLeaderboardRowProps {
   row: LeaderboardRow;
@@ -94,6 +95,11 @@ export function StadiumLeaderboardRow({ row, isCurrentUser, flash }: StadiumLead
         >
           {row.display_name}
         </span>
+
+        {/* VIP tag */}
+        {row.vip_tag && row.vip_theme && (
+          <VipTag tag={row.vip_tag} theme={row.vip_theme} />
+        )}
 
         {/* Streak bolts (≥3) */}
         {row.win_streak >= 3 && (
