@@ -63,28 +63,26 @@ async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
 /**
  * Verify that the calling user is an organizer for the given session.
  * Accepts either created_by ownership OR a session_organizers membership row.
+ * Uses the service client so the primary organizer is never blocked by
+ * read-side RLS on sessions or session_organizers.
  */
-async function isSessionOrganizer(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  sessionId: string
-): Promise<boolean> {
-  // Check sessions.created_by first (fast path).
-  const { data: session } = await supabase
+async function isSessionOrganizer(userId: string, sessionId: string): Promise<boolean> {
+  const svc = getServiceClient();
+
+  const { data: session } = await svc
     .from("sessions")
     .select("created_by")
     .eq("id", sessionId)
-    .single();
+    .maybeSingle();
 
   if (session?.created_by === userId) return true;
 
-  // Fall back to session_organizers membership table.
-  const { data: membership } = await supabase
+  const { data: membership } = await svc
     .from("session_organizers")
     .select("id")
     .eq("session_id", sessionId)
     .eq("user_id", userId)
-    .single();
+    .maybeSingle();
 
   return !!membership;
 }
@@ -179,7 +177,7 @@ export async function endMatchAction(
   //    isSessionOrganizer checks sessions.created_by FIRST (fast path),
   //    then falls back to session_organizers membership.
   const [isOrg, playerSlot] = await Promise.all([
-    isSessionOrganizer(supabase, user.id, match.session_id),
+    isSessionOrganizer(user.id, match.session_id),
     db
       .from("match_players")
       .select("id")
@@ -327,6 +325,10 @@ export async function updateMatchDetails(
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   const supabase = await createClient();
+  // All writes use the service client so the primary organizer
+  // (sessions.created_by) is never silently blocked by write-side RLS.
+  // Auth is verified at the JS layer (getUser + isSessionOrganizer) before any write.
+  const db = getServiceClient();
 
   // P0-3: Organizer-only action.
   const user = await getAuthUser(supabase);
@@ -334,35 +336,35 @@ export async function updateMatchDetails(
     return { success: false, message: "Not authenticated." };
   }
 
-  const { data: match, error: fetchErr } = await supabase
+  const { data: match, error: fetchErr } = await db
     .from("matches")
     .select("id, session_id, court_id, status")
     .eq("id", matchId)
     .single();
 
   if (fetchErr || !match) {
-    return { success: false, message: `Match not found: ${fetchErr?.message ?? "unknown"}` };
+    return { success: false, message: "Match not found." };
   }
 
   // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 
   if (!revertToActive) {
     // ── Score-only edit ──────────────────────────────────────
-    const { error } = await supabase
+    const { error } = await db
       .from("matches")
       .update({ team_a_score: teamAScore, team_b_score: teamBScore })
       .eq("id", matchId);
 
-    if (error) return { success: false, message: error.message };
+    if (error) return { success: false, message: "Failed to update scores." };
     return { success: true, message: "Scores updated." };
   }
 
   // ── Revert to in_progress ────────────────────────────────
-  const { error: revertErr } = await supabase
+  const { error: revertErr } = await db
     .from("matches")
     .update({
       status: "in_progress" as const,
@@ -372,30 +374,30 @@ export async function updateMatchDetails(
     })
     .eq("id", matchId);
 
-  if (revertErr) return { success: false, message: revertErr.message };
+  if (revertErr) return { success: false, message: "Failed to revert match." };
 
   // Court handling: reclaim if free, detach if occupied or closed.
   if (match.court_id) {
-    const { data: court } = await supabase
+    const { data: court } = await db
       .from("courts")
       .select("status")
       .eq("id", match.court_id)
       .single();
 
     if (court?.status === "available") {
-      await supabase
+      await db
         .from("courts")
         .update({ status: "in_use" as const })
         .eq("id", match.court_id);
     } else {
       // Another match occupies or the court is closed — detach.
-      await supabase.from("matches").update({ court_id: null }).eq("id", matchId);
+      await db.from("matches").update({ court_id: null }).eq("id", matchId);
     }
   }
 
   // Revert player queue entries that are currently "waiting"
   // (meaning endMatchAction already re-queued them).
-  const { data: matchPlayers } = await supabase
+  const { data: matchPlayers } = await db
     .from("match_players")
     .select("player_id")
     .eq("match_id", matchId);
@@ -403,17 +405,17 @@ export async function updateMatchDetails(
   if (matchPlayers && matchPlayers.length > 0) {
     await Promise.all(
       matchPlayers.map(async (mp) => {
-        const { data: entry } = await supabase
+        const { data: entry } = await db
           .from("queue_entries")
           .select("games_played, status")
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
-          .single();
+          .maybeSingle();
 
         // Only revert players currently waiting — those already in
         // another on_deck / playing match are left untouched.
         if (entry?.status === "waiting") {
-          return supabase
+          return db
             .from("queue_entries")
             .update({
               status: "playing" as const,
@@ -458,7 +460,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   }
 
   // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -577,7 +579,7 @@ export async function createManualMatchAction(
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
-  const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -686,7 +688,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   }
 
   // Verify caller is an organizer for this session (using the RLS client).
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -775,16 +777,19 @@ export async function reorderOnDeckMatches(
   if (orderedMatchIds.some((id) => !isValidUUID(id))) {
     return { success: false, message: "Invalid match ID in reorder list." };
   }
-  const db = await createClient();
+  const supabase = await createClient();
+  const db = getServiceClient();
 
-  const user = await getAuthUser(db);
+  const user = await getAuthUser(supabase);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   // Build individual updates — Supabase JS client doesn't support
   // bulk UPDATE with per-row values, so we fire them concurrently.
+  // Use service client so the primary organizer's writes are never
+  // silently dropped by write-side RLS on the matches table.
   const updates = orderedMatchIds.map((id, index) =>
     db
       .from("matches")
@@ -797,7 +802,7 @@ export async function reorderOnDeckMatches(
   const results = await Promise.all(updates);
   const firstError = results.find((r) => r.error);
   if (firstError?.error) {
-    return { success: false, message: `Failed to save order: ${firstError.error.message}` };
+    return { success: false, message: "Failed to save order." };
   }
 
   return { success: true, message: "Order saved." };
@@ -836,7 +841,7 @@ export async function publishMatchAction(
     return { success: false, message: "Only pending (on-deck) matches can be published." };
   if (match.is_published) return { success: true, message: "Already published." };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, match.session_id);
+  const isOrganizer = await isSessionOrganizer(user.id, match.session_id);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   // BUG-002 fix (layer 1): validate that no player in this draft has left
@@ -899,14 +904,15 @@ export async function publishMatchAction(
     }
   }
 
-  const { error } = await db
+  // Use svc (service client) so the primary organizer is never blocked by RLS.
+  const { error } = await svc
     .from("matches")
     .update({ is_published: true })
     .eq("id", matchId)
     .eq("status", "pending") // Atomic guard — cannot publish promoted match
     .eq("is_published", false); // Idempotency guard
 
-  if (error) return { success: false, message: error.message };
+  if (error) return { success: false, message: "Failed to publish match." };
 
   // BUG-001 fix (TypeScript side): now that the match is published, promote
   // all 4 players from 'waiting' to 'on_deck'. This is the deferred step
@@ -940,7 +946,7 @@ export async function publishAllDraftMatchesAction(
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   const svc = createServiceClient();
@@ -970,7 +976,7 @@ export async function publishAllDraftMatchesAction(
 
   const allPlayerIds = [...new Set((matchPlayerRows ?? []).map((r) => r.player_id))];
 
-  let taintedMatchIdSet = new Set<string>();
+  const taintedMatchIdSet = new Set<string>();
   if (allPlayerIds.length > 0) {
     const { data: leftEntries } = await svc
       .from("queue_entries")
@@ -1037,7 +1043,9 @@ export async function publishAllDraftMatchesAction(
     };
   }
 
-  const { data, error } = await db
+  // Use svc (service client) — not db (RLS client) — so the primary organizer
+  // (sessions.created_by) is never silently blocked by write-side RLS.
+  const { data, error } = await svc
     .from("matches")
     .update({ is_published: true })
     .in("id", publishableIds)
@@ -1045,7 +1053,7 @@ export async function publishAllDraftMatchesAction(
     .eq("is_published", false) // Idempotency guard
     .select("id");
 
-  if (error) return { success: false, message: error.message };
+  if (error) return { success: false, message: "Failed to publish drafts." };
 
   const publishedCount = data?.length ?? 0;
 

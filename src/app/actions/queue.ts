@@ -37,6 +37,27 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { isValidUUID } from "@/lib/validate";
 
+// ── Organizer check ───────────────────────────────────────────
+// Accepts created_by ownership OR session_organizers membership.
+// Uses the service client so the primary organizer is never
+// blocked by read-side RLS on the sessions/session_organizers tables.
+async function isSessionOrganizer(userId: string, sessionId: string): Promise<boolean> {
+  const svc = createServiceClient();
+  const { data: session } = await svc
+    .from("sessions")
+    .select("created_by")
+    .eq("id", sessionId)
+    .single();
+  if (session?.created_by === userId) return true;
+  const { data: membership } = await svc
+    .from("session_organizers")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return !!membership;
+}
+
 // ── Checkout ──────────────────────────────────────────────────
 // Marks the calling player's queue_entries row as "left" for a
 // given session, removing them from matchmaking.
@@ -79,8 +100,20 @@ export async function togglePlayerPause(
     return { success: false, error: "Not authenticated." };
   }
 
+  // Organizer-only: any authenticated player could otherwise pause any other
+  // player by calling this action with an arbitrary playerId. Verify the caller
+  // is the session creator OR a co-organizer before writing.
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) {
+    return { success: false, error: "Not authorized. Organizer access required." };
+  }
+
   // Update is_paused ONLY — never touch joined_at or games_played.
-  const { error } = await supabase
+  // Use service client so the write succeeds for the primary organizer
+  // (sessions.created_by), who has no session_organizers row and would
+  // be silently blocked by write-side RLS on queue_entries.
+  const svc = createServiceClient();
+  const { error } = await svc
     .from("queue_entries")
     .update({ is_paused: isPaused })
     .eq("session_id", sessionId)
@@ -120,6 +153,13 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   // be published (publishMatchAction blocks on 'left' players) and shows
   // a stale roster to the organizer. We remove the player and auto-cancel
   // the draft if it falls below 4 players, freeing the slot.
+  //
+  // Known TOCTOU limitation: the draft query and the subsequent DELETE
+  // are non-atomic. A concurrent publishMatchAction could publish the
+  // draft between these steps, meaning we delete from an already-live
+  // match. The risk is low (checkout and publish rarely race), and the
+  // worst outcome is a match with 3 players that the organizer must
+  // manually cancel. Full atomicity via a DB function is deferred.
   const svc = createServiceClient();
   const { data: draftMatches } = await svc
     .from("matches")
@@ -268,6 +308,14 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   // STEP 2 — Query the session floor (MIN games_played)
   //          Run this for BOTH first-time and returning players.
   //          This is the key fix for the line-jumping bug.
+  //
+  // Known TOCTOU limitation: the floor snapshot and the subsequent
+  // INSERT/UPDATE are not a single atomic transaction. A concurrent
+  // join between these two steps could lower the observed floor, so a
+  // new joiner's games_played could be set one tick above the true
+  // minimum. This edge case is rare and benign (the player gets a
+  // position slightly behind, not ahead); full atomicity would require
+  // a stored procedure, which is deferred.
   // ----------------------------------------------------------
   const { data: floorRow, error: floorError } = await supabase
     .from("queue_entries")
