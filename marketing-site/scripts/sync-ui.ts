@@ -50,27 +50,54 @@ function extractThemeBlock(css: string): string | null {
   return null; // unbalanced braces
 }
 
-// ── Helper: replace the @theme block in target CSS with a fresh one ───────────
+// ── Helper: replace the managed block (comment + @theme {}) with a fresh one ──
+//
+// Anchors on the SYNC COMMENT marker, not on `@theme {` directly.
+// If we anchored on `@theme {` alone, each run would leave the previous
+// comment header in place and prepend a new one — accreting a duplicate
+// header on every `npm run sync` invocation.
+const SYNC_MARKER = "/* ── AUTO-SYNCED";
+
 function replaceThemeBlock(target: string, freshBlock: string): string {
-  const start = target.indexOf("@theme {");
-  if (start === -1) {
-    // No existing block — inject right after the first @import line.
-    const importEnd = target.indexOf("\n", target.indexOf("@import"));
+  // Find the start of any previously-written managed block.
+  const commentStart = target.indexOf(SYNC_MARKER);
+  const themeStart = target.indexOf("@theme {");
+
+  // Determine where the managed region begins.
+  // If the comment precedes @theme, start from the comment; otherwise @theme.
+  const regionStart =
+    commentStart !== -1 && (themeStart === -1 || commentStart < themeStart)
+      ? commentStart
+      : themeStart;
+
+  if (regionStart === -1) {
+    // Nothing managed yet — inject right after the last @import line.
+    const lastImport = target.lastIndexOf("@import");
+    const importEnd = target.indexOf("\n", lastImport);
     if (importEnd === -1) return freshBlock + "\n" + target;
     return target.slice(0, importEnd + 1) + "\n" + freshBlock + "\n" + target.slice(importEnd + 1);
   }
 
+  // Walk forward from @theme { to find the closing brace of that block.
+  const themePos = target.indexOf("@theme {", regionStart);
+  if (themePos === -1) {
+    // Comment exists but no @theme block yet — replace from comment onward.
+    return (
+      target.slice(0, regionStart) + freshBlock + target.slice(regionStart + SYNC_MARKER.length)
+    );
+  }
+
   let depth = 0;
-  for (let i = start; i < target.length; i++) {
+  for (let i = themePos; i < target.length; i++) {
     if (target[i] === "{") depth++;
     if (target[i] === "}") {
       depth--;
       if (depth === 0) {
-        return target.slice(0, start) + freshBlock + target.slice(i + 1);
+        return target.slice(0, regionStart) + freshBlock + target.slice(i + 1);
       }
     }
   }
-  return target; // fallback: no change if block is malformed
+  return target; // fallback: malformed block
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────

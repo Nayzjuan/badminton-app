@@ -4,9 +4,6 @@
 /* ── AUTO-SYNCED from digital-twin/src/styles/global.css ──────────────────
    Run `npm run sync` to refresh. Do not edit this block manually.
    ─────────────────────────────────────────────────────────────────────── */
-/* ── AUTO-SYNCED from digital-twin/src/styles/global.css ──────────────────
-   Run `npm run sync` to refresh. Do not edit this block manually.
-   ─────────────────────────────────────────────────────────────────────── */
 @theme {
   /* ── Typography ── */
   --font-sans: "Geist", system-ui, -apple-system, sans-serif;
@@ -50,7 +47,7 @@
   --color-note-wash: oklch(13% 0.03 245);
 }
 
-/* ── Base ── */
+/* ── Base resets ── */
 html {
   scroll-behavior: smooth;
 }
@@ -60,14 +57,13 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── Heading font — applies globally, no class needed ── */
 h1,
 h2 {
   font-family: var(--font-heading);
   letter-spacing: -0.01em;
 }
 
-/* ── Scrollbar — refined 4px ── */
+/* ── Scrollbar ── */
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
@@ -83,93 +79,7 @@ h2 {
   background: var(--color-edge-hi);
 }
 
-/* ── Mermaid diagram container ── */
-.mermaid {
-  background: var(--color-surface);
-  border-radius: 12px;
-  padding: 1.5rem;
-  border: 1px solid var(--color-edge-dim);
-  overflow-x: auto;
-  text-align: center;
-}
-.mermaid svg {
-  max-width: 100%;
-  height: auto;
-}
-
-/* ── Shiki code blocks ── */
-.astro-code,
-pre.astro-code {
-  border-radius: 10px;
-  border: 1px solid var(--color-edge);
-  padding: 1rem 1.25rem;
-  font-size: 0.8125rem;
-  line-height: 1.7;
-  overflow-x: auto;
-  font-family: var(--font-mono);
-}
-
-/* ── Shared card ── */
-.dt-card {
-  background: var(--color-overlay);
-  border: 1px solid var(--color-edge);
-  border-radius: 10px;
-  overflow: hidden;
-  transition: border-color 120ms ease;
-}
-.dt-card:hover {
-  border-color: var(--color-edge-hi);
-}
-
-/* ── Shared table ── */
-.dt-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8125rem;
-}
-.dt-table th {
-  text-align: left;
-  padding: 0.5rem 0.875rem;
-  color: var(--color-ink-3);
-  font-family: var(--font-heading);
-  font-weight: 600;
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  border-bottom: 1px solid var(--color-edge);
-  background: var(--color-raised);
-}
-.dt-table td {
-  padding: 0.625rem 0.875rem;
-  border-bottom: 1px solid var(--color-edge-dim);
-  color: var(--color-ink-2);
-  vertical-align: top;
-}
-.dt-table tr:last-child td {
-  border-bottom: none;
-}
-.dt-table tr:hover td {
-  background: var(--color-raised);
-  transition: background 80ms ease;
-}
-
-/* ── Badge ── */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.2rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  font-weight: 500;
-  border: 1px solid;
-}
-
-/* ── Start Here rail — emerald-to-neutral directional tilt ── */
-.start-rail-bg {
-  background: linear-gradient(150deg, oklch(16% 0.05 155) 0%, oklch(10% 0.012 245) 100%);
-}
-
-/* ── Pulse animation for the "Live" phase badge ── */
+/* ── Pulse animation — used by the "live demo" badge in the sandbox ── */
 @keyframes dt-pulse {
   0%,
   100% {
@@ -181,52 +91,4 @@ pre.astro-code {
 }
 .dt-pulse {
   animation: dt-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-/* ── Kbd ── */
-kbd {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.1em 0.4em;
-  font-family: var(--font-mono);
-  font-size: 0.75em;
-  background: var(--color-raised);
-  border: 1px solid var(--color-edge);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  color: var(--color-ink-3);
-}
-
-/* ── Responsive: mobile nav ── */
-@media (max-width: 767px) {
-  #side-nav {
-    display: none;
-  }
-  #mobile-nav-toggle {
-    display: flex;
-  }
-  #side-nav.mobile-open {
-    display: flex;
-  }
-  .nav-offset {
-    margin-left: 0 !important;
-  }
-  .mobile-top-bar {
-    display: flex;
-  }
-}
-@media (min-width: 768px) {
-  #mobile-nav-toggle {
-    display: none;
-  }
-  .mobile-top-bar {
-    display: none;
-  }
-  /* Desktop sidebar guardrail — defensive override against any inline
-     `transform: translateX(...)` left over from mobile drawer JS. The nav
-     uses `position: fixed` with all four edges anchored, so it stays
-     pinned to the viewport while main content scrolls independently. */
-  #side-nav {
-    transform: none !important;
-  }
 }

@@ -54,6 +54,7 @@ type State = {
   players: Record<string, Player>;
   queue: string[]; // ordered player ids
   matches: Match[];
+  matchCounter: number; // monotonic — lives in state so reducer stays pure
 };
 
 type Action =
@@ -83,16 +84,13 @@ function mkInitialState(): State {
     players[id] = { id, name: s.name, skill: s.skill, status: "waiting", gamesPlayed: 0 };
     queue.push(id);
   });
-  return { players, queue, matches: [] };
+  return { players, queue, matches: [], matchCounter: 0 };
 }
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
-let _matchSeq = 0;
-
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "RESET":
-      _matchSeq = 0;
       return mkInitialState();
 
     case "REORDER": {
@@ -114,9 +112,9 @@ function reducer(state: State, action: Action): State {
       if (live.length >= 2) return state;
 
       const [a0, a1, b0, b1] = waiting;
-      _matchSeq += 1;
+      const nextCounter = state.matchCounter + 1;
       const match: Match = {
-        id: `m${_matchSeq}`,
+        id: `m${nextCounter}`,
         teamA: [a0, a1],
         teamB: [b0, b1],
         status: "pending",
@@ -127,7 +125,7 @@ function reducer(state: State, action: Action): State {
         players[id] = { ...players[id], status: "on_deck" };
       });
 
-      return { ...state, players, matches: [...state.matches, match] };
+      return { ...state, players, matches: [...state.matches, match], matchCounter: nextCounter };
     }
 
     case "START": {
@@ -187,7 +185,13 @@ const skillStyle: Record<Skill, string> = {
 };
 
 // ── SortablePlayerRow ─────────────────────────────────────────────────────────
-function SortablePlayerRow({ player, position }: { player: Player; position: number }) {
+function SortablePlayerRow({
+  player,
+  position,
+}: {
+  player: Player;
+  position: number | null; // null for on_deck / playing — not in the waiting line
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: player.id,
   });
@@ -233,7 +237,7 @@ function SortablePlayerRow({ player, position }: { player: Player; position: num
       )}
 
       <span className="w-5 text-[10px] font-mono text-ink-4 tabular-nums text-right flex-shrink-0">
-        {String(position).padStart(2, "0")}
+        {position !== null ? String(position).padStart(2, "0") : "·"}
       </span>
 
       <span className="flex-1 min-w-0 text-sm font-medium text-ink-2 truncate">{player.name}</span>
@@ -301,17 +305,19 @@ function MatchCard({
 
       {/* Teams */}
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 mb-4">
-        <div className="space-y-0.5">
+        <div className="space-y-0.5 min-w-0">
           {aNames.map((n, i) => (
-            <p key={i} className="text-sm font-semibold text-ink-2 text-right">
+            <p key={i} className="text-sm font-semibold text-ink-2 text-right truncate">
               {n}
             </p>
           ))}
         </div>
-        <span className="font-heading text-xs uppercase tracking-widest text-ink-4 px-1">vs</span>
-        <div className="space-y-0.5">
+        <span className="font-heading text-xs uppercase tracking-widest text-ink-4 px-1 flex-shrink-0">
+          vs
+        </span>
+        <div className="space-y-0.5 min-w-0">
           {bNames.map((n, i) => (
-            <p key={i} className="text-sm font-semibold text-ink-2 text-left">
+            <p key={i} className="text-sm font-semibold text-ink-2 text-left truncate">
               {n}
             </p>
           ))}
@@ -414,11 +420,18 @@ export default function OrganizerSandbox() {
           >
             <SortableContext items={state.queue} strategy={verticalListSortingStrategy}>
               <div className="flex flex-col gap-1">
-                {state.queue.map((id, i) => {
-                  const player = state.players[id];
-                  if (!player) return null;
-                  return <SortablePlayerRow key={id} player={player} position={i + 1} />;
-                })}
+                {(() => {
+                  // Compute waiting-only rank so position numbers reflect the
+                  // actual queue position, not the visual row index (which
+                  // includes on_deck / playing rows that don't count as waiting).
+                  let waitingRank = 0;
+                  return state.queue.map((id) => {
+                    const player = state.players[id];
+                    if (!player) return null;
+                    const pos = player.status === "waiting" ? ++waitingRank : null;
+                    return <SortablePlayerRow key={id} player={player} position={pos} />;
+                  });
+                })()}
               </div>
             </SortableContext>
           </DndContext>
