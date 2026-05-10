@@ -219,7 +219,7 @@ function SortablePlayerRow({
         <button
           type="button"
           aria-label={`Reorder ${player.name}`}
-          className="cursor-grab active:cursor-grabbing text-ink-4 hover:text-ink-3 flex-shrink-0"
+          className="cursor-grab active:cursor-grabbing text-ink-3 hover:text-ink-2 flex-shrink-0"
           {...attributes}
           {...listeners}
         >
@@ -329,7 +329,8 @@ function MatchCard({
         <button
           type="button"
           onClick={onStart}
-          className="w-full rounded-lg border border-accent-ring bg-accent-wash py-2 font-mono text-xs font-medium text-accent-hi transition-colors hover:border-accent hover:text-accent"
+          className="w-full rounded-lg bg-accent py-2 font-mono text-xs font-medium transition-colors hover:bg-accent-hi"
+          style={{ color: "var(--color-base)" }}
         >
           ▸ Start Match
         </button>
@@ -337,7 +338,7 @@ function MatchCard({
         <button
           type="button"
           onClick={onFinish}
-          className="w-full rounded-lg border border-edge bg-raised py-2 font-mono text-xs text-ink-3 transition-colors hover:border-edge-hi hover:text-ink-2"
+          className="w-full rounded-lg border border-edge-hi bg-raised py-2 font-mono text-xs text-ink-2 transition-colors hover:bg-lifted hover:text-ink"
         >
           ✓ Finish & Return Players
         </button>
@@ -384,7 +385,7 @@ export default function OrganizerSandbox() {
         <button
           type="button"
           onClick={() => dispatch({ type: "RESET" })}
-          className="rounded-md border border-edge bg-raised px-3 py-1 font-mono text-[10px] text-ink-3 hover:text-warn hover:border-warn/30 transition-colors"
+          className="rounded-md border border-edge-hi bg-raised px-3 py-1 font-mono text-[10px] text-ink-3 hover:text-warn hover:border-warn/30 transition-colors"
         >
           ↺ reset
         </button>
@@ -398,7 +399,7 @@ export default function OrganizerSandbox() {
               <h4 className="font-heading text-xs font-bold uppercase tracking-wider text-ink-2">
                 Player Queue
               </h4>
-              <span className="font-mono text-[10px] text-ink-4 tabular-nums">
+              <span className="font-mono text-[10px] text-ink-3 tabular-nums">
                 {waitingCount} waiting
               </span>
             </div>
@@ -406,7 +407,13 @@ export default function OrganizerSandbox() {
               type="button"
               onClick={() => dispatch({ type: "GENERATE" })}
               disabled={!canGenerate}
-              className="rounded-md border border-accent-ring bg-accent-wash px-3 py-1.5 font-mono text-xs font-medium text-accent-hi transition-colors hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+              title={
+                !canGenerate
+                  ? `Need ${Math.max(0, 4 - waitingCount)} more waiting player${Math.max(0, 4 - waitingCount) === 1 ? "" : "s"} to generate`
+                  : "Generate next match"
+              }
+              className="rounded-md bg-accent px-3 py-1.5 font-mono text-xs font-medium transition-colors hover:bg-accent-hi disabled:cursor-not-allowed disabled:opacity-40"
+              style={{ color: "var(--color-base)" }}
             >
               ▸ Generate Match
             </button>
@@ -436,7 +443,7 @@ export default function OrganizerSandbox() {
             </SortableContext>
           </DndContext>
 
-          <p className="text-[10px] text-ink-4 font-mono mt-1">
+          <p className="text-[10px] text-ink-3 font-mono mt-1">
             Drag ⠿ to reorder · Engine picks top 4 waiting players
           </p>
         </div>
@@ -447,15 +454,15 @@ export default function OrganizerSandbox() {
             <h4 className="font-heading text-xs font-bold uppercase tracking-wider text-ink-2">
               Match Board
             </h4>
-            <span className="font-mono text-[10px] text-ink-4 tabular-nums">
+            <span className="font-mono text-[10px] text-ink-3 tabular-nums">
               {liveMatches.length}/2 courts
             </span>
           </div>
 
           {liveMatches.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center rounded-xl border border-dashed border-edge-dim bg-base/40 py-12 px-6 text-center">
-              <p className="text-ink-4 text-sm mb-1">No matches yet</p>
-              <p className="text-ink-4 text-[11px] font-mono">
+            <div className="flex-1 flex flex-col items-center justify-center rounded-xl border border-dashed border-edge bg-base/40 py-12 px-6 text-center">
+              <p className="text-ink-3 text-sm mb-1">No matches yet</p>
+              <p className="text-ink-3 text-[11px] font-mono">
                 Click <span className="text-accent">▸ Generate Match</span> to create one
               </p>
             </div>
@@ -475,7 +482,7 @@ export default function OrganizerSandbox() {
 
           {/* Hint when both courts are full */}
           {liveMatches.length >= 2 && (
-            <p className="text-[10px] text-ink-4 font-mono">
+            <p className="text-[10px] text-ink-3 font-mono">
               Both courts occupied · Finish a match to generate the next one
             </p>
           )}
