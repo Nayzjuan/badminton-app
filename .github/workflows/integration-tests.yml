@@ -89,11 +89,21 @@ jobs:
           echo "  SUPABASE_URL: $SUPABASE_URL"
           echo "  DB_URL: $DB_URL"
 
-      # ── 7. Run integration tests ─────────────────────────────
-      # global-setup will also apply any pending migrations.
-      # Tests run serially (singleFork: true) for DB safety.
+      # ── 7. Reset DB + run integration tests ─────────────────
+      # supabase db reset re-applies all migrations from scratch,
+      # guaranteeing a clean slate before the full suite.
+      # global-setup also applies pending migrations, but this
+      # layer ensures no cross-suite pollution from a prior run.
+      # SKIP_DB_RESET=1 lets local devs skip the ~15s reset cost.
       - name: Run integration tests
-        run: npm run test:integration
+        run: |
+          if [ -z "$SKIP_DB_RESET" ]; then
+            echo "Resetting local DB before full suite run..."
+            supabase db reset
+          fi
+          npm run test:integration
+        env:
+          SKIP_DB_RESET: "" # empty = always reset in CI
 
       # ── 8. Upload coverage (optional) ───────────────────────
       # Only uploads if tests pass. Useful for tracking coverage

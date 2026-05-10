@@ -45,12 +45,29 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reportsDirectory: "coverage/integration",
+
+      // Targeted file coverage — the three highest blast-radius action files
       include: [
         "src/app/actions/sessions.ts",
         "src/app/actions/matchmaking.ts",
         "src/app/actions/match.ts",
       ],
       exclude: ["**/*.d.ts", "**/node_modules/**", "**/__tests__/**"],
+
+      // Phase 3: Tightened thresholds.
+      // Phase 2 target was 70%; Phase 3 raises to 85% per-file on the three
+      // highest blast-radius action files. perFile: true means each included
+      // file must independently meet the threshold — a well-covered file cannot
+      // mask a poorly-covered one as include[] grows.
+      // branches: 70 — error paths and rarely-hit guards are harder to reach;
+      //   80-85% would require forcing Supabase network errors in every test.
+      thresholds: {
+        perFile: true,
+        lines: 85,
+        functions: 85,
+        branches: 70,
+        statements: 85,
+      },
     },
   },
   resolve: {
