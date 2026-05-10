@@ -1019,26 +1019,26 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 
 **Three isolation layers:**
 
-| Layer | Helper | Default for |
-| ----- | ------ | ----------- |
-| A — Savepoint | `withTx(fn)` | Schema-parity catalog queries |
-| B — Truncate | `truncateTracked()` in `afterEach` | All Server Action suites |
-| C — DB reset | `supabase db reset` (CI only) | Full CI run cleanup |
+| Layer         | Helper                             | Default for                   |
+| ------------- | ---------------------------------- | ----------------------------- |
+| A — Savepoint | `withTx(fn)`                       | Schema-parity catalog queries |
+| B — Truncate  | `truncateTracked()` in `afterEach` | All Server Action suites      |
+| C — DB reset  | `supabase db reset` (CI only)      | Full CI run cleanup           |
 
 **Suites (56 tests total across 10 files):**
 
-| Suite | Tests | Covers |
-| ----- | ----- | ------- |
-| `health.test.ts` | 4 | Harness smoke — connectivity, factory, cleanup |
-| `auth.real.test.ts` | 1 | Mock drift detector — real auth roundtrip |
-| `matchmaking.test.ts` | 8 | Engine: draft mode, partnership cap, mixed-skill, Red Zone, draft cap, TOCTOU, `hasDraftsBlocking` |
-| `close-session.test.ts` | 7 | `closeSession` + Wrapped pipeline: auth, idempotency, cross-session stats accumulation |
-| `publish-match.test.ts` | 8 | Draft publish, queue transitions, RLS firewall, `publishAll`, `hasDraftsBlocking` |
-| `concurrency.test.ts` | 3 | Concurrent publish idempotency, engine in-process serialisation, CAS double-promote guard |
-| `rls-edge-cases.test.ts` | 6 | Anon read/write blocked, cross-session organiser isolation |
-| `score-submission.test.ts` | 8 | `endMatchAction` cascade: completed → re-queued → court freed → leaderboard |
-| `schema-parity.test.ts` | 13 | All 8 key RPCs, 2 tables, 2 columns, 1 materialized view confirmed via `pg_catalog` |
-| `performance.test.ts` | 1 | `closeSession` on 12-player/30-match session < 7s |
+| Suite                      | Tests | Covers                                                                                             |
+| -------------------------- | ----- | -------------------------------------------------------------------------------------------------- |
+| `health.test.ts`           | 4     | Harness smoke — connectivity, factory, cleanup                                                     |
+| `auth.real.test.ts`        | 1     | Mock drift detector — real auth roundtrip                                                          |
+| `matchmaking.test.ts`      | 8     | Engine: draft mode, partnership cap, mixed-skill, Red Zone, draft cap, TOCTOU, `hasDraftsBlocking` |
+| `close-session.test.ts`    | 7     | `closeSession` + Wrapped pipeline: auth, idempotency, cross-session stats accumulation             |
+| `publish-match.test.ts`    | 8     | Draft publish, queue transitions, RLS firewall, `publishAll`, `hasDraftsBlocking`                  |
+| `concurrency.test.ts`      | 3     | Concurrent publish idempotency, engine in-process serialisation, CAS double-promote guard          |
+| `rls-edge-cases.test.ts`   | 6     | Anon read/write blocked, cross-session organiser isolation                                         |
+| `score-submission.test.ts` | 8     | `endMatchAction` cascade: completed → re-queued → court freed → leaderboard                        |
+| `schema-parity.test.ts`    | 13    | All 8 key RPCs, 2 tables, 2 columns, 1 materialized view confirmed via `pg_catalog`                |
+| `performance.test.ts`      | 1     | `closeSession` on 12-player/30-match session < 7s                                                  |
 
 **Factories (`tests/integration/factories/index.ts`):**
 `makeProfile`, `makeSession`, `makeQueueEntry`, `makeCourt`, `makeMatch`, `makeCompletedMatch`, `enableAutoMatchmaking`, `ageQueueEntry`
@@ -1293,7 +1293,7 @@ APP_MANIFEST.md                  # This file — the living document
 
 A self-contained, interactive documentation site that visually explains every architectural layer of this codebase. Auto-regenerates `src/data/manifest.json` from live host-app source files via a watched extraction pipeline. Intended as onboarding infrastructure for new contributors and a permanent architectural reference.
 
-### Pages (all live as of 2026-05-09)
+### Pages (all live as of 2026-05-10)
 
 | Route         | Phase | What it contains                                                                                                            |
 | ------------- | ----- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -1305,6 +1305,7 @@ A self-contained, interactive documentation site that visually explains every ar
 | `/components` | 6     | D3 force-directed graph (33 nodes, 43 edges, 4 edge types); node inspector side drawer                                      |
 | `/flows`      | 7     | 11 Mermaid sequence traces with scrubber + cross-links; Mermaid re-rendered via `window.__mermaid`                          |
 | `/glossary`   | 8     | 27 curated gotchas (sourced from this file §9); severity + category filters; Pagefind-indexed                               |
+| `/sandbox`    | 9     | Interactive React island — drag-sortable queue, mock matchmaking engine, draft/publish/score lifecycle, terminal action log |
 | `/about`      | —     | Plain-English product overview                                                                                              |
 
 ### Key Architecture Decisions
@@ -1340,3 +1341,20 @@ npm run build        # Production build + Pagefind indexing
 npm run watch:extract # Re-run extraction on host-app source changes
 npx tsx scripts/extract.ts  # One-shot extraction
 ```
+
+### Organizer Sandbox (`/sandbox`)
+
+A standalone interactive playground built as a React Astro Island. Renders the organizer's mental model — drag-sortable queue, mock matchmaking, draft/publish/score lifecycle — without touching any database. The right-column terminal mirrors the real reducer's structured log entries so users can read what each action does to the system.
+
+**Stack additions** (only loaded on `/sandbox`): `@astrojs/react`, `react`, `react-dom`, `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/modifiers`, `@dnd-kit/utilities`. Bundle: `SandboxRoot.*.js` ~76kB raw / ~22kB gzip + React runtime ~58kB gzip.
+
+**Architecture:**
+
+- `src/sandbox/state/` — pure reducer over `SandboxState` (10 seeded players, queue order, matches, log, partnership counters, config). 14 action types, exhaustiveness-checked. `crypto.randomUUID()` for log IDs (no module-scoped counter).
+- `src/sandbox/engine/mockMatchmaking.ts` — narrates the real algorithm (queue scan → capacity check → pool diversity gate → greedy 3-split partnership cap rotation). Bails out when `pool.length === 4` and all splits hit the cap (rotation is futile at that size).
+- `src/sandbox/components/` — `QueueRow` (sortable, drag handle uses `useSortable`, 5px PointerSensor activation), `QueuePanel` (DndContext + SortableContext + `restrictToVerticalAxis + restrictToParentElement`), `MatchCard` (status-specific actions, local score input state), `MatchBoard` (3-column lane view + Recent footer), `SimulationFrame` (corner SIMULATION tag with pulsing dot + reset), `ActionLogger` (terminal: HH:mm:ss.sss timestamps, level filter chips, sticky-tail with "↓ jump to latest" pill, `role="log" aria-live="polite"`).
+- `src/sandbox/SandboxRoot.tsx` — composes the 2-column grid (`lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]`); right column is `lg:sticky lg:top-6`.
+
+**Required tsconfig override** (in `digital-twin/tsconfig.json`): `jsx: "react-jsx"` + `jsxImportSource: "react"`. `astro/tsconfigs/base.json` sets `jsx: "preserve"` which causes esbuild to emit classic `React.createElement` calls without `import React`, throwing `React is not defined` during SSR.
+
+**Note on Preact:** `@astrojs/preact 5.1.2` failed against Astro 5.18.1 with `Could not resolve "astro:preact:opts"` even with `optimizeDeps.exclude` and `ssr.noExternal`. Switched to React. Revisit Preact only if bundle size becomes a concern.

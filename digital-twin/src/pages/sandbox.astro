@@ -1,0 +1,25 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import SandboxRoot from '../sandbox/SandboxRoot.tsx';
+---
+
+<BaseLayout
+  title="Organizer Sandbox"
+  description="Interactive playground — play as the organizer. Mock players, run the engine, publish drafts, score matches. No real database."
+>
+  <PageHeader
+    title="Organizer Sandbox"
+    subtitle="Play the organizer flow with no real database behind it. Drag the queue, run the engine, publish drafts, score matches — every action narrates itself in the right-hand console."
+    phase={9}
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-6" data-pagefind-ignore>
+    {/*
+      client:load — hydrate immediately on page load. The sandbox is the
+      whole point of the page; lazy hydration would just delay interactivity.
+    */}
+    <SandboxRoot client:load />
+  </div>
+</BaseLayout>

@@ -7,7 +7,21 @@
 
 ## SESSION STATE (Last Updated: 2026-05-10)
 
-### What Was Accomplished This Session — Integration Testing Phases 1–3 + Documentation
+### What Was Accomplished This Session — Digital Twin: Organizer Sandbox (3 phases)
+
+**Digital Twin sandbox at `/sandbox` — interactive playground built as a React Astro Island.** Lets users play organizer without touching a real DB.
+
+- **Phase 1** — Foundation: installed `@astrojs/react` + `react` + `react-dom` + `@types/react*`. (Tried `@astrojs/preact` first; hit unresolvable `astro:preact:opts` against Astro 5.18.1 — switched to React.) Tsconfig override required: `jsx: "react-jsx"` + `jsxImportSource: "react"` because `astro/tsconfigs/base.json` sets `jsx: "preserve"` and esbuild emitted classic `React.createElement` without `import React`. Built state machine: `state/types.ts` (discriminated-union actions, Player/Match/Team/LogEntry/SandboxState, `pairKey()` helper), `state/seed.ts` (10 mock players, real-engine config defaults), `state/reducer.ts` (14 action types + exhaustiveness check, `withLog` helper, recursive `PUBLISH_ALL_DRAFTS` reuses publish guards), `engine/mockMatchmaking.ts` (narrates real algorithm: queue scan → capacity → pool diversity → greedy 3-split partnership cap), `state/useSandbox.ts` (memoized actions hook).
+- **Phase 2** — Mock app UI (left column) using `@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/modifiers`. Components: `QueueRow` (drag handle, skill chip, status badge, pause/leave actions), `QueuePanel` (DndContext + SortableContext, `restrictToVerticalAxis + restrictToParentElement` modifiers, PointerSensor with 5px activation distance + KeyboardSensor for a11y), `MatchCard` (status-specific actions: publish/cancel for draft, start/cancel for pending, score inputs for in_progress, terminal readout for completed), `MatchBoard` (3-column: Drafts / On Deck / Active + Recent footer), `SimulationFrame` (corner "SIMULATION" tag with pulsing dot + config readout + reset).
+- **Phase 3** — Action logger (right column). Terminal-style: HH:mm:ss.sss timestamps, level-coloured prompts (engine=▸ accent, info=· ink, warn=⚠, error=✗, debug=· dim), level filter chips with counts, sticky-tail auto-scroll with "↓ jump to latest" pill when user scrolls up, `role="log" aria-live="polite"` for screen reader announcements.
+- **Reducer cleanup:** swapped `_logSeq` module counter for `crypto.randomUUID()` log IDs (closes Phase 1 review's impure-reducer note). Added `START_MATCH` left-player guard. `LEAVE_QUEUE` refuses for `on_deck`/`in_progress` players. Engine: rotation bails out when `pool.length === 4` (rotating 4 elements yields the same 3 unordered splits).
+- **Layout:** 2-column grid `lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]`, right column `lg:sticky lg:top-6`, mobile stacked.
+- **Files added (under `digital-twin/src/sandbox/`):** `state/{types,seed,reducer,useSandbox}.ts`, `engine/mockMatchmaking.ts`, `components/{QueueRow,QueuePanel,MatchCard,MatchBoard,SimulationFrame,ActionLogger}.tsx`, `SandboxRoot.tsx`. Plus `pages/sandbox.astro` (`client:load`), `Nav.astro` (new "Interactive" section).
+- **Bundle:** `SandboxRoot.*.js` ~76kB raw / ~22kB gzip. `client.*.js` (React runtime) ~183kB / ~58kB gzip. Acceptable for an opt-in interactive page.
+- **Build verified:** `npm run build` green; SSR pre-renders all 10 seeded players + every panel header.
+- **Auto-deploy:** Vercel GitHub webhook (wired up earlier this week) will rebuild `digital-twin-phi-three.vercel.app` on push.
+
+### What Was Accomplished Earlier This Session — Integration Testing Phases 1–3 + Documentation
 
 **Integration testing Phase 1 complete and committed (ac2a4a1, not yet pushed).**
 
