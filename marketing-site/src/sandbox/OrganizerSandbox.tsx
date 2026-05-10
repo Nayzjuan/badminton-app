@@ -51,6 +51,7 @@ type Match = {
   teamA: readonly [string, string];
   teamB: readonly [string, string];
   status: MatchStatus;
+  createdAt: number; // used for auto-promote ordering (oldest on_deck promotes first)
   scoreA?: number;
   scoreB?: number;
 };
@@ -76,6 +77,39 @@ type Action =
   | { type: "SWAP_TAP"; target: SwapTarget }
   | { type: "SWAP_CANCEL" }
   | { type: "RESET" };
+
+// ── Demo config — mirrors the real app defaults ───────────────────────────────
+const COURTS = 2; // max concurrent active matches
+const MAX_AUTO_DRAFTS = 2; // max (drafts + on_deck) at any time
+
+// ── autoPromote — fills free courts from on_deck, oldest first ────────────────
+// Mirrors promoteOnDeckMatchInternal in the real app. Fires after PUBLISH and
+// FINISH so courts fill automatically without a manual "Start" click.
+function autoPromote(state: State): State {
+  const activeCount = state.matches.filter((m) => m.status === "active").length;
+  const freeCourts = COURTS - activeCount;
+  if (freeCourts <= 0) return state;
+
+  const pending = state.matches
+    .filter((m) => m.status === "on_deck")
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  if (pending.length === 0) return state;
+
+  let s = state;
+  for (const match of pending.slice(0, freeCourts)) {
+    const players = { ...s.players };
+    [...match.teamA, ...match.teamB].forEach((id) => {
+      players[id] = { ...players[id], status: "playing" };
+    });
+    s = {
+      ...s,
+      players,
+      matches: s.matches.map((m) => (m.id === match.id ? { ...m, status: "active" as const } : m)),
+    };
+  }
+  return s;
+}
 
 // ── Seed data ─────────────────────────────────────────────────────────────────
 const SEED: ReadonlyArray<{ name: string; skill: Skill }> = [
@@ -116,26 +150,34 @@ function reducer(state: State, action: Action): State {
     }
 
     case "GENERATE": {
+      // Cap: (existing drafts + on_deck) must be < MAX_AUTO_DRAFTS to open slots.
+      // Active courts don't count — they're already committed.
+      const existingDrafts = state.matches.filter((m) => m.status === "draft").length;
+      const existingOnDeck = state.matches.filter((m) => m.status === "on_deck").length;
+      const slotsAvailable = MAX_AUTO_DRAFTS - (existingDrafts + existingOnDeck);
+      if (slotsAvailable <= 0) return state;
+
       const waiting = state.queue.filter((id) => state.players[id]?.status === "waiting");
       if (waiting.length < 4) return state;
-      // Only one draft at a time (matches real app's single-draft-per-run flow)
-      if (state.matches.some((m) => m.status === "draft")) return state;
-      // Cap: max 2 concurrent live matches (on_deck + active)
-      const live = state.matches.filter(
-        (m) => m.status === "on_deck" || m.status === "active"
-      ).length;
-      if (live >= 2) return state;
 
-      const [a0, a1, b0, b1] = waiting;
-      const nextCounter = state.matchCounter + 1;
-      const match: Match = {
-        id: `m${nextCounter}`,
-        teamA: [a0, a1],
-        teamB: [b0, b1],
-        status: "draft",
-        // Draft: players stay "waiting" — draft is invisible to players
-      };
-      return { ...state, matches: [...state.matches, match], matchCounter: nextCounter };
+      // Generate as many drafts as slots allow, each consuming 4 players
+      const newMatches: Match[] = [];
+      let counter = state.matchCounter;
+      const ts = Date.now();
+      for (let i = 0; i < slotsAvailable; i++) {
+        const pool = waiting.slice(i * 4, i * 4 + 4);
+        if (pool.length < 4) break;
+        counter++;
+        newMatches.push({
+          id: `m${counter}`,
+          teamA: [pool[0], pool[1]],
+          teamB: [pool[2], pool[3]],
+          status: "draft",
+          createdAt: ts + i, // small offset ensures stable oldest-first ordering
+        });
+      }
+      if (newMatches.length === 0) return state;
+      return { ...state, matches: [...state.matches, ...newMatches], matchCounter: counter };
     }
 
     case "PUBLISH": {
@@ -145,16 +187,20 @@ function reducer(state: State, action: Action): State {
       [...match.teamA, ...match.teamB].forEach((id) => {
         players[id] = { ...players[id], status: "on_deck" };
       });
-      return {
+      const publishedState = {
         ...state,
         players,
         matches: state.matches.map((m) =>
-          m.id === action.matchId ? { ...m, status: "on_deck" } : m
+          m.id === action.matchId ? { ...m, status: "on_deck" as const } : m
         ),
       };
+      // Auto-promote: if a court is free, start this match immediately.
+      // Mirrors promoteOnDeckMatchInternal in the real app.
+      return autoPromote(publishedState);
     }
 
     case "START": {
+      // Manual override — keep for edge cases but auto-promote handles the normal flow
       const match = state.matches.find((m) => m.id === action.matchId);
       if (!match || match.status !== "on_deck") return state;
       const players = { ...state.players };
@@ -185,33 +231,39 @@ function reducer(state: State, action: Action): State {
       // Return players to the back of the queue
       const idSet = new Set(ids);
       const newQueue = [...state.queue.filter((id) => !idSet.has(id)), ...ids];
-      return {
+      const completedState = {
         ...state,
         players,
         queue: newQueue,
         matches: state.matches.map((m) =>
           m.id === action.matchId
-            ? { ...m, status: "completed", scoreA: action.scoreA, scoreB: action.scoreB }
+            ? { ...m, status: "completed" as const, scoreA: action.scoreA, scoreB: action.scoreB }
             : m
         ),
       };
+      // Auto-promote: court just freed — pull in the next on_deck match.
+      // Mirrors promoteOnDeckMatchInternal in the real app's endMatchAction.
+      return autoPromote(completedState);
     }
 
     case "CANCEL": {
       const match = state.matches.find((m) => m.id === action.matchId);
       if (!match) return state;
+      const wasActive = match.status === "active";
       const players = { ...state.players };
       if (match.status === "on_deck" || match.status === "active") {
         [...match.teamA, ...match.teamB].forEach((id) => {
           players[id] = { ...players[id], status: "waiting" };
         });
       }
-      return {
+      const cancelledState = {
         ...state,
         players,
         matches: state.matches.filter((m) => m.id !== action.matchId),
         swapPick: null,
       };
+      // Auto-promote only when an active match is cancelled (court freed).
+      return wasActive ? autoPromote(cancelledState) : cancelledState;
     }
 
     case "SWAP_TAP": {
@@ -496,7 +548,7 @@ function DraftCard({
           className="flex-1 rounded-md bg-accent py-1.5 font-mono text-xs font-medium transition-colors hover:bg-accent-hi"
           style={{ color: "var(--color-base)" }}
         >
-          ▸ publish
+          ▸ publish → call to court
         </button>
         <button
           type="button"
@@ -736,15 +788,15 @@ export default function OrganizerSandbox() {
 
   const liveCount = drafts.length + onDeckMatches.length + activeMatches.length;
 
-  const canGenerate =
-    waitingCount >= 4 && drafts.length === 0 && onDeckMatches.length + activeMatches.length < 2;
+  // Generate is available whenever there are open draft slots AND enough waiting players.
+  // Cap mirrors the real engine: (existingDrafts + onDeck) < MAX_AUTO_DRAFTS.
+  const draftSlotsFree = MAX_AUTO_DRAFTS - (drafts.length + onDeckMatches.length);
+  const canGenerate = waitingCount >= 4 && draftSlotsFree > 0;
 
   const generateTitle = !canGenerate
-    ? drafts.length > 0
-      ? "Publish your draft first"
-      : onDeckMatches.length + activeMatches.length >= 2
-        ? "Both courts occupied"
-        : `Need ${Math.max(0, 4 - waitingCount)} more waiting player${Math.max(0, 4 - waitingCount) === 1 ? "" : "s"}`
+    ? draftSlotsFree <= 0
+      ? "Draft queue full — publish or start a match to open a slot"
+      : `Need ${Math.max(0, 4 - waitingCount)} more waiting player${Math.max(0, 4 - waitingCount) === 1 ? "" : "s"}`
     : "Generate a draft match";
 
   return (
