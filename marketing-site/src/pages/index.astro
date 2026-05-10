@@ -24,13 +24,6 @@ import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
 
         <!-- Left: headline + CTAs -->
         <div class="max-w-2xl">
-          <div class="inline-flex items-center gap-2 rounded-full border border-accent-ring/50 bg-accent-wash px-3 py-1 mb-6">
-            <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent dt-pulse" aria-hidden="true"></span>
-            <span class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
-              Private Beta · Badminton Communities
-            </span>
-          </div>
-
           <h1 class="font-heading font-bold leading-[0.95] tracking-tight text-ink mb-6"
               style="font-size: clamp(3rem, 8vw, 6rem);">
             Automate Your<br/>
@@ -49,11 +42,6 @@ import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
                       hover:border-accent hover:text-accent transition-colors duration-75">
               Try the Demo
               <span aria-hidden="true">↓</span>
-            </a>
-            <a href="#contact"
-               class="inline-flex items-center gap-2 rounded-xl border border-edge bg-raised px-6 py-3 font-heading font-bold text-base text-ink-2
-                      hover:border-edge-hi hover:text-ink transition-colors duration-75">
-              Contact for Early Access
             </a>
           </div>
         </div>
@@ -234,101 +222,9 @@ import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
     </div>
   </section>
 
-  <!-- ═══════════════════════════════════════════════════════════════
-       CONTACT / EARLY ACCESS
-  ══════════════════════════════════════════════════════════════════ -->
-  <section id="contact" class="px-6 py-24 border-t border-edge-dim scroll-mt-14">
-    <div class="mx-auto max-w-2xl text-center">
-
-      <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-4">Early Access</p>
-      <h2 class="font-heading font-bold text-ink mb-4"
-          style="font-size: clamp(2rem, 5vw, 3.5rem);">
-        Ready to transform<br/>your sessions?
-      </h2>
-      <p class="text-ink-3 text-sm leading-relaxed mb-10 max-w-lg mx-auto">
-        We're onboarding a small number of badminton communities in this beta phase.
-        Drop us a message with your club size and location — we'll be in touch within 48 hours.
-      </p>
-
-      <!-- Contact form — replace formspree placeholder ID before launch -->
-      <!-- TODO: swap "placeholder" for a real Formspree form ID         -->
-      <form
-        method="POST"
-        action="https://formspree.io/f/placeholder"
-        class="flex flex-col gap-4 text-left"
-        data-marketing-form
-      >
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label class="flex flex-col gap-1.5">
-            <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Your name</span>
-            <input
-              type="text"
-              name="name"
-              placeholder="Alex"
-              required
-              class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
-                     focus:outline-none focus:border-accent transition-colors"
-            />
-          </label>
-          <label class="flex flex-col gap-1.5">
-            <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Email</span>
-            <input
-              type="email"
-              name="email"
-              placeholder="you@club.com"
-              required
-              class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
-                     focus:outline-none focus:border-accent transition-colors"
-            />
-          </label>
-        </div>
-        <label class="flex flex-col gap-1.5">
-          <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Club / community name</span>
-          <input
-            type="text"
-            name="club"
-            placeholder="Southside Badminton Club"
-            class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
-                   focus:outline-none focus:border-accent transition-colors"
-          />
-        </label>
-        <label class="flex flex-col gap-1.5">
-          <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Message (optional)</span>
-          <textarea
-            name="message"
-            rows={3}
-            placeholder="How many players do you typically run? Any specific challenges with your current setup?"
-            class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
-                   focus:outline-none focus:border-accent transition-colors resize-none"
-          ></textarea>
-        </label>
-
-        <button
-          type="submit"
-          class="rounded-xl bg-accent-wash border border-accent-ring px-8 py-3.5 font-heading font-bold text-base text-accent-hi
-                 hover:border-accent hover:text-accent transition-colors duration-75 self-center mt-2"
-        >
-          Request Early Access →
-        </button>
-      </form>
-
-      <p class="mt-6 text-[11px] text-ink-4">
-        Or email directly:
-        <a href="mailto:miggy.0107@gmail.com" class="text-ink-3 hover:text-accent transition-colors ml-1">
-          miggy.0107@gmail.com
-        </a>
-      </p>
-    </div>
-  </section>
-
 </BaseLayout>
 
 <style>
   /* dt-pulse is defined in global.css — available here */
   /* Smooth anchor-link scrolling already set on <html> via scroll-smooth */
-
-  /* Input focus ring uses accent without using outline */
-  input:focus, textarea:focus {
-    box-shadow: 0 0 0 2px oklch(33% 0.095 155 / 0.4);
-  }
 </style>
