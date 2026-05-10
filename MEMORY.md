@@ -5,9 +5,32 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-09)
+## SESSION STATE (Last Updated: 2026-05-10)
 
-### What Was Accomplished This Session — Cross-Session Awards (B+E) ALL PHASES COMPLETE
+### What Was Accomplished This Session — Integration Testing Phases 1–3 + Documentation
+
+**Integration testing Phase 1 complete and committed (ac2a4a1, not yet pushed).**
+
+- Separate `vitest.integration.config.ts` (env: node, fileParallelism: false, 30s timeout, coverage to `coverage/integration/`)
+- `tests/integration/global-setup.ts` — checks local Supabase is running, applies migrations
+- `tests/integration/setup.ts` — per-worker env load + Option B auth mock (Proxy wrapping real service-role client, overrides `auth.getUser()` via `authState.currentUserId`)
+- `tests/integration/helpers/mock-auth.ts` — `mockAuthAs(userId)` returns restore fn
+- `tests/integration/helpers/withTx.ts` — pg savepoint wrapper (Layer A)
+- `tests/integration/helpers/truncate.ts` — FK-safe per-table DELETE cleanup (Layer B) with production URL safety guard; `truncateTracked()` for auto-cleanup after `makeProfile()`
+- `tests/integration/factories/index.ts` — `makeProfile` (auth.admin.createUser + profiles upsert), `makeSession` (sessions + session_organizers insert), `makeQueueEntry`
+- `tests/integration/health.test.ts` — 4 smoke tests: DB connectivity, profile insert, session+organizer, truncate cleanup verification
+- `tests/integration/auth.real.test.ts` — single real auth roundtrip drift-detector
+- `.github/workflows/integration-tests.yml` — CI job with supabase start, `supabase status --output json` parsed with jq space-delimited keys (`"API URL"`, `"anon key"`, `"service_role key"`, `"DB URL"`)
+- `tests/integration/env.example` — committed template (local Supabase keys)
+- `package.json` — added `test:integration`, `test:integration:watch`, `test:integration:coverage` scripts
+- devDependencies: `@faker-js/faker`, `pg`, `@types/pg`
+- `INTEGRATION_TESTING_PLAN.md` committed to repo
+
+**Code review verdict:** Found 1 critical bug (jq selectors used underscore names; Supabase CLI uses spaces) — fixed. 2 minor issues (stale comment + README example) — fixed. Final: LGTM.
+
+**Integration testing fully complete.** SSH push is configured (no more PAT workflow-scope issues). All 3 phases shipped, pushed, and documented.
+
+### What Was Accomplished (Previous Session — Cross-Session Awards) ALL PHASES COMPLETE
 
 **Cross-session awards (B+E) — all 4 phases shipped.**
 
@@ -60,12 +83,13 @@
 
 ### Immediate Next Steps
 
-- (Optional) Add new Wrapped award metadata to `tests/unit/` or scaffold a per-award smoke test that verifies trigger conditions against a synthetic session.
-- (Optional) Leaderboard Direction A — plan exists at `~/.claude/plans/idempotent-meandering-wigderson.md`. Fonts, YouStrip, LeaderboardPodium, StadiumLeaderboardRow, leaderboard-page.tsx Stadium branch — all new files, no existing files modified.
-- Apply the P0–P1 UX fixes from DASHBOARD_UX_AUDIT.md: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
-- Update `simulate-engine.ts` to use `MAX_AUTO_DRAFTS` instead of `ON_DECK_LOOKAHEAD`/`MAX_ON_DECK_MATCHES`, then deprecate the two old constants.
-- Optional: drop `v_recent_pairings` view from DB in a new migration.
-- Optional: clean up unused `opp_a` / `opp_b` columns in the Wrapped RPC's `match_opponent_pairs` CTE.
+- **[ACTION NEEDED] Set PR-block branch protection on GitHub** — Settings → Branches → require "Integration Tests" CI check to pass on `main`. Activate once CI has been green for 10 consecutive runs over 2 days (<1 flake, as per INTEGRATION_TESTING_PLAN.md Decision #4).
+- (Optional) **Leaderboard Direction A** — plan at `~/.claude/plans/idempotent-meandering-wigderson.md`. All new files, no existing modified.
+- (Optional) Apply P0–P1 UX fixes from `DASHBOARD_UX_AUDIT.md`: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
+- (Optional) Update `simulate-engine.ts` to use `MAX_AUTO_DRAFTS` instead of `ON_DECK_LOOKAHEAD`/`MAX_ON_DECK_MATCHES`, then deprecate the two old constants.
+- (Optional) Drop `v_recent_pairings` view from DB in a new migration.
+- (Optional) Clean up unused `opp_a` / `opp_b` columns in the Wrapped RPC's `match_opponent_pairs` CTE.
+- (Post-MVP) PIN reconnect integration tests (`migrate_player_identity`) — explicitly deferred.
 
 ---
 

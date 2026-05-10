@@ -1006,6 +1006,43 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling              |
 | I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session simulation, engine under load                  |
 
+### Integration Tests (Vitest against local Supabase)
+
+- **Location:** `tests/integration/`
+- **Run:** `npm run test:integration` (requires `supabase start`)
+- **Config:** `vitest.integration.config.ts` — separate from unit tests, `fileParallelism: false` for DB safety
+- **Coverage thresholds:** 85% lines/functions/statements, 70% branches per-file (tightened in Phase 3)
+- **Setup:** Copy `tests/integration/env.example` → `tests/integration/.env`, fill from `supabase status`
+- **See:** `tests/integration/README.md` for full contributor guide
+
+**Auth mock (Option B):** `@/utils/supabase/server` is replaced by a Proxy wrapping a real service-role client. `auth.getUser()` is intercepted and returns whatever `mockAuthAs(userId)` sets. All DB writes use the real service-role client, so RLS policies and RPCs exercise the real schema.
+
+**Three isolation layers:**
+
+| Layer | Helper | Default for |
+| ----- | ------ | ----------- |
+| A — Savepoint | `withTx(fn)` | Schema-parity catalog queries |
+| B — Truncate | `truncateTracked()` in `afterEach` | All Server Action suites |
+| C — DB reset | `supabase db reset` (CI only) | Full CI run cleanup |
+
+**Suites (56 tests total across 10 files):**
+
+| Suite | Tests | Covers |
+| ----- | ----- | ------- |
+| `health.test.ts` | 4 | Harness smoke — connectivity, factory, cleanup |
+| `auth.real.test.ts` | 1 | Mock drift detector — real auth roundtrip |
+| `matchmaking.test.ts` | 8 | Engine: draft mode, partnership cap, mixed-skill, Red Zone, draft cap, TOCTOU, `hasDraftsBlocking` |
+| `close-session.test.ts` | 7 | `closeSession` + Wrapped pipeline: auth, idempotency, cross-session stats accumulation |
+| `publish-match.test.ts` | 8 | Draft publish, queue transitions, RLS firewall, `publishAll`, `hasDraftsBlocking` |
+| `concurrency.test.ts` | 3 | Concurrent publish idempotency, engine in-process serialisation, CAS double-promote guard |
+| `rls-edge-cases.test.ts` | 6 | Anon read/write blocked, cross-session organiser isolation |
+| `score-submission.test.ts` | 8 | `endMatchAction` cascade: completed → re-queued → court freed → leaderboard |
+| `schema-parity.test.ts` | 13 | All 8 key RPCs, 2 tables, 2 columns, 1 materialized view confirmed via `pg_catalog` |
+| `performance.test.ts` | 1 | `closeSession` on 12-player/30-match session < 7s |
+
+**Factories (`tests/integration/factories/index.ts`):**
+`makeProfile`, `makeSession`, `makeQueueEntry`, `makeCourt`, `makeMatch`, `makeCompletedMatch`, `enableAutoMatchmaking`, `ageQueueEntry`
+
 ### Test Helpers
 
 - `tests/helpers/teardown.ts` — `resetSandboxSession()`, `seedSession()` — sandbox cleanup and seeding
