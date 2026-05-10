@@ -205,8 +205,8 @@ import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
           </h2>
         </div>
         <p class="text-xs text-ink-4 max-w-xs leading-relaxed">
-          Drag players to prioritize them. Click Generate Match to run a draft.
-          Start and finish matches to see the rotation in action.
+          Drag players to reorder the queue. Generate a draft, publish it, start the match,
+          submit a score. Tap any player name in a match to swap positions.
         </p>
       </div>
 
@@ -214,7 +214,7 @@ import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
       <!-- client:visible defers hydration until the sandbox scrolls into view.
            The hero, features, and how-it-works sections are above the fold and
            fully static — no reason to load the React+dnd-kit bundle at TTI. -->
-      <OrganizerSandbox client:visible />
+      <OrganizerSandbox client:idle />
 
       <p class="mt-4 text-[11px] text-ink-4 font-mono text-center">
         Demo only · All data is local to your browser · Nothing is stored
