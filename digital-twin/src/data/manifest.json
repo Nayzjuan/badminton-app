@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-05-08T16:15:00.781Z",
+  "_lastExtracted": "2026-05-10T06:50:01.439Z",
   "tables": [
     {
       "name": "profiles",
@@ -566,6 +566,128 @@
           "name": "intro_dismissed_at",
           "type": "string",
           "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "carry_forward",
+          "type": "Record<string, unknown>",
+          "nullable": false,
+          "note": "Small payload written at session close, read by next session's RPC. Shape: { ended_on_win_streak: number, session_win_pct: number, session_id: string }"
+        }
+      ]
+    },
+    {
+      "name": "player_rivalries",
+      "typeName": "PlayerRivalry",
+      "desc": "player_rivalries table — running all-time H2H ledger between players (directional)",
+      "columns": [
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "rival_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wins_vs",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "losses_vs",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "sessions_faced",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "last_session_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "last_faced_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "player_partnerships",
+      "typeName": "PlayerPartnership",
+      "desc": "player_partnerships table — running all-time partnership ledger between players (directional)",
+      "columns": [
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "partner_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "games_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wins_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "losses_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "sessions_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "last_session_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "last_played_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "string",
+          "nullable": false,
           "note": ""
         }
       ]
@@ -1197,6 +1319,18 @@
     },
     {
       "name": "compute_session_wrapped",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "refresh_cross_session_stats",
       "returns": "void",
       "args": [
         {
