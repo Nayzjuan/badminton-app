@@ -105,15 +105,17 @@ const pageTitle = title === 'Badminton App · Digital Twin'
       window.__mermaid = mermaid;
     </script>
 
-    <!-- Mobile nav backdrop close -->
+    <!-- Mobile nav backdrop close — only acts when the mobile drawer is open.
+         Never touches inline transform (which would override the desktop
+         `fixed left-0 top-0 bottom-0` positioning and make the sidebar
+         appear to "scroll out"). -->
     <script>
       document.addEventListener('click', (e) => {
-        const nav    = document.getElementById('side-nav');
+        const nav = document.getElementById('side-nav');
+        if (!nav || !nav.classList.contains('mobile-open')) return;
         const toggle = document.getElementById('mobile-nav-toggle');
-        if (nav && toggle && !nav.contains(e.target) && !toggle.contains(e.target)) {
-          nav.classList.remove('mobile-open');
-          nav.style.transform = 'translateX(-100%)';
-        }
+        if (nav.contains(e.target) || (toggle && toggle.contains(e.target))) return;
+        nav.classList.remove('mobile-open');
       });
     </script>
 

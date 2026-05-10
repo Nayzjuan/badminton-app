@@ -216,4 +216,11 @@ kbd {
   .mobile-top-bar {
     display: none;
   }
+  /* Desktop sidebar guardrail — defensive override against any inline
+     `transform: translateX(...)` left over from mobile drawer JS. The nav
+     uses `position: fixed` with all four edges anchored, so it stays
+     pinned to the viewport while main content scrolls independently. */
+  #side-nav {
+    transform: none !important;
+  }
 }
