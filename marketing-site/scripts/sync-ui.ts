@@ -75,15 +75,25 @@ function replaceThemeBlock(target: string, freshBlock: string): string {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 function run(): void {
-  // Guard: source must exist. If digital-twin isn't present (e.g. someone
-  // cloned only the marketing-site folder), fail loudly with instructions.
+  // Guard: source must exist.
+  //
+  // Two valid cases where it won't:
+  //   1. CLI `vercel --prod` deploy — only uploads marketing-site/, not the
+  //      full monorepo. The global.css already has synced tokens from the
+  //      last local run, so the build is safe to continue unchanged.
+  //   2. Shallow or partial clone of the repo.
+  //
+  // In both cases we skip with a warning (exit 0) rather than failing the
+  // build. GitHub-integrated deploys DO get the full monorepo, so sync runs
+  // correctly there.
   if (!existsSync(SOURCE_CSS)) {
-    console.error(
-      "[sync-ui] ERROR: Cannot find digital-twin CSS at:",
+    console.warn(
+      "[sync-ui] WARN: digital-twin CSS not found at",
       SOURCE_CSS,
-      "\n         Ensure the full badminton-app repository is checked out."
+      "— skipping sync, using committed tokens.",
+      "\n         (Expected on CLI-only or partial-clone deploys.)"
     );
-    process.exit(1);
+    return; // exit 0 — build continues with the last committed tokens
   }
 
   console.log("[sync-ui] Reading OKLCH tokens from digital-twin…");
