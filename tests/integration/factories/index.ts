@@ -75,18 +75,16 @@ export async function makeProfile({
   pin,
 }: MakeProfileOptions): Promise<ProfileResult> {
   const client = serviceClient();
-  const name =
-    displayName ?? `${faker.person.firstName()} ${faker.person.lastName()}`;
+  const name = displayName ?? `${faker.person.firstName()} ${faker.person.lastName()}`;
   const profilePin = pin ?? faker.string.numeric(4);
 
   // Create auth user (email-less anonymous-style user via admin API)
-  const { data: authData, error: authError } =
-    await client.auth.admin.createUser({
-      email: `test-${Date.now()}-${Math.random().toString(36).slice(2)}@integration.local`,
-      password: "integration-test-password",
-      email_confirm: true,
-      user_metadata: { display_name: name },
-    });
+  const { data: authData, error: authError } = await client.auth.admin.createUser({
+    email: `test-${Date.now()}-${Math.random().toString(36).slice(2)}@integration.local`,
+    password: "integration-test-password",
+    email_confirm: true,
+    user_metadata: { display_name: name },
+  });
 
   if (authError || !authData.user) {
     throw new Error(
@@ -151,8 +149,7 @@ export async function makeSession({
   scoring = "single",
 }: MakeSessionOptions): Promise<SessionResult> {
   const client = serviceClient();
-  const sessionName =
-    name ?? `Integration Test Session ${faker.string.numeric(4)}`;
+  const sessionName = name ?? `Integration Test Session ${faker.string.numeric(4)}`;
 
   // Only pass fields defined in SessionInsert
   // (is_active, is_auto_matchmaking_on, etc. use DB defaults)
@@ -228,4 +225,237 @@ export async function makeQueueEntry({
   }
 
   return { id: entry.id };
+}
+
+// ── makeCourt ─────────────────────────────────────────────────
+
+export interface MakeCourtOptions {
+  /** Session UUID. */
+  sessionId: string;
+  /** Court name, e.g. "Court 1". */
+  name: string;
+  /** Court status. Defaults to "available". The engine ignores "closed" courts. */
+  status?: "available" | "in_use" | "closed";
+}
+
+/**
+ * Inserts a courts row for the given session.
+ * The matchmaking engine requires at least one non-closed court to run.
+ */
+export async function makeCourt({
+  sessionId,
+  name,
+  status = "available",
+}: MakeCourtOptions): Promise<{ id: string }> {
+  const client = serviceClient();
+
+  const { data: court, error } = await client
+    .from("courts")
+    .insert({ session_id: sessionId, name, status })
+    .select("id")
+    .single();
+
+  if (error || !court) {
+    throw new Error(`[makeCourt] Failed to insert court: ${error?.message ?? "no data"}`);
+  }
+
+  return { id: court.id };
+}
+
+// ── makeMatch ─────────────────────────────────────────────────
+
+export interface MakeMatchOptions {
+  /** Session UUID. */
+  sessionId: string;
+  /** Team A player UUIDs — exactly 2. */
+  teamA: [string, string];
+  /** Team B player UUIDs — exactly 2. */
+  teamB: [string, string];
+  /** Optional court UUID. Defaults to null (on-deck / pending). */
+  courtId?: string | null;
+  /** Match status. Defaults to "pending". */
+  status?: "pending" | "in_progress" | "completed" | "cancelled";
+  /** Whether the match is published (visible to players). Defaults to false (draft). */
+  isPublished?: boolean;
+  /** Whether the match is mixed level. Defaults to false. */
+  isMixedLevel?: boolean;
+}
+
+export interface MatchResult {
+  /** The new match's UUID. */
+  id: string;
+}
+
+/**
+ * Inserts a match + 4 match_players rows.
+ * Used to seed in-progress / completed / pending matches for testing
+ * matchmaking partnership counts, TOCTOU guards, and close-session logic.
+ */
+export async function makeMatch({
+  sessionId,
+  teamA,
+  teamB,
+  courtId = null,
+  status = "pending",
+  isPublished = false,
+  isMixedLevel = false,
+}: MakeMatchOptions): Promise<MatchResult> {
+  const client = serviceClient();
+
+  const { data: match, error: matchError } = await client
+    .from("matches")
+    .insert({
+      session_id: sessionId,
+      court_id: courtId,
+      status,
+      is_published: isPublished,
+      is_mixed_level: isMixedLevel,
+      origin: "manual",
+    })
+    .select("id")
+    .single();
+
+  if (matchError || !match) {
+    throw new Error(`[makeMatch] Failed to insert match: ${matchError?.message ?? "no data"}`);
+  }
+
+  // Insert 4 match_players rows
+  const players = [
+    { match_id: match.id, player_id: teamA[0], team: "a" as const },
+    { match_id: match.id, player_id: teamA[1], team: "a" as const },
+    { match_id: match.id, player_id: teamB[0], team: "b" as const },
+    { match_id: match.id, player_id: teamB[1], team: "b" as const },
+  ];
+
+  const { error: playersError } = await client.from("match_players").insert(players);
+
+  if (playersError) {
+    throw new Error(
+      `[makeMatch] Failed to insert match_players for match ${match.id}: ${playersError.message}`
+    );
+  }
+
+  return { id: match.id };
+}
+
+// ── makeCompletedMatch ────────────────────────────────────────
+
+export interface MakeCompletedMatchOptions {
+  /** Session UUID. */
+  sessionId: string;
+  /** Team A player UUIDs — exactly 2. */
+  teamA: [string, string];
+  /** Team B player UUIDs — exactly 2. */
+  teamB: [string, string];
+  /** Team A score. Defaults to 21. */
+  scoreA?: number;
+  /** Team B score. Defaults to 15. */
+  scoreB?: number;
+  /** Optional court UUID. */
+  courtId?: string | null;
+}
+
+/**
+ * Inserts a completed match with scores and match_players.
+ * Used to seed session history for testing:
+ *   • Partnership cap (fetchPartnershipCounts reads completed matches)
+ *   • closeSession → refresh_cross_session_stats / compute_session_wrapped
+ *   • Cross-session arithmetic tests
+ */
+export async function makeCompletedMatch({
+  sessionId,
+  teamA,
+  teamB,
+  scoreA = 21,
+  scoreB = 15,
+  courtId = null,
+}: MakeCompletedMatchOptions): Promise<MatchResult> {
+  const client = serviceClient();
+
+  // Insert with only MatchInsert-compatible fields first
+  const { data: match, error: matchError } = await client
+    .from("matches")
+    .insert({
+      session_id: sessionId,
+      court_id: courtId,
+      status: "completed",
+      is_published: true,
+      is_mixed_level: false,
+      origin: "auto",
+      started_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (matchError || !match) {
+    throw new Error(
+      `[makeCompletedMatch] Failed to insert match: ${matchError?.message ?? "no data"}`
+    );
+  }
+
+  // Update with score fields (MatchUpdate includes team_a_score, team_b_score, completed_at)
+  const { error: updateError } = await client
+    .from("matches")
+    .update({
+      team_a_score: scoreA,
+      team_b_score: scoreB,
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", match.id);
+
+  if (updateError) {
+    throw new Error(
+      `[makeCompletedMatch] Failed to update scores for match ${match.id}: ${updateError.message}`
+    );
+  }
+
+  const players = [
+    { match_id: match.id, player_id: teamA[0], team: "a" as const },
+    { match_id: match.id, player_id: teamA[1], team: "a" as const },
+    { match_id: match.id, player_id: teamB[0], team: "b" as const },
+    { match_id: match.id, player_id: teamB[1], team: "b" as const },
+  ];
+
+  const { error: playersError } = await client.from("match_players").insert(players);
+
+  if (playersError) {
+    throw new Error(
+      `[makeCompletedMatch] Failed to insert match_players for match ${match.id}: ${playersError.message}`
+    );
+  }
+
+  return { id: match.id };
+}
+
+// ── enableAutoMatchmaking ─────────────────────────────────────
+
+/**
+ * Enables auto-matchmaking for a session via direct DB update.
+ * `SessionInsert` doesn't include `is_auto_matchmaking_on`, so
+ * this helper updates it separately after session creation.
+ */
+export async function enableAutoMatchmaking(sessionId: string): Promise<void> {
+  const { error } = await serviceClient()
+    .from("sessions")
+    .update({ is_auto_matchmaking_on: true })
+    .eq("id", sessionId);
+  if (error) {
+    throw new Error(`[enableAutoMatchmaking] ${error.message}`);
+  }
+}
+
+/**
+ * Sets joined_at for a queue entry to a specific number of minutes ago.
+ * Used to simulate Red Zone (> CRITICAL_WAIT_MINUTES = 25) or
+ * last-resort fallback (> FALLBACK_WAIT_MINUTES = 15) scenarios.
+ */
+export async function ageQueueEntry(entryId: string, minutesAgo: number): Promise<void> {
+  const joinedAt = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+  const { error } = await serviceClient()
+    .from("queue_entries")
+    .update({ joined_at: joinedAt })
+    .eq("id", entryId);
+  if (error) {
+    throw new Error(`[ageQueueEntry] ${error.message}`);
+  }
 }
