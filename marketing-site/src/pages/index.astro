@@ -1,20 +1,330 @@
 ---
-// Phase 3 will rewrite this file with the full marketing landing page.
-// Keeping a clean placeholder so the build passes in Phase 1.
 import BaseLayout from '../layouts/BaseLayout.astro';
+import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
 ---
 
 <BaseLayout
   title="Badminton Queue App"
-  description="Automate your badminton queue. Smart matchmaking, real-time scoreboards, fair-play caps."
+  description="Automate your badminton queue. Smart matchmaking, real-time scoreboards, fair-play caps. No more whiteboards."
 >
-  <div class="flex items-center justify-center min-h-[60vh] px-6">
-    <div class="text-center space-y-3">
-      <p class="font-mono text-xs uppercase tracking-widest text-accent">coming soon</p>
-      <h1 class="font-heading text-4xl font-bold text-ink">Badminton Queue App</h1>
-      <p class="text-ink-3 text-base max-w-sm mx-auto">
-        Marketing site — Phase 3 content pending.
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HERO
+  ══════════════════════════════════════════════════════════════════ -->
+  <section class="relative min-h-[88vh] flex flex-col justify-center px-6 pt-16 pb-20 overflow-hidden">
+
+    <!-- Background grid pattern -->
+    <div aria-hidden="true"
+         class="pointer-events-none absolute inset-0 opacity-[0.04]"
+         style="background-image: linear-gradient(oklch(96% 0.005 245) 1px, transparent 1px), linear-gradient(90deg, oklch(96% 0.005 245) 1px, transparent 1px); background-size: 40px 40px;">
+    </div>
+
+    <div class="relative mx-auto w-full max-w-6xl">
+      <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-12 items-center">
+
+        <!-- Left: headline + CTAs -->
+        <div class="max-w-2xl">
+          <div class="inline-flex items-center gap-2 rounded-full border border-accent-ring/50 bg-accent-wash px-3 py-1 mb-6">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent dt-pulse" aria-hidden="true"></span>
+            <span class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
+              Private Beta · Badminton Communities
+            </span>
+          </div>
+
+          <h1 class="font-heading font-bold leading-[0.95] tracking-tight text-ink mb-6"
+              style="font-size: clamp(3rem, 8vw, 6rem);">
+            Automate Your<br/>
+            <span class="text-accent">Badminton Queue.</span>
+          </h1>
+
+          <p class="text-ink-3 leading-relaxed mb-8 max-w-lg"
+             style="font-size: clamp(1rem, 2vw, 1.2rem);">
+            No more whiteboards. No more empty courts. No more "whose turn is it?"
+            Smart matchmaking keeps every court busy and every player happy.
+          </p>
+
+          <div class="flex flex-wrap gap-3">
+            <a href="#sandbox"
+               class="inline-flex items-center gap-2 rounded-xl bg-accent-wash border border-accent-ring px-6 py-3 font-heading font-bold text-base text-accent-hi
+                      hover:border-accent hover:text-accent transition-colors duration-75">
+              Try the Demo
+              <span aria-hidden="true">↓</span>
+            </a>
+            <a href="#contact"
+               class="inline-flex items-center gap-2 rounded-xl border border-edge bg-raised px-6 py-3 font-heading font-bold text-base text-ink-2
+                      hover:border-edge-hi hover:text-ink transition-colors duration-75">
+              Contact for Early Access
+            </a>
+          </div>
+        </div>
+
+        <!-- Right: stat block -->
+        <aside class="hidden lg:flex flex-col gap-4 shrink-0">
+          {[
+            { value: '0',  unit: 'empty courts',   sub: 'engine fills every slot' },
+            { value: '∞',  unit: 'fair rotations',  sub: 'no-repeat partnership cap' },
+            { value: '1',  unit: 'tap to score',    sub: 'real-time for all players' },
+          ].map(s => (
+            <div class="rounded-2xl border border-edge bg-overlay px-6 py-4 w-52">
+              <div class="font-heading font-bold text-accent-hi leading-none mb-1"
+                   style="font-size: 2.75rem;">{s.value}</div>
+              <div class="text-sm font-semibold text-ink-2 leading-snug">{s.unit}</div>
+              <div class="text-[11px] text-ink-4 mt-0.5">{s.sub}</div>
+            </div>
+          ))}
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       FEATURES — asymmetric grid, not a standard 3-icon card layout
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="features" class="px-6 py-20 border-t border-edge-dim scroll-mt-14">
+    <div class="mx-auto max-w-6xl">
+
+      <div class="mb-12">
+        <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-3">What it does</p>
+        <h2 class="font-heading font-bold text-ink leading-tight"
+            style="font-size: clamp(2rem, 4vw, 3rem);">
+          Built for how real<br/>badminton clubs work.
+        </h2>
+      </div>
+
+      <!-- Feature layout: 1 large + 2 stacked right -->
+      <div class="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4">
+
+        <!-- Feature 01 — large primary -->
+        <div class="rounded-2xl border border-edge bg-overlay p-8 flex flex-col justify-between min-h-64">
+          <div class="font-heading font-bold text-[5rem] leading-none text-accent/20 select-none mb-4">
+            01
+          </div>
+          <div>
+            <h3 class="font-heading font-bold text-2xl text-ink mb-3">
+              Smart Matchmaking
+            </h3>
+            <p class="text-ink-3 text-sm leading-relaxed max-w-lg">
+              The engine balances teams by skill level, rotates players fairly by wait time,
+              and enforces partnership caps so the same two people aren't always paired together.
+              Every match feels fresh.
+            </p>
+          </div>
+        </div>
+
+        <!-- Features 02 + 03 — stacked right -->
+        <div class="flex flex-col gap-4">
+          <div class="rounded-2xl border border-edge bg-overlay p-6 flex-1">
+            <div class="font-heading font-bold text-[3rem] leading-none text-accent/15 select-none mb-3">
+              02
+            </div>
+            <h3 class="font-heading font-bold text-lg text-ink mb-2">
+              Real-time TV Scoreboard
+            </h3>
+            <p class="text-ink-3 text-xs leading-relaxed">
+              A dedicated display view for the big screen. Every active court,
+              every score, every queue position — live, no refresh needed.
+            </p>
+          </div>
+
+          <div class="rounded-2xl border border-edge bg-overlay p-6 flex-1">
+            <div class="font-heading font-bold text-[3rem] leading-none text-accent/15 select-none mb-3">
+              03
+            </div>
+            <h3 class="font-heading font-bold text-lg text-ink mb-2">
+              Fair-Play Caps
+            </h3>
+            <p class="text-ink-3 text-xs leading-relaxed">
+              Hard limits on how many times two players can partner up per session.
+              Keeps the pool diverse and the games competitive.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Secondary feature strip -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+        {[
+          { label: 'Anonymous join',  desc: 'Players scan a QR and join instantly — no app install required.' },
+          { label: 'Organizer PIN',   desc: 'Secure session management without requiring player accounts.' },
+          { label: 'Session Wrapped', desc: 'End-of-session awards celebrate milestones for every player.' },
+        ].map(f => (
+          <div class="rounded-xl border border-edge-dim bg-surface/50 px-5 py-4">
+            <h4 class="font-heading font-bold text-sm text-ink-2 mb-1.5">{f.label}</h4>
+            <p class="text-[11px] text-ink-4 leading-relaxed">{f.desc}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HOW IT FLOWS — three-step visual
+  ══════════════════════════════════════════════════════════════════ -->
+  <section class="px-6 py-20 border-t border-edge-dim">
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-3">How it works</p>
+        <h2 class="font-heading font-bold text-ink"
+            style="font-size: clamp(1.75rem, 3.5vw, 2.5rem);">
+          From scan to court in seconds.
+        </h2>
+      </div>
+
+      <ol class="grid grid-cols-1 sm:grid-cols-3 gap-6 relative">
+        {[
+          {
+            n: '1',
+            title: 'Players scan & join',
+            body:  'A QR code at the venue. Tap, enter a name, you\'re in the queue. No app, no account.',
+          },
+          {
+            n: '2',
+            title: 'Organizer generates matches',
+            body:  'One tap runs the engine. It reads the queue, balances skill, checks history, and drafts the next game.',
+          },
+          {
+            n: '3',
+            title: 'Court plays, scoreboard updates',
+            body:  'Players see their match on the big screen. Score goes in, players cycle back. Repeat.',
+          },
+        ].map((step) => (
+          <li class="relative flex flex-col gap-3">
+            <div class="w-10 h-10 rounded-full flex items-center justify-center border border-accent-ring bg-accent-wash shrink-0">
+              <span class="font-heading font-bold text-sm text-accent-hi">{step.n}</span>
+            </div>
+            <div>
+              <h3 class="font-heading font-bold text-base text-ink mb-1.5">{step.title}</h3>
+              <p class="text-xs text-ink-3 leading-relaxed">{step.body}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       INTERACTIVE SANDBOX — centrepiece demo
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="sandbox" class="px-6 py-20 border-t border-edge-dim scroll-mt-14">
+    <div class="mx-auto max-w-5xl">
+
+      <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-3">Interactive Demo</p>
+          <h2 class="font-heading font-bold text-ink"
+              style="font-size: clamp(1.75rem, 3.5vw, 2.5rem);">
+            Try the organizer<br class="hidden sm:inline"/> dashboard yourself.
+          </h2>
+        </div>
+        <p class="text-xs text-ink-4 max-w-xs leading-relaxed">
+          Drag players to prioritize them. Click Generate Match to run a draft.
+          Start and finish matches to see the rotation in action.
+        </p>
+      </div>
+
+      <!-- React island — no backend, no logging, purely visual -->
+      <OrganizerSandbox client:load />
+
+      <p class="mt-4 text-[11px] text-ink-4 font-mono text-center">
+        Demo only · All data is local to your browser · Nothing is stored
       </p>
     </div>
-  </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       CONTACT / EARLY ACCESS
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="contact" class="px-6 py-24 border-t border-edge-dim scroll-mt-14">
+    <div class="mx-auto max-w-2xl text-center">
+
+      <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-4">Early Access</p>
+      <h2 class="font-heading font-bold text-ink mb-4"
+          style="font-size: clamp(2rem, 5vw, 3.5rem);">
+        Ready to transform<br/>your sessions?
+      </h2>
+      <p class="text-ink-3 text-sm leading-relaxed mb-10 max-w-lg mx-auto">
+        We're onboarding a small number of badminton communities in this beta phase.
+        Drop us a message with your club size and location — we'll be in touch within 48 hours.
+      </p>
+
+      <!-- Contact form (static mailto fallback) -->
+      <form
+        method="POST"
+        action="https://formspree.io/f/placeholder"
+        class="flex flex-col gap-4 text-left"
+        data-marketing-form
+      >
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label class="flex flex-col gap-1.5">
+            <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Your name</span>
+            <input
+              type="text"
+              name="name"
+              placeholder="Alex"
+              required
+              class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
+                     focus:outline-none focus:border-accent transition-colors"
+            />
+          </label>
+          <label class="flex flex-col gap-1.5">
+            <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Email</span>
+            <input
+              type="email"
+              name="email"
+              placeholder="you@club.com"
+              required
+              class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
+                     focus:outline-none focus:border-accent transition-colors"
+            />
+          </label>
+        </div>
+        <label class="flex flex-col gap-1.5">
+          <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Club / community name</span>
+          <input
+            type="text"
+            name="club"
+            placeholder="Southside Badminton Club"
+            class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
+                   focus:outline-none focus:border-accent transition-colors"
+          />
+        </label>
+        <label class="flex flex-col gap-1.5">
+          <span class="font-mono text-[10px] uppercase tracking-wider text-ink-4">Message (optional)</span>
+          <textarea
+            name="message"
+            rows={3}
+            placeholder="How many players do you typically run? Any specific challenges with your current setup?"
+            class="rounded-lg border border-edge bg-overlay px-4 py-2.5 text-sm text-ink-2 placeholder:text-ink-4
+                   focus:outline-none focus:border-accent transition-colors resize-none"
+          ></textarea>
+        </label>
+
+        <button
+          type="submit"
+          class="rounded-xl bg-accent-wash border border-accent-ring px-8 py-3.5 font-heading font-bold text-base text-accent-hi
+                 hover:border-accent hover:text-accent transition-colors duration-75 self-center mt-2"
+        >
+          Request Early Access →
+        </button>
+      </form>
+
+      <p class="mt-6 text-[11px] text-ink-4">
+        Or email directly:
+        <a href="mailto:miggy.0107@gmail.com" class="text-ink-3 hover:text-accent transition-colors ml-1">
+          miggy.0107@gmail.com
+        </a>
+      </p>
+    </div>
+  </section>
+
 </BaseLayout>
+
+<style>
+  /* dt-pulse is defined in global.css — available here */
+  /* Smooth anchor-link scrolling already set on <html> via scroll-smooth */
+
+  /* Input focus ring uses accent without using outline */
+  input:focus, textarea:focus {
+    box-shadow: 0 0 0 2px oklch(33% 0.095 155 / 0.4);
+  }
+</style>
