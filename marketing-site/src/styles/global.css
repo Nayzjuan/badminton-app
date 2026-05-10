@@ -1,0 +1,232 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;600&display=swap");
+@import "tailwindcss";
+
+/* ── AUTO-SYNCED from digital-twin/src/styles/global.css ──────────────────
+   Run `npm run sync` to refresh. Do not edit this block manually.
+   ─────────────────────────────────────────────────────────────────────── */
+/* ── AUTO-SYNCED from digital-twin/src/styles/global.css ──────────────────
+   Run `npm run sync` to refresh. Do not edit this block manually.
+   ─────────────────────────────────────────────────────────────────────── */
+@theme {
+  /* ── Typography ── */
+  --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-heading: "Barlow Semi Condensed", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Cascadia Code", monospace;
+
+  /* ── Background scale — OKLCH, tinted toward 245° (blue-slate) ── */
+  --color-base: oklch(7% 0.012 245); /* App canvas — deepest layer       */
+  --color-surface: oklch(11% 0.016 245); /* Nav rail / sidebar               */
+  --color-overlay: oklch(15% 0.019 245); /* Cards, panels, code blocks       */
+  --color-raised: oklch(20% 0.022 245); /* Hover states, table headers      */
+  --color-lifted: oklch(25% 0.026 245); /* Active / selected states         */
+
+  /* ── Borders ── */
+  --color-edge: oklch(25% 0.025 245); /* Standard border                  */
+  --color-edge-dim: oklch(18% 0.018 245); /* Subtle border, row separators    */
+  --color-edge-hi: oklch(33% 0.03 245); /* Strong border, dividers          */
+
+  /* ── Ink (text) — OKLCH, same hue tint ── */
+  --color-ink: oklch(96% 0.005 245); /* H1, primary labels               */
+  --color-ink-2: oklch(72% 0.008 245); /* Body text, descriptions          */
+  --color-ink-3: oklch(48% 0.01 245); /* Metadata, muted, "soon"          */
+  --color-ink-4: oklch(32% 0.012 245); /* Ghost, disabled, placeholder     */
+
+  /* ── Accent — Precise Emerald (not neon, not cyan) ── */
+  --color-accent: oklch(76% 0.17 155);
+  --color-accent-hi: oklch(85% 0.15 155);
+  --color-accent-dim: oklch(56% 0.14 155);
+  --color-accent-wash: oklch(14% 0.048 155);
+  --color-accent-ring: oklch(33% 0.095 155);
+
+  /* ── Status ── */
+  --color-ok: oklch(76% 0.17 155); /* = accent (live/success)          */
+  --color-warn: oklch(78% 0.16 70); /* Phase "next", P1 badges          */
+  --color-err: oklch(65% 0.2 22); /* P0 badges, hard errors           */
+  --color-note: oklch(70% 0.15 245); /* Info callouts                    */
+
+  --color-ok-wash: oklch(14% 0.048 155);
+  --color-warn-wash: oklch(13% 0.04 70);
+  --color-err-wash: oklch(12% 0.05 22);
+  --color-note-wash: oklch(13% 0.03 245);
+}
+
+/* ── Base ── */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Heading font — applies globally, no class needed ── */
+h1,
+h2 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.01em;
+}
+
+/* ── Scrollbar — refined 4px ── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-edge);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-edge-hi);
+}
+
+/* ── Mermaid diagram container ── */
+.mermaid {
+  background: var(--color-surface);
+  border-radius: 12px;
+  padding: 1.5rem;
+  border: 1px solid var(--color-edge-dim);
+  overflow-x: auto;
+  text-align: center;
+}
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ── Shiki code blocks ── */
+.astro-code,
+pre.astro-code {
+  border-radius: 10px;
+  border: 1px solid var(--color-edge);
+  padding: 1rem 1.25rem;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+}
+
+/* ── Shared card ── */
+.dt-card {
+  background: var(--color-overlay);
+  border: 1px solid var(--color-edge);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 120ms ease;
+}
+.dt-card:hover {
+  border-color: var(--color-edge-hi);
+}
+
+/* ── Shared table ── */
+.dt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.dt-table th {
+  text-align: left;
+  padding: 0.5rem 0.875rem;
+  color: var(--color-ink-3);
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--color-edge);
+  background: var(--color-raised);
+}
+.dt-table td {
+  padding: 0.625rem 0.875rem;
+  border-bottom: 1px solid var(--color-edge-dim);
+  color: var(--color-ink-2);
+  vertical-align: top;
+}
+.dt-table tr:last-child td {
+  border-bottom: none;
+}
+.dt-table tr:hover td {
+  background: var(--color-raised);
+  transition: background 80ms ease;
+}
+
+/* ── Badge ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  border: 1px solid;
+}
+
+/* ── Start Here rail — emerald-to-neutral directional tilt ── */
+.start-rail-bg {
+  background: linear-gradient(150deg, oklch(16% 0.05 155) 0%, oklch(10% 0.012 245) 100%);
+}
+
+/* ── Pulse animation for the "Live" phase badge ── */
+@keyframes dt-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.dt-pulse {
+  animation: dt-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ── Kbd ── */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.1em 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  background: var(--color-raised);
+  border: 1px solid var(--color-edge);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--color-ink-3);
+}
+
+/* ── Responsive: mobile nav ── */
+@media (max-width: 767px) {
+  #side-nav {
+    display: none;
+  }
+  #mobile-nav-toggle {
+    display: flex;
+  }
+  #side-nav.mobile-open {
+    display: flex;
+  }
+  .nav-offset {
+    margin-left: 0 !important;
+  }
+  .mobile-top-bar {
+    display: flex;
+  }
+}
+@media (min-width: 768px) {
+  #mobile-nav-toggle {
+    display: none;
+  }
+  .mobile-top-bar {
+    display: none;
+  }
+  /* Desktop sidebar guardrail — defensive override against any inline
+     `transform: translateX(...)` left over from mobile drawer JS. The nav
+     uses `position: fixed` with all four edges anchored, so it stays
+     pinned to the viewport while main content scrolls independently. */
+  #side-nav {
+    transform: none !important;
+  }
+}
