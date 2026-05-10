@@ -45,6 +45,9 @@ export function runMockEngine(state: SandboxState): EngineResult {
   });
 
   // ── Phase 2: capacity check (mirrors dynamic draft cap fix) ────────────────
+  // The cap counts BOTH pending (on-deck, published) and draft (unpublished)
+  // matches — not just drafts. Pending matches occupy a queue slot just as
+  // drafts do; they simply haven't been started yet.
   const existingDrafts = state.matches.filter((m) => m.status === "draft").length;
   const existingPending = state.matches.filter((m) => m.status === "pending").length;
   const totalAtCap = existingDrafts + existingPending;
@@ -52,14 +55,30 @@ export function runMockEngine(state: SandboxState): EngineResult {
 
   logs.push({
     level: "engine",
-    msg: `[engine] capacity: ${existingPending} pending + ${existingDrafts} drafts = ${totalAtCap}, cap=${state.config.maxAutoDrafts}, slots=${slotsAvailable}`,
+    msg: `[engine] capacity: ${existingPending} on-deck + ${existingDrafts} draft = ${totalAtCap}/${state.config.maxAutoDrafts}, slots=${slotsAvailable}`,
   });
 
   if (slotsAvailable === 0) {
-    logs.push({
-      level: "warn",
-      msg: "[engine] at draft cap — no new matches generated",
-    });
+    // Distinguish the three blocking cases so the action logger gives the
+    // organizer an accurate, actionable reason — not a generic "draft cap".
+    let blockMsg: string;
+    if (existingDrafts === 0) {
+      // All slots filled by published on-deck matches — no drafts involved.
+      blockMsg =
+        `[engine] on-deck queue full (${existingPending} match${existingPending !== 1 ? "es" : ""} waiting) — ` +
+        `start a match to open a slot`;
+    } else if (existingPending === 0) {
+      // All slots filled by unpublished drafts.
+      blockMsg =
+        `[engine] draft queue full (${existingDrafts} unpublished draft${existingDrafts !== 1 ? "s" : ""}) — ` +
+        `publish or cancel drafts to continue`;
+    } else {
+      // Mixed: some published, some draft.
+      blockMsg =
+        `[engine] queue full (${existingPending} on-deck + ${existingDrafts} draft = ${totalAtCap}/${state.config.maxAutoDrafts}) — ` +
+        `start or publish matches to open a slot`;
+    }
+    logs.push({ level: "warn", msg: blockMsg });
     return { newMatches: [], logs };
   }
 
