@@ -29,6 +29,73 @@ function withLog(state: SandboxState, ...entries: Omit<LogEntry, "id" | "ts">[])
 
 const shortId = (id: string) => id.slice(-4);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// promoteOnDeck — mirrors promoteOnDeckMatchInternal in matchmaking.ts.
+//
+// When a court frees up (match ends or is cancelled), the real app
+// automatically promotes the oldest published pending match to in_progress.
+// This helper replicates that cascade so the sandbox behaves identically
+// without any manual "start match" click from the user.
+//
+// Order: oldest createdAt first (matches real app's `ORDER BY created_at ASC`).
+// Guard: only published (isPublished=true) pending matches are eligible —
+//        same as the real `is_published=true` filter in promoteOnDeckMatchInternal.
+// ─────────────────────────────────────────────────────────────────────────────
+function promoteOnDeck(state: SandboxState): SandboxState {
+  const eligible = state.matches
+    .filter((m) => m.status === "pending" && m.isPublished)
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  if (eligible.length === 0) {
+    // Check whether unpublished drafts are holding up the queue —
+    // mirrors the hasDraftsBlocking signal the real app surfaces.
+    const hasDrafts = state.matches.some((m) => m.status === "draft");
+    if (hasDrafts) {
+      return withLog(state, {
+        level: "warn",
+        msg: "[engine] court freed — drafts are blocking the queue; publish drafts to continue",
+      });
+    }
+    return withLog(state, {
+      level: "engine",
+      msg: "[engine] court freed — no on-deck match to promote",
+    });
+  }
+
+  const toPromote = eligible[0];
+  const allIds = [...toPromote.teamA, ...toPromote.teamB];
+  const aNames = toPromote.teamA.map((id) => state.players[id]?.name ?? "?").join(" + ");
+  const bNames = toPromote.teamB.map((id) => state.players[id]?.name ?? "?").join(" + ");
+
+  // Defensive: skip if a roster player somehow left between publish and now.
+  if (allIds.some((id) => state.players[id]?.status === "left")) {
+    return withLog(state, {
+      level: "warn",
+      msg: `[engine] auto-promote skipped — a roster player in ${shortId(toPromote.id)} has left; cancel and regenerate`,
+    });
+  }
+
+  const players = { ...state.players };
+  allIds.forEach((id) => {
+    const p = players[id];
+    if (p) players[id] = { ...p, status: "in_progress" };
+  });
+
+  return withLog(
+    {
+      ...state,
+      players,
+      matches: state.matches.map((m) =>
+        m.id === toPromote.id ? { ...m, status: "in_progress" } : m
+      ),
+    },
+    {
+      level: "engine",
+      msg: `[engine] ✓ auto-promoted ${shortId(toPromote.id)} → in_progress (${aNames}  vs  ${bNames})`,
+    }
+  );
+}
+
 export function reducer(state: SandboxState, action: SandboxAction): SandboxState {
   switch (action.type) {
     // ── Reset ────────────────────────────────────────────────────────────────
@@ -190,6 +257,7 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
           msg: `[match] ${shortId(match.id)} already terminal — cancel ignored`,
         });
       }
+      const wasOnCourt = match.status === "in_progress";
       const players = { ...state.players };
       // If the match was published or in progress, return its players to the queue.
       if (match.status === "pending" || match.status === "in_progress") {
@@ -198,7 +266,8 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
           if (p && p.status !== "left") players[id] = { ...p, status: "waiting" };
         });
       }
-      return withLog(
+
+      const cancelledState = withLog(
         {
           ...state,
           players,
@@ -207,6 +276,24 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
           ),
         },
         { level: "warn", msg: `[match] ${shortId(match.id)} cancelled` }
+      );
+
+      // Only trigger the court-free cascade when an active match is cancelled —
+      // a draft or pending match was not occupying a court so there's nothing
+      // to promote into. Mirrors cancelMatchAction which gates on match.court_id.
+      if (!wasOnCourt) return cancelledState;
+
+      // Step 2 — promote oldest on-deck match to the freed court.
+      //   Mirrors: promoteOnDeckMatchInternal() in cancelMatchAction.
+      const promotedState = promoteOnDeck(cancelledState);
+
+      // Step 3 — refill the on-deck slot.
+      //   Mirrors: runEngineForSession() after cancelMatchAction.
+      const { newMatches, logs } = runMockEngine(promotedState);
+      if (newMatches.length === 0 && logs.length === 0) return promotedState;
+      return withLog(
+        { ...promotedState, matches: [...promotedState.matches, ...newMatches] },
+        ...logs
       );
     }
 
@@ -289,7 +376,8 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
 
       const winner = scoreA > scoreB ? "A" : scoreB > scoreA ? "B" : "tie";
 
-      return withLog(
+      // Step 1 — record the completed result and return players to the queue.
+      const completedState = withLog(
         {
           ...state,
           players,
@@ -307,6 +395,19 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
           level: "debug",
           msg: `[partnerships] ${keyA}=${partnershipCounts[keyA]}, ${keyB}=${partnershipCounts[keyB]}`,
         }
+      );
+
+      // Step 2 — promote oldest on-deck match to the freed court.
+      //   Mirrors: promoteOnDeckMatchInternal() in endMatchAction.
+      const promotedState = promoteOnDeck(completedState);
+
+      // Step 3 — refill the on-deck slot with a new engine run.
+      //   Mirrors: runEngineForSession() after endMatchAction.
+      const { newMatches, logs } = runMockEngine(promotedState);
+      if (newMatches.length === 0 && logs.length === 0) return promotedState;
+      return withLog(
+        { ...promotedState, matches: [...promotedState.matches, ...newMatches] },
+        ...logs
       );
     }
 
