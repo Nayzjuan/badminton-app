@@ -151,14 +151,17 @@ export async function makeSession({
   const client = serviceClient();
   const sessionName = name ?? `Integration Test Session ${faker.string.numeric(4)}`;
 
-  // Only pass fields defined in SessionInsert
-  // (is_active, is_auto_matchmaking_on, etc. use DB defaults)
+  // Explicitly set is_auto_matchmaking_on=false so the engine does NOT
+  // run automatically after cancelMatchAction / endMatchAction in tests
+  // that don't need it. Tests that need the engine call enableAutoMatchmaking().
+  // (Production default is true, but for isolated integration tests false is safer.)
   const { data: session, error: sessionError } = await client
     .from("sessions")
     .insert({
       name: sessionName,
       created_by: organizer,
       scoring,
+      is_auto_matchmaking_on: false,
     })
     .select("id, name")
     .single();
@@ -169,11 +172,15 @@ export async function makeSession({
     );
   }
 
-  // Insert the organizer into session_organizers
-  const { error: orgError } = await client.from("session_organizers").insert({
-    session_id: session.id,
-    user_id: organizer,
-  });
+  // Ensure the organizer is in session_organizers.
+  // On local Supabase the on_session_created trigger already inserts this row,
+  // so use upsert (ignoreDuplicates) to handle both cases: trigger fired or not.
+  const { error: orgError } = await client
+    .from("session_organizers")
+    .upsert(
+      { session_id: session.id, user_id: organizer },
+      { onConflict: "session_id,user_id", ignoreDuplicates: true }
+    );
 
   if (orgError) {
     throw new Error(

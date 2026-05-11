@@ -7,6 +7,44 @@
 
 ## SESSION STATE (Last Updated: 2026-05-11)
 
+### What Was Accomplished This Session — drafted status tests + E2E + hasActiveMatch fix (2026-05-11, continued)
+
+**E2E tests: 3/3 passing (J-A, J-B, J-C).** All scenario-J tests pass headless against live Vercel.
+
+**Critical architecture fix — `hasActiveMatch` gate (`player-dashboard.tsx`):**
+
+Root cause: `usePlayerMatch` returns draft matches (`is_published=false, status=pending`) as `currentMatch`, making `hasActiveMatch=true` even for drafted/waiting players. This hijacked the UI into the full MatchAlert takeover before the organizer published.
+
+Fix (commit `6f4134e`):
+
+```tsx
+const hasActiveMatch =
+  currentMatch !== null &&
+  (currentMatch.match.status === "pending" || currentMatch.match.status === "in_progress") &&
+  (myEntry?.status === "on_deck" || myEntry?.status === "playing");
+// ↑ gate on queue status — draft matches never trigger MatchAlert
+```
+
+Queue status → UI mapping (now correct):
+
+- `on_deck` → `hasActiveMatch=true` → full MatchAlert takeover + audio chime
+- `playing` → `hasActiveMatch=true` → MatchAlert + ScoreInput
+- `drafted` → `hasActiveMatch=false` → QueueSubTab → "Match Forming" holding card (silent)
+- `waiting` → `hasActiveMatch=false` → QueueSubTab → queue position number
+
+**Integration test suite: 27 tests (11 original + 16 gap tests G-1 through G-16).** Cannot yet be run locally — local Supabase has no initial schema migration (tables only exist in production; local migrations start at incremental patches). See Known Bugs section.
+
+**tsconfig.json fix:** Added `marketing-site` to `exclude` array — was causing all Vercel deployments to fail since the OrganizerSandbox rewrite (`@dnd-kit/modifiers` not in root `node_modules`).
+
+**Code review verdict (Minor issues — acceptable pass):**
+
+- G-9 integration test seeds `on_deck` queue entries without a backing match row (valid shortcut for testing engine pool exclusion; would break if DB adds constraint requiring match for on_deck entries)
+- E2E scenario-J `getByText(/in line/)` locator is sound; previous `^#\d+$` regex was weaker but replaced
+
+**Known infrastructure gap: Local Supabase cannot start.** `supabase start` fails at migration `20260417000000_leaderboard_views.sql` because it references `v_match_history` which is only defined in `20260502000000_match_origin_tracking.sql` (out of order). Root cause: DB was originally created manually in production; only incremental migrations exist locally. No initial schema migration. Integration tests require local Supabase.
+
+---
+
 ### What Was Accomplished This Session — drafted queue_status + UX (2026-05-11)
 
 **`"drafted"` queue_status — full-stack feature across DB, real app, digital twin, and marketing sandbox.**
@@ -138,6 +176,7 @@ playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
 
 ### Known Bugs / Technical Debt
 
+- **[BLOCKER] Local Supabase has no initial schema migration** — `supabase start` fails at `20260417000000_leaderboard_views.sql` because it references `v_match_history` (defined in `20260502`). Root cause: production DB was created manually before the migration system was set up. To fix: export full production schema as `supabase/migrations/00000000000000_initial_schema.sql` using `supabase db dump --schema public`. This unblocks `npm run test:integration` locally.
 - `v_recent_pairings` view still exists in DB but is **no longer queried** by the engine — `buildOverlapMap` uses a 3-step manual join instead. The view is unused dead weight; safe to drop in a future migration if desired.
 - `ON_DECK_LOOKAHEAD` and `MAX_ON_DECK_MATCHES` still in `constants.ts` but not imported by `matchmaking.ts` — only used by `simulate-engine.ts`. Consider removing when `simulate-engine.ts` is updated.
 - Dashboard UX audit (DASHBOARD_UX_AUDIT.md) identifies P0 issues: header buttons below 44px touch target, tab nav missing tablist/tab ARIA roles, gradient on "Call Next Match" button. Not yet fixed in code.
@@ -145,9 +184,11 @@ playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
 - Skill badge has no dark mode variant — renders washed out on dark navy. P1 fix pending.
 - `match_opponent_pairs` CTE in the Wrapped RPC still SELECTs `opp_a` / `opp_b` columns from `LEAST/GREATEST` even though they're not aggregated downstream. Postgres optimizes these out, but tidy-up could remove them.
 - 3 incremental fix migrations were applied to Supabase dev (`expand_wrapped_awards`, `fix_wrapped_awards_uuid_max`, `fix_wrapped_awards_array_append`, `fix_wrapped_awards_double_trouble_scope`). The local migration file `20260508000000_expand_wrapped_awards.sql` is the consolidated final version that also incorporates the `20260509` threshold tweaks. If migrations are ever replayed from scratch, only the consolidated `20260508` version + the `20260509` patch run; intermediate fix names won't reappear.
+- **Integration test G-9 shortcut** — seeds `on_deck` queue entries via `makeQueueEntry(status:"on_deck")` without a backing match row. Valid for current engine tests but would break if DB adds a constraint requiring match rows for on_deck entries.
 
 ### Immediate Next Steps
 
+- **[BLOCKER] Create initial schema migration** — export production schema (`supabase db dump --schema public > supabase/migrations/00000000000000_initial_schema.sql`) so local Supabase starts and `npm run test:integration` can run. This unlocks the full 27-test integration suite.
 - **[ACTION NEEDED] Set PR-block branch protection on GitHub** — Settings → Branches → require "Integration Tests" CI check to pass on `main`. Activate once CI has been green for 10 consecutive runs over 2 days (<1 flake, as per INTEGRATION_TESTING_PLAN.md Decision #4).
 - (Optional) **Leaderboard Direction A** — plan at `~/.claude/plans/idempotent-meandering-wigderson.md`. All new files, no existing modified.
 - (Optional) Apply P0–P1 UX fixes from `DASHBOARD_UX_AUDIT.md`: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
@@ -509,17 +550,18 @@ NULL-return convention: `{ data: null, error: null }` = graceful slot-skip. `{ d
 
 **Locator best practice:** `page.getByRole("dialog").getByText("E2E_Alice")` — scope to container. `page.getByText("E2E_Alice")` fails if name appears in Sonner toasts.
 
-| Scenario             | File                                          | Covers                                                |
-| -------------------- | --------------------------------------------- | ----------------------------------------------------- |
-| A — Swap             | `scenario-a-swap.spec.ts`                     | Bench→deck swap, undo, player unavailable error       |
-| B — Engine flows     | `scenario-b-engine-flows.spec.ts`             | Auto-matchmaking, gate, on-deck cap                   |
-| C — Tap-to-Swap v2   | `scenario-c-tap-to-swap-v2.spec.ts`           | Cross-match direct swap (11 tests)                    |
-| D — Wrapped dismiss  | `scenario-d-session-wrapped-dismiss.spec.ts`  | Intro overlay dismiss, `intro_dismissed_at` persisted |
-| E — Match alert UI   | `scenario-e-match-alert-ui.spec.ts`           | Player match alert card + VIP tags                    |
-| F — Court time alert | `scenario-f-court-time-alert.spec.ts`         | Timer warning when elapsed ≥ limit                    |
-| G — H2H records      | `scenario-g-h2h-records.spec.ts`              | H2H strip after first meeting, correct counts         |
-| H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling        |
-| I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session under load                               |
+| Scenario             | File                                          | Covers                                                                                     |
+| -------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| A — Swap             | `scenario-a-swap.spec.ts`                     | Bench→deck swap, undo, player unavailable error                                            |
+| B — Engine flows     | `scenario-b-engine-flows.spec.ts`             | Auto-matchmaking, gate, on-deck cap                                                        |
+| C — Tap-to-Swap v2   | `scenario-c-tap-to-swap-v2.spec.ts`           | Cross-match direct swap (11 tests)                                                         |
+| D — Wrapped dismiss  | `scenario-d-session-wrapped-dismiss.spec.ts`  | Intro overlay dismiss, `intro_dismissed_at` persisted                                      |
+| E — Match alert UI   | `scenario-e-match-alert-ui.spec.ts`           | Player match alert card + VIP tags                                                         |
+| F — Court time alert | `scenario-f-court-time-alert.spec.ts`         | Timer warning when elapsed ≥ limit                                                         |
+| G — H2H records      | `scenario-g-h2h-records.spec.ts`              | H2H strip after first meeting, correct counts                                              |
+| H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling                                             |
+| I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session under load                                                                    |
+| J — Drafted status   | `scenario-j-drafted-status.spec.ts`           | Match Forming card, drafted→on_deck Realtime, drafted→waiting cancel (3 tests, ✅ passing) |
 
 ---
 
