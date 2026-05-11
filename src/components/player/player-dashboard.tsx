@@ -663,6 +663,34 @@ function QueueSubTab({
     );
   }
 
+  // ── Drafted — selected for an unpublished draft match ────────
+  // Players are "drafted" from the moment the engine drafts them until
+  // the organizer publishes. They have no visible match yet but should
+  // not see "You're not in the queue". Show a neutral holding state.
+  if (isInQueue && myEntry?.status === "drafted") {
+    return (
+      <div className="space-y-5">
+        <div
+          className="rounded-2xl border-2 border-slate-200 dark:border-border
+                        bg-slate-50 dark:bg-muted/50 p-6 text-center"
+        >
+          <div className="flex justify-center mb-3 text-3xl" aria-hidden="true">
+            🏸
+          </div>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
+            Match Forming
+          </p>
+          <p className="mt-1 text-lg font-bold text-slate-700 dark:text-foreground">Hang tight…</p>
+          <p className="mt-2 text-sm text-slate-500 dark:text-muted-foreground">
+            You&apos;ve been selected for an upcoming match. The organizer will confirm it shortly —
+            you&apos;ll get an alert the moment it&apos;s confirmed.
+          </p>
+        </div>
+        <QueueToggle isInQueue onJoin={joinQueue} onLeave={leaveQueue} />
+      </div>
+    );
+  }
+
   // ── Waiting in queue ────────────────────────────────────────
   if (isInQueue && myEntry?.status === "waiting") {
     return (
