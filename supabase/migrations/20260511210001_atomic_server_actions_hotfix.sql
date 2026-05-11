@@ -153,5 +153,6 @@ GRANT EXECUTE ON FUNCTION publish_match(uuid, uuid, uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION publish_match(uuid, uuid, uuid) TO service_role;
 
 
--- join_queue signature unchanged; only the grant was revoked above
+GRANT EXECUTE ON FUNCTION join_queue(uuid, uuid) TO service_role;
+
 -- publish_all_drafts unchanged
