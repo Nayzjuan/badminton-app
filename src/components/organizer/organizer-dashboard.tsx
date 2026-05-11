@@ -206,6 +206,18 @@ export function OrganizerDashboard({
   // `prev` could overwrite the broadcast-confirmed value on failure.
   const autoMatchmaking = pendingAuto ?? liveSession.is_auto_matchmaking_on;
 
+  // ── pendingAuto yield-back ──────────────────────────────────
+  // Once the broadcast updates liveSession to agree with pendingAuto,
+  // clear pendingAuto so liveSession becomes the sole source of truth.
+  // Without this, pendingAuto permanently shadows liveSession — meaning
+  // a co-organizer toggle in another tab would update liveSession via
+  // broadcast but our local pendingAuto would still override it.
+  useEffect(() => {
+    if (pendingAuto !== null && liveSession.is_auto_matchmaking_on === pendingAuto) {
+      setPendingAuto(null);
+    }
+  }, [liveSession.is_auto_matchmaking_on, pendingAuto]);
+
   // ── Organizer self-join ─────────────────────────────────────
   // Allows the organizer to add themselves to the queue directly from
   // the organizer dashboard — useful when running a session and also

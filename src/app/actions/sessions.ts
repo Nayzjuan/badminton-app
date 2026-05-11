@@ -396,6 +396,73 @@ export async function updateSessionSettings(
   return {};
 }
 
+// ── getSessionForOrganizer ────────────────────────────────────
+
+export interface GetSessionResult {
+  success: boolean;
+  session?: import("@/types/database").Session;
+  error?: string;
+}
+
+/**
+ * Lightweight read-only fetch of a session row for the organizer dashboard
+ * polling / reconnect layers (Layer 2 + Layer 3 of the auto-toggle sync fix).
+ *
+ * Why a server action and not a direct browser-client query?
+ *   The sessions table RLS SELECT policy only grants read access to the
+ *   session creator (sessions.created_by). Co-organizers (session_organizers
+ *   members who are not the creator) are blocked by RLS and receive no rows.
+ *   Using the service-role client here bypasses RLS so both the primary
+ *   organizer and all co-organizers can read the canonical session state.
+ *
+ * Auth: two-path organizer check (same as toggleAutoMatchmaking / updateSessionSettings).
+ *   1. authenticated (RLS client getUser)
+ *   2. sessions.created_by === user.id  OR  session_organizers membership
+ * The session row includes organizer_passcode — restricting to organizers
+ * ensures a plain authenticated player cannot read it by knowing the session UUID.
+ */
+export async function getSessionForOrganizer(sessionId: string): Promise<GetSessionResult> {
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Not authenticated." };
+
+  const service = createServiceClient();
+
+  // ── Two-path organizer check ──────────────────────────────────
+  // Primary organizer: sessions.created_by === user.id (fast path).
+  // Co-organizer:      session_organizers row exists for this user.
+  const { data: sessionMeta } = await service
+    .from("sessions")
+    .select("created_by")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (!sessionMeta) return { success: false, error: "Session not found." };
+
+  if (sessionMeta.created_by !== user.id) {
+    const { data: membership } = await service
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) return { success: false, error: "Not authorized. Organizer access required." };
+  }
+
+  // ── Fetch full session row ────────────────────────────────────
+  const { data, error } = await service.from("sessions").select("*").eq("id", sessionId).single();
+
+  if (error || !data) {
+    return { success: false, error: error?.message ?? "Session not found." };
+  }
+
+  return { success: true, session: data };
+}
+
 export interface CloseSessionResult {
   success: boolean;
   message: string;
