@@ -57,14 +57,38 @@ test.beforeEach(async () => {
 });
 
 // ── Bot creation helper ───────────────────────────────────────
+// Idempotent: if a bot with this email already exists (from a prior
+// run where teardown failed), reuse it rather than throwing.
 async function createBot(displayName: string): Promise<{ userId: string }> {
   const db = adminDb();
+  const email = `${displayName.toLowerCase().replace(/\s/g, "-")}-j@playwright.local`;
+
+  // Try to create; fall back to lookup if the account already exists.
+  let userId: string;
   const { data, error } = await db.auth.admin.createUser({
-    email: `${displayName.toLowerCase().replace(/\s/g, "-")}-j@playwright.local`,
+    email,
     email_confirm: true,
   });
-  if (error || !data.user) throw new Error(`[seed] createBot ${displayName}: ${error?.message}`);
-  const userId = data.user.id;
+
+  if (error) {
+    if (
+      error.message.includes("already been registered") ||
+      error.message.includes("already exists")
+    ) {
+      // Reuse the existing account
+      const { data: listData } = await db.auth.admin.listUsers({ perPage: 1000 });
+      const existing = listData?.users?.find((u) => u.email === email);
+      if (!existing)
+        throw new Error(`[seed] createBot ${displayName}: found duplicate but cannot locate user`);
+      userId = existing.id;
+    } else {
+      throw new Error(`[seed] createBot ${displayName}: ${error.message}`);
+    }
+  } else {
+    if (!data.user) throw new Error(`[seed] createBot ${displayName}: no user returned`);
+    userId = data.user.id;
+  }
+
   await db
     .from("profiles")
     .upsert(
@@ -78,11 +102,12 @@ async function createBot(displayName: string): Promise<{ userId: string }> {
 async function seedDraftedState(organizerUserId: string) {
   const db = adminDb();
 
-  // Create 3 filler bots so totalInQueue is 4
+  // Create 3 filler bots so totalInQueue is 4.
+  // Names must start with "E2E_" so resetSandboxSession auto-cleans them.
   const [b1, b2, b3] = await Promise.all([
-    createBot("J_Alice"),
-    createBot("J_Bob"),
-    createBot("J_Cara"),
+    createBot("E2E_J_Alice"),
+    createBot("E2E_J_Bob"),
+    createBot("E2E_J_Cara"),
   ]);
 
   // Insert as "waiting" first, then bulk-update to "drafted".
