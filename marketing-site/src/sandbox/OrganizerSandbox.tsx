@@ -33,7 +33,8 @@ import { CSS } from "@dnd-kit/utilities";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Skill = "beginner" | "intermediate" | "advanced";
-type PlayerStatus = "waiting" | "on_deck" | "playing";
+// "drafted" = earmarked in an unpublished draft; excluded from the waiting pool
+type PlayerStatus = "waiting" | "drafted" | "on_deck" | "playing";
 
 // Three-stage match lifecycle matching the real app's Draft Mode flow
 type MatchStatus = "draft" | "on_deck" | "active" | "completed";
@@ -78,9 +79,8 @@ type Action =
   | { type: "SWAP_CANCEL" }
   | { type: "RESET" };
 
-// ── Demo config — mirrors the real app defaults ───────────────────────────────
+// ── Demo config ───────────────────────────────────────────────────────────────
 const COURTS = 2; // max concurrent active matches
-const MAX_AUTO_DRAFTS = 2; // max (drafts + on_deck) at any time
 
 // ── autoPromote — fills free courts from on_deck, oldest first ────────────────
 // Mirrors promoteOnDeckMatchInternal in the real app. Fires after PUBLISH and
@@ -150,40 +150,48 @@ function reducer(state: State, action: Action): State {
     }
 
     case "GENERATE": {
-      // Cap: (existing drafts + on_deck) must be < MAX_AUTO_DRAFTS to open slots.
-      // Active courts don't count — they're already committed.
-      const existingDrafts = state.matches.filter((m) => m.status === "draft").length;
-      const existingOnDeck = state.matches.filter((m) => m.status === "on_deck").length;
-      const slotsAvailable = MAX_AUTO_DRAFTS - (existingDrafts + existingOnDeck);
-      if (slotsAvailable <= 0) return state;
-
+      // Only pull from "waiting" — "drafted" players are already earmarked in an
+      // existing draft and must not be double-booked into a second one.
+      // No pipeline cap: generate as many drafts as the waiting pool allows
+      // (one draft per 4 players). The "drafted" status is the sole guard.
       const waiting = state.queue.filter((id) => state.players[id]?.status === "waiting");
       if (waiting.length < 4) return state;
 
-      // Generate as many drafts as slots allow, each consuming 4 players
       const newMatches: Match[] = [];
+      const newPlayers = { ...state.players };
       let counter = state.matchCounter;
       const ts = Date.now();
-      for (let i = 0; i < slotsAvailable; i++) {
+
+      for (let i = 0; waiting.slice(i * 4, i * 4 + 4).length === 4; i++) {
         const pool = waiting.slice(i * 4, i * 4 + 4);
-        if (pool.length < 4) break;
         counter++;
         newMatches.push({
           id: `m${counter}`,
           teamA: [pool[0], pool[1]],
           teamB: [pool[2], pool[3]],
           status: "draft",
-          createdAt: ts + i, // small offset ensures stable oldest-first ordering
+          createdAt: ts + i,
+        });
+        // Mark these players as "drafted" so they're excluded from the next slot
+        pool.forEach((id) => {
+          newPlayers[id] = { ...newPlayers[id], status: "drafted" };
         });
       }
+
       if (newMatches.length === 0) return state;
-      return { ...state, matches: [...state.matches, ...newMatches], matchCounter: counter };
+      return {
+        ...state,
+        players: newPlayers,
+        matches: [...state.matches, ...newMatches],
+        matchCounter: counter,
+      };
     }
 
     case "PUBLISH": {
       const match = state.matches.find((m) => m.id === action.matchId);
       if (!match || match.status !== "draft") return state;
       const players = { ...state.players };
+      // drafted → on_deck (now visible to players)
       [...match.teamA, ...match.teamB].forEach((id) => {
         players[id] = { ...players[id], status: "on_deck" };
       });
@@ -251,7 +259,8 @@ function reducer(state: State, action: Action): State {
       if (!match) return state;
       const wasActive = match.status === "active";
       const players = { ...state.players };
-      if (match.status === "on_deck" || match.status === "active") {
+      // drafted, on_deck, and active players all return to waiting on cancel
+      if (match.status === "draft" || match.status === "on_deck" || match.status === "active") {
         [...match.teamA, ...match.teamB].forEach((id) => {
           players[id] = { ...players[id], status: "waiting" };
         });
@@ -341,6 +350,7 @@ function SortablePlayerRow({ player, position }: { player: Player; position: num
     zIndex: isDragging ? 10 : undefined,
   };
 
+  // Only "waiting" players can be dragged — drafted/on_deck/playing are committed
   const isQueueable = player.status === "waiting";
 
   return (
@@ -391,10 +401,14 @@ function SortablePlayerRow({ player, position }: { player: Player; position: num
       {player.status !== "waiting" && (
         <span
           className={`shrink-0 font-mono text-[9px] uppercase tracking-wider ${
-            player.status === "on_deck" ? "text-warn" : "text-accent"
+            player.status === "drafted"
+              ? "text-ink-3"
+              : player.status === "on_deck"
+                ? "text-warn"
+                : "text-accent"
           }`}
         >
-          {player.status === "on_deck" ? "deck" : "play"}
+          {player.status === "drafted" ? "draft" : player.status === "on_deck" ? "deck" : "play"}
         </span>
       )}
 
@@ -777,6 +791,7 @@ export default function OrganizerSandbox() {
 
   // Derived state
   const waitingCount = state.queue.filter((id) => state.players[id]?.status === "waiting").length;
+  const draftedCount = state.queue.filter((id) => state.players[id]?.status === "drafted").length;
   const onDeckPlayerCount = state.queue.filter(
     (id) => state.players[id]?.status === "on_deck"
   ).length;
@@ -788,14 +803,13 @@ export default function OrganizerSandbox() {
 
   const liveCount = drafts.length + onDeckMatches.length + activeMatches.length;
 
-  // Generate is available whenever there are open draft slots AND enough waiting players.
-  // Cap mirrors the real engine: (existingDrafts + onDeck) < MAX_AUTO_DRAFTS.
-  const draftSlotsFree = MAX_AUTO_DRAFTS - (drafts.length + onDeckMatches.length);
-  const canGenerate = waitingCount >= 4 && draftSlotsFree > 0;
+  // Generate is unblocked as long as there are ≥4 purely waiting players.
+  // "drafted" players are excluded — they're already earmarked in an existing draft.
+  const canGenerate = waitingCount >= 4;
 
   const generateTitle = !canGenerate
-    ? draftSlotsFree <= 0
-      ? "Draft queue full — publish or start a match to open a slot"
+    ? waitingCount + draftedCount >= 4
+      ? "Players are in pending drafts — publish or cancel to free them"
       : `Need ${Math.max(0, 4 - waitingCount)} more waiting player${Math.max(0, 4 - waitingCount) === 1 ? "" : "s"}`
     : "Generate a draft match";
 
@@ -850,6 +864,11 @@ export default function OrganizerSandbox() {
                 <span>
                   <span className="text-ink-2">{waitingCount}</span> waiting
                 </span>
+                {draftedCount > 0 && (
+                  <span>
+                    <span className="text-ink-2">{draftedCount}</span> drafted
+                  </span>
+                )}
                 {onDeckPlayerCount > 0 && (
                   <span>
                     <span className="text-warn">{onDeckPlayerCount}</span> on deck
