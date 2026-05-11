@@ -7,6 +7,61 @@
 
 ## SESSION STATE (Last Updated: 2026-05-11)
 
+### What Was Accomplished This Session — RPC behavioral integration tests (2026-05-11)
+
+**Added `tests/integration/rpc-behaviors.test.ts`** — 15 tests across two suites (H + I) covering the security-sensitive RPCs added in `20260511000002_missing_rpcs.sql`.
+
+**Suite H — `elevate_to_organizer` (7 tests):**
+
+- H-1: Correct passcode → `true`, row inserted into `session_organizers`
+- H-2: Wrong passcode → `false`, no row
+- H-3: No passcode set on session → `false`
+- H-4: Inactive (closed) session → `false`
+- H-5: Idempotent — committed pre-existing row + second call hits `ON CONFLICT DO NOTHING`, returns `true`, no duplicate
+- H-6: Primary organizer (trigger row already exists) → idempotent, `true`, no duplicate
+- H-7: Non-existent session UUID → `false`
+
+**Suite I — `rejoin_queue` (8 tests):**
+
+- I-1: `left` → `waiting`, `joined_at` refreshed to `now()`
+- I-2: `waiting` player → no-op (status + `joined_at` unchanged)
+- I-3: `on_deck` player → no-op
+- I-4: `drafted` player → no-op (cannot escape a draft via rejoin)
+- I-5: No queue entry → no-op, no row created
+- I-6: Only the calling player's entry is affected (other players' `left` entries unchanged)
+- I-7: `games_played` preserved on rejoin
+- I-8: `playing` player → no-op
+
+**Auth injection technique:** `set_config('request.jwt.claim.sub', userId, true)` via `pg.PoolClient` inside `withTx`. This mirrors exactly what PostgREST injects for every authenticated request — `auth.uid()` reads from `request.jwt.claim.sub`. `SET LOCAL` does not accept `$1` params; `set_config()` is the parameterized equivalent.
+
+**Two independent code reviews: LGTM** (second pass after fixing H-5 and adding I-8).
+
+**Full suite: 103/103 passing** (12 test files).
+
+---
+
+### What Was Accomplished This Session — Fixed all pre-existing integration test failures (2026-05-11)
+
+**Integration test suite now 88/88 passing** (up from 82/88 — 6 pre-existing failures fixed).
+
+**Fixes made:**
+
+1. **`matchmaking.test.ts` Test 2** — Updated assertion from `waiting` → correct behavior: 4 players in the engine-created draft get `drafted`, the other 4 remain `waiting` (pool diversity cap stops the engine at 1 draft with 8 players). Test now fetches the draft's `match_players`, categorizes each player as in-draft vs not, and asserts accordingly.
+
+2. **`matchmaking.test.ts` Test 7** — Added `.neq("id", preExistingMatchId)` when querying new engine-created drafts. The pre-existing match (status=pending, is_published=false) was being included in the "new draft" query, making p1-p4 appear as if the engine had re-booked them.
+
+3. **`concurrency.test.ts` Test 1** — Changed `makeMatch` → `makeMatchViaRpc`. `publishMatchAction` guards with `.eq("status", "drafted")`; using the raw DB insert left queue entries as `waiting` and the status update silently no-opped. `makeMatchViaRpc` correctly sets entries to `drafted` via the RPC.
+
+4. **`schema-parity.test.ts`** — Created `supabase/migrations/20260511000002_missing_rpcs.sql` adding `elevate_to_organizer(p_session_id uuid, p_passcode text) RETURNS boolean` and `rejoin_queue(p_session_id uuid) RETURNS void`. Both are SECURITY DEFINER with SET search_path, use `auth.uid()`, and have GRANT EXECUTE TO authenticated.
+
+5. **`auth.real.test.ts`** — Updated to accept `AuthSessionMissingError` for unauthenticated calls. `@supabase/supabase-js` v2.103.0 returns a typed error (not null) when there is no session. The mock intentionally still returns `error: null` (actions only guard `if (!user)`).
+
+6. **`src/types/database.ts`** — Added `is_auto_matchmaking_on` to `SessionInsert`'s optional picks. The factory was passing this field in the insert but the type didn't permit it (TS2769 error).
+
+**Code review verdict: LGTM** (independent agent reviewed all 6 fixes).
+
+---
+
 ### What Was Accomplished This Session — drafted status tests + E2E + hasActiveMatch fix (2026-05-11, continued)
 
 **E2E tests: 3/3 passing (J-A, J-B, J-C).** All scenario-J tests pass headless against live Vercel.
@@ -32,7 +87,7 @@ Queue status → UI mapping (now correct):
 - `drafted` → `hasActiveMatch=false` → QueueSubTab → "Match Forming" holding card (silent)
 - `waiting` → `hasActiveMatch=false` → QueueSubTab → queue position number
 
-**Integration test suite: 27 tests (11 original + 16 gap tests G-1 through G-16).** Cannot yet be run locally — local Supabase has no initial schema migration (tables only exist in production; local migrations start at incremental patches). See Known Bugs section.
+**Integration test suite: 88/88 passing.** Local Supabase running with `00000000000000_initial_schema.sql` as the bootstrap migration. All 11 test files pass.
 
 **tsconfig.json fix:** Added `marketing-site` to `exclude` array — was causing all Vercel deployments to fail since the OrganizerSandbox rewrite (`@dnd-kit/modifiers` not in root `node_modules`).
 
@@ -176,7 +231,7 @@ playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
 
 ### Known Bugs / Technical Debt
 
-- **[BLOCKER] Local Supabase has no initial schema migration** — `supabase start` fails at `20260417000000_leaderboard_views.sql` because it references `v_match_history` (defined in `20260502`). Root cause: production DB was created manually before the migration system was set up. To fix: export full production schema as `supabase/migrations/00000000000000_initial_schema.sql` using `supabase db dump --schema public`. This unblocks `npm run test:integration` locally.
+- ~~**[BLOCKER] Local Supabase has no initial schema migration**~~ — **RESOLVED (2026-05-11)**. `00000000000000_initial_schema.sql` created; local Supabase starts and all 88 integration tests pass.
 - `v_recent_pairings` view still exists in DB but is **no longer queried** by the engine — `buildOverlapMap` uses a 3-step manual join instead. The view is unused dead weight; safe to drop in a future migration if desired.
 - `ON_DECK_LOOKAHEAD` and `MAX_ON_DECK_MATCHES` still in `constants.ts` but not imported by `matchmaking.ts` — only used by `simulate-engine.ts`. Consider removing when `simulate-engine.ts` is updated.
 - Dashboard UX audit (DASHBOARD_UX_AUDIT.md) identifies P0 issues: header buttons below 44px touch target, tab nav missing tablist/tab ARIA roles, gradient on "Call Next Match" button. Not yet fixed in code.
@@ -188,7 +243,7 @@ playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
 
 ### Immediate Next Steps
 
-- **[BLOCKER] Create initial schema migration** — export production schema (`supabase db dump --schema public > supabase/migrations/00000000000000_initial_schema.sql`) so local Supabase starts and `npm run test:integration` can run. This unlocks the full 27-test integration suite.
+- ~~**[BLOCKER] Create initial schema migration**~~ — **RESOLVED (2026-05-11)**. All 88 integration tests pass.
 - **[ACTION NEEDED] Set PR-block branch protection on GitHub** — Settings → Branches → require "Integration Tests" CI check to pass on `main`. Activate once CI has been green for 10 consecutive runs over 2 days (<1 flake, as per INTEGRATION_TESTING_PLAN.md Decision #4).
 - (Optional) **Leaderboard Direction A** — plan at `~/.claude/plans/idempotent-meandering-wigderson.md`. All new files, no existing modified.
 - (Optional) Apply P0–P1 UX fixes from `DASHBOARD_UX_AUDIT.md`: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.

@@ -56,9 +56,7 @@ async function seedPlayers(
   n: number,
   skill: Parameters<typeof makeProfile>[0]["skill"] = "intermediate"
 ) {
-  const players = await Promise.all(
-    Array.from({ length: n }, () => makeProfile({ faker, skill }))
-  );
+  const players = await Promise.all(Array.from({ length: n }, () => makeProfile({ faker, skill })));
   const entries = await Promise.all(
     players.map((p) => makeQueueEntry({ sessionId, playerId: p.id }))
   );
@@ -90,16 +88,41 @@ describe("Matchmaking Engine — Suite A", () => {
     }
   });
 
-  // ── Test 2: Draft mode — queue entries stay "waiting" ─────
+  // ── Test 2: Draft mode — drafted players get 'drafted' status ──
 
-  it("queue entries remain 'waiting' until the draft is published", async () => {
+  it("players in an unpublished draft get 'drafted' status; others stay 'waiting'", async () => {
     const { session } = await baseSetup();
     const { players } = await seedPlayers(session.id, 8);
 
     await runEngineForSession(session.id);
 
-    // All 8 queue entries should still be "waiting" — publishing is a
-    // separate action (publishMatchAction). The engine only creates drafts.
+    // The engine creates exactly 1 draft (pool diversity cap stops it at 4 players
+    // committed). The RPC sets those 4 to 'drafted'; the other 4 stay 'waiting'.
+    //
+    // Migration 20260511000000_add_drafted_queue_status changed the behavior:
+    //   OLD: all players stayed 'waiting' until the organizer published
+    //   NEW: players IN a draft are set to 'drafted' immediately, giving the DB
+    //        a first-class exclusion signal (v_queue_with_wait_time filters on
+    //        status='waiting', so 'drafted' players can't be re-drafted).
+
+    // Fetch the created draft and find which players are in it
+    const { data: draftMatches } = await serviceClient()
+      .from("matches")
+      .select("id")
+      .eq("session_id", session.id)
+      .eq("status", "pending")
+      .eq("is_published", false);
+
+    expect(draftMatches).not.toBeNull();
+    expect(draftMatches!.length).toBe(1); // exactly 1 draft at the cap
+
+    const { data: draftPlayers } = await serviceClient()
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", draftMatches![0].id);
+
+    const draftedIds = new Set((draftPlayers ?? []).map((r) => r.player_id));
+
     const { data: entries } = await serviceClient()
       .from("queue_entries")
       .select("player_id, status")
@@ -110,8 +133,16 @@ describe("Matchmaking Engine — Suite A", () => {
       );
 
     expect(entries).not.toBeNull();
+    expect(entries!.length).toBe(8);
+
     for (const e of entries!) {
-      expect(e.status).toBe("waiting");
+      if (draftedIds.has(e.player_id)) {
+        // In the draft → should be 'drafted'
+        expect(e.status, `player ${e.player_id} is in draft, expected drafted`).toBe("drafted");
+      } else {
+        // Not in any draft → should still be 'waiting'
+        expect(e.status, `player ${e.player_id} not in draft, expected waiting`).toBe("waiting");
+      }
     }
   });
 
@@ -329,17 +360,17 @@ describe("Matchmaking Engine — Suite A", () => {
     const { players } = await seedPlayers(session.id, 8);
     const [p1, p2, p3, p4] = players;
 
-    // Create one pending match that already uses p1 and p2
-    await makeMatch({
+    // Create one pending match that already uses p1-p4.
+    // Save its ID so we can exclude it from the "engine-created drafts" query below.
+    const { id: preExistingMatchId } = await makeMatch({
       sessionId: session.id,
       teamA: [p1.id, p2.id],
       teamB: [p3.id, p4.id],
       status: "pending",
     });
 
-    // Remove p1-p4 from queue (they're committed) — mark as playing
-    // In reality the engine reads waiting players. Here we set their status.
-    // The engine queries v_queue_with_wait_time which only shows "waiting" players.
+    // Remove p1-p4 from queue (they're committed) — mark as on_deck so the
+    // engine's v_queue_with_wait_time view (filters status='waiting') skips them.
     await serviceClient()
       .from("queue_entries")
       .update({ status: "on_deck" as const })
@@ -349,13 +380,17 @@ describe("Matchmaking Engine — Suite A", () => {
     // p5-p8 are still waiting — enough for a new match
     await runEngineForSession(session.id);
 
-    // Collect all match_players across all created draft matches
+    // Collect match_players only from matches created by the engine run above.
+    // We must exclude the pre-existing match (preExistingMatchId) because that
+    // match also has status=pending & is_published=false — including it would
+    // make p1-p4 show up in the set and produce a false failure.
     const { data: newMatches } = await serviceClient()
       .from("matches")
       .select("id")
       .eq("session_id", session.id)
       .eq("status", "pending")
-      .eq("is_published", false);
+      .eq("is_published", false)
+      .neq("id", preExistingMatchId);
 
     const newMatchIds = (newMatches ?? []).map((m) => m.id);
 

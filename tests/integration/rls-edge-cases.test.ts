@@ -20,12 +20,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { Faker, en } from "@faker-js/faker";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import {
-  makeProfile,
-  makeSession,
-  makeQueueEntry,
-  makeCompletedMatch,
-} from "./factories";
+import { makeProfile, makeSession, makeQueueEntry, makeCompletedMatch } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { closeSession } from "@/app/actions/sessions";
@@ -114,9 +109,7 @@ describe("RLS Edge Cases — Suite E", () => {
     restore();
 
     // Anon client should see 0 rivalry rows
-    const { data, error } = await anonClient()
-      .from("player_rivalries")
-      .select("player_id");
+    const { data, error } = await anonClient().from("player_rivalries").select("player_id");
 
     expect(error).toBeNull();
     expect(data).toHaveLength(0);
@@ -126,12 +119,10 @@ describe("RLS Edge Cases — Suite E", () => {
     const organizer = await makeProfile({ faker });
 
     // Attempt to insert a session as an unauthenticated user
-    const { error } = await anonClient()
-      .from("sessions")
-      .insert({
-        name: "Malicious Session",
-        created_by: organizer.id,
-      });
+    const { error } = await anonClient().from("sessions").insert({
+      name: "Malicious Session",
+      created_by: organizer.id,
+    });
 
     // Should be blocked by RLS — either a permission error or policy violation
     expect(error).not.toBeNull();

@@ -98,9 +98,7 @@ vi.mock("@/utils/supabase/server", () => ({
                 });
               }
               const val = Reflect.get(authTarget, authProp);
-              return typeof val === "function"
-                ? val.bind(authTarget)
-                : val;
+              return typeof val === "function" ? val.bind(authTarget) : val;
             },
           });
         }

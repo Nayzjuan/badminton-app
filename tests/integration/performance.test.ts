@@ -23,7 +23,13 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { Faker, en } from "@faker-js/faker";
-import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeCompletedMatch } from "./factories";
+import {
+  makeProfile,
+  makeSession,
+  makeQueueEntry,
+  makeCourt,
+  makeCompletedMatch,
+} from "./factories";
 import { truncateTracked } from "./helpers/truncate";
 import { mockAuthAs } from "./helpers/mock-auth";
 import { closeSession } from "@/app/actions/sessions";

@@ -82,9 +82,7 @@ function getPool(): pg.Pool {
  *             Use this client for all DB operations you want rolled back.
  * @returns The value returned by `fn` (useful for assertions).
  */
-export async function withTx<T>(
-  fn: (db: pg.PoolClient) => Promise<T>
-): Promise<T> {
+export async function withTx<T>(fn: (db: pg.PoolClient) => Promise<T>): Promise<T> {
   const pool = getPool();
   const client = await pool.connect();
 

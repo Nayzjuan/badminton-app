@@ -73,37 +73,37 @@ DEBUG_MATCHMAKING=true npx vitest run --config vitest.integration.config.ts \
 
 ### Test Suites
 
-| Suite | File | What it covers |
-| ----- | ---- | -------------- |
-| **Health** | `health.test.ts` | Harness smoke — connectivity, factory round-trip, cleanup |
-| **Auth drift** | `auth.real.test.ts` | One real auth roundtrip to keep the mock honest |
-| **Matchmaking** | `matchmaking.test.ts` | Engine: draft mode, partnership cap, mixed-skill, Red Zone, draft cap, TOCTOU, `hasDraftsBlocking` |
-| **Close Session** | `close-session.test.ts` | `closeSession` + Wrapped pipeline: auth, idempotency, state transitions, cross-session stats |
-| **Publish Match** | `publish-match.test.ts` | Draft publish, queue transitions, RLS firewall, `publishAll`, `hasDraftsBlocking` |
-| **Concurrency** | `concurrency.test.ts` | Concurrent publish idempotency, engine in-process serialization, CAS double-promote guard |
-| **RLS Edge Cases** | `rls-edge-cases.test.ts` | Anon read/write blocked, cross-session organizer isolation |
-| **Score Submission** | `score-submission.test.ts` | `endMatchAction` cascade: completed → re-queued → court freed → leaderboard |
-| **Schema Parity** | `schema-parity.test.ts` | All 8 key RPCs, 2 tables, 2 columns, 1 materialized view confirmed via `pg_catalog` |
-| **Performance** | `performance.test.ts` | `closeSession` on 12-player/30-match session < 7s |
+| Suite                | File                       | What it covers                                                                                     |
+| -------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Health**           | `health.test.ts`           | Harness smoke — connectivity, factory round-trip, cleanup                                          |
+| **Auth drift**       | `auth.real.test.ts`        | One real auth roundtrip to keep the mock honest                                                    |
+| **Matchmaking**      | `matchmaking.test.ts`      | Engine: draft mode, partnership cap, mixed-skill, Red Zone, draft cap, TOCTOU, `hasDraftsBlocking` |
+| **Close Session**    | `close-session.test.ts`    | `closeSession` + Wrapped pipeline: auth, idempotency, state transitions, cross-session stats       |
+| **Publish Match**    | `publish-match.test.ts`    | Draft publish, queue transitions, RLS firewall, `publishAll`, `hasDraftsBlocking`                  |
+| **Concurrency**      | `concurrency.test.ts`      | Concurrent publish idempotency, engine in-process serialization, CAS double-promote guard          |
+| **RLS Edge Cases**   | `rls-edge-cases.test.ts`   | Anon read/write blocked, cross-session organizer isolation                                         |
+| **Score Submission** | `score-submission.test.ts` | `endMatchAction` cascade: completed → re-queued → court freed → leaderboard                        |
+| **Schema Parity**    | `schema-parity.test.ts`    | All 8 key RPCs, 2 tables, 2 columns, 1 materialized view confirmed via `pg_catalog`                |
+| **Performance**      | `performance.test.ts`      | `closeSession` on 12-player/30-match session < 7s                                                  |
 
 ### Environment
 
-| File | Purpose |
-| ---- | ------- |
-| `tests/integration/env.example` | Committed template — copy to `.env` and fill in |
-| `tests/integration/.env` | Gitignored. Contains local Supabase keys |
-| `vitest.integration.config.ts` | Separate Vitest config (does not affect unit tests) |
+| File                            | Purpose                                             |
+| ------------------------------- | --------------------------------------------------- |
+| `tests/integration/env.example` | Committed template — copy to `.env` and fill in     |
+| `tests/integration/.env`        | Gitignored. Contains local Supabase keys            |
+| `vitest.integration.config.ts`  | Separate Vitest config (does not affect unit tests) |
 
 ### Infrastructure Files
 
-| File | Purpose |
-| ---- | ------- |
-| `global-setup.ts` | Runs once: checks Supabase is running, applies migrations |
-| `setup.ts` | Runs per-worker: loads env, installs auth mock |
+| File                   | Purpose                                                     |
+| ---------------------- | ----------------------------------------------------------- |
+| `global-setup.ts`      | Runs once: checks Supabase is running, applies migrations   |
+| `setup.ts`             | Runs per-worker: loads env, installs auth mock              |
 | `helpers/mock-auth.ts` | `mockAuthAs(userId)` — controls which user an action "sees" |
-| `helpers/withTx.ts` | Layer A isolation — pg savepoint transactions |
-| `helpers/truncate.ts` | Layer B isolation — targeted DELETE after each test |
-| `factories/index.ts` | All seed helpers (see Factories Reference below) |
+| `helpers/withTx.ts`    | Layer A isolation — pg savepoint transactions               |
+| `helpers/truncate.ts`  | Layer B isolation — targeted DELETE after each test         |
+| `factories/index.ts`   | All seed helpers (see Factories Reference below)            |
 
 ---
 
@@ -129,7 +129,9 @@ Or with `beforeEach`/`afterEach`:
 
 ```ts
 let restoreAuth: () => void;
-beforeEach(() => { restoreAuth = mockAuthAs(organizerId); });
+beforeEach(() => {
+  restoreAuth = mockAuthAs(organizerId);
+});
 afterEach(() => restoreAuth());
 ```
 
@@ -143,11 +145,11 @@ The drift-detector (`auth.real.test.ts`) runs one real auth roundtrip per CI bui
 
 Three layers — pick the lightest one that works:
 
-| Layer | Helper | When to use |
-| ----- | ------ | ----------- |
-| **A — Savepoint** | `withTx(fn)` | Direct `pg` queries; single-connection tests (schema-parity) |
-| **B — Truncate** | `truncateTracked()` in `afterEach` | Server Actions (multi-connection) — default for most suites |
-| **C — DB reset** | `supabase db reset` in CI between suites | Full clean slate between CI runs |
+| Layer             | Helper                                   | When to use                                                  |
+| ----------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| **A — Savepoint** | `withTx(fn)`                             | Direct `pg` queries; single-connection tests (schema-parity) |
+| **B — Truncate**  | `truncateTracked()` in `afterEach`       | Server Actions (multi-connection) — default for most suites  |
+| **C — DB reset**  | `supabase db reset` in CI between suites | Full clean slate between CI runs                             |
 
 **Layer B** (truncate) is the default for most tests:
 
@@ -169,16 +171,16 @@ afterEach(async () => {
 
 Each suite uses a fixed Faker seed at the describe-block level. Pick a number that isn't already used:
 
-| Suite | Seed |
-| ----- | ---- |
-| health | 1001 |
-| matchmaking | 2001 |
-| close-session | 3001 |
-| publish-match | 4001 |
-| concurrency | 5001 |
-| rls-edge-cases | 6001 |
+| Suite            | Seed |
+| ---------------- | ---- |
+| health           | 1001 |
+| matchmaking      | 2001 |
+| close-session    | 3001 |
+| publish-match    | 4001 |
+| concurrency      | 5001 |
+| rls-edge-cases   | 6001 |
 | score-submission | 7001 |
-| performance | 8001 |
+| performance      | 8001 |
 
 New suites: use the next unused thousand (9001, 10001, …).
 
@@ -193,8 +195,8 @@ faker.seed(9001); // pick from the table above
 import { makeProfile, makeSession, makeCourt } from "./factories";
 
 const organizer = await makeProfile({ faker });
-const session   = await makeSession({ faker, organizer: organizer.id });
-const court     = await makeCourt({ sessionId: session.id, name: "Court 1" });
+const session = await makeSession({ faker, organizer: organizer.id });
+const court = await makeCourt({ sessionId: session.id, name: "Court 1" });
 ```
 
 ### 3. Set up cleanup
@@ -228,11 +230,7 @@ it("organizer can do X", async () => {
 ```ts
 import { serviceClient } from "./helpers/truncate";
 
-const { data } = await serviceClient()
-  .from("profiles")
-  .select("*")
-  .eq("id", playerId)
-  .single();
+const { data } = await serviceClient().from("profiles").select("*").eq("id", playerId).single();
 
 expect(data?.skill_level).toBe("advanced");
 ```
@@ -250,9 +248,9 @@ Creates a Supabase auth user + profiles row. Tracked for cleanup automatically.
 ```ts
 const { id, displayName } = await makeProfile({
   faker,
-  skill: "advanced",       // SkillLevel — defaults to "intermediate"
+  skill: "advanced", // SkillLevel — defaults to "intermediate"
   displayName: "Test Bot", // optional override
-  pin: "1234",             // optional 4-digit PIN
+  pin: "1234", // optional 4-digit PIN
 });
 ```
 
@@ -264,8 +262,8 @@ Creates a session + inserts the organizer into `session_organizers`.
 const { id, name } = await makeSession({
   faker,
   organizer: organizerId, // required — must exist in profiles
-  scoring: "single",      // defaults to "single"
-  name: "My Test",        // optional — generated if omitted
+  scoring: "single", // defaults to "single"
+  name: "My Test", // optional — generated if omitted
 });
 ```
 
@@ -277,7 +275,7 @@ Inserts a player into a session's queue.
 const { id } = await makeQueueEntry({
   sessionId: session.id,
   playerId: player.id,
-  status: "waiting",  // "waiting" | "on_deck" | "playing" | "left" — defaults to "waiting"
+  status: "waiting", // "waiting" | "on_deck" | "playing" | "left" — defaults to "waiting"
 });
 ```
 
@@ -300,12 +298,12 @@ Creates a pending/in-progress match with 4 match_players rows. Use for seeding d
 ```ts
 const { id } = await makeMatch({
   sessionId: session.id,
-  teamA: [p1.id, p2.id],          // exactly 2 player UUIDs
-  teamB: [p3.id, p4.id],          // exactly 2 player UUIDs
-  courtId: court.id,               // optional — null = on-deck (no court assigned)
-  status: "pending",               // defaults to "pending"
-  isPublished: false,              // defaults to false (draft)
-  isMixedLevel: false,             // defaults to false
+  teamA: [p1.id, p2.id], // exactly 2 player UUIDs
+  teamB: [p3.id, p4.id], // exactly 2 player UUIDs
+  courtId: court.id, // optional — null = on-deck (no court assigned)
+  status: "pending", // defaults to "pending"
+  isPublished: false, // defaults to false (draft)
+  isMixedLevel: false, // defaults to false
 });
 ```
 
@@ -320,8 +318,8 @@ const { id } = await makeCompletedMatch({
   sessionId: session.id,
   teamA: [p1.id, p2.id],
   teamB: [p3.id, p4.id],
-  scoreA: 21,   // defaults to 21
-  scoreB: 15,   // defaults to 15
+  scoreA: 21, // defaults to 21
+  scoreB: 15, // defaults to 15
   courtId: court.id, // optional
 });
 ```
@@ -379,6 +377,7 @@ It wipes ALL domain tables. If you need partial cleanup, use `serviceClient().fr
 ### Tests interfere with each other
 
 Tests run serially (one file at a time, `fileParallelism: false`). If you see interference, check that:
+
 - `afterEach` calls `truncateTracked()`
 - `clearMockAuth()` is called in `afterEach` for any suite that uses `clearMockAuth()` directly
 - The Faker seed is set at the module level (not shared across suite files)

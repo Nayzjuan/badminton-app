@@ -17,13 +17,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { Faker, en } from "@faker-js/faker";
-import {
-  makeProfile,
-  makeSession,
-  makeQueueEntry,
-  makeCourt,
-  makeMatch,
-} from "./factories";
+import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeMatch } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { endMatchAction, submitMatchScore } from "@/app/actions/match";

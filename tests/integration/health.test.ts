@@ -104,11 +104,7 @@ describe("Integration harness smoke test", () => {
     await truncateTracked();
 
     const client = serviceClient();
-    const { data } = await client
-      .from("profiles")
-      .select("id")
-      .eq("id", id)
-      .maybeSingle();
+    const { data } = await client.from("profiles").select("id").eq("id", id).maybeSingle();
 
     // Row should be gone
     expect(data).toBeNull();

@@ -19,15 +19,15 @@ Built in three phases: foundation → top-3 critical pathways → coverage expan
 
 ### Packages
 
-| Package | Purpose | Notes |
-|---|---|---|
-| `vitest` | Test runner | Native ESM + TS, no config gymnastics |
-| `@vitest/ui` | Optional dashboard | Local dev only, never in CI |
-| `@vitest/coverage-v8` | Coverage via c8 | Built-in, no extra runtime cost |
-| `vite-tsconfig-paths` | Resolve `@/...` imports | Required for Server Actions to import `@/lib/...`, `@/utils/...` |
-| `dotenv` | Load `.env.test` | Keeps test env separate from `.env.local` |
-| `@faker-js/faker` | Deterministic test data | Seeded RNG per test for reproducibility |
-| `pg` | Direct Postgres client | Used by `withTx` savepoint helper and seed factories that need raw SQL |
+| Package               | Purpose                 | Notes                                                                  |
+| --------------------- | ----------------------- | ---------------------------------------------------------------------- |
+| `vitest`              | Test runner             | Native ESM + TS, no config gymnastics                                  |
+| `@vitest/ui`          | Optional dashboard      | Local dev only, never in CI                                            |
+| `@vitest/coverage-v8` | Coverage via c8         | Built-in, no extra runtime cost                                        |
+| `vite-tsconfig-paths` | Resolve `@/...` imports | Required for Server Actions to import `@/lib/...`, `@/utils/...`       |
+| `dotenv`              | Load `.env.test`        | Keeps test env separate from `.env.local`                              |
+| `@faker-js/faker`     | Deterministic test data | Seeded RNG per test for reproducibility                                |
+| `pg`                  | Direct Postgres client  | Used by `withTx` savepoint helper and seed factories that need raw SQL |
 
 **Explicitly NOT installing:** `@testing-library/*`, `jsdom`, `happy-dom`, Playwright. Server Action tests are pure async function calls — no DOM required.
 
@@ -67,9 +67,9 @@ A `tests/integration/helpers/mock-auth.ts` helper:
 
 ```ts
 // usage in a test:
-const restore = mockAuthAs(userId);   // sets the active mock identity
+const restore = mockAuthAs(userId); // sets the active mock identity
 await closeSession(sessionId);
-restore();                            // cleans up after
+restore(); // cleans up after
 ```
 
 Implementation: `vi.mock('@/utils/supabase/server', ...)` returns a Supabase client backed by the **service role key** but with an injected `auth.getUser()` that returns the mocked `userId`. This means RLS policies that check `auth.uid()` see the mocked user, but the underlying client can bypass RLS for setup queries when needed.
@@ -84,27 +84,29 @@ Implementation: `vi.mock('@/utils/supabase/server', ...)` returns a Supabase cli
 
 ### Decision: **Supabase CLI local dev** — `supabase start`
 
-| Option | Verdict | Why |
-|---|---|---|
-| **Supabase CLI local** | ✅ **Chosen** | Free, ~10s Docker boot (reused across runs), real Postgres 17, all migrations, identical RLS, identical auth schema |
-| Supabase branching | ❌ | Costs per branch-day, network latency, overkill for unit-of-work tests. Reserve for staging integration. |
-| Testcontainers (raw `pg`) | ❌ | Loses Supabase-specific features (RLS, auth, storage). Forces parallel migration runner. |
-| Mocks / in-memory | ❌ | Defeats the point. RLS, RPC, FK cascades, PG17 quirks only show up against real Postgres. |
+| Option                    | Verdict       | Why                                                                                                                 |
+| ------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Supabase CLI local**    | ✅ **Chosen** | Free, ~10s Docker boot (reused across runs), real Postgres 17, all migrations, identical RLS, identical auth schema |
+| Supabase branching        | ❌            | Costs per branch-day, network latency, overkill for unit-of-work tests. Reserve for staging integration.            |
+| Testcontainers (raw `pg`) | ❌            | Loses Supabase-specific features (RLS, auth, storage). Forces parallel migration runner.                            |
+| Mocks / in-memory         | ❌            | Defeats the point. RLS, RPC, FK cascades, PG17 quirks only show up against real Postgres.                           |
 
 ### Test isolation — three layers, chosen per test class
 
 **Layer A — Transactional savepoint (default for single-RPC actions)**
 A `withTx(fn)` helper wraps the test in `BEGIN; SAVEPOINT t; ... ROLLBACK TO t;` and discards all writes.
-*Caveat:* Only works when the tested code uses one logical connection. Multi-RPC server actions (e.g. `closeSession`) use the Supabase client which manages its own connection pool — savepoints won't catch those writes. Use Layer B for these.
+_Caveat:_ Only works when the tested code uses one logical connection. Multi-RPC server actions (e.g. `closeSession`) use the Supabase client which manages its own connection pool — savepoints won't catch those writes. Use Layer B for these.
 
 **Layer B — Targeted truncation (for multi-RPC actions)**
 An `afterEach` cleans domain tables in dependency order:
+
 ```sql
 TRUNCATE session_wrapped_stats, player_rivalries, player_partnerships,
          match_players, match_games, matches, queue_entries,
          courts, session_organizers, sessions, profiles
 RESTART IDENTITY CASCADE;
 ```
+
 `auth.users` rows created by tests are removed via `auth.admin.deleteUser()`. **Never** truncate `auth.users` directly — breaks Supabase Auth's internal schema.
 
 **Layer C — Full reset (between suite files in CI)**
@@ -113,6 +115,7 @@ RESTART IDENTITY CASCADE;
 ### Seeds & factories
 
 `tests/integration/factories/`:
+
 - `makeProfile({ skill, name? })` → inserts profile + auth user, returns `{ id, displayName }`
 - `makeSession({ organizer, players? })` → session + queue entries
 - `makeCompletedMatch({ session, teamA, teamB, scoreA, scoreB })` → matches + match_players + scores
@@ -137,6 +140,7 @@ Ranked by **blast radius if broken** × **complexity of logic**.
 **Why critical:** The single most complex business logic in the app. Wrong matches anger users immediately. TOCTOU bugs corrupt match state. Partnership cap, Red Zone wait, draft mode, skill balancing all converge here.
 
 **Test cases:**
+
 - **Happy path:** 8 waiting players → engine returns 2 matches with no partnership repeats.
 - **Partnership cap:** Seed `partner_counts` so a pair has reached `MAX_PARTNERSHIP_REPEATS = 2` → engine MUST NOT pair them again. Assert via returned drafts.
 - **Mixed-skill flag:** Force a skill spread > threshold → asserts `is_mixed_level = true`.
@@ -151,6 +155,7 @@ Ranked by **blast radius if broken** × **complexity of logic**.
 **Why critical:** Just shipped. Touches `refresh_cross_session_stats`, `compute_session_wrapped`, `refresh_alltime_leaderboard`, broadcasts, queue cancellation, plus the new cross-session ledger tables. A regression here breaks Wrapped pages for every player every session close.
 
 **Test cases:**
+
 - **End-to-end happy path:** Seed a session with 4 players, 6 completed matches. Call `closeSession`. Assert: `session_wrapped_stats` rows for all 4, `player_rivalries` populated, `player_partnerships` populated, `carry_forward` JSONB shape correct, session marked inactive.
 - **Idempotency:** Calling `closeSession` on an already-closed session returns `{ success: false, message: "Session is already closed." }` with no side effects.
 - **`refresh_cross_session_stats` failure is non-fatal:** Mock the RPC to throw → close still completes, `wrappedReady` reflects only the `compute_session_wrapped` outcome.
@@ -164,6 +169,7 @@ Ranked by **blast radius if broken** × **complexity of logic**.
 **Why critical:** The 3-layer RLS firewall + draft-mode logic guards data integrity. A bug here either (a) shows draft matches to players prematurely or (b) leaves queue entries inconsistent with match state. Both create immediate user-visible chaos.
 
 **Test cases:**
+
 - **Publish flips `is_published`:** Draft → `true`. All 4 players' `queue_entries.status` transition `waiting → playing` atomically.
 - **Idempotency:** Double-publish on same match → second call is a no-op, no duplicate queue updates.
 - **Publish All:** 3 drafts → all flip in a single transaction; partial failure rolls back all.
@@ -182,6 +188,7 @@ Each phase is a discrete, mergeable PR. Phase 1 is a hard prerequisite for any a
 **Goal:** One trivial integration test passing in CI.
 
 **Deliverables:**
+
 - Install Vitest + deps; write `vitest.config.ts`
 - `tests/integration/setup.ts` (Supabase client, env loading)
 - `tests/integration/global-setup.ts` (assert `supabase start` running, apply migrations)
@@ -200,6 +207,7 @@ Each phase is a discrete, mergeable PR. Phase 1 is a hard prerequisite for any a
 **Goal:** Cover the Top 3 pathways from §3.
 
 **Deliverables:**
+
 - **Suite A:** `matchmaking.test.ts` — 8 cases on `runEngineInternal`
 - **Suite B:** `close-session.test.ts` — 7 cases on `closeSession` + cross-session pipeline
 - **Suite C:** `publish-match.test.ts` — 6 cases on publish + queue side effects
@@ -214,6 +222,7 @@ Each phase is a discrete, mergeable PR. Phase 1 is a hard prerequisite for any a
 **Goal:** Catch the long tail.
 
 **Deliverables:**
+
 - **Concurrency tests:** `Promise.all` × 5 concurrent `publishMatchAction` on same match → only one succeeds. Same for `runEngineForSession` → engine serialises via `engineRunningSessionIds` set or DB advisory lock.
 - **RLS edge cases:** Anon writes to every table; organizer of session A reading session B; player reading another player's `session_wrapped_stats`.
 - **PIN reconnect:** `migrate_player_identity` — old user → new user data migration; primary organizer protection.
@@ -229,12 +238,12 @@ Each phase is a discrete, mergeable PR. Phase 1 is a hard prerequisite for any a
 
 ## Decisions (locked)
 
-| # | Decision | Choice | Rationale |
-|---|---|---|---|
-| 1 | Auth mocking style | **Stub `@/utils/supabase/server` (Option B)** | Per-test speed (~150ms saved each); single `auth.real.test.ts` drift-detector keeps the mock honest |
-| 2 | Coverage tool | **`@vitest/coverage-v8` (c8)** | Built into Vitest, no extra runtime, sufficient detail |
-| 3 | CI provider | **GitHub Actions** | Matches existing repo pattern |
-| 4 | PR-block default | **Required for merge once Phase 2 stabilises** (<1 flake / 10 runs over 2 days) | Quality gate. Flakes get fixed or quarantined immediately, not tolerated |
+| #   | Decision           | Choice                                                                          | Rationale                                                                                           |
+| --- | ------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 1   | Auth mocking style | **Stub `@/utils/supabase/server` (Option B)**                                   | Per-test speed (~150ms saved each); single `auth.real.test.ts` drift-detector keeps the mock honest |
+| 2   | Coverage tool      | **`@vitest/coverage-v8` (c8)**                                                  | Built into Vitest, no extra runtime, sufficient detail                                              |
+| 3   | CI provider        | **GitHub Actions**                                                              | Matches existing repo pattern                                                                       |
+| 4   | PR-block default   | **Required for merge once Phase 2 stabilises** (<1 flake / 10 runs over 2 days) | Quality gate. Flakes get fixed or quarantined immediately, not tolerated                            |
 
 ---
 

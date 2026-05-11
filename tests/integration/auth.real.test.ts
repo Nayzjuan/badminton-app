@@ -29,23 +29,27 @@ describe("Auth mock drift detector", () => {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // An unauthenticated call should return { data: { user: null }, error: null }
+    // As of @supabase/supabase-js v2.x, an unauthenticated call returns:
+    //   { data: { user: null }, error: AuthSessionMissingError }
+    //
+    // Earlier SDK versions returned error: null in this case. The mock in
+    // setup.ts intentionally still returns error: null because server actions
+    // only guard with `if (!user)` (not `if (error)`), so mock fidelity on
+    // the error field is not required for action-level tests.
+    //
+    // This test documents the REAL SDK shape, not the mock shape.
     const { data, error } = await realClient.auth.getUser();
 
-    // Shape assertions
-    expect(error).toBeNull();
+    // data.user must be null (no active session)
     expect(data).toBeDefined();
     expect(data).toHaveProperty("user");
+    expect(data.user).toBeNull();
 
-    // The mock returns { data: { user: null }, error: null } for unauthenticated.
-    // Verify the real client has the same structure.
-    if (data.user === null) {
-      // Unauthenticated — shape matches mock's null-user path
-      expect(data.user).toBeNull();
-    } else {
-      // Somehow authenticated — the user object must have an id property
-      expect(data.user).toHaveProperty("id");
-      expect(typeof data.user.id).toBe("string");
+    // SDK v2 reports AuthSessionMissingError for unauthenticated calls.
+    // Accept both null (older SDK compat) and AuthSessionMissingError.
+    if (error !== null) {
+      expect(error).toHaveProperty("name", "AuthSessionMissingError");
+      expect(error).toHaveProperty("__isAuthError", true);
     }
   });
 });

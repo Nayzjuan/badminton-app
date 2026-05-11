@@ -32,6 +32,7 @@ import {
   makeQueueEntry,
   makeCourt,
   makeMatch,
+  makeMatchViaRpc,
   enableAutoMatchmaking,
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
@@ -68,7 +69,11 @@ describe("Concurrency & Race Conditions — Suite D", () => {
       makeQueueEntry({ sessionId: session.id, playerId: p4.id }),
     ]);
 
-    const match = await makeMatch({
+    // Use makeMatchViaRpc (not makeMatch) so the RPC sets queue entries to
+    // 'drafted'. publishMatchAction guards on .eq("status", "drafted"), so a
+    // direct DB insert that leaves entries 'waiting' would cause the status
+    // update to silently no-op and the on_deck assertion below would fail.
+    const match = await makeMatchViaRpc({
       sessionId: session.id,
       teamA: [p1.id, p2.id],
       teamB: [p3.id, p4.id],
@@ -79,9 +84,7 @@ describe("Concurrency & Race Conditions — Suite D", () => {
     let results: Awaited<ReturnType<typeof publishMatchAction>>[];
     try {
       // Fire 5 concurrent publish calls on the same match
-      results = await Promise.all(
-        Array.from({ length: 5 }, () => publishMatchAction(match.id))
-      );
+      results = await Promise.all(Array.from({ length: 5 }, () => publishMatchAction(match.id)));
     } finally {
       restore();
     }
@@ -133,9 +136,7 @@ describe("Concurrency & Race Conditions — Suite D", () => {
     // Fire 5 concurrent engine runs on the same session.
     // The in-process engineRunningFor Set prevents concurrent execution;
     // calls 2-5 return immediately while call 1 is in flight.
-    await Promise.all(
-      Array.from({ length: 5 }, () => runEngineForSession(session.id))
-    );
+    await Promise.all(Array.from({ length: 5 }, () => runEngineForSession(session.id)));
 
     // Exactly 1 match should have been created (one engine run produces 1
     // draft with 8 players and the MIN_FREE_POOL_FOR_ON_DECK check stopping at 1)

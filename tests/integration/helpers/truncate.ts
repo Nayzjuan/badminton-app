@@ -31,11 +31,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 
 /** Allowed local Supabase URL prefixes. */
-const LOCAL_URL_PREFIXES = [
-  "http://127.0.0.1",
-  "http://localhost",
-  "http://0.0.0.0",
-];
+const LOCAL_URL_PREFIXES = ["http://127.0.0.1", "http://localhost", "http://0.0.0.0"];
 
 function assertLocalOnly(): void {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
@@ -112,9 +108,7 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
  * Deletes all rows from every domain table in FK-safe order.
  * Called by truncateAll() — not for direct use.
  */
-async function truncateViaDeletes(
-  client: ReturnType<typeof serviceClient>
-): Promise<void> {
+async function truncateViaDeletes(client: ReturnType<typeof serviceClient>): Promise<void> {
   // Tables in FK dependency order: children before parents.
   // session_wrapped_stats, player_rivalries, player_partnerships
   // reference profiles → delete them first.
