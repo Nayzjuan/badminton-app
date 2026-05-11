@@ -182,6 +182,19 @@ export function useMatchAlerts({
 
       console.log(`[useMatchAlerts] queue transition: ${prev} → ${next}`);
 
+      // ── Drafted: single short haptic, no audio ────────────────
+      // Signals "something is happening" without creating urgency —
+      // the draft may still be cancelled or reshuffled before publish.
+      // Audio is intentionally reserved for the confirmed on_deck moment.
+      // Guard mirrors the on_deck pattern (prev !== target) so it fires even
+      // if bootstrap lost the race and prev is still null when the event arrives.
+      if (next === "drafted" && prev !== "drafted") {
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+          navigator.vibrate(80);
+        }
+        return;
+      }
+
       // ── FIX 1: check `next === target` not `prev === source`  ──
       // Old: if (prev === "waiting" && next === "on_deck")
       // Problem: if bootstrap hasn't finished, prev === null and the

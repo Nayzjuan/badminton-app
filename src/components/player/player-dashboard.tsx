@@ -670,6 +670,7 @@ function QueueSubTab({
   if (isInQueue && myEntry?.status === "drafted") {
     return (
       <div className="space-y-5">
+        {/* Primary messaging card */}
         <div
           className="rounded-2xl border-2 border-slate-200 dark:border-border
                         bg-slate-50 dark:bg-muted/50 p-6 text-center"
@@ -686,6 +687,16 @@ function QueueSubTab({
             you&apos;ll get an alert the moment it&apos;s confirmed.
           </p>
         </div>
+
+        {/* Pulsing status card — shows "selected" instead of a vanished position */}
+        <QueueStatus
+          position={null}
+          isDrafted
+          waitMinutes={myWaitMinutes}
+          gamesPlayed={myEntry.games_played}
+          totalInQueue={totalWaiting}
+        />
+
         <QueueToggle isInQueue onJoin={joinQueue} onLeave={leaveQueue} />
       </div>
     );
