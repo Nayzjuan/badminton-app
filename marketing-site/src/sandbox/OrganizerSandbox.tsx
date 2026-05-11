@@ -324,6 +324,7 @@ function reducer(state: State, action: Action): State {
       // Sync player statuses after a cross-match swap — each player inherits
       // the status that corresponds to their new match's state.
       const matchStatusToPlayerStatus = (ms: MatchStatus): PlayerStatus => {
+        if (ms === "draft") return "drafted"; // defensive: currently unreachable (draft cards are not swappable)
         if (ms === "on_deck") return "on_deck";
         if (ms === "active") return "playing";
         return "waiting";

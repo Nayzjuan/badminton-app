@@ -85,10 +85,11 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     refresh: refreshQueue,
   } = useQueue(session.id, profile.id);
 
-  const { currentMatch, loading: matchLoading, refresh: refreshMatch } = usePlayerMatch(
-    session.id,
-    profile.id
-  );
+  const {
+    currentMatch,
+    loading: matchLoading,
+    refresh: refreshMatch,
+  } = usePlayerMatch(session.id, profile.id);
 
   const {
     inProgressMatches,
@@ -118,11 +119,12 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
   // Player has an active match if they're on_deck or in_progress.
   const hasActiveMatch =
     currentMatch !== null &&
-    (currentMatch.match.status === "pending" ||
-      currentMatch.match.status === "in_progress");
+    (currentMatch.match.status === "pending" || currentMatch.match.status === "in_progress");
 
   const isInQueue = myEntry !== null && myEntry.status !== "left";
-  const totalWaiting = queue.filter((q) => q.status === "waiting").length;
+  // Include "drafted" players — they are committed to a pending draft and
+  // still occupy a session slot; excluding them understates the queue size.
+  const totalWaiting = queue.filter((q) => q.status === "waiting" || q.status === "drafted").length;
 
   // Header dot colour.
   const dotColor = hasActiveMatch
@@ -130,193 +132,190 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
       ? "bg-emerald-500 animate-pulse"
       : "bg-amber-400 animate-pulse"
     : myEntry?.is_paused
-    ? "bg-slate-400"          // Paused — neutral, no pulse
-    : isInQueue
-    ? "bg-emerald-500 animate-pulse"
-    : "bg-slate-300";
+      ? "bg-slate-400" // Paused — neutral, no pulse
+      : isInQueue
+        ? "bg-emerald-500 animate-pulse"
+        : "bg-slate-300";
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-background md:flex md:justify-center">
-    {/* On md+ screens, constrain to a phone-width column centred on the page */}
-    <div className="flex flex-col w-full min-h-screen md:max-w-md md:border-x md:border-slate-200 dark:md:border-border">
-      {/* ── Header ──────────────────────────────────────────── */}
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80
-                         dark:bg-background/95 dark:border-border">
-        <div className="px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-lg font-bold text-slate-900 dark:text-foreground truncate">
-                {session.name}
-              </h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="text-xs text-slate-500 dark:text-muted-foreground">
-                  {profile.display_name}
-                </span>
-                {profile.vip_tag && profile.vip_theme && (
-                  <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
-                )}
-                <SkillBadge level={profile.skill_level} />
-                {profile.pin && (
-                  <button
-                    onClick={() => setPinVisible((v) => !v)}
-                    className="flex items-center gap-1 rounded-full bg-slate-100 dark:bg-muted px-3 py-2
+      {/* On md+ screens, constrain to a phone-width column centred on the page */}
+      <div className="flex flex-col w-full min-h-screen md:max-w-md md:border-x md:border-slate-200 dark:md:border-border">
+        {/* ── Header ──────────────────────────────────────────── */}
+        <header
+          className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80
+                         dark:bg-background/95 dark:border-border"
+        >
+          <div className="px-4 py-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-lg font-bold text-slate-900 dark:text-foreground truncate">
+                  {session.name}
+                </h1>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="text-xs text-slate-500 dark:text-muted-foreground">
+                    {profile.display_name}
+                  </span>
+                  {profile.vip_tag && profile.vip_theme && (
+                    <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
+                  )}
+                  <SkillBadge level={profile.skill_level} />
+                  {profile.pin && (
+                    <button
+                      onClick={() => setPinVisible((v) => !v)}
+                      className="flex items-center gap-1 rounded-full bg-slate-100 dark:bg-muted px-3 py-2
                                min-h-[36px] text-[10px] font-mono text-slate-500 dark:text-muted-foreground
                                hover:bg-slate-200 dark:hover:bg-muted/80 transition-colors"
-                    title={pinVisible ? "Hide PIN" : "Show PIN"}
-                  >
-                    <span>{pinVisible ? profile.pin : `***${profile.pin.slice(-1)}`}</span>
-                    {pinVisible ? (
-                      <EyeOff className="h-2.5 w-2.5" />
-                    ) : (
-                      <Eye className="h-2.5 w-2.5" />
-                    )}
-                  </button>
-                )}
+                      title={pinVisible ? "Hide PIN" : "Show PIN"}
+                    >
+                      <span>{pinVisible ? profile.pin : `***${profile.pin.slice(-1)}`}</span>
+                      {pinVisible ? (
+                        <EyeOff className="h-2.5 w-2.5" />
+                      ) : (
+                        <Eye className="h-2.5 w-2.5" />
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <ThemeToggle
+                  className="text-slate-500 hover:text-slate-900 hover:bg-slate-100
+                                      dark:text-primary dark:hover:bg-primary/10"
+                />
+                <SignOutButton variant="icon" />
+                {/* Status dot — aria-hidden since the sr-only span carries the label */}
+                <div aria-hidden="true" className={`h-2.5 w-2.5 rounded-full ${dotColor}`} />
+                <span className="sr-only">
+                  Status:{" "}
+                  {hasActiveMatch ? "Match active" : isInQueue ? "In queue" : "Not in queue"}
+                </span>
+                {/* Leave Session */}
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <button
+                      className="flex items-center gap-1 rounded-lg px-3 py-2.5 min-h-[44px] text-xs font-medium
+                               text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                      title="Leave this session"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      Leave
+                    </button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Leave &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        You will be removed from the queue and will lose your spot. Any match
+                        currently in progress will not be affected. You can rejoin later using your
+                        name and PIN.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Stay</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={handleCheckout}
+                        disabled={checkingOut}
+                        className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                      >
+                        {checkingOut ? "Leaving…" : "Leave session"}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                    {/* Secondary escape hatch — full sign-out for device handoff */}
+                    <div className="border-t border-border mt-1 pt-3 text-center">
+                      <SignOutButton variant="text" />
+                    </div>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <ThemeToggle className="text-slate-500 hover:text-slate-900 hover:bg-slate-100
-                                      dark:text-primary dark:hover:bg-primary/10" />
-              <SignOutButton variant="icon" />
-              {/* Status dot — aria-hidden since the sr-only span carries the label */}
-              <div
-                aria-hidden="true"
-                className={`h-2.5 w-2.5 rounded-full ${dotColor}`}
-              />
-              <span className="sr-only">
-                Status:{" "}
-                {hasActiveMatch
-                  ? "Match active"
-                  : isInQueue
-                  ? "In queue"
-                  : "Not in queue"}
-              </span>
-              {/* Leave Session */}
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <button
-                    className="flex items-center gap-1 rounded-lg px-3 py-2.5 min-h-[44px] text-xs font-medium
-                               text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
-                    title="Leave this session"
-                  >
-                    <LogOut className="h-3.5 w-3.5" />
-                    Leave
-                  </button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Leave &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      You will be removed from the queue and will lose your spot. Any match
-                      currently in progress will not be affected. You can rejoin later
-                      using your name and PIN.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Stay</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={handleCheckout}
-                      disabled={checkingOut}
-                      className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
-                    >
-                      {checkingOut ? "Leaving…" : "Leave session"}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                  {/* Secondary escape hatch — full sign-out for device handoff */}
-                  <div className="border-t border-border mt-1 pt-3 text-center">
-                    <SignOutButton variant="text" />
-                  </div>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
           </div>
-        </div>
 
-        {/* ── Tab Bar — 4 tabs, mobile-stretch ────────────── */}
-        <div role="tablist" aria-label="Session navigation" className="grid grid-cols-4 border-t border-slate-200 dark:border-border">
-          {TABS.map(({ key, label, icon: Icon }) => {
-            const isActive = activeTab === key;
-            return (
-              <button
-                key={key}
-                role="tab"
-                aria-selected={isActive}
-                aria-controls={`tabpanel-${key}`}
-                id={`tab-${key}`}
-                onClick={() => setActiveTab(key)}
-                className={`flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold
+          {/* ── Tab Bar — 4 tabs, mobile-stretch ────────────── */}
+          <div
+            role="tablist"
+            aria-label="Session navigation"
+            className="grid grid-cols-4 border-t border-slate-200 dark:border-border"
+          >
+            {TABS.map(({ key, label, icon: Icon }) => {
+              const isActive = activeTab === key;
+              return (
+                <button
+                  key={key}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`tabpanel-${key}`}
+                  id={`tab-${key}`}
+                  onClick={() => setActiveTab(key)}
+                  className={`flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold
                             transition-colors
                             ${
                               isActive
                                 ? "text-slate-900 border-b-2 border-slate-900 dark:text-primary dark:border-primary"
                                 : "text-slate-400 hover:text-slate-600 dark:text-muted-foreground dark:hover:text-foreground"
                             }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </header>
-
-      {/* ── Pocket Ping enrollment prompt ───────────────────── */}
-      {/* Shown once, 2.5 s after mount, if Notification.permission === 'default'. */}
-      <NotificationEnrollment userId={profile.id} />
-
-      {/* ── Content ─────────────────────────────────────────── */}
-      <main className="flex-1 px-4 py-5 pb-8">
-        {activeTab === "status" && (
-          <div role="tabpanel" id="tabpanel-status" aria-labelledby="tab-status">
-            <MyStatusTab
-              profile={profile}
-              session={session}
-              hasActiveMatch={hasActiveMatch}
-              currentMatch={currentMatch}
-              isInQueue={isInQueue}
-              myEntry={myEntry}
-              myPosition={myPosition}
-              myWaitMinutes={myWaitMinutes}
-              totalWaiting={totalWaiting}
-              queueLoading={queueLoading}
-              matchLoading={matchLoading}
-              joinQueue={joinQueue}
-              leaveQueue={leaveQueue}
-            />
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              );
+            })}
           </div>
-        )}
+        </header>
 
-        {activeTab === "courts" && (
-          <div role="tabpanel" id="tabpanel-courts" aria-labelledby="tab-courts">
-            <LiveCourtsTab
-              inProgressMatches={inProgressMatches}
-              onDeckMatches={onDeckMatches}
-              loading={sessionLoading}
-            />
-          </div>
-        )}
+        {/* ── Pocket Ping enrollment prompt ───────────────────── */}
+        {/* Shown once, 2.5 s after mount, if Notification.permission === 'default'. */}
+        <NotificationEnrollment userId={profile.id} />
 
-        {activeTab === "waitlist" && (
-          <div role="tabpanel" id="tabpanel-waitlist" aria-labelledby="tab-waitlist">
-            <WaitlistTab
-              waitlist={waitlist}
-              myPlayerId={profile.id}
-              loading={sessionLoading}
-            />
-          </div>
-        )}
+        {/* ── Content ─────────────────────────────────────────── */}
+        <main className="flex-1 px-4 py-5 pb-8">
+          {activeTab === "status" && (
+            <div role="tabpanel" id="tabpanel-status" aria-labelledby="tab-status">
+              <MyStatusTab
+                profile={profile}
+                session={session}
+                hasActiveMatch={hasActiveMatch}
+                currentMatch={currentMatch}
+                isInQueue={isInQueue}
+                myEntry={myEntry}
+                myPosition={myPosition}
+                myWaitMinutes={myWaitMinutes}
+                totalWaiting={totalWaiting}
+                queueLoading={queueLoading}
+                matchLoading={matchLoading}
+                joinQueue={joinQueue}
+                leaveQueue={leaveQueue}
+              />
+            </div>
+          )}
 
-        {activeTab === "leaderboard" && (
-          <div role="tabpanel" id="tabpanel-leaderboard" aria-labelledby="tab-leaderboard">
-            <LeaderboardPage
-              sessionId={session.id}
-              currentUserId={profile.id}
-              variant="player-panel"
-            />
-          </div>
-        )}
-      </main>
-    </div>
+          {activeTab === "courts" && (
+            <div role="tabpanel" id="tabpanel-courts" aria-labelledby="tab-courts">
+              <LiveCourtsTab
+                inProgressMatches={inProgressMatches}
+                onDeckMatches={onDeckMatches}
+                loading={sessionLoading}
+              />
+            </div>
+          )}
+
+          {activeTab === "waitlist" && (
+            <div role="tabpanel" id="tabpanel-waitlist" aria-labelledby="tab-waitlist">
+              <WaitlistTab waitlist={waitlist} myPlayerId={profile.id} loading={sessionLoading} />
+            </div>
+          )}
+
+          {activeTab === "leaderboard" && (
+            <div role="tabpanel" id="tabpanel-leaderboard" aria-labelledby="tab-leaderboard">
+              <LeaderboardPage
+                sessionId={session.id}
+                currentUserId={profile.id}
+                variant="player-panel"
+              />
+            </div>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
@@ -380,18 +379,11 @@ function MyStatusTab({
 
         {/* Score input — only when the match is actually in progress */}
         {currentMatch.match.status === "in_progress" && (
-          <ScoreInputCard
-            matchId={currentMatch.match.id}
-            myTeam={currentMatch.myTeam}
-          />
+          <ScoreInputCard matchId={currentMatch.match.id} myTeam={currentMatch.myTeam} />
         )}
 
         <div className="pt-1">
-          <QueueToggle
-            isInQueue={isInQueue}
-            onJoin={joinQueue}
-            onLeave={leaveQueue}
-          />
+          <QueueToggle isInQueue={isInQueue} onJoin={joinQueue} onLeave={leaveQueue} />
         </div>
       </div>
     );
@@ -399,11 +391,7 @@ function MyStatusTab({
 
   // ── Loading ─────────────────────────────────────────────────
   if (queueLoading || matchLoading) {
-    return (
-      <div className="py-16 text-center text-sm text-muted-foreground">
-        Loading...
-      </div>
-    );
+    return <div className="py-16 text-center text-sm text-muted-foreground">Loading...</div>;
   }
 
   return (
@@ -563,7 +551,9 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
             />
           </div>
 
-          <span className="text-lg font-bold text-slate-300 dark:text-muted-foreground mt-5">–</span>
+          <span className="text-lg font-bold text-slate-300 dark:text-muted-foreground mt-5">
+            –
+          </span>
 
           {/* Their team score */}
           <div className="flex-1 text-center space-y-1">
@@ -588,9 +578,7 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
         </div>
 
         {/* Error */}
-        {error && (
-          <p className="text-center text-xs text-red-600 dark:text-red-400">{error}</p>
-        )}
+        {error && <p className="text-center text-xs text-red-600 dark:text-red-400">{error}</p>}
 
         {/* Submit */}
         <button
@@ -604,8 +592,19 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
           {isPending ? (
             <>
               <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
               </svg>
               Submitting…
             </>
@@ -641,9 +640,13 @@ function QueueSubTab({
   if (isInQueue && myEntry?.is_paused) {
     return (
       <div className="space-y-5">
-        <div className="rounded-2xl border-2 border-slate-300 dark:border-border
-                        bg-slate-50 dark:bg-muted/50 p-6 text-center">
-          <div className="flex justify-center mb-3 text-3xl" aria-hidden="true">⏸</div>
+        <div
+          className="rounded-2xl border-2 border-slate-300 dark:border-border
+                        bg-slate-50 dark:bg-muted/50 p-6 text-center"
+        >
+          <div className="flex justify-center mb-3 text-3xl" aria-hidden="true">
+            ⏸
+          </div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
             Paused by Organizer
           </p>
@@ -651,9 +654,8 @@ function QueueSubTab({
             You are taking a break
           </p>
           <p className="mt-2 text-sm text-slate-500 dark:text-muted-foreground">
-            You will not be called for matches while paused.
-            Your queue position is saved — the organizer will resume you
-            when you&apos;re ready to play.
+            You will not be called for matches while paused. Your queue position is saved — the
+            organizer will resume you when you&apos;re ready to play.
           </p>
         </div>
         <QueueToggle isInQueue onJoin={joinQueue} onLeave={leaveQueue} />
@@ -700,8 +702,7 @@ function QueueSubTab({
         </p>
         {myEntry && myEntry.games_played > 0 && (
           <p className="text-xs text-muted-foreground mt-3">
-            {myEntry.games_played} game{myEntry.games_played !== 1 ? "s" : ""}{" "}
-            played this session.
+            {myEntry.games_played} game{myEntry.games_played !== 1 ? "s" : ""} played this session.
           </p>
         )}
       </div>

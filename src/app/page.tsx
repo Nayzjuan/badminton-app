@@ -22,7 +22,7 @@ export default async function HomePage() {
       .from("queue_entries")
       .select("session_id, sessions!inner(is_active)")
       .eq("player_id", user.id)
-      .in("status", ["waiting", "on_deck", "playing"])
+      .in("status", ["waiting", "drafted", "on_deck", "playing"])
       .limit(1)
       .single();
 
@@ -39,13 +39,13 @@ export default async function HomePage() {
       <div className="w-full max-w-sm sm:max-w-md space-y-8 text-center">
         {/* Branding */}
         <div className="space-y-2">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl
-                          bg-amber-500 text-[#0E1C3A] ring-4 ring-amber-500/20 dark:ring-amber-400/20">
+          <div
+            className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl
+                          bg-amber-500 text-[#0E1C3A] ring-4 ring-amber-500/20 dark:ring-amber-400/20"
+          >
             <BadmintonRacketIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-3xl font-black tracking-tight text-foreground">
-            Badminton Queue
-          </h1>
+          <h1 className="text-3xl font-black tracking-tight text-foreground">Badminton Queue</h1>
           <p className="text-sm text-muted-foreground leading-relaxed">
             Enter your name and skill level to get started.
           </p>
@@ -99,7 +99,6 @@ function BadmintonRacketIcon({ className }: { className?: string }) {
     >
       {/* Rotate CW 45°: head → upper-right, handle → lower-left */}
       <g transform="rotate(45, 12, 12)">
-
         {/* ── Head: tall narrow oval, distinctly badminton not tennis ── */}
         <ellipse cx="12" cy="5.5" rx="3.5" ry="4.5" />
 
@@ -113,8 +112,8 @@ function BadmintonRacketIcon({ className }: { className?: string }) {
         </g>
 
         {/* ── Throat: V narrows from head edge to shaft ── */}
-        <line x1="9.8"  y1="9.8"  x2="11.2" y2="13.5" />
-        <line x1="14.2" y1="9.8"  x2="12.8" y2="13.5" />
+        <line x1="9.8" y1="9.8" x2="11.2" y2="13.5" />
+        <line x1="14.2" y1="9.8" x2="12.8" y2="13.5" />
 
         {/* ── Handle: parallel rails, slight outward flare ── */}
         <line x1="11.2" y1="13.5" x2="10.7" y2="21.5" />
@@ -122,7 +121,6 @@ function BadmintonRacketIcon({ className }: { className?: string }) {
 
         {/* ── Butt cap: curved grip end ── */}
         <path d="M10.7 21.5 Q12 23 13.3 21.5" />
-
       </g>
     </svg>
   );

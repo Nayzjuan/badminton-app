@@ -37,8 +37,7 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
   // which would expose `organizer_passcode` and `created_by`.  The RPC
   // returns only (id, name, is_active) for active sessions and nothing
   // for inactive or non-existent ones.
-  const { data: lookup } = await supabase
-    .rpc("lookup_active_session", { p_session_id: sessionId });
+  const { data: lookup } = await supabase.rpc("lookup_active_session", { p_session_id: sessionId });
   const session = lookup?.[0] ?? null;
 
   if (!session || !session.is_active) {
@@ -57,7 +56,7 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
       .select("id")
       .eq("session_id", sessionId)
       .eq("player_id", user.id)
-      .in("status", ["waiting", "on_deck", "playing"])
+      .in("status", ["waiting", "drafted", "on_deck", "playing"])
       .limit(1)
       .single();
 
@@ -94,14 +93,14 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12">
       {/* Session banner — distinct amber container so players know exactly what they're joining */}
       <div className="mb-8 w-full max-w-sm sm:max-w-md">
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center
-                        dark:border-amber-800/50 dark:bg-amber-950/20">
+        <div
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center
+                        dark:border-amber-800/50 dark:bg-amber-950/20"
+        >
           <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">
             Joining Session
           </p>
-          <h1 className="text-xl font-black tracking-tight text-foreground">
-            {session.name}
-          </h1>
+          <h1 className="text-xl font-black tracking-tight text-foreground">{session.name}</h1>
         </div>
       </div>
 
