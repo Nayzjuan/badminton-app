@@ -1,0 +1,257 @@
+// ============================================================
+// Scenario J — Drafted Status Player UX (headless)
+// ============================================================
+// Verifies the two-tier drafted UX from the player's perspective:
+//
+//   [A] DRAFTED — player sees "Match Forming / Hang tight…" card
+//       + pulsing QueueStatus indicator ("Match forming / selected from N queued")
+//       + no position number (status is "drafted", not "waiting")
+//       + QueueToggle still visible (player can leave if needed)
+//
+//   [B] DRAFTED → ON_DECK transition — on-deck alert replaces the
+//       "Match Forming" card when status changes via Realtime
+//
+//   [C] DRAFTED → WAITING (cancel) — player returns to normal
+//       waiting state with position number restored
+//
+// Test player: organizer bot (signed in, seeded into each scenario).
+// Queue state is injected directly via adminDb to avoid timing
+// dependencies on the full organizer → engine → draft flow.
+//
+// Headless: Playwright uses Chromium headless by default.
+// ============================================================
+
+import { test, expect } from "@playwright/test";
+import { adminDb } from "../helpers/admin-db";
+import dotenv from "dotenv";
+import path from "path";
+
+import { resetSandboxSession } from "../helpers/teardown";
+import {
+  ensureOrganizerAccount,
+  signInOrganizerBot,
+  ORGANIZER_STORAGE_STATE,
+  getOrganizerUserId,
+} from "../fixtures/auth";
+
+dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
+dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
+
+const SESSION_ID = process.env.TEST_SESSION_ID!;
+const BASE_URL = process.env.TEST_BASE_URL!;
+
+// ── One-time setup ────────────────────────────────────────────
+test.beforeAll(async ({ browser }) => {
+  await ensureOrganizerAccount();
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await signInOrganizerBot(page, BASE_URL);
+  } finally {
+    await context.close();
+  }
+});
+
+test.beforeEach(async () => {
+  await resetSandboxSession();
+});
+
+// ── Bot creation helper ───────────────────────────────────────
+async function createBot(displayName: string): Promise<{ userId: string }> {
+  const db = adminDb();
+  const { data, error } = await db.auth.admin.createUser({
+    email: `${displayName.toLowerCase().replace(/\s/g, "-")}-j@playwright.local`,
+    email_confirm: true,
+  });
+  if (error || !data.user) throw new Error(`[seed] createBot ${displayName}: ${error?.message}`);
+  const userId = data.user.id;
+  await db
+    .from("profiles")
+    .upsert(
+      { id: userId, display_name: displayName, skill_level: "intermediate", pin: "9999" },
+      { onConflict: "id" }
+    );
+  return { userId };
+}
+
+// ── Seed: organizer bot + 3 partners in queue, bot set to 'drafted' ──
+async function seedDraftedState(organizerUserId: string) {
+  const db = adminDb();
+
+  // Create 3 filler bots so totalInQueue is 4
+  const [b1, b2, b3] = await Promise.all([
+    createBot("J_Alice"),
+    createBot("J_Bob"),
+    createBot("J_Cara"),
+  ]);
+
+  // Insert as "waiting" first, then bulk-update to "drafted".
+  // We don't call the create_match_with_players RPC directly here because
+  // the sandbox session's RLS/organizer setup is different from integration
+  // test sessions. A direct two-step seed is equivalent and keeps the E2E
+  // helper self-contained without requiring RPC auth setup.
+  const queueInserts = [
+    { session_id: SESSION_ID, player_id: organizerUserId, status: "waiting" as const },
+    { session_id: SESSION_ID, player_id: b1.userId, status: "waiting" as const },
+    { session_id: SESSION_ID, player_id: b2.userId, status: "waiting" as const },
+    { session_id: SESSION_ID, player_id: b3.userId, status: "waiting" as const },
+  ];
+
+  const { error: qErr } = await db.from("queue_entries").insert(queueInserts);
+  if (qErr) throw new Error(`[seed] queue_entries: ${qErr.message}`);
+
+  // Seed a pending draft match so the DB state is coherent
+  const { data: match, error: mErr } = await db
+    .from("matches")
+    .insert({
+      session_id: SESSION_ID,
+      status: "pending",
+      is_published: false,
+      is_mixed_level: false,
+      origin: "auto",
+    })
+    .select("id")
+    .single();
+  if (mErr || !match) throw new Error(`[seed] match: ${mErr?.message}`);
+
+  // Insert match_players
+  await db.from("match_players").insert([
+    { match_id: match.id, player_id: organizerUserId, team: "a" },
+    { match_id: match.id, player_id: b1.userId, team: "a" },
+    { match_id: match.id, player_id: b2.userId, team: "b" },
+    { match_id: match.id, player_id: b3.userId, team: "b" },
+  ]);
+
+  // Now set all 4 players to "drafted" (mirrors what create_match_with_players does)
+  await db
+    .from("queue_entries")
+    .update({ status: "drafted" })
+    .eq("session_id", SESSION_ID)
+    .in("player_id", [organizerUserId, b1.userId, b2.userId, b3.userId]);
+
+  return { matchId: match.id, bots: [b1, b2, b3] };
+}
+
+// ─────────────────────────────────────────────────────────────
+// [A] Drafted state shows "Match Forming" card + pulsing indicator
+// ─────────────────────────────────────────────────────────────
+test("J-A: drafted player sees Match Forming card and pulsing QueueStatus indicator", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
+  const page = await context.newPage();
+
+  try {
+    const organizerUserId = await getOrganizerUserId();
+    await seedDraftedState(organizerUserId);
+
+    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+
+    // ── Primary messaging card ───────────────────────────────
+    await expect(page.getByText("Match Forming", { exact: false })).toBeVisible({ timeout: 8000 });
+
+    await expect(page.getByText("Hang tight", { exact: false })).toBeVisible();
+
+    await expect(page.getByText(/you.{0,10}ve been selected/i)).toBeVisible();
+
+    // ── QueueStatus pulsing card ─────────────────────────────
+    // Should show "Match forming" (lowercase — QueueStatus label)
+    // and "selected from" copy instead of a position number
+    await expect(page.getByText("Match forming", { exact: false })).toBeVisible();
+
+    await expect(page.getByText(/selected from .+ queued/i)).toBeVisible();
+
+    // Should NOT show a numeric queue position (e.g. "#1", "#2")
+    // A drafted player has no meaningful position
+    await expect(page.getByText(/^#\d+$/)).not.toBeVisible();
+
+    // ── QueueToggle still present ────────────────────────────
+    // Player can still leave even while drafted
+    await expect(page.getByRole("button", { name: /leave|check out/i })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// [B] Drafted → on_deck: on-deck alert replaces Match Forming card
+// ─────────────────────────────────────────────────────────────
+test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming with on-deck alert", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
+  const page = await context.newPage();
+
+  try {
+    const organizerUserId = await getOrganizerUserId();
+    await seedDraftedState(organizerUserId);
+
+    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+
+    // Confirm drafted state is showing first
+    await expect(page.getByText("Match Forming", { exact: false })).toBeVisible({
+      timeout: 8000,
+    });
+
+    // Simulate organizer publishing: push a Realtime-style update by directly
+    // updating the queue_entries row.  The hook's postgres_changes subscription
+    // will fire and transition the UI within ~2s.
+    const db = adminDb();
+    await db
+      .from("queue_entries")
+      .update({ status: "on_deck" })
+      .eq("session_id", SESSION_ID)
+      .eq("player_id", organizerUserId);
+
+    // "Match Forming" card should disappear
+    await expect(page.getByText("Match Forming", { exact: false })).not.toBeVisible({
+      timeout: 8000,
+    });
+
+    // On-deck alert or "You're up" copy should appear
+    // (OnDeckAlert renders with "You're Up Next" or similar)
+    await expect(page.getByText(/up next|on deck|your match/i)).toBeVisible({ timeout: 8000 });
+  } finally {
+    await context.close();
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// [C] Drafted → waiting (cancel): player returns to normal queue state
+// ─────────────────────────────────────────────────────────────
+test("J-C: cancelling a draft returns player to normal waiting state with position restored", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
+  const page = await context.newPage();
+
+  try {
+    const organizerUserId = await getOrganizerUserId();
+    await seedDraftedState(organizerUserId);
+
+    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+
+    // Confirm drafted state
+    await expect(page.getByText("Match Forming", { exact: false })).toBeVisible({
+      timeout: 8000,
+    });
+
+    // Simulate cancel: restore player to waiting
+    const db = adminDb();
+    await db
+      .from("queue_entries")
+      .update({ status: "waiting" })
+      .eq("session_id", SESSION_ID)
+      .eq("player_id", organizerUserId);
+
+    // "Match Forming" card should disappear
+    await expect(page.getByText("Match Forming", { exact: false })).not.toBeVisible({
+      timeout: 8000,
+    });
+
+    // Player should now see their position number (#1 since they were first in queue)
+    await expect(page.getByText(/^#\d+$|in line/i)).toBeVisible({ timeout: 8000 });
+  } finally {
+    await context.close();
+  }
+});

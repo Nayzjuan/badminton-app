@@ -24,14 +24,12 @@ import {
   makeQueueEntry,
   makeCourt,
   makeMatch,
+  makeMatchViaRpc,
   enableAutoMatchmaking,
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import {
-  publishMatchAction,
-  publishAllDraftMatchesAction,
-} from "@/app/actions/match";
+import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match";
 import { callNextMatch } from "@/app/actions/matchmaking";
 
 const faker = new Faker({ locale: [en] });
@@ -60,7 +58,7 @@ async function draftMatchSetup() {
     makeProfile({ faker }),
   ]);
 
-  // Add players to the queue (status: "waiting")
+  // Add players to the queue as "waiting" — the RPC will transition them
   await Promise.all([
     makeQueueEntry({ sessionId: session.id, playerId: p1.id }),
     makeQueueEntry({ sessionId: session.id, playerId: p2.id }),
@@ -68,12 +66,14 @@ async function draftMatchSetup() {
     makeQueueEntry({ sessionId: session.id, playerId: p4.id }),
   ]);
 
-  // Create 1 draft match (is_published = false)
-  const match = await makeMatch({
+  // Create draft via RPC — this atomically sets all 4 players to "drafted".
+  // Previously used makeMatch (direct insert) which left players as "waiting";
+  // publishMatchAction now guards .eq("status","drafted") so that path is tested
+  // separately in drafted-status.test.ts.
+  const match = await makeMatchViaRpc({
     sessionId: session.id,
     teamA: [p1.id, p2.id],
     teamB: [p3.id, p4.id],
-    status: "pending",
     isPublished: false,
   });
 

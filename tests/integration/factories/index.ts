@@ -193,9 +193,9 @@ export interface MakeQueueEntryOptions {
   playerId: string;
   /**
    * Entry status. Defaults to "waiting".
-   * Valid values match the QueueStatus enum: "waiting" | "on_deck" | "playing" | "left"
+   * Valid values match the QueueStatus enum.
    */
-  status?: "waiting" | "on_deck" | "playing" | "left";
+  status?: "waiting" | "drafted" | "on_deck" | "playing" | "left";
 }
 
 /**
@@ -425,6 +425,61 @@ export async function makeCompletedMatch({
   }
 
   return { id: match.id };
+}
+
+// ── makeMatchViaRpc ───────────────────────────────────────────
+
+export interface MakeMatchViaRpcOptions {
+  /** Session UUID. */
+  sessionId: string;
+  /** Team A player UUIDs — exactly 2. Players must have status="waiting". */
+  teamA: [string, string];
+  /** Team B player UUIDs — exactly 2. Players must have status="waiting". */
+  teamB: [string, string];
+  /**
+   * Whether to publish the match immediately.
+   * false (default) = draft; RPC sets all 4 players to 'drafted'.
+   * true = published on-deck; RPC sets all 4 players to 'on_deck'.
+   */
+  isPublished?: boolean;
+}
+
+/**
+ * Creates a match by calling the `create_match_with_players` RPC directly.
+ * Unlike makeMatch (which bypasses the RPC), this correctly updates
+ * queue_entries.status: "drafted" for unpublished drafts, "on_deck" for published.
+ *
+ * Use this factory when testing the drafted-status lifecycle.
+ * Use makeMatch when you need a match without touching queue statuses.
+ */
+export async function makeMatchViaRpc({
+  sessionId,
+  teamA,
+  teamB,
+  isPublished = false,
+}: MakeMatchViaRpcOptions): Promise<MatchResult> {
+  const client = serviceClient();
+
+  const { data: matchId, error } = await client.rpc("create_match_with_players", {
+    p_session_id: sessionId,
+    p_court_id: null,
+    p_status: "pending",
+    p_is_mixed_level: false,
+    p_started_at: null,
+    p_is_on_deck: true,
+    p_team_a_ids: teamA,
+    p_team_b_ids: teamB,
+    p_origin: "manual",
+    p_is_published: isPublished,
+  });
+
+  if (error || !matchId) {
+    throw new Error(
+      `[makeMatchViaRpc] RPC failed: ${error?.message ?? "null match ID returned (TOCTOU guard fired?)"}`
+    );
+  }
+
+  return { id: matchId as string };
 }
 
 // ── enableAutoMatchmaking ─────────────────────────────────────
