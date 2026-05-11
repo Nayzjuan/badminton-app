@@ -359,6 +359,25 @@ function MyStatusTab({
 }: MyStatusTabProps) {
   const [subTab, setSubTab] = useState<SubTab>("queue");
 
+  // ── MODE 0: Drafted — match forming (unpublished draft) ─────
+  // A drafted player has a pending match in the DB, so hasActiveMatch
+  // would be true — but the match isn't published yet (is_published=false)
+  // and the player hasn't been notified. Show the "Match Forming" holding
+  // state instead of the MatchAlert full takeover.
+  if (isInQueue && myEntry?.status === "drafted") {
+    return (
+      <QueueSubTab
+        isInQueue={isInQueue}
+        myEntry={myEntry}
+        myPosition={myPosition}
+        myWaitMinutes={myWaitMinutes}
+        totalWaiting={totalWaiting}
+        joinQueue={joinQueue}
+        leaveQueue={leaveQueue}
+      />
+    );
+  }
+
   // ── MODE 1: Active match — full takeover ────────────────────
   if (!matchLoading && hasActiveMatch && currentMatch) {
     return (
