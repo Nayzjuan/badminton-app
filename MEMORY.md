@@ -5,9 +5,60 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-10)
+## SESSION STATE (Last Updated: 2026-05-11)
 
-### What Was Accomplished This Session — Digital Twin: Organizer Sandbox (3 phases)
+### What Was Accomplished This Session — drafted queue_status + UX (2026-05-11)
+
+**`"drafted"` queue_status — full-stack feature across DB, real app, digital twin, and marketing sandbox.**
+
+**Problem solved:** Players in unpublished draft matches stayed `"waiting"`, forcing a TypeScript `committedSet` two-query workaround in `matchmaking.ts`. With `"drafted"` as a first-class status, drafted players are excluded from `v_queue_with_wait_time` at the DB level automatically.
+
+**Player status lifecycle (updated):**
+
+```
+waiting → drafted  (create_match_with_players sets status='drafted' for unpublished drafts)
+drafted → on_deck  (publishMatchAction promotes at publish time)
+drafted → waiting  (cancelMatchAction restores players to waiting)
+waiting → on_deck  (direct court match, no draft step)
+on_deck → playing  (promoteOnDeckMatchInternal / START_MATCH)
+playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
+```
+
+**DB (migrations applied to production `usxftpexoimletqmrggb`):**
+
+- `20260511000000_add_drafted_queue_status` — `ALTER TYPE queue_status ADD VALUE 'drafted'`; `create_match_with_players` Step d now sets `'drafted'` for unpublished drafts instead of leaving `'waiting'`
+- `20260511000001_swap_player_drafted_status` — `swap_player_in_match` Step c now sets incoming player to `'drafted'` (not `'waiting'`) for unpublished draft swaps, so `publishMatchAction`'s `.eq("status","drafted")` catches all four roster members
+
+**Real app TypeScript (all committed, pushed):**
+
+- `database.ts` — `QueueStatus` union includes `"drafted"`
+- `match.ts` — `publishMatchAction` + `publishAllDraftMatchesAction` changed `.eq("status","waiting")` → `.eq("status","drafted")` (critical: old guard wrote 0 rows)
+- `matchmaking.ts` — `committedSet` two-query workaround removed (~20 lines deleted)
+- `queue.ts` — `joinQueueAction` blocks `"drafted"` explicitly; redundant draft-mode match_players guard removed
+- `sessions.ts`, `auth.ts` (3 places), `use-queue.ts`, `use-match-alerts.ts` — all status-filter arrays include `"drafted"`
+- `app/page.tsx`, `play/join/page.tsx` — redirect guards include `"drafted"`
+- `organizer/page.tsx` — player count includes `"drafted"`
+- `player-dashboard.tsx` — `totalWaiting` includes `"drafted"`; `QueueSubTab` has `"drafted"` branch (see UX below)
+
+**Digital twin (committed, pushed):**
+
+- `state/types.ts` — `"drafted"` in `PlayerStatus`
+- `state/reducer.ts` — `GENERATE_MATCHES` marks players; `PUBLISH_MATCH` transitions `drafted→on_deck`; `CANCEL_MATCH` restores draft players; `LEAVE_QUEUE` blocks drafted
+- `components/QueueRow.tsx` — `statusTone` + `statusLabel` include `"drafted"`, `isInQueue` excludes it
+- `components/QueuePanel.tsx` — `draftedCount` counter shown in header
+
+**Marketing sandbox (committed + deployed to Vercel):**
+
+- `OrganizerSandbox.tsx` — `"drafted"` `PlayerStatus`; `GENERATE` marks players; `CANCEL` restores; `matchStatusToPlayerStatus` has `"draft"→"drafted"` arm
+
+**Drafted player UX — two-tier model:**
+
+- Tier 1 (`drafted`): `queue-status.tsx` — `isDrafted` prop renders `animate-ping` pulsing dot + "Match forming / selected from N queued" instead of blank position. `use-match-alerts.ts` — single 80ms `navigator.vibrate(80)` haptic on `prev !== "drafted"` transition (no audio; audio reserved for confirmed on_deck). `player-dashboard.tsx` — drafted branch shows both the "Hang tight" card AND `QueueStatus isDrafted`.
+- Tier 2 (`on_deck`): full audio chime + push notification, unchanged.
+
+---
+
+### What Was Accomplished (Previous Session) — Digital Twin: Organizer Sandbox (3 phases)
 
 **Digital Twin sandbox at `/sandbox` — interactive playground built as a React Astro Island.** Lets users play organizer without touching a real DB.
 
@@ -177,7 +228,8 @@ skill_level:    "beginner" | "lower_intermediate" | "intermediate" |
                 "upper_intermediate" | "lower_advanced" | "advanced"   (int 1–6)
                 ⚠️ "upper_beginner" was REMOVED — never reference it
 court_status:   "available" | "in_use" | "closed"
-queue_status:   "waiting" | "on_deck" | "playing" | "left"
+queue_status:   "waiting" | "drafted" | "on_deck" | "playing" | "left"
+                ↑ "drafted" added 2026-05-11 — set by create_match_with_players for unpublished drafts
 match_status:   "pending" | "in_progress" | "completed" | "cancelled"
 match_origin:   "auto" | "manual" | "modified"   (sticky: "manual" never demoted)
 scoring_format: "single" | "best_of_3" | "best_of_5"
