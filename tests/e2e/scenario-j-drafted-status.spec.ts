@@ -222,10 +222,20 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       timeout: 8000,
     });
 
-    // Simulate organizer publishing: push a Realtime-style update by directly
-    // updating the queue_entries row.  The hook's postgres_changes subscription
-    // will fire and transition the UI within ~2s.
+    // Simulate organizer publishing: flip matches.is_published AND
+    // queue_entries.status in the same order that publishMatchAction does.
+    // Both updates are required because usePlayerMatch now filters
+    // is_published=true (commit 2070d83 draft visibility fix) — without
+    // flipping is_published, currentMatch stays null and hasActiveMatch
+    // never becomes true, so the on-deck alert never fires.
     const db = adminDb();
+    await db
+      .from("matches")
+      .update({ is_published: true })
+      .eq("session_id", SESSION_ID)
+      .eq("status", "pending")
+      .eq("is_published", false);
+
     await db
       .from("queue_entries")
       .update({ status: "on_deck" })
