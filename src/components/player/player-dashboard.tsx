@@ -116,10 +116,20 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
   // on_deck (warning chime) or gets a court assigned (court call arpeggio).
   useMatchAlerts({ sessionId: session.id, playerId: profile.id });
 
-  // Player has an active match if they're on_deck or in_progress.
+  // Player "has an active match" only when their queue status confirms
+  // they are committed to it (on_deck or playing). This prevents draft
+  // matches (is_published=false, player still "waiting" or "drafted") from
+  // triggering the full MatchAlert takeover before the organizer publishes.
+  //
+  // Queue status mapping:
+  //   on_deck  → pending published match  → show MatchAlert (full takeover)
+  //   playing  → in_progress match         → show MatchAlert + ScoreInput
+  //   drafted  → pending unpublished draft → show "Match Forming" holding card
+  //   waiting  → no active match           → show queue position
   const hasActiveMatch =
     currentMatch !== null &&
-    (currentMatch.match.status === "pending" || currentMatch.match.status === "in_progress");
+    (currentMatch.match.status === "pending" || currentMatch.match.status === "in_progress") &&
+    (myEntry?.status === "on_deck" || myEntry?.status === "playing");
 
   const isInQueue = myEntry !== null && myEntry.status !== "left";
   // Include "drafted" players — they are committed to a pending draft and
@@ -358,25 +368,6 @@ function MyStatusTab({
   leaveQueue,
 }: MyStatusTabProps) {
   const [subTab, setSubTab] = useState<SubTab>("queue");
-
-  // ── MODE 0: Drafted — match forming (unpublished draft) ─────
-  // A drafted player has a pending match in the DB, so hasActiveMatch
-  // would be true — but the match isn't published yet (is_published=false)
-  // and the player hasn't been notified. Show the "Match Forming" holding
-  // state instead of the MatchAlert full takeover.
-  if (isInQueue && myEntry?.status === "drafted") {
-    return (
-      <QueueSubTab
-        isInQueue={isInQueue}
-        myEntry={myEntry}
-        myPosition={myPosition}
-        myWaitMinutes={myWaitMinutes}
-        totalWaiting={totalWaiting}
-        joinQueue={joinQueue}
-        leaveQueue={leaveQueue}
-      />
-    );
-  }
 
   // ── MODE 1: Active match — full takeover ────────────────────
   if (!matchLoading && hasActiveMatch && currentMatch) {

@@ -173,16 +173,18 @@ test("J-A: drafted player sees Match Forming card and pulsing QueueStatus indica
     await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
 
     // ── Primary messaging card ───────────────────────────────
-    await expect(page.getByText("Match Forming", { exact: false })).toBeVisible({ timeout: 8000 });
+    // Use exact: true to disambiguate from the QueueStatus "Match forming"
+    // span (same text, different casing). Two elements match case-insensitive.
+    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({ timeout: 8000 });
 
     await expect(page.getByText("Hang tight", { exact: false })).toBeVisible();
 
     await expect(page.getByText(/you.{0,10}ve been selected/i)).toBeVisible();
 
     // ── QueueStatus pulsing card ─────────────────────────────
-    // Should show "Match forming" (lowercase — QueueStatus label)
+    // Should show "Match forming" (lowercase f — QueueStatus span label)
     // and "selected from" copy instead of a position number
-    await expect(page.getByText("Match forming", { exact: false })).toBeVisible();
+    await expect(page.getByText("Match forming", { exact: true })).toBeVisible();
 
     await expect(page.getByText(/selected from .+ queued/i)).toBeVisible();
 
@@ -191,8 +193,9 @@ test("J-A: drafted player sees Match Forming card and pulsing QueueStatus indica
     await expect(page.getByText(/^#\d+$/)).not.toBeVisible();
 
     // ── QueueToggle still present ────────────────────────────
-    // Player can still leave even while drafted
-    await expect(page.getByRole("button", { name: /leave|check out/i })).toBeVisible();
+    // Player can still leave even while drafted.
+    // Use "Leave Queue" (the QueueToggle button) — not "Leave" (header action).
+    await expect(page.getByRole("button", { name: "Leave Queue" })).toBeVisible();
   } finally {
     await context.close();
   }
@@ -213,8 +216,9 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
 
     await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
 
-    // Confirm drafted state is showing first
-    await expect(page.getByText("Match Forming", { exact: false })).toBeVisible({
+    // Confirm drafted state is showing first (exact: true avoids strict-mode
+    // violation with the QueueStatus "Match forming" span)
+    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
       timeout: 8000,
     });
 
@@ -229,7 +233,7 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       .eq("player_id", organizerUserId);
 
     // "Match Forming" card should disappear
-    await expect(page.getByText("Match Forming", { exact: false })).not.toBeVisible({
+    await expect(page.getByText("Match Forming", { exact: true })).not.toBeVisible({
       timeout: 8000,
     });
 
@@ -256,8 +260,8 @@ test("J-C: cancelling a draft returns player to normal waiting state with positi
 
     await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
 
-    // Confirm drafted state
-    await expect(page.getByText("Match Forming", { exact: false })).toBeVisible({
+    // Confirm drafted state (exact: true avoids strict-mode violation)
+    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
       timeout: 8000,
     });
 
@@ -270,12 +274,14 @@ test("J-C: cancelling a draft returns player to normal waiting state with positi
       .eq("player_id", organizerUserId);
 
     // "Match Forming" card should disappear
-    await expect(page.getByText("Match Forming", { exact: false })).not.toBeVisible({
+    await expect(page.getByText("Match Forming", { exact: true })).not.toBeVisible({
       timeout: 8000,
     });
 
-    // Player should now see their position number (#1 since they were first in queue)
-    await expect(page.getByText(/^#\d+$|in line/i)).toBeVisible({ timeout: 8000 });
+    // Player should now see their queue position (#1 in the large number span,
+    // or "in line" in the ordinal sub-label). The QueueStatus component renders
+    // the exact text "#1" in a <span>, so match that.
+    await expect(page.getByText(/in line/i).first()).toBeVisible({ timeout: 8000 });
   } finally {
     await context.close();
   }
