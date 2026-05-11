@@ -87,6 +87,11 @@ async function isSessionOrganizer(userId: string, sessionId: string): Promise<bo
   return !!membership;
 }
 
+// Helper to detect when a Postgres RPC has not been deployed yet.
+function isRpcNotFound(error: { code?: string } | null): boolean {
+  return error?.code === "PGRST202";
+}
+
 // ============================================================
 // submitMatchScore — player-initiated score submission
 // ============================================================
@@ -829,11 +834,7 @@ export async function publishMatchAction(
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  const { data: match } = await db
-    .from("matches")
-    .select("session_id")
-    .eq("id", matchId)
-    .single();
+  const { data: match } = await db.from("matches").select("session_id").eq("id", matchId).single();
 
   if (!match) return { success: false, message: "Match not found." };
 
@@ -848,6 +849,10 @@ export async function publishMatchAction(
   });
 
   if (rpcError) {
+    if (isRpcNotFound(rpcError)) {
+      // Fallback: manual non-atomic publish (pre-RPC behaviour).
+      return await publishMatchFallback(svc, matchId, match.session_id);
+    }
     return { success: false, message: `Publish failed: ${rpcError.message}` };
   }
 
@@ -865,16 +870,104 @@ export async function publishMatchAction(
     case "HAS_LEFT_PLAYERS":
       return {
         success: false,
-        message: "Cannot publish — a player has left the session. Clear this draft and let the engine regenerate.",
+        message:
+          "Cannot publish — a player has left the session. Clear this draft and let the engine regenerate.",
       };
     case "CONFLICT":
       return {
         success: false,
-        message: "Cannot publish — a player is already assigned to another active match. Clear this draft and let the engine regenerate.",
+        message:
+          "Cannot publish — a player is already assigned to another active match. Clear this draft and let the engine regenerate.",
       };
     default:
       return { success: false, message: "Publish failed." };
   }
+}
+
+// Fallback implementation used when the publish_match RPC is not yet deployed.
+async function publishMatchFallback(
+  svc: ReturnType<typeof createServiceClient>,
+  matchId: string,
+  sessionId: string
+): Promise<{ success: boolean; message: string }> {
+  const { data: match } = await svc
+    .from("matches")
+    .select("session_id, status, is_published")
+    .eq("id", matchId)
+    .single();
+
+  if (!match) return { success: false, message: "Match not found." };
+  if (match.status !== "pending")
+    return { success: false, message: "Only pending (on-deck) matches can be published." };
+  if (match.is_published) return { success: true, message: "Already published." };
+
+  const { data: matchPlayerRows } = await svc
+    .from("match_players")
+    .select("player_id")
+    .eq("match_id", matchId);
+
+  const playerIds = (matchPlayerRows ?? []).map((r) => r.player_id);
+
+  if (playerIds.length > 0) {
+    const { data: leftPlayers } = await svc
+      .from("queue_entries")
+      .select("player_id")
+      .eq("session_id", sessionId)
+      .in("player_id", playerIds)
+      .eq("status", "left");
+
+    if (leftPlayers && leftPlayers.length > 0) {
+      return {
+        success: false,
+        message: `Cannot publish — ${leftPlayers.length} player${leftPlayers.length !== 1 ? "s have" : " has"} left the session. Clear this draft and let the engine regenerate.`,
+      };
+    }
+
+    const { data: otherActiveMatches } = await svc
+      .from("matches")
+      .select("id")
+      .eq("session_id", sessionId)
+      .in("status", ["pending", "in_progress"])
+      .neq("id", matchId);
+
+    if (otherActiveMatches && otherActiveMatches.length > 0) {
+      const { data: conflictRows } = await svc
+        .from("match_players")
+        .select("player_id")
+        .in(
+          "match_id",
+          otherActiveMatches.map((m) => m.id)
+        )
+        .in("player_id", playerIds);
+
+      if (conflictRows && conflictRows.length > 0) {
+        return {
+          success: false,
+          message: `Cannot publish — ${conflictRows.length} player${conflictRows.length !== 1 ? "s are" : " is"} already assigned to another active match. Clear this draft and let the engine regenerate.`,
+        };
+      }
+    }
+  }
+
+  const { error } = await svc
+    .from("matches")
+    .update({ is_published: true })
+    .eq("id", matchId)
+    .eq("status", "pending")
+    .eq("is_published", false);
+
+  if (error) return { success: false, message: "Failed to publish match." };
+
+  if (playerIds.length > 0) {
+    await svc
+      .from("queue_entries")
+      .update({ status: "on_deck" as const })
+      .eq("session_id", sessionId)
+      .in("player_id", playerIds)
+      .eq("status", "drafted");
+  }
+
+  return { success: true, message: "Match published." };
 }
 
 // ============================================================
@@ -903,6 +996,10 @@ export async function publishAllDraftMatchesAction(
   });
 
   if (rpcError) {
+    if (isRpcNotFound(rpcError)) {
+      // Fallback: manual non-atomic bulk publish (pre-RPC behaviour).
+      return await publishAllDraftsFallback(svc, sessionId);
+    }
     return { success: false, message: `Publish failed: ${rpcError.message}` };
   }
 
@@ -912,6 +1009,143 @@ export async function publishAllDraftMatchesAction(
 
   const publishedCount = result.published_count ?? 0;
   const skippedCount = result.skipped_count ?? 0;
+
+  const skippedMsg =
+    skippedCount > 0
+      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
+      : "";
+
+  return {
+    success: true,
+    message:
+      publishedCount > 0
+        ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.${skippedMsg}`
+        : `No drafts published.${skippedMsg}`,
+    publishedCount,
+    skippedCount,
+  };
+}
+
+// Fallback implementation used when the publish_all_drafts RPC is not yet deployed.
+async function publishAllDraftsFallback(
+  svc: ReturnType<typeof createServiceClient>,
+  sessionId: string
+): Promise<{ success: boolean; message: string; publishedCount?: number; skippedCount?: number }> {
+  const { data: draftMatches, error: draftErr } = await svc
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_published", false);
+
+  if (draftErr) return { success: false, message: draftErr.message };
+
+  const allDraftIds = (draftMatches ?? []).map((m) => m.id);
+  if (allDraftIds.length === 0) {
+    return { success: true, message: "No drafts to publish.", publishedCount: 0 };
+  }
+
+  const { data: matchPlayerRows } = await svc
+    .from("match_players")
+    .select("match_id, player_id")
+    .in("match_id", allDraftIds);
+
+  const allPlayerIds = [...new Set((matchPlayerRows ?? []).map((r) => r.player_id))];
+
+  const taintedMatchIdSet = new Set<string>();
+  if (allPlayerIds.length > 0) {
+    const { data: leftEntries } = await svc
+      .from("queue_entries")
+      .select("player_id")
+      .eq("session_id", sessionId)
+      .in("player_id", allPlayerIds)
+      .eq("status", "left");
+
+    if (leftEntries && leftEntries.length > 0) {
+      const leftPlayerSet = new Set(leftEntries.map((e) => e.player_id));
+      for (const row of matchPlayerRows ?? []) {
+        if (leftPlayerSet.has(row.player_id)) taintedMatchIdSet.add(row.match_id);
+      }
+    }
+  }
+
+  const allPublishableBeforeConflict = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
+  if (allPublishableBeforeConflict.length > 0) {
+    const { data: otherActiveMatches } = await svc
+      .from("matches")
+      .select("id")
+      .eq("session_id", sessionId)
+      .in("status", ["pending", "in_progress"])
+      .not("id", "in", `(${allDraftIds.join(",")})`);
+
+    if (otherActiveMatches && otherActiveMatches.length > 0) {
+      const otherMatchIds = otherActiveMatches.map((m) => m.id);
+      const publishablePlayers = (matchPlayerRows ?? []).filter((r) =>
+        allPublishableBeforeConflict.includes(r.match_id)
+      );
+      const { data: conflictRows } = await svc
+        .from("match_players")
+        .select("player_id, match_id")
+        .in("match_id", otherMatchIds)
+        .in(
+          "player_id",
+          publishablePlayers.map((r) => r.player_id)
+        );
+
+      if (conflictRows && conflictRows.length > 0) {
+        const conflictPlayerSet = new Set(conflictRows.map((r) => r.player_id));
+        for (const row of publishablePlayers) {
+          if (conflictPlayerSet.has(row.player_id)) {
+            taintedMatchIdSet.add(row.match_id);
+          }
+        }
+      }
+    }
+  }
+
+  const publishableIds = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
+  const skippedCount = taintedMatchIdSet.size;
+
+  if (publishableIds.length === 0) {
+    return {
+      success: false,
+      message: `All ${allDraftIds.length} draft match${allDraftIds.length !== 1 ? "es have" : " has"} players who left — clear them and let the engine regenerate.`,
+      publishedCount: 0,
+      skippedCount,
+    };
+  }
+
+  const { data, error } = await svc
+    .from("matches")
+    .update({ is_published: true })
+    .in("id", publishableIds)
+    .eq("status", "pending")
+    .eq("is_published", false)
+    .select("id");
+
+  if (error) return { success: false, message: "Failed to publish drafts." };
+
+  const publishedCount = data?.length ?? 0;
+
+  if (publishedCount > 0) {
+    const publishedMatchIds = new Set(data.map((m) => m.id));
+    const publishedPlayerIds = [
+      ...new Set(
+        (matchPlayerRows ?? [])
+          .filter((r) => publishedMatchIds.has(r.match_id))
+          .map((r) => r.player_id)
+      ),
+    ];
+
+    if (publishedPlayerIds.length > 0) {
+      await svc
+        .from("queue_entries")
+        .update({ status: "on_deck" as const })
+        .eq("session_id", sessionId)
+        .in("player_id", publishedPlayerIds)
+        .eq("status", "drafted");
+    }
+  }
 
   const skippedMsg =
     skippedCount > 0

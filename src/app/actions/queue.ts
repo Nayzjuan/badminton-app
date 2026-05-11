@@ -58,6 +58,11 @@ async function isSessionOrganizer(userId: string, sessionId: string): Promise<bo
   return !!membership;
 }
 
+// Helper to detect when a Postgres RPC has not been deployed yet.
+function isRpcNotFound(error: { code?: string } | null): boolean {
+  return error?.code === "PGRST202";
+}
+
 // ── Checkout ──────────────────────────────────────────────────
 // Marks the calling player's queue_entries row as "left" for a
 // given session, removing them from matchmaking.
@@ -152,14 +157,55 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   // The RPC atomically removes the player from draft match_players and
   // cancels the draft if it falls below 4 players.
   const svc = createServiceClient();
-  const { error: cleanupError } = await svc.rpc(
-    "checkout_player_cleanup_drafts",
-    { p_session_id: sessionId, p_player_id: user.id }
-  );
+  const { error: cleanupError } = await svc.rpc("checkout_player_cleanup_drafts", {
+    p_session_id: sessionId,
+    p_player_id: user.id,
+  });
 
   if (cleanupError) {
-    console.error("[checkoutPlayer] draft cleanup error:", cleanupError.message);
-    // Non-fatal: checkout itself succeeded.
+    if (isRpcNotFound(cleanupError)) {
+      // Fallback: manual non-atomic cleanup (pre-RPC behaviour).
+      // TOCTOU risk is acceptable here — the RPC will be deployed soon.
+      const { data: draftMatches } = await svc
+        .from("matches")
+        .select("id")
+        .eq("session_id", sessionId)
+        .eq("status", "pending")
+        .eq("is_published", false);
+
+      if (draftMatches && draftMatches.length > 0) {
+        const draftMatchIds = draftMatches.map((m) => m.id);
+        const { data: draftEntries } = await svc
+          .from("match_players")
+          .select("match_id")
+          .eq("player_id", user.id)
+          .in("match_id", draftMatchIds);
+
+        for (const entry of draftEntries ?? []) {
+          await svc
+            .from("match_players")
+            .delete()
+            .eq("match_id", entry.match_id)
+            .eq("player_id", user.id);
+
+          const { count } = await svc
+            .from("match_players")
+            .select("*", { count: "exact", head: true })
+            .eq("match_id", entry.match_id);
+
+          if ((count ?? 0) < 4) {
+            await svc
+              .from("matches")
+              .update({ status: "cancelled" as const })
+              .eq("id", entry.match_id)
+              .eq("status", "pending");
+          }
+        }
+      }
+    } else {
+      console.error("[checkoutPlayer] draft cleanup error:", cleanupError.message);
+      // Non-fatal: checkout itself succeeded.
+    }
   }
 
   return { success: true };
@@ -188,6 +234,10 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   });
 
   if (rpcError) {
+    if (isRpcNotFound(rpcError)) {
+      // Fallback: manual non-atomic join (pre-RPC behaviour).
+      return await joinQueueFallback(supabase, sessionId, user.id);
+    }
     console.error("[joinQueueAction] RPC error:", rpcError.message);
     return { error: rpcError.message };
   }
@@ -197,6 +247,89 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   }
 
   console.log(`[joinQueueAction] ${result.action} games_played=${result.games_played}`);
+
+  await runEngineForSession(sessionId);
+  return {};
+}
+
+// Fallback implementation used when the join_queue RPC is not yet deployed.
+// This mirrors the pre-RPC logic and carries the same benign TOCTOU caveats
+// documented in the original inline comments.
+async function joinQueueFallback(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  sessionId: string,
+  playerId: string
+): Promise<JoinQueueResult> {
+  const { data: existing, error: fetchError } = await supabase
+    .from("queue_entries")
+    .select("id, games_played, status")
+    .eq("session_id", sessionId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error("[joinQueueAction] fetch existing error:", fetchError.message);
+    return { error: fetchError.message };
+  }
+
+  if (
+    existing &&
+    (existing.status === "drafted" ||
+      existing.status === "on_deck" ||
+      existing.status === "playing")
+  ) {
+    return {
+      error: "You're currently in a match — wait for it to finish before rejoining the queue.",
+    };
+  }
+
+  const { data: floorRow, error: floorError } = await supabase
+    .from("queue_entries")
+    .select("games_played")
+    .eq("session_id", sessionId)
+    .in("status", ["waiting", "drafted", "on_deck", "playing"])
+    .order("games_played", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (floorError) {
+    console.error("[joinQueueAction] floor query failed:", floorError.message);
+  }
+
+  const sessionFloor: number = floorRow?.games_played ?? 0;
+
+  if (existing) {
+    const inheritedGames = Math.max(existing.games_played, sessionFloor);
+    const { error: updateError } = await supabase
+      .from("queue_entries")
+      .update({
+        status: "waiting" as const,
+        games_played: inheritedGames,
+        joined_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+
+    if (updateError) {
+      console.error("[joinQueueAction] update error:", updateError.message);
+      return { error: updateError.message };
+    }
+
+    await runEngineForSession(sessionId);
+    return {};
+  }
+
+  const { error: insertError } = await supabase.from("queue_entries").insert({
+    session_id: sessionId,
+    player_id: playerId,
+    status: "waiting" as const,
+    games_played: sessionFloor,
+    joined_at: new Date().toISOString(),
+  });
+
+  if (insertError) {
+    console.error("[joinQueueAction] insert error:", insertError.message);
+    return { error: insertError.message };
+  }
 
   await runEngineForSession(sessionId);
   return {};
