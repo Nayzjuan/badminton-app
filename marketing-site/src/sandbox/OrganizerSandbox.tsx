@@ -218,6 +218,7 @@ function reducer(state: State, action: Action): State {
       return {
         ...state,
         players,
+        swapPick: null, // clear swap mode on manual start
         matches: state.matches.map((m) =>
           m.id === action.matchId ? { ...m, status: "active" } : m
         ),
@@ -243,6 +244,7 @@ function reducer(state: State, action: Action): State {
         ...state,
         players,
         queue: newQueue,
+        swapPick: null, // clear any in-flight swap — completed match IDs must not survive
         matches: state.matches.map((m) =>
           m.id === action.matchId
             ? { ...m, status: "completed" as const, scoreA: action.scoreA, scoreB: action.scoreB }
@@ -308,7 +310,7 @@ function reducer(state: State, action: Action): State {
         const teamB = [...m.teamB] as [string, string];
 
         if (m.id === existing.matchId && m.id === target.matchId) {
-          // Intra-match swap
+          // Intra-match swap — same match status, no player status change needed
           (existing.team === "teamA" ? teamA : teamB)[existing.idx] = idB;
           (target.team === "teamA" ? teamA : teamB)[target.idx] = idA;
         } else if (m.id === existing.matchId) {
@@ -319,7 +321,30 @@ function reducer(state: State, action: Action): State {
         return { ...m, teamA, teamB };
       });
 
-      return { ...state, matches, swapPick: null };
+      // Sync player statuses after a cross-match swap — each player inherits
+      // the status that corresponds to their new match's state.
+      const matchStatusToPlayerStatus = (ms: MatchStatus): PlayerStatus => {
+        if (ms === "on_deck") return "on_deck";
+        if (ms === "active") return "playing";
+        return "waiting";
+      };
+      const existingMatch = state.matches.find((m) => m.id === existing.matchId);
+      const targetMatch = state.matches.find((m) => m.id === target.matchId);
+      const swappedPlayers = { ...state.players };
+      if (existingMatch && targetMatch && existing.matchId !== target.matchId) {
+        // idA moves into the target match → takes target match's status
+        swappedPlayers[idA] = {
+          ...swappedPlayers[idA],
+          status: matchStatusToPlayerStatus(targetMatch.status),
+        };
+        // idB moves into the existing match → takes existing match's status
+        swappedPlayers[idB] = {
+          ...swappedPlayers[idB],
+          status: matchStatusToPlayerStatus(existingMatch.status),
+        };
+      }
+
+      return { ...state, players: swappedPlayers, matches, swapPick: null };
     }
 
     case "SWAP_CANCEL":
@@ -808,7 +833,7 @@ export default function OrganizerSandbox() {
   const canGenerate = waitingCount >= 4;
 
   const generateTitle = !canGenerate
-    ? waitingCount + draftedCount >= 4
+    ? draftedCount >= 4
       ? "Players are in pending drafts — publish or cancel to free them"
       : `Need ${Math.max(0, 4 - waitingCount)} more waiting player${Math.max(0, 4 - waitingCount) === 1 ? "" : "s"}`
     : "Generate a draft match";
