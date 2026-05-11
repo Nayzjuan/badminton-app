@@ -20,7 +20,7 @@ import { Faker, en } from "@faker-js/faker";
 import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeMatch } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import { endMatchAction, submitMatchScore } from "@/app/actions/match";
+import { endMatchAction, submitMatchScore, cancelMatchAction } from "@/app/actions/match";
 
 const faker = new Faker({ locale: [en] });
 faker.seed(7001);
@@ -252,5 +252,166 @@ describe("Score Submission Cascade — Suite F", () => {
       );
 
     expect(error).toBeNull();
+  });
+
+  // ============================================================
+  // cancelMatchAction — contract distinct from endMatchAction
+  // ============================================================
+  // The key contract distinction: cancel returns players to the queue
+  // WITHOUT incrementing games_played, because the match never finished.
+  // endMatchAction always increments. Both transition status to 'waiting'
+  // (or skip if 'left'), but only end touches games_played.
+
+  // ── F-cancel-1: status flips, scores untouched ────────────
+  it("F-cancel-1: cancelMatchAction sets status='cancelled' and completed_at", async () => {
+    const { organizer, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      const result = await cancelMatchAction(match.id);
+      expect(result.success).toBe(true);
+    } finally {
+      restore();
+    }
+
+    const { data } = await serviceClient()
+      .from("matches")
+      .select("status, team_a_score, team_b_score, completed_at")
+      .eq("id", match.id)
+      .single();
+    expect(data?.status).toBe("cancelled");
+    expect(data?.completed_at).not.toBeNull();
+    // Cancel never writes scores.
+    expect(data?.team_a_score).toBeNull();
+    expect(data?.team_b_score).toBeNull();
+  });
+
+  // ── F-cancel-2: games_played NOT incremented ──────────────
+  it("F-cancel-2: cancelMatchAction returns players to 'waiting' WITHOUT incrementing games_played", async () => {
+    const { organizer, session, players, match } = await inProgressMatchSetup();
+
+    // Set every player's games_played to a known value so we can assert no change.
+    await serviceClient()
+      .from("queue_entries")
+      .update({ games_played: 7 })
+      .eq("session_id", session.id)
+      .in(
+        "player_id",
+        players.map((p) => p.id)
+      );
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      const result = await cancelMatchAction(match.id);
+      expect(result.success).toBe(true);
+    } finally {
+      restore();
+    }
+
+    const { data: entries } = await serviceClient()
+      .from("queue_entries")
+      .select("player_id, status, games_played")
+      .eq("session_id", session.id)
+      .in(
+        "player_id",
+        players.map((p) => p.id)
+      );
+
+    expect(entries).toHaveLength(4);
+    for (const e of entries ?? []) {
+      expect(e.status).toBe("waiting");
+      expect(e.games_played).toBe(7); // ← unchanged. endMatchAction would set 8.
+    }
+  });
+
+  // ── F-cancel-3: non-organizer rejected ────────────────────
+  it("F-cancel-3: cancelMatchAction rejects a non-organizer caller", async () => {
+    const { session, match, players } = await inProgressMatchSetup();
+    const outsider = await makeProfile({ faker });
+
+    const restore = mockAuthAs(outsider.id);
+    try {
+      const result = await cancelMatchAction(match.id);
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/organizer/i);
+    } finally {
+      restore();
+    }
+
+    const { data } = await serviceClient()
+      .from("matches")
+      .select("status")
+      .eq("id", match.id)
+      .single();
+    expect(data?.status).toBe("in_progress"); // unchanged
+
+    // Side-effect backstop: the organizer guard runs BEFORE the queue update.
+    // Confirm queue_entries are untouched — every player still 'playing'.
+    const { data: entries } = await serviceClient()
+      .from("queue_entries")
+      .select("status")
+      .eq("session_id", session.id)
+      .in(
+        "player_id",
+        players.map((p) => p.id)
+      );
+    for (const e of entries ?? []) {
+      expect(e.status).toBe("playing");
+    }
+  });
+
+  // ── F-cancel-4: CAS guard against double-cancel ──────────
+  it("F-cancel-4: cancelMatchAction is idempotent — second call rejects via CAS guard", async () => {
+    const { organizer, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      const r1 = await cancelMatchAction(match.id);
+      expect(r1.success).toBe(true);
+
+      const r2 = await cancelMatchAction(match.id);
+      expect(r2.success).toBe(false);
+      expect(r2.message).toMatch(/already cancelled|already completed/i);
+    } finally {
+      restore();
+    }
+  });
+
+  // ── F-cancel-5: 'left' players are not pulled back ───────
+  it("F-cancel-5: cancelMatchAction does NOT restore players whose status is 'left'", async () => {
+    const { organizer, session, players, match } = await inProgressMatchSetup();
+
+    // Player[0] checked out mid-match — their queue entry is now 'left'.
+    await serviceClient()
+      .from("queue_entries")
+      .update({ status: "left" as const })
+      .eq("session_id", session.id)
+      .eq("player_id", players[0].id);
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      const result = await cancelMatchAction(match.id);
+      expect(result.success).toBe(true);
+    } finally {
+      restore();
+    }
+
+    const { data: leftEntry } = await serviceClient()
+      .from("queue_entries")
+      .select("status")
+      .eq("session_id", session.id)
+      .eq("player_id", players[0].id)
+      .single();
+    expect(leftEntry?.status).toBe("left"); // NOT pulled back to 'waiting'
+
+    // Other 3 players were restored as expected.
+    const { data: others } = await serviceClient()
+      .from("queue_entries")
+      .select("player_id, status")
+      .eq("session_id", session.id)
+      .in("player_id", [players[1].id, players[2].id, players[3].id]);
+    for (const e of others ?? []) {
+      expect(e.status).toBe("waiting");
+    }
   });
 });

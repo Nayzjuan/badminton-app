@@ -439,4 +439,119 @@ describe("Matchmaking Engine — Suite A", () => {
       restore();
     }
   });
+
+  // ── Test 9: Paused-player exclusion ──────────────────────
+  // Soft-paused players (queue_entries.is_paused=true) MUST be invisible
+  // to the matchmaking engine even when they would otherwise satisfy
+  // FIFO and skill constraints. With 5 waiting players + 1 paused, the
+  // engine should form 1 match using only the 4 unpaused players.
+
+  it("Test 9: engine excludes paused players from candidate pool", async () => {
+    const { session } = await baseSetup();
+    const { players } = await seedPlayers(session.id, 5);
+
+    // Pause player[0] directly — togglePlayerPause is exercised in Suite K-style
+    // tests; here we go straight to the DB so the engine assertion stays focused.
+    await serviceClient()
+      .from("queue_entries")
+      .update({ is_paused: true })
+      .eq("session_id", session.id)
+      .eq("player_id", players[0].id);
+
+    await runEngineForSession(session.id);
+
+    // Engine should form exactly 1 match — using players[1..4], NOT players[0].
+    const { data: matches } = await serviceClient()
+      .from("matches")
+      .select("id")
+      .eq("session_id", session.id);
+    expect(matches).toHaveLength(1);
+
+    const { data: roster } = await serviceClient()
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", matches![0].id);
+    const ids = (roster ?? []).map((r) => r.player_id);
+
+    expect(ids).not.toContain(players[0].id); // paused — excluded
+    expect(ids).toHaveLength(4);
+
+    // Paused player's queue entry untouched: still 'waiting' + 'is_paused=true'.
+    const { data: pausedEntry } = await serviceClient()
+      .from("queue_entries")
+      .select("status, is_paused")
+      .eq("session_id", session.id)
+      .eq("player_id", players[0].id)
+      .single();
+    expect(pausedEntry?.status).toBe("waiting");
+    expect(pausedEntry?.is_paused).toBe(true);
+  });
+
+  // ── Test 10: Partnership cap saturation → no match formed ─
+  // When every possible 2v2 split among the only 4 eligible players
+  // exceeds MAX_PARTNERSHIP_REPEATS, the engine returns success=false
+  // and writes NO new match. (The accompanying cap_saturation broadcast
+  // is fire-and-forget; we assert the observable DB outcome.)
+  //
+  // To saturate ALL 6 pairs at MAX_PARTNERSHIP_REPEATS=2, we need 12
+  // completed-match teammate occurrences — 2 occurrences per pair.
+  // The 6-match Round-Robin double cycle below produces exactly that:
+  //   pairs (1,2)+(3,4), (1,3)+(2,4), (1,4)+(2,3), each twice.
+
+  it("Test 10: engine forms no match when every 2v2 split is partnership-capped", async () => {
+    const { session } = await baseSetup();
+    const { players } = await seedPlayers(session.id, 4);
+    const [p1, p2, p3, p4] = players;
+
+    // Two iterations of the 3 unique 2v2 splits = 6 matches.
+    // After this loop every same-team pair has games_together=2, hitting
+    // MAX_PARTNERSHIP_REPEATS exactly.
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await makeCompletedMatch({
+        sessionId: session.id,
+        teamA: [p1.id, p2.id],
+        teamB: [p3.id, p4.id],
+      });
+      await makeCompletedMatch({
+        sessionId: session.id,
+        teamA: [p1.id, p3.id],
+        teamB: [p2.id, p4.id],
+      });
+      await makeCompletedMatch({
+        sessionId: session.id,
+        teamA: [p1.id, p4.id],
+        teamB: [p2.id, p3.id],
+      });
+    }
+
+    // Capture the count of pre-existing pending matches (none expected) so we
+    // can assert the engine added zero new ones.
+    const { count: before } = await serviceClient()
+      .from("matches")
+      .select("*", { count: "exact", head: true })
+      .eq("session_id", session.id)
+      .eq("status", "pending");
+    expect(before).toBe(0);
+
+    await runEngineForSession(session.id);
+
+    const { count: after } = await serviceClient()
+      .from("matches")
+      .select("*", { count: "exact", head: true })
+      .eq("session_id", session.id)
+      .eq("status", "pending");
+
+    // No new pending match — every team split exceeded the partnership cap.
+    expect(after).toBe(0);
+
+    // The 4 players remain 'waiting' — none drafted.
+    const { data: entries } = await serviceClient()
+      .from("queue_entries")
+      .select("status")
+      .eq("session_id", session.id)
+      .in("player_id", [p1.id, p2.id, p3.id, p4.id]);
+    for (const e of entries ?? []) {
+      expect(e.status).toBe("waiting");
+    }
+  });
 });

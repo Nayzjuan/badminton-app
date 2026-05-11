@@ -5,7 +5,80 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-11)
+## SESSION STATE (Last Updated: 2026-05-12)
+
+### What Was Accomplished This Session — swap_player_in_match Step f regression FIXED (2026-05-12, continued)
+
+**Added migration `supabase/migrations/20260512000000_restore_swap_player_origin_flip.sql`** that re-issues `swap_player_in_match` with the same `(UUID, UUID, UUID, UUID, TEXT, BOOLEAN)` signature, Steps a–e copied verbatim from `20260511000001_swap_player_drafted_status.sql`, plus the restored Step f:
+
+```sql
+UPDATE matches
+SET    origin = 'modified'::public.match_origin
+WHERE  id = p_match_id
+  AND  origin = 'auto'::public.match_origin;
+```
+
+The `WHERE origin = 'auto'` guard is the sticky rule — `'manual'` and `'modified'` are untouched.
+
+**Application path:** Supabase CLI not installed locally, so the migration was applied via a one-shot `node + pg` script using the `DATABASE_URL` in `tests/integration/.env`. Verified at the `pg_catalog` level (`pg_get_functiondef`) that the installed function now contains both `origin = 'auto'` and `origin = 'modified'`.
+
+**Test unskip:** `M-5` in `tests/integration/manual-and-swap.test.ts` was the contract test that detected the regression; it is now unskipped with a shortened comment pointing at the restore migration as the contract guard.
+
+**Validation:** `npm run test:integration` 144/144 passing (zero skips, was 143 + 1 skipped). `npx tsc --noEmit` clean. `npm run lint` clean for the new migration and the edited test. **Independent code-review verdict: LGTM** (SQL byte-equivalent to the canonical Step f from `20260502000000`; signature match confirmed; no side-effects on `swap_match_players` or the `match_origin` enum).
+
+**Updated `APP_MANIFEST.md` Section 9 #26** — flipped the gotcha entry from "regression" to "fixed", citing the restore migration and the verifying test.
+
+---
+
+### What Was Accomplished This Session — TDD foundational matrix back-fill (2026-05-12)
+
+**Audited the 7 core workflows** (session creation, joining, match generation, manual draft adjustments, publishing, alerts, completion) against the existing 103-test integration suite + 10 E2E scenarios. Identified gaps and back-filled with **+41 net new tests** (143/143 passing + 1 skipped).
+
+**3 new integration suites:**
+
+- **Suite K — `tests/integration/session-lifecycle.test.ts`** (seed 11001, 13 tests)
+  - `createSession`: passcode upper-cased, duplicate active-passcode rejected (23505 unique constraint), name length > 60 rejected, passcode length > 20 rejected, unauth rejected
+  - `handle_new_session` trigger: inserts `session_organizers` row for `created_by`
+  - `joinAsCoOrganizer`: valid-passcode happy path, idempotent (no duplicate row), generic invalid-passcode message (no info leak), primary-organizer rejected, closed-session rejected
+  - `toggleAutoMatchmaking`: organiser flips false→true→false (atomic via `toggle_auto_matchmaking` RPC), non-organiser rejected with no DB write
+
+- **Suite L — `tests/integration/queue-join.test.ts`** (seed 10001, 8 tests)
+  - `joinQueueAction` first-time empty session → games_played=0
+  - **Inherited Games rule**: first-time joiner with veterans at 3 games → newcomer gets games_played=3
+  - Returning 'left' player rejoin: `joined_at` refreshed, games_played = MAX(existing, floor)
+  - Drafted/on_deck/playing rejoin all rejected with "currently in a match" message
+  - Unauth rejected with no DB write
+  - `checkoutPlayer` → status='left' AND removes player from unpublished draft (cancels draft when < 4 players)
+
+- **Suite M — `tests/integration/manual-and-swap.test.ts`** (seed 9101, 12 passed + 1 skipped)
+  - `createManualMatchAction`: origin='manual', is_published=true, players → on_deck (skip drafted)
+  - 3 negative paths: non-organiser, player not in session, player status='left' (Guard 0)
+  - `swap_player_in_match` sticky-rule: manual stays manual, modified stays modified
+  - `swapPlayerInMatch` action guards: PLAYER_UNAVAILABLE, PLAYER_NOT_IN_MATCH, MATCH_STARTED
+  - `swap_match_players`: auto+auto → both modified; manual+auto → manual sticky, auto becomes modified
+  - Hygiene: cancel after swap returns CURRENT roster + outgoing player to 'waiting', games_played untouched
+  - **M-5 SKIPPED** with regression block — see below
+
+**2 extended suites:**
+
+- **Suite A (`matchmaking.test.ts`) +2 tests**: Test 9 paused-player exclusion (engine excludes `is_paused=true` from candidate pool); Test 10 partnership-cap saturation (4 players × 6 completed matches via 2-cycle Round-Robin → all 6 pairs hit `MAX_PARTNERSHIP_REPEATS=2` → engine forms zero new matches, players stay 'waiting').
+
+- **Suite F (`score-submission.test.ts`) +5 tests** (F-cancel-1..5): `cancelMatchAction` flips status='cancelled', writes completed_at, scores stay null; **games_played NOT incremented (the key contract distinction from `endMatchAction`)**; non-organiser rejected with NO queue mutation; CAS double-cancel idempotent; 'left' players preserved (not pulled back to 'waiting').
+
+**Regression detected during M-5 RED phase (2026-05-12):**
+
+`swap_player_in_match` lost Step f (origin promotion `auto` → `modified`). Original migration `20260502000000_match_origin_tracking.sql` had Step f. Two later rewrites silently dropped it: `20260509000000_swap_player_draft_aware.sql` and `20260511000001_swap_player_drafted_status.sql`. `swap_match_players` (separate RPC) is NOT affected — Suite M-11 / M-12 confirm it still flips origin. M-5 is `it.skip`ped with a detailed REGRESSION block. A follow-up task was spawned to add a fix-up migration that re-adds Step f.
+
+**Validation gates:** `npx tsc --noEmit` clean, `npm run lint` clean for all new/extended files, `npm run test:integration` 143 passed + 1 skipped (15 files). Code-review verdict: **Minor issues** (5 polish items applied: bumped seed 9001→9101 to avoid collision with drafted-status, comment on L-2's `is_auto_matchmaking_on=false` dependency, comment on K-2 trigger-as-sole-inserter, M-13 added pre-cancel checkpoint asserting swap restored p0, F-cancel-3 added queue-untouched backstop).
+
+**Dropped from plan with rationale:**
+
+- fetchSeq race-guard unit test → React-hook-internal pattern; testing it would either duplicate the implementation or require React Testing Library hook infrastructure that the project doesn't have wired up. Behaviour is exercised end-to-end by `scenario-e` and `scenario-j` Playwright tests.
+- Multi-set scoring (`match_games`) and H2H ledger (`player_rivalries` / `player_partnerships`) tests → no current Server Action writes `match_games` on completion (only used in `v_match_history` aggregation); ledger writes happen inside `closeSession` and are Suite B territory.
+
+**Next session candidates:** (a) execute the spawned follow-up to restore Step f and unskip M-5; (b) optionally add ledger-write assertions to Suite B (`closeSession` → `refresh_cross_session_stats` → `player_rivalries`/`player_partnerships`); (c) optionally add a focused unit test for `usePlayerMatch.hasActiveMatch` gate semantics if React-hook unit infra is set up.
+
+---
 
 ### What Was Accomplished This Session — RPC behavioral integration tests (2026-05-11)
 
