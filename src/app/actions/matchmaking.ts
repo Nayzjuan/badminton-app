@@ -642,33 +642,12 @@ async function runAlgorithm(
   const pausedSet = new Set((pausedRows ?? []).map((r) => r.player_id));
   let activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
 
-  // ── 1c. Exclude players already committed to an active match ──────────────
-  // Draft mode intentionally keeps queue_entries.status='waiting' for
-  // unpublished drafts so players don't receive premature on-deck alerts.
-  // This means 'status=waiting' alone is no longer sufficient to identify
-  // a free player — a player can be 'waiting' AND in match_players for a
-  // pending draft. Without this filter, two consecutive engine runs in the
-  // same multi-slot loop can select the same player for two separate drafts.
-  const { data: activeMatchRows } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId)
-    .in("status", ["pending", "in_progress"]);
-
-  if (activeMatchRows && activeMatchRows.length > 0) {
-    const { data: committedRows } = await supabase
-      .from("match_players")
-      .select("player_id")
-      .in(
-        "match_id",
-        activeMatchRows.map((m) => m.id)
-      );
-
-    if (committedRows && committedRows.length > 0) {
-      const committedSet = new Set(committedRows.map((r) => r.player_id));
-      activePool = activePool.filter((p) => !committedSet.has(p.player_id));
-    }
-  }
+  // ── 1c. (Removed) committedSet workaround ────────────────────────────────
+  // Previously, draft players kept status='waiting', requiring a two-query
+  // manual exclusion filter here. Now that create_match_with_players sets
+  // status='drafted' atomically when creating a draft, those players are
+  // absent from v_queue_with_wait_time (which filters status='waiting').
+  // The DB-level guard makes this TypeScript-side workaround redundant.
 
   if (activePool.length < PLAYERS_PER_MATCH) {
     return {

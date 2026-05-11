@@ -10,6 +10,7 @@ export type SkillLevel = "beginner" | "intermediate" | "advanced";
 
 export type PlayerStatus =
   | "waiting" // in the queue, eligible to be drafted
+  | "drafted" // earmarked in an unpublished draft; excluded from the waiting pool
   | "on_deck" // assigned to a published pending match
   | "in_progress" // playing right now
   | "paused" // soft-paused by organizer (skipped by engine)

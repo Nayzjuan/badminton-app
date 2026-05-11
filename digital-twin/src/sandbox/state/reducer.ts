@@ -150,10 +150,13 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
     case "LEAVE_QUEUE": {
       const player = state.players[action.playerId];
       if (!player) return state;
-      // A player locked into an active or pending match cannot leave without
-      // first cancelling that match — prevents dangling references that
-      // START_MATCH / SUBMIT_SCORE would have to clean up.
-      if (player.status === "in_progress" || player.status === "on_deck") {
+      // A player locked into a draft, on-deck, or active match cannot leave
+      // without first cancelling that match — prevents dangling references.
+      if (
+        player.status === "drafted" ||
+        player.status === "in_progress" ||
+        player.status === "on_deck"
+      ) {
         return withLog(state, {
           level: "warn",
           msg: `[queue] ${player.name} cannot leave — currently ${player.status}; cancel the match first`,
@@ -190,7 +193,16 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
     // ── Match lifecycle ──────────────────────────────────────────────────────
     case "GENERATE_MATCHES": {
       const { newMatches, logs } = runMockEngine(state);
-      const next = { ...state, matches: [...state.matches, ...newMatches] };
+      // Mark every player earmarked in a new draft as "drafted" so they are
+      // excluded from the waiting pool on subsequent engine runs without
+      // requiring the TypeScript-side committedSet workaround.
+      const draftedIds = new Set(newMatches.flatMap((m) => [...m.teamA, ...m.teamB]));
+      const players = { ...state.players };
+      draftedIds.forEach((id) => {
+        const p = players[id];
+        if (p && p.status === "waiting") players[id] = { ...p, status: "drafted" };
+      });
+      const next = { ...state, players, matches: [...state.matches, ...newMatches] };
       return withLog(next, ...logs);
     }
 
@@ -213,9 +225,10 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
           msg: `[match] ${shortId(match.id)} cannot publish — at least one player has left the queue`,
         });
       }
+      // Transition: drafted → on_deck (mirrors the DB: publish sets status='on_deck')
       allIds.forEach((id) => {
         const p = players[id];
-        if (p) players[id] = { ...p, status: "on_deck" };
+        if (p && p.status === "drafted") players[id] = { ...p, status: "on_deck" };
       });
       return withLog(
         {
@@ -227,7 +240,7 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
         },
         {
           level: "info",
-          msg: `[match] ${shortId(match.id)} published — 4 players → on_deck`,
+          msg: `[match] ${shortId(match.id)} published — 4 players drafted → on_deck`,
         }
       );
     }
@@ -259,8 +272,15 @@ export function reducer(state: SandboxState, action: SandboxAction): SandboxStat
       }
       const wasOnCourt = match.status === "in_progress";
       const players = { ...state.players };
-      // If the match was published or in progress, return its players to the queue.
-      if (match.status === "pending" || match.status === "in_progress") {
+      // Return players to waiting for all cancellable states:
+      //   draft     → drafted players freed back to waiting pool
+      //   pending   → on_deck players freed
+      //   in_progress → playing players freed
+      if (
+        match.status === "draft" ||
+        match.status === "pending" ||
+        match.status === "in_progress"
+      ) {
         [...match.teamA, ...match.teamB].forEach((id) => {
           const p = players[id];
           if (p && p.status !== "left") players[id] = { ...p, status: "waiting" };

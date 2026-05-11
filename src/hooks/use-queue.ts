@@ -44,7 +44,7 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
       .from("queue_entries")
       .select("*")
       .eq("session_id", sessionId)
-      .in("status", ["waiting", "on_deck", "playing"])
+      .in("status", ["waiting", "drafted", "on_deck", "playing"])
       .order("games_played", { ascending: true })
       .order("joined_at", { ascending: true });
 

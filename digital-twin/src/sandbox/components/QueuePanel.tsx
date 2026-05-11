@@ -57,6 +57,7 @@ export default function QueuePanel({
   };
 
   const waitingCount = queueOrder.filter((id) => players[id]?.status === "waiting").length;
+  const draftedCount = queueOrder.filter((id) => players[id]?.status === "drafted").length;
   const pausedCount = queueOrder.filter((id) => players[id]?.status === "paused").length;
   const onDeckCount = queueOrder.filter((id) => players[id]?.status === "on_deck").length;
 
@@ -70,6 +71,11 @@ export default function QueuePanel({
             <span>
               <span className="text-ink-2">{waitingCount}</span> waiting
             </span>
+            {draftedCount > 0 && (
+              <span>
+                <span className="text-ink-2">{draftedCount}</span> drafted
+              </span>
+            )}
             {pausedCount > 0 && (
               <span>
                 <span className="text-ink-2">{pausedCount}</span> paused

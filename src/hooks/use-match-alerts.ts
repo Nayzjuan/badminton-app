@@ -73,13 +73,13 @@ export function useMatchAlerts({
   // eagerly so the context is primed as soon as possible.
   useEffect(() => {
     const unlock = () => unlockAudio();
-    document.addEventListener("click",      unlock, { once: true });
+    document.addEventListener("click", unlock, { once: true });
     document.addEventListener("touchstart", unlock, { once: true, passive: true });
-    document.addEventListener("keydown",    unlock, { once: true });
+    document.addEventListener("keydown", unlock, { once: true });
     return () => {
-      document.removeEventListener("click",      unlock);
+      document.removeEventListener("click", unlock);
       document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("keydown",    unlock);
+      document.removeEventListener("keydown", unlock);
     };
   }, []);
 
@@ -108,9 +108,7 @@ export function useMatchAlerts({
       // AudioContext being in a "running" state.  It is the reliable
       // fallback for mobile.
       try {
-        const { sendPlayerNotification } = await import(
-          "@/app/actions/notifications"
-        );
+        const { sendPlayerNotification } = await import("@/app/actions/notifications");
         await sendPlayerNotification(playerId, type);
       } catch (err) {
         // Non-critical — audio already fired; just log.
@@ -135,7 +133,7 @@ export function useMatchAlerts({
       .select("status")
       .eq("session_id", sessionId)
       .eq("player_id", playerId)
-      .in("status", ["waiting", "on_deck", "playing"])
+      .in("status", ["waiting", "drafted", "on_deck", "playing"])
       .maybeSingle();
 
     if (queueRow) {
@@ -254,12 +252,7 @@ export function useMatchAlerts({
   useEffect(() => {
     bootstrap();
 
-    const unsubQueue = subscribeToQueue(
-      supabase,
-      sessionId,
-      handleQueueChange,
-      "alerts-queue"
-    );
+    const unsubQueue = subscribeToQueue(supabase, sessionId, handleQueueChange, "alerts-queue");
 
     const unsubMatches = subscribeToMatches(
       supabase,
@@ -286,6 +279,6 @@ export function useMatchAlerts({
       unsubMatches();
       unsubPlayers();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId, playerId]);
 }

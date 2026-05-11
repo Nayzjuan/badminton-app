@@ -75,7 +75,7 @@ export async function signInAnonymously(formData: FormData) {
   const { data: activeEntries } = await service
     .from("queue_entries")
     .select("player_id, profiles!inner(display_name)")
-    .in("status", ["waiting", "on_deck", "playing"])
+    .in("status", ["waiting", "drafted", "on_deck", "playing"])
     .ilike("profiles.display_name", escapeLike(displayName));
 
   if (activeEntries && activeEntries.length > 0) {
@@ -207,7 +207,7 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
       .from("queue_entries")
       .select("session_id, sessions!inner(is_active)")
       .eq("player_id", profile.id)
-      .in("status", ["waiting", "on_deck", "playing"])
+      .in("status", ["waiting", "drafted", "on_deck", "playing"])
       .limit(1)
       .single();
 
@@ -407,7 +407,7 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
         .select("id, status")
         .eq("session_id", targetSessionId)
         .eq("player_id", newUserId)
-        .in("status", ["playing", "on_deck"])
+        .in("status", ["playing", "drafted", "on_deck"])
         .maybeSingle();
 
       if (queueEntry) {

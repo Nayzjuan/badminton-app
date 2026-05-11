@@ -523,7 +523,7 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     .from("queue_entries")
     .update({ status: "left" as const })
     .eq("session_id", sessionId)
-    .in("status", ["waiting", "on_deck", "playing"]);
+    .in("status", ["waiting", "drafted", "on_deck", "playing"]);
 
   // ── 3. Reset courts to closed ──────────────────────────────
   await supabase

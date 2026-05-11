@@ -258,7 +258,15 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   // the page loads, and the UI may prompt "Join Queue" before the
   // match state has propagated.  Block it cleanly here.
   // ----------------------------------------------------------
-  if (existing && (existing.status === "on_deck" || existing.status === "playing")) {
+  // 'drafted' is included because a drafted player is committed to an
+  // unpublished draft and must not be re-inserted into the queue until that
+  // draft is published (→ on_deck) or cancelled (→ waiting).
+  if (
+    existing &&
+    (existing.status === "drafted" ||
+      existing.status === "on_deck" ||
+      existing.status === "playing")
+  ) {
     console.log(
       `[joinQueueAction] BLOCKED — player=${playerId} is currently ` +
         `status=${existing.status} and cannot re-join until their match ends.`
@@ -267,42 +275,9 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
       error: "You're currently in a match — wait for it to finish before rejoining the queue.",
     };
   }
-
-  // Draft-mode guard: a player's queue_entries.status stays 'waiting' while
-  // in an unpublished draft, so the status check above doesn't catch them.
-  // Query match_players to block a re-join that would corrupt the draft roster.
-  if (existing) {
-    const svcJoin = createServiceClient();
-    const { data: pendingMatchIds } = await svcJoin
-      .from("matches")
-      .select("id")
-      .eq("session_id", sessionId)
-      .in("status", ["pending", "in_progress"]);
-
-    if (pendingMatchIds && pendingMatchIds.length > 0) {
-      const { data: matchEntry } = await svcJoin
-        .from("match_players")
-        .select("match_id")
-        .eq("player_id", playerId)
-        .in(
-          "match_id",
-          pendingMatchIds.map((m) => m.id)
-        )
-        .limit(1)
-        .maybeSingle();
-
-      if (matchEntry) {
-        console.log(
-          `[joinQueueAction] BLOCKED — player=${playerId} is already ` +
-            `in match_players for match=${matchEntry.match_id}`
-        );
-        return {
-          error:
-            "You're already assigned to a match — wait for it to complete before rejoining the queue.",
-        };
-      }
-    }
-  }
+  // Note: the separate draft-mode match_players guard that existed here has
+  // been removed. It was needed because draft players previously stayed
+  // 'waiting'; with the 'drafted' status that check is now redundant.
 
   // ----------------------------------------------------------
   // STEP 2 — Query the session floor (MIN games_played)
@@ -321,7 +296,7 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
     .from("queue_entries")
     .select("games_played")
     .eq("session_id", sessionId)
-    .in("status", ["waiting", "on_deck", "playing"])
+    .in("status", ["waiting", "drafted", "on_deck", "playing"])
     .order("games_played", { ascending: true })
     .limit(1)
     .maybeSingle();

@@ -39,7 +39,7 @@ export function skillLevelToInt(level: SkillLevel): number {
 
 export type CourtStatus = "available" | "in_use" | "closed";
 
-export type QueueStatus = "waiting" | "on_deck" | "playing" | "left";
+export type QueueStatus = "waiting" | "drafted" | "on_deck" | "playing" | "left";
 
 export type MatchStatus = "pending" | "in_progress" | "completed" | "cancelled";
 

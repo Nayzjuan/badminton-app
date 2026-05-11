@@ -914,17 +914,18 @@ export async function publishMatchAction(
 
   if (error) return { success: false, message: "Failed to publish match." };
 
-  // BUG-001 fix (TypeScript side): now that the match is published, promote
-  // all 4 players from 'waiting' to 'on_deck'. This is the deferred step
-  // that the RPC skipped when creating the draft, and is what triggers the
-  // ON_DECK_WARNING alert on each player's device at the right moment.
+  // Promote all 4 players from 'drafted' to 'on_deck'. The RPC set them to
+  // 'drafted' when the draft was created; publish is the moment they become
+  // visible to players and the ON_DECK_WARNING alert fires on each device.
+  // Guard is .eq("status", "drafted") — not "waiting" — because the RPC
+  // now marks players 'drafted' instead of leaving them 'waiting' (BUG-001).
   if (playerIds.length > 0) {
     await svc
       .from("queue_entries")
       .update({ status: "on_deck" as const })
       .eq("session_id", match.session_id)
       .in("player_id", playerIds)
-      .eq("status", "waiting"); // only promote players still waiting (idempotent)
+      .eq("status", "drafted"); // only promote drafted players (idempotent)
   }
 
   return { success: true, message: "Match published." };
@@ -1057,9 +1058,10 @@ export async function publishAllDraftMatchesAction(
 
   const publishedCount = data?.length ?? 0;
 
-  // BUG-001 fix (Publish All path): promote all players in the just-published
-  // drafts from 'waiting' to 'on_deck'. This fires ON_DECK_WARNING alerts
-  // for all 4 × N players simultaneously — one bulk UPDATE via service client.
+  // Promote all players in the just-published drafts from 'drafted' to
+  // 'on_deck'. Fires ON_DECK_WARNING alerts for all 4 × N players at once.
+  // Guard is .eq("status", "drafted") — players are 'drafted' since the RPC
+  // now sets that status at draft-creation time instead of leaving 'waiting'.
   if (publishedCount > 0) {
     const publishedMatchIds = new Set(data.map((m) => m.id));
     const publishedPlayerIds = [
@@ -1076,7 +1078,7 @@ export async function publishAllDraftMatchesAction(
         .update({ status: "on_deck" as const })
         .eq("session_id", sessionId)
         .in("player_id", publishedPlayerIds)
-        .eq("status", "waiting");
+        .eq("status", "drafted");
     }
   }
 

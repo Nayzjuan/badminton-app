@@ -16,6 +16,7 @@ const skillTone: Record<Player["skill"], string> = {
 
 const statusTone: Record<Player["status"], string> = {
   waiting: "text-ink-3",
+  drafted: "text-ink-3", // muted — not yet visible to players
   paused: "text-ink-4",
   on_deck: "text-warn",
   in_progress: "text-accent",
@@ -24,6 +25,7 @@ const statusTone: Record<Player["status"], string> = {
 
 const statusLabel: Record<Player["status"], string> = {
   waiting: "waiting",
+  drafted: "drafted",
   paused: "paused",
   on_deck: "on deck",
   in_progress: "playing",
@@ -55,6 +57,9 @@ export default function QueueRow({ player, position, onTogglePause, onLeave }: P
     zIndex: isDragging ? 10 : 0,
   };
 
+  // "drafted" is intentionally excluded — drafted players are committed to an
+  // unpublished draft and cannot be reordered, paused, or checked out until
+  // that draft is published or cancelled.
   const isInQueue = player.status === "waiting" || player.status === "paused";
 
   return (
