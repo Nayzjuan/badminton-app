@@ -228,7 +228,8 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
     return { error: "Not authenticated. Please refresh and try again." };
   }
 
-  const { data: result, error: rpcError } = await supabase.rpc("join_queue", {
+  const svc = createServiceClient();
+  const { data: result, error: rpcError } = await svc.rpc("join_queue", {
     p_session_id: sessionId,
     p_player_id: user.id,
   });
