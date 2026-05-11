@@ -829,106 +829,52 @@ export async function publishMatchAction(
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  // Verify organizer role — load the match to get session_id first.
   const { data: match } = await db
     .from("matches")
-    .select("session_id, status, is_published")
+    .select("session_id")
     .eq("id", matchId)
     .single();
 
   if (!match) return { success: false, message: "Match not found." };
-  if (match.status !== "pending")
-    return { success: false, message: "Only pending (on-deck) matches can be published." };
-  if (match.is_published) return { success: true, message: "Already published." };
 
   const isOrganizer = await isSessionOrganizer(user.id, match.session_id);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
-  // BUG-002 fix (layer 1): validate that no player in this draft has left
-  // the session since the match was generated. A 'left' player would be
-  // silently re-promoted to 'playing' on court assignment (BUG-002 layer 3).
   const svc = createServiceClient();
-  const { data: matchPlayerRows } = await svc
-    .from("match_players")
-    .select("player_id")
-    .eq("match_id", matchId);
+  const { data: result, error: rpcError } = await svc.rpc("publish_match", {
+    p_match_id: matchId,
+    p_session_id: match.session_id,
+    p_user_id: user.id,
+  });
 
-  const playerIds = (matchPlayerRows ?? []).map((r) => r.player_id);
+  if (rpcError) {
+    return { success: false, message: `Publish failed: ${rpcError.message}` };
+  }
 
-  if (playerIds.length > 0) {
-    const { data: leftPlayers } = await svc
-      .from("queue_entries")
-      .select("player_id")
-      .eq("session_id", match.session_id)
-      .in("player_id", playerIds)
-      .eq("status", "left");
-
-    if (leftPlayers && leftPlayers.length > 0) {
+  switch (result) {
+    case "SUCCESS":
+      return { success: true, message: "Match published." };
+    case "NOT_ORGANIZER":
+      return { success: false, message: "Forbidden" };
+    case "NOT_FOUND":
+      return { success: false, message: "Match not found." };
+    case "NOT_PENDING":
+      return { success: false, message: "Only pending (on-deck) matches can be published." };
+    case "ALREADY_PUBLISHED":
+      return { success: true, message: "Already published." };
+    case "HAS_LEFT_PLAYERS":
       return {
         success: false,
-        message: `Cannot publish — ${leftPlayers.length} player${leftPlayers.length !== 1 ? "s have" : " has"} left the session. Clear this draft and let the engine regenerate.`,
+        message: "Cannot publish — a player has left the session. Clear this draft and let the engine regenerate.",
       };
-    }
-
-    // Conflict check: verify no player in this draft is already committed
-    // to a different pending or in_progress match in the same session.
-    // This is an advisory (read-then-write) check — it catches the common
-    // case but does not hold a row-level lock between the SELECT and the
-    // UPDATE. A fully atomic solution would require a DB RPC with FOR UPDATE;
-    // that is deferred. The RPC Guard 2 inside create_match_with_players
-    // already closes this for engine-created drafts; this layer closes it
-    // for the organizer-triggered publish path.
-    const { data: otherActiveMatches } = await svc
-      .from("matches")
-      .select("id")
-      .eq("session_id", match.session_id)
-      .in("status", ["pending", "in_progress"])
-      .neq("id", matchId);
-
-    if (otherActiveMatches && otherActiveMatches.length > 0) {
-      const { data: conflictRows } = await svc
-        .from("match_players")
-        .select("player_id")
-        .in(
-          "match_id",
-          otherActiveMatches.map((m) => m.id)
-        )
-        .in("player_id", playerIds);
-
-      if (conflictRows && conflictRows.length > 0) {
-        return {
-          success: false,
-          message: `Cannot publish — ${conflictRows.length} player${conflictRows.length !== 1 ? "s are" : " is"} already assigned to another active match. Clear this draft and let the engine regenerate.`,
-        };
-      }
-    }
+    case "CONFLICT":
+      return {
+        success: false,
+        message: "Cannot publish — a player is already assigned to another active match. Clear this draft and let the engine regenerate.",
+      };
+    default:
+      return { success: false, message: "Publish failed." };
   }
-
-  // Use svc (service client) so the primary organizer is never blocked by RLS.
-  const { error } = await svc
-    .from("matches")
-    .update({ is_published: true })
-    .eq("id", matchId)
-    .eq("status", "pending") // Atomic guard — cannot publish promoted match
-    .eq("is_published", false); // Idempotency guard
-
-  if (error) return { success: false, message: "Failed to publish match." };
-
-  // Promote all 4 players from 'drafted' to 'on_deck'. The RPC set them to
-  // 'drafted' when the draft was created; publish is the moment they become
-  // visible to players and the ON_DECK_WARNING alert fires on each device.
-  // Guard is .eq("status", "drafted") — not "waiting" — because the RPC
-  // now marks players 'drafted' instead of leaving them 'waiting' (BUG-001).
-  if (playerIds.length > 0) {
-    await svc
-      .from("queue_entries")
-      .update({ status: "on_deck" as const })
-      .eq("session_id", match.session_id)
-      .in("player_id", playerIds)
-      .eq("status", "drafted"); // only promote drafted players (idempotent)
-  }
-
-  return { success: true, message: "Match published." };
 }
 
 // ============================================================
@@ -951,136 +897,21 @@ export async function publishAllDraftMatchesAction(
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   const svc = createServiceClient();
+  const { data: result, error: rpcError } = await svc.rpc("publish_all_drafts", {
+    p_session_id: sessionId,
+    p_user_id: user.id,
+  });
 
-  // BUG-002 fix (Publish All path): mirror the 'left' player guard from
-  // publishMatchAction. Find all draft matches, identify which contain a
-  // player whose queue_entries.status = 'left', and skip those matches.
-  // Clean drafts are published; tainted drafts are returned as skippedCount.
-  const { data: draftMatches, error: draftErr } = await svc
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("status", "pending")
-    .eq("is_published", false);
-
-  if (draftErr) return { success: false, message: draftErr.message };
-
-  const allDraftIds = (draftMatches ?? []).map((m) => m.id);
-  if (allDraftIds.length === 0) {
-    return { success: true, message: "No drafts to publish.", publishedCount: 0 };
+  if (rpcError) {
+    return { success: false, message: `Publish failed: ${rpcError.message}` };
   }
 
-  const { data: matchPlayerRows } = await svc
-    .from("match_players")
-    .select("match_id, player_id")
-    .in("match_id", allDraftIds);
-
-  const allPlayerIds = [...new Set((matchPlayerRows ?? []).map((r) => r.player_id))];
-
-  const taintedMatchIdSet = new Set<string>();
-  if (allPlayerIds.length > 0) {
-    const { data: leftEntries } = await svc
-      .from("queue_entries")
-      .select("player_id")
-      .eq("session_id", sessionId)
-      .in("player_id", allPlayerIds)
-      .eq("status", "left");
-
-    if (leftEntries && leftEntries.length > 0) {
-      const leftPlayerSet = new Set(leftEntries.map((e) => e.player_id));
-      for (const row of matchPlayerRows ?? []) {
-        if (leftPlayerSet.has(row.player_id)) taintedMatchIdSet.add(row.match_id);
-      }
-    }
+  if (!result?.success) {
+    return { success: false, message: result?.error ?? "Publish failed." };
   }
 
-  // Conflict check: also skip any draft whose player appears in a different
-  // pending or in_progress match. This mirrors the check in publishMatchAction
-  // and closes the race where two overlapping drafts are bulk-published
-  // simultaneously, double-booking a shared player.
-  const allPublishableBeforeConflict = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
-  if (allPublishableBeforeConflict.length > 0) {
-    const { data: otherActiveMatches } = await svc
-      .from("matches")
-      .select("id")
-      .eq("session_id", sessionId)
-      .in("status", ["pending", "in_progress"])
-      .not("id", "in", `(${allDraftIds.join(",")})`);
-
-    if (otherActiveMatches && otherActiveMatches.length > 0) {
-      const otherMatchIds = otherActiveMatches.map((m) => m.id);
-      const publishablePlayers = (matchPlayerRows ?? []).filter((r) =>
-        allPublishableBeforeConflict.includes(r.match_id)
-      );
-      const { data: conflictRows } = await svc
-        .from("match_players")
-        .select("player_id, match_id")
-        .in("match_id", otherMatchIds)
-        .in(
-          "player_id",
-          publishablePlayers.map((r) => r.player_id)
-        );
-
-      if (conflictRows && conflictRows.length > 0) {
-        const conflictPlayerSet = new Set(conflictRows.map((r) => r.player_id));
-        for (const row of publishablePlayers) {
-          if (conflictPlayerSet.has(row.player_id)) {
-            taintedMatchIdSet.add(row.match_id);
-          }
-        }
-      }
-    }
-  }
-
-  const publishableIds = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
-  const skippedCount = taintedMatchIdSet.size;
-
-  if (publishableIds.length === 0) {
-    return {
-      success: false,
-      message: `All ${allDraftIds.length} draft match${allDraftIds.length !== 1 ? "es have" : " has"} players who left — clear them and let the engine regenerate.`,
-      publishedCount: 0,
-      skippedCount,
-    };
-  }
-
-  // Use svc (service client) — not db (RLS client) — so the primary organizer
-  // (sessions.created_by) is never silently blocked by write-side RLS.
-  const { data, error } = await svc
-    .from("matches")
-    .update({ is_published: true })
-    .in("id", publishableIds)
-    .eq("status", "pending") // Atomic guard — cannot publish promoted match
-    .eq("is_published", false) // Idempotency guard
-    .select("id");
-
-  if (error) return { success: false, message: "Failed to publish drafts." };
-
-  const publishedCount = data?.length ?? 0;
-
-  // Promote all players in the just-published drafts from 'drafted' to
-  // 'on_deck'. Fires ON_DECK_WARNING alerts for all 4 × N players at once.
-  // Guard is .eq("status", "drafted") — players are 'drafted' since the RPC
-  // now sets that status at draft-creation time instead of leaving 'waiting'.
-  if (publishedCount > 0) {
-    const publishedMatchIds = new Set(data.map((m) => m.id));
-    const publishedPlayerIds = [
-      ...new Set(
-        (matchPlayerRows ?? [])
-          .filter((r) => publishedMatchIds.has(r.match_id))
-          .map((r) => r.player_id)
-      ),
-    ];
-
-    if (publishedPlayerIds.length > 0) {
-      await svc
-        .from("queue_entries")
-        .update({ status: "on_deck" as const })
-        .eq("session_id", sessionId)
-        .in("player_id", publishedPlayerIds)
-        .eq("status", "drafted");
-    }
-  }
+  const publishedCount = result.published_count ?? 0;
+  const skippedCount = result.skipped_count ?? 0;
 
   const skippedMsg =
     skippedCount > 0

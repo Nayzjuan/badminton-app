@@ -117,9 +117,12 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
   useMatchAlerts({ sessionId: session.id, playerId: profile.id });
 
   // Player "has an active match" only when their queue status confirms
-  // they are committed to it (on_deck or playing). This prevents draft
-  // matches (is_published=false, player still "waiting" or "drafted") from
-  // triggering the full MatchAlert takeover before the organizer publishes.
+  // they are committed to it (on_deck or playing). This gate now serves as
+  // defense-in-depth against temporal skew during publish: publishMatchAction
+  // updates matches.is_published BEFORE queue_entries.status, so there is a
+  // brief window where usePlayerMatch sees the published match but useQueue
+  // still reports "drafted". Without this gate, the MatchAlert would flash
+  // before the queue card has caught up.
   //
   // Queue status mapping:
   //   on_deck  → pending published match  → show MatchAlert (full takeover)

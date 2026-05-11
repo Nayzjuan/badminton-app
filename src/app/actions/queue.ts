@@ -149,53 +149,17 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   }
 
   // Clean up any unpublished draft matches this player is assigned to.
-  // Without this, a draft containing a 'left' player is stuck: it can't
-  // be published (publishMatchAction blocks on 'left' players) and shows
-  // a stale roster to the organizer. We remove the player and auto-cancel
-  // the draft if it falls below 4 players, freeing the slot.
-  //
-  // Known TOCTOU limitation: the draft query and the subsequent DELETE
-  // are non-atomic. A concurrent publishMatchAction could publish the
-  // draft between these steps, meaning we delete from an already-live
-  // match. The risk is low (checkout and publish rarely race), and the
-  // worst outcome is a match with 3 players that the organizer must
-  // manually cancel. Full atomicity via a DB function is deferred.
+  // The RPC atomically removes the player from draft match_players and
+  // cancels the draft if it falls below 4 players.
   const svc = createServiceClient();
-  const { data: draftMatches } = await svc
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("status", "pending")
-    .eq("is_published", false);
+  const { error: cleanupError } = await svc.rpc(
+    "checkout_player_cleanup_drafts",
+    { p_session_id: sessionId, p_player_id: user.id }
+  );
 
-  if (draftMatches && draftMatches.length > 0) {
-    const draftMatchIds = draftMatches.map((m) => m.id);
-    const { data: draftEntries } = await svc
-      .from("match_players")
-      .select("match_id")
-      .eq("player_id", user.id)
-      .in("match_id", draftMatchIds);
-
-    for (const entry of draftEntries ?? []) {
-      await svc
-        .from("match_players")
-        .delete()
-        .eq("match_id", entry.match_id)
-        .eq("player_id", user.id);
-
-      const { count } = await svc
-        .from("match_players")
-        .select("*", { count: "exact", head: true })
-        .eq("match_id", entry.match_id);
-
-      if ((count ?? 0) < 4) {
-        await svc
-          .from("matches")
-          .update({ status: "cancelled" as const })
-          .eq("id", entry.match_id)
-          .eq("status", "pending");
-      }
-    }
+  if (cleanupError) {
+    console.error("[checkoutPlayer] draft cleanup error:", cleanupError.message);
+    // Non-fatal: checkout itself succeeded.
   }
 
   return { success: true };
@@ -209,7 +173,6 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
   const supabase = await createClient();
 
-  // Resolve caller identity server-side — client cannot spoof player_id.
   const {
     data: { user },
     error: authError,
@@ -219,173 +182,21 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
     return { error: "Not authenticated. Please refresh and try again." };
   }
 
-  const playerId = user.id;
-
-  console.log(`[joinQueueAction] player=${playerId} session=${sessionId}`);
-
-  // ----------------------------------------------------------
-  // STEP 1 — Check for an existing queue_entries row
-  // ----------------------------------------------------------
-  const { data: existing, error: fetchError } = await supabase
-    .from("queue_entries")
-    .select("id, games_played, status")
-    .eq("session_id", sessionId)
-    .eq("player_id", playerId)
-    .maybeSingle();
-
-  if (fetchError) {
-    console.error("[joinQueueAction] fetch existing error:", fetchError.message);
-    return { error: fetchError.message };
-  }
-
-  console.log(
-    `[joinQueueAction] existing row:`,
-    existing
-      ? `id=${existing.id} games_played=${existing.games_played} status=${existing.status}`
-      : "none (first-time joiner)"
-  );
-
-  // ----------------------------------------------------------
-  // STEP 1b — Active-match guard (early return before any DB write)
-  //
-  // If the player is currently on_deck or playing, refuse the join.
-  // Re-queuing them would reset their queue entry to "waiting",
-  // evicting them from their assigned match slot and potentially
-  // creating a duplicate-in-queue appearance when the match ends.
-  //
-  // This most commonly surfaces when a player reconnects on a new
-  // device mid-match — the reconnect flow migrates their DB row,
-  // the page loads, and the UI may prompt "Join Queue" before the
-  // match state has propagated.  Block it cleanly here.
-  // ----------------------------------------------------------
-  // 'drafted' is included because a drafted player is committed to an
-  // unpublished draft and must not be re-inserted into the queue until that
-  // draft is published (→ on_deck) or cancelled (→ waiting).
-  if (
-    existing &&
-    (existing.status === "drafted" ||
-      existing.status === "on_deck" ||
-      existing.status === "playing")
-  ) {
-    console.log(
-      `[joinQueueAction] BLOCKED — player=${playerId} is currently ` +
-        `status=${existing.status} and cannot re-join until their match ends.`
-    );
-    return {
-      error: "You're currently in a match — wait for it to finish before rejoining the queue.",
-    };
-  }
-  // Note: the separate draft-mode match_players guard that existed here has
-  // been removed. It was needed because draft players previously stayed
-  // 'waiting'; with the 'drafted' status that check is now redundant.
-
-  // ----------------------------------------------------------
-  // STEP 2 — Query the session floor (MIN games_played)
-  //          Run this for BOTH first-time and returning players.
-  //          This is the key fix for the line-jumping bug.
-  //
-  // Known TOCTOU limitation: the floor snapshot and the subsequent
-  // INSERT/UPDATE are not a single atomic transaction. A concurrent
-  // join between these two steps could lower the observed floor, so a
-  // new joiner's games_played could be set one tick above the true
-  // minimum. This edge case is rare and benign (the player gets a
-  // position slightly behind, not ahead); full atomicity would require
-  // a stored procedure, which is deferred.
-  // ----------------------------------------------------------
-  const { data: floorRow, error: floorError } = await supabase
-    .from("queue_entries")
-    .select("games_played")
-    .eq("session_id", sessionId)
-    .in("status", ["waiting", "drafted", "on_deck", "playing"])
-    .order("games_played", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (floorError) {
-    // Non-fatal — fall back to 0 so joining is never blocked.
-    console.error("[joinQueueAction] floor query failed:", floorError.message);
-  }
-
-  const sessionFloor: number = floorRow?.games_played ?? 0;
-
-  console.log(
-    `[joinQueueAction] session floor=${sessionFloor}` +
-      (floorRow ? ` (from active players)` : ` (session empty, defaulting to 0)`)
-  );
-
-  // ----------------------------------------------------------
-  // STEP 3a — RETURNING PLAYER: row exists (waiting or left status)
-  //
-  // Note: on_deck / playing are caught by the early guard in Step 1b.
-  // By the time we reach here, existing (if set) is always waiting/left.
-  //
-  // BUG FIX (games_played): previously we kept existing.games_played
-  // unchanged.  If that value is BELOW the session floor (e.g., player
-  // has 0 games played but everyone else has 3), they would jump to #1.
-  //
-  // Fix: use MAX(existing.games_played, sessionFloor).
-  // This preserves hard-earned games (never reduce), but prevents
-  // a stale 0 from granting an unfair front-of-queue position.
-  // ----------------------------------------------------------
-  if (existing) {
-    const inheritedGames = Math.max(existing.games_played, sessionFloor);
-
-    console.log(
-      `[joinQueueAction] RETURNING PLAYER ` +
-        `existing.games_played=${existing.games_played} ` +
-        `sessionFloor=${sessionFloor} ` +
-        `→ will write games_played=${inheritedGames}`
-    );
-
-    const { error: updateError } = await supabase
-      .from("queue_entries")
-      .update({
-        status: "waiting" as const,
-        games_played: inheritedGames,
-        joined_at: new Date().toISOString(),
-      })
-      .eq("id", existing.id);
-
-    if (updateError) {
-      console.error("[joinQueueAction] update error:", updateError.message);
-      return { error: updateError.message };
-    }
-
-    console.log(`[joinQueueAction] RETURNING PLAYER re-queued at games_played=${inheritedGames}`);
-
-    await runEngineForSession(sessionId);
-    return {};
-  }
-
-  // ----------------------------------------------------------
-  // STEP 3b — FIRST-TIME JOINER: no row yet
-  //
-  // Insert with the session floor so they don't land at #1.
-  // Their joined_at is brand-new, so within the same games_played
-  // tier they go to the back of the line — fair.
-  // ----------------------------------------------------------
-  const inheritedGames = sessionFloor; // Floor already computed above.
-
-  console.log(
-    `[joinQueueAction] FIRST-TIME JOINER ` +
-      `sessionFloor=${sessionFloor} ` +
-      `→ inserting with games_played=${inheritedGames}`
-  );
-
-  const { error: insertError } = await supabase.from("queue_entries").insert({
-    session_id: sessionId,
-    player_id: playerId,
-    status: "waiting" as const,
-    games_played: inheritedGames,
-    joined_at: new Date().toISOString(),
+  const { data: result, error: rpcError } = await supabase.rpc("join_queue", {
+    p_session_id: sessionId,
+    p_player_id: user.id,
   });
 
-  if (insertError) {
-    console.error("[joinQueueAction] insert error:", insertError.message);
-    return { error: insertError.message };
+  if (rpcError) {
+    console.error("[joinQueueAction] RPC error:", rpcError.message);
+    return { error: rpcError.message };
   }
 
-  console.log(`[joinQueueAction] FIRST-TIME JOINER inserted at games_played=${inheritedGames}`);
+  if (!result?.success) {
+    return { error: result?.error ?? "Failed to join queue." };
+  }
+
+  console.log(`[joinQueueAction] ${result.action} games_played=${result.games_played}`);
 
   await runEngineForSession(sessionId);
   return {};

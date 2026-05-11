@@ -154,7 +154,7 @@ export function useMatchAlerts({
         .select("id, status")
         .eq("session_id", sessionId)
         .in("id", matchIds)
-        .in("status", ["pending", "in_progress"])
+        .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();

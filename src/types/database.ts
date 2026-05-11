@@ -237,7 +237,7 @@ export type ProfileUpdate = Partial<
 >;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
-  Partial<Pick<Session, "organizer_passcode" | "scoring">>;
+  Partial<Pick<Session, "organizer_passcode" | "scoring" | "is_auto_matchmaking_on">>;
 
 export type SessionUpdate = Partial<
   Pick<
@@ -628,6 +628,32 @@ export type Database = {
         /** Returns true when the old user is the primary organizer of an active session
          *  (server action must NOT delete their auth user). */
         Returns: boolean;
+      };
+      checkout_player_cleanup_drafts: {
+        Args: { p_session_id: string; p_player_id: string };
+        Returns: { cancelled_match_id: string }[];
+      };
+      join_queue: {
+        Args: { p_session_id: string; p_player_id: string };
+        Returns: {
+          success: boolean;
+          error?: string;
+          action?: string;
+          games_played?: number;
+        };
+      };
+      publish_match: {
+        Args: { p_match_id: string; p_session_id: string; p_user_id: string };
+        Returns: string;
+      };
+      publish_all_drafts: {
+        Args: { p_session_id: string; p_user_id: string };
+        Returns: {
+          success: boolean;
+          error?: string;
+          published_count?: number;
+          skipped_count?: number;
+        };
       };
       // ── QR-code join lookup (migration 20260502093938) ───────────
       lookup_active_session: {
