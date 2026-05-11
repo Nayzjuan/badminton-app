@@ -231,6 +231,7 @@ export function useOrganizerData(
   // ------------------------------------------------------------------
   const fetchActiveMatchesSeq = useRef(0);
   const fetchQueueSeq = useRef(0);
+  const fetchSessionSeq = useRef(0);
 
   // ---- Fetch functions ----
 
@@ -382,15 +383,36 @@ export function useOrganizerData(
     }
   }, [supabase, queue]);
 
+  // ── Session refresh ───────────────────────────────────────────
+  // Lightweight poll of the sessions table to catch missed broadcasts
+  // (e.g. network blip, tab backgrounded, or co-organizer toggle).
+  // The RLS client may strip is_auto_matchmaking_on for co-organizers,
+  // but the session creator will see the correct value. This is a
+  // defensive layer — the primary sync is still the broadcast channel.
+  const fetchSession = useCallback(async () => {
+    const mySeq = ++fetchSessionSeq.current;
+    const { data, error } = await supabase
+      .from("sessions")
+      .select("*")
+      .eq("id", sessionId)
+      .single();
+    // Discard stale results — a newer call or broadcast may have updated state.
+    if (mySeq !== fetchSessionSeq.current) return;
+    if (error) {
+      console.error("[useOrganizerData] fetchSession error:", error);
+    }
+    if (data) setSession(data);
+  }, [supabase, sessionId]);
+
   // ---- Initial load ----
 
   useEffect(() => {
     async function load() {
-      await Promise.all([fetchCourts(), fetchQueue()]);
+      await Promise.all([fetchCourts(), fetchQueue(), fetchSession()]);
       setLoading(false);
     }
     load();
-  }, [fetchCourts, fetchQueue]);
+  }, [fetchCourts, fetchQueue, fetchSession]);
 
   useEffect(() => {
     fetchActiveMatches();
@@ -410,10 +432,12 @@ export function useOrganizerData(
   const fetchCourtsRef = useRef(fetchCourts);
   const fetchQueueRef = useRef(fetchQueue);
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
+  const fetchSessionRef = useRef(fetchSession);
   // Update refs on every render so the latest closures are always used.
   fetchCourtsRef.current = fetchCourts;
   fetchQueueRef.current = fetchQueue;
   fetchActiveMatchesRef.current = fetchActiveMatches;
+  fetchSessionRef.current = fetchSession;
 
   // Stable callback that counts SUBSCRIBED/error events across all five
   // table channels and flips realtimeConnected accordingly.
@@ -513,6 +537,41 @@ export function useOrganizerData(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId, handleChannelStatus]); // Intentionally omit the fetch refs — they are kept current via the ref pattern above.
+
+  // ── Layer 2 — Polling + visibility refresh ────────────────────
+  // Catches missed broadcasts and reconnect gaps. Only runs when the
+  // tab is visible to avoid wasted DB queries in background tabs.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchSessionRef.current();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchSessionRef.current();
+      }
+    }, 15000);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // ── Layer 3 — Reconnect refresh ───────────────────────────────
+  // When realtime channels reconnect after a dropout, the broadcast
+  // that was sent during the gap may have been missed. Trigger a
+  // session refresh the moment all channels come back online.
+  const prevRealtimeConnected = useRef(realtimeConnected);
+  useEffect(() => {
+    if (realtimeConnected && !prevRealtimeConnected.current) {
+      fetchSessionRef.current();
+    }
+    prevRealtimeConnected.current = realtimeConnected;
+  }, [realtimeConnected]);
 
   // ---- Court actions ----
   // Each mutation explicitly calls fetchCourts() after a successful write

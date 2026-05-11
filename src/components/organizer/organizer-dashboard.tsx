@@ -117,10 +117,15 @@ export function OrganizerDashboard({
     setTogglingAuto(true);
     setPendingAuto(!liveSession.is_auto_matchmaking_on); // optimistic
     const result = await toggleAutoMatchmaking(session.id);
-    // Drop the pending override — liveSession is authoritative.
-    // On success the broadcast has already (or will shortly) update liveSession.
-    // On failure liveSession still holds the pre-toggle value, which is correct.
-    setPendingAuto(null);
+    if (result.success) {
+      // Hold the server-confirmed value as authoritative until the broadcast
+      // updates liveSession. This prevents the toggle from flickering OFF
+      // while we wait for the realtime broadcast to arrive.
+      setPendingAuto(result.isOn);
+    } else {
+      // Revert to liveSession value on failure.
+      setPendingAuto(null);
+    }
     setTogglingAuto(false);
     if (!result.success) {
       toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
