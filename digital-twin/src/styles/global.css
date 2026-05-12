@@ -191,6 +191,36 @@ kbd {
   color: var(--color-ink-3);
 }
 
+/* ── Player phone alert slide-up animation ── */
+@keyframes pp-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes pp-slide-down {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+.pp-alert-visible {
+  animation: pp-slide-up 450ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  z-index: 20;
+}
+
+.pp-alert-hidden {
+  animation: pp-slide-down 380ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  z-index: 20;
+  pointer-events: none;
+}
+
 /* ── Responsive: mobile nav ── */
 @media (max-width: 767px) {
   #side-nav {
