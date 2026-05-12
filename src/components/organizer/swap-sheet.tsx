@@ -79,7 +79,14 @@ function teamLabel(team: "a" | "b") {
 
 // ── Main component ────────────────────────────────────────────
 
-export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, onSwapComplete }: SwapSheetProps) {
+export function SwapSheet({
+  context,
+  queue,
+  activeMatches,
+  swapPlayer,
+  onClose,
+  onSwapComplete,
+}: SwapSheetProps) {
   // Internal state — reset via key prop in parent when context changes.
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [mismatchDismissed, setMismatchDismissed] = useState(false);
@@ -102,9 +109,7 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
   // Players already in this match are excluded.
   // All waiting players shown; paused ones rendered as disabled.
 
-  const currentMatchPlayerIds = new Set(
-    context?.currentPlayers.map((p) => p.player_id) ?? []
-  );
+  const currentMatchPlayerIds = new Set(context?.currentPlayers.map((p) => p.player_id) ?? []);
 
   // Build a set of ALL player IDs currently assigned to any active match
   // (both pending on-deck and in_progress on-court). This prevents players
@@ -132,9 +137,7 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
 
   // Search filter (applied after sort so order is stable)
   const filteredCandidates = search.trim()
-    ? allCandidates.filter((p) =>
-        p.display_name.toLowerCase().includes(search.toLowerCase())
-      )
+    ? allCandidates.filter((p) => p.display_name.toLowerCase().includes(search.toLowerCase()))
     : allCandidates;
 
   // ── Skill mismatch detection ───────────────────────────────
@@ -167,11 +170,7 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
     const inPlayer = queue.find((p) => p.player_id === selectedPlayerId);
     const inName = inPlayer?.display_name ?? "Unknown";
 
-    const result = await swapPlayer(
-      context.matchId,
-      context.outPlayerId,
-      selectedPlayerId
-    );
+    const result = await swapPlayer(context.matchId, context.outPlayerId, selectedPlayerId);
 
     if (result.success) {
       onSwapComplete({
@@ -209,7 +208,12 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
   // ── Render ─────────────────────────────────────────────────
 
   return (
-    <Sheet open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Sheet
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <SheetContent showClose>
         {/* ── Header: who is being swapped out ──────────────── */}
         <SheetHeader className="pr-10">
@@ -219,14 +223,19 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
           </SheetDescription>
 
           {context && (
-            <div className="mt-3 flex items-center gap-3 rounded-xl
-                            bg-amber-50 dark:bg-amber-950/30
-                            border border-amber-200 dark:border-amber-800/50
-                            px-4 py-3">
+            <div
+              className="mt-3 flex items-center gap-3 rounded-xl
+                            bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)]
+                            border border-[oklch(0.65_0.15_188/0.35)] dark:border-[oklch(0.79_0.18_188/0.30)]
+                            px-4 py-3"
+            >
               {/* Avatar initial */}
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center
-                              rounded-full bg-amber-500 dark:bg-amber-600
-                              text-sm font-bold text-white select-none">
+              <div
+                className="flex h-9 w-9 shrink-0 items-center justify-center
+                              rounded-lg bg-[oklch(0.55_0.18_188)] dark:bg-[oklch(0.79_0.18_188/0.25)]
+                              dark:border dark:border-[oklch(0.79_0.18_188/0.40)]
+                              font-command text-sm font-bold text-white dark:text-[oklch(0.89_0.12_188)] select-none"
+              >
                 {context.outPlayerName.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
@@ -235,10 +244,12 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
                 </p>
                 <SkillBadge level={context.outPlayerSkill} className="mt-0.5" />
               </div>
-              <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold
-                               uppercase tracking-wider
-                               bg-amber-100 border border-amber-300 text-amber-800
-                               dark:bg-amber-900/40 dark:border-amber-700 dark:text-amber-300">
+              <span
+                className="shrink-0 rounded-lg px-2 py-0.5 font-command text-[9px] font-bold
+                               uppercase tracking-[0.14em]
+                               bg-[oklch(0.79_0.18_188/0.10)] border border-[oklch(0.65_0.15_188/0.40)] text-[oklch(0.35_0.15_188)]
+                               dark:bg-[oklch(0.79_0.18_188/0.15)] dark:border-[oklch(0.79_0.18_188/0.40)] dark:text-[oklch(0.79_0.18_188)]"
+              >
                 {context ? teamLabel(context.outTeam) : ""}
               </span>
             </div>
@@ -247,7 +258,6 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
 
         {/* ── Scrollable player list ─────────────────────────── */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
-
           {/* Search input */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
@@ -305,18 +315,18 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   // Selected state
                   isSelected
-                    ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-600"
+                    ? "border-[oklch(0.65_0.15_188/0.60)] bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.10)] dark:border-[oklch(0.79_0.18_188/0.50)]"
                     : "border-border bg-background hover:bg-muted/40",
                   // Paused state
-                  player.is_paused
-                    ? "opacity-50 cursor-not-allowed"
-                    : "cursor-pointer",
+                  player.is_paused ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                 ].join(" ")}
               >
                 {/* Queue position number */}
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center
+                <span
+                  className="flex h-6 w-6 shrink-0 items-center justify-center
                                  rounded-full bg-muted
-                                 text-[10px] font-bold text-muted-foreground">
+                                 text-[10px] font-bold text-muted-foreground"
+                >
                   {idx + 1}
                 </span>
 
@@ -335,17 +345,28 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
 
                 {/* Paused badge OR selected checkmark */}
                 {player.is_paused ? (
-                  <span className="flex items-center gap-1 rounded-full px-2 py-0.5
+                  <span
+                    className="flex items-center gap-1 rounded-full px-2 py-0.5
                                    bg-muted border border-border
                                    text-[10px] font-bold uppercase tracking-wider
-                                   text-muted-foreground shrink-0">
+                                   text-muted-foreground shrink-0"
+                  >
                     <Pause className="h-2.5 w-2.5" />
                     Paused
                   </span>
                 ) : isSelected ? (
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center
-                                   rounded-full bg-amber-500 dark:bg-amber-600">
-                    <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <span
+                    className="flex h-5 w-5 shrink-0 items-center justify-center
+                                   rounded-full bg-[oklch(0.55_0.18_188)] dark:bg-[oklch(0.79_0.18_188/0.30)]
+                                   dark:ring-1 dark:ring-[oklch(0.79_0.18_188/0.60)]"
+                  >
+                    <svg
+                      className="h-3 w-3 text-white"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={3}
+                    >
                       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </span>
@@ -359,10 +380,12 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
         <SheetFooter>
           {/* Skill mismatch warning banner */}
           {showMismatchWarning && (
-            <div className="flex items-start gap-3 rounded-xl
+            <div
+              className="flex items-start gap-3 rounded-xl
                             bg-amber-50 dark:bg-amber-950/30
                             border border-amber-200 dark:border-amber-700/50
-                            px-4 py-3 mb-1">
+                            px-4 py-3 mb-1"
+            >
               <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
               <p className="flex-1 text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
                 This swap creates a mixed-level match. You can still confirm.
@@ -373,7 +396,13 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
                 className="shrink-0 rounded p-0.5 text-amber-600 dark:text-amber-400
                            hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
               >
-                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -382,9 +411,11 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
 
           {/* Inline error */}
           {inlineError && (
-            <div className="rounded-xl bg-red-50 dark:bg-red-950/30
+            <div
+              className="rounded-xl bg-red-50 dark:bg-red-950/30
                             border border-red-200 dark:border-red-800/50
-                            px-4 py-3">
+                            px-4 py-3"
+            >
               <p className="text-xs text-red-700 dark:text-red-400">{inlineError}</p>
               <button
                 onClick={() => setInlineError(null)}
@@ -401,17 +432,29 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
             data-testid="swap-confirm"
             onClick={handleConfirm}
             disabled={!selectedPlayerId || isConfirming}
-            className="w-full rounded-xl px-4 py-3 text-sm font-bold
-                       bg-amber-500 hover:bg-amber-600 text-white
-                       dark:bg-amber-600 dark:hover:bg-amber-700
+            className="w-full rounded-xl px-4 py-3 font-command text-[11px] font-bold uppercase tracking-[0.12em]
+                       bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)] text-white
+                       dark:bg-[oklch(0.79_0.18_188/0.22)] dark:hover:bg-[oklch(0.79_0.18_188/0.35)]
+                       dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
                        disabled:opacity-50 disabled:cursor-not-allowed
                        transition-colors"
           >
             {isConfirming ? (
               <span className="flex items-center justify-center gap-2">
                 <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
                 </svg>
                 Swapping…
               </span>

@@ -108,14 +108,14 @@ function VsBadge({ dark }: { dark?: boolean }) {
     <div
       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
         dark
-          ? "bg-emerald-500/20 ring-1 ring-emerald-500/40"
+          ? "bg-[oklch(0.79_0.18_188/0.15)] ring-1 ring-[oklch(0.79_0.18_188/0.40)]"
           : "bg-white dark:bg-white/10 ring-1 ring-slate-200 dark:ring-white/20 shadow-sm dark:shadow-none"
       }`}
       aria-hidden="true"
     >
       <span
         className={`text-[10px] font-black tracking-tight ${
-          dark ? "text-emerald-400" : "text-slate-400 dark:text-white/50"
+          dark ? "text-[oklch(0.79_0.18_188)]" : "text-slate-400 dark:text-white/50"
         }`}
       >
         VS
@@ -153,9 +153,9 @@ function PlayerRowLight({
   const classes = [
     "group w-full rounded-xl px-3 py-2 text-left transition-colors",
     isSelected
-      ? "bg-amber-100 dark:bg-amber-500/15 ring-1 ring-amber-400 dark:ring-amber-500/40"
+      ? "bg-[oklch(0.79_0.18_188/0.12)] dark:bg-[oklch(0.79_0.18_188/0.15)] ring-1 ring-[oklch(0.65_0.15_188/0.55)] dark:ring-[oklch(0.79_0.18_188/0.50)]"
       : isSwapTarget || onSwapClick
-      ? "bg-slate-100/70 dark:bg-white/[0.06] hover:bg-amber-50/60 dark:hover:bg-amber-500/10 cursor-pointer"
+      ? "bg-slate-100/70 dark:bg-white/[0.06] hover:bg-[oklch(0.79_0.18_188/0.08)] dark:hover:bg-[oklch(0.79_0.18_188/0.10)] cursor-pointer"
       : "bg-slate-100/70 dark:bg-white/[0.06]",
   ].join(" ");
 
@@ -189,7 +189,7 @@ function PlayerRowLight({
         </span>
         {onSwapClick && (
           <ArrowLeftRight
-            className="ml-auto h-3 w-3 flex-shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100"
+            className="ml-auto h-3 w-3 flex-shrink-0 text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)] opacity-0 transition-opacity group-hover:opacity-100"
             aria-hidden="true"
           />
         )}
@@ -282,7 +282,7 @@ export interface TeamsGridProps {
   // ── Swap interaction — on-deck (light) mode only ──────────────
   /** Called when a player row is tapped to initiate/complete a swap. */
   onPlayerTap?: (player: RosterPlayer, team: "a" | "b") => void;
-  /** player_id of the currently selected swap-source (amber highlight). */
+  /** player_id of the currently selected swap-source (teal highlight). */
   selectedPlayerId?: string;
   /** True while any picking-mode swap is in progress. */
   isSwapModeActive?: boolean;
