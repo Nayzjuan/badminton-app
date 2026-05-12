@@ -413,7 +413,14 @@ export function OrganizerDashboard({ profile, session, otherSessions = [] }: Org
   const showFloatingBar = swapContext?.mode === "picking";
 
   return (
-    <div className={`min-h-screen ${SURFACE_BG}`}>
+    <div
+      className={`min-h-screen ${SURFACE_BG}`}
+      style={{
+        backgroundImage:
+          "linear-gradient(oklch(0.79 0.18 188 / 0.04) 1px, transparent 1px), linear-gradient(90deg, oklch(0.79 0.18 188 / 0.04) 1px, transparent 1px)",
+        backgroundSize: "48px 48px",
+      }}
+    >
       {/* Top Header */}
       <header className={`sticky top-0 z-20 ${HEADER_BG} shadow-lg dark:border-b dark:border-border`}>
         <div className="max-w-7xl mx-auto px-3 lg:px-6 py-3 lg:py-4">

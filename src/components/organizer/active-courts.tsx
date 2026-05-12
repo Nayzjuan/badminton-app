@@ -651,16 +651,17 @@ export function ActiveCourts({
             onKeyDown={(e) => e.key === "Enter" && handleAddCourt()}
             placeholder="Court name (e.g. Court 3)"
             maxLength={40}
-            className="flex-1 rounded-xl border border-input bg-white dark:bg-input px-4 py-2.5
-                       text-sm placeholder:text-muted-foreground focus:outline-none
-                       focus:ring-2 focus:ring-ring shadow-sm"
+            className="flex-1 clip-cut border border-[oklch(0.30_0.025_240)] bg-[oklch(0.14_0.018_238)] px-4 py-2.5
+                       font-command text-sm text-foreground placeholder:text-muted-foreground
+                       focus:outline-none focus:border-[oklch(0.79_0.18_188)] transition-colors"
           />
           <button
             onClick={handleAddCourt}
             disabled={adding || !newCourtName.trim()}
-            className="whitespace-nowrap rounded-xl bg-primary px-5 py-2.5 text-sm
-                       font-semibold text-primary-foreground hover:bg-primary/90
-                       disabled:cursor-not-allowed disabled:opacity-50 transition-colors shadow-sm"
+            className="whitespace-nowrap clip-cut-sm bg-[oklch(0.79_0.18_188)] px-5 py-2.5
+                       font-command text-[10px] uppercase tracking-[0.10em] text-[oklch(0.07_0.012_245)]
+                       hover:bg-[oklch(0.84_0.18_188)] disabled:cursor-not-allowed disabled:opacity-50
+                       transition-colors"
           >
             {adding ? "Adding…" : "+ Add Court"}
           </button>
