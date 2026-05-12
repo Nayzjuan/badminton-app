@@ -7,6 +7,35 @@
 
 ## SESSION STATE (Last Updated: 2026-05-12)
 
+### What Was Accomplished This Session — Dual-State Player Fix: F1-F5 (2026-05-12)
+
+**Root cause analysis (no code written):** Identified 5 ways a player can appear simultaneously in two inconsistent states (queue_entries status vs match_players membership). See findings F1-F5 below.
+
+**4 new migrations + 5 hotfixes applied to local + production `usxftpexoimletqmrggb`:**
+
+- `20260511210001_atomic_server_actions_hotfix` — security + bug fixes for `checkout_player_cleanup_drafts` and `publish_match` (were missing from production; applied now).
+- `20260512200000_fix_swap_player_toctou` — adds 3 DB-level guards inside `swap_player_in_match`: Guard A (`SELECT FOR UPDATE` on incoming player's `queue_entries` row), Guard B (post-lock conflict check — incoming player not in another active `match_players` row), Guard C (`SELECT FOR UPDATE` on the match row). Global lock order: `queue_entries` → `matches`.
+- `20260512200001_atomicize_clear_on_deck_match` — initial `clear_on_deck_match_atomic` RPC (superseded by 200004).
+- `20260512200002_fix_remove_from_queue` — new `remove_player_from_queue_organizer(p_session_id, p_player_id) RETURNS UUID[]` RPC: locks queue row, removes player from all pending match rosters (published + draft), cancels under-strength matches, restores other players, sets status='left'. Lock order: `queue_entries` → `matches`.
+- `20260512200003_atomicize_revert_match` — new `revert_match_to_active(p_match_id, p_session_id) RETURNS TEXT` RPC: atomically reverts match to 'in_progress' and bulk-reverts all 'waiting' roster players to 'playing' via single JOIN UPDATE.
+- `20260512200004_fix_clear_on_deck_lock_order` — hotfix for 200001: restructures `clear_on_deck_match_atomic` into 6 steps to enforce `queue_entries` → `matches` lock order (prevents deadlock with `remove_player_from_queue_organizer`).
+
+**Server action updates:**
+
+- `src/app/actions/swap-player.ts` — `swapPlayerInMatch`: maps `PLAYER_UNAVAILABLE` and `MATCH_STARTED` exception strings from RPC to typed `SwapErrorCode` return values.
+- `src/app/actions/match.ts` — `clearOnDeckMatch`: tries `clear_on_deck_match_atomic` RPC first; falls back to old non-atomic JS sequence on PGRST202. `updateMatchDetails` revertToActive path: tries `revert_match_to_active` RPC first; falls back on PGRST202. Court-handling logic kept in JS (not part of player-state race condition).
+- `src/app/actions/queue.ts` — new `removePlayerFromQueue(sessionId, playerId)` server action: auth + organizer check, calls `remove_player_from_queue_organizer` RPC, falls back to raw UPDATE on PGRST202.
+- `src/hooks/use-organizer-data.ts` — `removeFromQueue` callback replaced: now calls `removePlayerFromQueueAction` server action instead of direct RLS client UPDATE.
+- `src/types/database.ts` — added 3 new RPC type entries: `clear_on_deck_match_atomic`, `revert_match_to_active`, `remove_player_from_queue_organizer`.
+
+**Validation:** `npx tsc --noEmit` clean. `npm run lint` clean (source files only; `.agents/skills/` third-party noise is pre-existing). `npm run test:integration` 156/156 passing (16 files). **Independent code-review verdict: Needs fixes → fixed → LGTM** (lock ordering inversion in `clear_on_deck_match_atomic` caught and fixed with migration 200004).
+
+**ESLint note:** The `react-hooks/refs` rule (React Compiler lint) fires on the `ref.current = fn` render-time assignments in `use-organizer-data.ts`. These are intentional (mutable-ref-callback pattern). Added `// eslint-disable-next-line react-hooks/refs` on each of the 4 assignment lines. The original `// eslint-disable-next-line react-hooks/exhaustive-deps` comment on the `useEffect` dep array was removed (was marked unused by ESLint — `exhaustive-deps` doesn't flag that hook's deps).
+
+**F3 closes automatically** — F3 required F1's concurrent swap as a prerequisite. F1 fix eliminates the scenario.
+
+---
+
 ### What Was Accomplished This Session — swap_player_in_match Step f regression FIXED (2026-05-12, continued)
 
 **Added migration `supabase/migrations/20260512000000_restore_swap_player_origin_flip.sql`** that re-issues `swap_player_in_match` with the same `(UUID, UUID, UUID, UUID, TEXT, BOOLEAN)` signature, Steps a–e copied verbatim from `20260511000001_swap_player_drafted_status.sql`, plus the restored Step f:
@@ -317,6 +346,7 @@ playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
 ### Immediate Next Steps
 
 - ~~**[BLOCKER] Create initial schema migration**~~ — **RESOLVED (2026-05-11)**. All 88 integration tests pass.
+- ~~**[P0] Dual-state player race conditions (F1-F5)**~~ — **RESOLVED (2026-05-12)**. All 5 findings fixed via 5 new migrations + server action updates. 156/156 tests passing.
 - **[ACTION NEEDED] Set PR-block branch protection on GitHub** — Settings → Branches → require "Integration Tests" CI check to pass on `main`. Activate once CI has been green for 10 consecutive runs over 2 days (<1 flake, as per INTEGRATION_TESTING_PLAN.md Decision #4).
 - (Optional) **Leaderboard Direction A** — plan at `~/.claude/plans/idempotent-meandering-wigderson.md`. All new files, no existing modified.
 - (Optional) Apply P0–P1 UX fixes from `DASHBOARD_UX_AUDIT.md`: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.

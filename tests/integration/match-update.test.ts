@@ -27,20 +27,10 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { Faker, en } from "@faker-js/faker";
-import {
-  makeProfile,
-  makeSession,
-  makeQueueEntry,
-  makeCourt,
-  makeMatchViaRpc,
-} from "./factories";
+import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeMatchViaRpc } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import {
-  updateMatchDetails,
-  clearOnDeckMatch,
-  reorderOnDeckMatches,
-} from "@/app/actions/match";
+import { updateMatchDetails, clearOnDeckMatch, reorderOnDeckMatches } from "@/app/actions/match";
 
 const faker = new Faker({ locale: [en] });
 faker.seed(10005);
@@ -66,11 +56,7 @@ async function seedSessionWithPlayers(n: number) {
 }
 
 async function readMatch(matchId: string) {
-  const { data } = await serviceClient()
-    .from("matches")
-    .select("*")
-    .eq("id", matchId)
-    .single();
+  const { data } = await serviceClient().from("matches").select("*").eq("id", matchId).single();
   return data;
 }
 
@@ -362,10 +348,7 @@ describe("clearOnDeckMatch — Suite N", () => {
       isPublished: true,
     });
 
-    await serviceClient()
-      .from("matches")
-      .update({ status: "in_progress" })
-      .eq("id", match.id);
+    await serviceClient().from("matches").update({ status: "in_progress" }).eq("id", match.id);
 
     const restore = mockAuthAs(organizer.id);
     try {

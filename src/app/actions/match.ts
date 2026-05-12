@@ -369,19 +369,71 @@ export async function updateMatchDetails(
   }
 
   // ── Revert to in_progress ────────────────────────────────
-  const { error: revertErr } = await db
-    .from("matches")
-    .update({
-      status: "in_progress" as const,
-      team_a_score: null,
-      team_b_score: null,
-      completed_at: null,
-    })
-    .eq("id", matchId);
+  // Try the atomic RPC first (migration 20260512200003).
+  // The RPC reverts the match status + bulk-updates all roster players
+  // from 'waiting' → 'playing' (games_played - 1) in one transaction,
+  // eliminating the N+1 round-trip loop and its silent failure modes.
+  const { error: rpcRevertErr } = await db.rpc("revert_match_to_active", {
+    p_match_id: matchId,
+    p_session_id: match.session_id,
+  });
 
-  if (revertErr) return { success: false, message: "Failed to revert match." };
+  if (rpcRevertErr && rpcRevertErr.code !== "PGRST202") {
+    // RPC exists but returned a domain error.
+    const msg = rpcRevertErr.message ?? "";
+    if (msg.includes("MATCH_NOT_FOUND")) {
+      return { success: false, message: "Match not found." };
+    }
+    return { success: false, message: "Failed to revert match." };
+  }
+
+  if (rpcRevertErr?.code === "PGRST202") {
+    // RPC not yet deployed — fall back to the original non-atomic sequence.
+    const { error: revertErr } = await db
+      .from("matches")
+      .update({
+        status: "in_progress" as const,
+        team_a_score: null,
+        team_b_score: null,
+        completed_at: null,
+      })
+      .eq("id", matchId);
+
+    if (revertErr) return { success: false, message: "Failed to revert match." };
+
+    const { data: matchPlayers } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", matchId);
+
+    if (matchPlayers && matchPlayers.length > 0) {
+      await Promise.all(
+        matchPlayers.map(async (mp) => {
+          const { data: entry } = await db
+            .from("queue_entries")
+            .select("games_played, status")
+            .eq("session_id", match.session_id)
+            .eq("player_id", mp.player_id)
+            .maybeSingle();
+
+          if (entry?.status === "waiting") {
+            return db
+              .from("queue_entries")
+              .update({
+                status: "playing" as const,
+                games_played: Math.max(0, (entry.games_played ?? 1) - 1),
+              })
+              .eq("session_id", match.session_id)
+              .eq("player_id", mp.player_id);
+          }
+        })
+      );
+    }
+  }
 
   // Court handling: reclaim if free, detach if occupied or closed.
+  // Kept in JS (not in RPC) — conditional court logic, not part of
+  // the player-state race condition that the RPC targets.
   if (match.court_id) {
     const { data: court } = await db
       .from("courts")
@@ -398,39 +450,6 @@ export async function updateMatchDetails(
       // Another match occupies or the court is closed — detach.
       await db.from("matches").update({ court_id: null }).eq("id", matchId);
     }
-  }
-
-  // Revert player queue entries that are currently "waiting"
-  // (meaning endMatchAction already re-queued them).
-  const { data: matchPlayers } = await db
-    .from("match_players")
-    .select("player_id")
-    .eq("match_id", matchId);
-
-  if (matchPlayers && matchPlayers.length > 0) {
-    await Promise.all(
-      matchPlayers.map(async (mp) => {
-        const { data: entry } = await db
-          .from("queue_entries")
-          .select("games_played, status")
-          .eq("session_id", match.session_id)
-          .eq("player_id", mp.player_id)
-          .maybeSingle();
-
-        // Only revert players currently waiting — those already in
-        // another on_deck / playing match are left untouched.
-        if (entry?.status === "waiting") {
-          return db
-            .from("queue_entries")
-            .update({
-              status: "playing" as const,
-              games_played: Math.max(0, (entry.games_played ?? 1) - 1),
-            })
-            .eq("session_id", match.session_id)
-            .eq("player_id", mp.player_id);
-        }
-      })
-    );
   }
 
   return { success: true, message: "Match reverted. Players can re-submit the correct score." };
@@ -705,54 +724,73 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
     };
   }
 
-  // 2. Fetch the players in this match.
-  const { data: matchPlayers, error: playersError } = await db
-    .from("match_players")
-    .select("player_id")
-    .eq("match_id", matchId);
+  // 2. Atomic clear via RPC (migration 20260512200001).
+  //    The RPC locks the match row, restores players to 'waiting' (skipping
+  //    'left' players), deletes the match, and returns the player ID array —
+  //    all in a single Postgres transaction.
+  const { data: atomicPlayerIds, error: atomicError } = await db.rpc("clear_on_deck_match_atomic", {
+    p_match_id: matchId,
+    p_session_id: match.session_id,
+  });
 
-  if (playersError || !matchPlayers) {
-    return {
-      success: false,
-      message: `Failed to fetch match players: ${playersError?.message ?? "unknown"}`,
-    };
-  }
+  let playerIds: string[];
 
-  const playerIds = matchPlayers.map((mp) => mp.player_id);
+  if (!atomicError) {
+    // RPC succeeded — player IDs are returned directly.
+    playerIds = (atomicPlayerIds as string[]) ?? [];
+  } else if (atomicError.code === "PGRST202") {
+    // RPC not yet deployed on this environment — fall back to the original
+    // non-atomic sequence (acceptable until all environments are migrated).
+    const { data: matchPlayers, error: playersError } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", matchId);
 
-  // 3. Restore players to "waiting" status.
-  //    joined_at and games_played are intentionally left unchanged —
-  //    their original queue position and play count are preserved
-  //    as if this on-deck match never happened.
-  //
-  //    Status guard: skip players whose status is "left". A player who
-  //    manually checked out while sitting on-deck should not be pulled
-  //    back into the queue when the organizer clears the match.
-  if (playerIds.length > 0) {
-    const { error: restoreError } = await db
-      .from("queue_entries")
-      .update({ status: "waiting" as const })
-      .eq("session_id", match.session_id)
-      .in("player_id", playerIds)
-      .neq("status", "left"); // skip players who already checked out
-
-    if (restoreError) {
+    if (playersError || !matchPlayers) {
       return {
         success: false,
-        message: `Failed to restore players to queue: ${restoreError.message}`,
+        message: `Failed to fetch match players: ${playersError?.message ?? "unknown"}`,
       };
     }
+
+    playerIds = matchPlayers.map((mp) => mp.player_id);
+
+    if (playerIds.length > 0) {
+      const { error: restoreError } = await db
+        .from("queue_entries")
+        .update({ status: "waiting" as const })
+        .eq("session_id", match.session_id)
+        .in("player_id", playerIds)
+        .neq("status", "left");
+
+      if (restoreError) {
+        return {
+          success: false,
+          message: `Failed to restore players to queue: ${restoreError.message}`,
+        };
+      }
+    }
+
+    const { error: deleteError } = await db.from("matches").delete().eq("id", matchId);
+    if (deleteError) {
+      return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
+    }
+  } else {
+    // RPC exists but returned a domain error.
+    const msg = atomicError.message ?? "";
+    if (msg.includes("MATCH_NOT_FOUND")) {
+      return { success: false, message: "Match not found." };
+    }
+    if (msg.includes("MATCH_NOT_PENDING")) {
+      return {
+        success: false,
+        message: `Cannot clear a match with status "${match.status}". Only pending on-deck matches can be cleared.`,
+      };
+    }
+    return { success: false, message: `Failed to clear match: ${msg}` };
   }
 
-  // 4. Delete the pending match row — it never played, so deletion
-  //    is cleaner than marking it "cancelled" (no history entry needed).
-  const { error: deleteError } = await db.from("matches").delete().eq("id", matchId);
-
-  if (deleteError) {
-    return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
-  }
-
-  // 5. Notify affected players via Realtime Broadcast. Their on-deck
+  // 3. Notify affected players via Realtime Broadcast. Their on-deck
   //    banner will disappear (via Postgres change events) and this
   //    broadcast ensures they see a friendly explanation toast rather
   //    than a confusing silent state change.
@@ -760,7 +798,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
     await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", playerIds);
   }
 
-  // 6. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
+  // 4. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
   await runEngineForSession(match.session_id);
 
   return { success: true, message: "On-deck match cleared. Players returned to queue." };

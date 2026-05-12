@@ -113,11 +113,15 @@ let playerCallback: (() => void) | null = null;
 vi.mock("@/lib/realtime", () => ({
   subscribeToMatches: (_client: unknown, _sessionId: string, cb: () => void) => {
     matchCallback = cb;
-    return () => { matchCallback = null; };
+    return () => {
+      matchCallback = null;
+    };
   },
   subscribeToMatchPlayers: (_client: unknown, _sessionId: string, cb: () => void) => {
     playerCallback = cb;
-    return () => { playerCallback = null; };
+    return () => {
+      playerCallback = null;
+    };
   },
 }));
 

@@ -655,6 +655,22 @@ export type Database = {
           skipped_count?: number;
         };
       };
+      // ── Dual-state player fixes (migration 20260512200000–200003) ─
+      clear_on_deck_match_atomic: {
+        Args: { p_match_id: string; p_session_id: string };
+        /** Returns the player IDs that were restored to 'waiting'. */
+        Returns: string[];
+      };
+      revert_match_to_active: {
+        Args: { p_match_id: string; p_session_id: string };
+        /** Returns 'ok' on success. */
+        Returns: string;
+      };
+      remove_player_from_queue_organizer: {
+        Args: { p_session_id: string; p_player_id: string };
+        /** Returns the match IDs that were affected (player removed / match cancelled). */
+        Returns: string[];
+      };
       // ── QR-code join lookup (migration 20260502093938) ───────────
       lookup_active_session: {
         Args: { p_session_id: string };

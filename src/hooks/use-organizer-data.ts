@@ -63,7 +63,10 @@ import {
   type SwapResult,
   type SwapMatchPlayersResult,
 } from "@/app/actions/swap-player";
-import { togglePlayerPause } from "@/app/actions/queue";
+import {
+  togglePlayerPause,
+  removePlayerFromQueue as removePlayerFromQueueAction,
+} from "@/app/actions/queue";
 import { updateSessionSettings, getSessionForOrganizer } from "@/app/actions/sessions";
 import type {
   Court,
@@ -433,10 +436,18 @@ export function useOrganizerData(
   const fetchQueueRef = useRef(fetchQueue);
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
   const fetchSessionRef = useRef(fetchSession);
-  // Update refs on every render so the latest closures are always used.
+  // Update refs on every render so the latest closures are always captured.
+  // This is the "mutable-ref-callback" pattern: refs are only READ inside
+  // stable callbacks (never during render), so stale-closure bugs are
+  // impossible. The react-hooks/refs rule flags writes to ref.current
+  // outside effects, but the pattern is intentional here.
+  // eslint-disable-next-line react-hooks/refs
   fetchCourtsRef.current = fetchCourts;
+  // eslint-disable-next-line react-hooks/refs
   fetchQueueRef.current = fetchQueue;
+  // eslint-disable-next-line react-hooks/refs
   fetchActiveMatchesRef.current = fetchActiveMatches;
+  // eslint-disable-next-line react-hooks/refs
   fetchSessionRef.current = fetchSession;
 
   // Stable callback that counts SUBSCRIBED/error events across all five
@@ -570,7 +581,6 @@ export function useOrganizerData(
       unsubBroadcast();
       unsubs.forEach((u) => u());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId, handleChannelStatus]); // Intentionally omit the fetch refs — they are kept current via the ref pattern above.
 
   // ── Layer 2 — Polling + visibility refresh ────────────────────
@@ -726,17 +736,19 @@ export function useOrganizerData(
 
   // ---- Queue actions ----
 
+  // removeFromQueue: delegates to the removePlayerFromQueue server action
+  // (queue.ts) which calls the remove_player_from_queue_organizer RPC.
+  // This atomically cleans up match_players rows for any pending match the
+  // player is in (published or draft) before setting their status='left',
+  // preventing the contradictory state where queue shows 'left' but the
+  // on-deck panel still shows the player inside a match.
   const removeFromQueue = useCallback(
     async (playerId: string) => {
-      const { error } = await supabase
-        .from("queue_entries")
-        .update({ status: "left" as const })
-        .eq("session_id", sessionId)
-        .eq("player_id", playerId);
-      if (error) return { error: error.message };
+      const result = await removePlayerFromQueueAction(sessionId, playerId);
+      if (!result.success) return { error: result.error };
       return {};
     },
-    [supabase, sessionId]
+    [sessionId]
   );
 
   // Soft pause: keeps player in queue but excludes them from matchmaking.

@@ -253,6 +253,91 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   return {};
 }
 
+// ============================================================
+// removePlayerFromQueue — Organizer kick with match cleanup (F4)
+// ============================================================
+// Replaces the raw hook-level UPDATE so that kicking a player
+// also cleans up any pending match_players rows. Without this,
+// an 'on_deck' player who gets kicked stays in match_players for
+// the published pending match, causing contradictory UI state.
+//
+// Calls remove_player_from_queue_organizer RPC (migration
+// 20260512200002) which atomically:
+//   1. Locks the queue_entries row.
+//   2. Finds all pending matches (published or draft) the player
+//      is in and removes them from the roster.
+//   3. Cancels any match that falls below 4 players after removal,
+//      returning the other players to 'waiting'.
+//   4. Sets the player's queue status = 'left'.
+//   5. Returns an array of affected match IDs for broadcast.
+//
+// Falls back to a simple status='left' UPDATE if the RPC is not
+// yet deployed on this environment (PGRST202).
+// ============================================================
+
+export interface RemovePlayerFromQueueResult {
+  success: boolean;
+  error?: string;
+}
+
+export async function removePlayerFromQueue(
+  sessionId: string,
+  playerId: string
+): Promise<RemovePlayerFromQueueResult> {
+  if (!isValidUUID(sessionId) || !isValidUUID(playerId)) {
+    return { success: false, error: "Invalid session or player ID." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { success: false, error: "Not authenticated." };
+  }
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) {
+    return { success: false, error: "Not authorized. Organizer access required." };
+  }
+
+  const svc = createServiceClient();
+
+  // Try the atomic RPC first (migration 20260512200002).
+  const { error: rpcErr } = await svc.rpc("remove_player_from_queue_organizer", {
+    p_session_id: sessionId,
+    p_player_id: playerId,
+  });
+
+  if (!rpcErr) {
+    return { success: true };
+  }
+
+  if (!isRpcNotFound(rpcErr)) {
+    // RPC deployed but returned a domain error.
+    const msg = rpcErr.message ?? "";
+    if (msg.includes("PLAYER_NOT_IN_SESSION")) {
+      return { success: false, error: "Player not found in this session." };
+    }
+    return { success: false, error: msg };
+  }
+
+  // Fallback: RPC not yet deployed — simple status update without cleanup.
+  // TOCTOU risk is accepted here; the RPC eliminates it once deployed.
+  const { error } = await svc
+    .from("queue_entries")
+    .update({ status: "left" as const })
+    .eq("session_id", sessionId)
+    .eq("player_id", playerId);
+
+  if (error) {
+    return { success: false, error: error.message };
+  }
+
+  return { success: true };
+}
+
 // Fallback implementation used when the join_queue RPC is not yet deployed.
 // This mirrors the pre-RPC logic and carries the same benign TOCTOU caveats
 // documented in the original inline comments.

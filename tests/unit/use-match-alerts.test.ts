@@ -100,15 +100,21 @@ vi.mock("@/utils/supabase/client", () => ({
 vi.mock("@/lib/realtime", () => ({
   subscribeToQueue: (_client: unknown, _sid: string, cb: (p: unknown) => void) => {
     queueCallback = cb;
-    return () => { queueCallback = null; };
+    return () => {
+      queueCallback = null;
+    };
   },
   subscribeToMatches: (_client: unknown, _sid: string, cb: (p: unknown) => void) => {
     matchCallback = cb;
-    return () => { matchCallback = null; };
+    return () => {
+      matchCallback = null;
+    };
   },
   subscribeToMatchPlayers: (_client: unknown, _sid: string, cb: (p: unknown) => void) => {
     playerCallback = cb;
-    return () => { playerCallback = null; };
+    return () => {
+      playerCallback = null;
+    };
   },
 }));
 
@@ -140,7 +146,9 @@ describe("useMatchAlerts — Unit Suite", () => {
     vi.clearAllMocks();
   });
 
-  function makeQueuePayload(status: string): RealtimePostgresChangesPayload<Record<string, unknown>> {
+  function makeQueuePayload(
+    status: string
+  ): RealtimePostgresChangesPayload<Record<string, unknown>> {
     return {
       new: { player_id: PLAYER_ID, session_id: SESSION_ID, status },
       old: {},
@@ -152,7 +160,9 @@ describe("useMatchAlerts — Unit Suite", () => {
     } as RealtimePostgresChangesPayload<Record<string, unknown>>;
   }
 
-  function makeMatchPayload(status: string): RealtimePostgresChangesPayload<Record<string, unknown>> {
+  function makeMatchPayload(
+    status: string
+  ): RealtimePostgresChangesPayload<Record<string, unknown>> {
     return {
       new: { id: MATCH_ID, session_id: SESSION_ID, status },
       old: {},
