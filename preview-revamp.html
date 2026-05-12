@@ -664,6 +664,350 @@ body::before {
   border-color: oklch(from var(--red) l c h / 0.55);
 }
 
+/* ─── SWAP MODE STATES ─── */
+
+/* Player card: selected (teal ring) */
+.player-card.player-selected {
+  background: oklch(0.79 0.18 188 / 0.12);
+  outline: 1px solid oklch(0.79 0.18 188 / 0.60);
+  outline-offset: -1px;
+}
+[data-theme="light"] .player-card.player-selected {
+  background: oklch(0.79 0.18 188 / 0.10);
+  outline-color: oklch(0.50 0.18 188 / 0.55);
+}
+
+/* Player card: swap target (subtle teal hover) */
+.player-card.player-swappable:hover {
+  background: oklch(0.79 0.18 188 / 0.10);
+  cursor: pointer;
+}
+[data-theme="light"] .player-card.player-swappable:hover {
+  background: oklch(0.50 0.18 188 / 0.08);
+}
+
+/* ─── FLOATING HUD BAR ─── */
+.swap-hud {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: oklch(0.14 0.018 238);
+  border: 1px solid oklch(0.79 0.18 188 / 0.50);
+  box-shadow:
+    0 0 24px oklch(0.79 0.18 188 / 0.18),
+    0 8px 32px oklch(0.10 0.016 238 / 0.60);
+  border-radius: 16px;
+  padding: 12px 16px;
+  margin-bottom: 40px;
+  max-width: 480px;
+}
+[data-theme="light"] .swap-hud {
+  background: oklch(0.97 0.008 238);
+  border-color: oklch(0.50 0.18 188 / 0.45);
+  box-shadow: 0 4px 20px oklch(0.50 0.18 188 / 0.12);
+}
+
+.swap-hud-pulse { display: flex; align-items: center; flex-shrink: 0; }
+.swap-pulse-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: oklch(0.79 0.18 188);
+  box-shadow: 0 0 8px oklch(0.79 0.18 188 / 0.70);
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+[data-theme="light"] .swap-pulse-dot { box-shadow: none; }
+
+.swap-hud-player { min-width: 0; flex: 1; }
+.swap-hud-name {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.swap-hud-meta {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-top: 2px;
+}
+
+.swap-hud-divider {
+  width: 1px;
+  height: 32px;
+  background: oklch(0.30 0.025 240);
+  flex-shrink: 0;
+}
+
+.swap-hud-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+.btn-swap-bench {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: oklch(0.79 0.18 188);
+  background: oklch(0.79 0.18 188 / 0.16);
+  border: 1px solid oklch(0.79 0.18 188 / 0.45);
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.btn-swap-bench:hover { background: oklch(0.79 0.18 188 / 0.28); }
+[data-theme="light"] .btn-swap-bench {
+  color: oklch(0.40 0.18 188);
+  background: oklch(0.50 0.18 188 / 0.10);
+  border-color: oklch(0.50 0.18 188 / 0.35);
+}
+
+.btn-swap-cancel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid oklch(0.30 0.025 240);
+  background: transparent;
+  color: oklch(0.48 0.016 238);
+  cursor: pointer;
+}
+.btn-swap-cancel:hover {
+  border-color: oklch(0.44 0.032 240);
+  color: oklch(0.68 0.014 238);
+  background: oklch(0.19 0.020 238);
+}
+
+/* ─── BENCH SWAP SHEET MOCKUP ─── */
+.swap-sheet-mock {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 480px;
+  margin-bottom: 48px;
+}
+
+.swap-sheet-header { margin-bottom: 20px; }
+.swap-sheet-title {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--t1);
+  margin-bottom: 4px;
+}
+.swap-sheet-sub {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 14px;
+}
+
+.swap-out-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: oklch(0.79 0.18 188 / 0.06);
+  border: 1px solid oklch(0.79 0.18 188 / 0.28);
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+[data-theme="light"] .swap-out-card {
+  background: oklch(0.50 0.18 188 / 0.06);
+  border-color: oklch(0.50 0.18 188 / 0.25);
+}
+
+.swap-out-avatar {
+  width: 36px;
+  height: 36px;
+  background: oklch(0.55 0.18 188);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+.swap-out-name {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--t1);
+}
+.swap-out-team {
+  margin-left: auto;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: oklch(0.79 0.18 188);
+  background: oklch(0.79 0.18 188 / 0.12);
+  border: 1px solid oklch(0.79 0.18 188 / 0.35);
+  padding: 3px 9px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+[data-theme="light"] .swap-out-team {
+  color: oklch(0.40 0.18 188);
+  background: oklch(0.50 0.18 188 / 0.10);
+  border-color: oklch(0.50 0.18 188 / 0.30);
+}
+
+.swap-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+.swap-section-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 10px;
+}
+
+.swap-candidate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.swap-candidate:hover { border-color: var(--border-hi); }
+
+.swap-candidate.swap-candidate-selected {
+  background: oklch(0.79 0.18 188 / 0.10);
+  border-color: oklch(0.79 0.18 188 / 0.50);
+}
+[data-theme="light"] .swap-candidate.swap-candidate-selected {
+  background: oklch(0.50 0.18 188 / 0.08);
+  border-color: oklch(0.50 0.18 188 / 0.45);
+}
+
+.swap-candidate.swap-candidate-paused { opacity: 0.50; cursor: not-allowed; }
+
+.swap-candidate-num {
+  width: 24px;
+  height: 24px;
+  background: var(--bg);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--t3);
+  flex-shrink: 0;
+}
+.swap-candidate-info { flex: 1; min-width: 0; }
+.swap-candidate-name {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--t1);
+  letter-spacing: 0.02em;
+}
+.swap-candidate-meta {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.10em;
+  color: var(--t3);
+  margin-top: 2px;
+}
+.swap-check {
+  width: 20px;
+  height: 20px;
+  background: oklch(0.55 0.18 188);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+[data-theme="light"] .swap-check { background: oklch(0.45 0.18 188); }
+
+.swap-paused-badge {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--t3);
+  flex-shrink: 0;
+}
+
+.swap-sheet-footer {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.btn-confirm-swap {
+  width: 100%;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 13px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: white;
+  background: oklch(0.55 0.18 188);
+  border: none;
+}
+.btn-confirm-swap:hover { background: oklch(0.62 0.18 188); }
+[data-theme="light"] .btn-confirm-swap {
+  background: oklch(0.45 0.18 188);
+}
+
+.btn-cancel-swap {
+  width: 100%;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 11px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--t2);
+}
+.btn-cancel-swap:hover { border-color: var(--border-hi); color: var(--t1); }
+
 /* ─── ADD COURT ─── */
 .add-court-row {
   display: flex;
@@ -1133,6 +1477,175 @@ body::before {
     </div>
 
   </div><!-- /deck-grid -->
+
+  <!-- ─── SWAP MODE — TAP-TO-SWAP INTERACTION STATES ─── -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-label">Tap-to-Swap · Picking Mode</div>
+    <div class="section-line"></div>
+  </div>
+
+  <!-- Deck card with one player selected (teal ring) -->
+  <div class="deck-card" style="margin-bottom:16px">
+    <div class="deck-card-inner" style="border-color: oklch(0.79 0.18 188 / 0.55)">
+      <div class="deck-card-header">
+        <div>
+          <div class="deck-card-num">On Deck #1</div>
+          <div class="deck-card-badges">
+            <span class="badge badge-mixed">Mixed Level</span>
+          </div>
+        </div>
+        <div class="deck-card-time">4m ago</div>
+      </div>
+      <div class="match-layout">
+        <div>
+          <div class="team-label yours">Your Team</div>
+          <div class="player-slot">
+            <!-- SELECTED player — teal ring -->
+            <div class="player-card player-selected">
+              <div class="player-name">Miguel Sicat</div>
+              <div class="player-level lvl-adv">ADV · <span style="opacity:0.65">Team A</span></div>
+            </div>
+            <!-- swap target — dimmed hover affordance -->
+            <div class="player-card player-swappable">
+              <div class="player-name">Erwin Buenaventura</div>
+              <div class="player-level lvl-ladv">L.ADV</div>
+            </div>
+          </div>
+        </div>
+        <div class="vs-divider">
+          <div class="vs-line"></div>
+          <div class="vs-text">VS</div>
+          <div class="vs-line"></div>
+        </div>
+        <div>
+          <div class="team-label opps">Opponents</div>
+          <div class="player-slot">
+            <div class="player-card player-swappable">
+              <div class="player-name">Leo Fajardo</div>
+              <div class="player-level lvl-adv">ADV</div>
+            </div>
+            <div class="player-card player-swappable">
+              <div class="player-name">Nestor Aquino</div>
+              <div class="player-level lvl-lint">L.INT</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="deck-card-footer">
+        <span class="hint-text" style="color:var(--accent-text)">
+          ↑ Tap another player to swap · or use Bench below
+        </span>
+        <button class="btn-clear">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M1 3h8M3.5 3V1.5h3V3M2 3l.5 6h5l.5-6" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"/>
+          </svg>
+          Clear
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating HUD bar (inline preview mock) -->
+  <div class="swap-hud">
+    <div class="swap-hud-pulse">
+      <span class="swap-pulse-dot"></span>
+    </div>
+    <div class="swap-hud-player">
+      <div class="swap-hud-name">Miguel Sicat</div>
+      <div class="swap-hud-meta">Team A · <span>ADV</span></div>
+    </div>
+    <div class="swap-hud-divider"></div>
+    <div class="swap-hud-actions">
+      <button class="btn-swap-bench">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/>
+        </svg>
+        Bench
+      </button>
+      <button class="btn-swap-cancel" aria-label="Cancel">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ─── BENCH SWAP SHEET — mockup ─── -->
+  <div class="section-header" style="margin-top:48px">
+    <div class="section-label">Bench Swap · Player Selection</div>
+    <div class="section-line"></div>
+  </div>
+
+  <div class="swap-sheet-mock">
+    <!-- Sheet header -->
+    <div class="swap-sheet-header">
+      <div>
+        <div class="swap-sheet-title">Swap Player</div>
+        <div class="swap-sheet-sub">Replacing from Team A</div>
+      </div>
+      <!-- Out player card -->
+      <div class="swap-out-card">
+        <div class="swap-out-avatar">M</div>
+        <div>
+          <div class="swap-out-name">Miguel Sicat</div>
+          <div class="player-level lvl-adv" style="margin-top:2px">ADV</div>
+        </div>
+        <div class="swap-out-team">Team A</div>
+      </div>
+    </div>
+
+    <!-- Search bar -->
+    <div class="swap-search-row">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--t3);flex-shrink:0">
+        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      </svg>
+      <span style="font-family:'Chakra Petch',sans-serif;font-size:11px;color:var(--t3);letter-spacing:0.06em">Search players…</span>
+    </div>
+
+    <div class="swap-section-label">Replace with</div>
+
+    <!-- Candidate rows -->
+    <div class="swap-candidate swap-candidate-selected">
+      <div class="swap-candidate-num">1</div>
+      <div class="swap-candidate-info">
+        <div class="swap-candidate-name">Rodel Bautista</div>
+        <div class="swap-candidate-meta">INT · 6 GP · 8m wait</div>
+      </div>
+      <div class="swap-check">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <path d="M20 6 9 17l-5-5"/>
+        </svg>
+      </div>
+    </div>
+    <div class="swap-candidate">
+      <div class="swap-candidate-num">2</div>
+      <div class="swap-candidate-info">
+        <div class="swap-candidate-name">Gita Reyes</div>
+        <div class="swap-candidate-meta">ADV · 4 GP · 12m wait</div>
+      </div>
+    </div>
+    <div class="swap-candidate">
+      <div class="swap-candidate-num">3</div>
+      <div class="swap-candidate-info">
+        <div class="swap-candidate-name">Carlos Mendez</div>
+        <div class="swap-candidate-meta">BEG · 2 GP · 15m wait</div>
+      </div>
+    </div>
+    <div class="swap-candidate swap-candidate-paused">
+      <div class="swap-candidate-num">4</div>
+      <div class="swap-candidate-info">
+        <div class="swap-candidate-name">Lanie Cruz</div>
+        <div class="swap-candidate-meta">INT · 8 GP · 20m wait</div>
+      </div>
+      <div class="swap-paused-badge">⏸ Paused</div>
+    </div>
+
+    <!-- Footer actions -->
+    <div class="swap-sheet-footer">
+      <button class="btn-confirm-swap">Confirm Swap</button>
+      <button class="btn-cancel-swap">Cancel</button>
+    </div>
+  </div>
 
   <!-- ADD COURT -->
   <div class="add-court-row">
