@@ -232,8 +232,8 @@ function SortableCard({
         ...style,
         filter: !effectivelyDraft
           ? selectedPlayerId
-            ? "drop-shadow(0 4px 16px oklch(0.79 0.18 188 / 0.28))"
-            : "drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.15))"
+            ? "drop-shadow(0 4px 16px var(--cc-accent-glow))"
+            : "drop-shadow(0 0 12px var(--cc-accent-glow))"
           : undefined,
       }}
     >
@@ -243,12 +243,12 @@ function SortableCard({
         // Animate the border/bg change for the publish transition
         "transition-colors duration-[250ms] ease-out",
         // Draft: dashed slate border — indicates "hidden from players"
-        // Published: solid teal border — indicates "visible / on deck"
+        // Published: solid teal border + corner accent + scan shimmer
         effectivelyDraft
-          ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
+          ? "border-dashed border-cc-border bg-cc-bg-2"
           : selectedPlayerId
-            ? "border-[oklch(0.79_0.18_188/0.80)] dark:border-[oklch(0.79_0.18_188/0.60)] bg-card"
-            : "border-[oklch(0.79_0.18_188/0.45)] dark:border-[oklch(0.79_0.18_188/0.30)] bg-card",
+            ? "border-cc-accent/80 bg-cc-bg-2 cc-corner-accent cc-scan"
+            : "border-cc-deck-border bg-cc-bg-2 cc-corner-accent cc-scan",
       ].join(" ")}
     >
       {/* ── Card header row ────────────────────────────────── */}
@@ -256,8 +256,8 @@ function SortableCard({
         className={[
           "flex items-center gap-1 px-2 py-2.5 border-b transition-colors duration-[250ms] ease-out",
           effectivelyDraft
-            ? "bg-slate-50 dark:bg-muted/30 border-slate-200 dark:border-slate-700"
-            : "bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)] border-[oklch(0.79_0.18_188/0.20)] dark:border-[oklch(0.79_0.18_188/0.18)]",
+            ? "bg-cc-bg-3 border-cc-border"
+            : "bg-cc-accent-dim border-cc-accent/20",
         ].join(" ")}
       >
         {/* DRAG HANDLE */}
@@ -268,15 +268,13 @@ function SortableCard({
           suppressHydrationWarning
           className="touch-none select-none cursor-grab active:cursor-grabbing
                      flex items-center justify-center p-1 rounded
-                     hover:bg-[oklch(0.79_0.18_188/0.12)] transition-colors"
+                     hover:bg-cc-accent/10 transition-colors"
           aria-label="Drag to reorder"
         >
           <GripVertical
             className={[
               "h-5 w-5 shrink-0 transition-colors duration-[250ms]",
-              effectivelyDraft
-                ? "text-slate-400 dark:text-slate-500"
-                : "text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)]",
+              effectivelyDraft ? "text-cc-t3" : "text-cc-accent",
             ].join(" ")}
           />
         </div>
@@ -285,11 +283,11 @@ function SortableCard({
         <div className="pointer-events-none select-none flex flex-1 items-center justify-between min-w-0 pl-1">
           <div className="flex items-center gap-2 min-w-0">
             {effectivelyDraft ? (
-              <span className="text-sm font-bold text-slate-500 dark:text-slate-400">
+              <span className="text-sm font-bold text-cc-t2">
                 Draft #{sectionIndex + 1}
               </span>
             ) : (
-              <span className="text-sm font-bold text-[oklch(0.40_0.15_188)] dark:text-[oklch(0.79_0.18_188)]">
+              <span className="font-command text-[11px] uppercase tracking-[0.16em] text-cc-accent-text">
                 On Deck #{sectionIndex + 1}
               </span>
             )}
@@ -297,10 +295,7 @@ function SortableCard({
               <span
                 className="clip-cut-badge border px-2 py-0.5
                             font-command text-[9px] uppercase tracking-[0.10em]
-                            bg-[oklch(0.79_0.18_188/0.10)] border-[oklch(0.65_0.15_188/0.40)] text-[oklch(0.35_0.15_188)]
-                            dark:bg-[oklch(0.79_0.18_188/0.12)]
-                            dark:border-[oklch(0.79_0.18_188/0.35)]
-                            dark:text-[oklch(0.79_0.18_188)]"
+                            bg-cc-accent-dim border-cc-accent/35 text-cc-accent-text"
               >
                 Mixed Level
               </span>
@@ -310,9 +305,7 @@ function SortableCard({
           <span
             className={[
               "text-xs font-medium shrink-0 transition-colors duration-[250ms]",
-              effectivelyDraft
-                ? "text-slate-400 dark:text-slate-500"
-                : "text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]",
+              effectivelyDraft ? "text-cc-t3" : "text-cc-t2",
             ].join(" ")}
           >
             {mins === 0 ? "Just formed" : `${mins}m ago`}
@@ -339,8 +332,8 @@ function SortableCard({
       />
 
       {/* ── Footer ──────────────────────────────────────────── */}
-      <div className="px-3 py-2 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground min-w-0 truncate">
+      <div className="px-3 py-2 bg-cc-bg-3 border-t border-cc-border flex items-center justify-between gap-2">
+        <p className="text-xs text-cc-t3 min-w-0 truncate">
           {effectivelyDraft
             ? "Hidden from players — publish to reveal"
             : isPickingMode && selectedPlayerId
@@ -355,10 +348,9 @@ function SortableCard({
               onClick={() => onPublish(match.id)}
               disabled={isPublishing || isPickingMode}
               className="flex items-center gap-1.5 clip-cut-sm
-                         bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
-                         dark:bg-[oklch(0.79_0.18_188/0.25)] dark:hover:bg-[oklch(0.79_0.18_188/0.38)]
-                         dark:text-[oklch(0.79_0.18_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
-                         transition-colors px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
+                         bg-cc-accent hover:bg-cc-accent/90
+                         border border-cc-accent/50
+                         transition-colors px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-btn-on-accent
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CheckCircle className="h-3.5 w-3.5 shrink-0" />
@@ -370,10 +362,9 @@ function SortableCard({
           <button
             onClick={() => onClear(match.id)}
             disabled={isClearing || isPickingMode}
-            className="flex shrink-0 items-center gap-1.5 clip-cut-sm border border-red-200
-                       bg-red-50 px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-red-700
-                       hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
-                       dark:text-red-400 dark:hover:bg-red-950/60
+            className="flex shrink-0 items-center gap-1.5 clip-cut-sm border border-cc-red/30
+                       bg-cc-red-dim px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-red
+                       hover:bg-cc-red/20
                        disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Trash2 className="h-4 w-4 shrink-0" />
@@ -383,7 +374,7 @@ function SortableCard({
       </div>
 
       {/* ── Inline error ───────────────────────────────────── */}
-      {error && <p className="px-4 pb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {error && <p className="px-4 pb-2 text-xs text-cc-red">{error}</p>}
     </div>
     </div>
   );
@@ -407,46 +398,44 @@ function OverlayCard({
   return (
     <div
       className={[
-        "clip-cut border-2 overflow-hidden rotate-1",
+        "relative clip-cut border-2 overflow-hidden rotate-1",
         isDraft
-          ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
-          : "border-[oklch(0.79_0.18_188/0.45)] dark:border-[oklch(0.79_0.18_188/0.30)] bg-card",
+          ? "border-dashed border-cc-border bg-cc-bg-2"
+          : "border-cc-deck-border bg-cc-bg-2 cc-corner-accent cc-scan",
       ].join(" ")}
       style={{
-        filter: isDraft ? undefined : "drop-shadow(0 8px 24px oklch(0.79 0.18 188 / 0.30))",
+        filter: isDraft ? undefined : "drop-shadow(0 8px 24px var(--cc-accent-glow))",
       }}
     >
       <div
         className={[
           "flex items-center gap-1 px-2 py-2.5 border-b",
           isDraft
-            ? "bg-slate-50 dark:bg-muted/30 border-slate-200 dark:border-slate-700"
-            : "bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)] border-[oklch(0.79_0.18_188/0.20)] dark:border-[oklch(0.79_0.18_188/0.18)]",
+            ? "bg-cc-bg-3 border-cc-border"
+            : "bg-cc-accent-dim border-cc-accent/20",
         ].join(" ")}
       >
         <div className="touch-none select-none cursor-grabbing flex items-center justify-center p-1 rounded">
           <GripVertical
             className={[
               "h-5 w-5 shrink-0",
-              isDraft
-                ? "text-slate-400 dark:text-slate-500"
-                : "text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)]",
+              isDraft ? "text-cc-t3" : "text-cc-accent",
             ].join(" ")}
           />
         </div>
         <div className="pointer-events-none select-none flex flex-1 items-center justify-between min-w-0 pl-1">
           <div className="flex items-center gap-2 min-w-0">
             {isDraft ? (
-              <span className="text-sm font-bold text-slate-500 dark:text-slate-400">
+              <span className="text-sm font-bold text-cc-t2">
                 Draft #{sectionIndex + 1}
               </span>
             ) : (
-              <span className="text-sm font-bold text-[oklch(0.40_0.15_188)] dark:text-[oklch(0.79_0.18_188)]">
+              <span className="font-command text-[11px] uppercase tracking-[0.16em] text-cc-accent-text">
                 On Deck #{sectionIndex + 1}
               </span>
             )}
             {match.is_mixed_level && (
-              <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-[oklch(0.79_0.18_188/0.10)] border-[oklch(0.65_0.15_188/0.40)] text-[oklch(0.35_0.15_188)] dark:bg-[oklch(0.79_0.18_188/0.12)] dark:border-[oklch(0.79_0.18_188/0.35)] dark:text-[oklch(0.79_0.18_188)]">
+              <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-cc-accent-dim border-cc-accent/35 text-cc-accent-text">
                 Mixed Level
               </span>
             )}
@@ -455,9 +444,7 @@ function OverlayCard({
           <span
             className={[
               "text-xs font-medium shrink-0",
-              isDraft
-                ? "text-slate-400 dark:text-slate-500"
-                : "text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]",
+              isDraft ? "text-cc-t3" : "text-cc-t2",
             ].join(" ")}
           >
             {mins === 0 ? "Just formed" : `${mins}m ago`}
@@ -467,13 +454,13 @@ function OverlayCard({
 
       <TeamsGrid teamA={teamA} teamB={teamB} labelA="Your Team" labelB="Opponents" />
 
-      <div className="px-3 py-2 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
+      <div className="px-3 py-2 bg-cc-bg-3 border-t border-cc-border flex items-center justify-between gap-2">
+        <p className="text-xs text-cc-t3">
           {isDraft ? "Hidden from players — publish to reveal" : "Tap any player to start a swap"}
         </p>
         <button
           disabled
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 min-h-[44px] text-xs font-semibold text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400 opacity-50 cursor-not-allowed"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cc-red/30 bg-cc-red-dim px-3 min-h-[44px] text-xs font-semibold text-cc-red opacity-50 cursor-not-allowed"
         >
           <Trash2 className="h-4 w-4" />
           Clear
@@ -791,13 +778,13 @@ function OnDeckPanelInner({
         <div
           role="status"
           aria-label={`${draftCount} on-deck match${draftCount !== 1 ? "es" : ""} waiting for approval`}
-          className="rounded-xl border border-[oklch(0.65_0.15_188/0.35)] dark:border-[oklch(0.79_0.18_188/0.25)]
-                     bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)]
+          className="rounded-xl border border-cc-accent/25
+                     bg-cc-accent-dim
                      animate-in slide-in-from-top-1 fade-in duration-200"
         >
           <div className="flex items-center justify-between gap-3 px-4 py-2">
-            <div className="flex items-center gap-2 text-sm text-[oklch(0.35_0.15_188)] dark:text-[oklch(0.79_0.18_188)] min-w-0">
-              <EyeOff className="h-4 w-4 shrink-0 text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]" />
+            <div className="flex items-center gap-2 text-sm text-cc-accent-text min-w-0">
+              <EyeOff className="h-4 w-4 shrink-0 text-cc-t2" />
               <span className="font-medium">
                 <span className="font-bold">{draftCount}</span> on-deck match
                 {draftCount !== 1 ? "es" : ""} waiting for approval
@@ -807,17 +794,16 @@ function OnDeckPanelInner({
               onClick={handlePublishAll}
               disabled={isPublishingAll}
               className="shrink-0 flex items-center gap-1.5 clip-cut-sm
-                         bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
-                         dark:bg-[oklch(0.79_0.18_188/0.25)] dark:hover:bg-[oklch(0.79_0.18_188/0.38)]
-                         dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
-                         transition-colors px-4 min-h-[44px] font-command text-[10px] uppercase tracking-[0.12em] text-white
+                         bg-cc-accent hover:bg-cc-accent/90
+                         border border-cc-accent/50
+                         transition-colors px-4 min-h-[44px] font-command text-[10px] uppercase tracking-[0.12em] text-cc-btn-on-accent
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isPublishingAll ? "Publishing…" : "Publish All"}
             </button>
           </div>
           {publishAllError && (
-            <p role="alert" className="px-4 pb-2 text-xs text-red-600 dark:text-red-400">
+            <p role="alert" className="px-4 pb-2 text-xs text-cc-red">
               {publishAllError}
             </p>
           )}
@@ -880,13 +866,13 @@ function OnDeckPanelInner({
               {/* Section header — always shown for published matches */}
               <div className="flex items-center gap-2.5">
                 <span className="relative flex h-2.5 w-2.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[oklch(0.79_0.18_188)] opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[oklch(0.55_0.18_188)] dark:bg-[oklch(0.79_0.18_188)]" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cc-accent opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cc-accent" />
                 </span>
-                <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                <span className="text-xs font-bold uppercase tracking-wider text-cc-t1">
                   On Deck
                 </span>
-                <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-[oklch(0.79_0.18_188/0.10)] text-[oklch(0.35_0.15_188)] ring-1 ring-[oklch(0.65_0.15_188/0.40)] dark:bg-[oklch(0.79_0.18_188/0.15)] dark:text-[oklch(0.79_0.18_188)] dark:ring-[oklch(0.79_0.18_188/0.40)]">
+                <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-cc-accent-dim text-cc-accent-text ring-1 ring-cc-accent/40">
                   {publishedMatches.length} match{publishedMatches.length !== 1 ? "es" : ""} ready
                 </span>
                 {publishedMatches.length > 1 && draftMatches.length === 0 && (

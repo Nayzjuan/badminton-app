@@ -138,19 +138,19 @@ function CourtCard({
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {
     matchmaking: {
-      cls: "bg-[oklch(0.78_0.17_62/0.18)] border-[oklch(0.78_0.17_62/0.45)] text-[oklch(0.88_0.14_62)]",
+      cls: "bg-cc-badge-progress-bg border-cc-amber/40 text-cc-amber",
       label: "Finding Match…",
     },
     in_progress: {
-      cls: "bg-[oklch(0.78_0.17_62/0.14)] border-[oklch(0.78_0.17_62/0.40)] text-[oklch(0.88_0.14_62)]",
+      cls: "bg-cc-badge-progress-bg border-cc-amber/40 text-cc-amber",
       label: "In Progress",
     },
     available: {
-      cls: "bg-[oklch(0.76_0.17_155/0.12)] border-[oklch(0.76_0.17_155/0.35)] text-[oklch(0.76_0.17_155)]",
+      cls: "bg-cc-accent-dim border-cc-accent/35 text-cc-accent",
       label: "Available",
     },
     closed: {
-      cls: "bg-[oklch(0.20_0.016_245)] border-[oklch(0.30_0.020_245)] text-[oklch(0.55_0.010_245)]",
+      cls: "bg-cc-bg-3 border-cc-border text-cc-t3",
       label: "Closed",
     },
   };
@@ -158,12 +158,14 @@ function CourtCard({
   // Outer wrapper carries the filter (glow + 1px ring); inner div carries clip-path.
   // Keeping them separate means the drop-shadow is applied to the already-clipped
   // shape, producing a ring that follows the chamfered polygon rather than the box.
+  // Colors reference --cc-* tokens via getComputedStyle (filter strings can't use
+  // var() inside oklch directly across browsers, so we resolve once per render).
   const glowFilter = isActive
     ? alertTier === "critical"
-      ? "drop-shadow(0 0 0 1px oklch(0.65 0.22 22 / 0.55)) drop-shadow(0 0 14px oklch(0.65 0.22 22 / 0.35))"
+      ? "drop-shadow(0 0 0 1px var(--cc-red)) drop-shadow(0 0 14px var(--cc-red-dim))"
       : alertTier === "warning"
-        ? "drop-shadow(0 0 0 1px oklch(0.78 0.17 62 / 0.50)) drop-shadow(0 0 14px oklch(0.78 0.17 62 / 0.28))"
-        : "drop-shadow(0 0 0 1px oklch(0.79 0.18 188 / 0.35)) drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.18))"
+        ? "drop-shadow(0 0 0 1px var(--cc-amber)) drop-shadow(0 0 14px var(--cc-amber-dim))"
+        : "drop-shadow(0 0 0 1px var(--cc-deck-border)) drop-shadow(0 0 12px var(--cc-accent-glow))"
     : undefined;
 
   return (
@@ -174,10 +176,9 @@ function CourtCard({
     >
       <div
         className={[
-          "flex flex-col clip-cut overflow-hidden transition-all",
-          !isActive ? "bg-card border border-gray-200 dark:border-border" : "",
+          "flex flex-col clip-cut overflow-hidden transition-all cc-scan cc-scan-slow",
+          isActive ? "bg-cc-bg-2" : "bg-cc-bg-2 border border-cc-border",
         ].join(" ")}
-        style={isActive ? { background: "oklch(0.10 0.014 245)" } : undefined}
       >
       {/* ── Header ─────────────────────────────────────────── */}
       {/*
@@ -187,39 +188,25 @@ function CourtCard({
       */}
       <div
         className={[
-          "flex items-center justify-between gap-2 px-5 pt-4 pb-3",
-          isActive ? "border-b" : "border-b border-gray-200 dark:border-border",
-        ].join(" ")}
-        style={
+          "relative z-[1] flex items-center justify-between gap-2 px-5 pt-4 pb-3 border-b",
           isActive
-            ? {
-                borderColor:
-                  alertTier === "critical"
-                    ? "oklch(0.65 0.22 22 / 0.28)"
-                    : alertTier === "warning"
-                      ? "oklch(0.78 0.17 62 / 0.28)"
-                      : "oklch(0.79 0.18 188 / 0.22)", // teal command separator
-              }
-            : undefined
-        }
+            ? alertTier === "critical"
+              ? "border-cc-red/30"
+              : alertTier === "warning"
+                ? "border-cc-amber/30"
+                : "border-cc-accent/25"
+            : "border-cc-border",
+        ].join(" ")}
       >
         {/* Left group — court name + badges stacked vertically */}
         <div className="flex flex-col gap-1.5 min-w-0">
-          <h3
-            className={`truncate font-command text-[20px] font-bold uppercase tracking-[0.06em] leading-none ${
-              isActive ? "text-white" : "text-gray-900 dark:text-foreground"
-            }`}
-          >
+          <h3 className="truncate font-command text-[20px] font-bold uppercase tracking-[0.06em] leading-none text-cc-t1">
             {court.name}
           </h3>
           <div className="flex items-center gap-1.5 flex-wrap">
             {match?.is_mixed_level && (
-              <span
-                className="clip-cut-badge border px-2 py-0.5
-                            font-command text-[9px] uppercase tracking-[0.10em]
-                            bg-amber-100 border-amber-300 text-amber-800
-                            dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300"
-              >
+              <span className="clip-cut-badge bg-cc-blue-dim text-cc-blue px-2 py-0.5
+                               font-command text-[9px] uppercase tracking-[0.10em]">
                 Mixed Level
               </span>
             )}
@@ -233,7 +220,7 @@ function CourtCard({
           )}
           <span
             className={`clip-cut-badge border px-2.5 py-0.5
-                        font-command text-[9px] uppercase tracking-[0.12em]
+                        font-command text-[9px] uppercase tracking-[0.12em] whitespace-nowrap
                         ${badgeCfg[cardState].cls}
                         ${cardState === "matchmaking" ? "animate-pulse" : ""}`}
           >
@@ -271,44 +258,46 @@ function CourtCard({
 
       {/* Non-active states — keep original body layout */}
       {!hasActiveMatch && (
-        <div className="flex-1 px-4 pb-3">
+        <div className="relative z-[1] flex-1 px-4 pb-3">
           {/* MATCHMAKING — spinner */}
           {isMatchmaking && (
             <div className="flex flex-col items-center justify-center gap-2 py-6">
-              <div className="h-7 w-7 rounded-full border-[3px] border-amber-200 border-t-amber-600 animate-spin" />
-              <p className="text-sm font-medium text-amber-700">Running algorithm…</p>
+              <div className="h-7 w-7 rounded-full border-[3px] border-cc-amber-dim border-t-cc-amber animate-spin" />
+              <p className="font-command text-[10px] uppercase tracking-[0.16em] text-cc-amber">
+                Running algorithm…
+              </p>
             </div>
           )}
 
-          {/* AVAILABLE — dashed placeholder with icon */}
+          {/* AVAILABLE — placeholder with icon */}
           {!isMatchmaking && cardState === "available" && (
             <div className="flex flex-col items-center justify-center gap-2 py-6">
-              <div className="rounded-full bg-emerald-50 border border-emerald-200 p-2.5">
-                <Swords className="h-5 w-5 text-emerald-400" />
+              <div className="rounded-full bg-cc-accent-dim border border-cc-accent/30 p-2.5">
+                <Swords className="h-5 w-5 text-cc-accent" />
               </div>
-              <p className="text-sm font-medium text-emerald-600">Ready for next match</p>
+              <p className="font-command text-[10px] uppercase tracking-[0.16em] text-cc-accent">
+                Ready for next match
+              </p>
             </div>
           )}
 
           {/* CLOSED — placeholder */}
           {cardState === "closed" && (
             <div className="flex items-center justify-center py-6">
-              <p className="text-sm text-muted-foreground">Court is closed</p>
+              <p className="font-command text-[10px] uppercase tracking-[0.16em] text-cc-t3">
+                Court is closed
+              </p>
             </div>
           )}
         </div>
       )}
 
       {/* ── Footer ─────────────────────────────────────────── */}
-      {/* pt-3 is uniform across all card states so buttons sit at the same
-          depth in the grid row regardless of which state is active. */}
-      <div
-        className={`px-4 pt-3 pb-4 space-y-2 ${isActive ? "border-t" : ""}`}
-        style={isActive ? { borderColor: "rgba(255,255,255,0.1)" } : undefined}
-      >
+      <div className="relative z-[1] px-4 pt-3 pb-4 space-y-2 border-t border-cc-border">
         {/* Inline error */}
         {error && (
-          <p className="rounded-lg bg-destructive/10 px-3 py-2 text-center text-xs text-destructive">
+          <p className="clip-cut-sm bg-cc-red-dim border border-cc-red/30 px-3 py-2 text-center
+                        font-command text-[9px] uppercase tracking-[0.10em] text-cc-red">
             {error}
           </p>
         )}
@@ -322,10 +311,10 @@ function CourtCard({
                 <button
                   onClick={onClearOnDeckMatch}
                   disabled={isClearing}
-                  className="flex items-center gap-1.5 clip-cut-sm border border-[oklch(0.65_0.22_22/0.40)]
-                             bg-[oklch(0.65_0.22_22/0.10)] px-3 py-2
-                             font-command text-[9px] uppercase tracking-[0.10em] text-[oklch(0.75_0.18_22)]
-                             hover:bg-[oklch(0.65_0.22_22/0.18)]
+                  className="flex items-center gap-1.5 clip-cut-sm border border-cc-red/30
+                             bg-cc-red-dim px-3 py-2
+                             font-command text-[9px] uppercase tracking-[0.10em] text-cc-red
+                             hover:bg-cc-red/15
                              disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -339,21 +328,17 @@ function CourtCard({
               <>
                 {isConfirmingCancel ? (
                   /* Two-step cancel confirmation */
-                  <div className="space-y-2 clip-cut border border-[oklch(0.65_0.22_22/0.35)]
-                                  bg-[oklch(0.65_0.22_22/0.08)] p-3">
-                    <p className="text-center font-command text-[9px] uppercase tracking-[0.10em]
-                                  text-[oklch(0.75_0.18_22)]">
+                  <div className="space-y-2 clip-cut border border-cc-red/35 bg-cc-red-dim p-3">
+                    <p className="text-center font-command text-[9px] uppercase tracking-[0.10em] text-cc-red">
                       Cancel this match? Players return to queue.
                     </p>
                     <div className="flex gap-2">
                       <button
                         onClick={onCancelConfirm}
                         disabled={isCancelling}
-                        className="flex-1 clip-cut-sm bg-[oklch(0.65_0.22_22/0.25)] py-2
-                                   border border-[oklch(0.65_0.22_22/0.50)]
-                                   font-command text-[9px] uppercase tracking-[0.10em]
-                                   text-[oklch(0.85_0.14_22)]
-                                   hover:bg-[oklch(0.65_0.22_22/0.35)]
+                        className="flex-1 clip-cut-sm bg-cc-red/25 py-2 border border-cc-red/50
+                                   font-command text-[9px] uppercase tracking-[0.10em] text-cc-t1
+                                   hover:bg-cc-red/35
                                    disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         {isCancelling ? "Cancelling…" : "Yes, Cancel"}
@@ -361,11 +346,9 @@ function CourtCard({
                       <button
                         onClick={onCancelDismiss}
                         disabled={isCancelling}
-                        className="flex-1 clip-cut-sm border border-[oklch(0.35_0.020_245)] py-2
-                                   bg-[oklch(0.18_0.018_245)]
-                                   font-command text-[9px] uppercase tracking-[0.10em]
-                                   text-[oklch(0.65_0.012_245)]
-                                   hover:bg-[oklch(0.22_0.018_245)]
+                        className="flex-1 clip-cut-sm border border-cc-border py-2 bg-cc-bg-3
+                                   font-command text-[9px] uppercase tracking-[0.10em] text-cc-t2
+                                   hover:bg-cc-border
                                    disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         Keep Playing
@@ -373,17 +356,15 @@ function CourtCard({
                     </div>
                   </div>
                 ) : (
-                  /* Normal in-progress actions */
-                  <div className="flex items-center justify-end gap-2">
+                  /* Normal in-progress actions — grid 1fr 1.6fr per preview spec */
+                  <div className="grid gap-2" style={{ gridTemplateColumns: "1fr 1.6fr" }}>
                     <button
                       onClick={onCancelRequest}
                       disabled={isCancelling}
-                      className="flex items-center gap-1.5 clip-cut-sm px-3 py-2
-                                 border border-[oklch(0.65_0.22_22/0.30)]
-                                 bg-[oklch(0.65_0.22_22/0.08)]
-                                 font-command text-[9px] uppercase tracking-[0.10em]
-                                 text-[oklch(0.75_0.18_22)]
-                                 hover:bg-[oklch(0.65_0.22_22/0.15)]
+                      className="flex items-center justify-center gap-1.5 clip-cut-sm px-3 py-2.5
+                                 border border-cc-red/30 bg-cc-red-dim
+                                 font-command text-[9px] uppercase tracking-[0.12em] text-cc-red
+                                 hover:bg-cc-red/18
                                  disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <XCircle className="h-3.5 w-3.5" />
@@ -392,11 +373,10 @@ function CourtCard({
                     <button
                       onClick={onInputScore}
                       disabled={isCancelling}
-                      className="flex items-center gap-1.5 clip-cut-sm
-                                 bg-[oklch(0.79_0.18_188)] hover:brightness-110
+                      className="flex items-center justify-center gap-1.5 clip-cut-sm
+                                 bg-cc-accent hover:brightness-110
                                  px-4 py-2.5 min-h-[44px]
-                                 font-command text-[9px] uppercase tracking-[0.10em]
-                                 text-[oklch(0.07_0.012_245)]
+                                 font-command text-[9px] uppercase tracking-[0.12em] text-cc-btn-on-accent
                                  disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     >
                       <Trophy className="h-3.5 w-3.5" />
@@ -415,20 +395,19 @@ function CourtCard({
             <button
               onClick={onCallNextMatch}
               className="flex items-center gap-1.5 clip-cut-sm
-                         bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
-                         dark:bg-[oklch(0.79_0.18_188/0.20)] dark:hover:bg-[oklch(0.79_0.18_188/0.32)]
-                         dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.45)]
-                         px-4 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
-                         transition-colors"
+                         bg-cc-accent hover:brightness-110
+                         px-4 py-2.5 min-h-[44px]
+                         font-command text-[10px] uppercase tracking-[0.12em] text-cc-btn-on-accent
+                         transition-all"
             >
               <Plus className="h-4 w-4" />
               Call Next Match
             </button>
             <button
               onClick={() => onUpdateStatus("closed")}
-              className="clip-cut-sm border border-[oklch(0.30_0.020_245)] px-3 py-2.5
+              className="clip-cut-sm border border-cc-border px-3 py-2.5
                          font-command text-[9px] uppercase tracking-[0.10em]
-                         text-[oklch(0.55_0.010_245)] hover:bg-[oklch(0.18_0.018_245)]
+                         text-cc-t3 hover:bg-cc-bg-3
                          transition-colors"
             >
               Close
@@ -441,19 +420,18 @@ function CourtCard({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => onUpdateStatus("available")}
-              className="flex-1 clip-cut-sm bg-[oklch(0.79_0.18_188/0.18)]
-                         border border-[oklch(0.79_0.18_188/0.45)]
-                         px-4 py-2.5 font-command text-[9px] uppercase tracking-[0.10em]
-                         text-[oklch(0.89_0.12_188)] hover:bg-[oklch(0.79_0.18_188/0.28)]
+              className="flex-1 clip-cut-sm bg-cc-accent-dim border border-cc-accent/45
+                         px-4 py-2.5 font-command text-[9px] uppercase tracking-[0.12em]
+                         text-cc-accent hover:bg-cc-accent/28
                          transition-colors"
             >
               Reopen Court
             </button>
             <button
               onClick={onRemove}
-              className="clip-cut-sm border border-[oklch(0.65_0.22_22/0.35)] px-3 py-2.5
+              className="clip-cut-sm border border-cc-red/35 px-3 py-2.5
                          font-command text-[9px] uppercase tracking-[0.10em]
-                         text-[oklch(0.75_0.18_22)] hover:bg-[oklch(0.65_0.22_22/0.10)]
+                         text-cc-red hover:bg-cc-red-dim
                          transition-colors"
             >
               Remove
@@ -678,51 +656,53 @@ export function ActiveCourts({
             onKeyDown={(e) => e.key === "Enter" && handleAddCourt()}
             placeholder="Court name (e.g. Court 3)"
             maxLength={40}
-            className="flex-1 clip-cut border border-[oklch(0.30_0.025_240)] bg-[oklch(0.14_0.018_238)] px-4 py-2.5
-                       font-command text-sm text-foreground placeholder:text-muted-foreground
-                       focus:outline-none focus:border-[oklch(0.79_0.18_188)] transition-colors"
+            className="flex-1 clip-cut border border-cc-border bg-cc-bg-2 px-4 py-2.5
+                       font-command text-sm text-cc-t1 placeholder:text-cc-t3
+                       focus:outline-none focus:border-cc-accent transition-colors"
           />
           <button
             onClick={handleAddCourt}
             disabled={adding || !newCourtName.trim()}
-            className="whitespace-nowrap clip-cut-sm bg-[oklch(0.79_0.18_188)] px-5 py-2.5
-                       font-command text-[10px] uppercase tracking-[0.10em] text-[oklch(0.07_0.012_245)]
-                       hover:bg-[oklch(0.84_0.18_188)] disabled:cursor-not-allowed disabled:opacity-50
-                       transition-colors"
+            className="whitespace-nowrap clip-cut-sm bg-cc-accent hover:brightness-110 px-5 py-2.5
+                       font-command text-[10px] uppercase tracking-[0.12em] text-cc-btn-on-accent
+                       disabled:cursor-not-allowed disabled:opacity-50 transition-all"
           >
             {adding ? "Adding…" : "+ Add Court"}
           </button>
         </div>
         {/* Time limit picker */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Court time limit:</span>
+          <span className="font-command text-[10px] uppercase tracking-[0.18em] text-cc-t3">
+            Court time limit:
+          </span>
           <CourtTimePopover timeLimitMinutes={timeLimitMinutes} onSave={onUpdateTimeLimit} />
         </div>
       </div>
 
-      {/* ── Section header ─────────────────────────────────────── */}
+      {/* ── Section header — amber bar matches preview .section-label.amber-bar ── */}
       <div className="flex items-center gap-3.5">
-        <span className="flex items-center gap-2.5 font-command text-[9px] uppercase tracking-[0.24em] text-muted-foreground shrink-0">
+        <span className="flex items-center gap-2.5 font-command text-[9px] uppercase tracking-[0.24em] text-cc-t3 shrink-0">
           <span
-            className="block w-[3px] h-[14px] rounded-[1px]
-                       bg-[oklch(0.78_0.17_62)]
-                       shadow-[0_0_8px_oklch(0.78_0.17_62/0.55)]"
+            className="block w-[3px] h-[14px] rounded-[1px] bg-cc-amber
+                       shadow-[0_0_8px_var(--cc-amber-dim)]"
           />
           Active Courts
         </span>
-        <div className="flex-1 h-px bg-border" />
+        <div className="flex-1 h-px bg-cc-border" />
       </div>
 
       {/* ── Courts grid ────────────────────────────────────────── */}
       {courts.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-gray-300 dark:border-border bg-white/60 dark:bg-card/60 py-16 text-center shadow-sm">
+        <div className="clip-cut border border-dashed border-cc-border bg-cc-bg-2 py-16 text-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="rounded-full bg-gray-100 dark:bg-muted p-4">
-              <Swords className="h-6 w-6 text-gray-400 dark:text-muted-foreground" />
+            <div className="rounded-full bg-cc-bg-3 p-4">
+              <Swords className="h-6 w-6 text-cc-t3" />
             </div>
             <div>
-              <p className="font-semibold text-gray-700 dark:text-foreground">No courts yet</p>
-              <p className="mt-0.5 text-sm text-gray-400 dark:text-muted-foreground">
+              <p className="font-command text-sm font-bold uppercase tracking-[0.12em] text-cc-t1">
+                No courts yet
+              </p>
+              <p className="mt-0.5 font-command text-[10px] uppercase tracking-[0.14em] text-cc-t3">
                 Add a court above to get started.
               </p>
             </div>

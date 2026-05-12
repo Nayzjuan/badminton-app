@@ -66,12 +66,12 @@ const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
 // Always-dark navy court — level text color only (no dot), matching preview spec.
 // ADV/U.INT → amber, INT/L.INT → teal, L.ADV → blue, BEG → muted
 const SKILL_CONFIG_DARK: Record<SkillLevel, { color: string; abbr: string }> = {
-  beginner:           { color: "text-white/40",                abbr: "Beg"   },
-  lower_intermediate: { color: "text-[oklch(0.79_0.18_188)]", abbr: "L.Int" },
-  intermediate:       { color: "text-[oklch(0.79_0.18_188)]", abbr: "Int"   },
-  upper_intermediate: { color: "text-[oklch(0.78_0.17_62)]",  abbr: "U.Int" },
-  lower_advanced:     { color: "text-[oklch(0.65_0.19_255)]", abbr: "L.Adv" },
-  advanced:           { color: "text-[oklch(0.78_0.17_62)]",  abbr: "Adv"   },
+  beginner:           { color: "text-cc-t3",     abbr: "Beg"   },
+  lower_intermediate: { color: "text-cc-accent", abbr: "L.Int" },
+  intermediate:       { color: "text-cc-accent", abbr: "Int"   },
+  upper_intermediate: { color: "text-cc-amber",  abbr: "U.Int" },
+  lower_advanced:     { color: "text-cc-blue",   abbr: "L.Adv" },
+  advanced:           { color: "text-cc-amber",  abbr: "Adv"   },
 };
 
 // ── Internal: skill indicators ─────────────────────────────────
@@ -106,9 +106,9 @@ function VsBadge({ dark }: { dark?: boolean }) {
   if (dark) {
     return (
       <div className="flex flex-col items-center gap-1" aria-hidden="true">
-        <div className="w-px h-3.5 bg-white/15" />
-        <span className="font-command text-[8px] font-bold text-white/30">VS</span>
-        <div className="w-px h-3.5 bg-white/15" />
+        <div className="w-px h-3.5 bg-cc-border" />
+        <span className="font-command text-[8px] font-bold text-cc-t3">VS</span>
+        <div className="w-px h-3.5 bg-cc-border" />
       </div>
     );
   }
@@ -158,10 +158,10 @@ function PlayerRowLight({
   const classes = [
     "group w-full clip-cut-tr px-3 py-2 text-left transition-colors",
     isSelected
-      ? "bg-[oklch(0.79_0.18_188/0.12)] dark:bg-[oklch(0.79_0.18_188/0.15)] outline outline-1 outline-[oklch(0.65_0.15_188/0.55)] dark:outline-[oklch(0.79_0.18_188/0.50)]"
+      ? "bg-cc-accent-dim outline outline-1 outline-cc-accent/55"
       : isSwapTarget || onSwapClick
-        ? "bg-slate-100/70 dark:bg-white/[0.06] hover:bg-[oklch(0.79_0.18_188/0.08)] dark:hover:bg-[oklch(0.79_0.18_188/0.10)] cursor-pointer"
-        : "bg-slate-100/70 dark:bg-white/[0.06]",
+        ? "bg-cc-bg-3 hover:bg-cc-accent-dim cursor-pointer"
+        : "bg-cc-bg-3",
   ].join(" ");
 
   const inner = (
@@ -200,7 +200,7 @@ function PlayerRowLight({
         </span>
         {onSwapClick && (
           <ArrowLeftRight
-            className="ml-auto h-3 w-3 flex-shrink-0 text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)] opacity-0 transition-opacity group-hover:opacity-100"
+            className="ml-auto h-3 w-3 flex-shrink-0 text-cc-accent opacity-0 transition-opacity group-hover:opacity-100"
             aria-hidden="true"
           />
         )}
@@ -243,22 +243,19 @@ interface PlayerRowDarkProps {
 function PlayerRowDark({ player, isMe }: PlayerRowDarkProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
   return (
-    <div
-      className="w-full clip-cut-tr px-3 py-2 transition-colors hover:bg-white/5"
-      style={{ background: "rgba(255,255,255,0.04)" }}
-    >
+    <div className="w-full clip-cut-tr bg-cc-bg-3 px-3 py-2 transition-colors hover:bg-cc-border">
       {/* Line 1 — name + optional VIP tag */}
       <div className="flex items-center gap-1.5 overflow-hidden">
         <span
           className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
-            isMe ? "font-bold text-white" : "font-medium text-white/90"
+            isMe ? "font-bold text-cc-t1" : "font-medium text-cc-t1"
           }`}
         >
           {player.display_name}
         </span>
         {hasTag && (
           <>
-            <span className="shrink-0 text-[11px] leading-none text-white/25 select-none" aria-hidden="true">
+            <span className="shrink-0 text-[11px] leading-none text-cc-t3 select-none" aria-hidden="true">
               |
             </span>
             <span className="shrink-0 leading-none">
@@ -322,11 +319,14 @@ export function TeamsGrid({
 
   return (
     <div className="grid gap-y-2 px-3 py-3" style={{ gridTemplateColumns: "1fr 40px 1fr" }}>
-      {/* Row 1 — column labels */}
+      {/* Row 1 — column labels.
+          Dark (court cards): muted "Team A / Team B" per preview .team-header.
+          Light/on-deck (light-style player rows): blue/amber per preview
+          .team-label.yours / .team-label.opps. */}
       <div style={{ gridColumn: 1, gridRow: 1 }}>
         <span
-          className={`font-command text-[8px] uppercase tracking-[0.24em] ${
-            dark ? "text-white/40" : "text-sky-600 dark:text-sky-400"
+          className={`font-command text-[9px] uppercase tracking-[0.20em] ${
+            dark ? "text-cc-t3" : "text-cc-blue"
           }`}
         >
           {labelA}
@@ -335,8 +335,8 @@ export function TeamsGrid({
       <div style={{ gridColumn: 2, gridRow: 1 }} aria-hidden="true" />
       <div style={{ gridColumn: 3, gridRow: 1 }} className="text-right">
         <span
-          className={`font-command text-[8px] uppercase tracking-[0.24em] ${
-            dark ? "text-white/40" : "text-amber-600 dark:text-amber-400"
+          className={`font-command text-[9px] uppercase tracking-[0.20em] ${
+            dark ? "text-cc-t3" : "text-cc-amber"
           }`}
         >
           {labelB}

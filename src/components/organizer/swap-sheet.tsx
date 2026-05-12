@@ -214,7 +214,7 @@ export function SwapSheet({
         if (!open) onClose();
       }}
     >
-      <SheetContent showClose>
+      <SheetContent showClose className="bg-cc-bg-2 border-cc-border">
         {/* ── Header: who is being swapped out ──────────────── */}
         <SheetHeader className="pr-10">
           <SheetTitle>Swap Player</SheetTitle>
@@ -225,21 +225,21 @@ export function SwapSheet({
           {context && (
             <div
               className="mt-3 flex items-center gap-3 rounded-xl
-                            bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)]
-                            border border-[oklch(0.65_0.15_188/0.35)] dark:border-[oklch(0.79_0.18_188/0.30)]
+                            bg-cc-accent-dim
+                            border border-cc-accent/40
                             px-4 py-3"
             >
               {/* Avatar initial */}
               <div
                 className="flex h-9 w-9 shrink-0 items-center justify-center
-                              rounded-lg bg-[oklch(0.55_0.18_188)] dark:bg-[oklch(0.79_0.18_188/0.25)]
-                              dark:border dark:border-[oklch(0.79_0.18_188/0.40)]
-                              font-command text-sm font-bold text-white dark:text-[oklch(0.89_0.12_188)] select-none"
+                              rounded-lg bg-cc-accent
+                              border border-cc-accent/40
+                              font-command text-sm font-bold text-cc-btn-on-accent select-none"
               >
                 {context.outPlayerName.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-foreground truncate">
+                <p className="text-sm font-bold text-cc-t1 truncate">
                   {context.outPlayerName}
                 </p>
                 <SkillBadge level={context.outPlayerSkill} className="mt-0.5" />
@@ -247,8 +247,7 @@ export function SwapSheet({
               <span
                 className="shrink-0 rounded-lg px-2 py-0.5 font-command text-[9px] font-bold
                                uppercase tracking-[0.14em]
-                               bg-[oklch(0.79_0.18_188/0.10)] border border-[oklch(0.65_0.15_188/0.40)] text-[oklch(0.35_0.15_188)]
-                               dark:bg-[oklch(0.79_0.18_188/0.15)] dark:border-[oklch(0.79_0.18_188/0.40)] dark:text-[oklch(0.79_0.18_188)]"
+                               bg-cc-accent-dim border border-cc-accent/40 text-cc-accent-text"
               >
                 {context ? teamLabel(context.outTeam) : ""}
               </span>
@@ -315,8 +314,8 @@ export function SwapSheet({
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   // Selected state
                   isSelected
-                    ? "border-[oklch(0.65_0.15_188/0.60)] bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.10)] dark:border-[oklch(0.79_0.18_188/0.50)]"
-                    : "border-border bg-background hover:bg-muted/40",
+                    ? "bg-cc-accent-dim outline outline-cc-accent/50 border-transparent"
+                    : "border-cc-border bg-cc-bg-2 hover:bg-cc-bg-3",
                   // Paused state
                   player.is_paused ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
                 ].join(" ")}
@@ -357,11 +356,10 @@ export function SwapSheet({
                 ) : isSelected ? (
                   <span
                     className="flex h-5 w-5 shrink-0 items-center justify-center
-                                   rounded-full bg-[oklch(0.55_0.18_188)] dark:bg-[oklch(0.79_0.18_188/0.30)]
-                                   dark:ring-1 dark:ring-[oklch(0.79_0.18_188/0.60)]"
+                                   rounded-full bg-cc-accent ring-1 ring-cc-accent/60"
                   >
                     <svg
-                      className="h-3 w-3 text-white"
+                      className="h-3 w-3 text-cc-btn-on-accent"
                       fill="none"
                       viewBox="0 0 24 24"
                       stroke="currentColor"
@@ -433,9 +431,8 @@ export function SwapSheet({
             onClick={handleConfirm}
             disabled={!selectedPlayerId || isConfirming}
             className="w-full rounded-xl px-4 py-3 font-command text-[11px] font-bold uppercase tracking-[0.12em]
-                       bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)] text-white
-                       dark:bg-[oklch(0.79_0.18_188/0.22)] dark:hover:bg-[oklch(0.79_0.18_188/0.35)]
-                       dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
+                       bg-cc-accent hover:bg-cc-accent/90 text-cc-btn-on-accent
+                       border border-cc-accent/50
                        disabled:opacity-50 disabled:cursor-not-allowed
                        transition-colors"
           >
@@ -468,8 +465,8 @@ export function SwapSheet({
             onClick={onClose}
             disabled={isConfirming}
             className="w-full rounded-xl px-4 py-3 text-sm font-medium
-                       border border-border bg-background text-foreground
-                       hover:bg-muted/60
+                       border border-cc-border bg-transparent text-cc-t2
+                       hover:bg-cc-bg-3
                        disabled:opacity-50 disabled:cursor-not-allowed
                        transition-colors"
           >

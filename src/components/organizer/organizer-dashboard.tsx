@@ -47,11 +47,10 @@ import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
 
 // ── Design token constants ───────────────────────────────────
-// Organizer dashboard is always dark — command-center aesthetic.
-const HEADER_BG = "bg-[oklch(0.11_0.016_238)]";
-const SURFACE_BG = "bg-[oklch(0.14_0.018_238)]";
-const ACTIVE_TAB =
-  "border-b-2 border-[oklch(0.79_0.18_188)] text-[oklch(0.79_0.18_188)] font-semibold";
+// Command-center surface tokens (theme-aware via cc-* tokens in globals.css).
+const HEADER_BG = "bg-cc-header-bg";
+const SURFACE_BG = "bg-cc-bg";
+const ACTIVE_TAB = "border-b-2 border-cc-accent text-cc-accent font-semibold";
 
 interface OrganizerDashboardProps {
   profile: Profile;
@@ -461,19 +460,19 @@ export function OrganizerDashboard({
       className={`min-h-screen ${SURFACE_BG}`}
       style={{
         backgroundImage:
-          "linear-gradient(oklch(0.79 0.18 188 / 0.04) 1px, transparent 1px), linear-gradient(90deg, oklch(0.79 0.18 188 / 0.04) 1px, transparent 1px)",
+          "linear-gradient(var(--cc-grid-color) 1px, transparent 1px), linear-gradient(90deg, var(--cc-grid-color) 1px, transparent 1px)",
         backgroundSize: "48px 48px",
       }}
     >
       {/* Top Header */}
-      <header className={`sticky top-0 z-20 ${HEADER_BG} border-b border-[oklch(0.22_0.022_240)]`}>
+      <header className={`sticky top-0 z-20 ${HEADER_BG} border-b border-cc-border`}>
         <div className="max-w-7xl mx-auto px-3 lg:px-6 py-3 lg:py-4">
           {/* ── Row 1: back link + mobile controls ── */}
           <div className="mb-2 flex items-center justify-between">
             <button
               onClick={() => router.push("/organizer")}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-white/60
-                         hover:text-white hover:bg-white/10 transition-colors -ml-1 px-3 py-2
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-cc-t3
+                         hover:text-cc-t1 hover:bg-cc-bg-3 transition-colors -ml-1 px-3 py-2
                          min-h-[44px] rounded"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
@@ -493,14 +492,14 @@ export function OrganizerDashboard({
                               text-[11px] font-semibold transition-colors border
                               ${
                                 autoMatchmaking
-                                  ? "bg-[oklch(0.79_0.18_188/0.14)] border-[oklch(0.79_0.18_188/0.50)] text-[oklch(0.79_0.18_188)]"
-                                  : "bg-white/10 border-white/20 text-white/50"
+                                  ? "bg-cc-accent-dim border-cc-accent/45 text-cc-accent"
+                                  : "bg-cc-bg-3 border-cc-border text-cc-t3"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full shrink-0
-                                    ${autoMatchmaking ? "bg-[oklch(0.79_0.18_188)]" : "bg-white/40"}`}
+                                    ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
                   />
                   {autoMatchmaking ? "Auto" : "Off"}
                 </button>
@@ -510,7 +509,7 @@ export function OrganizerDashboard({
                   <button
                     onClick={() => setMoreMenuOpen((v) => !v)}
                     className="inline-flex items-center justify-center h-9 w-9 rounded-lg
-                               text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                               text-cc-t2 hover:text-cc-t1 hover:bg-cc-bg-3 transition-colors"
                     aria-label="More options"
                   >
                     <MoreVertical className="h-4 w-4" />
@@ -519,7 +518,7 @@ export function OrganizerDashboard({
                   {moreMenuOpen && (
                     <div
                       className="absolute right-0 top-full mt-1.5 w-52 rounded-xl
-                                    border border-[oklch(0.30_0.025_240)] bg-[oklch(0.19_0.020_238)]
+                                    border border-cc-border bg-cc-bg-2
                                     shadow-xl z-50 overflow-hidden
                                     animate-in fade-in slide-in-from-top-1 duration-150"
                     >
@@ -530,10 +529,10 @@ export function OrganizerDashboard({
                         rel="noopener noreferrer"
                         onClick={() => setMoreMenuOpen(false)}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm
-                                   text-[oklch(0.68_0.014_238)] hover:bg-[oklch(0.23_0.022_240)]
-                                   hover:text-[oklch(0.94_0.008_238)] transition-colors"
+                                   text-cc-t2 hover:bg-cc-bg-3
+                                   hover:text-cc-t1 transition-colors"
                       >
-                        <Tv2 className="h-4 w-4 text-[oklch(0.48_0.016_238)] shrink-0" />
+                        <Tv2 className="h-4 w-4 text-cc-t3 shrink-0" />
                         TV Scoreboard
                       </a>
 
@@ -544,14 +543,14 @@ export function OrganizerDashboard({
                           setShareOpen(true);
                         }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
-                                   text-[oklch(0.68_0.014_238)] hover:bg-[oklch(0.23_0.022_240)]
-                                   hover:text-[oklch(0.94_0.008_238)] transition-colors"
+                                   text-cc-t2 hover:bg-cc-bg-3
+                                   hover:text-cc-t1 transition-colors"
                       >
-                        <Share2 className="h-4 w-4 text-[oklch(0.48_0.016_238)] shrink-0" />
+                        <Share2 className="h-4 w-4 text-cc-t3 shrink-0" />
                         Share Session
                       </button>
 
-                      <div className="border-t border-[oklch(0.30_0.025_240)]" />
+                      <div className="border-t border-cc-border" />
 
                       {/* Close Session */}
                       <button
@@ -560,8 +559,8 @@ export function OrganizerDashboard({
                           setCloseOpen(true);
                         }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
-                                   text-[oklch(0.65_0.21_25)] hover:bg-[oklch(0.65_0.21_25/0.10)]
-                                   hover:text-[oklch(0.75_0.19_25)] transition-colors"
+                                   text-cc-red hover:bg-cc-red-dim
+                                   hover:text-cc-red transition-colors"
                       >
                         <Power className="h-4 w-4 shrink-0" />
                         Close Session
@@ -584,16 +583,16 @@ export function OrganizerDashboard({
                               min-h-[44px] transition-colors
                               ${
                                 otherSessions.length > 0
-                                  ? "hover:bg-white/10 cursor-pointer"
+                                  ? "hover:bg-cc-bg-3 cursor-pointer"
                                   : "cursor-default"
                               }`}
                 >
-                  <h1 className="font-command text-lg lg:text-xl font-bold text-white tracking-wide truncate">
+                  <h1 className="font-command text-lg lg:text-xl font-bold text-cc-t1 tracking-wide truncate">
                     {session.name}
                   </h1>
                   {otherSessions.length > 0 && (
                     <ChevronDown
-                      className={`h-4 w-4 text-white/60 shrink-0 transition-transform
+                      className={`h-4 w-4 text-cc-t3 shrink-0 transition-transform
                                              ${switcherOpen ? "rotate-180" : ""}`}
                     />
                   )}
@@ -603,12 +602,12 @@ export function OrganizerDashboard({
                 {switcherOpen && otherSessions.length > 0 && (
                   <div
                     className="absolute left-0 top-full mt-2 w-72 rounded-xl
-                                  border border-[oklch(0.30_0.025_240)] bg-[oklch(0.19_0.020_238)]
+                                  border border-cc-border bg-cc-bg-2
                                   shadow-xl z-50 overflow-hidden
                                   animate-in fade-in slide-in-from-top-1 duration-150"
                   >
-                    <div className="px-3 py-2 bg-[oklch(0.23_0.022_240)] border-b border-[oklch(0.30_0.025_240)]">
-                      <p className="font-command text-[9px] font-bold uppercase tracking-[0.22em] text-[oklch(0.48_0.016_238)]">
+                    <div className="px-3 py-2 bg-cc-bg-3 border-b border-cc-border">
+                      <p className="font-command text-[9px] font-bold uppercase tracking-[0.22em] text-cc-t3">
                         Switch Session
                       </p>
                     </div>
@@ -621,16 +620,16 @@ export function OrganizerDashboard({
                             router.push(`/organizer/${s.id}`);
                           }}
                           className="flex items-center gap-3 w-full px-3 py-2.5 text-left
-                                     hover:bg-[oklch(0.23_0.022_240)] transition-colors"
+                                     hover:bg-cc-bg-3 transition-colors"
                         >
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[oklch(0.23_0.022_240)]">
-                            <Repeat className="h-3.5 w-3.5 text-[oklch(0.48_0.016_238)]" />
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-cc-bg-3">
+                            <Repeat className="h-3.5 w-3.5 text-cc-t3" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-[oklch(0.94_0.008_238)] truncate">
+                            <p className="text-sm font-semibold text-cc-t1 truncate">
                               {s.name}
                             </p>
-                            <p className="text-[10px] text-[oklch(0.48_0.016_238)]">
+                            <p className="text-[10px] text-cc-t3">
                               Created{" "}
                               {new Date(s.created_at).toLocaleDateString("en-US", {
                                 weekday: "short",
@@ -642,14 +641,14 @@ export function OrganizerDashboard({
                         </button>
                       ))}
                     </div>
-                    <div className="border-t border-[oklch(0.30_0.025_240)] px-3 py-2">
+                    <div className="border-t border-cc-border px-3 py-2">
                       <button
                         onClick={() => {
                           setSwitcherOpen(false);
                           router.push("/organizer");
                         }}
                         className="flex items-center gap-2 w-full text-xs font-medium
-                                   text-[oklch(0.79_0.18_188)] hover:text-[oklch(0.89_0.14_188)] transition-colors py-1"
+                                   text-cc-accent hover:text-cc-accent/80 transition-colors py-1"
                       >
                         <ArrowLeft className="h-3 w-3" />
                         View all sessions & create new
@@ -659,15 +658,15 @@ export function OrganizerDashboard({
                 )}
               </div>
 
-              <p className="text-sm text-white/60 hidden xl:block shrink-0">
+              <p className="text-sm text-cc-t3 hidden xl:block shrink-0">
                 — {profile.display_name}
               </p>
 
               {isClosed && (
                 <span
-                  className="inline-flex items-center gap-1 rounded-full bg-white/15
-                                 border border-white/30 px-2.5 py-0.5 text-[10px]
-                                 font-bold uppercase tracking-wider text-white/80 shrink-0"
+                  className="inline-flex items-center gap-1 rounded-full bg-cc-bg-3
+                                 border border-cc-border px-2.5 py-0.5 text-[10px]
+                                 font-bold uppercase tracking-wider text-cc-t2 shrink-0"
                 >
                   Closed
                 </span>
@@ -676,20 +675,20 @@ export function OrganizerDashboard({
 
             {/* Desktop action strip (hidden on mobile) */}
             {!isClosed && (
-              <div className="hidden lg:flex items-center gap-2 text-sm text-white/70 shrink-0">
+              <div className="hidden lg:flex items-center gap-2 text-sm text-cc-t2 shrink-0">
                 {/* Stats cluster */}
-                <span className="text-white/60 tabular-nums">
+                <span className="text-cc-t2 tabular-nums">
                   {courts.length} court{courts.length !== 1 ? "s" : ""}
                 </span>
-                <span className="text-white/40">·</span>
-                <span className="text-white/60 tabular-nums">{queue.length} in queue</span>
-                <span className="text-white/40">·</span>
-                <span className="text-white/60 tabular-nums">{activeMatches.length} in play</span>
+                <span className="text-cc-t3">·</span>
+                <span className="text-cc-t2 tabular-nums">{queue.length} in queue</span>
+                <span className="text-cc-t3">·</span>
+                <span className="text-cc-t2 tabular-nums">{activeMatches.length} in play</span>
                 {!realtimeConnected && (
                   <>
-                    <span className="text-white/40">·</span>
+                    <span className="text-cc-t3">·</span>
                     <span
-                      className="inline-flex items-center gap-1 text-amber-400/90"
+                      className="inline-flex items-center gap-1 text-cc-amber"
                       title="Realtime channels disconnected — displayed data may be stale. Reconnecting…"
                     >
                       <WifiOff className="h-3 w-3" aria-hidden="true" />
@@ -699,7 +698,7 @@ export function OrganizerDashboard({
                 )}
 
                 {/* Visual divider between stats and action buttons */}
-                <span className="h-4 w-px bg-white/20 mx-1 shrink-0" aria-hidden="true" />
+                <span className="h-4 w-px bg-cc-border mx-1 shrink-0" aria-hidden="true" />
 
                 {/* Auto-matchmaking toggle */}
                 <button
@@ -711,21 +710,20 @@ export function OrganizerDashboard({
                               min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] transition-colors border
                               ${
                                 autoMatchmaking
-                                  ? "bg-[oklch(0.79_0.18_188/0.14)] border-[oklch(0.79_0.18_188/0.50)] text-[oklch(0.79_0.18_188)] hover:bg-[oklch(0.79_0.18_188/0.22)]"
-                                  : "bg-white/10 border-white/20 text-white/50 hover:bg-white/15"
+                                  ? "bg-cc-accent-dim border-cc-accent/45 text-cc-accent hover:bg-cc-accent/20"
+                                  : "bg-cc-bg-3 border-cc-border text-cc-t3 hover:bg-cc-bg-2"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                   title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
                 >
                   <span
-                    className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-[oklch(0.79_0.18_188)]" : "bg-white/40"}`}
+                    className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
                   />
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
 
                 <ThemeToggle
-                  className="text-white/60 hover:text-white hover:bg-white/10
-                                        dark:text-primary dark:hover:bg-primary/10"
+                  className="text-cc-t2 hover:text-cc-t1 hover:bg-cc-bg-3"
                 />
                 {process.env.NODE_ENV === "development" && <DevTools sessionId={session.id} />}
 
@@ -734,9 +732,9 @@ export function OrganizerDashboard({
                   href={`/tv/${session.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-white/30
-                             bg-white/10 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white/80
-                             hover:bg-white/20 hover:text-white hover:border-white/50 transition-colors"
+                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-cc-border
+                             bg-cc-bg-3 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-t2
+                             hover:bg-cc-bg-2 hover:text-cc-t1 hover:border-cc-border-hi transition-colors"
                   title="Open TV scoreboard in a new tab"
                 >
                   <Tv2 className="h-3.5 w-3.5" />
@@ -746,9 +744,9 @@ export function OrganizerDashboard({
                 {/* Share Session — desktop trigger */}
                 <button
                   onClick={() => setShareOpen(true)}
-                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-white/40
-                             bg-white/10 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
-                             hover:bg-white/20 hover:border-white/60 transition-colors"
+                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-cc-border
+                             bg-cc-bg-3 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-t2
+                             hover:bg-cc-bg-2 hover:text-cc-t1 hover:border-cc-border-hi transition-colors"
                 >
                   <Share2 className="h-3.5 w-3.5" />
                   Share Session
@@ -757,9 +755,9 @@ export function OrganizerDashboard({
                 {/* Close Session — desktop trigger */}
                 <button
                   onClick={() => setCloseOpen(true)}
-                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-red-300/50
-                             bg-white/10 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-red-300
-                             hover:bg-red-500/20 hover:border-red-300 transition-colors"
+                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-cc-red/50
+                             bg-cc-red-dim px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-red
+                             hover:bg-cc-red/20 hover:border-cc-red transition-colors"
                 >
                   <Power className="h-3.5 w-3.5" />
                   Close Session
@@ -770,19 +768,19 @@ export function OrganizerDashboard({
 
           {/* Mobile stats row — visible only below md */}
           {!isClosed && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-white/50 lg:hidden">
+            <div className="mt-2 flex items-center gap-2 text-xs text-cc-t3 lg:hidden">
               <span>
                 {courts.length} court{courts.length !== 1 ? "s" : ""}
               </span>
-              <span className="text-white/40">·</span>
+              <span className="text-cc-t3">·</span>
               <span>{queue.length} in queue</span>
-              <span className="text-white/40">·</span>
+              <span className="text-cc-t3">·</span>
               <span>{activeMatches.length} active</span>
               {!realtimeConnected && (
                 <>
-                  <span className="text-white/40">·</span>
+                  <span className="text-cc-t3">·</span>
                   <span
-                    className="inline-flex items-center gap-1 text-amber-400/90"
+                    className="inline-flex items-center gap-1 text-cc-amber"
                     title="Realtime channels disconnected — displayed data may be stale. Reconnecting…"
                   >
                     <WifiOff className="h-3 w-3" aria-hidden="true" />
@@ -790,10 +788,9 @@ export function OrganizerDashboard({
                   </span>
                 </>
               )}
-              <span className="text-white/40">·</span>
+              <span className="text-cc-t3">·</span>
               <ThemeToggle
-                className="text-white/50 hover:text-white hover:bg-white/10
-                                      dark:text-primary dark:hover:bg-primary/10 -my-1"
+                className="text-cc-t3 hover:text-cc-t1 hover:bg-cc-bg-3 -my-1"
               />
             </div>
           )}
@@ -820,7 +817,7 @@ export function OrganizerDashboard({
                             ${
                               activeTab === tab.key
                                 ? ACTIVE_TAB
-                                : "text-[oklch(0.48_0.016_238)] hover:text-[oklch(0.68_0.014_238)] hover:bg-white/5"
+                                : "text-cc-t3 hover:text-cc-t2 hover:bg-cc-bg-3"
                             }`}
               >
                 {tab.label}
