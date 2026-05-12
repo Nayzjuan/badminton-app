@@ -144,13 +144,19 @@ interface PlayerRowLightProps {
   isMe?: boolean;
 }
 
-function PlayerRowLight({ player, isSelected, isSwapTarget, isMe, onSwapClick }: PlayerRowLightProps) {
+function PlayerRowLight({
+  player,
+  isSelected,
+  isSwapTarget,
+  isMe,
+  onSwapClick,
+}: PlayerRowLightProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
 
   const classes = [
-    "group w-full rounded-xl px-3 py-2 text-left transition-colors",
+    "group w-full clip-cut-tr px-3 py-2 text-left transition-colors",
     isSelected
-      ? "bg-[oklch(0.79_0.18_188/0.12)] dark:bg-[oklch(0.79_0.18_188/0.15)] ring-1 ring-[oklch(0.65_0.15_188/0.55)] dark:ring-[oklch(0.79_0.18_188/0.50)]"
+      ? "bg-[oklch(0.79_0.18_188/0.12)] dark:bg-[oklch(0.79_0.18_188/0.15)] outline outline-1 outline-[oklch(0.65_0.15_188/0.55)] dark:outline-[oklch(0.79_0.18_188/0.50)]"
       : isSwapTarget || onSwapClick
         ? "bg-slate-100/70 dark:bg-white/[0.06] hover:bg-[oklch(0.79_0.18_188/0.08)] dark:hover:bg-[oklch(0.79_0.18_188/0.10)] cursor-pointer"
         : "bg-slate-100/70 dark:bg-white/[0.06]",
@@ -238,7 +244,7 @@ function PlayerRowDark({ player, teamColor, isMe }: PlayerRowDarkProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
   return (
     <div
-      className="w-full rounded-xl px-3 py-2 transition-colors hover:bg-white/5"
+      className="w-full clip-cut-tr px-3 py-2 transition-colors hover:bg-white/5"
       style={{ background: "rgba(255,255,255,0.04)" }}
     >
       {/* Line 1 — "Name | TAG" */}
@@ -354,7 +360,11 @@ export function TeamsGrid({
       {/* Row 2 — first player pair */}
       <div style={{ gridColumn: 1, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark player={a0} teamColor="text-sky-200" isMe={myPlayerId ? myPlayerId === a0.player_id : undefined} />
+          <PlayerRowDark
+            player={a0}
+            teamColor="text-sky-200"
+            isMe={myPlayerId ? myPlayerId === a0.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={a0}
@@ -367,7 +377,11 @@ export function TeamsGrid({
       </div>
       <div style={{ gridColumn: 3, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark player={b0} teamColor="text-amber-200" isMe={myPlayerId ? myPlayerId === b0.player_id : undefined} />
+          <PlayerRowDark
+            player={b0}
+            teamColor="text-amber-200"
+            isMe={myPlayerId ? myPlayerId === b0.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={b0}
@@ -382,7 +396,11 @@ export function TeamsGrid({
       {/* Row 3 — second player pair */}
       <div style={{ gridColumn: 1, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark player={a1} teamColor="text-sky-200" isMe={myPlayerId ? myPlayerId === a1.player_id : undefined} />
+          <PlayerRowDark
+            player={a1}
+            teamColor="text-sky-200"
+            isMe={myPlayerId ? myPlayerId === a1.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={a1}
@@ -395,7 +413,11 @@ export function TeamsGrid({
       </div>
       <div style={{ gridColumn: 3, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark player={b1} teamColor="text-amber-200" isMe={myPlayerId ? myPlayerId === b1.player_id : undefined} />
+          <PlayerRowDark
+            player={b1}
+            teamColor="text-amber-200"
+            isMe={myPlayerId ? myPlayerId === b1.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={b1}

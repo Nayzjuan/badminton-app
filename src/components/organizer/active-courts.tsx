@@ -160,20 +160,19 @@ function CourtCard({
       data-testid={`court-card-${court.id}`}
       data-alert-tier={alertTier}
       className={[
-        "flex flex-col rounded-2xl shadow-md overflow-hidden transition-all",
+        "flex flex-col clip-cut overflow-hidden transition-all",
         !isActive ? "bg-card border border-gray-200 dark:border-border" : "",
       ].join(" ")}
       style={
         isActive
           ? {
               background: "oklch(0.10 0.014 245)",
-              boxShadow:
+              filter:
                 alertTier === "critical"
-                  ? "0 0 0 1px oklch(0.65 0.22 22 / 0.55), 0 0 40px oklch(0.65 0.22 22 / 0.22)"
+                  ? "drop-shadow(0 0 0 1px oklch(0.65 0.22 22 / 0.55)) drop-shadow(0 0 24px oklch(0.65 0.22 22 / 0.22))"
                   : alertTier === "warning"
-                    ? "0 0 0 1px oklch(0.78 0.17 62 / 0.55), 0 0 40px oklch(0.78 0.17 62 / 0.20)"
-                    : // Normal tier: electric command-teal — replaces the old emerald glow
-                      "0 0 0 1px oklch(0.79 0.18 188 / 0.45), 0 0 40px oklch(0.79 0.18 188 / 0.16)",
+                    ? "drop-shadow(0 0 0 1px oklch(0.78 0.17 62 / 0.55)) drop-shadow(0 0 24px oklch(0.78 0.17 62 / 0.18))"
+                    : "drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.18))",
             }
           : undefined
       }
@@ -215,10 +214,10 @@ function CourtCard({
           </h3>
           {match?.is_mixed_level && (
             <span
-              className="shrink-0 rounded-full border px-2 py-0.5
-                          text-xs font-bold uppercase tracking-wider
+              className="shrink-0 clip-cut-badge border px-2 py-0.5
+                          font-command text-[9px] uppercase tracking-[0.10em]
                           bg-amber-100 border-amber-300 text-amber-800
-                          dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]"
+                          dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300"
             >
               Mixed Level
             </span>
@@ -401,12 +400,12 @@ function CourtCard({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={onCallNextMatch}
-              className="flex items-center gap-1.5 rounded-xl
+              className="flex items-center gap-1.5 clip-cut-sm
                          bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
                          dark:bg-[oklch(0.79_0.18_188/0.20)] dark:hover:bg-[oklch(0.79_0.18_188/0.32)]
                          dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.45)]
-                         px-4 py-2.5 min-h-[44px] text-sm font-semibold text-white
-                         transition-colors shadow-sm"
+                         px-4 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
+                         transition-colors"
             >
               <Plus className="h-4 w-4" />
               Call Next Match

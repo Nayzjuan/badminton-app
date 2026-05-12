@@ -225,11 +225,21 @@ function SortableCard({
   }
 
   return (
+    // Outer wrapper carries drop-shadow (clip-path on inner clips box-shadow)
     <div
       ref={setNodeRef}
-      style={style}
+      style={{
+        ...style,
+        filter: !effectivelyDraft
+          ? selectedPlayerId
+            ? "drop-shadow(0 4px 16px oklch(0.79 0.18 188 / 0.28))"
+            : "drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.15))"
+          : undefined,
+      }}
+    >
+    <div
       className={[
-        "relative rounded-2xl border-2 shadow-sm overflow-hidden",
+        "relative clip-cut border-2 overflow-hidden",
         // Animate the border/bg change for the publish transition
         "transition-colors duration-[250ms] ease-out",
         // Draft: dashed slate border — indicates "hidden from players"
@@ -237,7 +247,7 @@ function SortableCard({
         effectivelyDraft
           ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
           : selectedPlayerId
-            ? "border-[oklch(0.79_0.18_188/0.80)] dark:border-[oklch(0.79_0.18_188/0.60)] shadow-[0_4px_16px_oklch(0.79_0.18_188/0.18)] dark:shadow-[0_4px_16px_oklch(0.79_0.18_188/0.25)] shadow-md bg-card"
+            ? "border-[oklch(0.79_0.18_188/0.80)] dark:border-[oklch(0.79_0.18_188/0.60)] bg-card"
             : "border-[oklch(0.79_0.18_188/0.45)] dark:border-[oklch(0.79_0.18_188/0.30)] bg-card",
       ].join(" ")}
     >
@@ -285,8 +295,8 @@ function SortableCard({
             )}
             {match.is_mixed_level && (
               <span
-                className="rounded-full border px-2 py-0.5
-                            text-[10px] font-bold uppercase tracking-wider
+                className="clip-cut-badge border px-2 py-0.5
+                            font-command text-[9px] uppercase tracking-[0.10em]
                             bg-[oklch(0.79_0.18_188/0.10)] border-[oklch(0.65_0.15_188/0.40)] text-[oklch(0.35_0.15_188)]
                             dark:bg-[oklch(0.79_0.18_188/0.12)]
                             dark:border-[oklch(0.79_0.18_188/0.35)]
@@ -344,11 +354,11 @@ function SortableCard({
             <button
               onClick={() => onPublish(match.id)}
               disabled={isPublishing || isPickingMode}
-              className="flex items-center gap-1.5 rounded-lg
+              className="flex items-center gap-1.5 clip-cut-sm
                          bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
                          dark:bg-[oklch(0.79_0.18_188/0.25)] dark:hover:bg-[oklch(0.79_0.18_188/0.38)]
                          dark:text-[oklch(0.79_0.18_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
-                         transition-colors px-3 min-h-[44px] text-xs font-semibold text-white
+                         transition-colors px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CheckCircle className="h-3.5 w-3.5 shrink-0" />
@@ -360,8 +370,8 @@ function SortableCard({
           <button
             onClick={() => onClear(match.id)}
             disabled={isClearing || isPickingMode}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200
-                       bg-red-50 px-3 min-h-[44px] text-xs font-semibold text-red-700
+            className="flex shrink-0 items-center gap-1.5 clip-cut-sm border border-red-200
+                       bg-red-50 px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-red-700
                        hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
                        dark:text-red-400 dark:hover:bg-red-950/60
                        disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -374,6 +384,7 @@ function SortableCard({
 
       {/* ── Inline error ───────────────────────────────────── */}
       {error && <p className="px-4 pb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
     </div>
   );
 }
@@ -396,11 +407,14 @@ function OverlayCard({
   return (
     <div
       className={[
-        "rounded-2xl border-2 shadow-2xl overflow-hidden rotate-1",
+        "clip-cut border-2 overflow-hidden rotate-1",
         isDraft
           ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
           : "border-[oklch(0.79_0.18_188/0.45)] dark:border-[oklch(0.79_0.18_188/0.30)] bg-card",
       ].join(" ")}
+      style={{
+        filter: isDraft ? undefined : "drop-shadow(0 8px 24px oklch(0.79 0.18 188 / 0.30))",
+      }}
     >
       <div
         className={[
@@ -414,7 +428,9 @@ function OverlayCard({
           <GripVertical
             className={[
               "h-5 w-5 shrink-0",
-              isDraft ? "text-slate-400 dark:text-slate-500" : "text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)]",
+              isDraft
+                ? "text-slate-400 dark:text-slate-500"
+                : "text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)]",
             ].join(" ")}
           />
         </div>
@@ -439,7 +455,9 @@ function OverlayCard({
           <span
             className={[
               "text-xs font-medium shrink-0",
-              isDraft ? "text-slate-400 dark:text-slate-500" : "text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]",
+              isDraft
+                ? "text-slate-400 dark:text-slate-500"
+                : "text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]",
             ].join(" ")}
           >
             {mins === 0 ? "Just formed" : `${mins}m ago`}
@@ -788,11 +806,11 @@ function OnDeckPanelInner({
             <button
               onClick={handlePublishAll}
               disabled={isPublishingAll}
-              className="shrink-0 flex items-center gap-1.5 rounded-lg
+              className="shrink-0 flex items-center gap-1.5 clip-cut-sm
                          bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
                          dark:bg-[oklch(0.79_0.18_188/0.25)] dark:hover:bg-[oklch(0.79_0.18_188/0.38)]
                          dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
-                         transition-colors px-4 min-h-[44px] text-sm font-semibold text-white
+                         transition-colors px-4 min-h-[44px] font-command text-[10px] uppercase tracking-[0.12em] text-white
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isPublishingAll ? "Publishing…" : "Publish All"}

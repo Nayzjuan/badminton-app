@@ -459,9 +459,7 @@ export function OrganizerDashboard({
   return (
     <div className={`min-h-screen ${SURFACE_BG}`}>
       {/* Top Header */}
-      <header
-        className={`sticky top-0 z-20 ${HEADER_BG} border-b border-[oklch(0.22_0.022_240)]`}
-      >
+      <header className={`sticky top-0 z-20 ${HEADER_BG} border-b border-[oklch(0.22_0.022_240)]`}>
         <div className="max-w-7xl mx-auto px-3 lg:px-6 py-3 lg:py-4">
           {/* ── Row 1: back link + mobile controls ── */}
           <div className="mb-2 flex items-center justify-between">
@@ -702,8 +700,8 @@ export function OrganizerDashboard({
                   onClick={handleToggleAuto}
                   disabled={togglingAuto}
                   aria-pressed={autoMatchmaking}
-                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2
-                              min-h-[44px] text-xs font-semibold transition-colors border
+                  className={`inline-flex items-center gap-1.5 clip-cut-sm px-3 py-2
+                              min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] transition-colors border
                               ${
                                 autoMatchmaking
                                   ? "bg-[oklch(0.79_0.18_188/0.14)] border-[oklch(0.79_0.18_188/0.50)] text-[oklch(0.79_0.18_188)] hover:bg-[oklch(0.79_0.18_188/0.22)]"
@@ -729,8 +727,8 @@ export function OrganizerDashboard({
                   href={`/tv/${session.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/30
-                             bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-white/80
+                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-white/30
+                             bg-white/10 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white/80
                              hover:bg-white/20 hover:text-white hover:border-white/50 transition-colors"
                   title="Open TV scoreboard in a new tab"
                 >
@@ -741,8 +739,8 @@ export function OrganizerDashboard({
                 {/* Share Session — desktop trigger */}
                 <button
                   onClick={() => setShareOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/40
-                             bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-white
+                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-white/40
+                             bg-white/10 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
                              hover:bg-white/20 hover:border-white/60 transition-colors"
                 >
                   <Share2 className="h-3.5 w-3.5" />
@@ -752,8 +750,8 @@ export function OrganizerDashboard({
                 {/* Close Session — desktop trigger */}
                 <button
                   onClick={() => setCloseOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-300/50
-                             bg-white/10 px-3 py-2.5 min-h-[44px] text-xs font-semibold text-red-300
+                  className="inline-flex items-center gap-1.5 clip-cut-sm border border-red-300/50
+                             bg-white/10 px-3 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-red-300
                              hover:bg-red-500/20 hover:border-red-300 transition-colors"
                 >
                   <Power className="h-3.5 w-3.5" />

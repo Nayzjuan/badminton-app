@@ -10,33 +10,33 @@
      - Barlow:     display font for big numerals + headings
      - JetBrains:  monospace (stats, codes, metadata pills)
      - Chakra:     organizer command-center bold / headings */
-  --font-sans:    var(--font-inter),    ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: var(--font-barlow),   var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-mono:    var(--font-jetbrains),ui-monospace, monospace;
-  --font-command: var(--font-chakra),   var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-barlow), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-command: var(--font-chakra), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
-  --color-background:           var(--background);
-  --color-foreground:           var(--foreground);
-  --color-card:                 var(--card);
-  --color-card-foreground:      var(--card-foreground);
-  --color-popover:              var(--popover);
-  --color-popover-foreground:   var(--popover-foreground);
-  --color-primary:              var(--primary);
-  --color-primary-foreground:   var(--primary-foreground);
-  --color-secondary:            var(--secondary);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted:                var(--muted);
-  --color-muted-foreground:     var(--muted-foreground);
-  --color-accent:               var(--accent);
-  --color-accent-foreground:    var(--accent-foreground);
-  --color-destructive:          var(--destructive);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-border:               var(--border);
-  --color-input:                var(--input);
-  --color-ring:                 var(--ring);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 
   /* Organizer-specific command-center teal — distinct from primary */
-  --color-command:              var(--command);
+  --color-command: var(--command);
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -47,73 +47,78 @@
 @layer base {
   /* ── Light mode — clean court, warm amber + emerald accents ─── */
   :root {
-    --background:              oklch(0.96 0.006 245);  /* pale slate floor */
-    --foreground:              oklch(0.12 0.018 245);  /* near-black ink */
-    --card:                    oklch(1 0 0);
-    --card-foreground:         oklch(0.12 0.018 245);
-    --popover:                 oklch(1 0 0);
-    --popover-foreground:      oklch(0.12 0.018 245);
-    --primary:                 oklch(0.55 0.16 155);   /* emerald (darker for white bg contrast) */
-    --primary-foreground:      oklch(1 0 0);
-    --secondary:               oklch(0.94 0.008 245);
-    --secondary-foreground:    oklch(0.12 0.018 245);
-    --muted:                   oklch(0.93 0.008 245);
-    --muted-foreground:        oklch(0.46 0.014 245);
-    --accent:                  oklch(0.68 0.17 62);    /* amber — energy, on-deck */
-    --accent-foreground:       oklch(0.12 0.018 245);
-    --destructive:             oklch(0.55 0.22 22);
-    --destructive-foreground:  oklch(1 0 0);
-    --border:                  oklch(0.86 0.010 245);
-    --input:                   oklch(0.93 0.008 245);
-    --ring:                    oklch(0.55 0.16 155);
-    --radius:                  0.875rem;
+    --background: oklch(0.96 0.006 245); /* pale slate floor */
+    --foreground: oklch(0.12 0.018 245); /* near-black ink */
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.12 0.018 245);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.12 0.018 245);
+    --primary: oklch(0.55 0.16 155); /* emerald (darker for white bg contrast) */
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.94 0.008 245);
+    --secondary-foreground: oklch(0.12 0.018 245);
+    --muted: oklch(0.93 0.008 245);
+    --muted-foreground: oklch(0.46 0.014 245);
+    --accent: oklch(0.68 0.17 62); /* amber — energy, on-deck */
+    --accent-foreground: oklch(0.12 0.018 245);
+    --destructive: oklch(0.55 0.22 22);
+    --destructive-foreground: oklch(1 0 0);
+    --border: oklch(0.86 0.01 245);
+    --input: oklch(0.93 0.008 245);
+    --ring: oklch(0.55 0.16 155);
+    --radius: 0.875rem;
 
     /* Organizer command-center teal (darker for light bg) */
-    --command:                 oklch(0.55 0.16 188);
+    --command: oklch(0.55 0.16 188);
 
     /* Legacy HSL tokens — kept for badminton-court + organizer panels.
        Same hues as before so existing colored elements stay consistent. */
-    --court-cyan-hsl:          180 100% 70%;
-    --court-lime-hsl:          80 100% 60%;
-    --amber-accent-hsl:        35 100% 60%;
+    --court-cyan-hsl: 180 100% 70%;
+    --court-lime-hsl: 80 100% 60%;
+    --amber-accent-hsl: 35 100% 60%;
   }
 
   /* ── Court Nights — dark theme, electric teal + amber on deep navy ─ */
   .dark {
-    --background:              oklch(0.07 0.012 245);
-    --foreground:              oklch(0.96 0.005 245);
-    --card:                    oklch(0.10 0.014 245);
-    --card-foreground:         oklch(0.96 0.005 245);
-    --popover:                 oklch(0.10 0.014 245);
-    --popover-foreground:      oklch(0.96 0.005 245);
-    --primary:                 oklch(0.76 0.17 155);   /* emerald — active, in queue */
-    --primary-foreground:      oklch(0.07 0.012 245);
-    --secondary:               oklch(0.18 0.018 245);
-    --secondary-foreground:    oklch(0.96 0.005 245);
-    --muted:                   oklch(0.14 0.016 245);
-    --muted-foreground:        oklch(0.56 0.012 245);
-    --accent:                  oklch(0.78 0.17 62);    /* amber — on-deck, warning */
-    --accent-foreground:       oklch(0.07 0.012 245);
-    --destructive:             oklch(0.65 0.2 22);
-    --destructive-foreground:  oklch(1 0 0);
-    --border:                  oklch(0.18 0.018 245);
-    --input:                   oklch(0.14 0.016 245);
-    --ring:                    oklch(0.76 0.17 155);
+    --background: oklch(0.07 0.012 245);
+    --foreground: oklch(0.96 0.005 245);
+    --card: oklch(0.1 0.014 245);
+    --card-foreground: oklch(0.96 0.005 245);
+    --popover: oklch(0.1 0.014 245);
+    --popover-foreground: oklch(0.96 0.005 245);
+    --primary: oklch(0.76 0.17 155); /* emerald — active, in queue */
+    --primary-foreground: oklch(0.07 0.012 245);
+    --secondary: oklch(0.18 0.018 245);
+    --secondary-foreground: oklch(0.96 0.005 245);
+    --muted: oklch(0.14 0.016 245);
+    --muted-foreground: oklch(0.56 0.012 245);
+    --accent: oklch(0.78 0.17 62); /* amber — on-deck, warning */
+    --accent-foreground: oklch(0.07 0.012 245);
+    --destructive: oklch(0.65 0.2 22);
+    --destructive-foreground: oklch(1 0 0);
+    --border: oklch(0.18 0.018 245);
+    --input: oklch(0.14 0.016 245);
+    --ring: oklch(0.76 0.17 155);
 
-    --command:                 oklch(0.79 0.18 188);   /* organizer dashboard accent */
+    --command: oklch(0.79 0.18 188); /* organizer dashboard accent */
 
-    --court-cyan-hsl:          180 100% 70%;
-    --court-lime-hsl:          80 100% 60%;
-    --amber-accent-hsl:        35 100% 60%;
+    --court-cyan-hsl: 180 100% 70%;
+    --court-lime-hsl: 80 100% 60%;
+    --amber-accent-hsl: 35 100% 60%;
   }
 
-  * { @apply border-border; }
+  * {
+    @apply border-border;
+  }
 
   body {
     @apply bg-background text-foreground;
     /* Inter OpenType features — modest tabular numerals + contextual alts.
        Keeps stats columns aligned without using a mono font for everything. */
-    font-feature-settings: "cv01" 1, "cv02" 1, "ss01" 1;
+    font-feature-settings:
+      "cv01" 1,
+      "cv02" 1,
+      "ss01" 1;
     text-rendering: optimizeLegibility;
   }
 
@@ -123,8 +128,12 @@
   }
 
   @keyframes leaderboard-flash {
-    0%   { background-color: oklch(0.68 0.17 62 / 0.25); }
-    100% { background-color: transparent; }
+    0% {
+      background-color: oklch(0.68 0.17 62 / 0.25);
+    }
+    100% {
+      background-color: transparent;
+    }
   }
 
   .dark [data-flash="true"] {
@@ -132,64 +141,162 @@
   }
 
   @keyframes leaderboard-flash-dark {
-    0%   { background-color: oklch(0.78 0.17 62 / 0.22); }
-    100% { background-color: transparent; }
+    0% {
+      background-color: oklch(0.78 0.17 62 / 0.22);
+    }
+    100% {
+      background-color: transparent;
+    }
   }
 
   /* ── Session Wrapped intro overlay ─────────────────────── */
-  @keyframes wi-fade   { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes wi-icon   { from { opacity: 0; transform: scale(0.3) rotate(-25deg); } to { opacity: 1; transform: scale(1) rotate(0deg); } }
-  @keyframes wi-up     { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes wi-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes wi-icon {
+    from {
+      opacity: 0;
+      transform: scale(0.3) rotate(-25deg);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) rotate(0deg);
+    }
+  }
+  @keyframes wi-up {
+    from {
+      opacity: 0;
+      transform: translateY(18px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
   @keyframes wi-word {
-    0%   { opacity: 0; transform: translateY(28px) scale(0.88); color: #F59E0B; }
-    30%  {             transform: translateY(6px)  scale(0.96); color: #FDE68A; }
-    65%  {                                                       color: #FFFFFF; }
-    100% { opacity: 1; transform: translateY(0)    scale(1);    color: #FFFFFF; }
+    0% {
+      opacity: 0;
+      transform: translateY(28px) scale(0.88);
+      color: #f59e0b;
+    }
+    30% {
+      transform: translateY(6px) scale(0.96);
+      color: #fde68a;
+    }
+    65% {
+      color: #ffffff;
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      color: #ffffff;
+    }
   }
   @keyframes wi-shimmer {
-    from { transform: translateX(-110%) skewX(-18deg); opacity: 0;   }
-    15%  {                                              opacity: 0.9; }
-    85%  {                                              opacity: 0.6; }
-    to   { transform: translateX(280%)  skewX(-18deg); opacity: 0;   }
+    from {
+      transform: translateX(-110%) skewX(-18deg);
+      opacity: 0;
+    }
+    15% {
+      opacity: 0.9;
+    }
+    85% {
+      opacity: 0.6;
+    }
+    to {
+      transform: translateX(280%) skewX(-18deg);
+      opacity: 0;
+    }
   }
   @keyframes wi-ring {
-    0%   { transform: scale(0.7); opacity: 0.7; }
-    60%  {                        opacity: 0.3; }
-    100% { transform: scale(4.0); opacity: 0;   }
+    0% {
+      transform: scale(0.7);
+      opacity: 0.7;
+    }
+    60% {
+      opacity: 0.3;
+    }
+    100% {
+      transform: scale(4);
+      opacity: 0;
+    }
   }
   @keyframes wi-float-r {
-    0%   { transform: translate(0, 0)        scale(1);   opacity: 0;   }
-    8%   {                                               opacity: 1;   }
-    88%  {                                               opacity: 0.6; }
-    100% { transform: translate(22px, -150px) scale(0.4); opacity: 0;  }
+    0% {
+      transform: translate(0, 0) scale(1);
+      opacity: 0;
+    }
+    8% {
+      opacity: 1;
+    }
+    88% {
+      opacity: 0.6;
+    }
+    100% {
+      transform: translate(22px, -150px) scale(0.4);
+      opacity: 0;
+    }
   }
   @keyframes wi-float-l {
-    0%   { transform: translate(0, 0)         scale(1);   opacity: 0;   }
-    8%   {                                                opacity: 1;   }
-    88%  {                                                opacity: 0.6; }
-    100% { transform: translate(-18px, -150px) scale(0.4); opacity: 0;  }
+    0% {
+      transform: translate(0, 0) scale(1);
+      opacity: 0;
+    }
+    8% {
+      opacity: 1;
+    }
+    88% {
+      opacity: 0.6;
+    }
+    100% {
+      transform: translate(-18px, -150px) scale(0.4);
+      opacity: 0;
+    }
   }
   @keyframes wi-breathe {
-    0%, 100% { transform: scale(1);    }
-    50%      { transform: scale(1.04); }
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.04);
+    }
   }
 
   /* ── VIP tag holographic shimmer ───────────────────────── */
   @keyframes vip-holo-shimmer {
-    0%   { background-position: 200% center; }
-    100% { background-position: -200% center; }
+    0% {
+      background-position: 200% center;
+    }
+    100% {
+      background-position: -200% center;
+    }
   }
 
   /* ── New design: status-dot pulse used in player header ──── */
   @keyframes status-pulse {
-    0%, 100% { opacity: 1;    }
-    50%      { opacity: 0.45; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
   }
 
   /* ── Match alert slide-up (full-screen takeover) ────────── */
   @keyframes match-alert-up {
-    from { transform: translateY(100%); }
-    to   { transform: translateY(0);    }
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
+    }
   }
 
   /* ════════════════════════════════════════════════════════
@@ -221,12 +328,29 @@
     );
   }
 
+  /* Single top-right chamfer — player cells (8px) and small badges (6px).
+     One-corner cut matches preview .player-card / .badge spec. */
+  .clip-cut-tr {
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  }
+  .clip-cut-badge {
+    clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+  }
+
   /* Organizer command-center accent — electric teal.
      Mapped from the --command CSS var; brighter on dark bg. */
-  .text-command { color: var(--command); }
-  .bg-command   { background-color: var(--command); }
-  .border-command { border-color: var(--command); }
-  .ring-command   { --tw-ring-color: var(--command); }
+  .text-command {
+    color: var(--command);
+  }
+  .bg-command {
+    background-color: var(--command);
+  }
+  .border-command {
+    border-color: var(--command);
+  }
+  .ring-command {
+    --tw-ring-color: var(--command);
+  }
 
   /* Glow drop-shadow for command-center elements (used sparingly
      on the active court tier). Falls back gracefully when filter
@@ -241,13 +365,19 @@
   /* Scan-line shimmer — used on "Now Playing" court cards.
      Subtle horizontal sheen that sweeps every 4s. */
   @keyframes scan-line {
-    0%   { transform: translateX(-110%); }
-    100% { transform: translateX(220%); }
+    0% {
+      transform: translateX(-110%);
+    }
+    100% {
+      transform: translateX(220%);
+    }
   }
 
   /* ── Reduced-motion ─────────────────────────────────────── */
   @media (prefers-reduced-motion: reduce) {
-    *, ::before, ::after {
+    *,
+    ::before,
+    ::after {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
