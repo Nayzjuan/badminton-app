@@ -230,7 +230,7 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
                 {context.outPlayerName.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-slate-900 dark:text-foreground truncate">
+                <p className="text-sm font-bold text-foreground truncate">
                   {context.outPlayerName}
                 </p>
                 <SkillBadge level={context.outPlayerSkill} className="mt-0.5" />
@@ -315,8 +315,8 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
               >
                 {/* Queue position number */}
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center
-                                 rounded-full bg-slate-100 dark:bg-muted
-                                 text-[10px] font-bold text-slate-500 dark:text-muted-foreground">
+                                 rounded-full bg-muted
+                                 text-[10px] font-bold text-muted-foreground">
                   {idx + 1}
                 </span>
 
@@ -336,9 +336,9 @@ export function SwapSheet({ context, queue, activeMatches, swapPlayer, onClose, 
                 {/* Paused badge OR selected checkmark */}
                 {player.is_paused ? (
                   <span className="flex items-center gap-1 rounded-full px-2 py-0.5
-                                   bg-slate-100 dark:bg-muted border border-slate-200 dark:border-border
+                                   bg-muted border border-border
                                    text-[10px] font-bold uppercase tracking-wider
-                                   text-slate-500 dark:text-muted-foreground shrink-0">
+                                   text-muted-foreground shrink-0">
                     <Pause className="h-2.5 w-2.5" />
                     Paused
                   </span>

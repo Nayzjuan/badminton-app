@@ -1,42 +1,40 @@
 import type { Metadata, Viewport } from "next";
-import { Space_Grotesk, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
+import { Inter, Barlow_Condensed, JetBrains_Mono, Chakra_Petch } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SerwistRegister } from "@/components/serwist-register";
 import { PwaNavBar } from "@/components/pwa-nav-bar";
 import "./globals.css";
 
-// Space Grotesk: geometric, slightly editorial — fits a fast-paced sports context
-// better than neutral Inter while staying completely legible.
+// ── New design font stack ─────────────────────────────────────
+// Inter:              body / UI default (player view) — exposed as --font-sans
+// Barlow Condensed:   display headings + huge numerals (leaderboard, court hero)
+// JetBrains Mono:     stats, metadata pills, monospace labels
+// Chakra Petch:       organizer command-center accent (geometric, sporty)
 //
-// `variable` exposes --font-space-grotesk so globals.css can wire it to
-// Tailwind's --font-sans. This makes font-sans resolve to Space Grotesk
-// everywhere (including Sonner toasts), not the system fallback.
-// Weight 300 removed — it is loaded but never used in any component.
-const spaceGrotesk = Space_Grotesk({
+// Each font exposes a CSS variable that globals.css wires to its semantic
+// role (--font-sans, --font-display, --font-mono, --font-command).
+const inter = Inter({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-space-grotesk",
+  weight: ["400", "500", "600", "700", "800", "900"],
+  variable: "--font-inter",
 });
-
-// Barlow Condensed: heavy condensed display type for the Stadium leaderboard.
-// Used exclusively inside the leaderboard tab — section title (52px italic 900),
-// podium rank numerals (68–88px), player names in rows (18px), win% (16px italic).
-// Exposed as --font-barlow-condensed; accessed via Tailwind arbitrary font-family.
-const barlowCondensed = Barlow_Condensed({
+const barlow = Barlow_Condensed({
   subsets: ["latin"],
   weight: ["700", "800", "900"],
   style: ["normal", "italic"],
-  variable: "--font-barlow-condensed",
+  variable: "--font-barlow",
 });
-
-// JetBrains Mono: monospaced for all stat columns in the Stadium leaderboard.
-// Ensures numeric columns align perfectly (tabular-nums is built in for mono).
-// Used for: rank #, GP, W-L, column headers, filter chips, movement delta, YOU tag.
-const jetbrainsMono = JetBrains_Mono({
+const jetbrains = JetBrains_Mono({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-jetbrains-mono",
+  variable: "--font-jetbrains",
+});
+const chakra = Chakra_Petch({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  style: ["normal", "italic"],
+  variable: "--font-chakra",
 });
 
 export const metadata: Metadata = {
@@ -83,8 +81,12 @@ export default function RootLayout({
     // suppressHydrationWarning prevents React from warning about the
     // class/style mismatch next-themes causes on the <html> element
     // between SSR and the first client render.
-    <html lang="en" suppressHydrationWarning className={`${spaceGrotesk.variable} ${barlowCondensed.variable} ${jetbrainsMono.variable}`}>
-      <body className={`${spaceGrotesk.className} antialiased pb-12`}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${inter.variable} ${barlow.variable} ${jetbrains.variable} ${chakra.variable}`}
+    >
+      <body className={`${inter.className} antialiased pb-12`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

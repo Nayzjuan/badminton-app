@@ -5,32 +5,38 @@
 
 /* ── Custom semantic tokens (mapped from CSS vars below) ─────── */
 @theme inline {
-  /* Wire Space Grotesk as the default sans stack.
-     --font-space-grotesk is emitted by next/font via the .variable class
-     on <html>. With this mapping, Tailwind's font-sans utility (and any
-     component that uses it — including Sonner toasts) always resolves to
-     Space Grotesk instead of the OS system font stack. */
-  --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* Font stacks — wired via next/font in layout.tsx
+     - Inter:      body / UI default (player view)
+     - Barlow:     display font for big numerals + headings
+     - JetBrains:  monospace (stats, codes, metadata pills)
+     - Chakra:     organizer command-center bold / headings */
+  --font-sans:    var(--font-inter),    ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-barlow),   var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono:    var(--font-jetbrains),ui-monospace, monospace;
+  --font-command: var(--font-chakra),   var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
-  --color-background:           hsl(var(--background));
-  --color-foreground:           hsl(var(--foreground));
-  --color-card:                 hsl(var(--card));
-  --color-card-foreground:      hsl(var(--card-foreground));
-  --color-popover:              hsl(var(--popover));
-  --color-popover-foreground:   hsl(var(--popover-foreground));
-  --color-primary:              hsl(var(--primary));
-  --color-primary-foreground:   hsl(var(--primary-foreground));
-  --color-secondary:            hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-muted:                hsl(var(--muted));
-  --color-muted-foreground:     hsl(var(--muted-foreground));
-  --color-accent:               hsl(var(--accent));
-  --color-accent-foreground:    hsl(var(--accent-foreground));
-  --color-destructive:          hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-border:               hsl(var(--border));
-  --color-input:                hsl(var(--input));
-  --color-ring:                 hsl(var(--ring));
+  --color-background:           var(--background);
+  --color-foreground:           var(--foreground);
+  --color-card:                 var(--card);
+  --color-card-foreground:      var(--card-foreground);
+  --color-popover:              var(--popover);
+  --color-popover-foreground:   var(--popover-foreground);
+  --color-primary:              var(--primary);
+  --color-primary-foreground:   var(--primary-foreground);
+  --color-secondary:            var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted:                var(--muted);
+  --color-muted-foreground:     var(--muted-foreground);
+  --color-accent:               var(--accent);
+  --color-accent-foreground:    var(--accent-foreground);
+  --color-destructive:          var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border:               var(--border);
+  --color-input:                var(--input);
+  --color-ring:                 var(--ring);
+
+  /* Organizer-specific command-center teal — distinct from primary */
+  --color-command:              var(--command);
 
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -39,82 +45,85 @@
 
 /* ── Base CSS variables ───────────────────────────────────────── */
 @layer base {
+  /* ── Light mode — clean court, warm amber + emerald accents ─── */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    --background:              oklch(0.96 0.006 245);  /* pale slate floor */
+    --foreground:              oklch(0.12 0.018 245);  /* near-black ink */
+    --card:                    oklch(1 0 0);
+    --card-foreground:         oklch(0.12 0.018 245);
+    --popover:                 oklch(1 0 0);
+    --popover-foreground:      oklch(0.12 0.018 245);
+    --primary:                 oklch(0.55 0.16 155);   /* emerald (darker for white bg contrast) */
+    --primary-foreground:      oklch(1 0 0);
+    --secondary:               oklch(0.94 0.008 245);
+    --secondary-foreground:    oklch(0.12 0.018 245);
+    --muted:                   oklch(0.93 0.008 245);
+    --muted-foreground:        oklch(0.46 0.014 245);
+    --accent:                  oklch(0.68 0.17 62);    /* amber — energy, on-deck */
+    --accent-foreground:       oklch(0.12 0.018 245);
+    --destructive:             oklch(0.55 0.22 22);
+    --destructive-foreground:  oklch(1 0 0);
+    --border:                  oklch(0.86 0.010 245);
+    --input:                   oklch(0.93 0.008 245);
+    --ring:                    oklch(0.55 0.16 155);
+    --radius:                  0.875rem;
+
+    /* Organizer command-center teal (darker for light bg) */
+    --command:                 oklch(0.55 0.16 188);
+
+    /* Legacy HSL tokens — kept for badminton-court + organizer panels.
+       Same hues as before so existing colored elements stay consistent. */
+    --court-cyan-hsl:          180 100% 70%;
+    --court-lime-hsl:          80 100% 60%;
+    --amber-accent-hsl:        35 100% 60%;
   }
 
-  /* ── Court Nights — grounded dark theme for a gym environment ─ */
-  /* Philosophy: deep navy base, warm amber primary, lime-green      */
-  /* accent. Feels like a lit sports hall, not a sci-fi terminal.   */
+  /* ── Court Nights — dark theme, electric teal + amber on deep navy ─ */
   .dark {
-    --background:              217 28% 8%;    /* deep navy court floor */
-    --foreground:              220 12% 92%;   /* warm off-white — readable, not ice-blue */
-    --card:                    217 25% 11%;   /* slightly lifted navy panel */
-    --card-foreground:         220 12% 92%;
-    --popover:                 217 25% 10%;
-    --popover-foreground:      220 12% 92%;
-    --primary:                 38 92% 52%;    /* warm amber — confident, energetic */
-    --primary-foreground:      217 28% 8%;    /* dark navy text on amber buttons */
-    --secondary:               217 20% 17%;   /* muted navy surface */
-    --secondary-foreground:    220 12% 92%;
-    --muted:                   217 20% 14%;   /* recessed surface */
-    --muted-foreground:        220 10% 52%;   /* legible grey, not too bright */
-    --accent:                  82 58% 40%;    /* warm lime-green — shuttlecock energy */
-    --accent-foreground:       0 0% 100%;
-    --destructive:             0 72% 52%;
-    --destructive-foreground:  0 0% 100%;
-    --border:                  217 18% 22%;   /* clean navy border, no color cast */
-    --input:                   217 25% 10%;
-    --ring:                    38 92% 52%;    /* amber focus ring */
+    --background:              oklch(0.07 0.012 245);
+    --foreground:              oklch(0.96 0.005 245);
+    --card:                    oklch(0.10 0.014 245);
+    --card-foreground:         oklch(0.96 0.005 245);
+    --popover:                 oklch(0.10 0.014 245);
+    --popover-foreground:      oklch(0.96 0.005 245);
+    --primary:                 oklch(0.76 0.17 155);   /* emerald — active, in queue */
+    --primary-foreground:      oklch(0.07 0.012 245);
+    --secondary:               oklch(0.18 0.018 245);
+    --secondary-foreground:    oklch(0.96 0.005 245);
+    --muted:                   oklch(0.14 0.016 245);
+    --muted-foreground:        oklch(0.56 0.012 245);
+    --accent:                  oklch(0.78 0.17 62);    /* amber — on-deck, warning */
+    --accent-foreground:       oklch(0.07 0.012 245);
+    --destructive:             oklch(0.65 0.2 22);
+    --destructive-foreground:  oklch(1 0 0);
+    --border:                  oklch(0.18 0.018 245);
+    --input:                   oklch(0.14 0.016 245);
+    --ring:                    oklch(0.76 0.17 155);
 
-    /* ── Court / accent tokens (used in badminton-court + badges) ── */
-    --court-cyan-hsl:          180 100% 70%; /* court lines, net, labels */
-    --court-lime-hsl:          80 100% 60%;  /* player name pills */
-    --amber-accent-hsl:        35 100% 60%;  /* mixed-level badge, revert button */
+    --command:                 oklch(0.79 0.18 188);   /* organizer dashboard accent */
+
+    --court-cyan-hsl:          180 100% 70%;
+    --court-lime-hsl:          80 100% 60%;
+    --amber-accent-hsl:        35 100% 60%;
   }
 
-  * {
-    @apply border-border;
-  }
+  * { @apply border-border; }
 
   body {
     @apply bg-background text-foreground;
-    /* Space Grotesk OpenType features:
-       cv01 — single-story 'a' (more geometric, matches the brand's sporty tone)
-       cv02 — single-story 'g' (same rationale — avoids the double-bowl look)
-       Both are subtle but cumulatively make the type feel more considered. */
-    font-feature-settings: "cv01" 1, "cv02" 1;
+    /* Inter OpenType features — modest tabular numerals + contextual alts.
+       Keeps stats columns aligned without using a mono font for everything. */
+    font-feature-settings: "cv01" 1, "cv02" 1, "ss01" 1;
     text-rendering: optimizeLegibility;
   }
 
   /* ── Leaderboard rank-change flash ──────────────────────── */
-  /* Triggered by setting data-flash="true" for 800ms via JS.  */
-  /* Clears automatically when the attribute is removed.        */
   [data-flash="true"] {
     animation: leaderboard-flash 0.8s ease-out forwards;
   }
 
   @keyframes leaderboard-flash {
-    0%   { background-color: hsl(38 92% 52% / 0.25); }
+    0%   { background-color: oklch(0.68 0.17 62 / 0.25); }
     100% { background-color: transparent; }
   }
 
@@ -123,77 +132,46 @@
   }
 
   @keyframes leaderboard-flash-dark {
-    0%   { background-color: hsl(38 92% 52% / 0.20); }
+    0%   { background-color: oklch(0.78 0.17 62 / 0.22); }
     100% { background-color: transparent; }
   }
 
   /* ── Session Wrapped intro overlay ─────────────────────── */
-  /* Keyframes that drive the staged reveal + enhancement      */
-  /* layers. All use transform + opacity only unless noted.    */
-
-  /* 1. Full-screen fade-in / fade-out */
-  @keyframes wi-fade {
-    from { opacity: 0; }
-    to   { opacity: 1; }
-  }
-
-  /* 2. Shuttlecock icon: tiny + rotated → full size */
-  @keyframes wi-icon {
-    from { opacity: 0; transform: scale(0.3) rotate(-25deg); }
-    to   { opacity: 1; transform: scale(1)   rotate(0deg);   }
-  }
-
-  /* 3. Standard text slide-up (SESSION label, name, stats) */
-  @keyframes wi-up {
-    from { opacity: 0; transform: translateY(18px); }
-    to   { opacity: 1; transform: translateY(0);    }
-  }
-
-  /* 4. "WRAPPED" slam + amber→white color flash.             */
-  /*    color IS animatable; GPU-composited props (transform,  */
-  /*    opacity) animate alongside it without conflict.        */
+  @keyframes wi-fade   { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes wi-icon   { from { opacity: 0; transform: scale(0.3) rotate(-25deg); } to { opacity: 1; transform: scale(1) rotate(0deg); } }
+  @keyframes wi-up     { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes wi-word {
     0%   { opacity: 0; transform: translateY(28px) scale(0.88); color: #F59E0B; }
     30%  {             transform: translateY(6px)  scale(0.96); color: #FDE68A; }
     65%  {                                                       color: #FFFFFF; }
     100% { opacity: 1; transform: translateY(0)    scale(1);    color: #FFFFFF; }
   }
-
-  /* 5. Diagonal shimmer sweep across WRAPPED text (one pass) */
   @keyframes wi-shimmer {
     from { transform: translateX(-110%) skewX(-18deg); opacity: 0;   }
     15%  {                                              opacity: 0.9; }
     85%  {                                              opacity: 0.6; }
     to   { transform: translateX(280%)  skewX(-18deg); opacity: 0;   }
   }
-
-  /* 6. Ring burst radiating from behind the icon */
   @keyframes wi-ring {
     0%   { transform: scale(0.7); opacity: 0.7; }
     60%  {                        opacity: 0.3; }
     100% { transform: scale(4.0); opacity: 0;   }
   }
-
-  /* 7. Particle float — rightward drift */
   @keyframes wi-float-r {
-    0%   { transform: translate(0, 0)      scale(1);   opacity: 0;   }
-    8%   {                                             opacity: 1;   }
-    88%  {                                             opacity: 0.6; }
-    100% { transform: translate(22px, -150px) scale(0.4); opacity: 0; }
+    0%   { transform: translate(0, 0)        scale(1);   opacity: 0;   }
+    8%   {                                               opacity: 1;   }
+    88%  {                                               opacity: 0.6; }
+    100% { transform: translate(22px, -150px) scale(0.4); opacity: 0;  }
   }
-
-  /* 8. Particle float — leftward drift */
   @keyframes wi-float-l {
-    0%   { transform: translate(0, 0)       scale(1);   opacity: 0;   }
-    8%   {                                              opacity: 1;   }
-    88%  {                                              opacity: 0.6; }
-    100% { transform: translate(-18px, -150px) scale(0.4); opacity: 0; }
+    0%   { transform: translate(0, 0)         scale(1);   opacity: 0;   }
+    8%   {                                                opacity: 1;   }
+    88%  {                                                opacity: 0.6; }
+    100% { transform: translate(-18px, -150px) scale(0.4); opacity: 0;  }
   }
-
-  /* 9. CTA soft breathe — very subtle, non-distracting pulse */
   @keyframes wi-breathe {
     0%, 100% { transform: scale(1);    }
-    50%       { transform: scale(1.04); }
+    50%      { transform: scale(1.04); }
   }
 
   /* ── VIP tag holographic shimmer ───────────────────────── */
@@ -202,20 +180,72 @@
     100% { background-position: -200% center; }
   }
 
-  /* ── Scrollbar hide utility ────────────────────────────── */
-  /* Used by Stadium leaderboard filter chips row to hide the  */
-  /* horizontal scrollbar while preserving swipe-to-scroll.   */
-  .scrollbar-hide {
-    scrollbar-width: none;        /* Firefox */
-    -ms-overflow-style: none;     /* IE / Edge */
-  }
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;                /* Chrome / Safari / Opera */
+  /* ── New design: status-dot pulse used in player header ──── */
+  @keyframes status-pulse {
+    0%, 100% { opacity: 1;    }
+    50%      { opacity: 0.45; }
   }
 
-  /* ── Reduced-motion: respect system preference ──────────── */
-  /* Collapses all CSS animations and transitions to near-zero  */
-  /* for users with vestibular disorders or motion sensitivity. */
+  /* ── Match alert slide-up (full-screen takeover) ────────── */
+  @keyframes match-alert-up {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0);    }
+  }
+
+  /* ════════════════════════════════════════════════════════
+     New design utilities — cut-corner clip-path, command teal
+     ════════════════════════════════════════════════════════ */
+
+  /* Cut-corner clip — used on organizer command-center cards.
+     The 18px chamfers on top-right and bottom-left give the cards
+     a sporty, geometric edge that reads as "command panel" rather
+     than generic web card. */
+  .clip-cut {
+    clip-path: polygon(
+      0 0,
+      calc(100% - 18px) 0,
+      100% 18px,
+      100% 100%,
+      18px 100%,
+      0 calc(100% - 18px)
+    );
+  }
+  .clip-cut-sm {
+    clip-path: polygon(
+      0 0,
+      calc(100% - 10px) 0,
+      100% 10px,
+      100% 100%,
+      10px 100%,
+      0 calc(100% - 10px)
+    );
+  }
+
+  /* Organizer command-center accent — electric teal.
+     Mapped from the --command CSS var; brighter on dark bg. */
+  .text-command { color: var(--command); }
+  .bg-command   { background-color: var(--command); }
+  .border-command { border-color: var(--command); }
+  .ring-command   { --tw-ring-color: var(--command); }
+
+  /* Glow drop-shadow for command-center elements (used sparingly
+     on the active court tier). Falls back gracefully when filter
+     is disabled. */
+  .glow-command {
+    filter: drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.45));
+  }
+  .glow-accent {
+    filter: drop-shadow(0 0 12px oklch(0.78 0.17 62 / 0.45));
+  }
+
+  /* Scan-line shimmer — used on "Now Playing" court cards.
+     Subtle horizontal sheen that sweeps every 4s. */
+  @keyframes scan-line {
+    0%   { transform: translateX(-110%); }
+    100% { transform: translateX(220%); }
+  }
+
+  /* ── Reduced-motion ─────────────────────────────────────── */
   @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after {
       animation-duration: 0.01ms !important;

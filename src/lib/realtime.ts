@@ -167,44 +167,6 @@ export function subscribeToMatchPlayers(
   };
 }
 
-export function subscribeToMatchGames(
-  supabase: TypedClient,
-  sessionId: string,
-  onChange: ChangeHandler<Database["public"]["Tables"]["match_games"]["Row"]>
-) {
-  const channelName = `match_games:${sessionId}`;
-
-  const channel = supabase
-    .channel(channelName)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "match_games" },
-      (payload) => {
-        console.log(`[realtime] ${channelName} event:`, payload.eventType);
-        onChange(payload as RealtimePostgresChangesPayload<Database["public"]["Tables"]["match_games"]["Row"]>);
-      }
-    )
-    .subscribe((status, err) => {
-      if (err) {
-        console.error(`[realtime] ${channelName} subscription error:`, err);
-      } else {
-        console.log(`[realtime] ${channelName} →`, status);
-      }
-    });
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}
-
-export function subscribeToSessionOrganizers(
-  supabase: TypedClient,
-  sessionId: string,
-  onChange: ChangeHandler<Database["public"]["Tables"]["session_organizers"]["Row"]>
-) {
-  return subscribeToTable(supabase, "session_organizers", sessionId, onChange);
-}
-
 /**
  * Subscribe to all profile changes. Profiles have no session_id, so
  * this subscribes broadly — the callback should re-fetch relevant

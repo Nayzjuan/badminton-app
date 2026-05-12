@@ -7,290 +7,134 @@
 
 ## SESSION STATE (Last Updated: 2026-05-12)
 
-### What Was Accomplished This Session — Dual-State Player Fix: F1-F5 (2026-05-12)
+### What Was Accomplished This Session — New UI Port (organizer + player) — ALL CHUNKS COMPLETE
 
-**Root cause analysis (no code written):** Identified 5 ways a player can appear simultaneously in two inconsistent states (queue_entries status vs match_players membership). See findings F1-F5 below.
+**Goal:** port `preview-revamp.html` (organizer) + `preview-player.html` (player) designs into the real Next.js app.
 
-**4 new migrations + 5 hotfixes applied to local + production `usxftpexoimletqmrggb`:**
+**Foundation:**
+- `src/app/globals.css` — HSL tokens → OKLCH. Both light + dark modes defined. New utility classes: `.clip-cut` / `.clip-cut-sm` (cut-corner polygon clip-path for organizer command-center cards), `.text-command` / `.bg-command` / `.glow-command` (electric teal `oklch(0.79 0.18 188)`), `.glow-accent`. New keyframes: `status-pulse` (1.4s pulse for status dots), `match-alert-up` (slide-up overlay), `scan-line`. Legacy `--court-cyan-hsl`/`--court-lime-hsl`/`--amber-accent-hsl` preserved for `badminton-court.tsx` + amber pills.
+- `src/app/layout.tsx` — Space Grotesk replaced with **Inter** (`--font-inter`, sans default) + **Barlow Condensed** italic (`--font-barlow`, headings) + **JetBrains Mono** (`--font-jetbrains`, stats/metadata) + **Chakra Petch** (`--font-chakra`, organizer command-center). All four variables on `<html>`.
 
-- `20260511210001_atomic_server_actions_hotfix` — security + bug fixes for `checkout_player_cleanup_drafts` and `publish_match` (were missing from production; applied now).
-- `20260512200000_fix_swap_player_toctou` — adds 3 DB-level guards inside `swap_player_in_match`: Guard A (`SELECT FOR UPDATE` on incoming player's `queue_entries` row), Guard B (post-lock conflict check — incoming player not in another active `match_players` row), Guard C (`SELECT FOR UPDATE` on the match row). Global lock order: `queue_entries` → `matches`.
-- `20260512200001_atomicize_clear_on_deck_match` — initial `clear_on_deck_match_atomic` RPC (superseded by 200004).
-- `20260512200002_fix_remove_from_queue` — new `remove_player_from_queue_organizer(p_session_id, p_player_id) RETURNS UUID[]` RPC: locks queue row, removes player from all pending match rosters (published + draft), cancels under-strength matches, restores other players, sets status='left'. Lock order: `queue_entries` → `matches`.
-- `20260512200003_atomicize_revert_match` — new `revert_match_to_active(p_match_id, p_session_id) RETURNS TEXT` RPC: atomically reverts match to 'in_progress' and bulk-reverts all 'waiting' roster players to 'playing' via single JOIN UPDATE.
-- `20260512200004_fix_clear_on_deck_lock_order` — hotfix for 200001: restructures `clear_on_deck_match_atomic` into 6 steps to enforce `queue_entries` → `matches` lock order (prevents deadlock with `remove_player_from_queue_organizer`).
+**Player view (rewrites):**
+- `match-alert.tsx` — full rewrite. Full-screen slide-up overlay, `position: absolute inset-0 z-30` inside the status tabpanel. Two states: amber on-deck ("Heads Up." hero, position-aware copy "X of Y on deck"), navy in_progress (massive COURT N hero, emerald pulse). Optional Mixed Level banner. NEW props: `onLeaveQueue` (renders bottom Leave Queue button with sonner error toast), `scoreSlot?: ReactNode` (renders ScoreInputCard inside the overlay so it isn't occluded). rAF mount animation with proper cleanup.
+- `queue-status.tsx` — full rewrite. Full-canvas big-numeral design (88px Barlow Condensed `#3`), inline context, thin amber rule, stats row (waited · games · skill). NEW props: `skillLevel?`, `approaching?` (amber radial glow + amber numeral when position ≤ 2).
+- `on-deck-alert.tsx` — simplified to approaching-banner only (small amber/sky pill for waiting players at positions 1–4). MatchAlert owns the pending/in_progress full-screen states.
 
-**Server action updates:**
+**Player view (refactors):**
+- `player-dashboard.tsx` — `<main className="relative flex-1 overflow-hidden">`. MatchAlert is scoped INSIDE `{activeTab === "status" && (...)}` block (so tabs stay switchable during active match). Passes `scoreSlot={<ScoreInputCard/>}` when in_progress. `MyStatusTab` active-match branch returns `null` (overlay handles everything). `QueueSubTab` rewritten: full-canvas "Ready to play?" empty state, inline Leave Queue button (no more `QueueToggle` component). New props: `skillLevel`, `sessionName`.
+- `live-courts-tab.tsx`, `waitlist-tab.tsx`, `match-history.tsx`, organizer files — batch sed semantic-token cleanup (`bg-white dark:bg-card` → `bg-card`, etc.).
 
-- `src/app/actions/swap-player.ts` — `swapPlayerInMatch`: maps `PLAYER_UNAVAILABLE` and `MATCH_STARTED` exception strings from RPC to typed `SwapErrorCode` return values.
-- `src/app/actions/match.ts` — `clearOnDeckMatch`: tries `clear_on_deck_match_atomic` RPC first; falls back to old non-atomic JS sequence on PGRST202. `updateMatchDetails` revertToActive path: tries `revert_match_to_active` RPC first; falls back on PGRST202. Court-handling logic kept in JS (not part of player-state race condition).
-- `src/app/actions/queue.ts` — new `removePlayerFromQueue(sessionId, playerId)` server action: auth + organizer check, calls `remove_player_from_queue_organizer` RPC, falls back to raw UPDATE on PGRST202.
-- `src/hooks/use-organizer-data.ts` — `removeFromQueue` callback replaced: now calls `removePlayerFromQueueAction` server action instead of direct RLS client UPDATE.
-- `src/types/database.ts` — added 3 new RPC type entries: `clear_on_deck_match_atomic`, `revert_match_to_active`, `remove_player_from_queue_organizer`.
+**Leaderboard:**
+- `stadium-leaderboard.tsx` — NEW. 6-region Stadium layout: header (Barlow 52px italic LEADERBOARD + amber player count + refresh) → YOU strip (amber gradient bar) → asymmetric podium [#2 left][#1 center taller w/ ghost watermark + lightning bolt streak][#3 right] → sort bar (visual only) → 6-col header → tail rows.
+- `leaderboard-page.tsx` — when `variant === "player-panel"`, short-circuits to `<StadiumLeaderboard rows={sessionRows} onRefresh={handleRefresh} />`. organizer-panel + standalone variants unchanged.
 
-**Validation:** `npx tsc --noEmit` clean. `npm run lint` clean (source files only; `.agents/skills/` third-party noise is pre-existing). `npm run test:integration` 156/156 passing (16 files). **Independent code-review verdict: Needs fixes → fixed → LGTM** (lock ordering inversion in `clear_on_deck_match_atomic` caught and fixed with migration 200004).
+**Organizer:**
+- `active-courts.tsx` — in_progress emerald glow swapped to electric command-teal (`oklch(0.79 0.18 188)`). Background hex `#0D1B2A` → `oklch(0.10 0.014 245)`.
 
-**ESLint note:** The `react-hooks/refs` rule (React Compiler lint) fires on the `ref.current = fn` render-time assignments in `use-organizer-data.ts`. These are intentional (mutable-ref-callback pattern). Added `// eslint-disable-next-line react-hooks/refs` on each of the 4 assignment lines. The original `// eslint-disable-next-line react-hooks/exhaustive-deps` comment on the `useEffect` dep array was removed (was marked unused by ESLint — `exhaustive-deps` doesn't flag that hook's deps).
+**Code Review Gate (3-cycle):**
+1. **Build + typecheck pass** after each chunk.
+2. **Initial regression sweep** caught: missing `onLeaveQueue` wiring → fixed.
+3. **Independent reviewer Cycle A** flagged 3 blockers: (a) ScoreInputCard occluded behind opaque overlay, (b) hardcoded "9:41" mock chrome leaked from preview HTML, (c) overlay covered ALL tabs making the tab bar dead during active match. All three fixed by adding `scoreSlot` prop + removing chrome + scoping overlay inside the status tabpanel.
+4. **Independent reviewer Cycle B (re-review)** verdict: **Minor issues** (acceptable pass per CLAUDE.md). Three blockers confirmed gone; 3 of 4 minor issues fully fixed; one follow-up logged below.
 
-**F3 closes automatically** — F3 required F1's concurrent swap as a prerequisite. F1 fix eliminates the scenario.
+**Files changed:** 19 files, +~1,900 / −~1,150 lines.
 
----
+**Validation:** `npx tsc --noEmit` exit 0 · `npm run build` exit 0.
 
-### What Was Accomplished This Session — swap_player_in_match Step f regression FIXED (2026-05-12, continued)
+### Critique Fix Pass (2026-05-12) — ALL ITEMS COMPLETE
 
-**Added migration `supabase/migrations/20260512000000_restore_swap_player_origin_flip.sql`** that re-issues `swap_player_in_match` with the same `(UUID, UUID, UUID, UUID, TEXT, BOOLEAN)` signature, Steps a–e copied verbatim from `20260511000001_swap_player_drafted_status.sql`, plus the restored Step f:
+Applied all P0–P3 issues surfaced by `/critique` + user answers:
 
-```sql
-UPDATE matches
-SET    origin = 'modified'::public.match_origin
-WHERE  id = p_match_id
-  AND  origin = 'auto'::public.match_origin;
-```
+**P0 fixes:**
+- `match-alert.tsx` — "Heads Up." h2 scaled from 28px → `clamp(56px, 16vw, 88px)` Barlow Condensed italic
+- `match-alert.tsx` — amber canvas: `bg-amber-400` replaced with explicit `backgroundColor: "oklch(0.78 0.17 62)"` so it's identical in both light/dark modes (no CSS-var ambiguity). All `dark:text-amber-*` variants on amber-tone paths removed — text stays dark amber on bright amber canvas in both modes.
+- `player-dashboard.tsx` — removed `className="relative"` from the status tabpanel div (it was stealing the containing block from `main.relative`, making the `absolute inset-0` overlay render 0px tall)
 
-The `WHERE origin = 'auto'` guard is the sticky rule — `'manual'` and `'modified'` are untouched.
+**P1 fixes:**
+- `match-alert.tsx` — `SKILL_DOT` 6-level map collapsed to `SKILL_TIER` 3-tier (BEG/INT/ADV with dot + text label). `PlayerRow` renders abbreviation text for quick scanning.
+- `player-dashboard.tsx` — `ScoreInputCard` score inputs: `max={99}` → `max={30}`. Added JS guard `if (a > 30 || b > 30) setError("Badminton scores are 0–30.")`.
 
-**Application path:** Supabase CLI not installed locally, so the migration was applied via a one-shot `node + pg` script using the `DATABASE_URL` in `tests/integration/.env`. Verified at the `pg_catalog` level (`pg_get_functiondef`) that the installed function now contains both `origin = 'auto'` and `origin = 'modified'`.
+**P2 fixes:**
+- `player-dashboard.tsx` — header right side completely refactored. ThemeToggle + SignOutButton + Leave Session collapsed into a `MoreVertical` overflow menu (`useRef` click-outside handler, controlled `AlertDialog` via `leaveDialogOpen` state — no `AlertDialogTrigger` needed). Status dot stays visible. Header now has 2 elements on the right (status dot + MoreVertical) instead of 5.
 
-**Test unskip:** `M-5` in `tests/integration/manual-and-swap.test.ts` was the contract test that detected the regression; it is now unskipped with a shortened comment pointing at the restore migration as the contract guard.
+**P3 fixes (emoji removal):**
+- `match-alert.tsx` — `⚠` text replaced with `<AlertTriangle>` Lucide icon in MixedLevelBanner. `🏸` removed from all detailText strings.
+- `player-dashboard.tsx` — `⏸` replaced with `<PauseCircle>` in paused state. `✅` replaced with `<CheckCircle2>`. `📊` replaced with `<BarChart2>`.
 
-**Validation:** `npm run test:integration` 144/144 passing (zero skips, was 143 + 1 skipped). `npx tsc --noEmit` clean. `npm run lint` clean for the new migration and the edited test. **Independent code-review verdict: LGTM** (SQL byte-equivalent to the canonical Step f from `20260502000000`; signature match confirmed; no side-effects on `swap_match_players` or the `match_origin` enum).
+**Motion differentiation:**
+- in_progress overlay: 380ms `cubic-bezier(0.16, 1, 0.3, 1)` (sharp, snap-to-action)
+- pending overlay: 550ms `cubic-bezier(0.22, 1, 0.36, 1)` (breathing, "get ready")
 
-**Updated `APP_MANIFEST.md` Section 9 #26** — flipped the gotcha entry from "regression" to "fixed", citing the restore migration and the verifying test.
+**Leaderboard color fixes:**
+- `stadium-leaderboard.tsx` — #3 podium rank: `dark:text-amber-800` → `dark:text-amber-500` (was near-invisible on dark bg)
+- PodiumCell losses: `text-muted-foreground` → `text-destructive` (matches tail-row convention)
+- PodiumCell win%: `text-muted-foreground` → `text-foreground/70` (more legible)
 
----
+**Code review gate:** 2-cycle. Cycle 1 caught overlay 0px-tall bug (tabpanel relative stealing containing block). Fixed. Cycle 2: LGTM.
 
-### What Was Accomplished This Session — TDD foundational matrix back-fill (2026-05-12)
+### Light/Dark Mode Audit Pass (2026-05-12) — ALL ITEMS COMPLETE
 
-**Audited the 7 core workflows** (session creation, joining, match generation, manual draft adjustments, publishing, alerts, completion) against the existing 103-test integration suite + 10 E2E scenarios. Identified gaps and back-filled with **+41 net new tests** (143/143 passing + 1 skipped).
+Fixed all components that had no light mode counterpart or broken light mode colors.
 
-**3 new integration suites:**
+**match-alert.tsx — in_progress overlay (full theme adaptation):**
+- Container: `bg-[oklch(0.07_0.012_245)]` → `bg-background` (semantic token, adapts automatically)
+- Status badge: hardcoded dark emerald tint → `bg-emerald-50 dark:bg-emerald-500/15 ring-1 ring-emerald-200 dark:ring-emerald-500/30`
+- Badge text: `text-emerald-300` → `text-emerald-700 dark:text-emerald-300`
+- "Active Court" label: `text-slate-400` → `text-muted-foreground`
+- Court name: `text-emerald-400` → `text-primary dark:text-emerald-400`
+- Divider: `bg-slate-700/40` → `bg-border`
+- TeamsGrid navy labels: `text-slate-300/400` → `text-muted-foreground / text-muted-foreground/60`
+- PlayerRow navy names: `text-white/slate-200` → `text-foreground / text-foreground/80`
+- MixedLevelBanner navy: dark-only classes → light+dark pairs throughout
+- LeaveQueueButton navy: dark-only classes → semantic + dark: overrides
 
-- **Suite K — `tests/integration/session-lifecycle.test.ts`** (seed 11001, 13 tests)
-  - `createSession`: passcode upper-cased, duplicate active-passcode rejected (23505 unique constraint), name length > 60 rejected, passcode length > 20 rejected, unauth rejected
-  - `handle_new_session` trigger: inserts `session_organizers` row for `created_by`
-  - `joinAsCoOrganizer`: valid-passcode happy path, idempotent (no duplicate row), generic invalid-passcode message (no info leak), primary-organizer rejected, closed-session rejected
-  - `toggleAutoMatchmaking`: organiser flips false→true→false (atomic via `toggle_auto_matchmaking` RPC), non-organiser rejected with no DB write
+**stadium-leaderboard.tsx — podium cell backgrounds:**
+- #1 cell: removed inline `style={{ background: "oklch(0.15...)" }}`, moved to className with `bg-[oklch(0.91_0.014_245)] dark:bg-[oklch(0.15_0.018_245)]`
+- isMe (non-first) cell: `oklch(0.78 0.17 62 / 0.06)` inline style → `bg-accent/10` className
+- Ghost watermark: 7% → 14% opacity (visible in both modes)
+- YOU strip gradient: 12% → 18% opacity (visible in both modes)
+- #2 rank color: `text-muted-foreground` → `text-foreground/50 dark:text-muted-foreground` (more contrast in light)
+- #3 rank color: previous fix `dark:text-amber-800` → `dark:text-amber-500` preserved
 
-- **Suite L — `tests/integration/queue-join.test.ts`** (seed 10001, 8 tests)
-  - `joinQueueAction` first-time empty session → games_played=0
-  - **Inherited Games rule**: first-time joiner with veterans at 3 games → newcomer gets games_played=3
-  - Returning 'left' player rejoin: `joined_at` refreshed, games_played = MAX(existing, floor)
-  - Drafted/on_deck/playing rejoin all rejected with "currently in a match" message
-  - Unauth rejected with no DB write
-  - `checkoutPlayer` → status='left' AND removes player from unpublished draft (cancels draft when < 4 players)
+**live-courts-tab.tsx:**
+- CourtMatchCard in_progress: `#0D1B2A` hex → `oklch(0.10 0.014 245)` + box-shadow converted from rgba() to oklch()
 
-- **Suite M — `tests/integration/manual-and-swap.test.ts`** (seed 9101, 12 passed + 1 skipped)
-  - `createManualMatchAction`: origin='manual', is_published=true, players → on_deck (skip drafted)
-  - 3 negative paths: non-organiser, player not in session, player status='left' (Guard 0)
-  - `swap_player_in_match` sticky-rule: manual stays manual, modified stays modified
-  - `swapPlayerInMatch` action guards: PLAYER_UNAVAILABLE, PLAYER_NOT_IN_MATCH, MATCH_STARTED
-  - `swap_match_players`: auto+auto → both modified; manual+auto → manual sticky, auto becomes modified
-  - Hygiene: cancel after swap returns CURRENT roster + outgoing player to 'waiting', games_played untouched
-  - **M-5 SKIPPED** with regression block — see below
+**preview-player.html:**
+- Added ~45 `[data-theme="light"]` overrides for leaderboard (`.lbs-*`), in-progress overlay (`.match-alert.in-progress`, `.alert-*`, `.score-*`), and waitlist (`.wl-*`)
 
-**2 extended suites:**
+**Code review gate:** 2-cycle. Cycle 1: LGTM with minor issues. Fixed #1 podium dark-mode bg distinction. Remaining minor: LeaveQueueButton navy uses non-semantic slate classes — logged, low priority.
 
-- **Suite A (`matchmaking.test.ts`) +2 tests**: Test 9 paused-player exclusion (engine excludes `is_paused=true` from candidate pool); Test 10 partnership-cap saturation (4 players × 6 completed matches via 2-cycle Round-Robin → all 6 pairs hit `MAX_PARTNERSHIP_REPEATS=2` → engine forms zero new matches, players stay 'waiting').
+### Waitlist Sporty Revamp (2026-05-12) — COMPLETE
 
-- **Suite F (`score-submission.test.ts`) +5 tests** (F-cancel-1..5): `cancelMatchAction` flips status='cancelled', writes completed_at, scores stay null; **games_played NOT incremented (the key contract distinction from `endMatchAction`)**; non-organiser rejected with NO queue mutation; CAS double-cancel idempotent; 'left' players preserved (not pulled back to 'waiting').
+Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max` + `/typeset`.
 
-**Regression detected during M-5 RED phase (2026-05-12):**
+**Design direction:** Live sports timing screen / tournament bracket row aesthetic.
 
-`swap_player_in_match` lost Step f (origin promotion `auto` → `modified`). Original migration `20260502000000_match_origin_tracking.sql` had Step f. Two later rewrites silently dropped it: `20260509000000_swap_player_draft_aware.sql` and `20260511000001_swap_player_drafted_status.sql`. `swap_match_players` (separate RPC) is NOT affected — Suite M-11 / M-12 confirm it still flips origin. M-5 is `it.skip`ped with a detailed REGRESSION block. A follow-up task was spawned to add a fix-up migration that re-adds Step f.
+**Key changes:**
+- No card wrapper — raw horizontal dividers like a live standings table
+- Zero-padded Barlow Condensed italic rank numbers: `01`, `02`… (hero of each row)
+- Rank colour-coded: `#1 = text-accent` (amber), `#2–4 = text-primary` (emerald), rest = muted
+- "You" row: full amber canvas `oklch(0.78 0.17 62)` (consistent with on-deck overlay), amber-950 dark text
+- `NEXT COURT` zone divider (positions 1–4 = hot zone, first to be called)
+- `WAITING` zone divider (tail queue)
+- GP shown as large JetBrains Mono numeral (not "X games" label)
+- BEG/INT/ADV skill abbreviations (3-tier, same as match-alert)
+- `LINEUP` header with live pulsing emerald dot + amber player count in Barlow Condensed italic
+- Removed SkillBadge pill component (replaced with text abbreviations for sporty density)
+- Full light + dark mode: all colours semantic or OKLCH with explicit values where needed
+- HTML prototype (`preview-player.html`) updated with matching CSS + HTML
 
-**Validation gates:** `npx tsc --noEmit` clean, `npm run lint` clean for all new/extended files, `npm run test:integration` 143 passed + 1 skipped (15 files). Code-review verdict: **Minor issues** (5 polish items applied: bumped seed 9001→9101 to avoid collision with drafted-status, comment on L-2's `is_auto_matchmaking_on=false` dependency, comment on K-2 trigger-as-sole-inserter, M-13 added pre-cancel checkpoint asserting swap restored p0, F-cancel-3 added queue-untouched backstop).
+**Code review:** LGTM (first pass). All TypeScript correct, contrast passes WCAG AA, no regressions.
 
-**Dropped from plan with rationale:**
+**.impeccable.md created** at project root with design context: fast · competitive · electric; sporty-futuristic athletic precision; references tournament brackets/F1 timing screens.
 
-- fetchSeq race-guard unit test → React-hook-internal pattern; testing it would either duplicate the implementation or require React Testing Library hook infrastructure that the project doesn't have wired up. Behaviour is exercised end-to-end by `scenario-e` and `scenario-j` Playwright tests.
-- Multi-set scoring (`match_games`) and H2H ledger (`player_rivalries` / `player_partnerships`) tests → no current Server Action writes `match_games` on completion (only used in `v_match_history` aggregation); ledger writes happen inside `closeSession` and are Suite B territory.
+### Follow-up items (non-blocking)
 
-**Next session candidates:** (a) execute the spawned follow-up to restore Step f and unskip M-5; (b) optionally add ledger-write assertions to Suite B (`closeSession` → `refresh_cross_session_stats` → `player_rivalries`/`player_partnerships`); (c) optionally add a focused unit test for `usePlayerMatch.hasActiveMatch` gate semantics if React-hook unit infra is set up.
+- **Stray slate utility classes in `match-history.tsx` + `waitlist-tab.tsx`** — some decorative slate utilities remain (rank-badge `bg-slate-800 dark:bg-slate-600`, draw-state `border-slate-300`, neutral `bg-slate-400 text-white dark:bg-slate-600`). They're semantic (representing "neutral" or "rank-1-4 highlight" states, not theme-aware containers) and have proper `dark:` variants, so they won't break dark mode. Off-token vs. the rest of the cleanup pass — log as polish work.
+- **`.clip-cut` utility unused** — defined in globals.css but not applied. The naive apply on `active-courts.tsx` broke the glow (`box-shadow` is clipped by clip-path). Needs a wrapper-with-`filter: drop-shadow` refactor to ship.
+- **Stadium leaderboard has no Filter chips / Sort buttons** — preview design includes "THIS SESSION / ALL-TIME / LAST 30" filter chips and SORT | RANK | WIN% | WINS | STREAK buttons. Current implementation has neither (would need new state in `leaderboard-page.tsx`).
 
----
-
-### What Was Accomplished This Session — RPC behavioral integration tests (2026-05-11)
-
-**Added `tests/integration/rpc-behaviors.test.ts`** — 15 tests across two suites (H + I) covering the security-sensitive RPCs added in `20260511000002_missing_rpcs.sql`.
-
-**Suite H — `elevate_to_organizer` (7 tests):**
-
-- H-1: Correct passcode → `true`, row inserted into `session_organizers`
-- H-2: Wrong passcode → `false`, no row
-- H-3: No passcode set on session → `false`
-- H-4: Inactive (closed) session → `false`
-- H-5: Idempotent — committed pre-existing row + second call hits `ON CONFLICT DO NOTHING`, returns `true`, no duplicate
-- H-6: Primary organizer (trigger row already exists) → idempotent, `true`, no duplicate
-- H-7: Non-existent session UUID → `false`
-
-**Suite I — `rejoin_queue` (8 tests):**
-
-- I-1: `left` → `waiting`, `joined_at` refreshed to `now()`
-- I-2: `waiting` player → no-op (status + `joined_at` unchanged)
-- I-3: `on_deck` player → no-op
-- I-4: `drafted` player → no-op (cannot escape a draft via rejoin)
-- I-5: No queue entry → no-op, no row created
-- I-6: Only the calling player's entry is affected (other players' `left` entries unchanged)
-- I-7: `games_played` preserved on rejoin
-- I-8: `playing` player → no-op
-
-**Auth injection technique:** `set_config('request.jwt.claim.sub', userId, true)` via `pg.PoolClient` inside `withTx`. This mirrors exactly what PostgREST injects for every authenticated request — `auth.uid()` reads from `request.jwt.claim.sub`. `SET LOCAL` does not accept `$1` params; `set_config()` is the parameterized equivalent.
-
-**Two independent code reviews: LGTM** (second pass after fixing H-5 and adding I-8).
-
-**Full suite: 103/103 passing** (12 test files).
-
----
-
-### What Was Accomplished This Session — Fixed all pre-existing integration test failures (2026-05-11)
-
-**Integration test suite now 88/88 passing** (up from 82/88 — 6 pre-existing failures fixed).
-
-**Fixes made:**
-
-1. **`matchmaking.test.ts` Test 2** — Updated assertion from `waiting` → correct behavior: 4 players in the engine-created draft get `drafted`, the other 4 remain `waiting` (pool diversity cap stops the engine at 1 draft with 8 players). Test now fetches the draft's `match_players`, categorizes each player as in-draft vs not, and asserts accordingly.
-
-2. **`matchmaking.test.ts` Test 7** — Added `.neq("id", preExistingMatchId)` when querying new engine-created drafts. The pre-existing match (status=pending, is_published=false) was being included in the "new draft" query, making p1-p4 appear as if the engine had re-booked them.
-
-3. **`concurrency.test.ts` Test 1** — Changed `makeMatch` → `makeMatchViaRpc`. `publishMatchAction` guards with `.eq("status", "drafted")`; using the raw DB insert left queue entries as `waiting` and the status update silently no-opped. `makeMatchViaRpc` correctly sets entries to `drafted` via the RPC.
-
-4. **`schema-parity.test.ts`** — Created `supabase/migrations/20260511000002_missing_rpcs.sql` adding `elevate_to_organizer(p_session_id uuid, p_passcode text) RETURNS boolean` and `rejoin_queue(p_session_id uuid) RETURNS void`. Both are SECURITY DEFINER with SET search_path, use `auth.uid()`, and have GRANT EXECUTE TO authenticated.
-
-5. **`auth.real.test.ts`** — Updated to accept `AuthSessionMissingError` for unauthenticated calls. `@supabase/supabase-js` v2.103.0 returns a typed error (not null) when there is no session. The mock intentionally still returns `error: null` (actions only guard `if (!user)`).
-
-6. **`src/types/database.ts`** — Added `is_auto_matchmaking_on` to `SessionInsert`'s optional picks. The factory was passing this field in the insert but the type didn't permit it (TS2769 error).
-
-**Code review verdict: LGTM** (independent agent reviewed all 6 fixes).
-
----
-
-### What Was Accomplished This Session — drafted status tests + E2E + hasActiveMatch fix (2026-05-11, continued)
-
-**E2E tests: 3/3 passing (J-A, J-B, J-C).** All scenario-J tests pass headless against live Vercel.
-
-**Critical architecture fix — `hasActiveMatch` gate (`player-dashboard.tsx`):**
-
-Root cause: `usePlayerMatch` returns draft matches (`is_published=false, status=pending`) as `currentMatch`, making `hasActiveMatch=true` even for drafted/waiting players. This hijacked the UI into the full MatchAlert takeover before the organizer published.
-
-Fix (commit `6f4134e`):
-
-```tsx
-const hasActiveMatch =
-  currentMatch !== null &&
-  (currentMatch.match.status === "pending" || currentMatch.match.status === "in_progress") &&
-  (myEntry?.status === "on_deck" || myEntry?.status === "playing");
-// ↑ gate on queue status — draft matches never trigger MatchAlert
-```
-
-Queue status → UI mapping (now correct):
-
-- `on_deck` → `hasActiveMatch=true` → full MatchAlert takeover + audio chime
-- `playing` → `hasActiveMatch=true` → MatchAlert + ScoreInput
-- `drafted` → `hasActiveMatch=false` → QueueSubTab → "Match Forming" holding card (silent)
-- `waiting` → `hasActiveMatch=false` → QueueSubTab → queue position number
-
-**Integration test suite: 88/88 passing.** Local Supabase running with `00000000000000_initial_schema.sql` as the bootstrap migration. All 11 test files pass.
-
-**tsconfig.json fix:** Added `marketing-site` to `exclude` array — was causing all Vercel deployments to fail since the OrganizerSandbox rewrite (`@dnd-kit/modifiers` not in root `node_modules`).
-
-**Code review verdict (Minor issues — acceptable pass):**
-
-- G-9 integration test seeds `on_deck` queue entries without a backing match row (valid shortcut for testing engine pool exclusion; would break if DB adds constraint requiring match for on_deck entries)
-- E2E scenario-J `getByText(/in line/)` locator is sound; previous `^#\d+$` regex was weaker but replaced
-
-**Known infrastructure gap: Local Supabase cannot start.** `supabase start` fails at migration `20260417000000_leaderboard_views.sql` because it references `v_match_history` which is only defined in `20260502000000_match_origin_tracking.sql` (out of order). Root cause: DB was originally created manually in production; only incremental migrations exist locally. No initial schema migration. Integration tests require local Supabase.
-
----
-
-### What Was Accomplished This Session — drafted queue_status + UX (2026-05-11)
-
-**`"drafted"` queue_status — full-stack feature across DB, real app, digital twin, and marketing sandbox.**
-
-**Problem solved:** Players in unpublished draft matches stayed `"waiting"`, forcing a TypeScript `committedSet` two-query workaround in `matchmaking.ts`. With `"drafted"` as a first-class status, drafted players are excluded from `v_queue_with_wait_time` at the DB level automatically.
-
-**Player status lifecycle (updated):**
-
-```
-waiting → drafted  (create_match_with_players sets status='drafted' for unpublished drafts)
-drafted → on_deck  (publishMatchAction promotes at publish time)
-drafted → waiting  (cancelMatchAction restores players to waiting)
-waiting → on_deck  (direct court match, no draft step)
-on_deck → playing  (promoteOnDeckMatchInternal / START_MATCH)
-playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
-```
-
-**DB (migrations applied to production `usxftpexoimletqmrggb`):**
-
-- `20260511000000_add_drafted_queue_status` — `ALTER TYPE queue_status ADD VALUE 'drafted'`; `create_match_with_players` Step d now sets `'drafted'` for unpublished drafts instead of leaving `'waiting'`
-- `20260511000001_swap_player_drafted_status` — `swap_player_in_match` Step c now sets incoming player to `'drafted'` (not `'waiting'`) for unpublished draft swaps, so `publishMatchAction`'s `.eq("status","drafted")` catches all four roster members
-
-**Real app TypeScript (all committed, pushed):**
-
-- `database.ts` — `QueueStatus` union includes `"drafted"`
-- `match.ts` — `publishMatchAction` + `publishAllDraftMatchesAction` changed `.eq("status","waiting")` → `.eq("status","drafted")` (critical: old guard wrote 0 rows)
-- `matchmaking.ts` — `committedSet` two-query workaround removed (~20 lines deleted)
-- `queue.ts` — `joinQueueAction` blocks `"drafted"` explicitly; redundant draft-mode match_players guard removed
-- `sessions.ts`, `auth.ts` (3 places), `use-queue.ts`, `use-match-alerts.ts` — all status-filter arrays include `"drafted"`
-- `app/page.tsx`, `play/join/page.tsx` — redirect guards include `"drafted"`
-- `organizer/page.tsx` — player count includes `"drafted"`
-- `player-dashboard.tsx` — `totalWaiting` includes `"drafted"`; `QueueSubTab` has `"drafted"` branch (see UX below)
-
-**Digital twin (committed, pushed):**
-
-- `state/types.ts` — `"drafted"` in `PlayerStatus`
-- `state/reducer.ts` — `GENERATE_MATCHES` marks players; `PUBLISH_MATCH` transitions `drafted→on_deck`; `CANCEL_MATCH` restores draft players; `LEAVE_QUEUE` blocks drafted
-- `components/QueueRow.tsx` — `statusTone` + `statusLabel` include `"drafted"`, `isInQueue` excludes it
-- `components/QueuePanel.tsx` — `draftedCount` counter shown in header
-
-**Marketing sandbox (committed + deployed to Vercel):**
-
-- `OrganizerSandbox.tsx` — `"drafted"` `PlayerStatus`; `GENERATE` marks players; `CANCEL` restores; `matchStatusToPlayerStatus` has `"draft"→"drafted"` arm
-
-**Drafted player UX — two-tier model:**
-
-- Tier 1 (`drafted`): `queue-status.tsx` — `isDrafted` prop renders `animate-ping` pulsing dot + "Match forming / selected from N queued" instead of blank position. `use-match-alerts.ts` — single 80ms `navigator.vibrate(80)` haptic on `prev !== "drafted"` transition (no audio; audio reserved for confirmed on_deck). `player-dashboard.tsx` — drafted branch shows both the "Hang tight" card AND `QueueStatus isDrafted`.
-- Tier 2 (`on_deck`): full audio chime + push notification, unchanged.
-
----
-
-### What Was Accomplished (Previous Session) — Digital Twin: Organizer Sandbox (3 phases)
-
-**Digital Twin sandbox at `/sandbox` — interactive playground built as a React Astro Island.** Lets users play organizer without touching a real DB.
-
-- **Phase 1** — Foundation: installed `@astrojs/react` + `react` + `react-dom` + `@types/react*`. (Tried `@astrojs/preact` first; hit unresolvable `astro:preact:opts` against Astro 5.18.1 — switched to React.) Tsconfig override required: `jsx: "react-jsx"` + `jsxImportSource: "react"` because `astro/tsconfigs/base.json` sets `jsx: "preserve"` and esbuild emitted classic `React.createElement` without `import React`. Built state machine: `state/types.ts` (discriminated-union actions, Player/Match/Team/LogEntry/SandboxState, `pairKey()` helper), `state/seed.ts` (10 mock players, real-engine config defaults), `state/reducer.ts` (14 action types + exhaustiveness check, `withLog` helper, recursive `PUBLISH_ALL_DRAFTS` reuses publish guards), `engine/mockMatchmaking.ts` (narrates real algorithm: queue scan → capacity → pool diversity → greedy 3-split partnership cap), `state/useSandbox.ts` (memoized actions hook).
-- **Phase 2** — Mock app UI (left column) using `@dnd-kit/core` + `@dnd-kit/sortable` + `@dnd-kit/modifiers`. Components: `QueueRow` (drag handle, skill chip, status badge, pause/leave actions), `QueuePanel` (DndContext + SortableContext, `restrictToVerticalAxis + restrictToParentElement` modifiers, PointerSensor with 5px activation distance + KeyboardSensor for a11y), `MatchCard` (status-specific actions: publish/cancel for draft, start/cancel for pending, score inputs for in_progress, terminal readout for completed), `MatchBoard` (3-column: Drafts / On Deck / Active + Recent footer), `SimulationFrame` (corner "SIMULATION" tag with pulsing dot + config readout + reset).
-- **Phase 3** — Action logger (right column). Terminal-style: HH:mm:ss.sss timestamps, level-coloured prompts (engine=▸ accent, info=· ink, warn=⚠, error=✗, debug=· dim), level filter chips with counts, sticky-tail auto-scroll with "↓ jump to latest" pill when user scrolls up, `role="log" aria-live="polite"` for screen reader announcements.
-- **Reducer cleanup:** swapped `_logSeq` module counter for `crypto.randomUUID()` log IDs (closes Phase 1 review's impure-reducer note). Added `START_MATCH` left-player guard. `LEAVE_QUEUE` refuses for `on_deck`/`in_progress` players. Engine: rotation bails out when `pool.length === 4` (rotating 4 elements yields the same 3 unordered splits).
-- **Layout:** 2-column grid `lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)]`, right column `lg:sticky lg:top-6`, mobile stacked.
-- **Files added (under `digital-twin/src/sandbox/`):** `state/{types,seed,reducer,useSandbox}.ts`, `engine/mockMatchmaking.ts`, `components/{QueueRow,QueuePanel,MatchCard,MatchBoard,SimulationFrame,ActionLogger}.tsx`, `SandboxRoot.tsx`. Plus `pages/sandbox.astro` (`client:load`), `Nav.astro` (new "Interactive" section).
-- **Bundle:** `SandboxRoot.*.js` ~76kB raw / ~22kB gzip. `client.*.js` (React runtime) ~183kB / ~58kB gzip. Acceptable for an opt-in interactive page.
-- **Build verified:** `npm run build` green; SSR pre-renders all 10 seeded players + every panel header.
-- **Auto-deploy:** Vercel GitHub webhook (wired up earlier this week) will rebuild `digital-twin-phi-three.vercel.app` on push.
-
-### What Was Accomplished Earlier This Session — Integration Testing Phases 1–3 + Documentation
-
-**Integration testing Phase 1 complete and committed (ac2a4a1, not yet pushed).**
-
-- Separate `vitest.integration.config.ts` (env: node, fileParallelism: false, 30s timeout, coverage to `coverage/integration/`)
-- `tests/integration/global-setup.ts` — checks local Supabase is running, applies migrations
-- `tests/integration/setup.ts` — per-worker env load + Option B auth mock (Proxy wrapping real service-role client, overrides `auth.getUser()` via `authState.currentUserId`)
-- `tests/integration/helpers/mock-auth.ts` — `mockAuthAs(userId)` returns restore fn
-- `tests/integration/helpers/withTx.ts` — pg savepoint wrapper (Layer A)
-- `tests/integration/helpers/truncate.ts` — FK-safe per-table DELETE cleanup (Layer B) with production URL safety guard; `truncateTracked()` for auto-cleanup after `makeProfile()`
-- `tests/integration/factories/index.ts` — `makeProfile` (auth.admin.createUser + profiles upsert), `makeSession` (sessions + session_organizers insert), `makeQueueEntry`
-- `tests/integration/health.test.ts` — 4 smoke tests: DB connectivity, profile insert, session+organizer, truncate cleanup verification
-- `tests/integration/auth.real.test.ts` — single real auth roundtrip drift-detector
-- `.github/workflows/integration-tests.yml` — CI job with supabase start, `supabase status --output json` parsed with jq space-delimited keys (`"API URL"`, `"anon key"`, `"service_role key"`, `"DB URL"`)
-- `tests/integration/env.example` — committed template (local Supabase keys)
-- `package.json` — added `test:integration`, `test:integration:watch`, `test:integration:coverage` scripts
-- devDependencies: `@faker-js/faker`, `pg`, `@types/pg`
-- `INTEGRATION_TESTING_PLAN.md` committed to repo
-
-**Code review verdict:** Found 1 critical bug (jq selectors used underscore names; Supabase CLI uses spaces) — fixed. 2 minor issues (stale comment + README example) — fixed. Final: LGTM.
-
-**Integration testing fully complete.** SSH push is configured (no more PAT workflow-scope issues). All 3 phases shipped, pushed, and documented.
-
-### What Was Accomplished (Previous Session — Cross-Session Awards) ALL PHASES COMPLETE
+### Previous Session — Cross-Session Awards (B+E) ALL PHASES COMPLETE
 
 **Cross-session awards (B+E) — all 4 phases shipped.**
 
@@ -333,7 +177,6 @@ playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
 
 ### Known Bugs / Technical Debt
 
-- ~~**[BLOCKER] Local Supabase has no initial schema migration**~~ — **RESOLVED (2026-05-11)**. `00000000000000_initial_schema.sql` created; local Supabase starts and all 88 integration tests pass.
 - `v_recent_pairings` view still exists in DB but is **no longer queried** by the engine — `buildOverlapMap` uses a 3-step manual join instead. The view is unused dead weight; safe to drop in a future migration if desired.
 - `ON_DECK_LOOKAHEAD` and `MAX_ON_DECK_MATCHES` still in `constants.ts` but not imported by `matchmaking.ts` — only used by `simulate-engine.ts`. Consider removing when `simulate-engine.ts` is updated.
 - Dashboard UX audit (DASHBOARD_UX_AUDIT.md) identifies P0 issues: header buttons below 44px touch target, tab nav missing tablist/tab ARIA roles, gradient on "Call Next Match" button. Not yet fixed in code.
@@ -341,19 +184,15 @@ playing → waiting  (SUBMIT_SCORE / endMatchAction — back of queue)
 - Skill badge has no dark mode variant — renders washed out on dark navy. P1 fix pending.
 - `match_opponent_pairs` CTE in the Wrapped RPC still SELECTs `opp_a` / `opp_b` columns from `LEAST/GREATEST` even though they're not aggregated downstream. Postgres optimizes these out, but tidy-up could remove them.
 - 3 incremental fix migrations were applied to Supabase dev (`expand_wrapped_awards`, `fix_wrapped_awards_uuid_max`, `fix_wrapped_awards_array_append`, `fix_wrapped_awards_double_trouble_scope`). The local migration file `20260508000000_expand_wrapped_awards.sql` is the consolidated final version that also incorporates the `20260509` threshold tweaks. If migrations are ever replayed from scratch, only the consolidated `20260508` version + the `20260509` patch run; intermediate fix names won't reappear.
-- **Integration test G-9 shortcut** — seeds `on_deck` queue entries via `makeQueueEntry(status:"on_deck")` without a backing match row. Valid for current engine tests but would break if DB adds a constraint requiring match rows for on_deck entries.
 
 ### Immediate Next Steps
 
-- ~~**[BLOCKER] Create initial schema migration**~~ — **RESOLVED (2026-05-11)**. All 88 integration tests pass.
-- ~~**[P0] Dual-state player race conditions (F1-F5)**~~ — **RESOLVED (2026-05-12)**. All 5 findings fixed via 5 new migrations + server action updates. 156/156 tests passing.
-- **[ACTION NEEDED] Set PR-block branch protection on GitHub** — Settings → Branches → require "Integration Tests" CI check to pass on `main`. Activate once CI has been green for 10 consecutive runs over 2 days (<1 flake, as per INTEGRATION_TESTING_PLAN.md Decision #4).
-- (Optional) **Leaderboard Direction A** — plan at `~/.claude/plans/idempotent-meandering-wigderson.md`. All new files, no existing modified.
-- (Optional) Apply P0–P1 UX fixes from `DASHBOARD_UX_AUDIT.md`: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
-- (Optional) Update `simulate-engine.ts` to use `MAX_AUTO_DRAFTS` instead of `ON_DECK_LOOKAHEAD`/`MAX_ON_DECK_MATCHES`, then deprecate the two old constants.
-- (Optional) Drop `v_recent_pairings` view from DB in a new migration.
-- (Optional) Clean up unused `opp_a` / `opp_b` columns in the Wrapped RPC's `match_opponent_pairs` CTE.
-- (Post-MVP) PIN reconnect integration tests (`migrate_player_identity`) — explicitly deferred.
+- (Optional) Add new Wrapped award metadata to `tests/unit/` or scaffold a per-award smoke test that verifies trigger conditions against a synthetic session.
+- (Optional) Leaderboard Direction A — plan exists at `~/.claude/plans/idempotent-meandering-wigderson.md`. Fonts, YouStrip, LeaderboardPodium, StadiumLeaderboardRow, leaderboard-page.tsx Stadium branch — all new files, no existing files modified.
+- Apply the P0–P1 UX fixes from DASHBOARD_UX_AUDIT.md: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
+- Update `simulate-engine.ts` to use `MAX_AUTO_DRAFTS` instead of `ON_DECK_LOOKAHEAD`/`MAX_ON_DECK_MATCHES`, then deprecate the two old constants.
+- Optional: drop `v_recent_pairings` view from DB in a new migration.
+- Optional: clean up unused `opp_a` / `opp_b` columns in the Wrapped RPC's `match_opponent_pairs` CTE.
 
 ---
 
@@ -427,8 +266,7 @@ skill_level:    "beginner" | "lower_intermediate" | "intermediate" |
                 "upper_intermediate" | "lower_advanced" | "advanced"   (int 1–6)
                 ⚠️ "upper_beginner" was REMOVED — never reference it
 court_status:   "available" | "in_use" | "closed"
-queue_status:   "waiting" | "drafted" | "on_deck" | "playing" | "left"
-                ↑ "drafted" added 2026-05-11 — set by create_match_with_players for unpublished drafts
+queue_status:   "waiting" | "on_deck" | "playing" | "left"
 match_status:   "pending" | "in_progress" | "completed" | "cancelled"
 match_origin:   "auto" | "manual" | "modified"   (sticky: "manual" never demoted)
 scoring_format: "single" | "best_of_3" | "best_of_5"
@@ -708,18 +546,17 @@ NULL-return convention: `{ data: null, error: null }` = graceful slot-skip. `{ d
 
 **Locator best practice:** `page.getByRole("dialog").getByText("E2E_Alice")` — scope to container. `page.getByText("E2E_Alice")` fails if name appears in Sonner toasts.
 
-| Scenario             | File                                          | Covers                                                                                     |
-| -------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| A — Swap             | `scenario-a-swap.spec.ts`                     | Bench→deck swap, undo, player unavailable error                                            |
-| B — Engine flows     | `scenario-b-engine-flows.spec.ts`             | Auto-matchmaking, gate, on-deck cap                                                        |
-| C — Tap-to-Swap v2   | `scenario-c-tap-to-swap-v2.spec.ts`           | Cross-match direct swap (11 tests)                                                         |
-| D — Wrapped dismiss  | `scenario-d-session-wrapped-dismiss.spec.ts`  | Intro overlay dismiss, `intro_dismissed_at` persisted                                      |
-| E — Match alert UI   | `scenario-e-match-alert-ui.spec.ts`           | Player match alert card + VIP tags                                                         |
-| F — Court time alert | `scenario-f-court-time-alert.spec.ts`         | Timer warning when elapsed ≥ limit                                                         |
-| G — H2H records      | `scenario-g-h2h-records.spec.ts`              | H2H strip after first meeting, correct counts                                              |
-| H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling                                             |
-| I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session under load                                                                    |
-| J — Drafted status   | `scenario-j-drafted-status.spec.ts`           | Match Forming card, drafted→on_deck Realtime, drafted→waiting cancel (3 tests, ✅ passing) |
+| Scenario             | File                                          | Covers                                                |
+| -------------------- | --------------------------------------------- | ----------------------------------------------------- |
+| A — Swap             | `scenario-a-swap.spec.ts`                     | Bench→deck swap, undo, player unavailable error       |
+| B — Engine flows     | `scenario-b-engine-flows.spec.ts`             | Auto-matchmaking, gate, on-deck cap                   |
+| C — Tap-to-Swap v2   | `scenario-c-tap-to-swap-v2.spec.ts`           | Cross-match direct swap (11 tests)                    |
+| D — Wrapped dismiss  | `scenario-d-session-wrapped-dismiss.spec.ts`  | Intro overlay dismiss, `intro_dismissed_at` persisted |
+| E — Match alert UI   | `scenario-e-match-alert-ui.spec.ts`           | Player match alert card + VIP tags                    |
+| F — Court time alert | `scenario-f-court-time-alert.spec.ts`         | Timer warning when elapsed ≥ limit                    |
+| G — H2H records      | `scenario-g-h2h-records.spec.ts`              | H2H strip after first meeting, correct counts         |
+| H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling        |
+| I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session under load                               |
 
 ---
 
