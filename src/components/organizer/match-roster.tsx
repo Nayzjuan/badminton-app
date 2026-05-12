@@ -63,16 +63,15 @@ const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
   advanced: { dot: "bg-purple-500  dark:bg-purple-400", abbr: "Adv" },
 };
 
-// Always-dark navy court (Active Courts visualization, On Deck cards) —
-// use brighter -400 variants directly since dark: would not fire when the
-// user's theme is light but the surface is still dark navy.
-const SKILL_CONFIG_DARK: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner: { dot: "bg-emerald-400", abbr: "Beg" },
-  lower_intermediate: { dot: "bg-teal-400", abbr: "L.Int" },
-  intermediate: { dot: "bg-sky-400", abbr: "Int" },
-  upper_intermediate: { dot: "bg-indigo-400", abbr: "U.Int" },
-  lower_advanced: { dot: "bg-fuchsia-400", abbr: "L.Adv" },
-  advanced: { dot: "bg-purple-400", abbr: "Adv" },
+// Always-dark navy court — level text color only (no dot), matching preview spec.
+// ADV/U.INT → amber, INT/L.INT → teal, L.ADV → blue, BEG → muted
+const SKILL_CONFIG_DARK: Record<SkillLevel, { color: string; abbr: string }> = {
+  beginner:           { color: "text-white/40",                abbr: "Beg"   },
+  lower_intermediate: { color: "text-[oklch(0.79_0.18_188)]", abbr: "L.Int" },
+  intermediate:       { color: "text-[oklch(0.79_0.18_188)]", abbr: "Int"   },
+  upper_intermediate: { color: "text-[oklch(0.78_0.17_62)]",  abbr: "U.Int" },
+  lower_advanced:     { color: "text-[oklch(0.65_0.19_255)]", abbr: "L.Adv" },
+  advanced:           { color: "text-[oklch(0.78_0.17_62)]",  abbr: "Adv"   },
 };
 
 // ── Internal: skill indicators ─────────────────────────────────
@@ -89,35 +88,38 @@ function SkillDot({ level }: { level: SkillLevel }) {
   );
 }
 
-function SkillDotDark({ level }: { level: SkillLevel }) {
-  const { dot, abbr } = SKILL_CONFIG_DARK[level] ?? { dot: "bg-slate-400", abbr: "?" };
+function SkillLevelDark({ level }: { level: SkillLevel }) {
+  const { color, abbr } = SKILL_CONFIG_DARK[level] ?? { color: "text-white/40", abbr: "?" };
   return (
-    <div className="flex shrink-0 items-center gap-1" aria-label={level}>
-      <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden="true" />
-      <span className="text-[10px] font-bold uppercase tracking-wide text-white/60 leading-none">
-        {abbr}
-      </span>
-    </div>
+    <span
+      className={`font-command text-[9px] font-bold uppercase tracking-[0.14em] leading-none ${color}`}
+      aria-label={level}
+    >
+      {abbr}
+    </span>
   );
 }
 
 // ── Internal: VS badge ─────────────────────────────────────────
 
 function VsBadge({ dark }: { dark?: boolean }) {
+  if (dark) {
+    return (
+      <div className="flex flex-col items-center gap-1" aria-hidden="true">
+        <div className="w-px h-3.5 bg-white/15" />
+        <span className="font-command text-[8px] font-bold text-white/30">VS</span>
+        <div className="w-px h-3.5 bg-white/15" />
+      </div>
+    );
+  }
   return (
     <div
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
-        dark
-          ? "bg-[oklch(0.79_0.18_188/0.15)] ring-1 ring-[oklch(0.79_0.18_188/0.40)]"
-          : "bg-white dark:bg-white/10 ring-1 ring-slate-200 dark:ring-white/20 shadow-sm dark:shadow-none"
-      }`}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
+                 bg-white dark:bg-white/10 ring-1 ring-slate-200 dark:ring-white/20
+                 shadow-sm dark:shadow-none"
       aria-hidden="true"
     >
-      <span
-        className={`text-[10px] font-black tracking-tight ${
-          dark ? "text-[oklch(0.79_0.18_188)]" : "text-slate-400 dark:text-white/50"
-        }`}
-      >
+      <span className="text-[10px] font-black tracking-tight text-slate-400 dark:text-white/50">
         VS
       </span>
     </div>
@@ -234,34 +236,29 @@ function PlayerRowLight({
 
 interface PlayerRowDarkProps {
   player: RosterPlayer;
-  /** Tailwind text-* class for the player name (team colour). */
-  teamColor: string;
   /** When set, this player's name renders bold white ("you are here"). */
   isMe?: boolean;
 }
 
-function PlayerRowDark({ player, teamColor, isMe }: PlayerRowDarkProps) {
+function PlayerRowDark({ player, isMe }: PlayerRowDarkProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
   return (
     <div
       className="w-full clip-cut-tr px-3 py-2 transition-colors hover:bg-white/5"
       style={{ background: "rgba(255,255,255,0.04)" }}
     >
-      {/* Line 1 — "Name | TAG" */}
+      {/* Line 1 — name + optional VIP tag */}
       <div className="flex items-center gap-1.5 overflow-hidden">
         <span
-          className={`shrink min-w-0 truncate text-[13px] leading-none ${
-            isMe ? "font-bold text-white" : `font-normal ${teamColor}`
+          className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
+            isMe ? "font-bold text-white" : "font-medium text-white/90"
           }`}
         >
           {player.display_name}
         </span>
         {hasTag && (
           <>
-            <span
-              className="shrink-0 text-[11px] leading-none text-white/25 select-none"
-              aria-hidden="true"
-            >
+            <span className="shrink-0 text-[11px] leading-none text-white/25 select-none" aria-hidden="true">
               |
             </span>
             <span className="shrink-0 leading-none">
@@ -270,12 +267,9 @@ function PlayerRowDark({ player, teamColor, isMe }: PlayerRowDarkProps) {
           </>
         )}
       </div>
-      {/* Line 2 — skill */}
-      <div className="mt-1 flex items-center gap-1.5">
-        <SkillDotDark level={player.skill_level} />
-        <span className="invisible text-[10px] leading-none" aria-hidden="true">
-          _
-        </span>
+      {/* Line 2 — skill level (colored text, no dot) */}
+      <div className="mt-1">
+        <SkillLevelDark level={player.skill_level} />
       </div>
     </div>
   );
@@ -331,8 +325,8 @@ export function TeamsGrid({
       {/* Row 1 — column labels */}
       <div style={{ gridColumn: 1, gridRow: 1 }}>
         <span
-          className={`text-[10px] font-black uppercase tracking-widest ${
-            dark ? "text-sky-400/70" : "text-sky-600 dark:text-sky-400"
+          className={`font-command text-[8px] uppercase tracking-[0.24em] ${
+            dark ? "text-white/40" : "text-sky-600 dark:text-sky-400"
           }`}
         >
           {labelA}
@@ -341,8 +335,8 @@ export function TeamsGrid({
       <div style={{ gridColumn: 2, gridRow: 1 }} aria-hidden="true" />
       <div style={{ gridColumn: 3, gridRow: 1 }} className="text-right">
         <span
-          className={`text-[10px] font-black uppercase tracking-widest ${
-            dark ? "text-amber-400/70" : "text-amber-600 dark:text-amber-400"
+          className={`font-command text-[8px] uppercase tracking-[0.24em] ${
+            dark ? "text-white/40" : "text-amber-600 dark:text-amber-400"
           }`}
         >
           {labelB}
@@ -362,7 +356,6 @@ export function TeamsGrid({
         {dark ? (
           <PlayerRowDark
             player={a0}
-            teamColor="text-sky-200"
             isMe={myPlayerId ? myPlayerId === a0.player_id : undefined}
           />
         ) : (
@@ -379,7 +372,6 @@ export function TeamsGrid({
         {dark ? (
           <PlayerRowDark
             player={b0}
-            teamColor="text-amber-200"
             isMe={myPlayerId ? myPlayerId === b0.player_id : undefined}
           />
         ) : (
@@ -398,7 +390,6 @@ export function TeamsGrid({
         {dark ? (
           <PlayerRowDark
             player={a1}
-            teamColor="text-sky-200"
             isMe={myPlayerId ? myPlayerId === a1.player_id : undefined}
           />
         ) : (
@@ -415,7 +406,6 @@ export function TeamsGrid({
         {dark ? (
           <PlayerRowDark
             player={b1}
-            teamColor="text-amber-200"
             isMe={myPlayerId ? myPlayerId === b1.player_id : undefined}
           />
         ) : (
