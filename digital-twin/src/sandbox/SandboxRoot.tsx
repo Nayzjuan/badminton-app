@@ -12,6 +12,11 @@
 //
 // Auto-play: cycles Alex through waiting→on_deck→playing→reset on a timer.
 // Pauses when the user clicks anything in the organizer panel.
+//
+// Phone scaling: the phone renders internally at 375×780px (pixel-perfect)
+// but is scaled down via CSS transform so the grid column only consumes
+// PHONE_W × PHONE_SCALE px — giving the organizer panel more breathing room
+// at the lg breakpoint (~1024px viewport).
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useState } from "react";
 import { useSandbox } from "./state/useSandbox";
@@ -23,6 +28,7 @@ import QueuePanel from "./components/QueuePanel";
 import MatchBoard from "./components/MatchBoard";
 import ActionLogger from "./components/ActionLogger";
 import PlayerPhone from "./player/PlayerPhone";
+import { YOU_ID } from "./player/useAutoPlay";
 
 // Pool of names used for "+ add player" — picks one not already in the players record.
 const ADDITIONAL_NAMES = [
@@ -39,6 +45,14 @@ const ADDITIONAL_NAMES = [
 ];
 
 const SKILL_CYCLE: Player["skill"][] = ["beginner", "intermediate", "advanced"];
+
+// Phone mockup dimensions and display scale.
+// The phone renders internally at full 375×780 (matches a real iPhone 14 Pro
+// viewport) but is scaled down so the grid column only takes up
+// PHONE_W × PHONE_SCALE = ~270px — giving the organizer panel room to breathe.
+const PHONE_W = 375;
+const PHONE_H = 780;
+const PHONE_SCALE = 0.72;
 
 export default function SandboxRoot() {
   const { state, actions } = useSandbox();
@@ -147,7 +161,9 @@ export default function SandboxRoot() {
       </div>
 
       {/* ── Main 3-column layout ── */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_auto_minmax(280px,340px)]">
+      {/* The phone column is sized to the SCALED width so the organizer
+          gets meaningful space even at the 1024px lg breakpoint. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_auto_minmax(240px,300px)]">
         {/* ── Left: Organizer panel ── */}
         {/* Wrapping in a div with onClick pauses auto-play on any interaction */}
         <div className="min-w-0" onClick={pauseAutoPlay}>
@@ -184,7 +200,31 @@ export default function SandboxRoot() {
             <span className="font-mono text-[10px] text-ink-4">Alex · player view</span>
           </div>
 
-          <PlayerPhone state={state} soundEnabled={soundEnabled} />
+          {/* Scale wrapper — outer div claims the shrunk footprint in the grid;
+               inner div renders the phone at native resolution then scales it.
+               transform-origin: top left keeps the top-left corner anchored. */}
+          <div
+            style={{
+              width: PHONE_W * PHONE_SCALE,
+              height: PHONE_H * PHONE_SCALE,
+              flexShrink: 0,
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: PHONE_W,
+                height: PHONE_H,
+                transform: `scale(${PHONE_SCALE})`,
+                transformOrigin: "top left",
+              }}
+            >
+              <PlayerPhone state={state} soundEnabled={soundEnabled} />
+            </div>
+          </div>
 
           {/* Alex's status indicator below phone */}
           <div className="flex items-center gap-2">
@@ -193,14 +233,14 @@ export default function SandboxRoot() {
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: alexStatusColor(state.players["p1"]?.status),
+                background: alexStatusColor(state.players[YOU_ID]?.status),
                 flexShrink: 0,
               }}
             />
             <span className="font-mono text-[10px] text-ink-3">
               Alex:{" "}
-              <span style={{ color: alexStatusColor(state.players["p1"]?.status) }}>
-                {state.players["p1"]?.status ?? "—"}
+              <span style={{ color: alexStatusColor(state.players[YOU_ID]?.status) }}>
+                {state.players[YOU_ID]?.status ?? "—"}
               </span>
             </span>
           </div>
