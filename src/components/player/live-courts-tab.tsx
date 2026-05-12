@@ -16,19 +16,13 @@ interface LiveCourtsTabProps {
   inProgressMatches: SessionMatch[];
   onDeckMatches: SessionMatch[];
   loading: boolean;
+  /** Logged-in player's ID — used to bold-highlight "you" in court rosters. */
+  myPlayerId?: string;
 }
 
-export function LiveCourtsTab({
-  inProgressMatches,
-  onDeckMatches,
-  loading,
-}: LiveCourtsTabProps) {
+export function LiveCourtsTab({ inProgressMatches, onDeckMatches, loading, myPlayerId }: LiveCourtsTabProps) {
   if (loading) {
-    return (
-      <div className="py-16 text-center text-sm text-muted-foreground">
-        Loading courts...
-      </div>
-    );
+    return <div className="py-16 text-center text-sm text-muted-foreground">Loading courts...</div>;
   }
 
   const hasNothing = inProgressMatches.length === 0 && onDeckMatches.length === 0;
@@ -67,7 +61,7 @@ export function LiveCourtsTab({
 
           <div className="space-y-4">
             {inProgressMatches.map((match) => (
-              <CourtMatchCard key={match.id} match={match} variant="in_progress" />
+              <CourtMatchCard key={match.id} match={match} variant="in_progress" myPlayerId={myPlayerId} />
             ))}
           </div>
         </section>
@@ -91,7 +85,7 @@ export function LiveCourtsTab({
 
           <div className="space-y-4">
             {onDeckMatches.map((match) => (
-              <CourtMatchCard key={match.id} match={match} variant="on_deck" />
+              <CourtMatchCard key={match.id} match={match} variant="on_deck" myPlayerId={myPlayerId} />
             ))}
           </div>
         </section>
@@ -107,9 +101,11 @@ export function LiveCourtsTab({
 function CourtMatchCard({
   match,
   variant,
+  myPlayerId,
 }: {
   match: SessionMatch;
   variant: "in_progress" | "on_deck";
+  myPlayerId?: string;
 }) {
   const isOnDeck = variant === "on_deck";
 
@@ -145,7 +141,8 @@ function CourtMatchCard({
           ? undefined
           : {
               background: "oklch(0.10 0.014 245)",
-              boxShadow: "0 0 0 1px oklch(0.76 0.17 155 / 0.35), 0 0 24px oklch(0.76 0.17 155 / 0.10)",
+              boxShadow:
+                "0 0 0 1px oklch(0.76 0.17 155 / 0.35), 0 0 24px oklch(0.76 0.17 155 / 0.10)",
               borderColor: "transparent",
             }
       }
@@ -160,8 +157,8 @@ function CourtMatchCard({
       >
         <div className="flex items-center gap-2">
           <span
-            className={`text-sm font-bold ${
-              isOnDeck ? "text-amber-900 dark:text-amber-300" : "text-white"
+            className={`text-[11px] font-bold uppercase tracking-[0.08em] ${
+              isOnDeck ? "text-amber-900 dark:text-amber-300" : "text-white/60"
             }`}
           >
             {isOnDeck ? "On Deck" : (match.court?.name ?? "Court")}
@@ -179,10 +176,10 @@ function CourtMatchCard({
           )}
         </div>
         <span
-          className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+          className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.06em] ${
             isOnDeck
               ? "bg-amber-200/60 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300"
-              : "bg-white/10 text-white/80"
+              : "bg-emerald-500/15 text-emerald-400"
           }`}
         >
           {isOnDeck ? "Waiting for court" : "In Progress"}
@@ -190,13 +187,7 @@ function CourtMatchCard({
       </div>
 
       {/* Roster grid */}
-      <TeamsGrid
-        dark={!isOnDeck}
-        teamA={teamA}
-        teamB={teamB}
-        labelA="Team A"
-        labelB="Team B"
-      />
+      <TeamsGrid dark={!isOnDeck} teamA={teamA} teamB={teamB} labelA="Team A" labelB="Team B" myPlayerId={myPlayerId} />
     </div>
   );
 }
