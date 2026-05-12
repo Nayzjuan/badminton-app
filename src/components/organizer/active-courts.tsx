@@ -138,45 +138,47 @@ function CourtCard({
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {
     matchmaking: {
-      cls: "bg-amber-400 text-white border-amber-500 dark:bg-amber-500/90 dark:border-amber-600",
+      cls: "bg-[oklch(0.78_0.17_62/0.18)] border-[oklch(0.78_0.17_62/0.45)] text-[oklch(0.88_0.14_62)]",
       label: "Finding Match…",
     },
     in_progress: {
-      cls: "bg-blue-600 text-white border-blue-700 dark:bg-blue-700 dark:border-blue-800",
+      cls: "bg-[oklch(0.78_0.17_62/0.14)] border-[oklch(0.78_0.17_62/0.40)] text-[oklch(0.88_0.14_62)]",
       label: "In Progress",
     },
     available: {
-      cls: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800/60",
+      cls: "bg-[oklch(0.76_0.17_155/0.12)] border-[oklch(0.76_0.17_155/0.35)] text-[oklch(0.76_0.17_155)]",
       label: "Available",
     },
     closed: {
-      cls: "bg-gray-100 text-gray-600 border-gray-200 dark:bg-muted dark:text-muted-foreground dark:border-border",
+      cls: "bg-[oklch(0.20_0.016_245)] border-[oklch(0.30_0.020_245)] text-[oklch(0.55_0.010_245)]",
       label: "Closed",
     },
   };
+
+  // Outer wrapper carries the filter (glow + 1px ring); inner div carries clip-path.
+  // Keeping them separate means the drop-shadow is applied to the already-clipped
+  // shape, producing a ring that follows the chamfered polygon rather than the box.
+  const glowFilter = isActive
+    ? alertTier === "critical"
+      ? "drop-shadow(0 0 0 1px oklch(0.65 0.22 22 / 0.55)) drop-shadow(0 0 14px oklch(0.65 0.22 22 / 0.35))"
+      : alertTier === "warning"
+        ? "drop-shadow(0 0 0 1px oklch(0.78 0.17 62 / 0.50)) drop-shadow(0 0 14px oklch(0.78 0.17 62 / 0.28))"
+        : "drop-shadow(0 0 0 1px oklch(0.79 0.18 188 / 0.35)) drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.18))"
+    : undefined;
 
   return (
     <div
       data-testid={`court-card-${court.id}`}
       data-alert-tier={alertTier}
-      className={[
-        "flex flex-col clip-cut overflow-hidden transition-all",
-        !isActive ? "bg-card border border-gray-200 dark:border-border" : "",
-      ].join(" ")}
-      style={
-        isActive
-          ? {
-              background: "oklch(0.10 0.014 245)",
-              filter:
-                alertTier === "critical"
-                  ? "drop-shadow(0 0 0 1px oklch(0.65 0.22 22 / 0.55)) drop-shadow(0 0 24px oklch(0.65 0.22 22 / 0.22))"
-                  : alertTier === "warning"
-                    ? "drop-shadow(0 0 0 1px oklch(0.78 0.17 62 / 0.55)) drop-shadow(0 0 24px oklch(0.78 0.17 62 / 0.18))"
-                    : "drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.18))",
-            }
-          : undefined
-      }
+      style={{ filter: glowFilter }}
     >
+      <div
+        className={[
+          "flex flex-col clip-cut overflow-hidden transition-all",
+          !isActive ? "bg-card border border-gray-200 dark:border-border" : "",
+        ].join(" ")}
+        style={isActive ? { background: "oklch(0.10 0.014 245)" } : undefined}
+      >
       {/* ── Header ─────────────────────────────────────────── */}
       {/*
         Single-row layout: left group (name + mixed badge + origin tag) gets
@@ -206,7 +208,7 @@ function CourtCard({
         {/* Left group — min-w-0 allows court name to truncate instead of wrapping */}
         <div className="flex items-center gap-2 min-w-0">
           <h3
-            className={`truncate text-base font-bold ${
+            className={`truncate font-command text-base font-bold uppercase tracking-tight ${
               isActive ? "text-white" : "text-gray-900 dark:text-foreground"
             }`}
           >
@@ -232,8 +234,8 @@ function CourtCard({
           )}
           {/* Pulse scoped to the badge only when matchmaking — not the whole card */}
           <span
-            className={`shrink-0 rounded-full border px-2.5 py-0.5
-                        text-xs font-bold uppercase tracking-widest
+            className={`shrink-0 clip-cut-badge border px-2.5 py-0.5
+                        font-command text-[9px] uppercase tracking-[0.12em]
                         ${badgeCfg[cardState].cls}
                         ${cardState === "matchmaking" ? "animate-pulse" : ""}`}
           >
@@ -322,10 +324,10 @@ function CourtCard({
                 <button
                   onClick={onClearOnDeckMatch}
                   disabled={isClearing}
-                  className="flex items-center gap-1.5 rounded-lg border border-red-200
-                             bg-red-50 px-3 py-2 text-xs font-semibold text-red-700
-                             hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
-                             dark:text-red-400 dark:hover:bg-red-950/60
+                  className="flex items-center gap-1.5 clip-cut-sm border border-[oklch(0.65_0.22_22/0.40)]
+                             bg-[oklch(0.65_0.22_22/0.10)] px-3 py-2
+                             font-command text-[9px] uppercase tracking-[0.10em] text-[oklch(0.75_0.18_22)]
+                             hover:bg-[oklch(0.65_0.22_22/0.18)]
                              disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -339,26 +341,34 @@ function CourtCard({
               <>
                 {isConfirmingCancel ? (
                   /* Two-step cancel confirmation */
-                  <div className="space-y-2 rounded-xl border border-red-200 bg-red-50 p-3">
-                    <p className="text-center text-xs font-semibold text-red-800">
+                  <div className="space-y-2 clip-cut border border-[oklch(0.65_0.22_22/0.35)]
+                                  bg-[oklch(0.65_0.22_22/0.08)] p-3">
+                    <p className="text-center font-command text-[9px] uppercase tracking-[0.10em]
+                                  text-[oklch(0.75_0.18_22)]">
                       Cancel this match? Players return to queue.
                     </p>
                     <div className="flex gap-2">
                       <button
                         onClick={onCancelConfirm}
                         disabled={isCancelling}
-                        className="flex-1 rounded-lg bg-red-600 py-2 text-xs font-semibold
-                                   text-white hover:bg-red-700 disabled:opacity-50
-                                   disabled:cursor-not-allowed transition-colors"
+                        className="flex-1 clip-cut-sm bg-[oklch(0.65_0.22_22/0.25)] py-2
+                                   border border-[oklch(0.65_0.22_22/0.50)]
+                                   font-command text-[9px] uppercase tracking-[0.10em]
+                                   text-[oklch(0.85_0.14_22)]
+                                   hover:bg-[oklch(0.65_0.22_22/0.35)]
+                                   disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         {isCancelling ? "Cancelling…" : "Yes, Cancel"}
                       </button>
                       <button
                         onClick={onCancelDismiss}
                         disabled={isCancelling}
-                        className="flex-1 rounded-lg border border-gray-200 bg-white py-2 text-xs
-                                   font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50
-                                   disabled:cursor-not-allowed transition-colors"
+                        className="flex-1 clip-cut-sm border border-[oklch(0.35_0.020_245)] py-2
+                                   bg-[oklch(0.18_0.018_245)]
+                                   font-command text-[9px] uppercase tracking-[0.10em]
+                                   text-[oklch(0.65_0.012_245)]
+                                   hover:bg-[oklch(0.22_0.018_245)]
+                                   disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         Keep Playing
                       </button>
@@ -370,9 +380,12 @@ function CourtCard({
                     <button
                       onClick={onCancelRequest}
                       disabled={isCancelling}
-                      className="flex items-center gap-1.5 rounded-lg px-3 py-2
-                                 text-xs font-medium text-red-500 dark:text-red-400
-                                 hover:bg-red-50 dark:hover:bg-red-950/20
+                      className="flex items-center gap-1.5 clip-cut-sm px-3 py-2
+                                 border border-[oklch(0.65_0.22_22/0.30)]
+                                 bg-[oklch(0.65_0.22_22/0.08)]
+                                 font-command text-[9px] uppercase tracking-[0.10em]
+                                 text-[oklch(0.75_0.18_22)]
+                                 hover:bg-[oklch(0.65_0.22_22/0.15)]
                                  disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <XCircle className="h-3.5 w-3.5" />
@@ -381,9 +394,13 @@ function CourtCard({
                     <button
                       onClick={onInputScore}
                       disabled={isCancelling}
-                      className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2.5 min-h-[44px]
-                                 text-xs font-semibold text-white hover:bg-slate-800
-                                 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+                      className="flex items-center gap-1.5 clip-cut-sm
+                                 bg-[oklch(0.16_0.018_245)] border border-[oklch(0.32_0.025_245)]
+                                 px-4 py-2.5 min-h-[44px]
+                                 font-command text-[9px] uppercase tracking-[0.10em]
+                                 text-[oklch(0.85_0.010_245)]
+                                 hover:bg-[oklch(0.20_0.018_245)]
+                                 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <Trophy className="h-3.5 w-3.5" />
                       Input Score &amp; End
@@ -412,8 +429,10 @@ function CourtCard({
             </button>
             <button
               onClick={() => onUpdateStatus("closed")}
-              className="rounded-xl border border-gray-200 px-3 py-2.5 text-xs
-                         text-gray-500 hover:bg-gray-50 transition-colors"
+              className="clip-cut-sm border border-[oklch(0.30_0.020_245)] px-3 py-2.5
+                         font-command text-[9px] uppercase tracking-[0.10em]
+                         text-[oklch(0.55_0.010_245)] hover:bg-[oklch(0.18_0.018_245)]
+                         transition-colors"
             >
               Close
             </button>
@@ -425,20 +444,26 @@ function CourtCard({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => onUpdateStatus("available")}
-              className="flex-1 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold
-                         text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="flex-1 clip-cut-sm bg-[oklch(0.79_0.18_188/0.18)]
+                         border border-[oklch(0.79_0.18_188/0.45)]
+                         px-4 py-2.5 font-command text-[9px] uppercase tracking-[0.10em]
+                         text-[oklch(0.89_0.12_188)] hover:bg-[oklch(0.79_0.18_188/0.28)]
+                         transition-colors"
             >
               Reopen Court
             </button>
             <button
               onClick={onRemove}
-              className="rounded-xl border border-destructive/30 px-3 py-2.5 text-xs
-                         text-destructive hover:bg-destructive/10 transition-colors"
+              className="clip-cut-sm border border-[oklch(0.65_0.22_22/0.35)] px-3 py-2.5
+                         font-command text-[9px] uppercase tracking-[0.10em]
+                         text-[oklch(0.75_0.18_22)] hover:bg-[oklch(0.65_0.22_22/0.10)]
+                         transition-colors"
             >
               Remove
             </button>
           </div>
         )}
+      </div>
       </div>
     </div>
   );
