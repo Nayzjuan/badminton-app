@@ -37,7 +37,8 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { isSessionOrganizer, isRpcNotFound } from "@/app/actions/_shared";
+import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isRpcNotFound } from "@/lib/rpc-utils";
 
 // ── Checkout ──────────────────────────────────────────────────
 // Marks the calling player's queue_entries row as "left" for a

@@ -35,7 +35,8 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { isSessionOrganizer, isRpcNotFound } from "@/app/actions/_shared";
+import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isRpcNotFound } from "@/lib/rpc-utils";
 
 // Service client singleton for this module — bypasses RLS for writes.
 // Auth is always verified at the JS layer before any service client write.
