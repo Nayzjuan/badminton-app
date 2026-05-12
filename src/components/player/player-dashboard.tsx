@@ -554,13 +554,24 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
   const myScoreValue = myTeam === "a" ? teamAScore : teamBScore;
   const theirScoreValue = myTeam === "a" ? teamBScore : teamAScore;
 
+  function clampScore(val: string): string {
+    if (val === "") return "";
+    const num = parseInt(val, 10);
+    if (isNaN(num)) return "";
+    return String(Math.min(30, Math.max(0, num)));
+  }
+
   function handleMyScore(val: string) {
-    if (myTeam === "a") setTeamAScore(val);
-    else setTeamBScore(val);
+    setError(null);
+    const clamped = clampScore(val);
+    if (myTeam === "a") setTeamAScore(clamped);
+    else setTeamBScore(clamped);
   }
   function handleTheirScore(val: string) {
-    if (myTeam === "a") setTeamBScore(val);
-    else setTeamAScore(val);
+    setError(null);
+    const clamped = clampScore(val);
+    if (myTeam === "a") setTeamBScore(clamped);
+    else setTeamAScore(clamped);
   }
 
   function handleSubmit() {
