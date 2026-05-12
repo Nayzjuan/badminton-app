@@ -62,7 +62,7 @@ async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
   return user;
 }
 
-// isSessionOrganizer and isRpcNotFound are imported from ./_shared.
+// isSessionOrganizer imported from ./_shared; isRpcNotFound from @/lib/rpc-utils.
 
 // ============================================================
 // submitMatchScore — player-initiated score submission

@@ -3,9 +3,13 @@
 // ============================================================
 // Shared Action Helpers
 // ============================================================
-// isSessionOrganizer and isRpcNotFound were duplicated across
-// match.ts, queue.ts, and swap-player.ts. They live here so
-// a single definition can be imported by every action module.
+// isSessionOrganizer was duplicated across match.ts, queue.ts,
+// and swap-player.ts. It lives here so a single definition can be
+// imported by every action module.
+//
+// Note: isRpcNotFound is in src/lib/rpc-utils.ts (pure sync util,
+// not a server action — Turbopack requires all "use server" exports
+// to be async functions).
 //
 // All helpers use the service-role client so they bypass RLS;
 // auth is always verified by the calling action via getUser()
@@ -44,4 +48,3 @@ export async function isSessionOrganizer(userId: string, sessionId: string): Pro
 
   return !!membership;
 }
-

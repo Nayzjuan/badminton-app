@@ -47,11 +47,11 @@ import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
 
 // ── Design token constants ───────────────────────────────────
-// Centralised so a future CSS-variable migration touches one place.
-const HEADER_BG = "bg-[#1D3A6F] dark:bg-[hsl(217_30%_11%)]";
-const SURFACE_BG = "bg-[#FAFAF7] dark:bg-background";
+// Organizer dashboard is always dark — command-center aesthetic.
+const HEADER_BG = "bg-[oklch(0.11_0.016_238)]";
+const SURFACE_BG = "bg-[oklch(0.14_0.018_238)]";
 const ACTIVE_TAB =
-  "border-b-2 border-white text-white font-semibold dark:border-primary dark:text-primary";
+  "border-b-2 border-[oklch(0.79_0.18_188)] text-[oklch(0.79_0.18_188)] font-semibold";
 
 interface OrganizerDashboardProps {
   profile: Profile;
@@ -460,7 +460,7 @@ export function OrganizerDashboard({
     <div className={`min-h-screen ${SURFACE_BG}`}>
       {/* Top Header */}
       <header
-        className={`sticky top-0 z-20 ${HEADER_BG} shadow-lg dark:border-b dark:border-border`}
+        className={`sticky top-0 z-20 ${HEADER_BG} border-b border-[oklch(0.22_0.022_240)]`}
       >
         <div className="max-w-7xl mx-auto px-3 lg:px-6 py-3 lg:py-4">
           {/* ── Row 1: back link + mobile controls ── */}
@@ -488,14 +488,14 @@ export function OrganizerDashboard({
                               text-[11px] font-semibold transition-colors border
                               ${
                                 autoMatchmaking
-                                  ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300"
+                                  ? "bg-[oklch(0.79_0.18_188/0.14)] border-[oklch(0.79_0.18_188/0.50)] text-[oklch(0.79_0.18_188)]"
                                   : "bg-white/10 border-white/20 text-white/50"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full shrink-0
-                                    ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`}
+                                    ${autoMatchmaking ? "bg-[oklch(0.79_0.18_188)]" : "bg-white/40"}`}
                   />
                   {autoMatchmaking ? "Auto" : "Off"}
                 </button>
@@ -514,7 +514,8 @@ export function OrganizerDashboard({
                   {moreMenuOpen && (
                     <div
                       className="absolute right-0 top-full mt-1.5 w-52 rounded-xl
-                                    border border-slate-200 bg-white shadow-xl z-50 overflow-hidden
+                                    border border-[oklch(0.30_0.025_240)] bg-[oklch(0.19_0.020_238)]
+                                    shadow-xl z-50 overflow-hidden
                                     animate-in fade-in slide-in-from-top-1 duration-150"
                     >
                       {/* TV View */}
@@ -524,9 +525,10 @@ export function OrganizerDashboard({
                         rel="noopener noreferrer"
                         onClick={() => setMoreMenuOpen(false)}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm
-                                   text-slate-700 hover:bg-slate-50 dark:text-foreground dark:hover:bg-muted transition-colors"
+                                   text-[oklch(0.68_0.014_238)] hover:bg-[oklch(0.23_0.022_240)]
+                                   hover:text-[oklch(0.94_0.008_238)] transition-colors"
                       >
-                        <Tv2 className="h-4 w-4 text-slate-400 shrink-0" />
+                        <Tv2 className="h-4 w-4 text-[oklch(0.48_0.016_238)] shrink-0" />
                         TV Scoreboard
                       </a>
 
@@ -537,13 +539,14 @@ export function OrganizerDashboard({
                           setShareOpen(true);
                         }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
-                                   text-slate-700 hover:bg-slate-50 dark:text-foreground dark:hover:bg-muted transition-colors"
+                                   text-[oklch(0.68_0.014_238)] hover:bg-[oklch(0.23_0.022_240)]
+                                   hover:text-[oklch(0.94_0.008_238)] transition-colors"
                       >
-                        <Share2 className="h-4 w-4 text-slate-400 shrink-0" />
+                        <Share2 className="h-4 w-4 text-[oklch(0.48_0.016_238)] shrink-0" />
                         Share Session
                       </button>
 
-                      <div className="border-t border-slate-100" />
+                      <div className="border-t border-[oklch(0.30_0.025_240)]" />
 
                       {/* Close Session */}
                       <button
@@ -552,7 +555,8 @@ export function OrganizerDashboard({
                           setCloseOpen(true);
                         }}
                         className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
-                                   text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/20 transition-colors"
+                                   text-[oklch(0.65_0.21_25)] hover:bg-[oklch(0.65_0.21_25/0.10)]
+                                   hover:text-[oklch(0.75_0.19_25)] transition-colors"
                       >
                         <Power className="h-4 w-4 shrink-0" />
                         Close Session
@@ -579,7 +583,7 @@ export function OrganizerDashboard({
                                   : "cursor-default"
                               }`}
                 >
-                  <h1 className="text-lg lg:text-xl font-bold text-white truncate">
+                  <h1 className="font-command text-lg lg:text-xl font-bold text-white tracking-wide truncate">
                     {session.name}
                   </h1>
                   {otherSessions.length > 0 && (
@@ -593,12 +597,13 @@ export function OrganizerDashboard({
                 {/* Session switcher dropdown */}
                 {switcherOpen && otherSessions.length > 0 && (
                   <div
-                    className="absolute left-0 top-full mt-2 w-72 rounded-xl border border-slate-200
-                                  dark:border-border bg-white dark:bg-card shadow-xl z-50 overflow-hidden
+                    className="absolute left-0 top-full mt-2 w-72 rounded-xl
+                                  border border-[oklch(0.30_0.025_240)] bg-[oklch(0.19_0.020_238)]
+                                  shadow-xl z-50 overflow-hidden
                                   animate-in fade-in slide-in-from-top-1 duration-150"
                   >
-                    <div className="px-3 py-2 bg-slate-50 dark:bg-muted border-b border-slate-100 dark:border-border">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    <div className="px-3 py-2 bg-[oklch(0.23_0.022_240)] border-b border-[oklch(0.30_0.025_240)]">
+                      <p className="font-command text-[9px] font-bold uppercase tracking-[0.22em] text-[oklch(0.48_0.016_238)]">
                         Switch Session
                       </p>
                     </div>
@@ -611,16 +616,16 @@ export function OrganizerDashboard({
                             router.push(`/organizer/${s.id}`);
                           }}
                           className="flex items-center gap-3 w-full px-3 py-2.5 text-left
-                                     hover:bg-slate-50 dark:hover:bg-muted transition-colors"
+                                     hover:bg-[oklch(0.23_0.022_240)] transition-colors"
                         >
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-muted">
-                            <Repeat className="h-3.5 w-3.5 text-slate-500" />
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[oklch(0.23_0.022_240)]">
+                            <Repeat className="h-3.5 w-3.5 text-[oklch(0.48_0.016_238)]" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-slate-800 dark:text-foreground truncate">
+                            <p className="text-sm font-semibold text-[oklch(0.94_0.008_238)] truncate">
                               {s.name}
                             </p>
-                            <p className="text-[10px] text-slate-400">
+                            <p className="text-[10px] text-[oklch(0.48_0.016_238)]">
                               Created{" "}
                               {new Date(s.created_at).toLocaleDateString("en-US", {
                                 weekday: "short",
@@ -632,14 +637,14 @@ export function OrganizerDashboard({
                         </button>
                       ))}
                     </div>
-                    <div className="border-t border-slate-100 dark:border-border px-3 py-2">
+                    <div className="border-t border-[oklch(0.30_0.025_240)] px-3 py-2">
                       <button
                         onClick={() => {
                           setSwitcherOpen(false);
                           router.push("/organizer");
                         }}
-                        className="flex items-center gap-2 w-full text-xs font-medium text-blue-600
-                                   dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors py-1"
+                        className="flex items-center gap-2 w-full text-xs font-medium
+                                   text-[oklch(0.79_0.18_188)] hover:text-[oklch(0.89_0.14_188)] transition-colors py-1"
                       >
                         <ArrowLeft className="h-3 w-3" />
                         View all sessions & create new
@@ -701,14 +706,14 @@ export function OrganizerDashboard({
                               min-h-[44px] text-xs font-semibold transition-colors border
                               ${
                                 autoMatchmaking
-                                  ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30"
+                                  ? "bg-[oklch(0.79_0.18_188/0.14)] border-[oklch(0.79_0.18_188/0.50)] text-[oklch(0.79_0.18_188)] hover:bg-[oklch(0.79_0.18_188/0.22)]"
                                   : "bg-white/10 border-white/20 text-white/50 hover:bg-white/15"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                   title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
                 >
                   <span
-                    className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-emerald-400" : "bg-white/40"}`}
+                    className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-[oklch(0.79_0.18_188)]" : "bg-white/40"}`}
                   />
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
@@ -805,12 +810,12 @@ export function OrganizerDashboard({
                 aria-selected={activeTab === tab.key}
                 aria-controls={`tabpanel-${tab.key}`}
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative shrink-0 whitespace-nowrap px-4 lg:px-5 py-2.5 text-sm
-                            font-medium transition-colors
+                className={`relative shrink-0 whitespace-nowrap px-4 lg:px-5 py-2.5
+                            font-command text-[10px] uppercase tracking-[0.14em] transition-colors
                             ${
                               activeTab === tab.key
                                 ? ACTIVE_TAB
-                                : "text-white/70 hover:text-white hover:bg-white/10 dark:hover:bg-white/5"
+                                : "text-[oklch(0.48_0.016_238)] hover:text-[oklch(0.68_0.014_238)] hover:bg-white/5"
                             }`}
               >
                 {tab.label}
