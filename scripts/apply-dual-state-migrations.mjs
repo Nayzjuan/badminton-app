@@ -1,5 +1,5 @@
 // apply-dual-state-migrations.mjs
-// Applies the 4 dual-state player fix migrations to local Supabase.
+// Applies the 5 dual-state player fix migrations to local Supabase.
 // Usage: node scripts/apply-dual-state-migrations.mjs
 
 import pg from "pg";
@@ -15,6 +15,7 @@ const MIGRATIONS = [
   "20260512200001_atomicize_clear_on_deck_match.sql",
   "20260512200002_fix_remove_from_queue.sql",
   "20260512200003_atomicize_revert_match.sql",
+  "20260512200004_fix_clear_on_deck_lock_order.sql",
 ];
 
 const client = new pg.Client({

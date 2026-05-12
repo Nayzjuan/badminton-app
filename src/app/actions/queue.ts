@@ -35,33 +35,9 @@
 import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
+import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-
-// ── Organizer check ───────────────────────────────────────────
-// Accepts created_by ownership OR session_organizers membership.
-// Uses the service client so the primary organizer is never
-// blocked by read-side RLS on the sessions/session_organizers tables.
-async function isSessionOrganizer(userId: string, sessionId: string): Promise<boolean> {
-  const svc = createServiceClient();
-  const { data: session } = await svc
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .single();
-  if (session?.created_by === userId) return true;
-  const { data: membership } = await svc
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  return !!membership;
-}
-
-// Helper to detect when a Postgres RPC has not been deployed yet.
-function isRpcNotFound(error: { code?: string } | null): boolean {
-  return error?.code === "PGRST202";
-}
+import { isSessionOrganizer, isRpcNotFound } from "@/app/actions/_shared";
 
 // ── Checkout ──────────────────────────────────────────────────
 // Marks the calling player's queue_entries row as "left" for a
@@ -305,12 +281,29 @@ export async function removePlayerFromQueue(
   const svc = createServiceClient();
 
   // Try the atomic RPC first (migration 20260512200002).
-  const { error: rpcErr } = await svc.rpc("remove_player_from_queue_organizer", {
-    p_session_id: sessionId,
-    p_player_id: playerId,
-  });
+  // The RPC returns the UUIDs of every pending match that was affected
+  // (i.e. had the player removed from its roster). We use this list to
+  // broadcast a "match_cancelled" notification to the remaining players
+  // in those matches so they see a toast instead of a silent state change.
+  const { data: affectedMatchIds, error: rpcErr } = await svc.rpc(
+    "remove_player_from_queue_organizer",
+    { p_session_id: sessionId, p_player_id: playerId }
+  );
 
   if (!rpcErr) {
+    // Notify remaining players in any matches that were cancelled.
+    const matchIds = (affectedMatchIds ?? []) as string[];
+    if (matchIds.length > 0) {
+      const { data: matchPlayers } = await svc
+        .from("match_players")
+        .select("player_id")
+        .in("match_id", matchIds);
+
+      const otherPlayerIds = (matchPlayers ?? []).map((mp) => mp.player_id);
+      if (otherPlayerIds.length > 0) {
+        await broadcastOrganizerIntervention(sessionId, "match_cancelled", otherPlayerIds);
+      }
+    }
     return { success: true };
   }
 

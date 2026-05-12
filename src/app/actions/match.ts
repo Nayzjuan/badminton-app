@@ -35,6 +35,7 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
+import { isSessionOrganizer, isRpcNotFound } from "@/app/actions/_shared";
 
 // Service client singleton for this module — bypasses RLS for writes.
 // Auth is always verified at the JS layer before any service client write.
@@ -60,37 +61,7 @@ async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
   return user;
 }
 
-/**
- * Verify that the calling user is an organizer for the given session.
- * Accepts either created_by ownership OR a session_organizers membership row.
- * Uses the service client so the primary organizer is never blocked by
- * read-side RLS on sessions or session_organizers.
- */
-async function isSessionOrganizer(userId: string, sessionId: string): Promise<boolean> {
-  const svc = getServiceClient();
-
-  const { data: session } = await svc
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .maybeSingle();
-
-  if (session?.created_by === userId) return true;
-
-  const { data: membership } = await svc
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  return !!membership;
-}
-
-// Helper to detect when a Postgres RPC has not been deployed yet.
-function isRpcNotFound(error: { code?: string } | null): boolean {
-  return error?.code === "PGRST202";
-}
+// isSessionOrganizer and isRpcNotFound are imported from ./_shared.
 
 // ============================================================
 // submitMatchScore — player-initiated score submission

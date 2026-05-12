@@ -44,7 +44,6 @@ DECLARE
   v_current_status   TEXT;
   v_affected_matches UUID[] := '{}';
   v_match_id         UUID;
-  v_is_published     BOOLEAN;
   v_other_player_ids UUID[];
   v_remaining_count  INT;
 BEGIN
@@ -63,8 +62,8 @@ BEGIN
   -- Iterate over all pending matches this player is currently assigned to.
   -- Normally at most one, but we handle multiple as a safety net for any
   -- legacy data that might exist from the pre-F1-fix era.
-  FOR v_match_id, v_is_published IN
-    SELECT m.id, m.is_published
+  FOR v_match_id IN
+    SELECT m.id
     FROM   match_players mp
     JOIN   matches m ON m.id = mp.match_id
     WHERE  mp.player_id  = p_player_id
@@ -89,19 +88,19 @@ BEGIN
     WHERE  match_id = v_match_id;
 
     -- If the match is now under-strength, cancel it and restore others.
+    -- Only cancelled matches are appended to v_affected_matches so the
+    -- caller broadcasts "match_cancelled" only to genuinely affected players
+    -- (not to players in a match that survived with a 4th player still in).
     IF v_remaining_count < 4 THEN
       UPDATE matches
       SET    status       = 'cancelled',
+             court_id     = NULL,   -- free the court so it isn't invisibly occupied
              completed_at = NOW()
       WHERE  id = v_match_id;
 
-      -- Restore remaining players. Status depends on whether the match
-      -- was published:
-      --   Published  → other players were 'on_deck'   → back to 'waiting'
-      --   Unpublished→ other players were 'drafted'   → back to 'waiting'
-      -- IN ('drafted','on_deck') covers both cases without accidentally
-      -- touching 'left' players or players who were already 'waiting'
-      -- before the cleanup.
+      -- Restore remaining players. IN ('drafted','on_deck') covers both
+      -- published (on_deck) and unpublished (drafted) matches without
+      -- accidentally touching 'left' or already-'waiting' players.
       IF v_other_player_ids IS NOT NULL THEN
         UPDATE queue_entries
         SET    status = 'waiting'
@@ -109,9 +108,10 @@ BEGIN
           AND  player_id  = ANY(v_other_player_ids)
           AND  status     IN ('drafted', 'on_deck');
       END IF;
-    END IF;
 
-    v_affected_matches := array_append(v_affected_matches, v_match_id);
+      -- Track cancelled match ID for broadcast by the calling server action.
+      v_affected_matches := array_append(v_affected_matches, v_match_id);
+    END IF;
   END LOOP;
 
   -- Finally, mark the player as 'left' in the queue.

@@ -33,6 +33,7 @@ import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
+import { isSessionOrganizer } from "@/app/actions/_shared";
 
 // ── Return types ──────────────────────────────────────────────
 
@@ -68,28 +69,8 @@ async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
   return user;
 }
 
-async function isSessionOrganizer(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  sessionId: string
-): Promise<boolean> {
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .single();
-
-  if (session?.created_by === userId) return true;
-
-  const { data: membership } = await supabase
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .single();
-
-  return !!membership;
-}
+// isSessionOrganizer is imported from ./_shared (service-role based,
+// consistent with match.ts and queue.ts).
 
 // ── Main action ───────────────────────────────────────────────
 
@@ -140,7 +121,7 @@ export async function swapPlayerInMatch(
   }
 
   // ── Organizer auth (requires sessionId from match) ────────
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -298,7 +279,7 @@ export async function swapMatchPlayers(
   }
 
   // ── Guard 3: Caller must be organizer of this session ─────
-  const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
