@@ -51,7 +51,7 @@ interface MatchTimerProps {
    *  If provided, the timer is static (no interval). */
   endedAt?: string | null;
   /** Display variant. Defaults to "live" for active courts. */
-  variant?: "live" | "static";
+  variant?: "live" | "static" | "command";
   className?: string;
 }
 
@@ -99,6 +99,20 @@ export function MatchTimer({
   }, [startedAt, endedAt]);
 
   if (!startedAt || !display) return null;
+
+  // ── Command variant — large amber Chakra Petch, no dot ───
+  if (variant === "command" && !endedAt) {
+    return (
+      <span
+        className={`tabular-nums font-command text-[22px] font-bold
+                    leading-none tracking-[0.04em]
+                    text-[oklch(0.78_0.17_62)]
+                    ${className}`}
+      >
+        {display}
+      </span>
+    );
+  }
 
   // ── Live variant ─────────────────────────────────────────
   if (variant === "live" && !endedAt) {

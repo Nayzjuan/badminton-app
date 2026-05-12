@@ -181,11 +181,9 @@ function CourtCard({
       >
       {/* ── Header ─────────────────────────────────────────── */}
       {/*
-        Single-row layout: left group (name + mixed badge + origin tag) gets
-        min-w-0 so the court name can truncate before the right group is
-        pushed to a second line. The right group (timer + status badge) is
-        always shrink-0 and stays in place. This eliminates the 30px height
-        discrepancy that occurred when Mixed Level badge caused flex-wrap.
+        Left group: court name (20px Chakra Petch) stacked above badges.
+        Right group: flex-col (timer on top, status badge below).
+        Both sides use min-w-0 / shrink-0 to prevent flex overflow.
       */}
       <div
         className={[
@@ -205,36 +203,36 @@ function CourtCard({
             : undefined
         }
       >
-        {/* Left group — min-w-0 allows court name to truncate instead of wrapping */}
-        <div className="flex items-center gap-2 min-w-0">
+        {/* Left group — court name + badges stacked vertically */}
+        <div className="flex flex-col gap-1.5 min-w-0">
           <h3
-            className={`truncate font-command text-base font-bold uppercase tracking-tight ${
+            className={`truncate font-command text-[20px] font-bold uppercase tracking-[0.06em] leading-none ${
               isActive ? "text-white" : "text-gray-900 dark:text-foreground"
             }`}
           >
             {court.name}
           </h3>
-          {match?.is_mixed_level && (
-            <span
-              className="shrink-0 clip-cut-badge border px-2 py-0.5
-                          font-command text-[9px] uppercase tracking-[0.10em]
-                          bg-amber-100 border-amber-300 text-amber-800
-                          dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300"
-            >
-              Mixed Level
-            </span>
-          )}
-          {match && <MatchOriginTag origin={match.origin} />}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {match?.is_mixed_level && (
+              <span
+                className="clip-cut-badge border px-2 py-0.5
+                            font-command text-[9px] uppercase tracking-[0.10em]
+                            bg-amber-100 border-amber-300 text-amber-800
+                            dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300"
+              >
+                Mixed Level
+              </span>
+            )}
+            {match && <MatchOriginTag origin={match.origin} />}
+          </div>
         </div>
-        {/* Right group — live timer + status badge; never shrinks or wraps internally */}
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Live match timer — only shown when in_progress */}
+        {/* Right group — timer on top, status badge below (column) */}
+        <div className="flex flex-col items-end gap-2 shrink-0">
           {cardState === "in_progress" && match?.started_at && (
-            <MatchTimer startedAt={match.started_at} variant="live" />
+            <MatchTimer startedAt={match.started_at} variant="command" />
           )}
-          {/* Pulse scoped to the badge only when matchmaking — not the whole card */}
           <span
-            className={`shrink-0 clip-cut-badge border px-2.5 py-0.5
+            className={`clip-cut-badge border px-2.5 py-0.5
                         font-command text-[9px] uppercase tracking-[0.12em]
                         ${badgeCfg[cardState].cls}
                         ${cardState === "matchmaking" ? "animate-pulse" : ""}`}
@@ -395,12 +393,11 @@ function CourtCard({
                       onClick={onInputScore}
                       disabled={isCancelling}
                       className="flex items-center gap-1.5 clip-cut-sm
-                                 bg-[oklch(0.16_0.018_245)] border border-[oklch(0.32_0.025_245)]
+                                 bg-[oklch(0.79_0.18_188)] hover:brightness-110
                                  px-4 py-2.5 min-h-[44px]
                                  font-command text-[9px] uppercase tracking-[0.10em]
-                                 text-[oklch(0.85_0.010_245)]
-                                 hover:bg-[oklch(0.20_0.018_245)]
-                                 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                 text-[oklch(0.07_0.012_245)]
+                                 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     >
                       <Trophy className="h-3.5 w-3.5" />
                       Input Score &amp; End
@@ -701,6 +698,19 @@ export function ActiveCourts({
           <span className="text-xs text-muted-foreground">Court time limit:</span>
           <CourtTimePopover timeLimitMinutes={timeLimitMinutes} onSave={onUpdateTimeLimit} />
         </div>
+      </div>
+
+      {/* ── Section header ─────────────────────────────────────── */}
+      <div className="flex items-center gap-3.5">
+        <span className="flex items-center gap-2.5 font-command text-[9px] uppercase tracking-[0.24em] text-muted-foreground shrink-0">
+          <span
+            className="block w-[3px] h-[14px] rounded-[1px]
+                       bg-[oklch(0.78_0.17_62)]
+                       shadow-[0_0_8px_oklch(0.78_0.17_62/0.55)]"
+          />
+          Active Courts
+        </span>
+        <div className="flex-1 h-px bg-border" />
       </div>
 
       {/* ── Courts grid ────────────────────────────────────────── */}
