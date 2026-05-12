@@ -1,6 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
-import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
+import SandboxRoot from '../sandbox/SandboxRoot.tsx';
 ---
 
 <BaseLayout
@@ -194,27 +194,27 @@ import OrganizerSandbox from '../sandbox/OrganizerSandbox.tsx';
        INTERACTIVE SANDBOX — centrepiece demo
   ══════════════════════════════════════════════════════════════════ -->
   <section id="sandbox" class="px-6 py-20 border-t border-edge-dim scroll-mt-14">
-    <div class="mx-auto max-w-5xl">
+    <div class="mx-auto max-w-7xl">
 
       <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-3">Interactive Demo</p>
           <h2 class="font-heading font-bold text-ink"
               style="font-size: clamp(1.75rem, 3.5vw, 2.5rem);">
-            Try the organizer<br class="hidden sm:inline"/> dashboard yourself.
+            Organizer and player views,<br class="hidden sm:inline"/> side by side.
           </h2>
         </div>
         <p class="text-xs text-ink-4 max-w-xs leading-relaxed">
-          Drag players to reorder the queue. Generate a draft, publish it, start the match,
-          submit a score. Tap any player name in a match to swap positions.
+          Drag players to reorder the queue. Generate a draft, publish it, start the match —
+          and watch the player's phone snap to ON DECK in real time.
         </p>
       </div>
 
-      <!-- React island — no backend, no logging, purely visual -->
-      <!-- client:visible defers hydration until the sandbox scrolls into view.
-           The hero, features, and how-it-works sections are above the fold and
-           fully static — no reason to load the React+dnd-kit bundle at TTI. -->
-      <OrganizerSandbox client:idle />
+      <!-- React island — full split-screen sandbox (organizer + PlayerPhone + event log).
+           client:visible defers the 103 kB bundle parse + hydration until the user
+           actually scrolls near #sandbox — the right choice for a component this
+           far below the fold (hero + features + how-it-works sit above it). -->
+      <SandboxRoot client:visible />
 
       <p class="mt-4 text-[11px] text-ink-4 font-mono text-center">
         Demo only · All data is local to your browser · Nothing is stored
