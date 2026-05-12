@@ -35,11 +35,11 @@ export function LiveCourtsTab({
 
   if (hasNothing) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-white dark:bg-card px-6 py-12 text-center">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
-          <Swords className="h-5 w-5 text-slate-400 dark:text-muted-foreground" />
+      <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+          <Swords className="h-5 w-5 text-muted-foreground" />
         </div>
-        <p className="text-sm font-medium text-slate-600 dark:text-foreground">No active matches</p>
+        <p className="text-sm font-medium text-foreground">No active matches</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Matches will appear here once the organizer starts them.
         </p>
@@ -57,7 +57,7 @@ export function LiveCourtsTab({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
             </span>
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
               Now Playing
             </h2>
             <span className="rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
@@ -81,7 +81,7 @@ export function LiveCourtsTab({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
             </span>
-            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">
               On Deck
             </h2>
             <span className="rounded-full bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
@@ -137,15 +137,15 @@ function CourtMatchCard({
     <div
       className={
         isOnDeck
-          ? "rounded-2xl overflow-hidden shadow-sm border border-amber-100 dark:border-amber-500/20 bg-white dark:bg-card"
+          ? "rounded-2xl overflow-hidden shadow-sm border border-amber-100 dark:border-amber-500/20 bg-card"
           : "rounded-2xl overflow-hidden shadow-sm border"
       }
       style={
         isOnDeck
           ? undefined
           : {
-              background: "#0D1B2A",
-              boxShadow: "0 0 0 1px rgba(16,185,129,0.3), 0 0 24px rgba(16,185,129,0.08)",
+              background: "oklch(0.10 0.014 245)",
+              boxShadow: "0 0 0 1px oklch(0.76 0.17 155 / 0.35), 0 0 24px oklch(0.76 0.17 155 / 0.10)",
               borderColor: "transparent",
             }
       }

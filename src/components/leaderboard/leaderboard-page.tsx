@@ -30,6 +30,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Trophy, RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { LeaderboardTable } from "./leaderboard-table";
+import { StadiumLeaderboard } from "./stadium-leaderboard";
 import { LeaderboardHeroCard } from "./leaderboard-hero-card";
 import { AdvancedStatsToggle } from "./advanced-stats-toggle";
 import { getSessionLeaderboard, getAllTimeLeaderboard, getPlayerStats } from "@/app/actions/leaderboard";
@@ -217,7 +218,45 @@ export function LeaderboardPage({
     isCentered ? "max-w-2xl mx-auto" : "",
   ].filter(Boolean).join(" ");
 
-  // ── Render ────────────────────────────────────────────────
+  // ── Render: player-panel → Stadium layout ─────────────────
+  // The compact player-panel variant short-circuits the regular table
+  // and renders the dedicated Stadium component. It uses session rows
+  // only (no all-time / advanced toggle in the player dashboard).
+  if (isCompact) {
+    return (
+      <div className="px-1">
+        {error && (
+          <p
+            role="alert"
+            className="my-3 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {error}
+          </p>
+        )}
+        {sessionLoading && sessionRows.length === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            Loading leaderboard…
+          </div>
+        ) : sessionRows.length === 0 ? (
+          <div className="py-12 text-center">
+            <p className="text-sm font-medium text-foreground">No ranked players yet</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Min. {MIN_SESSION_GP} games to appear on the board.
+            </p>
+          </div>
+        ) : (
+          <StadiumLeaderboard
+            sessionName={activeSessionName}
+            rows={sessionRows}
+            currentUserId={currentUserId}
+            onRefresh={handleRefresh}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ── Render: organizer / standalone ────────────────────────
   return (
     <div className={wrapperClass}>
 

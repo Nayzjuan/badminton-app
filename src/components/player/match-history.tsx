@@ -73,7 +73,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
 
   if (loading) {
     return (
-      <div className="py-12 text-center text-sm text-slate-400">
+      <div className="py-12 text-center text-sm text-muted-foreground">
         Loading history...
       </div>
     );
@@ -81,12 +81,12 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
 
   if (history.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-white dark:bg-card px-6 py-12 text-center">
-        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
-          <History className="h-5 w-5 text-slate-400 dark:text-muted-foreground" />
+      <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-12 text-center">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+          <History className="h-5 w-5 text-muted-foreground" />
         </div>
-        <p className="text-sm font-medium text-slate-600 dark:text-foreground">No matches yet</p>
-        <p className="mt-1 text-xs text-slate-400 dark:text-muted-foreground">
+        <p className="text-sm font-medium text-foreground">No matches yet</p>
+        <p className="mt-1 text-xs text-muted-foreground">
           Your completed matches will appear here.
         </p>
       </div>
@@ -111,21 +111,21 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
   return (
     <div className="space-y-4">
       {/* Stats bar */}
-      <div className="flex items-center justify-between rounded-xl bg-white dark:bg-card border border-slate-200 dark:border-border px-4 py-3 shadow-sm">
+      <div className="flex items-center justify-between rounded-xl bg-card border border-border px-4 py-3 shadow-sm">
         <div className="flex items-center gap-2">
-          <Trophy className="h-4 w-4 text-slate-400 dark:text-muted-foreground" />
-          <span className="text-sm font-bold text-slate-700 dark:text-foreground">
+          <Trophy className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-bold text-foreground">
             {history.length} match{history.length !== 1 ? "es" : ""}
           </span>
         </div>
         <div className="flex items-center gap-3 text-sm">
           <span className="font-bold text-emerald-600 dark:text-emerald-400">{wins}W</span>
-          <span className="text-slate-300 dark:text-muted-foreground/50">/</span>
+          <span className="text-muted-foreground/40">/</span>
           <span className="font-bold text-red-500 dark:text-red-400">{losses}L</span>
           {draws > 0 && (
             <>
-              <span className="text-slate-300 dark:text-muted-foreground/50">/</span>
-              <span className="font-bold text-slate-400 dark:text-muted-foreground">{draws}D</span>
+              <span className="text-muted-foreground/40">/</span>
+              <span className="font-bold text-muted-foreground">{draws}D</span>
             </>
           )}
         </div>
@@ -161,7 +161,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
             ? "border-emerald-200 dark:border-emerald-800/50"
             : draw
             ? "border-slate-300 dark:border-border"
-            : "border-slate-200 dark:border-border";
+            : "border-border";
           const headerBg = won
             ? "bg-emerald-50 border-emerald-100 dark:bg-emerald-950/30 dark:border-emerald-800/40"
             : draw
@@ -177,7 +177,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
           return (
             <div
               key={match.match_id}
-              className={`rounded-2xl border overflow-hidden bg-white dark:bg-card shadow-sm ${borderColor}`}
+              className={`rounded-2xl border overflow-hidden bg-card shadow-sm ${borderColor}`}
             >
               {/* Header */}
               <div
@@ -191,7 +191,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
                 </div>
                 <div className="flex items-center gap-2">
                   {(dateStr || timeStr) && (
-                    <span className="text-[10px] text-slate-400 dark:text-muted-foreground">
+                    <span className="text-[10px] text-muted-foreground">
                       {dateStr}{dateStr && timeStr ? " · " : ""}{timeStr}
                     </span>
                   )}
@@ -209,14 +209,14 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
                 <div className="flex items-center justify-center gap-3 mb-3">
                   <span
                     className={`text-3xl font-black tabular-nums
-                                ${won ? "text-emerald-600 dark:text-emerald-400" : draw ? "text-slate-500 dark:text-muted-foreground" : "text-slate-400 dark:text-muted-foreground"}`}
+                                ${won ? "text-emerald-600 dark:text-emerald-400" : draw ? "text-slate-500 dark:text-muted-foreground" : "text-muted-foreground"}`}
                   >
                     {myScore ?? "?"}
                   </span>
                   <span className="text-sm font-bold text-slate-300 dark:text-muted-foreground/40">–</span>
                   <span
                     className={`text-3xl font-black tabular-nums
-                                ${lost ? "text-red-500 dark:text-red-400" : "text-slate-400 dark:text-muted-foreground"}`}
+                                ${lost ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}
                   >
                     {theirScore ?? "?"}
                   </span>
@@ -231,7 +231,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
                       return (
                         <span
                           key={gs.game_number}
-                          className="rounded-full bg-slate-100 dark:bg-muted px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-muted-foreground"
+                          className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-muted-foreground"
                         >
                           G{gs.game_number}: {mine}-{theirs}
                         </span>
@@ -243,19 +243,19 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
                 {/* Players */}
                 <div className="flex items-center justify-center gap-3 text-xs text-slate-500 dark:text-muted-foreground">
                   <div className="text-center">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-muted-foreground mb-0.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">
                       Partner
                     </p>
-                    <p className="font-medium text-slate-700 dark:text-foreground">
+                    <p className="font-medium text-foreground">
                       {match.teammates?.join(", ") ?? "—"}
                     </p>
                   </div>
                   <span className="text-slate-300 dark:text-muted-foreground/40">vs</span>
                   <div className="text-center">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-muted-foreground mb-0.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">
                       Opponents
                     </p>
-                    <p className="font-medium text-slate-700 dark:text-foreground">
+                    <p className="font-medium text-foreground">
                       {match.opponents?.join(" & ") ?? "—"}
                     </p>
                   </div>

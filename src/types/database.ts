@@ -284,12 +284,40 @@ export type SessionWrappedStats = {
   earned_awards:       string[];
   award_data:          Record<string, Record<string, unknown>>;
   intro_dismissed_at:  string | null;
+  /** Small payload written at session close, read by next session's RPC.
+   *  Shape: { ended_on_win_streak: number, session_win_pct: number, session_id: string } */
+  carry_forward:       Record<string, unknown>;
 };
 
-export type SessionWrappedStatsInsert = Omit<SessionWrappedStats, "id" | "point_diff" | "computed_at" | "intro_dismissed_at"> &
-  Partial<Pick<SessionWrappedStats, "computed_at" | "intro_dismissed_at">>;
+export type SessionWrappedStatsInsert = Omit<SessionWrappedStats, "id" | "point_diff" | "computed_at" | "intro_dismissed_at" | "carry_forward"> &
+  Partial<Pick<SessionWrappedStats, "computed_at" | "intro_dismissed_at" | "carry_forward">>;
 
 export type SessionWrappedStatsUpdate = Partial<Omit<SessionWrappedStats, "id" | "session_id" | "player_id" | "point_diff">>;
+
+/** player_rivalries table — running all-time H2H ledger between players (directional) */
+export type PlayerRivalry = {
+  player_id:       string;
+  rival_id:        string;
+  wins_vs:         number;
+  losses_vs:       number;
+  sessions_faced:  number;
+  last_session_id: string | null;
+  last_faced_at:   string | null;
+  updated_at:      string;
+};
+
+/** player_partnerships table — running all-time partnership ledger between players (directional) */
+export type PlayerPartnership = {
+  player_id:         string;
+  partner_id:        string;
+  games_together:    number;
+  wins_together:     number;
+  losses_together:   number;
+  sessions_together: number;
+  last_session_id:   string | null;
+  last_played_at:    string | null;
+  updated_at:        string;
+};
 
 /** identity_migrations table — audit log of every old → new UUID reconnect */
 export type IdentityMigration = {
@@ -395,6 +423,18 @@ export type Database = {
         Row: SessionWrappedStats;
         Insert: SessionWrappedStatsInsert;
         Update: SessionWrappedStatsUpdate;
+        Relationships: [];
+      };
+      player_rivalries: {
+        Row: PlayerRivalry;
+        Insert: Omit<PlayerRivalry, "updated_at"> & Partial<Pick<PlayerRivalry, "updated_at">>;
+        Update: Partial<Omit<PlayerRivalry, "player_id" | "rival_id">>;
+        Relationships: [];
+      };
+      player_partnerships: {
+        Row: PlayerPartnership;
+        Insert: Omit<PlayerPartnership, "updated_at"> & Partial<Pick<PlayerPartnership, "updated_at">>;
+        Update: Partial<Omit<PlayerPartnership, "player_id" | "partner_id">>;
         Relationships: [];
       };
       identity_migrations: {
@@ -522,6 +562,10 @@ export type Database = {
         Returns: string; // UUID of the new match
       };
       compute_session_wrapped: {
+        Args: { p_session_id: string };
+        Returns: void;
+      };
+      refresh_cross_session_stats: {
         Args: { p_session_id: string };
         Returns: void;
       };

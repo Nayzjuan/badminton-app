@@ -164,17 +164,18 @@ function CourtCard({
       data-alert-tier={alertTier}
       className={[
         "flex flex-col rounded-2xl shadow-md overflow-hidden transition-all",
-        !isActive ? "bg-white dark:bg-card border border-gray-200 dark:border-border" : "",
+        !isActive ? "bg-card border border-gray-200 dark:border-border" : "",
       ].join(" ")}
       style={
         isActive
           ? {
-              background: "#0D1B2A",
+              background: "oklch(0.10 0.014 245)",
               boxShadow: alertTier === "critical"
-                ? "0 0 0 1px rgba(239,68,68,0.5), 0 0 40px rgba(239,68,68,0.2)"
+                ? "0 0 0 1px oklch(0.65 0.22 22 / 0.55), 0 0 40px oklch(0.65 0.22 22 / 0.22)"
                 : alertTier === "warning"
-                ? "0 0 0 1px rgba(245,158,11,0.5), 0 0 40px rgba(245,158,11,0.18)"
-                : "0 0 0 1px rgba(16,185,129,0.3), 0 0 40px rgba(16,185,129,0.12)",
+                ? "0 0 0 1px oklch(0.78 0.17 62 / 0.55), 0 0 40px oklch(0.78 0.17 62 / 0.20)"
+                // Normal tier: electric command-teal — replaces the old emerald glow
+                : "0 0 0 1px oklch(0.79 0.18 188 / 0.45), 0 0 40px oklch(0.79 0.18 188 / 0.16)",
             }
           : undefined
       }
@@ -194,10 +195,10 @@ function CourtCard({
         ].join(" ")}
         style={isActive ? {
           borderColor: alertTier === "critical"
-            ? "rgba(239,68,68,0.25)"
+            ? "oklch(0.65 0.22 22 / 0.28)"
             : alertTier === "warning"
-            ? "rgba(245,158,11,0.25)"
-            : "rgba(255,255,255,0.1)"
+            ? "oklch(0.78 0.17 62 / 0.28)"
+            : "oklch(0.79 0.18 188 / 0.22)"  // teal command separator
         } : undefined}
       >
         {/* Left group — min-w-0 allows court name to truncate instead of wrapping */}

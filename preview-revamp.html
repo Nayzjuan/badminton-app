@@ -1,0 +1,1371 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shuttlecore — Command Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300&family=Barlow+Condensed:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ─── DARK THEME (default) ─── */
+:root,
+[data-theme="dark"] {
+  --bg:        oklch(0.14 0.018 238);
+  --bg-2:      oklch(0.19 0.020 238);
+  --bg-3:      oklch(0.23 0.022 240);
+  --border:    oklch(0.30 0.025 240);
+  --border-hi: oklch(0.44 0.032 240);
+
+  /* Primary accent: electric aqua/teal — distinct from lime, sporty */
+  --accent:      oklch(0.79 0.18 188);
+  --accent-dim:  oklch(0.79 0.18 188 / 0.14);
+  --accent-glow: oklch(0.79 0.18 188 / 0.28);
+  --accent-text: oklch(0.79 0.18 188);
+
+  --amber:     oklch(0.78 0.17 62);
+  --amber-dim: oklch(0.78 0.17 62 / 0.14);
+  --blue:      oklch(0.65 0.19 255);
+  --blue-dim:  oklch(0.65 0.19 255 / 0.14);
+  --red:       oklch(0.65 0.21 25);
+  --red-dim:   oklch(0.65 0.21 25 / 0.10);
+
+  --t1: oklch(0.94 0.008 238);
+  --t2: oklch(0.68 0.014 238);
+  --t3: oklch(0.48 0.016 238);
+
+  --header-bg: oklch(0.11 0.016 238 / 0.95);
+  --grid-color: oklch(0.30 0.025 240 / 0.12);
+
+  --scan-color: oklch(0.79 0.18 188 / 0.04);
+  --deck-border: oklch(0.79 0.18 188 / 0.50);
+  --badge-progress-bg: oklch(0.78 0.17 62 / 0.14);
+
+  --btn-on-accent: oklch(0.11 0.016 238);
+}
+
+/* ─── LIGHT THEME ─── */
+[data-theme="light"] {
+  --bg:        oklch(0.94 0.010 235);
+  --bg-2:      oklch(0.99 0.005 235);
+  --bg-3:      oklch(0.91 0.014 235);
+  --border:    oklch(0.80 0.022 235);
+  --border-hi: oklch(0.65 0.030 235);
+
+  /* Accent: deep teal that punches on light surfaces */
+  --accent:      oklch(0.50 0.18 188);
+  --accent-dim:  oklch(0.50 0.18 188 / 0.10);
+  --accent-glow: oklch(0.50 0.18 188 / 0.18);
+  --accent-text: oklch(0.50 0.18 188);
+
+  --amber:     oklch(0.58 0.18 62);
+  --amber-dim: oklch(0.58 0.18 62 / 0.12);
+  --blue:      oklch(0.48 0.20 255);
+  --blue-dim:  oklch(0.48 0.20 255 / 0.12);
+  --red:       oklch(0.52 0.22 25);
+  --red-dim:   oklch(0.52 0.22 25 / 0.10);
+
+  --t1: oklch(0.18 0.020 238);
+  --t2: oklch(0.40 0.018 238);
+  --t3: oklch(0.58 0.016 238);
+
+  --header-bg: oklch(0.99 0.005 235 / 0.97);
+  --grid-color: oklch(0.72 0.022 235 / 0.30);
+
+  --scan-color: transparent;
+  --deck-border: oklch(0.50 0.18 188 / 0.55);
+  --badge-progress-bg: oklch(0.58 0.18 62 / 0.12);
+
+  --btn-on-accent: oklch(0.99 0.005 235);
+}
+
+/* ─── TRANSITIONS ─── */
+body,
+.header,
+.nav-tabs-wrapper,
+.hidden-banner,
+.deck-card-inner,
+.court-card,
+.player-card,
+.court-player-card,
+.nav-tab,
+.btn,
+.btn-clear,
+.btn-cancel,
+.btn-score,
+.btn-add-court,
+.court-input,
+.toggle-pill,
+.tab-badge {
+  transition:
+    background-color 0.32s ease,
+    border-color 0.32s ease,
+    color 0.22s ease,
+    box-shadow 0.32s ease;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Barlow Condensed', sans-serif;
+  background: var(--bg);
+  color: var(--t1);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.4;
+  position: relative;
+  overflow-x: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+  transition: background-image 0.32s ease;
+}
+
+/* ─── HEADER ─── */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--header-bg);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-inner {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  height: 64px;
+  gap: 16px;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 28px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.back-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--t3);
+  text-decoration: none;
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.back-link:hover { color: var(--t2); }
+
+.session-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.session-name {
+  font-family: 'Chakra Petch', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-name .organizer { color: var(--t3); font-weight: 400; }
+
+/* Header stats */
+.header-stats {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.stat-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 20px;
+  position: relative;
+}
+.stat-block + .stat-block::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  height: 22px; width: 1px;
+  background: var(--border);
+}
+
+.stat-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 2px;
+}
+
+.stat-value {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--t1);
+}
+.stat-value.live { color: var(--amber); }
+
+/* Header right */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ─── BUTTONS ─── */
+:root { --cut: 10px; }
+
+.btn {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--t2);
+  padding: 7px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+  white-space: nowrap;
+}
+.btn:hover {
+  border-color: var(--border-hi);
+  color: var(--t1);
+  background: var(--bg-3);
+}
+
+.btn-auto {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: var(--accent-dim);
+}
+.btn-auto:hover { background: oklch(from var(--accent) l c h / 0.22); }
+
+.btn-auto .pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+[data-theme="light"] .btn-auto .pulse-dot { box-shadow: none; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.btn-danger {
+  border-color: var(--red);
+  color: var(--red);
+  background: var(--red-dim);
+}
+.btn-danger:hover { background: oklch(from var(--red) l c h / 0.18); }
+
+/* Theme toggle button */
+.btn-theme {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--t2);
+  width: 36px;
+  height: 34px;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+  flex-shrink: 0;
+  transition: background-color 0.32s ease, border-color 0.32s ease;
+}
+.btn-theme:hover {
+  border-color: var(--border-hi);
+  background: var(--bg-3);
+}
+.icon-sun { display: none; }
+.icon-moon { display: block; }
+[data-theme="light"] .icon-sun { display: block; }
+[data-theme="light"] .icon-moon { display: none; }
+
+/* ─── NAV TABS ─── */
+.nav-tabs-wrapper {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 64px;
+  z-index: 90;
+}
+
+.nav-tabs {
+  display: flex;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 28px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-tabs::-webkit-scrollbar { display: none; }
+
+.nav-tab {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--t3);
+  padding: 15px 20px;
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.nav-tab:hover { color: var(--t2); }
+.nav-tab.active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+}
+
+.tab-badge {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  background: var(--amber);
+  color: var(--bg);
+  clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px));
+  line-height: 1.2;
+}
+
+/* ─── HIDDEN BANNER ─── */
+.hidden-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 7px 28px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+.banner-dot { width: 5px; height: 5px; border-radius: 50%; }
+.banner-dot.hidden-dot { background: var(--t3); }
+.banner-dot.visible-dot {
+  background: var(--accent);
+  box-shadow: 0 0 5px var(--accent-glow);
+}
+[data-theme="light"] .banner-dot.visible-dot { box-shadow: none; }
+.banner-sep { width: 1px; height: 10px; background: var(--border); }
+
+/* ─── MAIN ─── */
+.main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 32px 28px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ─── SECTION HEADERS ─── */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.section-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--t3);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.section-label::before {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 14px;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: background-color 0.32s ease, box-shadow 0.32s ease;
+}
+[data-theme="light"] .section-label::before { box-shadow: none; }
+
+.section-label.amber-bar::before {
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber-dim);
+}
+[data-theme="light"] .section-label.amber-bar::before { box-shadow: none; }
+
+.section-count {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 3px 10px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+  transition: background-color 0.32s ease, color 0.22s ease;
+}
+
+.section-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
+}
+
+/* ─── ON DECK CARDS ─── */
+.deck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 16px;
+  margin-bottom: 40px;
+}
+
+.deck-card {
+  filter: drop-shadow(0 0 16px var(--accent-glow));
+  transition: filter 0.32s ease;
+}
+.deck-card:hover {
+  filter: drop-shadow(0 0 26px oklch(from var(--accent) l c h / 0.40));
+}
+[data-theme="light"] .deck-card { filter: none; }
+[data-theme="light"] .deck-card:hover { filter: none; }
+
+.deck-card-inner {
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+  background: var(--bg-2);
+  border: 1px solid var(--deck-border);
+  padding: 22px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Corner accent marks */
+.deck-card-inner::before {
+  content: '';
+  position: absolute;
+  top: 5px; left: 5px;
+  width: 12px; height: 12px;
+  border-top: 1px solid var(--accent);
+  border-left: 1px solid var(--accent);
+  pointer-events: none;
+  transition: border-color 0.32s ease;
+  opacity: 0.7;
+}
+
+/* Scan line — hidden in light mode */
+.deck-card-inner::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 35%;
+  background: linear-gradient(to bottom, transparent, var(--scan-color) 50%, transparent);
+  animation: scan 5s linear infinite;
+  pointer-events: none;
+  top: -35%;
+}
+@keyframes scan {
+  from { top: -35%; }
+  to   { top: 105%; }
+}
+
+[data-theme="light"] .deck-card-inner {
+  box-shadow: 0 2px 12px oklch(0.50 0.18 188 / 0.10);
+}
+
+.deck-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.deck-card-num {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  margin-bottom: 8px;
+}
+
+.deck-card-badges { display: flex; gap: 6px; align-items: center; }
+
+.badge {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+  transition: background-color 0.32s ease, color 0.22s ease;
+}
+.badge-mixed { background: var(--blue-dim); color: var(--blue); }
+.badge-edited { background: var(--bg-3); color: var(--t3); }
+.badge-manual { background: var(--bg-3); color: var(--t3); }
+
+.deck-card-time {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  color: var(--t3);
+  letter-spacing: 0.05em;
+}
+
+/* Match layout */
+.match-layout {
+  display: grid;
+  grid-template-columns: 1fr 32px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.team-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.team-label.yours { color: var(--blue); }
+.team-label.opps  { color: var(--amber); }
+
+.player-slot { display: flex; flex-direction: column; gap: 8px; }
+
+.player-card {
+  background: var(--bg-3);
+  padding: 9px 12px;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+  cursor: pointer;
+}
+.player-card:hover { background: var(--border); }
+
+.player-name {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--t1);
+  letter-spacing: 0.02em;
+}
+.player-level {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  margin-top: 2px;
+}
+.lvl-adv  { color: var(--amber); }
+.lvl-ladv { color: var(--blue); }
+.lvl-lint { color: var(--accent-text); }
+.lvl-uint { color: var(--amber); }
+.lvl-beg  { color: var(--t3); }
+.lvl-int  { color: var(--accent-text); }
+
+.vs-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.vs-line { width: 1px; height: 18px; background: var(--border); }
+.vs-text {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--t3);
+}
+
+.deck-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.hint-text {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 11px;
+  color: var(--t3);
+  letter-spacing: 0.04em;
+}
+
+.btn-clear {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--red);
+  background: var(--red-dim);
+  border: 1px solid oklch(from var(--red) l c h / 0.30);
+  padding: 6px 14px;
+  cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-clear:hover {
+  background: oklch(from var(--red) l c h / 0.18);
+  border-color: oklch(from var(--red) l c h / 0.55);
+}
+
+/* ─── ADD COURT ─── */
+.add-court-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.court-input {
+  flex: 1;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--t1);
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  padding: 12px 18px;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  outline: none;
+}
+.court-input::placeholder { color: var(--t3); }
+.court-input:focus { border-color: var(--accent); }
+
+.btn-add-court {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--btn-on-accent);
+  background: var(--accent);
+  border: none;
+  padding: 12px 22px;
+  cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  white-space: nowrap;
+}
+.btn-add-court:hover { filter: brightness(1.08); }
+
+.time-limit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 40px;
+}
+.time-limit-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+.toggle-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  cursor: pointer;
+}
+.toggle-pip {
+  width: 7px; height: 7px;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  background: var(--t3);
+}
+.toggle-text {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+
+/* ─── COURTS GRID ─── */
+.courts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.court-card {
+  background: var(--bg-2);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
+  border: 1px solid var(--border);
+  padding: 22px;
+  position: relative;
+  overflow: hidden;
+}
+.court-card:hover { border-color: var(--border-hi); }
+
+.court-card.in-progress {
+  filter: drop-shadow(0 0 20px var(--amber-dim));
+}
+[data-theme="light"] .court-card.in-progress {
+  filter: none;
+  box-shadow: 0 2px 12px var(--amber-dim);
+}
+
+.court-card.in-progress::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 30%;
+  background: linear-gradient(to bottom, transparent, oklch(from var(--amber) l c h / 0.025) 50%, transparent);
+  animation: scan 7s linear infinite;
+  pointer-events: none;
+  top: -30%;
+  animation-delay: -2s;
+}
+[data-theme="light"] .court-card.in-progress::after { display: none; }
+
+.court-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.court-name {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t1);
+}
+.court-badges { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+
+.court-header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.court-timer {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  line-height: 1;
+}
+
+.badge-progress {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  background: var(--badge-progress-bg);
+  color: var(--amber);
+  clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+  transition: background-color 0.32s ease, color 0.22s ease;
+}
+
+.court-match {
+  display: grid;
+  grid-template-columns: 1fr 26px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 18px;
+}
+.team-header {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 8px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--t3);
+  margin-bottom: 8px;
+}
+
+.court-player-card {
+  background: var(--bg-3);
+  padding: 8px 10px;
+  clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 0 100%);
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.court-player-card:last-child { margin-bottom: 0; }
+.court-player-card:hover { background: var(--border); }
+
+.court-vs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.court-vs-line { width: 1px; height: 14px; background: var(--border); }
+.court-vs-text {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--t3);
+}
+
+.court-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-cancel {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--red);
+  background: var(--red-dim);
+  border: 1px solid oklch(from var(--red) l c h / 0.28);
+  padding: 10px;
+  cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.btn-cancel:hover { background: oklch(from var(--red) l c h / 0.18); }
+
+.btn-score {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--btn-on-accent);
+  background: var(--accent);
+  border: none;
+  padding: 10px;
+  cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.btn-score:hover { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-inner">
+    <div class="header-left">
+      <a href="#" class="back-link">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <path d="M8 2L3 6L8 10" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/>
+        </svg>
+        All Sessions
+      </a>
+      <div class="session-divider"></div>
+      <div class="session-name">🏸 E2E Sandbox — Do Not Join <span class="organizer">— Miggy</span></div>
+    </div>
+
+    <div class="header-stats">
+      <div class="stat-block">
+        <div class="stat-label">Courts</div>
+        <div class="stat-value">3</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Queue</div>
+        <div class="stat-value">20</div>
+      </div>
+      <div class="stat-block">
+        <div class="stat-label">Live</div>
+        <div class="stat-value live">6</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <!-- Theme toggle -->
+      <button class="btn-theme" onclick="toggleTheme()" title="Toggle light/dark mode">
+        <!-- Moon: shown in dark mode -->
+        <svg class="icon-moon" width="15" height="15" viewBox="0 0 15 15" fill="none">
+          <path d="M12.5 9.5A6 6 0 015.5 2.5a6.5 6.5 0 100 10 6 6 0 007-3z" stroke="currentColor" stroke-width="1.3" stroke-linecap="square"/>
+        </svg>
+        <!-- Sun: shown in light mode -->
+        <svg class="icon-sun" width="15" height="15" viewBox="0 0 15 15" fill="none">
+          <circle cx="7.5" cy="7.5" r="2.5" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M7.5 1v1.5M7.5 12.5V14M14 7.5h-1.5M2.5 7.5H1M11.7 3.3l-1.06 1.06M4.36 10.64l-1.06 1.06M11.7 11.7l-1.06-1.06M4.36 4.36L3.3 3.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="square"/>
+        </svg>
+      </button>
+
+      <button class="btn btn-auto">
+        <span class="pulse-dot"></span>
+        Auto On
+      </button>
+      <button class="btn">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <rect x="1" y="2" width="10" height="7" rx="1" stroke="currentColor" stroke-width="1.3"/>
+          <path d="M4 9v1.5M8 9v1.5M3 10.5h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="square"/>
+        </svg>
+        TV View
+      </button>
+      <button class="btn">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <circle cx="3.5" cy="6" r="1.8" stroke="currentColor" stroke-width="1.2"/>
+          <circle cx="9" cy="2.5" r="1.5" stroke="currentColor" stroke-width="1.2"/>
+          <circle cx="9" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5.3 5L7.5 3.5M5.3 7L7.5 8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"/>
+        </svg>
+        Share
+      </button>
+      <button class="btn btn-danger">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/>
+        </svg>
+        Close Session
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- HIDDEN BANNER -->
+<div class="hidden-banner">
+  <span class="banner-dot hidden-dot"></span>
+  Hidden from players
+  <span class="banner-sep"></span>
+  <span class="banner-dot visible-dot"></span>
+  Visible on deck
+</div>
+
+<!-- NAV TABS -->
+<div class="nav-tabs-wrapper">
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="setTab(this)">Active Courts</button>
+    <button class="nav-tab" onclick="setTab(this)">Queue &amp; Match Control</button>
+    <button class="nav-tab" onclick="setTab(this)">
+      Wait Time Monitor
+      <span class="tab-badge">16</span>
+    </button>
+    <button class="nav-tab" onclick="setTab(this)">Match History</button>
+    <button class="nav-tab" onclick="setTab(this)">Leaderboard</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- ON DECK -->
+  <div class="section-header">
+    <div class="section-label">On Deck</div>
+    <div class="section-count">2 Matches Ready</div>
+    <div class="section-line"></div>
+  </div>
+
+  <div class="deck-grid">
+
+    <!-- Deck #1 -->
+    <div class="deck-card">
+      <div class="deck-card-inner">
+        <div class="deck-card-header">
+          <div>
+            <div class="deck-card-num">On Deck #1</div>
+            <div class="deck-card-badges">
+              <span class="badge badge-mixed">Mixed Level</span>
+              <span class="badge badge-edited">Edited</span>
+            </div>
+          </div>
+          <div class="deck-card-time">233m ago</div>
+        </div>
+        <div class="match-layout">
+          <div>
+            <div class="team-label yours">Your Team</div>
+            <div class="player-slot">
+              <div class="player-card">
+                <div class="player-name">Miguel Sicat</div>
+                <div class="player-level lvl-adv">ADV</div>
+              </div>
+              <div class="player-card">
+                <div class="player-name">Erwin Buenaventura</div>
+                <div class="player-level lvl-ladv">L.ADV</div>
+              </div>
+            </div>
+          </div>
+          <div class="vs-divider">
+            <div class="vs-line"></div>
+            <div class="vs-text">VS</div>
+            <div class="vs-line"></div>
+          </div>
+          <div>
+            <div class="team-label opps">Opponents</div>
+            <div class="player-slot">
+              <div class="player-card">
+                <div class="player-name">Leo Fajardo</div>
+                <div class="player-level lvl-adv">ADV</div>
+              </div>
+              <div class="player-card">
+                <div class="player-name">Nestor Aquino</div>
+                <div class="player-level lvl-lint">L.INT</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="deck-card-footer">
+          <span class="hint-text">Tap any player to start a swap</span>
+          <button class="btn-clear">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M1 3h8M3.5 3V1.5h3V3M2 3l.5 6h5l.5-6" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"/>
+            </svg>
+            Clear
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Deck #2 -->
+    <div class="deck-card">
+      <div class="deck-card-inner">
+        <div class="deck-card-header">
+          <div>
+            <div class="deck-card-num">On Deck #2</div>
+            <div class="deck-card-badges">
+              <span class="badge badge-mixed">Mixed Level</span>
+            </div>
+          </div>
+          <div class="deck-card-time">233m ago</div>
+        </div>
+        <div class="match-layout">
+          <div>
+            <div class="team-label yours">Your Team</div>
+            <div class="player-slot">
+              <div class="player-card">
+                <div class="player-name">Jared Padilla</div>
+                <div class="player-level lvl-ladv">L.ADV</div>
+              </div>
+              <div class="player-card">
+                <div class="player-name">Tricia Evangelista</div>
+                <div class="player-level lvl-ladv">L.ADV</div>
+              </div>
+            </div>
+          </div>
+          <div class="vs-divider">
+            <div class="vs-line"></div>
+            <div class="vs-text">VS</div>
+            <div class="vs-line"></div>
+          </div>
+          <div>
+            <div class="team-label opps">Opponents</div>
+            <div class="player-slot">
+              <div class="player-card">
+                <div class="player-name">Kristine Lao</div>
+                <div class="player-level lvl-ladv">L.ADV</div>
+              </div>
+              <div class="player-card">
+                <div class="player-name">Ramon Sy</div>
+                <div class="player-level lvl-ladv">L.ADV</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="deck-card-footer">
+          <span class="hint-text">Tap any player to start a swap</span>
+          <button class="btn-clear">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M1 3h8M3.5 3V1.5h3V3M2 3l.5 6h5l.5-6" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"/>
+            </svg>
+            Clear
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /deck-grid -->
+
+  <!-- ADD COURT -->
+  <div class="add-court-row">
+    <input type="text" class="court-input" placeholder="Court name (e.g. Court 3)" />
+    <button class="btn-add-court">+ Add Court</button>
+  </div>
+  <div class="time-limit-row">
+    <span class="time-limit-label">Court Time Limit</span>
+    <div class="toggle-pill">
+      <div class="toggle-pip"></div>
+      <span class="toggle-text">Off</span>
+    </div>
+  </div>
+
+  <!-- ACTIVE COURTS -->
+  <div class="section-header">
+    <div class="section-label amber-bar">Active Courts</div>
+    <div class="section-line"></div>
+  </div>
+
+  <div class="courts-grid">
+
+    <!-- Court C -->
+    <div class="court-card in-progress">
+      <div class="court-card-header">
+        <div>
+          <div class="court-name">Court C</div>
+          <div class="court-badges">
+            <span class="badge badge-mixed">Mixed Level</span>
+            <span class="badge badge-edited">Edited</span>
+          </div>
+        </div>
+        <div class="court-header-right">
+          <div class="court-timer" id="timer-0">00:28</div>
+          <div class="badge-progress">In Progress</div>
+        </div>
+      </div>
+      <div class="court-match">
+        <div>
+          <div class="team-header">Team A</div>
+          <div class="court-player-card">
+            <div class="player-name">Manny Soriano</div>
+            <div class="player-level lvl-uint">U.INT</div>
+          </div>
+          <div class="court-player-card">
+            <div class="player-name">Lyra Espiritu</div>
+            <div class="player-level lvl-uint">U.INT</div>
+          </div>
+        </div>
+        <div class="court-vs">
+          <div class="court-vs-line"></div>
+          <div class="court-vs-text">VS</div>
+          <div class="court-vs-line"></div>
+        </div>
+        <div>
+          <div class="team-header">Team B</div>
+          <div class="court-player-card">
+            <div class="player-name">Bong Villanueva</div>
+            <div class="player-level lvl-lint">L.INT</div>
+          </div>
+          <div class="court-player-card">
+            <div class="player-name">Dana Yap</div>
+            <div class="player-level lvl-adv">ADV</div>
+          </div>
+        </div>
+      </div>
+      <div class="court-actions">
+        <button class="btn-cancel">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M1 1l7 7M8 1L1 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"/>
+          </svg>
+          Cancel
+        </button>
+        <button class="btn-score">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M2 4.5h5M4.5 2v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>
+          </svg>
+          Input Score &amp; End
+        </button>
+      </div>
+    </div>
+
+    <!-- Court 2 -->
+    <div class="court-card in-progress">
+      <div class="court-card-header">
+        <div>
+          <div class="court-name">Court 2</div>
+          <div class="court-badges">
+            <span class="badge badge-manual">Manual</span>
+          </div>
+        </div>
+        <div class="court-header-right">
+          <div class="court-timer" id="timer-1">3:53:22</div>
+          <div class="badge-progress">In Progress</div>
+        </div>
+      </div>
+      <div class="court-match">
+        <div>
+          <div class="team-header">Team A</div>
+          <div class="court-player-card">
+            <div class="player-name">E2E_OrganizerBot</div>
+            <div class="player-level lvl-int">INT</div>
+          </div>
+          <div class="court-player-card">
+            <div class="player-name">E2E_J_Alice</div>
+            <div class="player-level lvl-int">INT</div>
+          </div>
+        </div>
+        <div class="court-vs">
+          <div class="court-vs-line"></div>
+          <div class="court-vs-text">VS</div>
+          <div class="court-vs-line"></div>
+        </div>
+        <div>
+          <div class="team-header">Team B</div>
+          <div class="court-player-card">
+            <div class="player-name">E2E_J_Cara</div>
+            <div class="player-level lvl-int">INT</div>
+          </div>
+          <div class="court-player-card">
+            <div class="player-name">E2E_J_Bob</div>
+            <div class="player-level lvl-int">INT</div>
+          </div>
+        </div>
+      </div>
+      <div class="court-actions">
+        <button class="btn-cancel">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M1 1l7 7M8 1L1 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"/>
+          </svg>
+          Cancel
+        </button>
+        <button class="btn-score">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M2 4.5h5M4.5 2v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>
+          </svg>
+          Input Score &amp; End
+        </button>
+      </div>
+    </div>
+
+    <!-- Court 3 -->
+    <div class="court-card in-progress">
+      <div class="court-card-header">
+        <div>
+          <div class="court-name">Court 3</div>
+          <div class="court-badges"></div>
+        </div>
+        <div class="court-header-right">
+          <div class="court-timer" id="timer-2">11:06:03</div>
+          <div class="badge-progress">In Progress</div>
+        </div>
+      </div>
+      <div class="court-match">
+        <div>
+          <div class="team-header">Team A</div>
+          <div class="court-player-card">
+            <div class="player-name">Rodel Garcia</div>
+            <div class="player-level lvl-lint">L.INT</div>
+          </div>
+          <div class="court-player-card">
+            <div class="player-name">Lanie Flores</div>
+            <div class="player-level lvl-beg">BEG</div>
+          </div>
+        </div>
+        <div class="court-vs">
+          <div class="court-vs-line"></div>
+          <div class="court-vs-text">VS</div>
+          <div class="court-vs-line"></div>
+        </div>
+        <div>
+          <div class="team-header">Team B</div>
+          <div class="court-player-card">
+            <div class="player-name">Cherry Lim</div>
+            <div class="player-level lvl-lint">L.INT</div>
+          </div>
+          <div class="court-player-card">
+            <div class="player-name">Dodong Cruz</div>
+            <div class="player-level lvl-beg">BEG</div>
+          </div>
+        </div>
+      </div>
+      <div class="court-actions">
+        <button class="btn-cancel">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M1 1l7 7M8 1L1 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="square"/>
+          </svg>
+          Cancel
+        </button>
+        <button class="btn-score">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+            <path d="M2 4.5h5M4.5 2v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>
+          </svg>
+          Input Score &amp; End
+        </button>
+      </div>
+    </div>
+
+  </div><!-- /courts-grid -->
+</main>
+
+<script>
+function setTab(el) {
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+}
+
+// Restore saved theme
+const saved = localStorage.getItem('theme');
+if (saved) document.documentElement.setAttribute('data-theme', saved);
+
+// Live timers
+let secs = [28, 14002, 39963];
+function fmt(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(sec).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+const timers = ['timer-0','timer-1','timer-2'].map(id => document.getElementById(id));
+setInterval(() => {
+  secs = secs.map(s => s + 1);
+  timers.forEach((el, i) => el && (el.textContent = fmt(secs[i])));
+}, 1000);
+</script>
+</body>
+</html>

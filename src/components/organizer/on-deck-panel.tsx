@@ -237,10 +237,10 @@ function SortableCard({
         // Draft: dashed slate border — indicates "hidden from players"
         // Published: solid amber border — indicates "visible / on deck"
         effectivelyDraft
-          ? "border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-card"
+          ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
           : selectedPlayerId
-          ? "border-amber-400 dark:border-amber-500/60 shadow-amber-200 dark:shadow-amber-500/20 shadow-md bg-white dark:bg-card"
-          : "border-amber-200 dark:border-amber-500/30 bg-white dark:bg-card",
+          ? "border-amber-400 dark:border-amber-500/60 shadow-amber-200 dark:shadow-amber-500/20 shadow-md bg-card"
+          : "border-amber-200 dark:border-amber-500/30 bg-card",
       ].join(" ")}
     >
       {/* ── Card header row ────────────────────────────────── */}
@@ -332,7 +332,7 @@ function SortableCard({
 
       {/* ── Footer ──────────────────────────────────────────── */}
       <div className="px-3 py-2 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-2">
-        <p className="text-xs text-slate-400 dark:text-muted-foreground min-w-0 truncate">
+        <p className="text-xs text-muted-foreground min-w-0 truncate">
           {effectivelyDraft
             ? "Hidden from players — publish to reveal"
             : isPickingMode && selectedPlayerId
@@ -399,8 +399,8 @@ function OverlayCard({
       className={[
         "rounded-2xl border-2 shadow-2xl overflow-hidden rotate-1",
         isDraft
-          ? "border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-card"
-          : "border-amber-200 dark:border-amber-500/30 bg-white dark:bg-card",
+          ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
+          : "border-amber-200 dark:border-amber-500/30 bg-card",
       ].join(" ")}
     >
       <div
@@ -455,7 +455,7 @@ function OverlayCard({
       <TeamsGrid teamA={teamA} teamB={teamB} labelA="Your Team" labelB="Opponents" />
 
       <div className="px-3 py-2 bg-slate-50 dark:bg-muted/50 border-t border-slate-100 dark:border-border flex items-center justify-between gap-2">
-        <p className="text-xs text-slate-400 dark:text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {isDraft ? "Hidden from players — publish to reveal" : "Tap any player to start a swap"}
         </p>
         <button
@@ -764,14 +764,14 @@ function OnDeckPanelInner({
           capSaturation={capSaturation}
           onDismiss={onDismissCapSaturation}
         />
-        <div className="rounded-xl border border-dashed border-slate-200 dark:border-border bg-slate-50/60 dark:bg-card/50 px-6 py-8 text-center">
-          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
-            <Clock className="h-5 w-5 text-slate-400 dark:text-muted-foreground" />
+        <div className="rounded-xl border border-dashed border-border bg-slate-50/60 dark:bg-card/50 px-6 py-8 text-center">
+          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+            <Clock className="h-5 w-5 text-muted-foreground" />
           </div>
-          <p className="text-sm font-medium text-slate-600 dark:text-foreground">
+          <p className="text-sm font-medium text-foreground">
             No matches on deck
           </p>
-          <p className="mt-1 text-xs text-slate-400 dark:text-muted-foreground">
+          <p className="mt-1 text-xs text-muted-foreground">
             The engine fills this automatically, or create one manually in Queue &amp; Match Control.
           </p>
         </div>
@@ -843,7 +843,7 @@ function OnDeckPanelInner({
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   Drafts
                 </span>
-                <span className="text-xs text-slate-400 dark:text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   — hidden from players
                 </span>
               </div>
@@ -888,14 +888,14 @@ function OnDeckPanelInner({
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
                   <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
                 </span>
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-foreground">
+                <span className="text-xs font-bold uppercase tracking-wider text-foreground">
                   On Deck
                 </span>
                 <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:text-[hsl(var(--amber-accent-hsl))] dark:ring-1 dark:ring-[hsl(var(--amber-accent-hsl))]/50">
                   {publishedMatches.length} match{publishedMatches.length !== 1 ? "es" : ""} ready
                 </span>
                 {publishedMatches.length > 1 && draftMatches.length === 0 && (
-                  <span className="text-xs text-slate-400 dark:text-muted-foreground hidden sm:block">
+                  <span className="text-xs text-muted-foreground hidden sm:block">
                     — drag to reprioritize
                   </span>
                 )}

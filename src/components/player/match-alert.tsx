@@ -1,33 +1,26 @@
 "use client";
 
 // ============================================================
-// MatchAlert — Full-screen takeover card when player is called
+// MatchAlert — Full-screen slide-up takeover
 // ============================================================
-// Replaces the entire queue UI when a player has an active match.
+// Mounts as an absolute overlay over the main content area
+// (header + bottom tab bar remain visible). Slides up from
+// the bottom with an expo-out curve.
 //
 // Two states:
-//   "pending"     → amber "On Deck" card — no court yet
-//   "in_progress" → dark-navy "Head to Court!" card with MASSIVE
-//                   court number as the absolute focal point
+//   "pending"     → amber canvas, "Heads Up." hero (large, Barlow),
+//                   optional position chip when not next up.
+//   "in_progress" → dark navy canvas, massive COURT N hero
+//                   with pulsing dot. ScoreInputCard via scoreSlot.
 //
-// Player identity:
-//   No avatar circles — players are identified by name alone
-//   (sports-roster convention). Two-line PlayerRow:
-//     Line 1 → NAME (full width, truncates at 20 chars)
-//     Line 2 → [YOU label + VIP glow tag] [● skill dot]
-//
-// Symmetry:
-//   CSS grid with explicit col/row placement. VS badge spans
-//   both player rows (row-span-2). Invisible YOU spacer on all
-//   non-me rows ensures every row is the same height.
-//
-// VIP tags:
-//   Uses the real VipTag component (neon glow in dark mode,
-//   holographic shimmer in light mode). Pass myVipTag +
-//   myVipTheme from the player's Profile to the component.
+// Animation intentionally differs:
+//   pending     — 550ms, soft expo-out (breathe, "get ready")
+//   in_progress — 380ms, sharp expo-out (snap to action)
 // ============================================================
 
-import { VipTag } from "@/components/ui/vip-tag";
+import { useEffect, useState, type ReactNode } from "react";
+import { toast } from "sonner";
+import { AlertTriangle } from "lucide-react";
 import type { Court, Profile, SkillLevel } from "@/types/database";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -37,270 +30,167 @@ interface MatchAlertProps {
   court: Court | null;
   myDisplayName: string;
   mySkillLevel: SkillLevel;
-  myVipTag?: string | null;
-  myVipTheme?: string | null;
   teammates: Profile[];
   opponents: Profile[];
   isMixedLevel?: boolean;
-  /** 1-based position among pending on-deck matches (1 = next court). null when in_progress. */
+  /** 1-based position among pending on-deck matches (1 = next court). */
   onDeckPosition?: number | null;
   /** Total pending on-deck matches right now. */
   totalOnDeck?: number;
+  /** Optional leave-queue callback rendered inside the overlay. */
+  onLeaveQueue?: () => Promise<{ error?: string } | void>;
+  /** Score input slot — rendered inside the in_progress overlay. */
+  scoreSlot?: ReactNode;
 }
 
-// ── Skill Indicator ───────────────────────────────────────────
-// 8px coloured dot + 3-char abbreviation.
-// Replaces the wide SkillBadge pill (saves ~60px per row, giving
-// the name full width on its own line without competing elements).
+// ── Skill tier map — 3 tiers for quick scanning ──────────────
+// 6 raw levels collapsed to 3 readable abbreviations.
+// Dot color + label both shown for redundancy.
 
-const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner:           { dot: "bg-emerald-500 dark:bg-emerald-400", abbr: "Beg"   },
-  lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400",    abbr: "L.Int" },
-  intermediate:       { dot: "bg-sky-500     dark:bg-sky-400",     abbr: "Int"   },
-  upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400",  abbr: "U.Int" },
-  lower_advanced:     { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
-  advanced:           { dot: "bg-purple-500  dark:bg-purple-400",  abbr: "Adv"   },
+const SKILL_TIER: Record<SkillLevel, { label: string; dotCls: string }> = {
+  beginner:           { label: "BEG", dotCls: "bg-emerald-400" },
+  lower_intermediate: { label: "BEG", dotCls: "bg-emerald-400" },
+  intermediate:       { label: "INT", dotCls: "bg-sky-400"     },
+  upper_intermediate: { label: "INT", dotCls: "bg-sky-500"     },
+  lower_advanced:     { label: "ADV", dotCls: "bg-purple-400"  },
+  advanced:           { label: "ADV", dotCls: "bg-purple-500"  },
 };
 
-function SkillIndicator({ level }: { level: SkillLevel }) {
-  const cfg = SKILL_CONFIG[level] ?? { dot: "bg-slate-400", abbr: "?" };
-  return (
-    <div className="flex shrink-0 items-center gap-1">
-      <div className={`h-2 w-2 rounded-full ${cfg.dot}`} />
-      <span className="text-[10px] font-bold uppercase tracking-wide leading-none
-                       text-slate-500 dark:text-slate-400">
-        {cfg.abbr}
-      </span>
-    </div>
-  );
-}
-
-// ── Player Row ────────────────────────────────────────────────
-// accentColor drives the "me" row highlight:
-//   "amber"   → on-deck state (warm amber tint)
-//   "emerald" → in-progress state (cool emerald tint)
-
-interface PlayerRowProps {
-  name: string;
-  skill: SkillLevel;
-  isMe?: boolean;
-  vipTag?: string | null;
-  vipTheme?: string | null;
-  accentColor: "amber" | "emerald";
-}
+// ── Player row inside the teams grid ──────────────────────────
 
 function PlayerRow({
   name,
   skill,
   isMe = false,
-  vipTag = null,
-  vipTheme = null,
-  accentColor,
-}: PlayerRowProps) {
-  return (
-    <div
-      className={`w-full overflow-hidden rounded-xl px-3 py-2.5 transition-all
-        ${isMe && accentColor === "amber"
-          ? "bg-amber-100 ring-1 ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700/60"
-          : ""}
-        ${isMe && accentColor === "emerald"
-          ? "bg-emerald-50 ring-1 ring-emerald-300 dark:bg-emerald-950/40 dark:ring-emerald-700/60"
-          : ""}
-        ${!isMe
-          ? "bg-slate-100/70 dark:bg-white/[0.04]"
-          : ""}
-      `}
-    >
-      {/* Line 1 — name only, full cell width */}
-      <p
-        className={`w-full truncate text-[14px] font-bold leading-snug
-          ${isMe && accentColor === "amber"
-            ? "text-amber-900 dark:text-amber-200"
-            : ""}
-          ${isMe && accentColor === "emerald"
-            ? "text-emerald-900 dark:text-emerald-200"
-            : ""}
-          ${!isMe
-            ? "text-slate-800 dark:text-slate-300"
-            : ""}
-        `}
-      >
-        {name}
-      </p>
+  tone,
+}: {
+  name: string;
+  skill: SkillLevel;
+  isMe?: boolean;
+  tone: "amber" | "navy";
+}) {
+  const tier = SKILL_TIER[skill];
 
-      {/* Line 2 — YOU + VIP (left) · skill dot (right) */}
-      {/* Always rendered — invisible spacer keeps all rows the same height */}
-      <div className="mt-0.5 flex items-center justify-between gap-1">
-        <div className="flex items-center gap-1.5">
-          {isMe ? (
-            <span
-              className={`text-[10px] font-black uppercase tracking-widest leading-none
-                ${accentColor === "amber"
-                  ? "text-amber-600 dark:text-amber-400"
-                  : "text-emerald-600 dark:text-emerald-400"
-                }`}
-            >
-              You
-            </span>
-          ) : (
-            /* Invisible spacer — preserves row height uniformly */
-            <span className="invisible text-[10px] leading-none" aria-hidden="true">
-              You
-            </span>
-          )}
-          {vipTag && vipTheme && (
-            <VipTag tag={vipTag} theme={vipTheme} />
-          )}
-        </div>
-        <SkillIndicator level={skill} />
-      </div>
+  // Amber tone is always on a bright amber canvas (oklch 0.78 0.17 62) —
+  // no dark: overrides needed; text stays dark in both light and dark mode.
+  // Navy tone uses semantic tokens so it works on both the dark bg (dark mode)
+  // and the light bg (light mode) versions of the in_progress overlay.
+  const tierLabelCls =
+    tone === "amber"
+      ? "text-amber-900/60"
+      : "text-muted-foreground/70";
+
+  const nameCls =
+    isMe
+      ? tone === "amber"
+        ? "font-bold text-amber-950"
+        : "font-bold text-foreground"
+      : tone === "amber"
+      ? "font-medium text-amber-900/80"
+      : "font-medium text-foreground/80";
+
+  return (
+    <div className="flex items-center gap-2 py-1.5">
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tier.dotCls}`} />
+      <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.1em] ${tierLabelCls}`}>
+        {tier.label}
+      </span>
+      <span className={`flex-1 truncate text-sm ${nameCls}`}>{name}</span>
+      {isMe && (
+        <span
+          className={`ml-1 shrink-0 text-[9px] font-bold uppercase tracking-[0.14em] leading-none
+            ${tone === "amber" ? "text-emerald-700" : "text-primary dark:text-emerald-400"}`}
+        >
+          You
+        </span>
+      )}
     </div>
   );
 }
 
-// ── VS Badge ──────────────────────────────────────────────────
+// ── Teams grid (Your Team | VS | Opponents) ──────────────────
 
-function VsBadge() {
-  return (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
-                    bg-slate-800 dark:bg-slate-700 text-[11px] font-black text-white shadow-md">
-      VS
-    </div>
-  );
-}
-
-// ── Empty Row (module-level) ──────────────────────────────────
-// Placeholder that matches a real PlayerRow height exactly.
-// Defined at module scope — NOT inside TeamsGrid — so React's
-// reconciler sees a stable component reference on every render
-// (avoids unnecessary unmount/remount of placeholder DOM nodes).
-
-function EmptyRow() {
-  return (
-    <div className="w-full overflow-hidden rounded-xl bg-slate-100/50
-                    dark:bg-white/[0.02] px-3 py-2.5">
-      <p className="invisible text-[14px] font-bold leading-snug">·</p>
-      <div className="mt-0.5 flex items-center justify-between">
-        <span className="invisible text-[10px] leading-none">You</span>
-      </div>
-    </div>
-  );
-}
-
-// ── Teams Grid ────────────────────────────────────────────────
-// 3-column CSS grid with explicit placement — guarantees both
-// player columns are always equal width and equal row height.
-//
-//   col 1 (1fr)        | col 2 (36px) | col 3 (1fr)
-//   ─────────────────────────────────────────────────
-//   row 1  "Your Team" |              | "Opponents"
-//   row 2  Me row      |    [VS]      | Opp 1 row
-//   row 3  Partner     |   (span 2)   | Opp 2 row
-
-interface TeamsGridProps {
-  me: { name: string; skill: SkillLevel; vipTag?: string | null; vipTheme?: string | null };
+function TeamsGrid({
+  me,
+  teammates,
+  opponents,
+  tone,
+}: {
+  me: { name: string; skill: SkillLevel };
   teammates: Profile[];
   opponents: Profile[];
-  accentColor: "amber" | "emerald";
-}
-
-function TeamsGrid({ me, teammates, opponents, accentColor }: TeamsGridProps) {
+  tone: "amber" | "navy";
+}) {
   const partner = teammates[0] ?? null;
-  const opp1    = opponents[0] ?? null;
-  const opp2    = opponents[1] ?? null;
+  const opp1 = opponents[0] ?? null;
+  const opp2 = opponents[1] ?? null;
+
+  // Amber canvas is always bright; no dark: variants for amber tone.
+  const labelCls =
+    tone === "amber"
+      ? "text-amber-800/90"
+      : "text-muted-foreground";
+
+  const vsCls =
+    tone === "amber"
+      ? "text-amber-800/80"
+      : "text-muted-foreground/60";
 
   return (
-    <div className="grid grid-cols-[1fr_36px_1fr] gap-x-2 gap-y-2">
-      {/* ── Row 1: column labels ──────────────────────────── */}
-      <p
-        className={`col-start-1 row-start-1
-                    text-center text-[10px] font-black uppercase tracking-widest
-                    ${accentColor === "emerald"
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-amber-600 dark:text-amber-400"
-                    }`}
-      >
-        Your Team
-      </p>
-      <div className="col-start-2 row-start-1" aria-hidden="true" />
-      <p className="col-start-3 row-start-1
-                    text-center text-[10px] font-black uppercase tracking-widest
-                    text-rose-500 dark:text-rose-400">
-        Opponents
-      </p>
-
-      {/* ── VS badge — spans both player rows ─────────────── */}
-      <div className="col-start-2 row-start-2 row-span-2 flex items-center justify-center">
-        <VsBadge />
-      </div>
-
-      {/* ── Row 2: first player pair ──────────────────────── */}
-      <div className="col-start-1 row-start-2">
-        <PlayerRow
-          name={me.name}
-          skill={me.skill}
-          isMe
-          vipTag={me.vipTag}
-          vipTheme={me.vipTheme}
-          accentColor={accentColor}
-        />
-      </div>
-      <div className="col-start-3 row-start-2">
-        {opp1 ? (
-          <PlayerRow
-            name={opp1.display_name}
-            skill={opp1.skill_level}
-            vipTag={opp1.vip_tag}
-            vipTheme={opp1.vip_theme}
-            accentColor={accentColor}
-          />
-        ) : (
-          <EmptyRow />
-        )}
-      </div>
-
-      {/* ── Row 3: second player pair ─────────────────────── */}
-      <div className="col-start-1 row-start-3">
+    <div className="grid grid-cols-[1fr_auto_1fr] gap-x-3 items-start">
+      <div>
+        <p className={`mb-2 text-[10px] font-bold uppercase tracking-[0.14em] ${labelCls}`}>
+          Your Team
+        </p>
+        <PlayerRow name={me.name} skill={me.skill} isMe tone={tone} />
         {partner ? (
-          <PlayerRow
-            name={partner.display_name}
-            skill={partner.skill_level}
-            vipTag={partner.vip_tag}
-            vipTheme={partner.vip_theme}
-            accentColor={accentColor}
-          />
+          <PlayerRow name={partner.display_name} skill={partner.skill_level} tone={tone} />
         ) : (
-          <EmptyRow />
+          <div className="py-1.5 text-sm opacity-30">·</div>
         )}
       </div>
-      <div className="col-start-3 row-start-3">
-        {opp2 ? (
-          <PlayerRow
-            name={opp2.display_name}
-            skill={opp2.skill_level}
-            vipTag={opp2.vip_tag}
-            vipTheme={opp2.vip_theme}
-            accentColor={accentColor}
-          />
+      <div className={`pt-7 text-[11px] font-bold tracking-[0.1em] ${vsCls}`}>VS</div>
+      <div>
+        <p className={`mb-2 text-[10px] font-bold uppercase tracking-[0.14em] ${labelCls}`}>
+          Opponents
+        </p>
+        {opp1 ? (
+          <PlayerRow name={opp1.display_name} skill={opp1.skill_level} tone={tone} />
         ) : (
-          <EmptyRow />
+          <div className="py-1.5 text-sm opacity-30">·</div>
+        )}
+        {opp2 ? (
+          <PlayerRow name={opp2.display_name} skill={opp2.skill_level} tone={tone} />
+        ) : (
+          <div className="py-1.5 text-sm opacity-30">·</div>
         )}
       </div>
     </div>
   );
 }
 
-// ── Mixed Level Warning ───────────────────────────────────────
+// ── Mixed Level banner ────────────────────────────────────────
 
-function MixedLevelBanner() {
+function MixedLevelBanner({ tone }: { tone: "amber" | "navy" }) {
   return (
-    <div className="border-b border-amber-200 bg-amber-50 px-5 py-2.5 text-center
-                    dark:border-amber-800/50 dark:bg-amber-950/30">
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300
-                       bg-amber-100 px-3 py-1 text-xs font-bold uppercase tracking-wider
-                       text-amber-800 dark:border-amber-700 dark:bg-amber-900/40
-                       dark:text-amber-300">
-        <span aria-hidden="true">⚠</span>
+    <div
+      className={`mx-6 mt-3 flex items-center justify-center gap-2 rounded-lg px-3 py-2
+        ${
+          tone === "amber"
+            ? "bg-amber-900/15 ring-1 ring-amber-900/25"
+            : "bg-amber-50 dark:bg-amber-500/10 ring-1 ring-amber-200 dark:ring-amber-500/30"
+        }`}
+    >
+      <AlertTriangle
+        className={`h-3.5 w-3.5 shrink-0 ${
+          tone === "amber" ? "text-amber-900" : "text-amber-600 dark:text-amber-400"
+        }`}
+        aria-hidden="true"
+      />
+      <span
+        className={`text-[10px] font-extrabold uppercase tracking-[0.14em]
+          ${tone === "amber" ? "text-amber-900" : "text-amber-700 dark:text-amber-300"}`}
+      >
         Mixed Level Match
       </span>
     </div>
@@ -314,161 +204,217 @@ export function MatchAlert({
   court,
   myDisplayName,
   mySkillLevel,
-  myVipTag,
-  myVipTheme,
   teammates,
   opponents,
   isMixedLevel = false,
   onDeckPosition = null,
   totalOnDeck = 0,
+  onLeaveQueue,
+  scoreSlot,
 }: MatchAlertProps) {
+  const me = { name: myDisplayName, skill: mySkillLevel };
 
-  const me = {
-    name:     myDisplayName,
-    skill:    mySkillLevel,
-    vipTag:   myVipTag ?? null,
-    vipTheme: myVipTheme ?? null,
-  };
+  // Slide-up animation — trigger on mount via state flip.
+  // Two rAF IDs must both be cancellable from effect cleanup.
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => {
+      r2 = requestAnimationFrame(() => setVisible(true));
+    });
+    return () => {
+      cancelAnimationFrame(r1);
+      cancelAnimationFrame(r2);
+    };
+  }, []);
 
-  // ── In-Progress: "Head to Court" ─────────────────────────────
+  // ── In Progress — snappy (380ms), action-immediate ──────────
   if (matchStatus === "in_progress") {
     return (
       <div
         role="alert"
         aria-label={`Match starting${court ? ` — head to ${court.name}` : ""}`}
-        className="overflow-hidden rounded-3xl border border-emerald-900/50
-                   shadow-[0_8px_64px_rgba(16,185,129,0.15)]
-                   animate-in fade-in zoom-in-95 duration-300"
+        className="absolute inset-0 z-30 flex flex-col overflow-y-auto bg-background"
+        style={{
+          transform: visible ? "translateY(0)" : "translateY(100%)",
+          transition: "transform 380ms cubic-bezier(0.16, 1, 0.3, 1)",
+        }}
       >
-
-        {/* Court number hero — always dark navy for urgency */}
-        <div className="relative overflow-hidden bg-[#0E1C3A] px-6 pb-7 pt-8 text-center">
-          {/* Ambient pulsing rings — decorative only */}
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-64 w-64 animate-ping rounded-full border border-emerald-500/10
-                            [animation-duration:3s]" />
-          </div>
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-44 w-44 animate-ping rounded-full border border-emerald-500/10
-                            [animation-duration:3s] [animation-delay:0.8s]" />
-          </div>
-
-          {/* Live dot — decorative */}
-          <div aria-hidden="true" className="relative mb-4 flex justify-center">
-            <span className="relative flex h-4 w-4">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full
-                               bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-4 w-4 rounded-full bg-emerald-500" />
-            </span>
-          </div>
-
-          <p className="relative mb-2 text-[10px] font-black uppercase tracking-[0.28em]
-                        text-emerald-400">
-            It&apos;s your turn!
-          </p>
-
-          {/* THE focal point — readable from arm's length.
-              Fluid font-size: scales from 40px on narrow viewports to
-              72px on wide ones, so long court names never wrap or overflow. */}
-          <h2
-            className="relative font-black leading-none tracking-tight text-white
-                       drop-shadow-[0_2px_24px_rgba(16,185,129,0.3)]"
-            style={{ fontSize: "clamp(40px, 15vw, 72px)" }}
-          >
-            {court ? court.name : "Head to court!"}
-          </h2>
-
-          <p className="relative mt-4 text-sm font-semibold text-emerald-300">
-            Your match is starting now 🏸
-          </p>
-        </div>
-
-        {isMixedLevel && <MixedLevelBanner />}
-
-        {/* Teams */}
-        <div className="bg-slate-50 px-4 pb-6 pt-5 dark:bg-card">
-          <TeamsGrid
-            me={me}
-            teammates={teammates}
-            opponents={opponents}
-            accentColor="emerald"
+        <div className="flex items-center justify-end px-6 pt-4">
+          <span
+            className="h-2 w-2 rounded-full bg-emerald-500"
+            style={{ animation: "status-pulse 1.4s ease-in-out infinite" }}
+            aria-hidden="true"
           />
         </div>
+
+        <div className="px-6 pt-3">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-500/15 ring-1 ring-emerald-200 dark:ring-emerald-500/30 px-2.5 py-1">
+            <span
+              className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+              style={{ animation: "status-pulse 1.4s ease-in-out infinite" }}
+            />
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700 dark:text-emerald-300">
+              Match in Progress
+            </span>
+          </span>
+        </div>
+
+        <div className="px-6 pt-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Active Court
+          </p>
+          <h2
+            className="mt-1 font-display font-black leading-none tracking-tight text-primary dark:text-emerald-400"
+            style={{ fontSize: "clamp(48px, 14vw, 72px)" }}
+          >
+            {court ? court.name.toUpperCase() : "COURT"}
+          </h2>
+        </div>
+
+        {isMixedLevel && <MixedLevelBanner tone="navy" />}
+
+        <div className="my-5 mx-6 h-px bg-border" />
+
+        <div className="px-6">
+          <TeamsGrid me={me} teammates={teammates} opponents={opponents} tone="navy" />
+        </div>
+
+        {scoreSlot && <div className="px-6 pt-5">{scoreSlot}</div>}
+
+        {onLeaveQueue && (
+          <div className="mt-auto px-6 pt-4 pb-5">
+            <LeaveQueueButton tone="navy" onClick={onLeaveQueue} />
+          </div>
+        )}
       </div>
     );
   }
 
-  // ── On-Deck: waiting for a court ─────────────────────────────
-  // Derive position-aware copy.
-  const posLabel =
-    onDeckPosition === null || onDeckPosition === 1
-      ? "Next Available Court"
-      : `#${onDeckPosition} On Deck`;
+  // ── On Deck (pending) — breathing room (550ms) ───────────────
+  const isNextUp = onDeckPosition === null || onDeckPosition === 1;
 
-  const posSubline =
-    onDeckPosition === null || onDeckPosition === 1
-      ? "Find your team — a court is opening soon 🏸"
-      : onDeckPosition === 2
-      ? "1 match ahead of you — get warmed up! 🏸"
-      : `${onDeckPosition - 1} matches ahead of you — be ready soon 🏸`;
+  const pillText = isNextUp
+    ? "You're On Deck"
+    : `${onDeckPosition} of ${totalOnDeck} on deck`;
 
-  // Only show positional context (e.g. "2 of 3 on deck") when the
-  // player is NOT next — position 1 means they ARE next, so
-  // "You're On Deck" is the correct and unambiguous label.
-  const posEyebrow =
-    onDeckPosition !== null && onDeckPosition > 1 && totalOnDeck > 1
-      ? `${onDeckPosition} of ${totalOnDeck} on deck`
-      : "You're On Deck";
+  const subText = isNextUp ? "Coming Up Next" : `#${onDeckPosition} On Deck`;
+
+  const detailText = isNextUp
+    ? "Find your team — a court is opening soon"
+    : onDeckPosition === 2
+    ? "1 match ahead — get warmed up"
+    : `${(onDeckPosition ?? 1) - 1} matches ahead — be ready soon`;
 
   return (
     <div
       role="alert"
       aria-label="You're on deck — a court is opening soon"
-      className="overflow-hidden rounded-3xl border border-amber-200
-                 shadow-xl animate-in fade-in zoom-in-95 duration-300
-                 dark:border-amber-800/40"
+      className="absolute inset-0 z-30 flex flex-col"
+      style={{
+        backgroundColor: "oklch(0.78 0.17 62)",
+        transform: visible ? "translateY(0)" : "translateY(100%)",
+        transition: "transform 550ms cubic-bezier(0.22, 1, 0.36, 1)",
+      }}
     >
+      <div className="flex items-center justify-end px-6 pt-4">
+        <span
+          className="h-2 w-2 rounded-full bg-amber-900/40"
+          style={{ animation: "status-pulse 1.4s ease-in-out infinite" }}
+          aria-hidden="true"
+        />
+      </div>
 
-      {/* Status header */}
-      <div className="bg-amber-50 px-6 pb-6 pt-7 text-center dark:bg-amber-950/20">
-        {/* Pulse dot — decorative */}
-        <div aria-hidden="true" className="mb-3 flex justify-center">
-          <span className="relative flex h-3.5 w-3.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full
-                             bg-amber-400 opacity-60" />
-            <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-amber-500" />
+      <div className="px-6 pt-3">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-900/15 ring-1 ring-amber-900/25 px-2.5 py-1">
+          <span
+            className="h-1.5 w-1.5 rounded-full bg-amber-900/70"
+            style={{ animation: "status-pulse 1.4s ease-in-out infinite" }}
+          />
+          <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-950">
+            {pillText}
+          </span>
+        </span>
+      </div>
+
+      {!isNextUp && (
+        <div className="px-6 pt-2">
+          <span className="font-mono text-[11px] font-bold uppercase tracking-[0.1em] text-amber-950/70">
+            {(onDeckPosition ?? 2) === 2
+              ? "1 MATCH AHEAD IN LINE"
+              : `${(onDeckPosition ?? 1) - 1} MATCHES AHEAD IN LINE`}
           </span>
         </div>
+      )}
 
-        <p className="mb-2 text-[10px] font-black uppercase tracking-[0.22em]
-                      text-amber-600 dark:text-amber-400">
-          {posEyebrow}
+      <div className="px-6 pt-3">
+        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-amber-950/80">
+          {subText}
         </p>
-
-        <h2 className="text-4xl font-black leading-none text-slate-900 dark:text-amber-100">
-          {posLabel}
+        <h2
+          className="mt-1 font-display font-black leading-[0.95] tracking-tight text-amber-950"
+          style={{ fontSize: "clamp(56px, 16vw, 88px)" }}
+        >
+          Heads
+          <br />
+          Up.
         </h2>
-
-        <p className="mt-3 text-sm font-medium text-slate-500 dark:text-amber-300/80">
-          {posSubline}
+        <p className="mt-2.5 text-[13px] font-medium leading-snug text-amber-950/85">
+          {detailText}
         </p>
       </div>
 
-      {isMixedLevel && <MixedLevelBanner />}
+      {isMixedLevel && <MixedLevelBanner tone="amber" />}
 
-      {/* Teams */}
-      <div className="bg-white px-4 pb-6 pt-5 dark:bg-card">
-        <TeamsGrid
-          me={me}
-          teammates={teammates}
-          opponents={opponents}
-          accentColor="amber"
-        />
-        <p className="mt-5 text-center text-[10px] font-medium
-                      text-slate-400 dark:text-muted-foreground">
-          You&apos;ll be directed to a court as soon as one opens up
-        </p>
+      <div className="my-5 mx-6 h-px bg-amber-900/25" />
+
+      <div className="px-6">
+        <TeamsGrid me={me} teammates={teammates} opponents={opponents} tone="amber" />
       </div>
+
+      {onLeaveQueue && (
+        <div className="mt-auto px-6 pt-4 pb-5">
+          <LeaveQueueButton tone="amber" onClick={onLeaveQueue} />
+        </div>
+      )}
     </div>
+  );
+}
+
+// ── Leave Queue button (rendered inside both overlay variants) ────
+
+function LeaveQueueButton({
+  tone,
+  onClick,
+}: {
+  tone: "amber" | "navy";
+  onClick: () => Promise<{ error?: string } | void>;
+}) {
+  const [pending, setPending] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={async () => {
+        setPending(true);
+        try {
+          const result = await onClick();
+          if (result && "error" in result && result.error) {
+            toast.error(result.error);
+          }
+        } finally {
+          setPending(false);
+        }
+      }}
+      className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold transition-colors
+        disabled:opacity-50 disabled:cursor-not-allowed
+        ${
+          tone === "amber"
+            ? "border border-amber-900/30 bg-amber-900/10 text-red-700 hover:bg-amber-900/15"
+            : "border border-border dark:border-slate-700/60 bg-destructive/5 dark:bg-slate-900/40 text-destructive dark:text-red-400 hover:bg-destructive/10 dark:hover:bg-slate-800/50"
+        }`}
+    >
+      {pending ? "Leaving…" : "Leave Queue"}
+    </button>
   );
 }
