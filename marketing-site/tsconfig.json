@@ -1,0 +1,17 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@components/*": ["src/components/*"],
+      "@layouts/*": ["src/layouts/*"],
+      "@data/*": ["src/data/*"]
+    },
+    // React 17+ automatic JSX runtime so .tsx files don't need `import React`.
+    // Astro's base config sets jsx: "preserve" (TS leaves JSX alone for the
+    // bundler) but esbuild needs the explicit runtime hint to emit
+    // `jsx-runtime` calls instead of `React.createElement`.
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
+  }
+}

@@ -1,0 +1,36 @@
+---
+// Marketing site nav — no architecture links, no search, no phase badges.
+---
+
+<header class="fixed top-0 left-0 right-0 z-50 bg-surface/90 backdrop-blur-sm border-b border-edge-dim">
+  <div class="mx-auto max-w-6xl px-6 h-14 flex items-center justify-between gap-6">
+
+    <!-- Brand -->
+    <a href="/" class="flex items-center gap-2 group">
+      <span class="font-heading font-bold text-base text-ink tracking-tight group-hover:text-accent transition-colors duration-75">
+        🏸 Badminton Queue
+      </span>
+    </a>
+
+    <!-- Nav links — always visible, compact on mobile -->
+    <nav class="flex items-center gap-4 md:gap-6 text-xs md:text-sm">
+      <a href="/#features"
+         class="text-ink-3 hover:text-ink-2 transition-colors duration-75">
+        Features
+      </a>
+      <a href="/#sandbox"
+         class="text-ink-3 hover:text-ink-2 transition-colors duration-75">
+        Try it
+      </a>
+      <a href="/#sandbox"
+         class="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 font-heading font-bold text-xs transition-colors duration-75 hover:bg-accent-hi"
+         style="color: var(--color-base)">
+        Demo →
+      </a>
+    </nav>
+
+  </div>
+</header>
+
+<!-- Spacer so fixed nav doesn't overlap content -->
+<div class="h-14"></div>

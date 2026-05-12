@@ -1,0 +1,123 @@
+# ============================================================
+# CI: Integration Tests — Badminton Queue App
+# ============================================================
+# Runs Vitest integration tests against a local Supabase instance
+# spun up inside the CI runner via Docker + Supabase CLI.
+#
+# Test isolation:
+#   • Tests run serially (singleFork: true) — no parallel DB conflicts.
+#   • Layer B (truncateTracked) cleans up after each test.
+#   • Layer C (supabase db reset) runs between suite files via pretest.
+#
+# Pinned versions (update deliberately — drift causes flakes):
+#   • Node.js: 20 LTS
+#   • Supabase CLI: 1.x (latest stable at time of writing)
+#
+# Failure notifications:
+#   GitHub emails the pusher automatically when this fails.
+# ============================================================
+
+name: Integration Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  integration:
+    name: Vitest Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Setup Node ────────────────────────────────────────
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      # ── 3. Install dependencies ──────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── 4. Install Supabase CLI ──────────────────────────────
+      # Pin to a specific major version for stability.
+      # Supabase CLI requires Docker — ubuntu-latest includes Docker.
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # ── 5. Start local Supabase ──────────────────────────────
+      # Boots the full Supabase stack via Docker Compose.
+      # Uses the supabase/ project config in the repo.
+      # First run pulls images (~60s); subsequent runs reuse the cache.
+      - name: Start local Supabase
+        run: supabase start
+        # Increase timeout to account for image pulls on cold runners.
+        # Typical time: 60–90s on first pull, ~15s with cache.
+        timeout-minutes: 5
+
+      # ── 6. Write .env.integration ──────────────────────────────
+      # Extract keys from `supabase status --output json` and write
+      # them to tests/integration/.env for the test runner to load.
+      - name: Write integration env file
+        run: |
+          SUPABASE_STATUS=$(supabase status --output json)
+
+          # Supabase CLI outputs keys with spaces, not underscores:
+          #   "API URL", "anon key", "service_role key", "DB URL"
+          SUPABASE_URL=$(echo "$SUPABASE_STATUS"     | jq -r '."API URL"')
+          ANON_KEY=$(echo "$SUPABASE_STATUS"          | jq -r '."anon key"')
+          SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS"  | jq -r '."service_role key"')
+          DB_URL=$(echo "$SUPABASE_STATUS"            | jq -r '."DB URL"')
+
+          cat > tests/integration/.env <<EOF
+          NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL
+          NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY
+          SUPABASE_SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY
+          DATABASE_URL=$DB_URL
+          EOF
+
+          echo "Integration env written:"
+          echo "  SUPABASE_URL: $SUPABASE_URL"
+          echo "  DB_URL: $DB_URL"
+
+      # ── 7. Reset DB + run integration tests ─────────────────
+      # supabase db reset re-applies all migrations from scratch,
+      # guaranteeing a clean slate before the full suite.
+      # global-setup also applies pending migrations, but this
+      # layer ensures no cross-suite pollution from a prior run.
+      # SKIP_DB_RESET=1 lets local devs skip the ~15s reset cost.
+      - name: Run integration tests
+        run: |
+          if [ -z "$SKIP_DB_RESET" ]; then
+            echo "Resetting local DB before full suite run..."
+            supabase db reset
+          fi
+          npm run test:integration
+        env:
+          SKIP_DB_RESET: "" # empty = always reset in CI
+
+      # ── 8. Upload coverage (optional) ───────────────────────
+      # Only uploads if tests pass. Useful for tracking coverage
+      # trends over time without blocking on coverage thresholds.
+      - name: Upload integration coverage
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage
+          path: coverage/integration/
+          retention-days: 7
+
+      # ── 9. Stop Supabase ──────────────────────────────────────
+      # Explicit stop to release Docker resources cleanly.
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop

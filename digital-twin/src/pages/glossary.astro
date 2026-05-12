@@ -1,0 +1,303 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+
+type Severity = 'critical' | 'warn' | 'info';
+
+interface Gotcha {
+  id: string;
+  title: string;
+  body: string;
+  severity: Severity;
+  category: string;
+  link?: string;
+}
+
+const gotchas = manifest.gotchas as Gotcha[];
+
+// Derive sorted unique categories for the filter chips
+const categories = [...new Set(gotchas.map(g => g.category))].sort();
+
+const severityMeta: Record<Severity, { label: string; bg: string; text: string; border: string }> = {
+  critical: {
+    label: 'Critical',
+    bg:     'oklch(18% 0.030 22)',
+    text:   'oklch(70% 0.20 22)',
+    border: 'oklch(40% 0.18 22 / 0.4)',
+  },
+  warn: {
+    label: 'Warn',
+    bg:     'oklch(20% 0.030 70)',
+    text:   'oklch(78% 0.16 70)',
+    border: 'oklch(50% 0.14 70 / 0.4)',
+  },
+  info: {
+    label: 'Info',
+    bg:     'oklch(17% 0.025 245)',
+    text:   'oklch(60% 0.08 245)',
+    border: 'oklch(36% 0.04 245 / 0.5)',
+  },
+};
+
+const counts = {
+  critical: gotchas.filter(g => g.severity === 'critical').length,
+  warn:     gotchas.filter(g => g.severity === 'warn').length,
+  info:     gotchas.filter(g => g.severity === 'info').length,
+};
+---
+
+<BaseLayout
+  title="Glossary & Gotchas"
+  description="27 curated gotchas sourced from APP_MANIFEST.md — the architectural quirks, silent failure modes, and hard-won rules that define this codebase."
+>
+  <PageHeader
+    title="Glossary & Gotchas"
+    subtitle={`${gotchas.length} curated gotchas sourced live from APP_MANIFEST.md. Filter by severity or category. Critical = silent failure mode. Warn = unexpected behavior. Info = easy to forget.`}
+    phase={8}
+    phaseStatus="live"
+  />
+
+  <!-- ── Severity summary strip ────────────────────────────────────── -->
+  <div class="px-8 py-4 border-b border-edge-dim flex flex-wrap gap-4">
+    {(['critical','warn','info'] as Severity[]).map(s => {
+      const m = severityMeta[s];
+      return (
+        <div class="flex items-center gap-2.5">
+          <span
+            class="text-[10px] font-mono font-bold px-2 py-0.5 rounded"
+            style={`background:${m.bg};color:${m.text};border:1px solid ${m.border}`}
+          >{m.label}</span>
+          <span class="text-xs text-ink-3 font-mono">{counts[s]}</span>
+        </div>
+      );
+    })}
+    <span class="ml-auto text-[10px] text-ink-4 hidden sm:block self-center">
+      Type to filter · click row to expand · links → relevant view
+    </span>
+  </div>
+
+  <!-- ── Filter bar ─────────────────────────────────────────────────── -->
+  <div class="px-8 py-4 border-b border-edge flex flex-wrap gap-3 items-center" data-pagefind-ignore>
+    <!-- Text search -->
+    <div class="relative flex-1 min-w-48 max-w-xs">
+      <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-ink-4 pointer-events-none"
+           width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="6" cy="6" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M10 10l3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <input
+        id="gtq-search"
+        type="search"
+        placeholder="Filter gotchas…"
+        autocomplete="off"
+        class="w-full bg-raised border border-edge text-ink-2 text-xs font-mono
+               pl-8 pr-3 py-2 rounded-lg placeholder:text-ink-4
+               focus:outline-none focus:border-accent-ring focus:bg-lifted
+               transition-colors duration-75"
+      />
+    </div>
+
+    <!-- Severity chips -->
+    <div class="flex gap-1.5 flex-wrap" id="sev-filters">
+      {(['critical','warn','info'] as Severity[]).map(s => {
+        const m = severityMeta[s];
+        return (
+          <button
+            data-filter-sev={s}
+            class="sev-chip text-[10px] font-mono font-bold px-2.5 py-1 rounded-lg border transition-all duration-75 opacity-50 hover:opacity-100"
+            style={`background:${m.bg};color:${m.text};border-color:${m.border}`}
+          >{m.label}</button>
+        );
+      })}
+    </div>
+
+    <!-- Category chips -->
+    <div class="flex gap-1.5 flex-wrap" id="cat-filters">
+      {categories.map(cat => (
+        <button
+          data-filter-cat={cat}
+          class="cat-chip text-[10px] font-mono text-ink-3 bg-raised border border-edge
+                 px-2.5 py-1 rounded-lg hover:text-ink-2 hover:border-edge-hi
+                 transition-all duration-75 opacity-50 hover:opacity-100"
+        >{cat}</button>
+      ))}
+    </div>
+
+    <!-- Clear -->
+    <button id="gtq-clear"
+      class="text-[10px] font-mono text-ink-4 hover:text-ink-2 transition-colors hidden ml-auto"
+    >Clear ×</button>
+  </div>
+
+  <!-- ── Gotcha list ────────────────────────────────────────────────── -->
+  <div class="px-8 py-2" data-pagefind-body>
+
+    <!-- No-results message -->
+    <div id="gtq-empty" class="hidden py-16 text-center text-ink-4 text-xs font-mono">
+      No gotchas match — try a different filter.
+    </div>
+
+    <ul id="gtq-list" class="divide-y divide-edge-dim">
+      {gotchas.map((g, i) => {
+        const m = severityMeta[g.severity];
+        return (
+          <li
+            data-sev={g.severity}
+            data-cat={g.category}
+            data-text={`${g.title} ${g.body} ${g.category}`.toLowerCase()}
+            class="gtq-row py-4 group"
+          >
+            <div class="flex items-start gap-4">
+              <!-- Number -->
+              <span class="text-[10px] font-mono text-ink-4 w-6 shrink-0 pt-0.5 text-right select-none">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+
+              <!-- Content -->
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2.5 flex-wrap mb-1.5">
+                  <!-- Severity badge -->
+                  <span
+                    class="text-[10px] font-mono font-bold px-2 py-0.5 rounded shrink-0"
+                    style={`background:${m.bg};color:${m.text};border:1px solid ${m.border}`}
+                  >{m.label}</span>
+
+                  <!-- Category badge -->
+                  <span class="text-[10px] font-mono text-ink-4 bg-raised border border-edge-dim px-2 py-0.5 rounded shrink-0">
+                    {g.category}
+                  </span>
+
+                  <!-- Title -->
+                  <span class="text-sm font-semibold text-ink-2 font-heading leading-tight min-w-0"
+                        set:html={g.title.replace(/`([^`]+)`/g, '<code class="text-accent font-mono text-xs">$1</code>')}
+                  ></span>
+                </div>
+
+                <!-- Body -->
+                <p class="text-xs text-ink-3 leading-relaxed pl-0 max-w-3xl"
+                   set:html={g.body.replace(/`([^`]+)`/g, '<code class="text-accent font-mono">$1</code>')}
+                ></p>
+
+                <!-- Link -->
+                {g.link && (
+                  <a
+                    href={g.link}
+                    class="inline-flex items-center gap-1 mt-2 text-[10px] font-mono
+                           text-accent-hi bg-accent-wash border border-accent-ring
+                           px-2.5 py-1 rounded-lg hover:bg-lifted hover:border-accent
+                           transition-all duration-75"
+                  >
+                    See in docs →
+                  </a>
+                )}
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  </div>
+</BaseLayout>
+
+<!-- ── Client-side filter island ─────────────────────────────────────── -->
+<script>
+const searchInput = document.getElementById('gtq-search') as HTMLInputElement;
+const clearBtn    = document.getElementById('gtq-clear')!;
+const emptyMsg    = document.getElementById('gtq-empty')!;
+const listEl      = document.getElementById('gtq-list')!;
+const rows        = Array.from(listEl.querySelectorAll<HTMLLIElement>('.gtq-row'));
+const sevChips    = Array.from(document.querySelectorAll<HTMLButtonElement>('.sev-chip'));
+const catChips    = Array.from(document.querySelectorAll<HTMLButtonElement>('.cat-chip'));
+
+let activeSearch = '';
+let activeSev    = new Set<string>();
+let activeCat    = new Set<string>();
+
+function applyFilters() {
+  const q   = activeSearch.trim().toLowerCase();
+  const hasSev = activeSev.size > 0;
+  const hasCat = activeCat.size > 0;
+  const hasAny = q || hasSev || hasCat;
+
+  clearBtn.classList.toggle('hidden', !hasAny);
+
+  let visible = 0;
+  rows.forEach(row => {
+    const text = row.dataset.text ?? '';
+    const sev  = row.dataset.sev  ?? '';
+    const cat  = row.dataset.cat  ?? '';
+
+    const matchQ   = !q       || text.includes(q);
+    const matchSev = !hasSev  || activeSev.has(sev);
+    const matchCat = !hasCat  || activeCat.has(cat);
+
+    const show = matchQ && matchSev && matchCat;
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  emptyMsg.classList.toggle('hidden', visible > 0);
+}
+
+// Text search — debounced 60ms
+let debounce: ReturnType<typeof setTimeout>;
+searchInput.addEventListener('input', () => {
+  clearTimeout(debounce);
+  debounce = setTimeout(() => {
+    activeSearch = searchInput.value;
+    applyFilters();
+  }, 60);
+});
+
+// Severity toggle
+sevChips.forEach(chip => {
+  chip.addEventListener('click', () => {
+    const sev = chip.dataset.filterSev!;
+    if (activeSev.has(sev)) {
+      activeSev.delete(sev);
+      chip.classList.remove('opacity-100', 'ring-1', 'ring-current');
+      chip.classList.add('opacity-50');
+    } else {
+      activeSev.add(sev);
+      chip.classList.remove('opacity-50');
+      chip.classList.add('opacity-100', 'ring-1', 'ring-current');
+    }
+    applyFilters();
+  });
+});
+
+// Category toggle
+catChips.forEach(chip => {
+  chip.addEventListener('click', () => {
+    const cat = chip.dataset.filterCat!;
+    if (activeCat.has(cat)) {
+      activeCat.delete(cat);
+      chip.classList.remove('opacity-100', 'ring-1', 'ring-current');
+      chip.classList.add('opacity-50');
+    } else {
+      activeCat.add(cat);
+      chip.classList.remove('opacity-50');
+      chip.classList.add('opacity-100', 'ring-1', 'ring-current');
+    }
+    applyFilters();
+  });
+});
+
+// Clear all
+clearBtn.addEventListener('click', () => {
+  searchInput.value = '';
+  activeSearch = '';
+  activeSev.clear();
+  activeCat.clear();
+  sevChips.forEach(c => {
+    c.classList.remove('opacity-100', 'ring-1', 'ring-current');
+    c.classList.add('opacity-50');
+  });
+  catChips.forEach(c => {
+    c.classList.remove('opacity-100', 'ring-1', 'ring-current');
+    c.classList.add('opacity-50');
+  });
+  applyFilters();
+});
+</script>

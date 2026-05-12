@@ -1,0 +1,26 @@
+---
+interface Props {
+  phase: number;
+  status?: 'live' | 'next' | 'upcoming';
+}
+const { phase, status = 'upcoming' } = Astro.props;
+---
+
+{status === 'live' && (
+  <span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border bg-ok-wash text-ok border-ok/20">
+    <span class="w-1.5 h-1.5 rounded-full bg-ok dt-pulse inline-block shrink-0"></span>
+    Live
+  </span>
+)}
+
+{status === 'next' && (
+  <span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border bg-warn-wash text-warn border-warn/20">
+    ⏳ Phase {phase} — Up Next
+  </span>
+)}
+
+{status === 'upcoming' && (
+  <span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border bg-raised text-ink-4 border-edge">
+    ⏳ Phase {phase} — Coming Soon
+  </span>
+)}

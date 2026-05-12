@@ -85,12 +85,13 @@ export function usePlayerMatch(
     const matchIds = myAssignments.map((a) => a.match_id);
 
     // Find the active match (pending or in_progress) for this session.
+    // Draft Mode firewall: pending matches are only visible when published.
     const { data: matches } = await supabase
       .from("matches")
       .select("*")
       .eq("session_id", sessionId)
       .in("id", matchIds)
-      .in("status", ["pending", "in_progress"])
+      .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)")
       .order("created_at", { ascending: false })
       .limit(1);
 
@@ -131,6 +132,7 @@ export function usePlayerMatch(
         .select("id, sort_order, created_at")
         .eq("session_id", sessionId)
         .eq("status", "pending")
+        .eq("is_published", true)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: true });
 

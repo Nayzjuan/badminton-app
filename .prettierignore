@@ -1,0 +1,10 @@
+.next/
+out/
+build/
+node_modules/
+public/
+backups/
+coverage/
+playwright-report/
+test-results/
+*.sql

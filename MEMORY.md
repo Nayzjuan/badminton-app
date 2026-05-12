@@ -12,26 +12,32 @@
 **Goal:** port `preview-revamp.html` (organizer) + `preview-player.html` (player) designs into the real Next.js app.
 
 **Foundation:**
+
 - `src/app/globals.css` — HSL tokens → OKLCH. Both light + dark modes defined. New utility classes: `.clip-cut` / `.clip-cut-sm` (cut-corner polygon clip-path for organizer command-center cards), `.text-command` / `.bg-command` / `.glow-command` (electric teal `oklch(0.79 0.18 188)`), `.glow-accent`. New keyframes: `status-pulse` (1.4s pulse for status dots), `match-alert-up` (slide-up overlay), `scan-line`. Legacy `--court-cyan-hsl`/`--court-lime-hsl`/`--amber-accent-hsl` preserved for `badminton-court.tsx` + amber pills.
 - `src/app/layout.tsx` — Space Grotesk replaced with **Inter** (`--font-inter`, sans default) + **Barlow Condensed** italic (`--font-barlow`, headings) + **JetBrains Mono** (`--font-jetbrains`, stats/metadata) + **Chakra Petch** (`--font-chakra`, organizer command-center). All four variables on `<html>`.
 
 **Player view (rewrites):**
+
 - `match-alert.tsx` — full rewrite. Full-screen slide-up overlay, `position: absolute inset-0 z-30` inside the status tabpanel. Two states: amber on-deck ("Heads Up." hero, position-aware copy "X of Y on deck"), navy in_progress (massive COURT N hero, emerald pulse). Optional Mixed Level banner. NEW props: `onLeaveQueue` (renders bottom Leave Queue button with sonner error toast), `scoreSlot?: ReactNode` (renders ScoreInputCard inside the overlay so it isn't occluded). rAF mount animation with proper cleanup.
 - `queue-status.tsx` — full rewrite. Full-canvas big-numeral design (88px Barlow Condensed `#3`), inline context, thin amber rule, stats row (waited · games · skill). NEW props: `skillLevel?`, `approaching?` (amber radial glow + amber numeral when position ≤ 2).
 - `on-deck-alert.tsx` — simplified to approaching-banner only (small amber/sky pill for waiting players at positions 1–4). MatchAlert owns the pending/in_progress full-screen states.
 
 **Player view (refactors):**
+
 - `player-dashboard.tsx` — `<main className="relative flex-1 overflow-hidden">`. MatchAlert is scoped INSIDE `{activeTab === "status" && (...)}` block (so tabs stay switchable during active match). Passes `scoreSlot={<ScoreInputCard/>}` when in_progress. `MyStatusTab` active-match branch returns `null` (overlay handles everything). `QueueSubTab` rewritten: full-canvas "Ready to play?" empty state, inline Leave Queue button (no more `QueueToggle` component). New props: `skillLevel`, `sessionName`.
 - `live-courts-tab.tsx`, `waitlist-tab.tsx`, `match-history.tsx`, organizer files — batch sed semantic-token cleanup (`bg-white dark:bg-card` → `bg-card`, etc.).
 
 **Leaderboard:**
+
 - `stadium-leaderboard.tsx` — NEW. 6-region Stadium layout: header (Barlow 52px italic LEADERBOARD + amber player count + refresh) → YOU strip (amber gradient bar) → asymmetric podium [#2 left][#1 center taller w/ ghost watermark + lightning bolt streak][#3 right] → sort bar (visual only) → 6-col header → tail rows.
 - `leaderboard-page.tsx` — when `variant === "player-panel"`, short-circuits to `<StadiumLeaderboard rows={sessionRows} onRefresh={handleRefresh} />`. organizer-panel + standalone variants unchanged.
 
 **Organizer:**
+
 - `active-courts.tsx` — in_progress emerald glow swapped to electric command-teal (`oklch(0.79 0.18 188)`). Background hex `#0D1B2A` → `oklch(0.10 0.014 245)`.
 
 **Code Review Gate (3-cycle):**
+
 1. **Build + typecheck pass** after each chunk.
 2. **Initial regression sweep** caught: missing `onLeaveQueue` wiring → fixed.
 3. **Independent reviewer Cycle A** flagged 3 blockers: (a) ScoreInputCard occluded behind opaque overlay, (b) hardcoded "9:41" mock chrome leaked from preview HTML, (c) overlay covered ALL tabs making the tab bar dead during active match. All three fixed by adding `scoreSlot` prop + removing chrome + scoping overlay inside the status tabpanel.
@@ -46,26 +52,32 @@
 Applied all P0–P3 issues surfaced by `/critique` + user answers:
 
 **P0 fixes:**
+
 - `match-alert.tsx` — "Heads Up." h2 scaled from 28px → `clamp(56px, 16vw, 88px)` Barlow Condensed italic
 - `match-alert.tsx` — amber canvas: `bg-amber-400` replaced with explicit `backgroundColor: "oklch(0.78 0.17 62)"` so it's identical in both light/dark modes (no CSS-var ambiguity). All `dark:text-amber-*` variants on amber-tone paths removed — text stays dark amber on bright amber canvas in both modes.
 - `player-dashboard.tsx` — removed `className="relative"` from the status tabpanel div (it was stealing the containing block from `main.relative`, making the `absolute inset-0` overlay render 0px tall)
 
 **P1 fixes:**
+
 - `match-alert.tsx` — `SKILL_DOT` 6-level map collapsed to `SKILL_TIER` 3-tier (BEG/INT/ADV with dot + text label). `PlayerRow` renders abbreviation text for quick scanning.
 - `player-dashboard.tsx` — `ScoreInputCard` score inputs: `max={99}` → `max={30}`. Added JS guard `if (a > 30 || b > 30) setError("Badminton scores are 0–30.")`.
 
 **P2 fixes:**
+
 - `player-dashboard.tsx` — header right side completely refactored. ThemeToggle + SignOutButton + Leave Session collapsed into a `MoreVertical` overflow menu (`useRef` click-outside handler, controlled `AlertDialog` via `leaveDialogOpen` state — no `AlertDialogTrigger` needed). Status dot stays visible. Header now has 2 elements on the right (status dot + MoreVertical) instead of 5.
 
 **P3 fixes (emoji removal):**
+
 - `match-alert.tsx` — `⚠` text replaced with `<AlertTriangle>` Lucide icon in MixedLevelBanner. `🏸` removed from all detailText strings.
 - `player-dashboard.tsx` — `⏸` replaced with `<PauseCircle>` in paused state. `✅` replaced with `<CheckCircle2>`. `📊` replaced with `<BarChart2>`.
 
 **Motion differentiation:**
+
 - in_progress overlay: 380ms `cubic-bezier(0.16, 1, 0.3, 1)` (sharp, snap-to-action)
 - pending overlay: 550ms `cubic-bezier(0.22, 1, 0.36, 1)` (breathing, "get ready")
 
 **Leaderboard color fixes:**
+
 - `stadium-leaderboard.tsx` — #3 podium rank: `dark:text-amber-800` → `dark:text-amber-500` (was near-invisible on dark bg)
 - PodiumCell losses: `text-muted-foreground` → `text-destructive` (matches tail-row convention)
 - PodiumCell win%: `text-muted-foreground` → `text-foreground/70` (more legible)
@@ -77,6 +89,7 @@ Applied all P0–P3 issues surfaced by `/critique` + user answers:
 Fixed all components that had no light mode counterpart or broken light mode colors.
 
 **match-alert.tsx — in_progress overlay (full theme adaptation):**
+
 - Container: `bg-[oklch(0.07_0.012_245)]` → `bg-background` (semantic token, adapts automatically)
 - Status badge: hardcoded dark emerald tint → `bg-emerald-50 dark:bg-emerald-500/15 ring-1 ring-emerald-200 dark:ring-emerald-500/30`
 - Badge text: `text-emerald-300` → `text-emerald-700 dark:text-emerald-300`
@@ -89,6 +102,7 @@ Fixed all components that had no light mode counterpart or broken light mode col
 - LeaveQueueButton navy: dark-only classes → semantic + dark: overrides
 
 **stadium-leaderboard.tsx — podium cell backgrounds:**
+
 - #1 cell: removed inline `style={{ background: "oklch(0.15...)" }}`, moved to className with `bg-[oklch(0.91_0.014_245)] dark:bg-[oklch(0.15_0.018_245)]`
 - isMe (non-first) cell: `oklch(0.78 0.17 62 / 0.06)` inline style → `bg-accent/10` className
 - Ghost watermark: 7% → 14% opacity (visible in both modes)
@@ -97,9 +111,11 @@ Fixed all components that had no light mode counterpart or broken light mode col
 - #3 rank color: previous fix `dark:text-amber-800` → `dark:text-amber-500` preserved
 
 **live-courts-tab.tsx:**
+
 - CourtMatchCard in_progress: `#0D1B2A` hex → `oklch(0.10 0.014 245)` + box-shadow converted from rgba() to oklch()
 
 **preview-player.html:**
+
 - Added ~45 `[data-theme="light"]` overrides for leaderboard (`.lbs-*`), in-progress overlay (`.match-alert.in-progress`, `.alert-*`, `.score-*`), and waitlist (`.wl-*`)
 
 **Code review gate:** 2-cycle. Cycle 1: LGTM with minor issues. Fixed #1 podium dark-mode bg distinction. Remaining minor: LeaveQueueButton navy uses non-semantic slate classes — logged, low priority.
@@ -111,6 +127,7 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 **Design direction:** Live sports timing screen / tournament bracket row aesthetic.
 
 **Key changes:**
+
 - No card wrapper — raw horizontal dividers like a live standings table
 - Zero-padded Barlow Condensed italic rank numbers: `01`, `02`… (hero of each row)
 - Rank colour-coded: `#1 = text-accent` (amber), `#2–4 = text-primary` (emerald), rest = muted
@@ -184,6 +201,33 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 - Skill badge has no dark mode variant — renders washed out on dark navy. P1 fix pending.
 - `match_opponent_pairs` CTE in the Wrapped RPC still SELECTs `opp_a` / `opp_b` columns from `LEAST/GREATEST` even though they're not aggregated downstream. Postgres optimizes these out, but tidy-up could remove them.
 - 3 incremental fix migrations were applied to Supabase dev (`expand_wrapped_awards`, `fix_wrapped_awards_uuid_max`, `fix_wrapped_awards_array_append`, `fix_wrapped_awards_double_trouble_scope`). The local migration file `20260508000000_expand_wrapped_awards.sql` is the consolidated final version that also incorporates the `20260509` threshold tweaks. If migrations are ever replayed from scratch, only the consolidated `20260508` version + the `20260509` patch run; intermediate fix names won't reappear.
+
+### Build Fix + Organizer Port (2026-05-12) — COMPLETE
+
+**Vercel build was broken** at commit `5a5651f` due to Turbopack requiring all exports from `"use server"` files to be `async`. `isRpcNotFound` was a sync export in `_shared.ts`.
+
+**Fixes applied:**
+- `src/lib/rpc-utils.ts` — new file containing `isRpcNotFound` (pure sync util, moved out of "use server" scope)
+- `src/app/actions/_shared.ts` — removed `isRpcNotFound` export; updated comment
+- `src/app/actions/match.ts` + `queue.ts` — updated imports to use `@/lib/rpc-utils`
+- `src/types/database.ts`:
+  - Added `"drafted"` to `QueueStatus`
+  - Added `is_auto_matchmaking_on` to `SessionInsert` optional fields
+  - Registered 7 missing draft-mode RPC function types: `revert_match_to_active`, `clear_on_deck_match_atomic`, `publish_match`, `publish_all_drafts`, `checkout_player_cleanup_drafts`, `join_queue`, `remove_player_from_queue_organizer`
+
+**Organizer dashboard ported** to match `preview-revamp.html` command-center design:
+- `organizer-dashboard.tsx`:
+  - Auto-matchmaking toggle: emerald → electric teal `oklch(0.79 0.18 188)` (both mobile + desktop)
+  - Mobile more-menu dropdown: white/slate → dark `oklch(0.19 0.020 238)` command-center
+  - Session switcher dropdown: white/slate → dark command-center; header uses `font-command`
+  - Tab nav: `font-command`, uppercase tracking, teal colors for active/hover
+- `on-deck-panel.tsx`:
+  - All amber replaced with teal for: card borders, card header bg, drag-handle icon, card title, "Mixed Level" badge, time-ago label, "On Deck" section pulse dot, "match ready" badge, Publish/Publish All buttons, draft banner
+  - Teal shadow on swap-selection state
+- `active-courts.tsx`:
+  - "Call Next Match" button: emerald → teal (light solid / dark translucent with border)
+
+**Pushed to `main`:** commits `ee6e4c6` (build fix) + `836df5d` (organizer port). Vercel should deploy cleanly now.
 
 ### Immediate Next Steps
 
@@ -266,7 +310,7 @@ skill_level:    "beginner" | "lower_intermediate" | "intermediate" |
                 "upper_intermediate" | "lower_advanced" | "advanced"   (int 1–6)
                 ⚠️ "upper_beginner" was REMOVED — never reference it
 court_status:   "available" | "in_use" | "closed"
-queue_status:   "waiting" | "on_deck" | "playing" | "left"
+queue_status:   "waiting" | "on_deck" | "playing" | "left" | "drafted"
 match_status:   "pending" | "in_progress" | "completed" | "cancelled"
 match_origin:   "auto" | "manual" | "modified"   (sticky: "manual" never demoted)
 scoring_format: "single" | "best_of_3" | "best_of_5"

@@ -1,0 +1,55 @@
+---
+import Nav from '../components/Nav.astro';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const {
+  title = 'Badminton Queue App',
+  description = 'Automate your badminton queue. Smart matchmaking, real-time scoreboards, fair-play caps.',
+  ogImage = '/og.png',
+} = Astro.props;
+
+const pageTitle = title === 'Badminton Queue App'
+  ? title
+  : `${title} — Badminton Queue App`;
+---
+
+<!doctype html>
+<html lang="en" class="h-full scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <meta property="og:title"       content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image"       content={ogImage} />
+    <meta property="og:type"        content="website" />
+    <meta name="twitter:card"       content="summary_large_image" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{pageTitle}</title>
+  </head>
+
+  <body class="bg-base text-ink-2 font-sans antialiased">
+    <Nav />
+
+    <main>
+      <slot />
+    </main>
+
+    <footer class="border-t border-edge-dim py-8 px-6">
+      <div class="mx-auto max-w-6xl flex flex-col sm:flex-row items-center justify-between gap-4">
+        <span class="font-heading font-bold text-sm text-ink-3 tracking-tight">
+          Badminton Queue App
+        </span>
+        <p class="text-xs text-ink-4">
+          &copy; {new Date().getFullYear()} · Built for badminton communities
+        </p>
+      </div>
+    </footer>
+  </body>
+</html>

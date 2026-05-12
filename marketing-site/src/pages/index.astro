@@ -1,0 +1,230 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import SandboxRoot from '../sandbox/SandboxRoot.tsx';
+---
+
+<BaseLayout
+  title="Badminton Queue App"
+  description="Automate your badminton queue. Smart matchmaking, real-time scoreboards, fair-play caps. No more whiteboards."
+>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HERO
+  ══════════════════════════════════════════════════════════════════ -->
+  <section class="relative min-h-[88vh] flex flex-col justify-center px-6 pt-16 pb-20 overflow-hidden">
+
+    <!-- Background grid pattern -->
+    <div aria-hidden="true"
+         class="pointer-events-none absolute inset-0 opacity-[0.04]"
+         style="background-image: linear-gradient(oklch(96% 0.005 245) 1px, transparent 1px), linear-gradient(90deg, oklch(96% 0.005 245) 1px, transparent 1px); background-size: 40px 40px;">
+    </div>
+
+    <div class="relative mx-auto w-full max-w-6xl">
+      <div class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-12 items-center">
+
+        <!-- Left: headline + CTAs -->
+        <div class="max-w-2xl">
+          <h1 class="font-heading font-bold leading-[0.95] tracking-tight text-ink mb-6"
+              style="font-size: clamp(3rem, 8vw, 6rem);">
+            Automate Your<br/>
+            <span class="text-accent">Badminton Queue.</span>
+          </h1>
+
+          <p class="text-ink-3 leading-relaxed mb-8 max-w-lg"
+             style="font-size: clamp(1rem, 2vw, 1.2rem);">
+            No more whiteboards. No more empty courts. No more "whose turn is it?"
+            Smart matchmaking keeps every court busy and every player happy.
+          </p>
+
+          <div class="flex flex-wrap gap-3">
+            <a href="#sandbox"
+               class="inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-3 font-heading font-bold text-base transition-colors duration-75 hover:bg-accent-hi"
+               style="color: var(--color-base)">
+              Try the Demo
+              <span aria-hidden="true">↓</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Right: stat block -->
+        <aside class="hidden lg:flex flex-col gap-4 shrink-0">
+          {[
+            { value: '0',  unit: 'empty courts',   sub: 'engine fills every slot' },
+            { value: '∞',  unit: 'fair rotations',  sub: 'no-repeat partnership cap' },
+            { value: '1',  unit: 'tap to score',    sub: 'real-time for all players' },
+          ].map(s => (
+            <div class="rounded-2xl border border-edge-hi bg-overlay px-6 py-4 w-52">
+              <div class="font-heading font-bold text-accent-hi leading-none mb-1"
+                   style="font-size: 2.75rem;">{s.value}</div>
+              <div class="text-sm font-semibold text-ink-2 leading-snug">{s.unit}</div>
+              <div class="text-[11px] text-ink-4 mt-0.5">{s.sub}</div>
+            </div>
+          ))}
+        </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       FEATURES — asymmetric grid, not a standard 3-icon card layout
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="features" class="px-6 py-20 border-t border-edge-dim scroll-mt-14">
+    <div class="mx-auto max-w-6xl">
+
+      <div class="mb-12">
+        <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-3">What it does</p>
+        <h2 class="font-heading font-bold text-ink leading-tight"
+            style="font-size: clamp(2rem, 4vw, 3rem);">
+          Built for how real<br/>badminton clubs work.
+        </h2>
+      </div>
+
+      <!-- Feature layout: 1 large + 2 stacked right -->
+      <div class="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-4">
+
+        <!-- Feature 01 — large primary -->
+        <div class="rounded-2xl border border-edge bg-overlay p-8 flex flex-col justify-between min-h-64">
+          <div class="font-heading font-bold text-[5rem] leading-none text-accent/35 select-none mb-4">
+            01
+          </div>
+          <div>
+            <h3 class="font-heading font-bold text-2xl text-ink mb-3">
+              Smart Matchmaking
+            </h3>
+            <p class="text-ink-3 text-sm leading-relaxed max-w-lg">
+              The engine balances teams by skill level, rotates players fairly by wait time,
+              and enforces partnership caps so the same two people aren't always paired together.
+              Every match feels fresh.
+            </p>
+          </div>
+        </div>
+
+        <!-- Features 02 + 03 — stacked right -->
+        <div class="flex flex-col gap-4">
+          <div class="rounded-2xl border border-edge bg-overlay p-6 flex-1">
+            <div class="font-heading font-bold text-[3rem] leading-none text-accent/30 select-none mb-3">
+              02
+            </div>
+            <h3 class="font-heading font-bold text-lg text-ink mb-2">
+              Real-time TV Scoreboard
+            </h3>
+            <p class="text-ink-3 text-xs leading-relaxed">
+              A dedicated display view for the big screen. Every active court,
+              every score, every queue position — live, no refresh needed.
+            </p>
+          </div>
+
+          <div class="rounded-2xl border border-edge bg-overlay p-6 flex-1">
+            <div class="font-heading font-bold text-[3rem] leading-none text-accent/30 select-none mb-3">
+              03
+            </div>
+            <h3 class="font-heading font-bold text-lg text-ink mb-2">
+              Fair-Play Caps
+            </h3>
+            <p class="text-ink-3 text-xs leading-relaxed">
+              Hard limits on how many times two players can partner up per session.
+              Keeps the pool diverse and the games competitive.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Secondary feature strip -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+        {[
+          { label: 'Anonymous join',  desc: 'Players scan a QR and join instantly — no app install required.' },
+          { label: 'Organizer PIN',   desc: 'Secure session management without requiring player accounts.' },
+          { label: 'Session Wrapped', desc: 'End-of-session awards celebrate milestones for every player.' },
+        ].map(f => (
+          <div class="rounded-xl border border-edge-dim bg-surface/50 px-5 py-4">
+            <h4 class="font-heading font-bold text-sm text-ink-2 mb-1.5">{f.label}</h4>
+            <p class="text-[11px] text-ink-4 leading-relaxed">{f.desc}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       HOW IT FLOWS — three-step visual
+  ══════════════════════════════════════════════════════════════════ -->
+  <section class="px-6 py-20 border-t border-edge-dim">
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-3">How it works</p>
+        <h2 class="font-heading font-bold text-ink"
+            style="font-size: clamp(1.75rem, 3.5vw, 2.5rem);">
+          From scan to court in seconds.
+        </h2>
+      </div>
+
+      <ol class="grid grid-cols-1 sm:grid-cols-3 gap-6 relative">
+        {[
+          {
+            n: '1',
+            title: 'Players scan & join',
+            body:  'A QR code at the venue. Tap, enter a name, you\'re in the queue. No app, no account.',
+          },
+          {
+            n: '2',
+            title: 'Organizer generates matches',
+            body:  'One tap runs the engine. It reads the queue, balances skill, checks history, and drafts the next game.',
+          },
+          {
+            n: '3',
+            title: 'Court plays, scoreboard updates',
+            body:  'Players see their match on the big screen. Score goes in, players cycle back. Repeat.',
+          },
+        ].map((step) => (
+          <li class="relative flex flex-col gap-3">
+            <div class="w-10 h-10 rounded-full flex items-center justify-center bg-accent shrink-0">
+              <span class="font-heading font-bold text-sm" style="color: var(--color-base)">{step.n}</span>
+            </div>
+            <div>
+              <h3 class="font-heading font-bold text-base text-ink mb-1.5">{step.title}</h3>
+              <p class="text-xs text-ink-3 leading-relaxed">{step.body}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       INTERACTIVE SANDBOX — centrepiece demo
+  ══════════════════════════════════════════════════════════════════ -->
+  <section id="sandbox" class="px-6 py-20 border-t border-edge-dim scroll-mt-14">
+    <div class="mx-auto max-w-7xl">
+
+      <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p class="font-mono text-[11px] uppercase tracking-[0.2em] text-accent mb-3">Interactive Demo</p>
+          <h2 class="font-heading font-bold text-ink"
+              style="font-size: clamp(1.75rem, 3.5vw, 2.5rem);">
+            Organizer and player views,<br class="hidden sm:inline"/> side by side.
+          </h2>
+        </div>
+        <p class="text-xs text-ink-4 max-w-xs leading-relaxed">
+          Drag players to reorder the queue. Generate a draft, publish it, start the match —
+          and watch the player's phone snap to ON DECK in real time.
+        </p>
+      </div>
+
+      <!-- React island — full split-screen sandbox (organizer + PlayerPhone + event log).
+           client:visible defers the 103 kB bundle parse + hydration until the user
+           actually scrolls near #sandbox — the right choice for a component this
+           far below the fold (hero + features + how-it-works sit above it). -->
+      <SandboxRoot client:visible />
+
+      <p class="mt-4 text-[11px] text-ink-4 font-mono text-center">
+        Demo only · All data is local to your browser · Nothing is stored
+      </p>
+    </div>
+  </section>
+
+</BaseLayout>
+
+<style>
+  /* dt-pulse is defined in global.css — available here */
+  /* Smooth anchor-link scrolling already set on <html> via scroll-smooth */
+</style>

@@ -40,10 +40,7 @@ interface ActiveCourtsProps {
   timeLimitMinutes: number | null;
   onUpdateTimeLimit: (minutes: number | null) => Promise<{ error?: string }>;
   onAddCourt: (name: string) => Promise<{ error?: string }>;
-  onUpdateCourtStatus: (
-    courtId: string,
-    status: Court["status"]
-  ) => Promise<{ error?: string }>;
+  onUpdateCourtStatus: (courtId: string, status: Court["status"]) => Promise<{ error?: string }>;
   onRemoveCourt: (courtId: string) => Promise<{ error?: string }>;
   onCallNextMatch: (courtId: string) => Promise<MatchmakingResult>;
   onEndMatch: (
@@ -110,10 +107,10 @@ function CourtCard({
   const cardState: CardState = isMatchmaking
     ? "matchmaking"
     : hasActiveMatch
-    ? "in_progress"
-    : court.status === "closed"
-    ? "closed"
-    : "available";
+      ? "in_progress"
+      : court.status === "closed"
+        ? "closed"
+        : "available";
 
   // When a match is live, the card flips to a dark navy surface.
   const isActive = cardState === "in_progress";
@@ -163,19 +160,19 @@ function CourtCard({
       data-testid={`court-card-${court.id}`}
       data-alert-tier={alertTier}
       className={[
-        "flex flex-col rounded-2xl shadow-md overflow-hidden transition-all",
+        "flex flex-col clip-cut overflow-hidden transition-all",
         !isActive ? "bg-card border border-gray-200 dark:border-border" : "",
       ].join(" ")}
       style={
         isActive
           ? {
               background: "oklch(0.10 0.014 245)",
-              boxShadow: alertTier === "critical"
-                ? "0 0 0 1px oklch(0.65 0.22 22 / 0.55), 0 0 40px oklch(0.65 0.22 22 / 0.22)"
-                : alertTier === "warning"
-                ? "0 0 0 1px oklch(0.78 0.17 62 / 0.55), 0 0 40px oklch(0.78 0.17 62 / 0.20)"
-                // Normal tier: electric command-teal — replaces the old emerald glow
-                : "0 0 0 1px oklch(0.79 0.18 188 / 0.45), 0 0 40px oklch(0.79 0.18 188 / 0.16)",
+              filter:
+                alertTier === "critical"
+                  ? "drop-shadow(0 0 0 1px oklch(0.65 0.22 22 / 0.55)) drop-shadow(0 0 24px oklch(0.65 0.22 22 / 0.22))"
+                  : alertTier === "warning"
+                    ? "drop-shadow(0 0 0 1px oklch(0.78 0.17 62 / 0.55)) drop-shadow(0 0 24px oklch(0.78 0.17 62 / 0.18))"
+                    : "drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.18))",
             }
           : undefined
       }
@@ -193,13 +190,18 @@ function CourtCard({
           "flex items-center justify-between gap-2 px-5 pt-4 pb-3",
           isActive ? "border-b" : "border-b border-gray-200 dark:border-border",
         ].join(" ")}
-        style={isActive ? {
-          borderColor: alertTier === "critical"
-            ? "oklch(0.65 0.22 22 / 0.28)"
-            : alertTier === "warning"
-            ? "oklch(0.78 0.17 62 / 0.28)"
-            : "oklch(0.79 0.18 188 / 0.22)"  // teal command separator
-        } : undefined}
+        style={
+          isActive
+            ? {
+                borderColor:
+                  alertTier === "critical"
+                    ? "oklch(0.65 0.22 22 / 0.28)"
+                    : alertTier === "warning"
+                      ? "oklch(0.78 0.17 62 / 0.28)"
+                      : "oklch(0.79 0.18 188 / 0.22)", // teal command separator
+              }
+            : undefined
+        }
       >
         {/* Left group — min-w-0 allows court name to truncate instead of wrapping */}
         <div className="flex items-center gap-2 min-w-0">
@@ -212,10 +214,10 @@ function CourtCard({
           </h3>
           {match?.is_mixed_level && (
             <span
-              className="shrink-0 rounded-full border px-2 py-0.5
-                          text-xs font-bold uppercase tracking-wider
+              className="shrink-0 clip-cut-badge border px-2 py-0.5
+                          font-command text-[9px] uppercase tracking-[0.10em]
                           bg-amber-100 border-amber-300 text-amber-800
-                          dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]"
+                          dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300"
             >
               Mixed Level
             </span>
@@ -398,9 +400,12 @@ function CourtCard({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={onCallNextMatch}
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 min-h-[44px]
-                         text-sm font-semibold text-white hover:bg-emerald-700
-                         transition-colors shadow-sm"
+              className="flex items-center gap-1.5 clip-cut-sm
+                         bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
+                         dark:bg-[oklch(0.79_0.18_188/0.20)] dark:hover:bg-[oklch(0.79_0.18_188/0.32)]
+                         dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.45)]
+                         px-4 py-2.5 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
+                         transition-colors"
             >
               <Plus className="h-4 w-4" />
               Call Next Match
@@ -468,9 +473,7 @@ export function ActiveCourts({
   // ── Score modal state ───────────────────────────────────────
   const [scoringMatchId, setScoringMatchId] = useState<string | null>(null);
   const scoringMatch =
-    scoringMatchId !== null
-      ? (activeMatches.find((m) => m.id === scoringMatchId) ?? null)
-      : null;
+    scoringMatchId !== null ? (activeMatches.find((m) => m.id === scoringMatchId) ?? null) : null;
 
   // ── Toast ───────────────────────────────────────────────────
   const [toast, setToast] = useState<Toast | null>(null);
@@ -493,9 +496,7 @@ export function ActiveCourts({
   function getMatch(courtId: string): EnrichedMatch | undefined {
     // Only in_progress matches have a court_id — pending (on-deck) matches
     // have court_id=null and are displayed separately in OnDeckPanel.
-    return activeMatches.find(
-      (m) => m.court_id === courtId && m.status === "in_progress"
-    );
+    return activeMatches.find((m) => m.court_id === courtId && m.status === "in_progress");
   }
 
   // ── Handlers ────────────────────────────────────────────────
@@ -600,8 +601,8 @@ export function ActiveCourts({
                         toast.type === "success"
                           ? "border-emerald-400 bg-emerald-50 dark:border-emerald-500/60 dark:bg-emerald-950/40"
                           : toast.type === "warning"
-                          ? "border-amber-400 bg-amber-50 dark:border-amber-500/60 dark:bg-amber-950/40"
-                          : "border-red-400 bg-red-50 dark:border-red-500/60 dark:bg-red-950/40"
+                            ? "border-amber-400 bg-amber-50 dark:border-amber-500/60 dark:bg-amber-950/40"
+                            : "border-red-400 bg-red-50 dark:border-red-500/60 dark:bg-red-950/40"
                       }`}
         >
           <div className="flex items-start gap-3">
@@ -611,21 +612,25 @@ export function ActiveCourts({
             <div className="flex-1 min-w-0">
               <p
                 className={`text-sm font-semibold
-                    ${toast.type === "success"
-                      ? "text-emerald-900 dark:text-emerald-300"
-                      : toast.type === "warning"
-                      ? "text-amber-900 dark:text-amber-300"
-                      : "text-red-900 dark:text-red-300"}`}
+                    ${
+                      toast.type === "success"
+                        ? "text-emerald-900 dark:text-emerald-300"
+                        : toast.type === "warning"
+                          ? "text-amber-900 dark:text-amber-300"
+                          : "text-red-900 dark:text-red-300"
+                    }`}
               >
                 {toast.title}
               </p>
               <p
                 className={`mt-0.5 text-xs
-                    ${toast.type === "success"
-                      ? "text-emerald-700 dark:text-emerald-400"
-                      : toast.type === "warning"
-                      ? "text-amber-700 dark:text-amber-400"
-                      : "text-red-700 dark:text-red-400"}`}
+                    ${
+                      toast.type === "success"
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : toast.type === "warning"
+                          ? "text-amber-700 dark:text-amber-400"
+                          : "text-red-700 dark:text-red-400"
+                    }`}
               >
                 {toast.body}
               </p>
@@ -669,10 +674,7 @@ export function ActiveCourts({
         {/* Time limit picker */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Court time limit:</span>
-          <CourtTimePopover
-            timeLimitMinutes={timeLimitMinutes}
-            onSave={onUpdateTimeLimit}
-          />
+          <CourtTimePopover timeLimitMinutes={timeLimitMinutes} onSave={onUpdateTimeLimit} />
         </div>
       </div>
 

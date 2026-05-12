@@ -1,0 +1,670 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+
+// Sidebar list — rendered server-side for fast paint
+const TRACE_LIST = [
+  { id: 'join-queue',       num: '01', title: 'Player joins queue' },
+  { id: 'score-cascade',    num: '02', title: 'Score submission cascade' },
+  { id: 'toctou-race',      num: '03', title: 'TOCTOU race condition' },
+  { id: 'manual-match',     num: '04', title: 'Manual match creation' },
+  { id: 'tap-to-swap',      num: '05', title: 'Tap-to-Swap v2' },
+  { id: 'session-wrapped',  num: '06', title: 'Session Wrapped trigger' },
+  { id: 'auto-matchmaking', num: '07', title: 'Auto-matchmaking toggle' },
+  { id: 'pin-reconnect',    num: '08', title: 'PIN reconnect' },
+  { id: 'cap-saturation',   num: '09', title: 'Cap saturation' },
+  { id: 'tv-sync',          num: '10', title: 'TV board sync' },
+  { id: 'draft-publish',    num: '11', title: 'Draft mode publish' },
+];
+---
+
+<BaseLayout
+  title="Flows & Traces"
+  description="11 annotated sequence diagrams tracing every major user journey through the system — from queue join to engine race to Session Wrapped."
+>
+  <PageHeader
+    title="Flows & Traces"
+    subtitle="11 end-to-end sequence traces. Select a scenario, then step through each message with the scrubber. Cross-links navigate to the relevant documentation view."
+    phase={7}
+    phaseStatus="live"
+  />
+
+  <!-- ── Two-column layout ─────────────────────────────────────────── -->
+  <div class="flex min-h-0" data-pagefind-body>
+
+    <!-- ── Trace selector sidebar ──────────────────────────────────── -->
+    <aside class="hidden lg:flex flex-col w-52 shrink-0 border-r border-edge overflow-y-auto">
+      <div class="sticky top-0 bg-base z-10 px-4 pt-6 pb-2 border-b border-edge-dim">
+        <span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-4">Scenarios</span>
+        <span class="float-right text-[10px] text-ink-4 font-mono">11</span>
+      </div>
+      <nav class="px-2 py-3 space-y-0.5 flex-1">
+        {TRACE_LIST.map(t => (
+          <button
+            data-trace-id={t.id}
+            class="trace-btn w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-colors duration-75 hover:bg-raised group"
+          >
+            <span class="text-[10px] font-mono text-ink-4 w-5 shrink-0 group-hover:text-ink-3">{t.num}</span>
+            <span class="text-xs text-ink-3 leading-tight group-hover:text-ink-2 truncate">{t.title}</span>
+            <span class="trace-dot w-1.5 h-1.5 rounded-full bg-accent shrink-0 ml-auto opacity-0"></span>
+          </button>
+        ))}
+      </nav>
+    </aside>
+
+    <!-- ── Main panel ───────────────────────────────────────────────── -->
+    <div class="flex-1 min-w-0 flex flex-col">
+
+      <!-- Mobile: horizontal scroll trace tabs -->
+      <div class="lg:hidden overflow-x-auto flex gap-1 px-4 py-3 border-b border-edge-dim shrink-0">
+        {TRACE_LIST.map(t => (
+          <button
+            data-trace-id={t.id}
+            class="trace-btn shrink-0 text-[10px] font-mono text-ink-3 bg-raised border border-edge px-2.5 py-1.5 rounded-lg whitespace-nowrap hover:text-accent-hi hover:border-accent-ring transition-all duration-75"
+          >
+            {t.num} {t.title}
+          </button>
+        ))}
+      </div>
+
+      <!-- Trace header -->
+      <div class="px-8 pt-6 pb-4 border-b border-edge-dim shrink-0">
+        <div id="trace-actors" class="text-[10px] font-mono text-ink-4 mb-1 uppercase tracking-wider"></div>
+        <h2 id="trace-title" class="text-xl font-bold text-ink font-heading mb-1"></h2>
+        <p  id="trace-desc"  class="text-xs text-ink-3 leading-relaxed max-w-2xl"></p>
+      </div>
+
+      <!-- Mermaid diagram -->
+      <div class="px-8 py-6 overflow-y-auto" style="min-height:260px;max-height:440px">
+        <div id="trace-diagram" class="overflow-x-auto"></div>
+        <div id="diagram-loading" class="text-xs text-ink-4 font-mono py-8 text-center hidden">
+          Rendering diagram…
+        </div>
+      </div>
+
+      <!-- ── Scrubber + step panel (sticky bottom) ──────────────────── -->
+      <div class="shrink-0 border-t border-edge bg-surface px-8 py-5 space-y-4">
+
+        <!-- Scrubber controls -->
+        <div class="flex items-center gap-4">
+          <button id="step-prev"
+            class="text-ink-4 hover:text-ink transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
+            aria-label="Previous step"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <!-- Track -->
+          <div class="flex-1 relative" id="scrubber-wrap">
+            <div class="h-1 rounded-full bg-raised relative overflow-hidden">
+              <div id="scrubber-fill" class="absolute inset-y-0 left-0 rounded-full transition-all duration-150" style="background:oklch(76% 0.17 155);width:0%"></div>
+            </div>
+            <div id="scrubber-dots" class="absolute inset-0 flex items-center justify-between pointer-events-none px-0"></div>
+          </div>
+
+          <button id="step-next"
+            class="text-ink-4 hover:text-ink transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
+            aria-label="Next step"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <span id="step-counter" class="text-[10px] font-mono text-ink-4 w-10 text-right shrink-0"></span>
+        </div>
+
+        <!-- Step detail -->
+        <div class="rounded-xl border border-edge bg-raised px-5 py-4 space-y-2.5 min-h-[100px]">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <span id="step-num-badge" class="text-[10px] font-mono text-ink-4 mr-2"></span>
+              <span id="step-label" class="text-sm font-semibold text-ink font-heading"></span>
+            </div>
+          </div>
+          <p id="step-desc" class="text-xs text-ink-3 leading-relaxed"></p>
+          <div id="step-links" class="flex flex-wrap gap-2"></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</BaseLayout>
+
+<!-- ── Flows island — imports Mermaid from same CDN (cached instance) ── -->
+<script type="module" is:inline>
+
+// ── Trace data ──────────────────────────────────────────────────────────
+const TRACES = [
+  {
+    id: 'join-queue',
+    title: 'Player joins queue',
+    desc: 'From tap to UI update. Covers auth check, the queue INSERT, and how the realtime event fans out to the organizer and all connected players via the ref-callback pattern.',
+    actors: 'Player Browser · Next.js Server · Supabase DB · Organizer Browser',
+    diagram: `sequenceDiagram
+    participant PB as Player Browser
+    participant S as Server
+    participant DB as Supabase DB
+    participant OB as Organizer Browser
+
+    PB->>S: joinQueueAction(sessionId)
+    Note right of S: isValidUUID · isSessionOrganizer
+    S->>DB: INSERT queue_entries status=active
+    DB-->>S: row id · position · joined_at
+    S-->>PB: success: true
+    DB--)OB: realtime queue_entries INSERT
+    Note over OB: fetchQueueSeq++ guards against stale overwrites
+    OB->>DB: SELECT queue_entries WHERE session_id
+    DB-->>OB: updated queue list
+    Note over OB: setQueue(data) — UI refreshes`,
+    steps: [
+      { label: 'Button tap', desc: 'Player taps "Join Queue". QueueToggle.onJoin() sets loading state and calls the server action.', links: [{ text:'QueueToggle', href:'/components#' },{ text:'joinQueueAction', href:'/actions#queue-ts' }] },
+      { label: 'Server validates', desc: 'isValidUUID() guards the sessionId param. createServiceClient() bypasses RLS for the INSERT. Returns { success, error } — never throws.', links: [{ text:'Server Actions pattern', href:'/actions#invariant' },{ text:'queue.ts', href:'/actions#queue-ts' }] },
+      { label: 'DB INSERT', desc: 'Row inserted into queue_entries with status="active". Position is calculated as COUNT(active entries) + 1. joined_at = NOW().', links: [{ text:'queue_entries table', href:'/database#tables' }] },
+      { label: 'Response to player', desc: 'Server returns { success: true }. QueueToggle clears loading state. Player sees their queue position in QueueStatus.', links: [{ text:'QueueStatus', href:'/components#' }] },
+      { label: 'Realtime fan-out', desc: 'Supabase fires a postgres_changes INSERT event on the queue_entries channel (filtered by session_id). All subscribers receive it.', links: [{ text:'Channel map', href:'/realtime#channels' }] },
+      { label: 'Organizer refresh', desc: 'useOrganizerData.fetchQueueSeq increments BEFORE the async fetch. fetchQueueRef.current() fires — the ref-callback pattern ensures zero channel teardown.', links: [{ text:'Ref-callback pattern', href:'/realtime#ref-pattern' },{ text:'Race demo', href:'/realtime#race-demo' }] },
+      { label: 'UI update', desc: 'setQueue(data) updates React state. QueueControl, WaitTimeMonitor, and OnDeckPanel all re-render with the new player.', links: [{ text:'QueueControl', href:'/components#' },{ text:'useOrganizerData', href:'/realtime#channels' }] },
+    ]
+  },
+  {
+    id: 'score-cascade',
+    title: 'Score submission cascade',
+    desc: 'What happens after an organizer submits scores. Triggers match completion, engine re-run, new match creation, and a full realtime fan-out to all connected clients.',
+    actors: 'Organizer · Server · Supabase DB · Engine · Player Browsers',
+    diagram: `sequenceDiagram
+    participant O as Organizer
+    participant S as Server
+    participant DB as Supabase
+    participant E as Engine
+    participant PB as Player Browsers
+
+    O->>S: endMatchAction(matchId, scoreA, scoreB)
+    S->>DB: UPDATE matches SET status=completed score_a score_b
+    S->>E: callNextMatch(sessionId)
+    E->>DB: fetch queue + courts + recent rosters
+    E->>E: runEngineInternal()
+    E->>DB: INSERT matches + match_players
+    E->>DB: UPDATE queue_entries status=on_deck
+    DB--)PB: realtime matches INSERT
+    DB--)O: realtime matches + queue_entries UPDATE
+    Note over O,PB: fetchSeq guards prevent stale overwrite`,
+    steps: [
+      { label: 'Score submit', desc: 'Organizer enters game scores in ScoreModal and confirms. endMatchAction is called with the matchId and score pair.', links: [{ text:'ScoreModal', href:'/components#' },{ text:'endMatchAction', href:'/actions#match-ts' }] },
+      { label: 'Match completed', desc: 'matches row updated: status="completed", score_a, score_b set. The DB trigger fires no secondary logic — all cascade is handled in the server action.', links: [{ text:'matches table', href:'/database#tables' }] },
+      { label: 'Engine triggered', desc: 'callNextMatch(sessionId) is called immediately after match completion. This is the engine entry point.', links: [{ text:'callNextMatch', href:'/actions#matchmaking-ts' },{ text:'Engine overview', href:'/engine#pipeline' }] },
+      { label: 'State fetch', desc: 'Engine fetches: active queue, available courts, recent 10 rosters (for overlap map), and pending match count.', links: [{ text:'Engine internals', href:'/engine#pipeline' }] },
+      { label: 'runEngineInternal', desc: 'Priority scores computed. Anchor player selected. buildOverlapMap() checks partnership history. Partners selected respecting MAX_REPEATS cap.', links: [{ text:'Priority calculator', href:'/engine#priority-calc' },{ text:'Partnership cap', href:'/engine#cap-viz' }] },
+      { label: 'Matches created', desc: 'New match + 4 match_player rows inserted. Queue entries for those 4 players updated to status="on_deck". Origin set to "matchmade".', links: [{ text:'match_players table', href:'/database#tables' }] },
+      { label: 'Realtime fan-out', desc: 'Multiple realtime events fire: matches INSERT (new match), queue_entries UPDATE (4 rows). All trigger fetchSeq increments on all clients.', links: [{ text:'Channel map', href:'/realtime#channels' }] },
+      { label: 'All clients refresh', desc: 'Organizer sees new on-deck match card. Player browsers see queue position shift. fetchSeq guards discard any late-arriving stale responses.', links: [{ text:'Race demo', href:'/realtime#race-demo' }] },
+    ]
+  },
+  {
+    id: 'toctou-race',
+    title: 'TOCTOU race condition',
+    desc: 'Two realtime events fire 50 ms apart. The slower fetch (Event A) arrives after the faster one (Event B) has already updated state. The monotonic sequence counter discards the stale result.',
+    actors: 'Supabase Realtime · useOrganizerData hook · React State',
+    diagram: `sequenceDiagram
+    participant RT as Supabase Realtime
+    participant HK as useOrganizerData
+    participant DB as Supabase DB
+    participant UI as React State
+
+    RT--)HK: Event A fires t=0ms
+    Note over HK: fetchActiveMatchesSeq = ++1  mySeq=1
+    RT--)HK: Event B fires t=50ms
+    Note over HK: fetchActiveMatchesSeq = ++2  mySeq=2
+    HK->>DB: fetch B starts t=50ms
+    HK->>DB: fetch A starts t=0ms slower path
+    DB-->>HK: B resolves t=300ms mySeq 2 == fetchSeq 2
+    HK->>UI: setMatches(B data) APPLIED
+    DB-->>HK: A resolves t=900ms mySeq 1 != fetchSeq 2
+    Note over HK: return — stale data discarded no state update`,
+    steps: [
+      { label: 'Event A fires', desc: 'Supabase realtime delivers Event A at t=0ms. The handler immediately runs: fetchActiveMatchesSeq = ++fetchActiveMatchesSeq. mySeq captures the value (1).', links: [{ text:'Realtime channels', href:'/realtime#channels' }] },
+      { label: 'Event B fires', desc: 'Event B arrives 50ms later. The same handler runs again: fetchActiveMatchesSeq = ++2. mySeq=2 captured. Both fetches are now in-flight simultaneously.', links: [{ text:'Race condition demo', href:'/realtime#race-demo' }] },
+      { label: 'Both fetches in-flight', desc: 'Two concurrent SELECT queries are running. A started first but is slower (900ms). B started 50ms later but is faster (250ms). Neither knows about the other.', links: [{ text:'useOrganizerData hook', href:'/components#' }] },
+      { label: 'B resolves first', desc: 'Event B\'s fetch returns at t=300ms. The guard runs: mySeq(2) === fetchActiveMatchesSeq(2). This is the most recent fetch — safe to apply.', links: [{ text:'Sequence guard pattern', href:'/realtime#race-demo' }] },
+      { label: 'State updated (B)', desc: 'setMatches(data) fires with Event B\'s data. React re-renders. fetchSeq is now 2 — it will not be lowered by any pending fetch.', links: [] },
+      { label: 'A resolves (discarded)', desc: 'Event A\'s fetch returns at t=900ms. The guard runs: mySeq(1) !== fetchActiveMatchesSeq(2). An even newer fetch exists — this data is stale. return immediately.', links: [{ text:'Race condition demo', href:'/realtime#race-demo' }] },
+    ]
+  },
+  {
+    id: 'manual-match',
+    title: 'Manual match creation',
+    desc: 'Organizer hand-picks 4 players from QueueControl and creates a match directly — bypassing the engine. Covers the DB cascade and realtime fan-out.',
+    actors: 'Organizer · Server · Supabase DB · Realtime',
+    diagram: `sequenceDiagram
+    participant O as Organizer
+    participant S as Server
+    participant DB as Supabase
+    participant RT as Realtime
+
+    O->>S: createManualMatchAction(sessionId, playerIds x4)
+    S->>DB: INSERT matches origin=manual status=pending
+    S->>DB: INSERT match_players x4
+    S->>DB: UPDATE queue_entries SET status=on_deck
+    DB--)RT: matches INSERT event
+    DB--)RT: match_players INSERT event
+    DB--)RT: queue_entries UPDATE event
+    RT--)O: fetchActiveMatchesSeq++ refreshes
+    RT--)O: fetchQueueSeq++ refreshes
+    Note over O: OnDeckPanel shows manual match card`,
+    steps: [
+      { label: 'Player selection', desc: 'Organizer checks 4 players in QueueControl. The "Create Match" button becomes enabled when exactly 4 are checked (or 2–4 with auto-fill). createManualMatchAction is called.', links: [{ text:'QueueControl', href:'/components#' },{ text:'createManualMatchAction', href:'/actions#match-ts' }] },
+      { label: 'Match INSERT', desc: 'A new matches row created: status="pending", origin="manual". Manual matches skip the engine entirely — no priority scores or overlap checks.', links: [{ text:'matches table', href:'/database#tables' },{ text:'MatchOriginTag', href:'/components#' }] },
+      { label: 'Players assigned', desc: '4 match_players rows inserted. Team A = players 1&2, Team B = players 3&4 (in selection order, unless teams are balanced by skill automatically).', links: [{ text:'match_players table', href:'/database#tables' }] },
+      { label: 'Queue status update', desc: 'Those 4 players\' queue_entries rows updated to status="on_deck". Their position in the queue is preserved (Inherited Games floor logic still applies).', links: [{ text:'queue.ts', href:'/actions#queue-ts' }] },
+      { label: 'Three realtime events', desc: 'Three separate postgres_changes events fire: matches INSERT, match_players INSERT ×4 (one per player), queue_entries UPDATE ×4. Each triggers a seq increment.', links: [{ text:'Channel map', href:'/realtime#channels' }] },
+      { label: 'UI updates', desc: 'OnDeckPanel renders the new match card with a "Manual" origin tag. Queue panel shows the 4 players as "On Deck" with the court pending indicator.', links: [{ text:'OnDeckPanel', href:'/components#' },{ text:'MatchCard', href:'/components#' }] },
+    ]
+  },
+  {
+    id: 'tap-to-swap',
+    title: 'Tap-to-Swap v2',
+    desc: 'Cross-match player exchange. Tap a player in Match A, tap another in Match B — their positions swap without touching the queue. Full state machine: idle → picking → confirm.',
+    actors: 'Organizer · OnDeckPanel · Server · Supabase DB',
+    diagram: `sequenceDiagram
+    participant O as Organizer
+    participant CP as OnDeckPanel
+    participant S as Server
+    participant DB as Supabase
+
+    O->>CP: tap player P1 in Match A
+    Note over CP: swapContext = P1 matchId=A team
+    Note over CP: mode idle → picking SwapFloatingBar shown
+    O->>CP: tap player P2 in Match B
+    Note over CP: cross-match swap detected
+    CP->>S: swapMatchPlayers(matchA matchB P1 P2)
+    S->>DB: UPDATE match_players match_id=B WHERE player=P1
+    S->>DB: UPDATE match_players match_id=A WHERE player=P2
+    DB--)O: realtime match_players UPDATE x2
+    Note over O: both match cards re-render`,
+    steps: [
+      { label: 'First tap', desc: 'Organizer taps a player avatar in a MatchCard. OnDeckPanel\'s onPlayerTap fires: swapContext is set with { playerId, matchId, team }. Mode transitions from idle → picking.', links: [{ text:'OnDeckPanel', href:'/components#' },{ text:'MatchCard', href:'/components#' }] },
+      { label: 'Picking mode', desc: 'SwapFloatingBar slides up from the bottom with the selected player\'s name and skill. All other player taps now register as "swap target" candidates.', links: [{ text:'SwapFloatingBar', href:'/components#' },{ text:'swap-player.ts', href:'/actions#swap-player-ts' }] },
+      { label: 'Second tap', desc: 'Organizer taps a player in a different match. OnDeckPanel detects this is a cross-match swap (target is in a different matchId than source).', links: [] },
+      { label: 'swapMatchPlayers called', desc: 'swapMatchPlayers(matchA, matchB, P1, P2) server action called. Validation: both matches must be pending, both players must be in their respective matches.', links: [{ text:'swap-player.ts', href:'/actions#swap-player-ts' }] },
+      { label: 'DB swap', desc: 'Two UPDATE statements in a transaction: P1\'s match_id changed from A→B, P2\'s from B→A. Team assignments and sort_order preserved.', links: [{ text:'match_players table', href:'/database#tables' }] },
+      { label: 'Realtime update', desc: 'Two match_players UPDATE events fire. fetchActiveMatchesSeq increments twice (guarded). Both MatchCard components re-render with the swapped rosters.', links: [{ text:'Channel map', href:'/realtime#channels' },{ text:'TeamsGrid', href:'/components#' }] },
+    ]
+  },
+  {
+    id: 'session-wrapped',
+    title: 'Session Wrapped trigger',
+    desc: 'The organizer ends the session. A REST broadcast pushes all connected players to the /wrapped page simultaneously — bypassing RLS that would prevent postgres_changes from reaching them.',
+    actors: 'Organizer · Server · Supabase Broadcast · All Player Browsers',
+    diagram: `sequenceDiagram
+    participant O as Organizer
+    participant S as Server
+    participant DB as Supabase
+    participant BC as Broadcast Channel
+    participant PB as All Player Browsers
+
+    O->>S: closeSession(sessionId)
+    S->>DB: UPDATE sessions SET status=closed
+    S->>BC: POST realtime:session-events:id
+    Note over BC: event: session_closed
+    BC--)PB: broadcast delivered
+    Note over PB: useOrganizerBroadcast fires
+    PB->>PB: router.push /wrapped/sessionId
+    Note over PB: Wrapped animated intro plays`,
+    steps: [
+      { label: 'Close session', desc: 'Organizer clicks "End Session" in the header. A confirmation dialog appears. On confirm, closeSession(sessionId) is called.', links: [{ text:'closeSession', href:'/actions#sessions-ts' },{ text:'OrganizerDashboard', href:'/components#' }] },
+      { label: 'DB update', desc: 'sessions.status updated to "closed". This triggers no automatic cascade — the broadcast is sent manually from the server action.', links: [{ text:'sessions table', href:'/database#tables' }] },
+      { label: 'REST broadcast', desc: 'Server POSTs to the Supabase Realtime broadcast endpoint with event: "session_closed". This bypasses RLS entirely — it\'s a server-to-client push, not a DB read.', links: [{ text:'Broadcast catalog', href:'/realtime#broadcasts' }] },
+      { label: 'Broadcast delivered', desc: 'The session-events channel delivers the event to all subscribed clients (organizer + all players + TV board). Delivery is near-instant (WebSocket push).', links: [{ text:'session-events channel', href:'/realtime#channels' }] },
+      { label: 'Handler fires', desc: 'useOrganizerBroadcast on every player browser fires the session_closed handler. The handler calls router.push("/wrapped/" + sessionId).', links: [{ text:'useOrganizerBroadcast', href:'/components#' } ] },
+      { label: 'Wrapped intro', desc: 'All players land on /wrapped simultaneously. The animated intro plays. After dismissal, the full Session Wrapped stats and awards are revealed.', links: [{ text:'wrapped.ts', href:'/actions#wrapped-ts' }] },
+    ]
+  },
+  {
+    id: 'auto-matchmaking',
+    title: 'Auto-matchmaking toggle',
+    desc: 'Why the sessions postgres_changes channel can\'t sync the toggle to co-organizers — and why a broadcast is the correct solution. A key architectural gotcha.',
+    actors: 'Organizer · Server · Supabase DB · Broadcast · Co-Organizer Browser',
+    diagram: `sequenceDiagram
+    participant O as Organizer
+    participant S as Server
+    participant DB as Supabase
+    participant BC as Broadcast Channel
+    participant CO as Co-Organizer
+
+    O->>S: toggleAutoMatchmaking(sessionId true)
+    S->>DB: UPDATE sessions SET is_auto_matchmaking_on=true
+    Note over DB: RLS: SELECT only for sessions.created_by
+    Note over DB: Co-organizer postgres_changes silently dropped
+    S->>BC: POST realtime:session-events:id
+    Note over BC: event: auto_matchmaking_toggled isOn:true
+    BC--)CO: broadcast delivered bypasses RLS
+    Note over CO: setAutoMatchmaking(true) UI syncs`,
+    steps: [
+      { label: 'Toggle flip', desc: 'Organizer flips the auto-matchmaking toggle. toggleAutoMatchmaking(sessionId, !current) called immediately (optimistic UI).', links: [{ text:'toggleAutoMatchmaking', href:'/actions#sessions-ts' }] },
+      { label: 'DB write', desc: 'sessions.is_auto_matchmaking_on updated. This write succeeds for the organizer (they own the session row via created_by FK).', links: [{ text:'sessions table', href:'/database#tables' }] },
+      { label: 'RLS blocks realtime', desc: 'The sessions table has an RLS SELECT policy: only sessions.created_by can read the row. A co-organizer\'s postgres_changes subscription is silently filtered — no event delivered, no error thrown.', links: [{ text:'auto_matchmaking gotcha', href:'/realtime#channels' }] },
+      { label: 'Broadcast sent', desc: 'Server sends auto_matchmaking_toggled broadcast with { isOn: boolean }. This goes to the Realtime broadcast channel — NOT postgres_changes — bypassing RLS entirely.', links: [{ text:'Broadcast catalog', href:'/realtime#broadcasts' }] },
+      { label: 'Co-organizer syncs', desc: 'Co-organizer\'s useOrganizerBroadcast receives the event. setAutoMatchmaking(true) updates their local state. UI toggle reflects the correct value without a page reload.', links: [{ text:'useOrganizerBroadcast', href:'/components#' }] },
+    ]
+  },
+  {
+    id: 'pin-reconnect',
+    title: 'PIN reconnect',
+    desc: 'A player loses their anonymous session (new browser, cleared storage). They re-enter the 4-digit PIN. The server migrates all their history to the new anonymous UUID.',
+    actors: 'Player Browser · Server · Supabase Auth · Supabase DB',
+    diagram: `sequenceDiagram
+    participant PB as Player Browser
+    participant S as Server
+    participant Auth as Supabase Auth
+    participant DB as Supabase DB
+
+    Note over PB: Session lost — new anonymous user
+    PB->>S: reconnectWithPIN(sessionId pin)
+    S->>DB: SELECT id FROM profiles WHERE pin=hash(pin)
+    DB-->>S: oldPlayerId found
+    S->>Auth: signOut() clear stale session
+    S->>Auth: signInAnonymously() fresh session
+    Auth-->>S: newUserId
+    S->>DB: UPDATE profiles id=newUserId WHERE id=oldPlayerId
+    S->>DB: UPDATE queue_entries match_players matches
+    S-->>PB: success redirect to play/sessionId`,
+    steps: [
+      { label: 'Session lost', desc: 'Player opens the app on a new device or cleared their browser storage. They have a new anonymous Supabase session with a different UUID — their profile is gone from the app\'s perspective.', links: [{ text:'auth.ts', href:'/actions#auth-ts' }] },
+      { label: 'PIN entry', desc: 'Player enters their 4-digit PIN on the reconnect screen. reconnectWithPIN(sessionId, pin) called. The PIN is hashed on the server — it is never stored in plaintext.', links: [{ text:'auth.ts', href:'/actions#auth-ts' } ] },
+      { label: 'PIN lookup', desc: 'Server queries profiles WHERE pin = hash(pin) AND session_id = sessionId. Returns the oldPlayerId (their original anonymous UUID). If no match: returns { error: "PIN not found" }.', links: [{ text:'profiles table', href:'/database#tables' }] },
+      { label: 'Session reset', desc: 'signOut() clears the current anonymous session. signInAnonymously() creates a brand new Supabase anonymous session. This is critical — skipping signOut() causes stale session conflicts.', links: [{ text:'auth.ts warn note', href:'/actions#auth-ts' }] },
+      { label: 'UUID migration', desc: 'All DB records referencing oldPlayerId are updated to newUserId: profiles, queue_entries, match_players, matches (created_by). Player\'s history is fully restored.', links: [{ text:'profiles table', href:'/database#tables' }] },
+      { label: 'Redirect', desc: 'Server returns { success: true }. Client navigates back to /play/sessionId with full session continuity. Queue position, games played, and match history intact.', links: [{ text:'PlayerDashboard', href:'/components#' }] },
+    ]
+  },
+  {
+    id: 'cap-saturation',
+    title: 'Cap saturation',
+    desc: 'The engine has tried every possible pairing but all combinations exceed MAX_REPEATS = 2. The engine gives up and signals the organizer via broadcast.',
+    actors: 'Server · Engine · Supabase DB · Broadcast · Organizer Browser',
+    diagram: `sequenceDiagram
+    participant S as Server
+    participant E as Engine
+    participant DB as Supabase
+    participant BC as Broadcast Channel
+    participant O as Organizer
+
+    S->>E: runEngineInternal(players courts)
+    E->>DB: SELECT recent match_players for overlapMap
+    E->>E: buildOverlapMap(recentRosters)
+    Note over E: all anchor-partner pairs exceed MAX_REPEATS=2
+    E-->>S: success false reason cap_saturated
+    S->>BC: POST realtime:session-events:id
+    Note over BC: event: cap_saturation affectedPlayerIds
+    BC--)O: broadcast delivered
+    Note over O: CapSaturationNotice banner appears`,
+    steps: [
+      { label: 'Engine triggered', desc: 'runEngineInternal is called (from callNextMatch or auto-matchmaking). It receives the active queue, available courts, and recent roster history.', links: [{ text:'Engine flowchart', href:'/engine#pipeline' }] },
+      { label: 'buildOverlapMap', desc: 'buildOverlapMap fetches the last N match rosters from match_players and counts how many times each player pair has played together. This is the DB-side operation (not in matchmaking-core.ts).', links: [{ text:'matchmaking.ts note', href:'/actions#matchmaking-ts' },{ text:'Engine constants', href:'/engine#constants' }] },
+      { label: 'All pairs saturated', desc: 'For each anchor player tried, every valid partner combination has played together >= MAX_REPEATS (2) times recently. No valid match can be formed within the cap constraint.', links: [{ text:'Partnership cap visualizer', href:'/engine#cap-viz' }] },
+      { label: 'Engine returns failure', desc: 'runEngineInternal returns { success: false, reason: "cap_saturated", affectedPlayerIds }. The engine does NOT create a match — it returns cleanly without a DB write.', links: [] },
+      { label: 'Broadcast sent', desc: 'Server sends cap_saturation broadcast with the list of affected playerIds. This is a server-to-client signal — no DB change associated.', links: [{ text:'Broadcast catalog', href:'/realtime#broadcasts' }] },
+      { label: 'Organizer notified', desc: 'useOrganizerBroadcast fires. setCapSaturation(true) updates state. CapSaturationNotice banner appears in OnDeckPanel prompting manual intervention.', links: [{ text:'OnDeckPanel', href:'/components#' }] },
+    ]
+  },
+  {
+    id: 'tv-sync',
+    title: 'TV board sync',
+    desc: 'How TvBoard stays current without an authenticated session. Dual-layer freshness: realtime subscriptions for instant updates + 15 s polling as a guaranteed fallback.',
+    actors: 'Supabase Realtime · TvBoard · Server · Polling Timer',
+    diagram: `sequenceDiagram
+    participant DB as Supabase DB
+    participant RT as Realtime
+    participant TV as TvBoard
+    participant S as Server
+
+    Note over DB: Score submitted — match updated
+    DB--)RT: matches UPDATE event
+    RT--)TV: subscribeToMatches callback
+    TV->>S: getTvData(sessionId)
+    DB--)RT: match_players UPDATE near-simultaneous
+    RT--)TV: subscribeToMatchPlayers callback
+    TV->>S: getTvData(sessionId) second call
+    S-->>TV: courts matches matchPlayers profiles
+    Note over TV: last response wins state updated
+    Note over TV: if realtime stalls after 15s
+    TV->>S: getTvData polling fallback`,
+    steps: [
+      { label: 'Score triggers DB update', desc: 'An organizer submits a match score. The matches row is updated. This triggers postgres_changes events on any subscribed clients — including anonymous TV sessions.', links: [{ text:'endMatchAction', href:'/actions#match-ts' }] },
+      { label: 'matches event fires', desc: 'TvBoard\'s subscribeToMatches callback fires. It calls getTvData() to fetch the full updated state — not just the changed row. This ensures full consistency.', links: [{ text:'TvBoard', href:'/components#' }] },
+      { label: 'match_players fires', desc: 'A near-simultaneous match_players UPDATE also fires (player reassignments from the completed match). subscribeToMatchPlayers triggers a second getTvData() call.', links: [] },
+      { label: 'Race to resolution', desc: 'Two getTvData() calls are in-flight. Unlike useOrganizerData, TvBoard has NO fetchSeq guard — whichever resolves last wins. At TV refresh rates this is acceptable.', links: [{ text:'TV vs organizer pattern', href:'/realtime#channels' }] },
+      { label: 'State updated', desc: 'The winning response sets matches state. TvCourtCard and TvOnDeckCard re-render. The board reflects the completed match removal and any new on-deck matches.', links: [{ text:'TvCourtCard', href:'/components#' },{ text:'TvOnDeckCard', href:'/components#' }] },
+      { label: 'Polling fallback', desc: 'If realtime stalls (anonymous user RLS edge cases or network hiccup), a setInterval fires getTvData() every 15 s. Guarantees the TV board is never stale for more than 15 s.', links: [{ text:'tv.ts', href:'/actions#tv-ts' }] },
+    ]
+  },
+  {
+    id: 'draft-publish',
+    title: 'Draft mode publish',
+    desc: 'When draft mode is on, the engine creates matches in a "draft" state. The organizer reviews them before publishing. publishAllDrafts atomically promotes all drafts to pending.',
+    actors: 'Organizer · Engine · Server · Supabase DB · Realtime',
+    diagram: `sequenceDiagram
+    participant O as Organizer
+    participant E as Engine
+    participant S as Server
+    participant DB as Supabase
+    participant RT as Realtime
+
+    Note over O: Draft mode ON
+    O->>E: callNextMatch via auto or button
+    E->>DB: INSERT matches status=draft
+    E->>DB: INSERT match_players
+    DB--)RT: matches INSERT draft
+    RT--)O: fetchActiveMatchesSeq++ refresh
+    Note over O: OnDeckPanel shows draft section
+    O->>S: publishAllDraftsAction(sessionId)
+    S->>DB: UPDATE matches SET status=pending WHERE status=draft
+    S->>DB: UPDATE queue_entries SET status=on_deck
+    DB--)RT: matches UPDATE + queue_entries UPDATE
+    RT--)O: both channels refresh
+    Note over O: drafts promoted to on-deck`,
+    steps: [
+      { label: 'Draft mode active', desc: 'The organizer has turned on draft mode in session settings. All subsequent engine runs create matches with status="draft" instead of "pending".', links: [{ text:'toggleDraftMode', href:'/actions#sessions-ts' },{ text:'OrganizerDashboard', href:'/components#' }] },
+      { label: 'Engine runs', desc: 'callNextMatch fires (auto or manual). runEngineInternal runs as normal. The only difference: matches are inserted with status="draft" instead of "pending".', links: [{ text:'Engine flowchart', href:'/engine#pipeline' }] },
+      { label: 'Draft rows created', desc: 'Draft matches and their match_players are inserted. Queue entries for those players are NOT yet set to "on_deck" — they remain "active" until published.', links: [{ text:'matches table', href:'/database#tables' }] },
+      { label: 'Realtime event', desc: 'matches INSERT fires. fetchActiveMatchesSeq increments. OnDeckPanel\'s draft section updates to show the new draft match cards.', links: [{ text:'OnDeckPanel', href:'/components#' }] },
+      { label: 'Organizer reviews', desc: 'Draft matches appear in a distinct "DRAFT" section in OnDeckPanel. The organizer can re-order, swap, or discard drafts before publishing.', links: [] },
+      { label: 'publishAllDrafts', desc: 'Organizer clicks "Publish All". publishAllDraftsAction(sessionId) atomically: updates all draft match statuses to "pending", updates those players\' queue_entries to "on_deck".', links: [{ text:'publishAllDraftsAction', href:'/actions#match-ts' }] },
+      { label: 'Promotion complete', desc: 'Two realtime events fire: matches UPDATE (draft→pending) and queue_entries UPDATE (active→on_deck). OnDeckPanel moves cards from draft section to main on-deck list.', links: [{ text:'Channel map', href:'/realtime#channels' }] },
+    ]
+  },
+];
+
+// ── State ────────────────────────────────────────────────────────────────
+let activeTraceId = TRACES[0].id;
+let activeStep    = 0;
+
+// ── DOM refs ─────────────────────────────────────────────────────────────
+const titleEl   = document.getElementById('trace-title');
+const descEl    = document.getElementById('trace-desc');
+const actorsEl  = document.getElementById('trace-actors');
+const diagramEl = document.getElementById('trace-diagram');
+const loadingEl = document.getElementById('diagram-loading');
+const fillEl    = document.getElementById('scrubber-fill');
+const dotsWrap  = document.getElementById('scrubber-dots');
+const counterEl = document.getElementById('step-counter');
+const prevBtn   = document.getElementById('step-prev');
+const nextBtn   = document.getElementById('step-next');
+const numBadge  = document.getElementById('step-num-badge');
+const stepLabel = document.getElementById('step-label');
+const stepDesc  = document.getElementById('step-desc');
+const stepLinks = document.getElementById('step-links');
+
+// ── Mermaid getter — waits for BaseLayout to expose __mermaid ────────────
+async function getMermaid(retries = 20) {
+  for (let i = 0; i < retries; i++) {
+    if (window.__mermaid) return window.__mermaid;
+    await new Promise(r => setTimeout(r, 80));
+  }
+  return null;
+}
+
+// ── Render Mermaid diagram ───────────────────────────────────────────────
+async function renderDiagram(diagram) {
+  const mermaid = await getMermaid();
+  if (!mermaid) {
+    diagramEl.textContent = 'Mermaid unavailable';
+    return;
+  }
+  loadingEl.classList.remove('hidden');
+  diagramEl.innerHTML = '';
+  // Small delay so the loading indicator paints before heavy SVG work
+  await new Promise(r => setTimeout(r, 30));
+  try {
+    diagramEl.className = 'mermaid overflow-x-auto';
+    diagramEl.removeAttribute('data-processed');
+    diagramEl.textContent = diagram;
+    await mermaid.run({ nodes: [diagramEl] });
+  } catch (err) {
+    diagramEl.textContent = 'Diagram render error: ' + (err instanceof Error ? err.message : String(err));
+  } finally {
+    loadingEl.classList.add('hidden');
+  }
+}
+
+// ── Scrubber dots ────────────────────────────────────────────────────────
+function buildScrubberDots(steps) {
+  dotsWrap.innerHTML = '';
+  const n = steps.length;
+  for (let i = 0; i < n; i++) {
+    const dot = document.createElement('button');
+    dot.className = 'scrubber-dot';
+    dot.title = steps[i].label;
+    dot.setAttribute('data-step', i);
+    dot.addEventListener('click', () => goToStep(i));
+    dotsWrap.appendChild(dot);
+  }
+}
+
+function updateScrubber(steps, step) {
+  const n = steps.length;
+  const pct = n <= 1 ? 0 : (step / (n - 1)) * 100;
+  fillEl.style.width = pct + '%';
+  counterEl.textContent = (step + 1) + ' / ' + n;
+  dotsWrap.querySelectorAll('.scrubber-dot').forEach((d, i) => {
+    d.classList.remove('sd-active', 'sd-past');
+    if (i === step)  d.classList.add('sd-active');
+    if (i  < step)  d.classList.add('sd-past');
+  });
+  prevBtn.disabled = step === 0;
+  nextBtn.disabled = step === n - 1;
+}
+
+// ── Step detail ──────────────────────────────────────────────────────────
+function showStep(steps, step) {
+  const s = steps[step];
+  numBadge.textContent = 'Step ' + (step + 1);
+  stepLabel.textContent = s.label;
+  stepDesc.textContent  = s.desc;
+  stepLinks.innerHTML   = s.links.map(l =>
+    `<a href="${l.href}"
+        class="inline-flex items-center gap-1 text-[10px] font-mono text-accent-hi
+               bg-accent-wash border border-accent-ring px-2.5 py-1 rounded-lg
+               hover:bg-lifted hover:border-accent transition-all duration-75">
+      ${l.text} →
+    </a>`
+  ).join('');
+}
+
+// ── Go to step ───────────────────────────────────────────────────────────
+function goToStep(n) {
+  const trace = TRACES.find(t => t.id === activeTraceId);
+  const clamped = Math.max(0, Math.min(n, trace.steps.length - 1));
+  activeStep = clamped;
+  updateScrubber(trace.steps, clamped);
+  showStep(trace.steps, clamped);
+}
+
+// ── Select trace ─────────────────────────────────────────────────────────
+async function selectTrace(id) {
+  const trace = TRACES.find(t => t.id === id);
+  if (!trace) return;
+  activeTraceId = id;
+  activeStep    = 0;
+
+  // Sidebar active state
+  document.querySelectorAll('.trace-btn').forEach(btn => {
+    const isActive = btn.dataset.traceId === id;
+    btn.classList.toggle('bg-lifted', isActive);
+    btn.classList.toggle('text-ink',  isActive);
+    btn.querySelector('.trace-dot')?.classList.toggle('opacity-0', !isActive);
+  });
+
+  // Header
+  actorsEl.textContent = trace.actors;
+  titleEl.textContent  = trace.title;
+  descEl.textContent   = trace.desc;
+
+  // Diagram
+  await renderDiagram(trace.diagram);
+
+  // Scrubber
+  buildScrubberDots(trace.steps);
+  updateScrubber(trace.steps, 0);
+  showStep(trace.steps, 0);
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────
+prevBtn.addEventListener('click', () => goToStep(activeStep - 1));
+nextBtn.addEventListener('click', () => goToStep(activeStep + 1));
+document.addEventListener('keydown', e => {
+  var tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (e.key === 'ArrowRight') { e.preventDefault(); goToStep(activeStep + 1); }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); goToStep(activeStep - 1); }
+});
+
+document.querySelectorAll('.trace-btn').forEach(btn => {
+  btn.addEventListener('click', () => selectTrace(btn.dataset.traceId));
+});
+
+// ── Initial render ───────────────────────────────────────────────────────
+selectTrace(TRACES[0].id);
+
+</script>
+
+<!-- ── Styles ──────────────────────────────────────────────────────── -->
+<style is:global>
+  /* Scrubber dots */
+  .scrubber-dot {
+    width: 13px; height: 13px;
+    border-radius: 50%;
+    background: oklch(25% 0.02 245);
+    border: 1.5px solid oklch(35% 0.02 245);
+    transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+    cursor: pointer;
+    pointer-events: all;
+    flex-shrink: 0;
+  }
+  .scrubber-dot.sd-active {
+    background: oklch(76% 0.17 155);
+    border-color: oklch(76% 0.17 155);
+    box-shadow: 0 0 10px oklch(76% 0.17 155 / 0.45);
+  }
+  .scrubber-dot.sd-past {
+    background: oklch(52% 0.14 155);
+    border-color: oklch(52% 0.14 155);
+  }
+  #scrubber-dots {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* Diagram container — Mermaid SVG overflow scroll */
+  #trace-diagram svg {
+    max-width: 100%;
+    overflow: visible;
+  }
+
+  /* Trace button active state */
+  .trace-btn.bg-lifted .trace-dot { opacity: 1 !important; }
+</style>

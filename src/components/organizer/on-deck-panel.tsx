@@ -23,8 +23,8 @@
 //   Drafts are visible ONLY to the organizer in this panel.
 //   Players and the TV see nothing until the organizer publishes.
 //   Two sections render independently:
-//     - Drafts section  — amber-dashed border cards + Publish button
-//     - On Deck section — solid amber border cards (published)
+//     - Drafts section  — dashed slate border cards + Publish button
+//     - On Deck section — solid teal border cards (published)
 //   Both sections share the same DnD context and sort_order so the
 //   organizer can freely reorder across draft/published boundaries.
 // ============================================================
@@ -199,9 +199,7 @@ function SortableCard({
   // ── Derive swap visual state for this card ─────────────────
   const isPickingMode = swapContext?.mode === "picking";
   const selectedPlayerId =
-    isPickingMode && swapContext.matchId === match.id
-      ? swapContext.outPlayerId
-      : undefined;
+    isPickingMode && swapContext.matchId === match.id ? swapContext.outPlayerId : undefined;
   const isSwapModeActive = isPickingMode;
 
   // Optimistic transition: once the organizer clicks Publish the card
@@ -227,20 +225,30 @@ function SortableCard({
   }
 
   return (
+    // Outer wrapper carries drop-shadow (clip-path on inner clips box-shadow)
     <div
       ref={setNodeRef}
-      style={style}
+      style={{
+        ...style,
+        filter: !effectivelyDraft
+          ? selectedPlayerId
+            ? "drop-shadow(0 4px 16px oklch(0.79 0.18 188 / 0.28))"
+            : "drop-shadow(0 0 12px oklch(0.79 0.18 188 / 0.15))"
+          : undefined,
+      }}
+    >
+    <div
       className={[
-        "relative rounded-2xl border-2 shadow-sm overflow-hidden",
+        "relative clip-cut border-2 overflow-hidden",
         // Animate the border/bg change for the publish transition
         "transition-colors duration-[250ms] ease-out",
         // Draft: dashed slate border — indicates "hidden from players"
-        // Published: solid amber border — indicates "visible / on deck"
+        // Published: solid teal border — indicates "visible / on deck"
         effectivelyDraft
           ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
           : selectedPlayerId
-          ? "border-amber-400 dark:border-amber-500/60 shadow-amber-200 dark:shadow-amber-500/20 shadow-md bg-card"
-          : "border-amber-200 dark:border-amber-500/30 bg-card",
+            ? "border-[oklch(0.79_0.18_188/0.80)] dark:border-[oklch(0.79_0.18_188/0.60)] bg-card"
+            : "border-[oklch(0.79_0.18_188/0.45)] dark:border-[oklch(0.79_0.18_188/0.30)] bg-card",
       ].join(" ")}
     >
       {/* ── Card header row ────────────────────────────────── */}
@@ -249,7 +257,7 @@ function SortableCard({
           "flex items-center gap-1 px-2 py-2.5 border-b transition-colors duration-[250ms] ease-out",
           effectivelyDraft
             ? "bg-slate-50 dark:bg-muted/30 border-slate-200 dark:border-slate-700"
-            : "bg-amber-50/70 dark:bg-amber-500/10 border-amber-100 dark:border-amber-500/20",
+            : "bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)] border-[oklch(0.79_0.18_188/0.20)] dark:border-[oklch(0.79_0.18_188/0.18)]",
         ].join(" ")}
       >
         {/* DRAG HANDLE */}
@@ -260,7 +268,7 @@ function SortableCard({
           suppressHydrationWarning
           className="touch-none select-none cursor-grab active:cursor-grabbing
                      flex items-center justify-center p-1 rounded
-                     hover:bg-amber-100/60 dark:hover:bg-amber-800/30 transition-colors"
+                     hover:bg-[oklch(0.79_0.18_188/0.12)] transition-colors"
           aria-label="Drag to reorder"
         >
           <GripVertical
@@ -268,7 +276,7 @@ function SortableCard({
               "h-5 w-5 shrink-0 transition-colors duration-[250ms]",
               effectivelyDraft
                 ? "text-slate-400 dark:text-slate-500"
-                : "text-amber-400 dark:text-amber-500",
+                : "text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)]",
             ].join(" ")}
           />
         </div>
@@ -281,18 +289,18 @@ function SortableCard({
                 Draft #{sectionIndex + 1}
               </span>
             ) : (
-              <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
+              <span className="text-sm font-bold text-[oklch(0.40_0.15_188)] dark:text-[oklch(0.79_0.18_188)]">
                 On Deck #{sectionIndex + 1}
               </span>
             )}
             {match.is_mixed_level && (
               <span
-                className="rounded-full border px-2 py-0.5
-                            text-[10px] font-bold uppercase tracking-wider
-                            bg-amber-100 border-amber-300 text-amber-800
-                            dark:bg-[hsl(var(--amber-accent-hsl))]/20
-                            dark:border-[hsl(var(--amber-accent-hsl))]/50
-                            dark:text-[hsl(var(--amber-accent-hsl))]"
+                className="clip-cut-badge border px-2 py-0.5
+                            font-command text-[9px] uppercase tracking-[0.10em]
+                            bg-[oklch(0.79_0.18_188/0.10)] border-[oklch(0.65_0.15_188/0.40)] text-[oklch(0.35_0.15_188)]
+                            dark:bg-[oklch(0.79_0.18_188/0.12)]
+                            dark:border-[oklch(0.79_0.18_188/0.35)]
+                            dark:text-[oklch(0.79_0.18_188)]"
               >
                 Mixed Level
               </span>
@@ -304,7 +312,7 @@ function SortableCard({
               "text-xs font-medium shrink-0 transition-colors duration-[250ms]",
               effectivelyDraft
                 ? "text-slate-400 dark:text-slate-500"
-                : "text-amber-600 dark:text-amber-400",
+                : "text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]",
             ].join(" ")}
           >
             {mins === 0 ? "Just formed" : `${mins}m ago`}
@@ -336,8 +344,8 @@ function SortableCard({
           {effectivelyDraft
             ? "Hidden from players — publish to reveal"
             : isPickingMode && selectedPlayerId
-            ? "Tap another player to swap"
-            : "Tap any player to start a swap"}
+              ? "Tap another player to swap"
+              : "Tap any player to start a swap"}
         </p>
 
         <div className="flex items-center gap-2 shrink-0">
@@ -346,8 +354,11 @@ function SortableCard({
             <button
               onClick={() => onPublish(match.id)}
               disabled={isPublishing || isPickingMode}
-              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700
-                         transition-colors px-3 min-h-[44px] text-xs font-semibold text-white
+              className="flex items-center gap-1.5 clip-cut-sm
+                         bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
+                         dark:bg-[oklch(0.79_0.18_188/0.25)] dark:hover:bg-[oklch(0.79_0.18_188/0.38)]
+                         dark:text-[oklch(0.79_0.18_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
+                         transition-colors px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-white
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CheckCircle className="h-3.5 w-3.5 shrink-0" />
@@ -359,8 +370,8 @@ function SortableCard({
           <button
             onClick={() => onClear(match.id)}
             disabled={isClearing || isPickingMode}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200
-                       bg-red-50 px-3 min-h-[44px] text-xs font-semibold text-red-700
+            className="flex shrink-0 items-center gap-1.5 clip-cut-sm border border-red-200
+                       bg-red-50 px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-red-700
                        hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40
                        dark:text-red-400 dark:hover:bg-red-950/60
                        disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -372,9 +383,8 @@ function SortableCard({
       </div>
 
       {/* ── Inline error ───────────────────────────────────── */}
-      {error && (
-        <p className="px-4 pb-2 text-xs text-red-600 dark:text-red-400">{error}</p>
-      )}
+      {error && <p className="px-4 pb-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </div>
     </div>
   );
 }
@@ -397,18 +407,21 @@ function OverlayCard({
   return (
     <div
       className={[
-        "rounded-2xl border-2 shadow-2xl overflow-hidden rotate-1",
+        "clip-cut border-2 overflow-hidden rotate-1",
         isDraft
           ? "border-dashed border-slate-300 dark:border-slate-600 bg-card"
-          : "border-amber-200 dark:border-amber-500/30 bg-card",
+          : "border-[oklch(0.79_0.18_188/0.45)] dark:border-[oklch(0.79_0.18_188/0.30)] bg-card",
       ].join(" ")}
+      style={{
+        filter: isDraft ? undefined : "drop-shadow(0 8px 24px oklch(0.79 0.18 188 / 0.30))",
+      }}
     >
       <div
         className={[
           "flex items-center gap-1 px-2 py-2.5 border-b",
           isDraft
             ? "bg-slate-50 dark:bg-muted/30 border-slate-200 dark:border-slate-700"
-            : "bg-amber-50/70 dark:bg-amber-500/10 border-amber-100 dark:border-amber-500/20",
+            : "bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)] border-[oklch(0.79_0.18_188/0.20)] dark:border-[oklch(0.79_0.18_188/0.18)]",
         ].join(" ")}
       >
         <div className="touch-none select-none cursor-grabbing flex items-center justify-center p-1 rounded">
@@ -417,7 +430,7 @@ function OverlayCard({
               "h-5 w-5 shrink-0",
               isDraft
                 ? "text-slate-400 dark:text-slate-500"
-                : "text-amber-400 dark:text-amber-500",
+                : "text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)]",
             ].join(" ")}
           />
         </div>
@@ -428,12 +441,12 @@ function OverlayCard({
                 Draft #{sectionIndex + 1}
               </span>
             ) : (
-              <span className="text-sm font-bold text-amber-900 dark:text-amber-300">
+              <span className="text-sm font-bold text-[oklch(0.40_0.15_188)] dark:text-[oklch(0.79_0.18_188)]">
                 On Deck #{sectionIndex + 1}
               </span>
             )}
             {match.is_mixed_level && (
-              <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 border-amber-300 text-amber-800 dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:border-[hsl(var(--amber-accent-hsl))]/50 dark:text-[hsl(var(--amber-accent-hsl))]">
+              <span className="rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-[oklch(0.79_0.18_188/0.10)] border-[oklch(0.65_0.15_188/0.40)] text-[oklch(0.35_0.15_188)] dark:bg-[oklch(0.79_0.18_188/0.12)] dark:border-[oklch(0.79_0.18_188/0.35)] dark:text-[oklch(0.79_0.18_188)]">
                 Mixed Level
               </span>
             )}
@@ -444,7 +457,7 @@ function OverlayCard({
               "text-xs font-medium shrink-0",
               isDraft
                 ? "text-slate-400 dark:text-slate-500"
-                : "text-amber-600 dark:text-amber-400",
+                : "text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]",
             ].join(" ")}
           >
             {mins === 0 ? "Just formed" : `${mins}m ago`}
@@ -502,9 +515,7 @@ function CapSaturationNotice({
           <AlertTriangle
             className={[
               "h-4 w-4 mt-0.5 shrink-0",
-              isRedZone
-                ? "text-red-600 dark:text-red-400"
-                : "text-orange-500 dark:text-orange-400",
+              isRedZone ? "text-red-600 dark:text-red-400" : "text-orange-500 dark:text-orange-400",
             ].join(" ")}
           />
           <div className="min-w-0">
@@ -518,9 +529,7 @@ function CapSaturationNotice({
             >
               Partner-pair cap reached
               {isRedZone && (
-                <span className="ml-1.5 text-xs font-bold uppercase tracking-wider">
-                  — urgent
-                </span>
+                <span className="ml-1.5 text-xs font-bold uppercase tracking-wider">— urgent</span>
               )}
             </p>
             <p
@@ -588,8 +597,7 @@ function OnDeckPanelInner({
     const incomingIds = new Set(matches.map((m) => m.id));
     const currentIds = new Set(orderedMatches.map((m) => m.id));
     const setsEqual =
-      incomingIds.size === currentIds.size &&
-      [...incomingIds].every((id) => currentIds.has(id));
+      incomingIds.size === currentIds.size && [...incomingIds].every((id) => currentIds.has(id));
 
     if (!setsEqual) {
       setOrderedMatches(matches);
@@ -605,18 +613,14 @@ function OnDeckPanelInner({
       // the previous failure no longer applies to the new batch.
       setPublishAllError(null);
     } else {
-      setOrderedMatches((prev) =>
-        prev.map((old) => matches.find((m) => m.id === old.id) ?? old)
-      );
+      setOrderedMatches((prev) => prev.map((old) => matches.find((m) => m.id === old.id) ?? old));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches]);
 
   // ── Drag state ──────────────────────────────────────────────
   const [activeId, setActiveId] = useState<string | null>(null);
-  const activeMatch = activeId
-    ? orderedMatches.find((m) => m.id === activeId) ?? null
-    : null;
+  const activeMatch = activeId ? (orderedMatches.find((m) => m.id === activeId) ?? null) : null;
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 3 } }),
@@ -760,19 +764,15 @@ function OnDeckPanelInner({
   if (orderedMatches.length === 0) {
     return (
       <div className="space-y-4">
-        <CapSaturationNotice
-          capSaturation={capSaturation}
-          onDismiss={onDismissCapSaturation}
-        />
+        <CapSaturationNotice capSaturation={capSaturation} onDismiss={onDismissCapSaturation} />
         <div className="rounded-xl border border-dashed border-border bg-slate-50/60 dark:bg-card/50 px-6 py-8 text-center">
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
             <Clock className="h-5 w-5 text-muted-foreground" />
           </div>
-          <p className="text-sm font-medium text-foreground">
-            No matches on deck
-          </p>
+          <p className="text-sm font-medium text-foreground">No matches on deck</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            The engine fills this automatically, or create one manually in Queue &amp; Match Control.
+            The engine fills this automatically, or create one manually in Queue &amp; Match
+            Control.
           </p>
         </div>
       </div>
@@ -784,33 +784,33 @@ function OnDeckPanelInner({
   return (
     <div className="space-y-4">
       {/* ── Cap saturation notice ── shown when pair cap blocked a match ── */}
-      <CapSaturationNotice
-        capSaturation={capSaturation}
-        onDismiss={onDismissCapSaturation}
-      />
+      <CapSaturationNotice capSaturation={capSaturation} onDismiss={onDismissCapSaturation} />
 
       {/* ── Publish All banner ── shown when there are drafts ── */}
       {draftCount > 0 && (
         <div
           role="status"
           aria-label={`${draftCount} on-deck match${draftCount !== 1 ? "es" : ""} waiting for approval`}
-          className="rounded-xl border border-amber-200 dark:border-amber-500/30
-                     bg-amber-50/80 dark:bg-amber-500/10
+          className="rounded-xl border border-[oklch(0.65_0.15_188/0.35)] dark:border-[oklch(0.79_0.18_188/0.25)]
+                     bg-[oklch(0.79_0.18_188/0.06)] dark:bg-[oklch(0.79_0.18_188/0.08)]
                      animate-in slide-in-from-top-1 fade-in duration-200"
         >
           <div className="flex items-center justify-between gap-3 px-4 py-2">
-            <div className="flex items-center gap-2 text-sm text-amber-900 dark:text-amber-300 min-w-0">
-              <EyeOff className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div className="flex items-center gap-2 text-sm text-[oklch(0.35_0.15_188)] dark:text-[oklch(0.79_0.18_188)] min-w-0">
+              <EyeOff className="h-4 w-4 shrink-0 text-[oklch(0.50_0.14_188)] dark:text-[oklch(0.68_0.14_188)]" />
               <span className="font-medium">
-                <span className="font-bold">{draftCount}</span>{" "}
-                on-deck match{draftCount !== 1 ? "es" : ""} waiting for approval
+                <span className="font-bold">{draftCount}</span> on-deck match
+                {draftCount !== 1 ? "es" : ""} waiting for approval
               </span>
             </div>
             <button
               onClick={handlePublishAll}
               disabled={isPublishingAll}
-              className="shrink-0 flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700
-                         transition-colors px-4 min-h-[44px] text-sm font-semibold text-white
+              className="shrink-0 flex items-center gap-1.5 clip-cut-sm
+                         bg-[oklch(0.55_0.18_188)] hover:bg-[oklch(0.62_0.18_188)]
+                         dark:bg-[oklch(0.79_0.18_188/0.25)] dark:hover:bg-[oklch(0.79_0.18_188/0.38)]
+                         dark:text-[oklch(0.89_0.12_188)] dark:border dark:border-[oklch(0.79_0.18_188/0.50)]
+                         transition-colors px-4 min-h-[44px] font-command text-[10px] uppercase tracking-[0.12em] text-white
                          disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isPublishingAll ? "Publishing…" : "Publish All"}
@@ -832,10 +832,7 @@ function OnDeckPanelInner({
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
-        <SortableContext
-          items={orderedMatches.map((m) => m.id)}
-          strategy={rectSortingStrategy}
-        >
+        <SortableContext items={orderedMatches.map((m) => m.id)} strategy={rectSortingStrategy}>
           {/* ── Drafts section ─────────────────────────────── */}
           {draftMatches.length > 0 && (
             <div className="space-y-3">
@@ -843,9 +840,7 @@ function OnDeckPanelInner({
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   Drafts
                 </span>
-                <span className="text-xs text-muted-foreground">
-                  — hidden from players
-                </span>
+                <span className="text-xs text-muted-foreground">— hidden from players</span>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {draftMatches.map((match, idx) => (
@@ -885,13 +880,13 @@ function OnDeckPanelInner({
               {/* Section header — always shown for published matches */}
               <div className="flex items-center gap-2.5">
                 <span className="relative flex h-2.5 w-2.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[oklch(0.79_0.18_188)] opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[oklch(0.55_0.18_188)] dark:bg-[oklch(0.79_0.18_188)]" />
                 </span>
                 <span className="text-xs font-bold uppercase tracking-wider text-foreground">
                   On Deck
                 </span>
-                <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 dark:bg-[hsl(var(--amber-accent-hsl))]/20 dark:text-[hsl(var(--amber-accent-hsl))] dark:ring-1 dark:ring-[hsl(var(--amber-accent-hsl))]/50">
+                <span className="rounded-full px-2 py-0.5 text-xs font-bold bg-[oklch(0.79_0.18_188/0.10)] text-[oklch(0.35_0.15_188)] ring-1 ring-[oklch(0.65_0.15_188/0.40)] dark:bg-[oklch(0.79_0.18_188/0.15)] dark:text-[oklch(0.79_0.18_188)] dark:ring-[oklch(0.79_0.18_188/0.40)]">
                   {publishedMatches.length} match{publishedMatches.length !== 1 ? "es" : ""} ready
                 </span>
                 {publishedMatches.length > 1 && draftMatches.length === 0 && (
@@ -924,21 +919,23 @@ function OnDeckPanelInner({
         </SortableContext>
 
         <DragOverlay dropAnimation={{ duration: 200, easing: "ease" }}>
-          {activeMatch ? (() => {
-            const isDraft = !activeMatch.is_published && !optimisticPublishedIds.has(activeMatch.id);
-            const sectionMatches = isDraft ? draftMatches : publishedMatches;
-            const sectionIndex = sectionMatches.findIndex((m) => m.id === activeMatch.id);
-            return (
-              <OverlayCard
-                match={activeMatch}
-                sectionIndex={sectionIndex >= 0 ? sectionIndex : 0}
-                isDraft={isDraft}
-              />
-            );
-          })() : null}
+          {activeMatch
+            ? (() => {
+                const isDraft =
+                  !activeMatch.is_published && !optimisticPublishedIds.has(activeMatch.id);
+                const sectionMatches = isDraft ? draftMatches : publishedMatches;
+                const sectionIndex = sectionMatches.findIndex((m) => m.id === activeMatch.id);
+                return (
+                  <OverlayCard
+                    match={activeMatch}
+                    sectionIndex={sectionIndex >= 0 ? sectionIndex : 0}
+                    isDraft={isDraft}
+                  />
+                );
+              })()
+            : null}
         </DragOverlay>
       </DndContext>
-
     </div>
   );
 }

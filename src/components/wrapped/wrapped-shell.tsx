@@ -16,33 +16,33 @@ import { useRouter } from "next/navigation";
 import { Share2 } from "lucide-react";
 import { WrappedIntro } from "@/components/wrapped/wrapped-intro";
 import { WrappedAwardCard } from "@/components/wrapped/wrapped-award-card";
-import { sortAwardsByRarity } from "@/lib/wrapped-awards";
+import { topAwardsByRarity } from "@/lib/wrapped-awards";
 import { dismissWrappedIntro } from "@/app/actions/wrapped";
 import type { MatchHistory as MatchHistoryRow } from "@/types/database";
 
 // ── Types ──────────────────────────────────────────────────────
 
 export type WrappedStats = {
-  playerName:   string;
-  games:        number;
-  wins:         number;
-  losses:       number;
-  pointsFor:    number;
+  playerName: string;
+  games: number;
+  wins: number;
+  losses: number;
+  pointsFor: number;
   pointsAgainst: number;
-  pointDiff:    number;
-  winPct:       number;
-  sessionRank:  number | null;
+  pointDiff: number;
+  winPct: number;
+  sessionRank: number | null;
   earnedAwards: string[];
-  awardData:    Record<string, Record<string, unknown>>;
+  awardData: Record<string, Record<string, unknown>>;
 };
 
 interface WrappedShellProps {
-  stats:           WrappedStats;
-  sessionId:       string;
-  playerId:        string;
-  matchHistory:    MatchHistoryRow[];
+  stats: WrappedStats;
+  sessionId: string;
+  playerId: string;
+  matchHistory: MatchHistoryRow[];
   /** True when intro_dismissed_at is already set in DB — skip the overlay immediately. */
-  introDismissed:  boolean;
+  introDismissed: boolean;
 }
 
 // ── Rarity badge colors (for the stat card) ───────────────────
@@ -51,20 +51,20 @@ function WinRateBar({ pct }: { pct: number }) {
   return (
     <div
       style={{
-        height:       "6px",
+        height: "6px",
         borderRadius: "999px",
-        background:   "rgba(255,255,255,0.1)",
-        overflow:     "hidden",
-        marginTop:    "6px",
+        background: "rgba(255,255,255,0.1)",
+        overflow: "hidden",
+        marginTop: "6px",
       }}
     >
       <div
         style={{
-          height:       "100%",
-          width:        `${Math.min(pct, 100)}%`,
+          height: "100%",
+          width: `${Math.min(pct, 100)}%`,
           borderRadius: "999px",
-          background:   pct >= 50 ? "#F59E0B" : "rgba(255,255,255,0.3)",
-          transition:   "width 1.2s cubic-bezier(0.22,1,0.36,1) 600ms",
+          background: pct >= 50 ? "#F59E0B" : "rgba(255,255,255,0.3)",
+          transition: "width 1.2s cubic-bezier(0.22,1,0.36,1) 600ms",
         }}
       />
     </div>
@@ -73,15 +73,25 @@ function WinRateBar({ pct }: { pct: number }) {
 
 // ── Component ──────────────────────────────────────────────────
 
-export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDismissed }: WrappedShellProps) {
+export function WrappedShell({
+  stats,
+  sessionId,
+  playerId,
+  matchHistory,
+  introDismissed,
+}: WrappedShellProps) {
   // If the player already dismissed the intro (DB flag set), skip it immediately.
   // This prevents the overlay from reappearing on every page load / device.
-  const [introVisible,  setIntroVisible]  = useState(!introDismissed);
+  const [introVisible, setIntroVisible] = useState(!introDismissed);
   // Guard against double-click: set true before the async action, reset on error.
-  const [isDismissing,  setIsDismissing]  = useState(false);
+  const [isDismissing, setIsDismissing] = useState(false);
   const router = useRouter();
 
-  const sorted = sortAwardsByRarity(stats.earnedAwards);
+  // Top 6 by rarity — keeps the feed scannable on phone screens and
+  // guarantees the most prestigious tier (legendary/rare) appears first
+  // when a player earns many awards.
+  const sorted = topAwardsByRarity(stats.earnedAwards, 6);
+  const totalEarned = stats.earnedAwards.length;
 
   /**
    * Persist the dismiss to the DB then navigate to the lobby.
@@ -129,36 +139,36 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
           {/* Header */}
           <div
             style={{
-              background:   "rgba(6,13,27,0.95)",
+              background: "rgba(6,13,27,0.95)",
               borderBottom: "1px solid rgba(255,255,255,0.06)",
-              padding:      "1rem 1.25rem 0.75rem",
-              display:      "flex",
-              alignItems:   "center",
+              padding: "1rem 1.25rem 0.75rem",
+              display: "flex",
+              alignItems: "center",
               justifyContent: "space-between",
-              position:     "sticky",
-              top:          0,
-              zIndex:       10,
+              position: "sticky",
+              top: 0,
+              zIndex: 10,
             }}
           >
             <div>
               <p
                 style={{
-                  fontSize:   "10px",
+                  fontSize: "10px",
                   fontWeight: "900",
                   letterSpacing: "0.2em",
                   textTransform: "uppercase",
-                  color:      "rgba(245,158,11,0.7)",
-                  margin:     0,
+                  color: "rgba(245,158,11,0.7)",
+                  margin: 0,
                 }}
               >
                 Session Wrapped
               </p>
               <p
                 style={{
-                  fontSize:   "1.25rem",
+                  fontSize: "1.25rem",
                   fontWeight: "800",
-                  color:      "#FFFFFF",
-                  margin:     0,
+                  color: "#FFFFFF",
+                  margin: 0,
                   lineHeight: 1.2,
                 }}
               >
@@ -169,16 +179,16 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
             <button
               onClick={handleDone}
               style={{
-                fontSize:      "11px",
-                fontWeight:    "700",
+                fontSize: "11px",
+                fontWeight: "700",
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
-                color:         "rgba(255,255,255,0.5)",
-                background:    "transparent",
-                border:        "1px solid rgba(255,255,255,0.12)",
-                borderRadius:  "999px",
-                padding:       "6px 14px",
-                cursor:        "pointer",
+                color: "rgba(255,255,255,0.5)",
+                background: "transparent",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: "999px",
+                padding: "6px 14px",
+                cursor: "pointer",
               }}
             >
               Done
@@ -190,32 +200,32 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
             <div
               style={{
                 borderRadius: "1.25rem",
-                border:       "1px solid rgba(245,158,11,0.2)",
-                background:   "rgba(245,158,11,0.06)",
-                padding:      "1.25rem",
-                animation:    "wi-up 400ms cubic-bezier(0.22,1,0.36,1) 80ms both",
+                border: "1px solid rgba(245,158,11,0.2)",
+                background: "rgba(245,158,11,0.06)",
+                padding: "1.25rem",
+                animation: "wi-up 400ms cubic-bezier(0.22,1,0.36,1) 80ms both",
               }}
             >
               {/* Big stats row */}
               <div
                 style={{
-                  display:        "flex",
+                  display: "flex",
                   justifyContent: "space-around",
-                  marginBottom:   "1rem",
+                  marginBottom: "1rem",
                 }}
               >
                 {[
-                  { label: "Matches",  value: stats.games,    color: "#FFFFFF" },
-                  { label: "Wins",     value: stats.wins,     color: "#F59E0B" },
-                  { label: "Losses",   value: stats.losses,   color: "rgba(255,255,255,0.45)" },
+                  { label: "Matches", value: stats.games, color: "#FFFFFF" },
+                  { label: "Wins", value: stats.wins, color: "#F59E0B" },
+                  { label: "Losses", value: stats.losses, color: "rgba(255,255,255,0.45)" },
                 ].map(({ label, value, color }) => (
                   <div key={label} style={{ textAlign: "center" }}>
                     <p
                       style={{
-                        fontSize:   "clamp(2rem, 12vw, 3.5rem)",
+                        fontSize: "clamp(2rem, 12vw, 3.5rem)",
                         fontWeight: "900",
                         color,
-                        margin:     0,
+                        margin: 0,
                         lineHeight: 1,
                         fontVariantNumeric: "tabular-nums",
                       }}
@@ -224,12 +234,12 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
                     </p>
                     <p
                       style={{
-                        fontSize:      "9px",
-                        fontWeight:    "900",
+                        fontSize: "9px",
+                        fontWeight: "900",
                         letterSpacing: "0.2em",
                         textTransform: "uppercase",
-                        color:         "rgba(255,255,255,0.3)",
-                        margin:        "4px 0 0",
+                        color: "rgba(255,255,255,0.3)",
+                        margin: "4px 0 0",
                       }}
                     >
                       {label}
@@ -242,12 +252,14 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
               <div style={{ marginBottom: "0.5rem" }}>
                 <div
                   style={{
-                    display:        "flex",
+                    display: "flex",
                     justifyContent: "space-between",
-                    alignItems:     "baseline",
+                    alignItems: "baseline",
                   }}
                 >
-                  <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>
+                  <span
+                    style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", fontWeight: 600 }}
+                  >
                     Win Rate
                   </span>
                   <span style={{ fontSize: "13px", color: "#F59E0B", fontWeight: 700 }}>
@@ -261,34 +273,69 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
               <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.75rem" }}>
                 <div
                   style={{
-                    flex:         1,
-                    background:   "rgba(255,255,255,0.04)",
+                    flex: 1,
+                    background: "rgba(255,255,255,0.04)",
                     borderRadius: "0.625rem",
-                    padding:      "0.5rem 0.75rem",
-                    textAlign:    "center",
+                    padding: "0.5rem 0.75rem",
+                    textAlign: "center",
                   }}
                 >
-                  <p style={{ margin: 0, fontSize: "1.125rem", fontWeight: 700, color: stats.pointDiff >= 0 ? "#F59E0B" : "rgba(255,255,255,0.5)" }}>
-                    {stats.pointDiff >= 0 ? "+" : ""}{stats.pointDiff}
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: "1.125rem",
+                      fontWeight: 700,
+                      color: stats.pointDiff >= 0 ? "#F59E0B" : "rgba(255,255,255,0.5)",
+                    }}
+                  >
+                    {stats.pointDiff >= 0 ? "+" : ""}
+                    {stats.pointDiff}
                   </p>
-                  <p style={{ margin: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.3)", marginTop: "2px" }}>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: "9px",
+                      fontWeight: 700,
+                      letterSpacing: "0.15em",
+                      textTransform: "uppercase",
+                      color: "rgba(255,255,255,0.3)",
+                      marginTop: "2px",
+                    }}
+                  >
                     Point Diff
                   </p>
                 </div>
                 {stats.sessionRank !== null && (
                   <div
                     style={{
-                      flex:         1,
-                      background:   "rgba(255,255,255,0.04)",
+                      flex: 1,
+                      background: "rgba(255,255,255,0.04)",
                       borderRadius: "0.625rem",
-                      padding:      "0.5rem 0.75rem",
-                      textAlign:    "center",
+                      padding: "0.5rem 0.75rem",
+                      textAlign: "center",
                     }}
                   >
-                    <p style={{ margin: 0, fontSize: "1.125rem", fontWeight: 700, color: stats.sessionRank === 1 ? "#F59E0B" : "#FFFFFF" }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "1.125rem",
+                        fontWeight: 700,
+                        color: stats.sessionRank === 1 ? "#F59E0B" : "#FFFFFF",
+                      }}
+                    >
                       #{stats.sessionRank}
                     </p>
-                    <p style={{ margin: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.3)", marginTop: "2px" }}>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "9px",
+                        fontWeight: 700,
+                        letterSpacing: "0.15em",
+                        textTransform: "uppercase",
+                        color: "rgba(255,255,255,0.3)",
+                        marginTop: "2px",
+                      }}
+                    >
                       Session Rank
                     </p>
                   </div>
@@ -303,16 +350,18 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
               <>
                 <p
                   style={{
-                    fontSize:      "10px",
-                    fontWeight:    "900",
+                    fontSize: "10px",
+                    fontWeight: "900",
                     letterSpacing: "0.2em",
                     textTransform: "uppercase",
-                    color:         "rgba(255,255,255,0.3)",
-                    marginBottom:  "0.75rem",
-                    animation:     "wi-up 400ms cubic-bezier(0.22,1,0.36,1) 150ms both",
+                    color: "rgba(255,255,255,0.3)",
+                    marginBottom: "0.75rem",
+                    animation: "wi-up 400ms cubic-bezier(0.22,1,0.36,1) 150ms both",
                   }}
                 >
-                  {sorted.length} Award{sorted.length !== 1 ? "s" : ""} Earned
+                  {totalEarned > sorted.length
+                    ? `Top ${sorted.length} of ${totalEarned} Awards`
+                    : `${sorted.length} Award${sorted.length !== 1 ? "s" : ""} Earned`}
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                   {sorted.map((slug, i) => (
@@ -329,17 +378,25 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
               /* No-awards state */
               <div
                 style={{
-                  textAlign:  "center",
-                  padding:    "3rem 1rem",
-                  animation:  "wi-up 400ms cubic-bezier(0.22,1,0.36,1) 200ms both",
+                  textAlign: "center",
+                  padding: "3rem 1rem",
+                  animation: "wi-up 400ms cubic-bezier(0.22,1,0.36,1) 200ms both",
                 }}
               >
                 <p style={{ fontSize: "3rem", margin: "0 0 1rem" }}>🫶</p>
-                <p style={{ fontSize: "1.25rem", fontWeight: 700, color: "#FFFFFF", margin: "0 0 0.5rem" }}>
+                <p
+                  style={{
+                    fontSize: "1.25rem",
+                    fontWeight: 700,
+                    color: "#FFFFFF",
+                    margin: "0 0 0.5rem",
+                  }}
+                >
                   Participation Trophy
                 </p>
                 <p style={{ fontSize: "0.875rem", color: "rgba(255,255,255,0.5)", margin: 0 }}>
-                  You showed up and put in the hours. Come back next session — the awards will follow.
+                  You showed up and put in the hours. Come back next session — the awards will
+                  follow.
                 </p>
               </div>
             )}
@@ -350,12 +407,12 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
             <div style={{ padding: "0 1.25rem 1.5rem" }}>
               <p
                 style={{
-                  fontSize:      "10px",
-                  fontWeight:    "900",
+                  fontSize: "10px",
+                  fontWeight: "900",
                   letterSpacing: "0.2em",
                   textTransform: "uppercase",
-                  color:         "rgba(255,255,255,0.3)",
-                  marginBottom:  "0.75rem",
+                  color: "rgba(255,255,255,0.3)",
+                  marginBottom: "0.75rem",
                 }}
               >
                 Match Recap
@@ -363,28 +420,37 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
               <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                 {matchHistory.map((match, i) => {
                   const isTeamA = match.team === "a";
-                  const myScore    = isTeamA ? match.team_a_score : match.team_b_score;
+                  const myScore = isTeamA ? match.team_a_score : match.team_b_score;
                   const theirScore = isTeamA ? match.team_b_score : match.team_a_score;
-                  const won  = myScore !== null && theirScore !== null && myScore > theirScore;
+                  const won = myScore !== null && theirScore !== null && myScore > theirScore;
                   const draw = myScore !== null && theirScore !== null && myScore === theirScore;
                   const lost = !won && !draw;
 
                   const completedDate = match.completed_at ? new Date(match.completed_at) : null;
                   const timeStr = completedDate
-                    ? completedDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+                    ? completedDate.toLocaleTimeString("en-US", {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })
                     : "";
 
-                  const borderColor = won  ? "rgba(52,211,153,0.3)"
-                                    : draw ? "rgba(255,255,255,0.12)"
-                                           : "rgba(255,255,255,0.08)";
-                  const badgeBg     = won  ? "#10B981"
-                                    : draw ? "rgba(255,255,255,0.2)"
-                                           : "rgba(239,68,68,0.25)";
-                  const badgeColor  = won  ? "#fff"
-                                    : draw ? "rgba(255,255,255,0.8)"
-                                           : "#FCA5A5";
-                  const badgeLabel  = won ? "Won" : draw ? "Draw" : "Lost";
-                  const myScoreColor    = won  ? "#34D399" : draw ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.35)";
+                  const borderColor = won
+                    ? "rgba(52,211,153,0.3)"
+                    : draw
+                      ? "rgba(255,255,255,0.12)"
+                      : "rgba(255,255,255,0.08)";
+                  const badgeBg = won
+                    ? "#10B981"
+                    : draw
+                      ? "rgba(255,255,255,0.2)"
+                      : "rgba(239,68,68,0.25)";
+                  const badgeColor = won ? "#fff" : draw ? "rgba(255,255,255,0.8)" : "#FCA5A5";
+                  const badgeLabel = won ? "Won" : draw ? "Draw" : "Lost";
+                  const myScoreColor = won
+                    ? "#34D399"
+                    : draw
+                      ? "rgba(255,255,255,0.5)"
+                      : "rgba(255,255,255,0.35)";
                   const theirScoreColor = lost ? "#FCA5A5" : "rgba(255,255,255,0.35)";
 
                   return (
@@ -392,40 +458,53 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
                       key={match.match_id}
                       style={{
                         borderRadius: "1rem",
-                        border:       `1px solid ${borderColor}`,
-                        background:   "rgba(255,255,255,0.04)",
-                        overflow:     "hidden",
+                        border: `1px solid ${borderColor}`,
+                        background: "rgba(255,255,255,0.04)",
+                        overflow: "hidden",
                       }}
                     >
                       {/* Card header */}
                       <div
                         style={{
-                          display:        "flex",
-                          alignItems:     "center",
+                          display: "flex",
+                          alignItems: "center",
                           justifyContent: "space-between",
-                          padding:        "0.5rem 1rem",
-                          borderBottom:   `1px solid ${borderColor}`,
-                          background:     won  ? "rgba(52,211,153,0.08)"
-                                        : draw ? "rgba(255,255,255,0.04)"
-                                               : "rgba(255,255,255,0.03)",
+                          padding: "0.5rem 1rem",
+                          borderBottom: `1px solid ${borderColor}`,
+                          background: won
+                            ? "rgba(52,211,153,0.08)"
+                            : draw
+                              ? "rgba(255,255,255,0.04)"
+                              : "rgba(255,255,255,0.03)",
                         }}
                       >
-                        <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>
-                          Match {matchHistory.length - i}{match.court_name ? ` · Court ${match.court_name}` : ""}
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            color: "rgba(255,255,255,0.4)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Match {matchHistory.length - i}
+                          {match.court_name ? ` · Court ${match.court_name}` : ""}
                         </span>
                         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                           {timeStr && (
-                            <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.3)" }}>{timeStr}</span>
+                            <span style={{ fontSize: "10px", color: "rgba(255,255,255,0.3)" }}>
+                              {timeStr}
+                            </span>
                           )}
-                          <span style={{
-                            borderRadius: "999px",
-                            padding:      "2px 8px",
-                            fontSize:     "10px",
-                            fontWeight:   "800",
-                            textTransform: "uppercase",
-                            background:   badgeBg,
-                            color:        badgeColor,
-                          }}>
+                          <span
+                            style={{
+                              borderRadius: "999px",
+                              padding: "2px 8px",
+                              fontSize: "10px",
+                              fontWeight: "800",
+                              textTransform: "uppercase",
+                              background: badgeBg,
+                              color: badgeColor,
+                            }}
+                          >
                             {badgeLabel}
                           </span>
                         </div>
@@ -433,24 +512,102 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
 
                       {/* Score + players */}
                       <div style={{ padding: "0.75rem 1rem" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
-                          <span style={{ fontSize: "2rem", fontWeight: 900, fontVariantNumeric: "tabular-nums", color: myScoreColor }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "0.75rem",
+                            marginBottom: "0.75rem",
+                          }}
+                        >
+                          <span
+                            style={{
+                              fontSize: "2rem",
+                              fontWeight: 900,
+                              fontVariantNumeric: "tabular-nums",
+                              color: myScoreColor,
+                            }}
+                          >
                             {myScore ?? "?"}
                           </span>
-                          <span style={{ fontSize: "0.875rem", fontWeight: 700, color: "rgba(255,255,255,0.2)" }}>–</span>
-                          <span style={{ fontSize: "2rem", fontWeight: 900, fontVariantNumeric: "tabular-nums", color: theirScoreColor }}>
+                          <span
+                            style={{
+                              fontSize: "0.875rem",
+                              fontWeight: 700,
+                              color: "rgba(255,255,255,0.2)",
+                            }}
+                          >
+                            –
+                          </span>
+                          <span
+                            style={{
+                              fontSize: "2rem",
+                              fontWeight: 900,
+                              fontVariantNumeric: "tabular-nums",
+                              color: theirScoreColor,
+                            }}
+                          >
                             {theirScore ?? "?"}
                           </span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", fontSize: "12px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "1rem",
+                            fontSize: "12px",
+                          }}
+                        >
                           <div style={{ textAlign: "center" }}>
-                            <p style={{ margin: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.3)", marginBottom: "2px" }}>Partner</p>
-                            <p style={{ margin: 0, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>{match.teammates?.join(", ") ?? "—"}</p>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: "9px",
+                                fontWeight: 700,
+                                letterSpacing: "0.15em",
+                                textTransform: "uppercase",
+                                color: "rgba(255,255,255,0.3)",
+                                marginBottom: "2px",
+                              }}
+                            >
+                              Partner
+                            </p>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontWeight: 600,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            >
+                              {match.teammates?.join(", ") ?? "—"}
+                            </p>
                           </div>
                           <span style={{ color: "rgba(255,255,255,0.2)" }}>vs</span>
                           <div style={{ textAlign: "center" }}>
-                            <p style={{ margin: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(255,255,255,0.3)", marginBottom: "2px" }}>Opponents</p>
-                            <p style={{ margin: 0, fontWeight: 600, color: "rgba(255,255,255,0.75)" }}>{match.opponents?.join(" & ") ?? "—"}</p>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: "9px",
+                                fontWeight: 700,
+                                letterSpacing: "0.15em",
+                                textTransform: "uppercase",
+                                color: "rgba(255,255,255,0.3)",
+                                marginBottom: "2px",
+                              }}
+                            >
+                              Opponents
+                            </p>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontWeight: 600,
+                                color: "rgba(255,255,255,0.75)",
+                              }}
+                            >
+                              {match.opponents?.join(" & ") ?? "—"}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -464,9 +621,9 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
           {/* ── Footer: share + done ──────────────────── */}
           <div
             style={{
-              padding:  "1rem 1.25rem",
-              display:  "flex",
-              gap:      "0.75rem",
+              padding: "1rem 1.25rem",
+              display: "flex",
+              gap: "0.75rem",
               animation: "wi-up 400ms cubic-bezier(0.22,1,0.36,1) 300ms both",
             }}
           >
@@ -475,29 +632,31 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
                 // Share API — copy URL to clipboard as fallback
                 const url = window.location.href;
                 if (navigator.share) {
-                  navigator.share({
-                    title: `${stats.playerName}'s Session Wrapped`,
-                    text: `I played ${stats.games} games and won ${stats.wins} tonight 🏸`,
-                    url,
-                  }).catch(() => {});
+                  navigator
+                    .share({
+                      title: `${stats.playerName}'s Session Wrapped`,
+                      text: `I played ${stats.games} games and won ${stats.wins} tonight 🏸`,
+                      url,
+                    })
+                    .catch(() => {});
                 } else {
                   navigator.clipboard.writeText(url).catch(() => {});
                 }
               }}
               style={{
-                flex:          1,
-                display:       "flex",
-                alignItems:    "center",
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
                 justifyContent: "center",
-                gap:           "0.5rem",
-                padding:       "0.875rem",
-                borderRadius:  "0.875rem",
-                border:        "1px solid rgba(255,255,255,0.12)",
-                background:    "rgba(255,255,255,0.05)",
-                color:         "rgba(255,255,255,0.7)",
-                fontSize:      "0.875rem",
-                fontWeight:    "700",
-                cursor:        "pointer",
+                gap: "0.5rem",
+                padding: "0.875rem",
+                borderRadius: "0.875rem",
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.05)",
+                color: "rgba(255,255,255,0.7)",
+                fontSize: "0.875rem",
+                fontWeight: "700",
+                cursor: "pointer",
               }}
             >
               <Share2 size={16} />
@@ -507,17 +666,17 @@ export function WrappedShell({ stats, sessionId, playerId, matchHistory, introDi
             <button
               onClick={handleDone}
               style={{
-                flex:          2,
-                padding:       "0.875rem",
-                borderRadius:  "0.875rem",
-                background:    "#F59E0B",
-                color:         "#060D1B",
-                fontSize:      "0.875rem",
-                fontWeight:    "900",
+                flex: 2,
+                padding: "0.875rem",
+                borderRadius: "0.875rem",
+                background: "#F59E0B",
+                color: "#060D1B",
+                fontSize: "0.875rem",
+                fontWeight: "900",
                 letterSpacing: "0.06em",
                 textTransform: "uppercase",
-                border:        "none",
-                cursor:        "pointer",
+                border: "none",
+                cursor: "pointer",
               }}
             >
               Back to Lobby

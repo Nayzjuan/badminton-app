@@ -35,6 +35,8 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
+import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isRpcNotFound } from "@/lib/rpc-utils";
 
 // Service client singleton for this module — bypasses RLS for writes.
 // Auth is always verified at the JS layer before any service client write.
@@ -54,38 +56,13 @@ export interface MatchActionResult {
  * Returns the user object or null.
  */
 async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   return user;
 }
 
-/**
- * Verify that the calling user is an organizer for the given session.
- * Accepts either created_by ownership OR a session_organizers membership row.
- */
-async function isSessionOrganizer(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  sessionId: string
-): Promise<boolean> {
-  // Check sessions.created_by first (fast path).
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .single();
-
-  if (session?.created_by === userId) return true;
-
-  // Fall back to session_organizers membership table.
-  const { data: membership } = await supabase
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .single();
-
-  return !!membership;
-}
+// isSessionOrganizer imported from ./_shared; isRpcNotFound from @/lib/rpc-utils.
 
 // ============================================================
 // submitMatchScore — player-initiated score submission
@@ -177,7 +154,7 @@ export async function endMatchAction(
   //    isSessionOrganizer checks sessions.created_by FIRST (fast path),
   //    then falls back to session_organizers membership.
   const [isOrg, playerSlot] = await Promise.all([
-    isSessionOrganizer(supabase, user.id, match.session_id),
+    isSessionOrganizer(user.id, match.session_id),
     db
       .from("match_players")
       .select("id")
@@ -214,7 +191,7 @@ export async function endMatchAction(
       completed_at: new Date().toISOString(),
     })
     .eq("id", matchId)
-    .eq("status", "in_progress")   // ← Atomic guard (CAS)
+    .eq("status", "in_progress") // ← Atomic guard (CAS)
     .select("id");
 
   if (matchUpdateError) {
@@ -254,7 +231,7 @@ export async function endMatchAction(
           .select("games_played")
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
-          .neq("status", "left")          // skip players who already left
+          .neq("status", "left") // skip players who already left
           .maybeSingle();
 
         // entry is null when the player's status is "left" — skip them.
@@ -271,7 +248,7 @@ export async function endMatchAction(
           })
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
-          .neq("status", "left");         // double-guard against race condition
+          .neq("status", "left"); // double-guard against race condition
       })
     );
   }
@@ -325,6 +302,10 @@ export async function updateMatchDetails(
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   const supabase = await createClient();
+  // All writes use the service client so the primary organizer
+  // (sessions.created_by) is never silently blocked by write-side RLS.
+  // Auth is verified at the JS layer (getUser + isSessionOrganizer) before any write.
+  const db = getServiceClient();
 
   // P0-3: Organizer-only action.
   const user = await getAuthUser(supabase);
@@ -332,99 +313,115 @@ export async function updateMatchDetails(
     return { success: false, message: "Not authenticated." };
   }
 
-  const { data: match, error: fetchErr } = await supabase
+  const { data: match, error: fetchErr } = await db
     .from("matches")
     .select("id, session_id, court_id, status")
     .eq("id", matchId)
     .single();
 
   if (fetchErr || !match) {
-    return { success: false, message: `Match not found: ${fetchErr?.message ?? "unknown"}` };
+    return { success: false, message: "Match not found." };
   }
 
   // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 
   if (!revertToActive) {
     // ── Score-only edit ──────────────────────────────────────
-    const { error } = await supabase
+    const { error } = await db
       .from("matches")
       .update({ team_a_score: teamAScore, team_b_score: teamBScore })
       .eq("id", matchId);
 
-    if (error) return { success: false, message: error.message };
+    if (error) return { success: false, message: "Failed to update scores." };
     return { success: true, message: "Scores updated." };
   }
 
   // ── Revert to in_progress ────────────────────────────────
-  const { error: revertErr } = await supabase
-    .from("matches")
-    .update({
-      status: "in_progress" as const,
-      team_a_score: null,
-      team_b_score: null,
-      completed_at: null,
-    })
-    .eq("id", matchId);
+  // Try the atomic RPC first (migration 20260512200003).
+  // The RPC reverts the match status + bulk-updates all roster players
+  // from 'waiting' → 'playing' (games_played - 1) in one transaction,
+  // eliminating the N+1 round-trip loop and its silent failure modes.
+  const { error: rpcRevertErr } = await db.rpc("revert_match_to_active", {
+    p_match_id: matchId,
+    p_session_id: match.session_id,
+  });
 
-  if (revertErr) return { success: false, message: revertErr.message };
+  if (rpcRevertErr && rpcRevertErr.code !== "PGRST202") {
+    // RPC exists but returned a domain error.
+    const msg = rpcRevertErr.message ?? "";
+    if (msg.includes("MATCH_NOT_FOUND")) {
+      return { success: false, message: "Match not found." };
+    }
+    return { success: false, message: "Failed to revert match." };
+  }
+
+  if (rpcRevertErr?.code === "PGRST202") {
+    // RPC not yet deployed — fall back to the original non-atomic sequence.
+    const { error: revertErr } = await db
+      .from("matches")
+      .update({
+        status: "in_progress" as const,
+        team_a_score: null,
+        team_b_score: null,
+        completed_at: null,
+      })
+      .eq("id", matchId);
+
+    if (revertErr) return { success: false, message: "Failed to revert match." };
+
+    const { data: matchPlayers } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", matchId);
+
+    if (matchPlayers && matchPlayers.length > 0) {
+      await Promise.all(
+        matchPlayers.map(async (mp) => {
+          const { data: entry } = await db
+            .from("queue_entries")
+            .select("games_played, status")
+            .eq("session_id", match.session_id)
+            .eq("player_id", mp.player_id)
+            .maybeSingle();
+
+          if (entry?.status === "waiting") {
+            return db
+              .from("queue_entries")
+              .update({
+                status: "playing" as const,
+                games_played: Math.max(0, (entry.games_played ?? 1) - 1),
+              })
+              .eq("session_id", match.session_id)
+              .eq("player_id", mp.player_id);
+          }
+        })
+      );
+    }
+  }
 
   // Court handling: reclaim if free, detach if occupied or closed.
+  // Kept in JS (not in RPC) — conditional court logic, not part of
+  // the player-state race condition that the RPC targets.
   if (match.court_id) {
-    const { data: court } = await supabase
+    const { data: court } = await db
       .from("courts")
       .select("status")
       .eq("id", match.court_id)
       .single();
 
     if (court?.status === "available") {
-      await supabase
+      await db
         .from("courts")
         .update({ status: "in_use" as const })
         .eq("id", match.court_id);
     } else {
       // Another match occupies or the court is closed — detach.
-      await supabase
-        .from("matches")
-        .update({ court_id: null })
-        .eq("id", matchId);
+      await db.from("matches").update({ court_id: null }).eq("id", matchId);
     }
-  }
-
-  // Revert player queue entries that are currently "waiting"
-  // (meaning endMatchAction already re-queued them).
-  const { data: matchPlayers } = await supabase
-    .from("match_players")
-    .select("player_id")
-    .eq("match_id", matchId);
-
-  if (matchPlayers && matchPlayers.length > 0) {
-    await Promise.all(
-      matchPlayers.map(async (mp) => {
-        const { data: entry } = await supabase
-          .from("queue_entries")
-          .select("games_played, status")
-          .eq("session_id", match.session_id)
-          .eq("player_id", mp.player_id)
-          .single();
-
-        // Only revert players currently waiting — those already in
-        // another on_deck / playing match are left untouched.
-        if (entry?.status === "waiting") {
-          return supabase
-            .from("queue_entries")
-            .update({
-              status: "playing" as const,
-              games_played: Math.max(0, (entry.games_played ?? 1) - 1),
-            })
-            .eq("session_id", match.session_id)
-            .eq("player_id", mp.player_id);
-        }
-      })
-    );
   }
 
   return { success: true, message: "Match reverted. Players can re-submit the correct score." };
@@ -459,7 +456,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   }
 
   // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -482,14 +479,17 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       completed_at: new Date().toISOString(),
     })
     .eq("id", matchId)
-    .in("status", ["pending", "in_progress"])  // ← Atomic guard (CAS)
+    .in("status", ["pending", "in_progress"]) // ← Atomic guard (CAS)
     .select("id");
 
   if (matchUpdateError) {
     return { success: false, message: `Failed to cancel match: ${matchUpdateError.message}` };
   }
   if (!cancelledRows || cancelledRows.length === 0) {
-    return { success: false, message: "Match was already cancelled or completed by another request." };
+    return {
+      success: false,
+      message: "Match was already cancelled or completed by another request.",
+    };
   }
 
   // 3. Return players to queue WITHOUT incrementing games_played.
@@ -513,7 +513,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       .update({ status: "waiting" as const })
       .eq("session_id", match.session_id)
       .in("player_id", playerIds)
-      .neq("status", "left");             // skip players who already checked out
+      .neq("status", "left"); // skip players who already checked out
   }
 
   // 4. PIPELINE: promote oldest on-deck match to the freed court.
@@ -536,11 +536,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   // 6. Notify affected players via Realtime Broadcast so their dashboards
   //    show a friendly explanation instead of a silent state change.
   if (playerIds.length > 0) {
-    await broadcastOrganizerIntervention(
-      match.session_id,
-      "match_cancelled",
-      playerIds
-    );
+    await broadcastOrganizerIntervention(match.session_id, "match_cancelled", playerIds);
   }
 
   return { success: true, message: "Match cancelled. Players returned to queue." };
@@ -579,14 +575,17 @@ export async function createManualMatchAction(
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
-  const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 
-  // Validate all players are in this session's queue.
   const allPlayerIds = [...teamAPlayerIds, ...teamBPlayerIds];
-  const { data: queueEntries } = await supabase
+  const svc = getServiceClient();
+
+  // Validate all players are in this session's queue (any status).
+  // Gives a clear "not in session" error before hitting the RPC.
+  const { data: queueEntries } = await svc
     .from("queue_entries")
     .select("player_id")
     .eq("session_id", sessionId)
@@ -598,50 +597,56 @@ export async function createManualMatchAction(
     return { success: false, message: "One or more selected players are not in this session." };
   }
 
-  // 1. Create the match row — goes On Deck (pending, no court).
-  //    origin: "manual" so the organizer's intentional composition is
-  //    always distinguishable from engine-generated matches.
-  //    is_published: true — manual matches bypass Draft Mode review; the
-  //    organizer chose the composition themselves, so it publishes instantly.
-  const { data: match, error: matchError } = await supabase
-    .from("matches")
-    .insert({
-      session_id: sessionId,
-      court_id: null,
-      status: "pending" as const,
-      started_at: null,
-      origin: "manual" as const,
-      is_published: true,
-    })
-    .select()
-    .single();
+  // Compute is_mixed_level from player skill levels.
+  const { data: playerProfiles } = await svc
+    .from("profiles")
+    .select("skill_level")
+    .in("id", allPlayerIds);
+  const skillLevels = new Set((playerProfiles ?? []).map((p) => p.skill_level));
+  const isMixedLevel = skillLevels.size > 1;
 
-  if (matchError || !match) {
-    return { success: false, message: matchError?.message ?? "Failed to create match." };
+  // Single atomic write via the create_match_with_players RPC.
+  //
+  // Routing through the RPC gives us all three TOCTOU guards for free:
+  //   Guard 0 — pre-flight: all players must be 'waiting' (blocks 'left',
+  //             'on_deck', 'playing' — prevents assigning an already-committed player)
+  //   Guard 1 — row-level lock on queue_entries, preventing concurrent
+  //             engine/manual runs from double-booking the same player
+  //   Guard 2 — post-lock conflict check: no player may already appear in
+  //             another pending/in_progress match_players row
+  //
+  // The RPC also handles queue promotion atomically: with
+  // p_is_published=true it updates all players to 'on_deck' inside the
+  // same transaction, so the Jackie B / Carlo partial-update bug cannot
+  // recur regardless of which Supabase client was used to invoke it.
+  const { data: matchId, error: rpcError } = await svc.rpc("create_match_with_players", {
+    p_session_id: sessionId,
+    p_court_id: null,
+    p_status: "pending",
+    p_is_mixed_level: isMixedLevel,
+    p_started_at: null,
+    p_is_on_deck: true,
+    p_team_a_ids: teamAPlayerIds,
+    p_team_b_ids: teamBPlayerIds,
+    p_origin: "manual",
+    p_is_published: true,
+  });
+
+  if (rpcError) {
+    return { success: false, message: rpcError.message };
   }
 
-  // 2. Assign players to the match.
-  const playerRows = [
-    ...teamAPlayerIds.map((pid) => ({ match_id: match.id, player_id: pid, team: "a" as const })),
-    ...teamBPlayerIds.map((pid) => ({ match_id: match.id, player_id: pid, team: "b" as const })),
-  ];
-
-  const { error: playersError } = await supabase.from("match_players").insert(playerRows);
-  if (playersError) {
-    // Roll back the match row to avoid an orphaned match.
-    await supabase.from("matches").delete().eq("id", match.id);
-    return { success: false, message: playersError.message };
+  if (!matchId) {
+    // RPC returned NULL: Guard 0 or Guard 2 fired — a player is not
+    // 'waiting' or is already committed to another active match.
+    return {
+      success: false,
+      message:
+        "Could not create match — one or more players are unavailable or already assigned to an active match.",
+    };
   }
 
-  // 3. Mark all players as "on_deck" — removes them from the
-  //    waiting pool so they can't be double-booked by the auto-algo.
-  await supabase
-    .from("queue_entries")
-    .update({ status: "on_deck" as const })
-    .eq("session_id", sessionId)
-    .in("player_id", allPlayerIds);
-
-  return { success: true, message: "Match added to On Deck.", matchId: match.id };
+  return { success: true, message: "Match added to On Deck.", matchId };
 }
 
 // ============================================================
@@ -679,7 +684,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   }
 
   // Verify caller is an organizer for this session (using the RLS client).
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -691,63 +696,81 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
     };
   }
 
-  // 2. Fetch the players in this match.
-  const { data: matchPlayers, error: playersError } = await db
-    .from("match_players")
-    .select("player_id")
-    .eq("match_id", matchId);
+  // 2. Atomic clear via RPC (migration 20260512200001).
+  //    The RPC locks the match row, restores players to 'waiting' (skipping
+  //    'left' players), deletes the match, and returns the player ID array —
+  //    all in a single Postgres transaction.
+  const { data: atomicPlayerIds, error: atomicError } = await db.rpc("clear_on_deck_match_atomic", {
+    p_match_id: matchId,
+    p_session_id: match.session_id,
+  });
 
-  if (playersError || !matchPlayers) {
-    return { success: false, message: `Failed to fetch match players: ${playersError?.message ?? "unknown"}` };
-  }
+  let playerIds: string[];
 
-  const playerIds = matchPlayers.map((mp) => mp.player_id);
+  if (!atomicError) {
+    // RPC succeeded — player IDs are returned directly.
+    playerIds = (atomicPlayerIds as string[]) ?? [];
+  } else if (atomicError.code === "PGRST202") {
+    // RPC not yet deployed on this environment — fall back to the original
+    // non-atomic sequence (acceptable until all environments are migrated).
+    const { data: matchPlayers, error: playersError } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", matchId);
 
-  // 3. Restore players to "waiting" status.
-  //    joined_at and games_played are intentionally left unchanged —
-  //    their original queue position and play count are preserved
-  //    as if this on-deck match never happened.
-  //
-  //    Status guard: skip players whose status is "left". A player who
-  //    manually checked out while sitting on-deck should not be pulled
-  //    back into the queue when the organizer clears the match.
-  if (playerIds.length > 0) {
-    const { error: restoreError } = await db
-      .from("queue_entries")
-      .update({ status: "waiting" as const })
-      .eq("session_id", match.session_id)
-      .in("player_id", playerIds)
-      .neq("status", "left");   // skip players who already checked out
-
-    if (restoreError) {
-      return { success: false, message: `Failed to restore players to queue: ${restoreError.message}` };
+    if (playersError || !matchPlayers) {
+      return {
+        success: false,
+        message: `Failed to fetch match players: ${playersError?.message ?? "unknown"}`,
+      };
     }
+
+    playerIds = matchPlayers.map((mp) => mp.player_id);
+
+    if (playerIds.length > 0) {
+      const { error: restoreError } = await db
+        .from("queue_entries")
+        .update({ status: "waiting" as const })
+        .eq("session_id", match.session_id)
+        .in("player_id", playerIds)
+        .neq("status", "left");
+
+      if (restoreError) {
+        return {
+          success: false,
+          message: `Failed to restore players to queue: ${restoreError.message}`,
+        };
+      }
+    }
+
+    const { error: deleteError } = await db.from("matches").delete().eq("id", matchId);
+    if (deleteError) {
+      return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
+    }
+  } else {
+    // RPC exists but returned a domain error.
+    const msg = atomicError.message ?? "";
+    if (msg.includes("MATCH_NOT_FOUND")) {
+      return { success: false, message: "Match not found." };
+    }
+    if (msg.includes("MATCH_NOT_PENDING")) {
+      return {
+        success: false,
+        message: `Cannot clear a match with status "${match.status}". Only pending on-deck matches can be cleared.`,
+      };
+    }
+    return { success: false, message: `Failed to clear match: ${msg}` };
   }
 
-  // 4. Delete the pending match row — it never played, so deletion
-  //    is cleaner than marking it "cancelled" (no history entry needed).
-  const { error: deleteError } = await db
-    .from("matches")
-    .delete()
-    .eq("id", matchId);
-
-  if (deleteError) {
-    return { success: false, message: `Failed to delete on-deck match: ${deleteError.message}` };
-  }
-
-  // 5. Notify affected players via Realtime Broadcast. Their on-deck
+  // 3. Notify affected players via Realtime Broadcast. Their on-deck
   //    banner will disappear (via Postgres change events) and this
   //    broadcast ensures they see a friendly explanation toast rather
   //    than a confusing silent state change.
   if (playerIds.length > 0) {
-    await broadcastOrganizerIntervention(
-      match.session_id,
-      "on_deck_cleared",
-      playerIds
-    );
+    await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", playerIds);
   }
 
-  // 6. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
+  // 4. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
   await runEngineForSession(match.session_id);
 
   return { success: true, message: "On-deck match cleared. Players returned to queue." };
@@ -769,16 +792,19 @@ export async function reorderOnDeckMatches(
   if (orderedMatchIds.some((id) => !isValidUUID(id))) {
     return { success: false, message: "Invalid match ID in reorder list." };
   }
-  const db = await createClient();
+  const supabase = await createClient();
+  const db = getServiceClient();
 
-  const user = await getAuthUser(db);
+  const user = await getAuthUser(supabase);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   // Build individual updates — Supabase JS client doesn't support
   // bulk UPDATE with per-row values, so we fire them concurrently.
+  // Use service client so the primary organizer's writes are never
+  // silently dropped by write-side RLS on the matches table.
   const updates = orderedMatchIds.map((id, index) =>
     db
       .from("matches")
@@ -791,7 +817,7 @@ export async function reorderOnDeckMatches(
   const results = await Promise.all(updates);
   const firstError = results.find((r) => r.error);
   if (firstError?.error) {
-    return { success: false, message: `Failed to save order: ${firstError.error.message}` };
+    return { success: false, message: "Failed to save order." };
   }
 
   return { success: true, message: "Order saved." };
@@ -818,24 +844,73 @@ export async function publishMatchAction(
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  // Verify organizer role — load the match to get session_id first.
-  const { data: match } = await db
+  const { data: match } = await db.from("matches").select("session_id").eq("id", matchId).single();
+
+  if (!match) return { success: false, message: "Match not found." };
+
+  const isOrganizer = await isSessionOrganizer(user.id, match.session_id);
+  if (!isOrganizer) return { success: false, message: "Forbidden" };
+
+  const svc = createServiceClient();
+  const { data: result, error: rpcError } = await svc.rpc("publish_match", {
+    p_match_id: matchId,
+    p_session_id: match.session_id,
+    p_user_id: user.id,
+  });
+
+  if (rpcError) {
+    if (isRpcNotFound(rpcError)) {
+      // Fallback: manual non-atomic publish (pre-RPC behaviour).
+      return await publishMatchFallback(svc, matchId, match.session_id);
+    }
+    return { success: false, message: `Publish failed: ${rpcError.message}` };
+  }
+
+  switch (result) {
+    case "SUCCESS":
+      return { success: true, message: "Match published." };
+    case "NOT_ORGANIZER":
+      return { success: false, message: "Forbidden" };
+    case "NOT_FOUND":
+      return { success: false, message: "Match not found." };
+    case "NOT_PENDING":
+      return { success: false, message: "Only pending (on-deck) matches can be published." };
+    case "ALREADY_PUBLISHED":
+      return { success: true, message: "Already published." };
+    case "HAS_LEFT_PLAYERS":
+      return {
+        success: false,
+        message:
+          "Cannot publish — a player has left the session. Clear this draft and let the engine regenerate.",
+      };
+    case "CONFLICT":
+      return {
+        success: false,
+        message:
+          "Cannot publish — a player is already assigned to another active match. Clear this draft and let the engine regenerate.",
+      };
+    default:
+      return { success: false, message: "Publish failed." };
+  }
+}
+
+// Fallback implementation used when the publish_match RPC is not yet deployed.
+async function publishMatchFallback(
+  svc: ReturnType<typeof createServiceClient>,
+  matchId: string,
+  sessionId: string
+): Promise<{ success: boolean; message: string }> {
+  const { data: match } = await svc
     .from("matches")
     .select("session_id, status, is_published")
     .eq("id", matchId)
     .single();
 
   if (!match) return { success: false, message: "Match not found." };
-  if (match.status !== "pending") return { success: false, message: "Only pending (on-deck) matches can be published." };
+  if (match.status !== "pending")
+    return { success: false, message: "Only pending (on-deck) matches can be published." };
   if (match.is_published) return { success: true, message: "Already published." };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, match.session_id);
-  if (!isOrganizer) return { success: false, message: "Forbidden" };
-
-  // BUG-002 fix (layer 1): validate that no player in this draft has left
-  // the session since the match was generated. A 'left' player would be
-  // silently re-promoted to 'playing' on court assignment (BUG-002 layer 3).
-  const svc = createServiceClient();
   const { data: matchPlayerRows } = await svc
     .from("match_players")
     .select("player_id")
@@ -847,7 +922,7 @@ export async function publishMatchAction(
     const { data: leftPlayers } = await svc
       .from("queue_entries")
       .select("player_id")
-      .eq("session_id", match.session_id)
+      .eq("session_id", sessionId)
       .in("player_id", playerIds)
       .eq("status", "left");
 
@@ -857,28 +932,49 @@ export async function publishMatchAction(
         message: `Cannot publish — ${leftPlayers.length} player${leftPlayers.length !== 1 ? "s have" : " has"} left the session. Clear this draft and let the engine regenerate.`,
       };
     }
+
+    const { data: otherActiveMatches } = await svc
+      .from("matches")
+      .select("id")
+      .eq("session_id", sessionId)
+      .in("status", ["pending", "in_progress"])
+      .neq("id", matchId);
+
+    if (otherActiveMatches && otherActiveMatches.length > 0) {
+      const { data: conflictRows } = await svc
+        .from("match_players")
+        .select("player_id")
+        .in(
+          "match_id",
+          otherActiveMatches.map((m) => m.id)
+        )
+        .in("player_id", playerIds);
+
+      if (conflictRows && conflictRows.length > 0) {
+        return {
+          success: false,
+          message: `Cannot publish — ${conflictRows.length} player${conflictRows.length !== 1 ? "s are" : " is"} already assigned to another active match. Clear this draft and let the engine regenerate.`,
+        };
+      }
+    }
   }
 
-  const { error } = await db
+  const { error } = await svc
     .from("matches")
     .update({ is_published: true })
     .eq("id", matchId)
-    .eq("status", "pending")     // Atomic guard — cannot publish promoted match
-    .eq("is_published", false);  // Idempotency guard
+    .eq("status", "pending")
+    .eq("is_published", false);
 
-  if (error) return { success: false, message: error.message };
+  if (error) return { success: false, message: "Failed to publish match." };
 
-  // BUG-001 fix (TypeScript side): now that the match is published, promote
-  // all 4 players from 'waiting' to 'on_deck'. This is the deferred step
-  // that the RPC skipped when creating the draft, and is what triggers the
-  // ON_DECK_WARNING alert on each player's device at the right moment.
   if (playerIds.length > 0) {
     await svc
       .from("queue_entries")
       .update({ status: "on_deck" as const })
-      .eq("session_id", match.session_id)
+      .eq("session_id", sessionId)
       .in("player_id", playerIds)
-      .eq("status", "waiting");  // only promote players still waiting (idempotent)
+      .eq("status", "drafted");
   }
 
   return { success: true, message: "Match published." };
@@ -900,15 +996,51 @@ export async function publishAllDraftMatchesAction(
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 
-  const isOrganizer = await isSessionOrganizer(db, user.id, sessionId);
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   const svc = createServiceClient();
+  const { data: result, error: rpcError } = await svc.rpc("publish_all_drafts", {
+    p_session_id: sessionId,
+    p_user_id: user.id,
+  });
 
-  // BUG-002 fix (Publish All path): mirror the 'left' player guard from
-  // publishMatchAction. Find all draft matches, identify which contain a
-  // player whose queue_entries.status = 'left', and skip those matches.
-  // Clean drafts are published; tainted drafts are returned as skippedCount.
+  if (rpcError) {
+    if (isRpcNotFound(rpcError)) {
+      // Fallback: manual non-atomic bulk publish (pre-RPC behaviour).
+      return await publishAllDraftsFallback(svc, sessionId);
+    }
+    return { success: false, message: `Publish failed: ${rpcError.message}` };
+  }
+
+  if (!result?.success) {
+    return { success: false, message: result?.error ?? "Publish failed." };
+  }
+
+  const publishedCount = result.published_count ?? 0;
+  const skippedCount = result.skipped_count ?? 0;
+
+  const skippedMsg =
+    skippedCount > 0
+      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
+      : "";
+
+  return {
+    success: true,
+    message:
+      publishedCount > 0
+        ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.${skippedMsg}`
+        : `No drafts published.${skippedMsg}`,
+    publishedCount,
+    skippedCount,
+  };
+}
+
+// Fallback implementation used when the publish_all_drafts RPC is not yet deployed.
+async function publishAllDraftsFallback(
+  svc: ReturnType<typeof createServiceClient>,
+  sessionId: string
+): Promise<{ success: boolean; message: string; publishedCount?: number; skippedCount?: number }> {
   const { data: draftMatches, error: draftErr } = await svc
     .from("matches")
     .select("id")
@@ -930,7 +1062,7 @@ export async function publishAllDraftMatchesAction(
 
   const allPlayerIds = [...new Set((matchPlayerRows ?? []).map((r) => r.player_id))];
 
-  let taintedMatchIdSet = new Set<string>();
+  const taintedMatchIdSet = new Set<string>();
   if (allPlayerIds.length > 0) {
     const { data: leftEntries } = await svc
       .from("queue_entries")
@@ -947,6 +1079,40 @@ export async function publishAllDraftMatchesAction(
     }
   }
 
+  const allPublishableBeforeConflict = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
+  if (allPublishableBeforeConflict.length > 0) {
+    const { data: otherActiveMatches } = await svc
+      .from("matches")
+      .select("id")
+      .eq("session_id", sessionId)
+      .in("status", ["pending", "in_progress"])
+      .not("id", "in", `(${allDraftIds.join(",")})`);
+
+    if (otherActiveMatches && otherActiveMatches.length > 0) {
+      const otherMatchIds = otherActiveMatches.map((m) => m.id);
+      const publishablePlayers = (matchPlayerRows ?? []).filter((r) =>
+        allPublishableBeforeConflict.includes(r.match_id)
+      );
+      const { data: conflictRows } = await svc
+        .from("match_players")
+        .select("player_id, match_id")
+        .in("match_id", otherMatchIds)
+        .in(
+          "player_id",
+          publishablePlayers.map((r) => r.player_id)
+        );
+
+      if (conflictRows && conflictRows.length > 0) {
+        const conflictPlayerSet = new Set(conflictRows.map((r) => r.player_id));
+        for (const row of publishablePlayers) {
+          if (conflictPlayerSet.has(row.player_id)) {
+            taintedMatchIdSet.add(row.match_id);
+          }
+        }
+      }
+    }
+  }
+
   const publishableIds = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
   const skippedCount = taintedMatchIdSet.size;
 
@@ -959,21 +1125,18 @@ export async function publishAllDraftMatchesAction(
     };
   }
 
-  const { data, error } = await db
+  const { data, error } = await svc
     .from("matches")
     .update({ is_published: true })
     .in("id", publishableIds)
-    .eq("status", "pending")    // Atomic guard — cannot publish promoted match
-    .eq("is_published", false)  // Idempotency guard
+    .eq("status", "pending")
+    .eq("is_published", false)
     .select("id");
 
-  if (error) return { success: false, message: error.message };
+  if (error) return { success: false, message: "Failed to publish drafts." };
 
   const publishedCount = data?.length ?? 0;
 
-  // BUG-001 fix (Publish All path): promote all players in the just-published
-  // drafts from 'waiting' to 'on_deck'. This fires ON_DECK_WARNING alerts
-  // for all 4 × N players simultaneously — one bulk UPDATE via service client.
   if (publishedCount > 0) {
     const publishedMatchIds = new Set(data.map((m) => m.id));
     const publishedPlayerIds = [
@@ -990,19 +1153,21 @@ export async function publishAllDraftMatchesAction(
         .update({ status: "on_deck" as const })
         .eq("session_id", sessionId)
         .in("player_id", publishedPlayerIds)
-        .eq("status", "waiting");
+        .eq("status", "drafted");
     }
   }
 
-  const skippedMsg = skippedCount > 0
-    ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
-    : "";
+  const skippedMsg =
+    skippedCount > 0
+      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
+      : "";
 
   return {
     success: true,
-    message: publishedCount > 0
-      ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.${skippedMsg}`
-      : `No drafts published.${skippedMsg}`,
+    message:
+      publishedCount > 0
+        ? `${publishedCount} draft match${publishedCount !== 1 ? "es" : ""} published.${skippedMsg}`
+        : `No drafts published.${skippedMsg}`,
     publishedCount,
     skippedCount,
   };

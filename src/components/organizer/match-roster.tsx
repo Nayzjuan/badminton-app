@@ -55,24 +55,24 @@ export interface RosterPlayer {
 //   Advanced       → Adv
 
 const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner:           { dot: "bg-emerald-500 dark:bg-emerald-400", abbr: "Beg"   },
-  lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400",    abbr: "L.Int" },
-  intermediate:       { dot: "bg-sky-500     dark:bg-sky-400",     abbr: "Int"   },
-  upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400",  abbr: "U.Int" },
-  lower_advanced:     { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
-  advanced:           { dot: "bg-purple-500  dark:bg-purple-400",  abbr: "Adv"   },
+  beginner: { dot: "bg-emerald-500 dark:bg-emerald-400", abbr: "Beg" },
+  lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400", abbr: "L.Int" },
+  intermediate: { dot: "bg-sky-500     dark:bg-sky-400", abbr: "Int" },
+  upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400", abbr: "U.Int" },
+  lower_advanced: { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
+  advanced: { dot: "bg-purple-500  dark:bg-purple-400", abbr: "Adv" },
 };
 
 // Always-dark navy court (Active Courts visualization, On Deck cards) —
 // use brighter -400 variants directly since dark: would not fire when the
 // user's theme is light but the surface is still dark navy.
 const SKILL_CONFIG_DARK: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner:           { dot: "bg-emerald-400", abbr: "Beg"   },
-  lower_intermediate: { dot: "bg-teal-400",    abbr: "L.Int" },
-  intermediate:       { dot: "bg-sky-400",     abbr: "Int"   },
-  upper_intermediate: { dot: "bg-indigo-400",  abbr: "U.Int" },
-  lower_advanced:     { dot: "bg-fuchsia-400", abbr: "L.Adv" },
-  advanced:           { dot: "bg-purple-400",  abbr: "Adv"   },
+  beginner: { dot: "bg-emerald-400", abbr: "Beg" },
+  lower_intermediate: { dot: "bg-teal-400", abbr: "L.Int" },
+  intermediate: { dot: "bg-sky-400", abbr: "Int" },
+  upper_intermediate: { dot: "bg-indigo-400", abbr: "U.Int" },
+  lower_advanced: { dot: "bg-fuchsia-400", abbr: "L.Adv" },
+  advanced: { dot: "bg-purple-400", abbr: "Adv" },
 };
 
 // ── Internal: skill indicators ─────────────────────────────────
@@ -108,14 +108,14 @@ function VsBadge({ dark }: { dark?: boolean }) {
     <div
       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
         dark
-          ? "bg-emerald-500/20 ring-1 ring-emerald-500/40"
+          ? "bg-[oklch(0.79_0.18_188/0.15)] ring-1 ring-[oklch(0.79_0.18_188/0.40)]"
           : "bg-white dark:bg-white/10 ring-1 ring-slate-200 dark:ring-white/20 shadow-sm dark:shadow-none"
       }`}
       aria-hidden="true"
     >
       <span
         className={`text-[10px] font-black tracking-tight ${
-          dark ? "text-emerald-400" : "text-slate-400 dark:text-white/50"
+          dark ? "text-[oklch(0.79_0.18_188)]" : "text-slate-400 dark:text-white/50"
         }`}
       >
         VS
@@ -134,36 +134,45 @@ function VsBadge({ dark }: { dark?: boolean }) {
 
 interface PlayerRowLightProps {
   player: RosterPlayer;
-  /** Highlights this row amber — the swap source player. */
+  /** Highlights this row — the swap source player. */
   isSelected?: boolean;
   /** Any picking mode active — show pointer affordance on this row. */
   isSwapTarget?: boolean;
   /** Called when row is tapped to initiate/complete a swap. */
   onSwapClick?: () => void;
+  /** When myPlayerId is set: true = you, false = others (dim others). */
+  isMe?: boolean;
 }
 
 function PlayerRowLight({
   player,
   isSelected,
   isSwapTarget,
+  isMe,
   onSwapClick,
 }: PlayerRowLightProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
 
   const classes = [
-    "group w-full rounded-xl px-3 py-2 text-left transition-colors",
+    "group w-full clip-cut-tr px-3 py-2 text-left transition-colors",
     isSelected
-      ? "bg-amber-100 dark:bg-amber-500/15 ring-1 ring-amber-400 dark:ring-amber-500/40"
+      ? "bg-[oklch(0.79_0.18_188/0.12)] dark:bg-[oklch(0.79_0.18_188/0.15)] outline outline-1 outline-[oklch(0.65_0.15_188/0.55)] dark:outline-[oklch(0.79_0.18_188/0.50)]"
       : isSwapTarget || onSwapClick
-      ? "bg-slate-100/70 dark:bg-white/[0.06] hover:bg-amber-50/60 dark:hover:bg-amber-500/10 cursor-pointer"
-      : "bg-slate-100/70 dark:bg-white/[0.06]",
+        ? "bg-slate-100/70 dark:bg-white/[0.06] hover:bg-[oklch(0.79_0.18_188/0.08)] dark:hover:bg-[oklch(0.79_0.18_188/0.10)] cursor-pointer"
+        : "bg-slate-100/70 dark:bg-white/[0.06]",
   ].join(" ");
 
   const inner = (
     <>
       {/* Line 1 — "Name | TAG" */}
       <div className="flex items-center gap-1.5 overflow-hidden">
-        <span className="shrink min-w-0 truncate text-[13px] font-bold leading-none text-slate-800 dark:text-slate-100">
+        <span
+          className={`shrink min-w-0 truncate text-[13px] leading-none ${
+            isMe === false
+              ? "font-normal text-slate-500 dark:text-slate-400"
+              : "font-bold text-slate-800 dark:text-slate-100"
+          }`}
+        >
           {player.display_name}
         </span>
         {hasTag && (
@@ -189,7 +198,7 @@ function PlayerRowLight({
         </span>
         {onSwapClick && (
           <ArrowLeftRight
-            className="ml-auto h-3 w-3 flex-shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100"
+            className="ml-auto h-3 w-3 flex-shrink-0 text-[oklch(0.65_0.15_188)] dark:text-[oklch(0.79_0.18_188)] opacity-0 transition-opacity group-hover:opacity-100"
             aria-hidden="true"
           />
         )}
@@ -227,19 +236,23 @@ interface PlayerRowDarkProps {
   player: RosterPlayer;
   /** Tailwind text-* class for the player name (team colour). */
   teamColor: string;
+  /** When set, this player's name renders bold white ("you are here"). */
+  isMe?: boolean;
 }
 
-function PlayerRowDark({ player, teamColor }: PlayerRowDarkProps) {
+function PlayerRowDark({ player, teamColor, isMe }: PlayerRowDarkProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
   return (
     <div
-      className="w-full rounded-xl px-3 py-2 transition-colors hover:bg-white/5"
+      className="w-full clip-cut-tr px-3 py-2 transition-colors hover:bg-white/5"
       style={{ background: "rgba(255,255,255,0.04)" }}
     >
       {/* Line 1 — "Name | TAG" */}
       <div className="flex items-center gap-1.5 overflow-hidden">
         <span
-          className={`shrink min-w-0 truncate text-[13px] font-bold leading-none ${teamColor}`}
+          className={`shrink min-w-0 truncate text-[13px] leading-none ${
+            isMe ? "font-bold text-white" : `font-normal ${teamColor}`
+          }`}
         >
           {player.display_name}
         </span>
@@ -279,10 +292,16 @@ export interface TeamsGridProps {
   labelA?: string;
   /** Column B label (defaults to "Team B"). */
   labelB?: string;
+  /**
+   * The logged-in player's ID. When provided, their row gets bold-white
+   * emphasis and all other rows are dimmed — used in the player's Live
+   * Courts tab to make "you" instantly findable in a busy match roster.
+   */
+  myPlayerId?: string;
   // ── Swap interaction — on-deck (light) mode only ──────────────
   /** Called when a player row is tapped to initiate/complete a swap. */
   onPlayerTap?: (player: RosterPlayer, team: "a" | "b") => void;
-  /** player_id of the currently selected swap-source (amber highlight). */
+  /** player_id of the currently selected swap-source (teal highlight). */
   selectedPlayerId?: string;
   /** True while any picking-mode swap is in progress. */
   isSwapModeActive?: boolean;
@@ -294,6 +313,7 @@ export function TeamsGrid({
   dark,
   labelA = "Team A",
   labelB = "Team B",
+  myPlayerId,
   onPlayerTap,
   selectedPlayerId,
   isSwapModeActive,
@@ -307,10 +327,7 @@ export function TeamsGrid({
   if (!a0 || !a1 || !b0 || !b1) return null;
 
   return (
-    <div
-      className="grid gap-y-2 px-3 py-3"
-      style={{ gridTemplateColumns: "1fr 40px 1fr" }}
-    >
+    <div className="grid gap-y-2 px-3 py-3" style={{ gridTemplateColumns: "1fr 40px 1fr" }}>
       {/* Row 1 — column labels */}
       <div style={{ gridColumn: 1, gridRow: 1 }}>
         <span
@@ -343,24 +360,34 @@ export function TeamsGrid({
       {/* Row 2 — first player pair */}
       <div style={{ gridColumn: 1, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark player={a0} teamColor="text-sky-200" />
+          <PlayerRowDark
+            player={a0}
+            teamColor="text-sky-200"
+            isMe={myPlayerId ? myPlayerId === a0.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={a0}
             isSelected={selectedPlayerId === a0.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== a0.player_id}
+            isMe={myPlayerId ? myPlayerId === a0.player_id : undefined}
             onSwapClick={onPlayerTap ? () => onPlayerTap(a0, "a") : undefined}
           />
         )}
       </div>
       <div style={{ gridColumn: 3, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark player={b0} teamColor="text-amber-200" />
+          <PlayerRowDark
+            player={b0}
+            teamColor="text-amber-200"
+            isMe={myPlayerId ? myPlayerId === b0.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={b0}
             isSelected={selectedPlayerId === b0.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== b0.player_id}
+            isMe={myPlayerId ? myPlayerId === b0.player_id : undefined}
             onSwapClick={onPlayerTap ? () => onPlayerTap(b0, "b") : undefined}
           />
         )}
@@ -369,24 +396,34 @@ export function TeamsGrid({
       {/* Row 3 — second player pair */}
       <div style={{ gridColumn: 1, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark player={a1} teamColor="text-sky-200" />
+          <PlayerRowDark
+            player={a1}
+            teamColor="text-sky-200"
+            isMe={myPlayerId ? myPlayerId === a1.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={a1}
             isSelected={selectedPlayerId === a1.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== a1.player_id}
+            isMe={myPlayerId ? myPlayerId === a1.player_id : undefined}
             onSwapClick={onPlayerTap ? () => onPlayerTap(a1, "a") : undefined}
           />
         )}
       </div>
       <div style={{ gridColumn: 3, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark player={b1} teamColor="text-amber-200" />
+          <PlayerRowDark
+            player={b1}
+            teamColor="text-amber-200"
+            isMe={myPlayerId ? myPlayerId === b1.player_id : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={b1}
             isSelected={selectedPlayerId === b1.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== b1.player_id}
+            isMe={myPlayerId ? myPlayerId === b1.player_id : undefined}
             onSwapClick={onPlayerTap ? () => onPlayerTap(b1, "b") : undefined}
           />
         )}

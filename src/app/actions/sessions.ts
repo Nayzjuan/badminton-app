@@ -19,8 +19,16 @@ import type { ScoringFormat } from "@/types/database";
 // ── Passcode auto-generation ──────────────────────────────────
 
 const BIRDIE_WORDS = [
-  "BIRDIE", "SMASH", "DRIVE", "CLEAR", "DROPS",
-  "RALLY", "SERVE", "COURT", "NETSH", "LUNGE",
+  "BIRDIE",
+  "SMASH",
+  "DRIVE",
+  "CLEAR",
+  "DROPS",
+  "RALLY",
+  "SERVE",
+  "COURT",
+  "NETSH",
+  "LUNGE",
 ];
 
 /**
@@ -61,7 +69,9 @@ export async function createSession(opts: {
 }): Promise<CreateSessionResult> {
   // Auth gate
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
   // ── Input validation ──────────────────────────────────────
@@ -95,7 +105,8 @@ export async function createSession(opts: {
     if (conflict) {
       return {
         success: false,
-        message: "This passcode is currently in use by another active session. Please choose a different one.",
+        message:
+          "This passcode is currently in use by another active session. Please choose a different one.",
       };
     }
   } else {
@@ -136,7 +147,8 @@ export async function createSession(opts: {
     if (insertError?.code === "23505") {
       return {
         success: false,
-        message: "This passcode is currently in use by another active session. Please choose a different one.",
+        message:
+          "This passcode is currently in use by another active session. Please choose a different one.",
       };
     }
     return {
@@ -172,14 +184,14 @@ export interface JoinCoOrganizerResult {
  * Security: returns the same generic error when nothing matches
  * — never reveals whether the passcode exists.
  */
-export async function joinAsCoOrganizer(
-  passcode: string
-): Promise<JoinCoOrganizerResult> {
+export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganizerResult> {
   const INVALID = "Invalid passcode. No active session found.";
 
   // Auth gate
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
   const normalized = passcode.trim().toUpperCase();
@@ -252,7 +264,9 @@ export async function toggleAutoMatchmaking(
 
   // Auth gate
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return { success: false, isOn: false, message: "Not authenticated." };
 
   const service = createServiceClient();
@@ -284,10 +298,9 @@ export async function toggleAutoMatchmaking(
 
   // Atomic flip via DB function — eliminates the read→write
   // lost-update race that existed when we did SELECT then UPDATE.
-  const { data: newValue, error: rpcErr } = await service.rpc(
-    "toggle_auto_matchmaking",
-    { p_session_id: sessionId }
-  );
+  const { data: newValue, error: rpcErr } = await service.rpc("toggle_auto_matchmaking", {
+    p_session_id: sessionId,
+  });
 
   if (rpcErr) {
     return { success: false, isOn: false, message: rpcErr.message };
@@ -331,17 +344,32 @@ export async function updateSessionSettings(
   if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
 
-  // Verify organizer access
-  const { data: org } = await supabase
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", user.id)
+  // Two-path organizer check: created_by fast-path first (the primary organizer
+  // never has a session_organizers row), then session_organizers membership.
+  // Uses service client so read-side RLS never blocks either query.
+  const svc = createServiceClient();
+  const { data: sessionMeta } = await svc
+    .from("sessions")
+    .select("created_by")
+    .eq("id", sessionId)
     .maybeSingle();
-  if (!org) return { error: "Not an organizer of this session." };
+
+  const isPrimaryOrganizer = sessionMeta?.created_by === user.id;
+
+  if (!isPrimaryOrganizer) {
+    const { data: org } = await svc
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!org) return { error: "Not an organizer of this session." };
+  }
 
   // Explicitly allowlist updatable fields — prevents a crafted call from
   // updating sensitive columns (is_active, organizer_passcode, created_by, etc.)
@@ -357,13 +385,82 @@ export async function updateSessionSettings(
     }
   }
 
-  const { error } = await supabase
+  // Use service client for the write so the primary organizer's update is
+  // never silently blocked by write-side RLS on the sessions table.
+  const { error } = await svc
     .from("sessions")
     .update({ court_time_limit_minutes: updates.court_time_limit_minutes })
     .eq("id", sessionId);
 
-  if (error) return { error: error.message };
+  if (error) return { error: "Failed to update session settings." };
   return {};
+}
+
+// ── getSessionForOrganizer ────────────────────────────────────
+
+export interface GetSessionResult {
+  success: boolean;
+  session?: import("@/types/database").Session;
+  error?: string;
+}
+
+/**
+ * Lightweight read-only fetch of a session row for the organizer dashboard
+ * polling / reconnect layers (Layer 2 + Layer 3 of the auto-toggle sync fix).
+ *
+ * Why a server action and not a direct browser-client query?
+ *   The sessions table RLS SELECT policy only grants read access to the
+ *   session creator (sessions.created_by). Co-organizers (session_organizers
+ *   members who are not the creator) are blocked by RLS and receive no rows.
+ *   Using the service-role client here bypasses RLS so both the primary
+ *   organizer and all co-organizers can read the canonical session state.
+ *
+ * Auth: two-path organizer check (same as toggleAutoMatchmaking / updateSessionSettings).
+ *   1. authenticated (RLS client getUser)
+ *   2. sessions.created_by === user.id  OR  session_organizers membership
+ * The session row includes organizer_passcode — restricting to organizers
+ * ensures a plain authenticated player cannot read it by knowing the session UUID.
+ */
+export async function getSessionForOrganizer(sessionId: string): Promise<GetSessionResult> {
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Not authenticated." };
+
+  const service = createServiceClient();
+
+  // ── Two-path organizer check ──────────────────────────────────
+  // Primary organizer: sessions.created_by === user.id (fast path).
+  // Co-organizer:      session_organizers row exists for this user.
+  const { data: sessionMeta } = await service
+    .from("sessions")
+    .select("created_by")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (!sessionMeta) return { success: false, error: "Session not found." };
+
+  if (sessionMeta.created_by !== user.id) {
+    const { data: membership } = await service
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!membership) return { success: false, error: "Not authorized. Organizer access required." };
+  }
+
+  // ── Fetch full session row ────────────────────────────────────
+  const { data, error } = await service.from("sessions").select("*").eq("id", sessionId).single();
+
+  if (error || !data) {
+    return { success: false, error: error?.message ?? "Session not found." };
+  }
+
+  return { success: true, session: data };
 }
 
 export interface CloseSessionResult {
@@ -381,7 +478,9 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   // organizer of the session. Without this check any authenticated user
   // who learns a session UUID can close it (service client bypasses RLS).
   const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
+  const {
+    data: { user },
+  } = await userClient.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
   let supabase: ReturnType<typeof createServiceClient>;
@@ -491,7 +590,7 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     .from("queue_entries")
     .update({ status: "left" as const })
     .eq("session_id", sessionId)
-    .in("status", ["waiting", "on_deck", "playing"]);
+    .in("status", ["waiting", "drafted", "on_deck", "playing"]);
 
   // ── 3. Reset courts to closed ──────────────────────────────
   await supabase

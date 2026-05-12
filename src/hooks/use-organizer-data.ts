@@ -63,8 +63,11 @@ import {
   type SwapResult,
   type SwapMatchPlayersResult,
 } from "@/app/actions/swap-player";
-import { togglePlayerPause } from "@/app/actions/queue";
-import { updateSessionSettings } from "@/app/actions/sessions";
+import {
+  togglePlayerPause,
+  removePlayerFromQueue as removePlayerFromQueueAction,
+} from "@/app/actions/queue";
+import { updateSessionSettings, getSessionForOrganizer } from "@/app/actions/sessions";
 import type {
   Court,
   Match,
@@ -123,10 +126,7 @@ export interface UseOrganizerDataResult {
   // -- Matchmaking --
   callNextMatch: (courtId: string) => Promise<MatchmakingResult>;
   // -- Match actions --
-  createManualMatch: (
-    teamA: string[],
-    teamB: string[]
-  ) => Promise<{ error?: string }>;
+  createManualMatch: (teamA: string[], teamB: string[]) => Promise<{ error?: string }>;
   endMatch: (
     matchId: string,
     teamAScore: number,
@@ -139,17 +139,13 @@ export interface UseOrganizerDataResult {
   publishMatch: (matchId: string) => Promise<{ error?: string }>;
   publishAllDrafts: () => Promise<{ error?: string; publishedCount?: number }>;
   // -- Swap actions --
-  swapPlayer: (
-    matchId: string,
-    outPlayerId: string,
-    inPlayerId: string
-  ) => Promise<SwapResult>;
+  swapPlayer: (matchId: string, outPlayerId: string, inPlayerId: string) => Promise<SwapResult>;
   swapMatchPlayers: (
     aMatchId: string,
     aPlayerId: string,
     bMatchId: string,
     bPlayerId: string,
-    sessionId: string,
+    sessionId: string
   ) => Promise<SwapMatchPlayersResult>;
   // -- Queue actions --
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
@@ -231,6 +227,7 @@ export function useOrganizerData(
   // ------------------------------------------------------------------
   const fetchActiveMatchesSeq = useRef(0);
   const fetchQueueSeq = useRef(0);
+  const fetchSessionSeq = useRef(0);
 
   // ---- Fetch functions ----
 
@@ -322,10 +319,7 @@ export function useOrganizerData(
     const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
     let profileMap = new Map<string, Profile>();
     if (playerIds.length > 0) {
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("*")
-        .in("id", playerIds);
+      const { data: profileData } = await supabase.from("profiles").select("*").in("id", playerIds);
 
       // Abort if superseded.
       if (mySeq !== fetchActiveMatchesSeq.current) return;
@@ -369,10 +363,7 @@ export function useOrganizerData(
   const fetchQueueProfiles = useCallback(async () => {
     const playerIds = queue.map((q) => q.player_id);
     if (playerIds.length === 0) return;
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .in("id", playerIds);
+    const { data } = await supabase.from("profiles").select("*").in("id", playerIds);
     if (data) {
       setProfiles((prev) => {
         const next = new Map(prev);
@@ -382,10 +373,44 @@ export function useOrganizerData(
     }
   }, [supabase, queue]);
 
+  // ── Session refresh ───────────────────────────────────────────
+  // Lightweight poll to catch missed broadcasts (e.g. network blip,
+  // tab backgrounded, or co-organizer toggle).
+  //
+  // Uses a server action (getSessionForOrganizer) backed by the service-role
+  // client so it works for both the session creator AND co-organizers.
+  // The browser-client RLS SELECT policy on `sessions` only grants access
+  // to the session creator, making a direct .from("sessions") call return
+  // nothing for co-organizers — a server action bypass is required.
+  //
+  // F3 guard: the auto_matchmaking_toggled broadcast handler increments
+  // fetchSessionSeq.current before calling setSession. This means any
+  // in-flight poll that started before the toggle fires will fail the
+  // mySeq check below and be silently discarded, preventing a stale
+  // poll snapshot from overwriting the broadcast-confirmed value.
+  const fetchSession = useCallback(async () => {
+    const mySeq = ++fetchSessionSeq.current;
+    const result = await getSessionForOrganizer(sessionId);
+    // Discard stale results — a newer poll or broadcast has taken precedence.
+    if (mySeq !== fetchSessionSeq.current) return;
+    if (!result.success || !result.session) {
+      console.error("[useOrganizerData] fetchSession error:", result.error);
+      return;
+    }
+    setSession(result.session);
+  }, [sessionId]);
+
   // ---- Initial load ----
 
   useEffect(() => {
     async function load() {
+      // fetchSession is intentionally excluded here.
+      // initialSession is a server-rendered prop that is fresh at mount time
+      // (the organizer page uses dynamic rendering, not static/ISR caching),
+      // so an additional fetch on load would be redundant and add latency.
+      // fetchSession has a stable identity (dep: [sessionId]) — it is excluded
+      // for the redundancy reason above, not due to identity instability.
+      // Layer 2 (15s poll) and Layer 3 (reconnect) handle subsequent refreshes.
       await Promise.all([fetchCourts(), fetchQueue()]);
       setLoading(false);
     }
@@ -410,10 +435,20 @@ export function useOrganizerData(
   const fetchCourtsRef = useRef(fetchCourts);
   const fetchQueueRef = useRef(fetchQueue);
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
-  // Update refs on every render so the latest closures are always used.
+  const fetchSessionRef = useRef(fetchSession);
+  // Update refs on every render so the latest closures are always captured.
+  // This is the "mutable-ref-callback" pattern: refs are only READ inside
+  // stable callbacks (never during render), so stale-closure bugs are
+  // impossible. The react-hooks/refs rule flags writes to ref.current
+  // outside effects, but the pattern is intentional here.
+  // eslint-disable-next-line react-hooks/refs
   fetchCourtsRef.current = fetchCourts;
+  // eslint-disable-next-line react-hooks/refs
   fetchQueueRef.current = fetchQueue;
+  // eslint-disable-next-line react-hooks/refs
   fetchActiveMatchesRef.current = fetchActiveMatches;
+  // eslint-disable-next-line react-hooks/refs
+  fetchSessionRef.current = fetchSession;
 
   // Stable callback that counts SUBSCRIBED/error events across all five
   // table channels and flips realtimeConnected accordingly.
@@ -429,7 +464,7 @@ export function useOrganizerData(
       setRealtimeConnected(connectedChannelIds.current.size === REALTIME_CHANNEL_COUNT);
     },
     [] // deliberately stable — only accesses connectedChannelIds (ref, stable identity)
-       // and setRealtimeConnected (stable setState dispatcher)
+    // and setRealtimeConnected (stable setState dispatcher)
   );
 
   useEffect(() => {
@@ -484,6 +519,11 @@ export function useOrganizerData(
       // session_closed handler — not used by organizer dashboard.
       undefined,
       (payload: AutoMatchmakingToggledPayload) => {
+        // Invalidate any in-flight fetchSession poll. A poll that started
+        // before this toggle write may carry a stale is_auto_matchmaking_on
+        // value. Bumping the sequence counter ensures that poll's mySeq
+        // check fails and it gets silently discarded (F3 fix).
+        ++fetchSessionSeq.current;
         setSession((prev) => ({
           ...prev,
           is_auto_matchmaking_on: payload.isOn,
@@ -495,24 +535,88 @@ export function useOrganizerData(
     );
 
     const unsubs = [
-      subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current(), undefined, handleChannelStatus),
-      subscribeToQueue(supabase, sessionId, () => fetchQueueRef.current(), undefined, handleChannelStatus),
-      subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current(), undefined, handleChannelStatus),
-      subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current(), undefined, handleChannelStatus),
+      subscribeToCourts(
+        supabase,
+        sessionId,
+        () => fetchCourtsRef.current(),
+        undefined,
+        handleChannelStatus
+      ),
+      subscribeToQueue(
+        supabase,
+        sessionId,
+        () => fetchQueueRef.current(),
+        undefined,
+        handleChannelStatus
+      ),
+      subscribeToMatches(
+        supabase,
+        sessionId,
+        () => fetchActiveMatchesRef.current(),
+        undefined,
+        handleChannelStatus
+      ),
+      subscribeToMatchPlayers(
+        supabase,
+        sessionId,
+        () => fetchActiveMatchesRef.current(),
+        undefined,
+        handleChannelStatus
+      ),
       // Profile changes (e.g. skill override) → re-fetch queue (view includes
       // skill_level from profiles) and active matches (embedded profiles).
-      subscribeToProfiles(supabase, sessionId, () => {
-        fetchQueueRef.current();
-        fetchActiveMatchesRef.current();
-      }, undefined, handleChannelStatus),
+      subscribeToProfiles(
+        supabase,
+        sessionId,
+        () => {
+          fetchQueueRef.current();
+          fetchActiveMatchesRef.current();
+        },
+        undefined,
+        handleChannelStatus
+      ),
     ];
     return () => {
       supabase.removeChannel(sessionChannel);
       unsubBroadcast();
       unsubs.forEach((u) => u());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId, handleChannelStatus]); // Intentionally omit the fetch refs — they are kept current via the ref pattern above.
+
+  // ── Layer 2 — Polling + visibility refresh ────────────────────
+  // Catches missed broadcasts and reconnect gaps. Only runs when the
+  // tab is visible to avoid wasted DB queries in background tabs.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchSessionRef.current();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchSessionRef.current();
+      }
+    }, 15000);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // ── Layer 3 — Reconnect refresh ───────────────────────────────
+  // When realtime channels reconnect after a dropout, the broadcast
+  // that was sent during the gap may have been missed. Trigger a
+  // session refresh the moment all channels come back online.
+  const prevRealtimeConnected = useRef(realtimeConnected);
+  useEffect(() => {
+    if (realtimeConnected && !prevRealtimeConnected.current) {
+      fetchSessionRef.current();
+    }
+    prevRealtimeConnected.current = realtimeConnected;
+  }, [realtimeConnected]);
 
   // ---- Court actions ----
   // Each mutation explicitly calls fetchCourts() after a successful write
@@ -521,9 +625,7 @@ export function useOrganizerData(
 
   const addCourt = useCallback(
     async (name: string) => {
-      const { error } = await supabase
-        .from("courts")
-        .insert({ session_id: sessionId, name });
+      const { error } = await supabase.from("courts").insert({ session_id: sessionId, name });
       if (error) return { error: error.message };
       await fetchCourts();
       return {};
@@ -533,10 +635,7 @@ export function useOrganizerData(
 
   const updateCourtStatus = useCallback(
     async (courtId: string, status: Court["status"]) => {
-      const { error } = await supabase
-        .from("courts")
-        .update({ status })
-        .eq("id", courtId);
+      const { error } = await supabase.from("courts").update({ status }).eq("id", courtId);
       if (error) return { error: error.message };
       await fetchCourts();
       return {};
@@ -637,17 +736,19 @@ export function useOrganizerData(
 
   // ---- Queue actions ----
 
+  // removeFromQueue: delegates to the removePlayerFromQueue server action
+  // (queue.ts) which calls the remove_player_from_queue_organizer RPC.
+  // This atomically cleans up match_players rows for any pending match the
+  // player is in (published or draft) before setting their status='left',
+  // preventing the contradictory state where queue shows 'left' but the
+  // on-deck panel still shows the player inside a match.
   const removeFromQueue = useCallback(
     async (playerId: string) => {
-      const { error } = await supabase
-        .from("queue_entries")
-        .update({ status: "left" as const })
-        .eq("session_id", sessionId)
-        .eq("player_id", playerId);
-      if (error) return { error: error.message };
+      const result = await removePlayerFromQueueAction(sessionId, playerId);
+      if (!result.success) return { error: result.error };
       return {};
     },
-    [supabase, sessionId]
+    [sessionId]
   );
 
   // Soft pause: keeps player in queue but excludes them from matchmaking.
@@ -667,11 +768,7 @@ export function useOrganizerData(
   // so the UI updates immediately without relying on Realtime.
 
   const swapPlayer = useCallback(
-    async (
-      matchId: string,
-      outPlayerId: string,
-      inPlayerId: string
-    ): Promise<SwapResult> => {
+    async (matchId: string, outPlayerId: string, inPlayerId: string): Promise<SwapResult> => {
       const result = await swapPlayerInMatchAction(matchId, outPlayerId, inPlayerId);
       // Always refresh state so the UI reflects the swap (or the latest
       // server state if it failed due to a concurrent change).
@@ -692,9 +789,15 @@ export function useOrganizerData(
       aPlayerId: string,
       bMatchId: string,
       bPlayerId: string,
-      sessionId: string,
+      sessionId: string
     ): Promise<SwapMatchPlayersResult> => {
-      const result = await swapMatchPlayersAction(aMatchId, aPlayerId, bMatchId, bPlayerId, sessionId);
+      const result = await swapMatchPlayersAction(
+        aMatchId,
+        aPlayerId,
+        bMatchId,
+        bPlayerId,
+        sessionId
+      );
       // Refresh active matches regardless of outcome so the UI
       // shows the latest server state (swap or any concurrent change).
       await fetchActiveMatches();
@@ -739,23 +842,18 @@ export function useOrganizerData(
 
   // ── Draft Mode actions ────────────────────────────────────────
 
-  const publishMatch = useCallback(
-    async (matchId: string): Promise<{ error?: string }> => {
-      const result = await publishMatchAction(matchId);
-      return result.success ? {} : { error: result.message };
-    },
-    []
-  );
+  const publishMatch = useCallback(async (matchId: string): Promise<{ error?: string }> => {
+    const result = await publishMatchAction(matchId);
+    return result.success ? {} : { error: result.message };
+  }, []);
 
-  const publishAllDrafts = useCallback(
-    async (): Promise<{ error?: string; publishedCount?: number }> => {
-      const result = await publishAllDraftMatchesAction(sessionId);
-      return result.success
-        ? { publishedCount: result.publishedCount }
-        : { error: result.message };
-    },
-    [sessionId]
-  );
+  const publishAllDrafts = useCallback(async (): Promise<{
+    error?: string;
+    publishedCount?: number;
+  }> => {
+    const result = await publishAllDraftMatchesAction(sessionId);
+    return result.success ? { publishedCount: result.publishedCount } : { error: result.message };
+  }, [sessionId]);
 
   return {
     session,

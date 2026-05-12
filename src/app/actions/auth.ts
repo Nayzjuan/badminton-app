@@ -13,6 +13,12 @@ import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
 import { displayNameSchema, pinSchema } from "@/lib/schemas/auth";
 
+// Escape ILIKE special characters so a caller-supplied string is always
+// treated as a literal — never as a wildcard pattern.
+function escapeLike(s: string): string {
+  return s.replace(/[%_\\]/g, "\\$&");
+}
+
 // ── Registration ────────────────────────────────────────────
 
 export async function signInAnonymously(formData: FormData) {
@@ -69,11 +75,11 @@ export async function signInAnonymously(formData: FormData) {
   const { data: activeEntries } = await service
     .from("queue_entries")
     .select("player_id, profiles!inner(display_name)")
-    .in("status", ["waiting", "on_deck", "playing"])
-    .ilike("profiles.display_name", displayName);
+    .in("status", ["waiting", "drafted", "on_deck", "playing"])
+    .ilike("profiles.display_name", escapeLike(displayName));
 
   if (activeEntries && activeEntries.length > 0) {
-    return { error: "Name taken. Add an initial (e.g. \"Miggy L.\")." };
+    return { error: 'Name taken. Add an initial (e.g. "Miggy L.").' };
   }
 
   // ── Returning player check ────────────────────────────────────
@@ -84,14 +90,15 @@ export async function signInAnonymously(formData: FormData) {
   const { data: existingProfile } = await service
     .from("profiles")
     .select("id")
-    .ilike("display_name", displayName)
+    .ilike("display_name", escapeLike(displayName))
     .eq("pin", pin)
     .limit(1)
     .single();
 
   if (existingProfile) {
     return {
-      error: "Looks like you've played before! Use \"Reconnect\" below to pick up where you left off.",
+      error:
+        'Looks like you\'ve played before! Use "Reconnect" below to pick up where you left off.',
     };
   }
 
@@ -155,10 +162,7 @@ export interface ReconnectResult {
   wrappedUrl?: string;
 }
 
-export async function reconnectPlayer(
-  playerName: string,
-  pin: string
-): Promise<ReconnectResult> {
+export async function reconnectPlayer(playerName: string, pin: string): Promise<ReconnectResult> {
   // Validate via Zod — same rules as registration
   const nameResult = displayNameSchema.safeParse(playerName ?? "");
   if (!nameResult.success) {
@@ -176,7 +180,7 @@ export async function reconnectPlayer(
   const { data: profiles } = await service
     .from("profiles")
     .select("*")
-    .ilike("display_name", name)
+    .ilike("display_name", escapeLike(name))
     .eq("pin", pinResult.data);
 
   if (!profiles || profiles.length === 0) {
@@ -203,7 +207,7 @@ export async function reconnectPlayer(
       .from("queue_entries")
       .select("session_id, sessions!inner(is_active)")
       .eq("player_id", profile.id)
-      .in("status", ["waiting", "on_deck", "playing"])
+      .in("status", ["waiting", "drafted", "on_deck", "playing"])
       .limit(1)
       .single();
 
@@ -304,7 +308,7 @@ export async function reconnectPlayer(
   if (newUserId === oldUserId) {
     console.error(
       "[reconnectPlayer] signInAnonymously returned the same UUID as the target profile — " +
-      "sign-out did not clear the session. Player should retry.",
+        "sign-out did not clear the session. Player should retry.",
       { oldUserId }
     );
     return { success: false, error: "Session conflict — please sign out and try again." };
@@ -343,8 +347,8 @@ export async function reconnectPlayer(
   if (isActiveOrganizer) {
     console.log(
       "[reconnectPlayer] Old user is the primary organizer of an active session — " +
-      "sessions.created_by, profile, and auth user preserved to keep organizer " +
-      "dashboard valid on their other device.",
+        "sessions.created_by, profile, and auth user preserved to keep organizer " +
+        "dashboard valid on their other device.",
       { oldUserId, newUserId }
     );
   }
@@ -403,7 +407,7 @@ export async function reconnectPlayer(
         .select("id, status")
         .eq("session_id", targetSessionId)
         .eq("player_id", newUserId)
-        .in("status", ["playing", "on_deck"])
+        .in("status", ["playing", "drafted", "on_deck"])
         .maybeSingle();
 
       if (queueEntry) {
@@ -428,8 +432,8 @@ export async function reconnectPlayer(
           // Match ended while migration was in flight — reset entry to "waiting".
           console.log(
             "[reconnectPlayer] Post-migration reconciliation: " +
-            `queue entry stuck as "${queueEntry.status}" with no active match — ` +
-            `resetting to "waiting".`,
+              `queue entry stuck as "${queueEntry.status}" with no active match — ` +
+              `resetting to "waiting".`,
             { newUserId, sessionId: targetSessionId }
           );
           await service
@@ -521,11 +525,7 @@ export async function getCurrentProfile() {
 
   if (!user) return null;
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
   return profile;
 }

@@ -1,0 +1,274 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import StartHereRail from '../components/StartHereRail.astro';
+
+const stats = [
+  { value: '9',  label: 'tables'            },
+  { value: '6',  label: 'enums'             },
+  { value: '5',  label: 'views'             },
+  { value: '13', label: 'RPCs'              },
+  { value: '12', label: 'action files'      },
+  { value: '7',  label: 'realtime channels' },
+  { value: '4',  label: 'broadcast events'  },
+  { value: '11', label: 'trace flows'       },
+];
+
+const sections = [
+  {
+    href:    '/database',
+    icon:    '⊞',
+    title:   'Database',
+    desc:    'ER diagram, all 9 tables, 6 enums, 5 views, and 13 RPCs — with FK overlays and plain-English glosses.',
+    phase:   2,
+    tags:    ['Postgres', 'Supabase', 'RLS'],
+  },
+  {
+    href:    '/actions',
+    icon:    '→',
+    title:   'Server Actions',
+    desc:    'Every mutation across 12 action files: inputs, auth gates, tables written, RPCs invoked, broadcasts emitted.',
+    phase:   3,
+    tags:    ['Next.js', 'use server', 'Zod'],
+  },
+  {
+    href:    '/engine',
+    icon:    '⚙',
+    title:   'Matchmaking Engine',
+    desc:    'Pipeline flowchart, interactive priority calculator, partnership-cap visualizer, and TOCTOU guard sequence diagram.',
+    phase:   4,
+    tags:    ['Algorithm', 'N-choose-3', 'TOCTOU'],
+  },
+  {
+    href:    '/realtime',
+    icon:    '⚡',
+    title:   'Realtime & State',
+    desc:    '7 channels, the ref-callback subscription pattern, monotonic sequence guards, and 4 broadcast event types.',
+    phase:   5,
+    tags:    ['Supabase Realtime', 'React hooks', 'Broadcast'],
+  },
+  {
+    href:    '/components',
+    icon:    '⛶',
+    title:   'Component Hierarchy',
+    desc:    'Force-directed graph of all Organizer and Player dashboard components — edges for props, actions, and realtime deps.',
+    phase:   6,
+    tags:    ['React', 'Next.js', 'D3'],
+  },
+  {
+    href:    '/flows',
+    icon:    '⟶',
+    title:   'Flows & Traces',
+    desc:    '11 animated sequence diagrams — tap Join Queue, fire the engine, publish a draft, swap players, close a session.',
+    phase:   7,
+    tags:    ['Sequence diagrams', 'Interactive', 'Mermaid'],
+  },
+  {
+    href:    '/glossary',
+    icon:    '≡',
+    title:   'Glossary & Gotchas',
+    desc:    '28 numbered critical rules: column name traps, deprecated constants, RLS silent-failure patterns, and more.',
+    phase:   8,
+    tags:    ['Reference', 'Bugs', 'Patterns'],
+  },
+  {
+    href:    '/about',
+    icon:    'ℹ',
+    title:   'About',
+    desc:    'What the Badminton Queue App is, what this Digital Twin is, and who built it.',
+    phase:   null,
+    tags:    [],
+  },
+];
+---
+
+<BaseLayout title="Badminton App · Digital Twin">
+  <!-- Mobile spacing -->
+  <div class="md:hidden h-4"></div>
+
+  <div class="px-8 py-10 flex gap-8 items-start">
+    <!-- Main content -->
+    <div class="flex-1 min-w-0">
+
+      <!-- Hero -->
+      <div class="mb-8">
+        <div class="text-xs font-semibold uppercase tracking-[0.18em] text-accent mb-2">
+          Digital Twin · v0.1
+        </div>
+        <h1 class="text-4xl font-bold text-ink tracking-tight leading-tight mb-3">
+          Badminton Queue App<br/>
+          <span class="text-accent">Architecture Reference</span>
+        </h1>
+        <p class="text-ink-3 text-base max-w-xl leading-relaxed">
+          An interactive, living documentation site that visually explains every layer
+          of the codebase — from Postgres schema to matchmaking engine to Supabase Realtime fan-out.
+          Auto-updates when source files change.
+        </p>
+      </div>
+
+      <!-- Stats bar -->
+      <div class="flex flex-wrap gap-2 mb-10">
+        {stats.map(s => (
+          <div class="flex items-center gap-1.5 bg-overlay border border-edge rounded-lg px-3 py-1.5">
+            <span class="text-sm font-bold text-accent-hi">{s.value}</span>
+            <span class="text-xs text-ink-3">{s.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <!-- ── How to read this ──────────────────────────────────── -->
+      <div class="mb-10" data-pagefind-body>
+        <h2 class="text-sm font-semibold uppercase tracking-widest text-ink-3 mb-4">
+          How to read this
+        </h2>
+        <p class="text-xs text-ink-3 mb-5 leading-relaxed max-w-lg">
+          New to the codebase? Follow this order. Each stop builds on the last — by step 6 you can trace any bug end-to-end.
+        </p>
+
+        <ol class="space-y-1.5">
+          {[
+            {
+              n: '01', href: '/database',
+              title: 'Database Schema',
+              goal:  'Know the 9 tables, 6 enums, 14 RPCs, and the two DB triggers that auto-create profile and organizer rows.',
+            },
+            {
+              n: '02', href: '/actions',
+              title: 'Server Actions',
+              goal:  'Read the Invariant pattern, then scan the 13 action files. Every mutation in the app lives here.',
+            },
+            {
+              n: '03', href: '/engine',
+              title: 'Matchmaking Engine',
+              goal:  'Run the priority calculator. Understand why MAX_REPEATS = 2 blocks certain pairings. Trace the TOCTOU guard.',
+            },
+            {
+              n: '04', href: '/realtime',
+              title: 'Realtime & State',
+              goal:  'Learn the ref-callback pattern. Run the race-condition demo. Understand why auto_matchmaking uses broadcast, not postgres_changes.',
+            },
+            {
+              n: '05', href: '/components',
+              title: 'Component Hierarchy',
+              goal:  'Click OrganizerDashboard. See its hooks and actions. Understand how useOrganizerData is the central nervous system.',
+            },
+            {
+              n: '06', href: '/flows',
+              title: 'Flows & Traces',
+              goal:  'Pick "Score submission cascade". Step through all 8 messages. You now understand how a single tap fans out to every client.',
+            },
+            {
+              n: '07', href: '/glossary',
+              title: 'Glossary & Gotchas',
+              goal:  'Bookmark this. Filter for "Critical" severity. These 8 gotchas are the ones that will silently corrupt data.',
+            },
+          ].map((step, i, arr) => (
+            <li class="flex items-start gap-3">
+              <!-- Number + connector -->
+              <div class="flex flex-col items-center shrink-0 pt-0.5">
+                <span class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold font-mono bg-accent text-base shrink-0"
+                      style="background:oklch(20% 0.04 155);color:oklch(76% 0.17 155)">
+                  {step.n}
+                </span>
+                {i < arr.length - 1 && (
+                  <span class="w-px flex-1 min-h-[1.5rem] mt-1" style="background:oklch(28% 0.02 245)"></span>
+                )}
+              </div>
+              <!-- Card -->
+              <a
+                href={step.href}
+                class="flex-1 min-w-0 group rounded-lg border border-edge bg-raised px-4 py-3 mb-0.5
+                       hover:border-accent-ring hover:bg-lifted transition-all duration-75 block"
+              >
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <span class="text-sm font-semibold text-ink-2 group-hover:text-accent-hi transition-colors font-heading">
+                    {step.title}
+                  </span>
+                  <span class="text-accent opacity-0 group-hover:opacity-100 transition-opacity text-sm shrink-0">→</span>
+                </div>
+                <p class="text-xs text-ink-3 leading-relaxed">{step.goal}</p>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <!-- System diagram -->
+      <div class="mb-10">
+        <h2 class="text-sm font-semibold uppercase tracking-widest text-ink-3 mb-3">
+          System Overview
+        </h2>
+        <div class="mermaid">
+{`flowchart LR
+    subgraph Clients["Client Layer"]
+        P["🏸 Player Browser\\nplay/[sessionId]"]
+        O["📋 Organizer Browser\\norganizer/[sessionId]"]
+        T["📺 TV Scoreboard\\ntv/[sessionId]"]
+    end
+
+    subgraph Next["Next.js 16 — App Router"]
+        SA["Server Actions\\n12 files · 40+ mutations"]
+        SC["Server Components\\n(read-only views)"]
+    end
+
+    subgraph Supa["Supabase"]
+        PG["Postgres\\n9 tables · 13 RPCs · 5 views"]
+        RT["Realtime\\n7 channels · 4 broadcast events"]
+        AU["Anonymous Auth\\n(@supabase/ssr)"]
+    end
+
+    P & O -->|action calls| SA
+    T -->|read-only RSC| SC
+    SA -->|service role — bypasses RLS| PG
+    SC -->|anon client| PG
+    PG -->|postgres_changes| RT
+    SA -->|REST broadcast| RT
+    RT -->|subscriptions| P & O
+    AU -.->|cookie auth| SA & SC`}
+        </div>
+      </div>
+
+      <!-- Section cards -->
+      <div>
+        <h2 class="text-sm font-semibold uppercase tracking-widest text-ink-3 mb-3">
+          What's inside
+        </h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {sections.map(s => (
+            <a
+              href={s.href}
+              class="dt-card p-5 hover:border-accent-ring transition-all group block"
+            >
+              <div class="flex items-start justify-between gap-2 mb-2">
+                <div class="flex items-center gap-2.5">
+                  <span class="text-xl leading-none">{s.icon}</span>
+                  <span class="font-semibold text-ink-2 group-hover:text-accent-hi transition-colors text-sm">
+                    {s.title}
+                  </span>
+                </div>
+                {s.phase !== null && (
+                  <span class="text-[10px] text-ink-3 shrink-0 mt-0.5">Phase {s.phase}</span>
+                )}
+              </div>
+              <p class="text-xs text-ink-3 leading-relaxed mb-3">{s.desc}</p>
+              {s.tags.length > 0 && (
+                <div class="flex flex-wrap gap-1">
+                  {s.tags.map(t => (
+                    <span class="text-[10px] bg-raised border border-edge-dim text-ink-3 px-2 py-0.5 rounded-full">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </a>
+          ))}
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Start Here rail (desktop) -->
+    <div class="hidden lg:block">
+      <StartHereRail />
+    </div>
+  </div>
+</BaseLayout>

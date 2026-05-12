@@ -1,0 +1,136 @@
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;600&display=swap");
+@import "tailwindcss";
+
+/* ── AUTO-SYNCED from digital-twin/src/styles/global.css ──────────────────
+   Run `npm run sync` to refresh. Do not edit this block manually.
+   ─────────────────────────────────────────────────────────────────────── */
+@theme {
+  /* ── Typography ── */
+  --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-heading: "Barlow Semi Condensed", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Cascadia Code", monospace;
+
+  /* ── Background scale — OKLCH, tinted toward 245° (blue-slate) ── */
+  --color-base: oklch(7% 0.012 245); /* App canvas — deepest layer       */
+  --color-surface: oklch(11% 0.016 245); /* Nav rail / sidebar               */
+  --color-overlay: oklch(15% 0.019 245); /* Cards, panels, code blocks       */
+  --color-raised: oklch(20% 0.022 245); /* Hover states, table headers      */
+  --color-lifted: oklch(25% 0.026 245); /* Active / selected states         */
+
+  /* ── Borders ── */
+  --color-edge: oklch(25% 0.025 245); /* Standard border                  */
+  --color-edge-dim: oklch(18% 0.018 245); /* Subtle border, row separators    */
+  --color-edge-hi: oklch(33% 0.03 245); /* Strong border, dividers          */
+
+  /* ── Ink (text) — OKLCH, same hue tint ── */
+  --color-ink: oklch(96% 0.005 245); /* H1, primary labels               */
+  --color-ink-2: oklch(72% 0.008 245); /* Body text, descriptions          */
+  --color-ink-3: oklch(48% 0.01 245); /* Metadata, muted, "soon"          */
+  --color-ink-4: oklch(32% 0.012 245); /* Ghost, disabled, placeholder     */
+
+  /* ── Accent — Precise Emerald (not neon, not cyan) ── */
+  --color-accent: oklch(76% 0.17 155);
+  --color-accent-hi: oklch(85% 0.15 155);
+  --color-accent-dim: oklch(56% 0.14 155);
+  --color-accent-wash: oklch(14% 0.048 155);
+  --color-accent-ring: oklch(33% 0.095 155);
+
+  /* ── Status ── */
+  --color-ok: oklch(76% 0.17 155); /* = accent (live/success)          */
+  --color-warn: oklch(78% 0.16 70); /* Phase "next", P1 badges          */
+  --color-err: oklch(65% 0.2 22); /* P0 badges, hard errors           */
+  --color-note: oklch(70% 0.15 245); /* Info callouts                    */
+
+  --color-ok-wash: oklch(14% 0.048 155);
+  --color-warn-wash: oklch(13% 0.04 70);
+  --color-err-wash: oklch(12% 0.05 22);
+  --color-note-wash: oklch(13% 0.03 245);
+}
+
+/* ── Base resets ── */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.01em;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-edge);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-edge-hi);
+}
+
+/* ── Pulse animation — used by the "live demo" badge in the sandbox ── */
+@keyframes dt-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.dt-pulse {
+  animation: dt-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ── Shared card shell — used by sandbox organizer components ── */
+.dt-card {
+  background: var(--color-overlay);
+  border: 1px solid var(--color-edge);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 120ms ease;
+}
+.dt-card:hover {
+  border-color: var(--color-edge-hi);
+}
+
+/* ── Player phone alert slide-up animation ── */
+@keyframes pp-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes pp-slide-down {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+.pp-alert-visible {
+  animation: pp-slide-up 450ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  z-index: 20;
+}
+
+.pp-alert-hidden {
+  animation: pp-slide-down 380ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  z-index: 20;
+  pointer-events: none;
+}

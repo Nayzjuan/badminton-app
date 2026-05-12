@@ -11,54 +11,71 @@
 --   3. Replace the ENUM type with the new 6-value set
 --   4. Restore skill_level_to_int() with renumbered 1–6 mapping
 --   5. Restore v_queue_with_wait_time against the new type
+--
+-- IDEMPOTENCY (local dev): Steps 1–3 are wrapped in a DO block
+-- that only fires if 'upper_beginner' still exists in the
+-- skill_level enum. When the initial_schema migration creates
+-- skill_level without 'upper_beginner', these steps are no-ops.
+-- Steps 4–5 use CREATE OR REPLACE and are always idempotent.
 -- ============================================================
 
--- ── Step 1: Migrate existing rows ────────────────────────────
-UPDATE public.profiles
-SET skill_level = 'beginner'::text::skill_level
-WHERE skill_level = 'upper_beginner';
+-- ── Steps 1–3: Type swap (only if upper_beginner still exists) ─
+DO $$
+BEGIN
+  -- Check whether 'upper_beginner' still exists in the skill_level enum.
+  -- If the base schema already created skill_level without it, skip everything.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_type t
+    JOIN pg_enum e ON t.oid = e.enumtypid
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE n.nspname = 'public'
+      AND t.typname = 'skill_level'
+      AND e.enumlabel = 'upper_beginner'
+  ) THEN
 
--- ── Step 2: Drop dependents that block the type swap ─────────
+    -- Step 1: Migrate existing rows
+    UPDATE public.profiles
+    SET skill_level = 'beginner'::text::skill_level
+    WHERE skill_level = 'upper_beginner';
 
--- The view depends on profiles.skill_level (column type).
-DROP VIEW IF EXISTS public.v_queue_with_wait_time;
+    -- Step 2: Drop dependents that block the type swap
+    DROP VIEW IF EXISTS public.v_queue_with_wait_time;
+    DROP FUNCTION IF EXISTS public.skill_level_to_int(skill_level);
 
--- The function depends on the skill_level type as its parameter.
-DROP FUNCTION IF EXISTS public.skill_level_to_int(skill_level);
+    -- Step 3a: Create the new 6-value enum (upper_beginner removed).
+    CREATE TYPE skill_level_new AS ENUM (
+      'beginner',
+      'lower_intermediate',
+      'intermediate',
+      'upper_intermediate',
+      'lower_advanced',
+      'advanced'
+    );
 
--- ── Step 3: Swap the ENUM type ────────────────────────────────
+    -- Step 3b: Drop the column default, alter the column, restore.
+    ALTER TABLE public.profiles
+      ALTER COLUMN skill_level DROP DEFAULT;
 
--- 3a. Create the new 6-value enum (upper_beginner removed).
-CREATE TYPE skill_level_new AS ENUM (
-  'beginner',
-  'lower_intermediate',
-  'intermediate',
-  'upper_intermediate',
-  'lower_advanced',
-  'advanced'
-);
+    ALTER TABLE public.profiles
+      ALTER COLUMN skill_level TYPE skill_level_new
+      USING skill_level::text::skill_level_new;
 
--- 3b. Drop the column default (it references the old type OID and
---     cannot be auto-cast), alter the column, then restore.
-ALTER TABLE public.profiles
-  ALTER COLUMN skill_level DROP DEFAULT;
+    -- Step 3c: Drop the old enum and rename the new one.
+    DROP TYPE public.skill_level;
+    ALTER TYPE skill_level_new RENAME TO skill_level;
 
-ALTER TABLE public.profiles
-  ALTER COLUMN skill_level TYPE skill_level_new
-  USING skill_level::text::skill_level_new;
+    -- Step 3d: Restore the column default.
+    ALTER TABLE public.profiles
+      ALTER COLUMN skill_level SET DEFAULT 'beginner'::skill_level;
 
--- 3c. Drop the old enum and rename the new one into its place.
-DROP TYPE public.skill_level;
-ALTER TYPE public.skill_level_new RENAME TO skill_level;
-
--- 3d. Restore the column default against the final type name.
-ALTER TABLE public.profiles
-  ALTER COLUMN skill_level SET DEFAULT 'beginner'::skill_level;
+  END IF;
+END $$;
 
 -- ── Step 4: Restore skill_level_to_int() ─────────────────────
+-- Always runs — CREATE OR REPLACE is idempotent.
 -- Renumbered 1–6: lower_intermediate through advanced each shift
 -- down by 1, closing the gap left by upper_beginner.
--- Preserves ±1 preferred / ±2 max matchmaking window semantics.
 CREATE OR REPLACE FUNCTION public.skill_level_to_int(lvl skill_level)
 RETURNS integer
 LANGUAGE sql IMMUTABLE STRICT
@@ -74,6 +91,7 @@ AS $$
 $$;
 
 -- ── Step 5: Restore v_queue_with_wait_time ────────────────────
+-- Always runs — CREATE OR REPLACE is idempotent.
 CREATE OR REPLACE VIEW public.v_queue_with_wait_time AS
 SELECT
   qe.id,

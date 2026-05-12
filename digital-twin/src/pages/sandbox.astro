@@ -1,0 +1,25 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import SandboxRoot from '../sandbox/SandboxRoot.tsx';
+---
+
+<BaseLayout
+  title="Interactive Sandbox"
+  description="Live split-screen demo — organizer view on the left, player phone on the right, both driven by the same in-memory state. No real database."
+>
+  <PageHeader
+    title="Interactive Sandbox"
+    subtitle="Organizer and player views side by side — sharing the same live state. Publish a draft on the left and watch the player's phone snap to ON DECK on the right. Auto-play loops the full sequence automatically."
+    phase={9}
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-6" data-pagefind-ignore>
+    {/*
+      client:load — hydrate immediately on page load. The sandbox is the
+      whole point of the page; lazy hydration would just delay interactivity.
+    */}
+    <SandboxRoot client:load />
+  </div>
+</BaseLayout>

@@ -1,0 +1,266 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+import { fileURLToPath } from 'url';
+import { resolve, dirname } from 'path';
+
+// HOST_ROOT computed at build time — used to generate vscode:// deep links
+const _dir      = dirname(fileURLToPath(import.meta.url));
+const HOST_ROOT = resolve(_dir, '../../../');             // digital-twin/src/pages → badminton-app/
+function vsLink(relPath: string) {
+  return `vscode://file${HOST_ROOT}/src/app/actions/${relPath}`;
+}
+
+// ── Curated annotations — semantic knowledge the AST parser can't infer ─────
+// Keys must match filenames in manifest.actions[].file exactly.
+const annotations: Record<string, {
+  desc:      string;
+  tags:      string[];
+  note?:     string;
+  severity?: 'warn' | 'info';
+}> = {
+  'auth.ts': {
+    desc:     'Anonymous session creation, PIN-based identity reconnect, and UUID migration.',
+    tags:     ['Auth', 'Anonymous', 'PIN'],
+    note:     'Always call signOut() before signInAnonymously() — skipping causes stale session conflict in the identity migration flow.',
+    severity: 'warn',
+  },
+  'dev.ts': {
+    desc:     'Development-only: seed players and test data, wipe session state.',
+    tags:     ['Dev', 'Seed'],
+    note:     'Must be env-gated: {process.env.NODE_ENV === "development" && …}. Never expose to production.',
+    severity: 'warn',
+  },
+  'h2h.ts': {
+    desc:     'Head-to-head win record lookup for exact 2v2 team pairings.',
+    tags:     ['Stats', 'H2H'],
+  },
+  'leaderboard.ts': {
+    desc:     'Session leaderboard (live Postgres view) and all-time leaderboard (materialized view).',
+    tags:     ['Leaderboard', 'Stats'],
+  },
+  'match.ts': {
+    desc:     'Score submission, match lifecycle (end / cancel / update), manual creation, and draft-mode publish controls.',
+    tags:     ['Match', 'Score', 'Draft'],
+    note:     'cancelMatchAction auto-promotes the oldest on-deck match and re-runs the engine. On-deck actions (clearOnDeckMatch, publishMatchAction, reorderOnDeckMatches) live here, not in matchmaking.ts.',
+    severity: 'info',
+  },
+  'matchmaking.ts': {
+    desc:     'Public engine entry points. callNextMatch → runEngineForSession → runEngineInternal (internal). buildOverlapMap and fetchRecentRosters are private helpers not shown here.',
+    tags:     ['Engine', 'Algorithm'],
+    note:     'buildOverlapMap is async/DB — it lives here, not in matchmaking-core.ts (pure logic only). recentRosters is hoisted once per engine run; overlapMap is computed per-anchor.',
+    severity: 'info',
+  },
+  'notifications.ts': {
+    desc:     'Web Push / VAPID notification dispatch to player devices.',
+    tags:     ['Push', 'VAPID'],
+    note:     'All 3 subscription fields required: endpoint · p256dh · auth_key. Missing any one = silent failure.',
+    severity: 'warn',
+  },
+  'profile.ts': {
+    desc:     'Player skill level and PIN management.',
+    tags:     ['Profile', 'PIN'],
+  },
+  'queue.ts': {
+    desc:     'Join, leave, and soft-pause a player in the session queue. Implements Inherited Games floor logic to prevent queue-jumping.',
+    tags:     ['Queue', 'Status'],
+    note:     '"left" players are never re-queued on match end/cancel — ghost re-queue prevention.',
+    severity: 'info',
+  },
+  'sessions.ts': {
+    desc:     'Session lifecycle: create, co-organizer promotion, settings update, and close (triggers Session Wrapped).',
+    tags:     ['Session', 'Organizer'],
+    note:     'File is sessions.ts (plural). Never create a session.ts duplicate — it will silently shadow this file.',
+    severity: 'warn',
+  },
+  'swap-player.ts': {
+    desc:     'Bench → on-deck swap and cross-match Tap-to-Swap v2 (direct player exchange between two pending matches).',
+    tags:     ['Swap', 'Tap-to-Swap'],
+  },
+  'tv.ts': {
+    desc:     'Public read-only TV scoreboard data. Uses service-role client — no session auth required.',
+    tags:     ['TV', 'Public'],
+  },
+  'wrapped.ts': {
+    desc:     'Session Wrapped: record when a player dismisses the animated intro overlay.',
+    tags:     ['Wrapped', 'Awards'],
+  },
+};
+
+// ── Merge live manifest with annotations ──────────────────────────────────────
+const groups = manifest.actions.map(a => ({
+  id:        a.file.replace('.ts', '-ts'),   // "auth.ts" → "auth-ts" (valid fragment)
+  file:      a.file,
+  functions: a.functions,
+  ...(annotations[a.file] ?? { desc: '', tags: [] }),
+}));
+
+const totalFunctions = groups.reduce((sum, g) => sum + g.functions.length, 0);
+
+// Flag: has unannotated files (useful during development)
+const unannotated = groups.filter(g => !g.desc);
+---
+
+<BaseLayout
+  title="Server Actions"
+  description="Catalog of every 'use server' function across all 13 action files."
+>
+  <PageHeader
+    title="Server Actions Surface"
+    subtitle={`${manifest.actions.length} action files · ${totalFunctions} exported functions. Every mutation in the app flows through one of these. Extracted live from the codebase.`}
+    phase={3}
+    phaseStatus="live"
+  />
+
+  <div class="flex gap-8 px-8 py-8 items-start" data-pagefind-body>
+
+    <!-- ── In-page file directory (sticky sidebar) ─────────────── -->
+    <aside class="hidden lg:block w-44 shrink-0">
+      <div class="sticky top-8">
+        <div class="flex items-center justify-between pb-2 mb-2 border-b border-edge-dim">
+          <span class="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-4">
+            Files
+          </span>
+          <span class="text-[10px] text-ink-4 font-mono">{groups.length}</span>
+        </div>
+
+        <nav class="space-y-0.5">
+          {groups.map(g => (
+            <a
+              href={`#${g.id}`}
+              class="flex items-center justify-between gap-1 px-2 py-1.5 rounded-md text-xs font-mono text-ink-3 hover:bg-raised hover:text-ink-2 transition-colors duration-75 group"
+            >
+              <span class="truncate group-hover:text-ink">{g.file}</span>
+              <span class="text-ink-4 shrink-0 text-[10px]">{g.functions.length}</span>
+            </a>
+          ))}
+        </nav>
+
+        <!-- Stats footer -->
+        <div class="mt-4 pt-3 border-t border-edge-dim space-y-1">
+          <div class="flex items-center justify-between text-[10px]">
+            <span class="text-ink-4">Total exports</span>
+            <span class="font-mono text-accent">{totalFunctions}</span>
+          </div>
+          <div class="flex items-center justify-between text-[10px]">
+            <span class="text-ink-4">Extracted</span>
+            <span class="font-mono text-ink-3">live</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── Main content ────────────────────────────────────────── -->
+    <div class="flex-1 min-w-0 space-y-3">
+
+      <!-- Invariant pattern callout -->
+      <div id="invariant" class="rounded-xl p-5 bg-accent-wash border border-accent-ring scroll-mt-6">
+        <h2 class="font-heading font-bold text-sm text-accent-hi uppercase tracking-wider mb-3">
+          Invariant — every action follows this pattern
+        </h2>
+        <ol class="space-y-1.5 text-xs text-ink-3 list-decimal list-inside leading-relaxed">
+          <li>
+            <code class="text-accent font-mono">isValidUUID(id)</code>
+            {' '}guard on every UUID param — returns early before any DB call
+          </li>
+          <li>
+            <code class="text-accent font-mono">getUser()</code>
+            {' '}→ <code class="text-accent font-mono">isSessionOrganizer()</code>
+            {' '}auth check
+          </li>
+          <li>
+            All <code class="text-accent font-mono">.from(…)</code> reads and writes via
+            {' '}<code class="text-accent font-mono">createServiceClient()</code>
+            {' '}— bypasses RLS
+          </li>
+          <li>
+            Return shape:
+            {' '}<code class="text-accent font-mono">{'{ success: boolean; message?: string; error?: string }'}</code>
+            {' '}— never throw unhandled errors
+          </li>
+        </ol>
+      </div>
+
+      <!-- Action file cards -->
+      {groups.map(g => (
+        <article id={g.id} class="dt-card scroll-mt-6 overflow-visible">
+
+          <!-- Card header -->
+          <div class="px-5 py-4 border-b border-edge">
+            <div class="flex items-start justify-between gap-4 flex-wrap">
+              <div class="min-w-0">
+                <div class="text-[10px] font-mono text-ink-4 mb-0.5 select-none">
+                  src/app/actions/
+                </div>
+                <h2 class="text-base font-bold text-ink font-heading tracking-tight leading-tight">
+                  {g.file}
+                </h2>
+                {g.desc && (
+                  <p class="text-xs text-ink-3 mt-1.5 leading-relaxed max-w-lg">
+                    {g.desc}
+                  </p>
+                )}
+              </div>
+
+              {/* Tags */}
+              {g.tags && g.tags.length > 0 && (
+                <div class="flex flex-wrap gap-1 shrink-0 mt-0.5">
+                  {g.tags.map((t: string) => (
+                    <span class="badge bg-raised border-edge text-ink-3 font-mono">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Warn / info note */}
+            {g.note && (
+              <div class:list={[
+                'mt-3 text-xs rounded-lg px-3 py-2 leading-relaxed',
+                g.severity === 'warn'
+                  ? 'bg-warn-wash text-warn border border-warn/20'
+                  : 'bg-raised text-ink-3 border border-edge-dim',
+              ]}>
+                <span class:list={['font-semibold font-heading mr-1', g.severity === 'warn' ? 'text-warn' : 'text-ink-2']}>
+                  {g.severity === 'warn' ? '⚠ ' : 'ℹ '}
+                </span>
+                {g.note}
+              </div>
+            )}
+          </div>
+
+          <!-- Function chips -->
+          <div class="px-5 py-4 flex flex-wrap gap-2">
+            {g.functions.map((fn: string) => (
+              <code class="inline-flex items-center font-mono text-xs bg-raised border border-edge text-ink-3 px-3 py-1.5 rounded-lg hover:bg-lifted hover:text-accent-hi hover:border-accent-ring transition-all duration-75 cursor-default select-all">
+                {fn}()
+              </code>
+            ))}
+          </div>
+
+          <!-- Footer metadata -->
+          <div class="px-5 py-2 border-t border-edge-dim bg-surface flex items-center gap-4 text-[10px] text-ink-4 font-mono">
+            <span>{g.functions.length} export{g.functions.length !== 1 ? 's' : ''}</span>
+            <a
+              href={vsLink(g.file)}
+              title="Open in VS Code"
+              class="text-accent hover:text-accent-hi hover:underline transition-colors duration-75 select-all"
+            >src/app/actions/{g.file}</a>
+          </div>
+
+        </article>
+      ))}
+
+      <!-- Dev warning: unannotated files -->
+      {unannotated.length > 0 && (
+        <div class="rounded-lg p-3 bg-warn-wash border border-warn/20 text-xs text-warn">
+          ⚠ {unannotated.length} file{unannotated.length > 1 ? 's' : ''} have no annotation in actions.astro:
+          {' '}{unannotated.map(g => g.file).join(', ')}
+        </div>
+      )}
+
+    </div>
+  </div>
+</BaseLayout>

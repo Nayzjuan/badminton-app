@@ -38,8 +38,7 @@ import {
   CRITICAL_WAIT_MINUTES,
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
-  ON_DECK_LOOKAHEAD,
-  MAX_ON_DECK_MATCHES,
+  MAX_AUTO_DRAFTS,
   MIN_FREE_POOL_FOR_ON_DECK,
   MAX_PARTNERSHIP_REPEATS,
 } from "@/lib/constants";
@@ -66,10 +65,17 @@ import { isValidUUID } from "@/lib/validate";
 // call is a no-op — the first run will already produce the
 // correct on-deck state when it finishes.
 //
-// Scope: single Node.js process. For multi-process deployments a
-// Postgres advisory lock (pg_try_advisory_xact_lock) is the
-// correct cross-instance serialization primitive, but the Set is
-// sufficient for the current single-worker setup and is cheap.
+// Scope: single Node.js process only — this Set has no effect in
+// multi-process or serverless deployments (e.g. Vercel, where each
+// request may land on a different worker).
+//
+// Cross-process serialisation is now enforced at the DB layer:
+// create_match_with_players (migration 20260507000000) acquires a
+// row-level lock (SELECT … FOR UPDATE ORDER BY player_id) on the
+// target queue_entries rows before checking for conflicts in
+// match_players. A second concurrent transaction blocks at the lock
+// and then hits the conflict check — returning NULL — once the first
+// commits. executeMatch treats NULL as a graceful slot-skip.
 const engineRunningFor = new Set<string>();
 
 export interface MatchmakingResult {
@@ -115,7 +121,9 @@ export async function callNextMatch(
   // runEngineForSession) so RLS no longer rescues us — the gate
   // must live here, in the public entry point.
   const userClient = await createClient();
-  const { data: { user } } = await userClient.auth.getUser();
+  const {
+    data: { user },
+  } = await userClient.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
   const service = createServiceClient();
@@ -139,13 +147,17 @@ export async function callNextMatch(
   }
   // ── End auth gate ─────────────────────────────────────────────
 
+  // Use the regular client only for the session-read (RLS-bound read is fine).
+  // All writes (promote + engine) must use the service client so queue_entries
+  // updates are never silently dropped by RLS for players the organizer doesn't
+  // own — the same fix already applied to endMatchAction (match.ts line ~287).
   const supabase = await createClient();
 
   // 1. Try to promote an existing on-deck match.
-  let promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
+  let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
   if (promoted.success) {
     // Refill the on-deck slot we just consumed.
-    await runEngineInternal(supabase, sessionId);
+    await runEngineInternal(service, sessionId);
     return promoted;
   }
 
@@ -166,9 +178,12 @@ export async function callNextMatch(
   // 3. Toggle ON: run engine now, then retry promotion.
   // bypassGate=true: organizer explicitly requested a match — don't let the
   // soft gate defer it. Serve the best available group immediately.
-  await runEngineInternal(supabase, sessionId, true);
-  promoted = await promoteOnDeckMatchInternal(supabase, sessionId, courtId);
+  await runEngineInternal(service, sessionId, true);
+  promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
   if (promoted.success) return promoted;
+  // Surface the draft-blocking signal so the organizer sees "review drafts"
+  // rather than the generic "not enough players" when drafts are the real reason.
+  if (promoted.hasDraftsBlocking) return promoted;
 
   return {
     success: false,
@@ -229,15 +244,21 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
       .single();
 
     if (sessionErr) {
-      console.error(`[engine] runEngineForSession: failed to read session ${sessionId} — ${sessionErr.message}`);
+      console.error(
+        `[engine] runEngineForSession: failed to read session ${sessionId} — ${sessionErr.message}`
+      );
       return;
     }
     if (!session?.is_auto_matchmaking_on) {
-      console.log(`[engine] runEngineForSession: toggle is OFF for session ${sessionId} — skipping`);
+      console.log(
+        `[engine] runEngineForSession: toggle is OFF for session ${sessionId} — skipping`
+      );
       return;
     }
 
-    console.log(`[engine] runEngineForSession: toggle ON for session ${sessionId} — starting engine`);
+    console.log(
+      `[engine] runEngineForSession: toggle ON for session ${sessionId} — starting engine`
+    );
     await runEngineInternal(supabase, sessionId);
   } finally {
     engineRunningFor.delete(sessionId);
@@ -247,12 +268,17 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
-// Capacity-limited on-deck filler.
-// capacity = min(courtCount + ON_DECK_LOOKAHEAD, MAX_ON_DECK_MATCHES)
-//   1 court  → 2 on-deck  (1 + 1, at cap)
-//   2 courts → 2 on-deck  (3, capped to 2)
-//   3 courts → 2 on-deck  (4, capped to 2)
-// Fills slots up to capacity, stopping when queue is exhausted.
+// Dynamic draft filler. Generates on-deck matches until the combined
+// total of pending matches (published + unpublished) reaches MAX_AUTO_DRAFTS.
+//
+// slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)
+//   totalPending is fetched in a single atomic query (no race between
+//   published and draft sub-counts).
+//   0 pending → up to 3 slots (pool diversity cap applies)
+//   1 pending → up to 2 slots
+//   2 pending → 1 slot
+//   3 pending → 0 slots (at cap)
+// Fills slots up to slotsAvailable, stopping when queue is exhausted.
 
 async function runEngineInternal(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -276,36 +302,33 @@ async function runEngineInternal(
     return;
   }
 
-  // capacity = min(courts + lookahead, MAX_ON_DECK_MATCHES).
-  // The lookahead (default 1) means there is always one match queued beyond
-  // the active court count so a second court finishing right after the first
-  // never idles. The hard cap (default 2) prevents the engine from
-  // speculating too far ahead: pre-forming 3-5 matches on a busy night locks
-  // players into specific partners before new arrivals can be included,
-  // making the organizer's queue list confusingly short.
-  // The fill loop stops gracefully when the pool is exhausted, so neither
-  // the lookahead nor the cap ever creates phantom matches.
-  const capacity = Math.min(courtCount + ON_DECK_LOOKAHEAD, MAX_ON_DECK_MATCHES);
-
-  // BUG-003 fix: count only published pending matches toward capacity.
-  // Unpublished drafts are not promotable, so counting them would freeze
-  // the engine as soon as the draft cap is reached — silencing Red Zone.
-  const { count: existingOnDeck, error: deckErr } = await supabase
+  // Count all pending matches (published + unpublished) in one atomic query.
+  // Using a single query rather than two sequential published/draft sub-counts
+  // eliminates a narrow race window: if a draft were published between the two
+  // queries, totalPending could be underestimated by 1, allowing a spurious
+  // extra draft. The single query reads a consistent snapshot.
+  const { count: totalPendingRaw, error: totalErr } = await supabase
     .from("matches")
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId)
-    .eq("status", "pending")
-    .eq("is_published", true);
+    .eq("status", "pending");
 
-  if (deckErr) {
-    console.error(`[engine] runEngineInternal: pending count query failed — ${deckErr.message}`);
+  if (totalErr) {
+    console.error(`[engine] runEngineInternal: pending count failed — ${totalErr.message}`);
     return;
   }
 
-  const slotsAvailable = capacity - (existingOnDeck ?? 0);
-  console.log(`[engine] runEngineInternal: courts=${courtCount} capacity=${capacity} onDeck=${existingOnDeck ?? 0} slots=${slotsAvailable}`);
+  const totalPending = totalPendingRaw ?? 0;
+  const slotsAvailable = Math.max(0, MAX_AUTO_DRAFTS - totalPending);
+
+  console.log(
+    `[engine] runEngineInternal: courts=${courtCount} ` +
+      `total=${totalPending} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
+  );
   if (slotsAvailable <= 0) {
-    console.log(`[engine] runEngineInternal: on-deck at capacity (${existingOnDeck}/${capacity}) — skipping`);
+    console.log(
+      `[engine] runEngineInternal: draft cap reached (${totalPending}/${MAX_AUTO_DRAFTS}) — skipping`
+    );
     return;
   }
 
@@ -348,7 +371,7 @@ async function runEngineInternal(
 
       if (waitingCount > 0 && waitingCount <= GATE_POOL_THRESHOLD) {
         const maxWait = Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0));
-        const hasRedZone   = maxWait >= CRITICAL_WAIT_MINUTES;
+        const hasRedZone = maxWait >= CRITICAL_WAIT_MINUTES;
         const gateTimedOut = maxWait >= GATE_HOLD_MINUTES;
 
         if (!hasRedZone && !gateTimedOut) {
@@ -361,8 +384,8 @@ async function runEngineInternal(
           if (!activeErr && (activeCount ?? 0) > 0) {
             console.log(
               `[engine] Soft gate active: pool=${waitingCount} ≤ ${GATE_POOL_THRESHOLD}, ` +
-              `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
-              `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
+                `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
+                `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
             );
             return;
           }
@@ -389,7 +412,7 @@ async function runEngineInternal(
       if (estimatedWaiting < minPool) {
         console.log(
           `[engine] Pool diversity cap at slot ${i + 1}: ` +
-          `estimatedWaiting=${estimatedWaiting} < ${minPool} — stopping to preserve pool`
+            `estimatedWaiting=${estimatedWaiting} < ${minPool} — stopping to preserve pool`
         );
         break;
       }
@@ -401,7 +424,9 @@ async function runEngineInternal(
       // "Not enough players" is expected and not an error; anything else is.
       const isExpected = message?.includes("Not enough");
       if (!isExpected) {
-        console.error(`[matchmaking] runEngineInternal: slot ${i + 1}/${slotsAvailable} failed — ${message}`);
+        console.error(
+          `[matchmaking] runEngineInternal: slot ${i + 1}/${slotsAvailable} failed — ${message}`
+        );
       } else if (process.env.DEBUG_MATCHMAKING === "true") {
         console.log(`[matchmaking] runEngineInternal: stopping at slot ${i + 1} — ${message}`);
       }
@@ -500,15 +525,17 @@ export async function promoteOnDeckMatchInternal(
       started_at: now,
     })
     .eq("id", match.id)
-    .eq("status", "pending")    // ← Atomic guard
-    .eq("is_published", true)   // ← Draft guard
+    .eq("status", "pending") // ← Atomic guard
+    .eq("is_published", true) // ← Draft guard
     .select("id")
     .single();
 
   if (updateError || !promotedMatch) {
     if (!promotedMatch && !updateError) {
       // Another concurrent request already promoted this match — bail gracefully.
-      console.warn("[matchmaking] promoteOnDeckMatch: match already promoted by concurrent request, skipping.");
+      console.warn(
+        "[matchmaking] promoteOnDeckMatch: match already promoted by concurrent request, skipping."
+      );
       return { success: false, message: "On-deck match was already promoted by another request." };
     }
     return {
@@ -613,7 +640,14 @@ async function runAlgorithm(
     .eq("is_paused", true);
 
   const pausedSet = new Set((pausedRows ?? []).map((r) => r.player_id));
-  const activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+  let activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+
+  // ── 1c. (Removed) committedSet workaround ────────────────────────────────
+  // Previously, draft players kept status='waiting', requiring a two-query
+  // manual exclusion filter here. Now that create_match_with_players sets
+  // status='drafted' atomically when creating a draft, those players are
+  // absent from v_queue_with_wait_time (which filters status='waiting').
+  // The DB-level guard makes this TypeScript-side workaround redundant.
 
   if (activePool.length < PLAYERS_PER_MATCH) {
     return {
@@ -651,8 +685,8 @@ async function runAlgorithm(
   if (process.env.DEBUG_MATCHMAKING === "true") {
     console.log(
       `[matchmaking] anchor=${anchor.display_name} skill=${anchorSkill} ` +
-      `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
-      `redZone=${anchorIsRedZone} pool=${pool.length}`
+        `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
+        `redZone=${anchorIsRedZone} pool=${pool.length}`
     );
   }
 
@@ -667,7 +701,7 @@ async function runAlgorithm(
   // (saves 2 DB queries per additional on-deck slot filled in one run).
   // Falls back to a fresh fetch when called from single-match paths
   // (callNextMatch inline engine, or direct court assignment).
-  const recentRosters = cachedRecentRosters ?? await fetchRecentRosters(supabase, sessionId);
+  const recentRosters = cachedRecentRosters ?? (await fetchRecentRosters(supabase, sessionId));
 
   // Candidates = everyone except the anchor (already priority-sorted),
   // pre-filtered to remove any player who has already reached the hard
@@ -675,11 +709,13 @@ async function runAlgorithm(
   // enforcement point — it propagates through every downstream path:
   // skill expansion, Tier-1/2 diversity swap, Tier-3 rotation, and the
   // last-resort fallback. No waiver logic anywhere in the call stack.
-  const candidates = pool.slice(1).filter(
-    (c) =>
-      (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
-      MAX_PARTNERSHIP_REPEATS
-  );
+  const candidates = pool
+    .slice(1)
+    .filter(
+      (c) =>
+        (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
+        MAX_PARTNERSHIP_REPEATS
+    );
 
   // Track whether the cap reduced the candidate pool.
   // Used at the no-match return to decide whether to fire the saturation signal.
@@ -761,7 +797,7 @@ async function runAlgorithm(
           if (process.env.DEBUG_MATCHMAKING === "true") {
             console.warn(
               `[matchmaking] Swap target ${swapTarget.display_name} is Red Zone ` +
-              `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
+                `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
             );
           }
           // Fall through to executeMatch with the original group.
@@ -781,7 +817,11 @@ async function runAlgorithm(
 
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (!isDiversityViolation(swappedIds, activeRosters)) {
-              const draft = snakeDraft([anchor, ...swapGroup], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+              const draft = snakeDraft(
+                [anchor, ...swapGroup],
+                partnershipCounts,
+                MAX_PARTNERSHIP_REPEATS
+              );
               if (!draft) {
                 if (process.env.DEBUG_MATCHMAKING === "true") {
                   console.log(
@@ -791,12 +831,22 @@ async function runAlgorithm(
                 continue;
               }
               if (process.env.DEBUG_MATCHMAKING === "true") {
-                console.log(`[matchmaking] Tier-1 swap succeeded — replaced with ${candidate.display_name}`);
+                console.log(
+                  `[matchmaking] Tier-1 swap succeeded — replaced with ${candidate.display_name}`
+                );
               }
               // Inherit isMixed from the current window — swap doesn't change
               // the skill spread, only the 3rd companion.
               const isMixedSwap = maxVariance > SKILL_VARIANCE_MAX;
-              return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, isMixedSwap, isOnDeck);
+              return executeMatch(
+                supabase,
+                sessionId,
+                courtId,
+                draft.teamA,
+                draft.teamB,
+                isMixedSwap,
+                isOnDeck
+              );
             }
           }
 
@@ -822,7 +872,11 @@ async function runAlgorithm(
 
                 const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
                 if (!isDiversityViolation(swappedIds, activeRosters)) {
-                  const draft = snakeDraft([anchor, ...swapGroup], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+                  const draft = snakeDraft(
+                    [anchor, ...swapGroup],
+                    partnershipCounts,
+                    MAX_PARTNERSHIP_REPEATS
+                  );
                   if (!draft) {
                     if (process.env.DEBUG_MATCHMAKING === "true") {
                       console.log(
@@ -837,7 +891,15 @@ async function runAlgorithm(
                     );
                   }
                   // ±SKILL_VARIANCE_MAX is still within normal parameters (not mixed).
-                  return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, false, isOnDeck);
+                  return executeMatch(
+                    supabase,
+                    sessionId,
+                    courtId,
+                    draft.teamA,
+                    draft.teamB,
+                    false,
+                    isOnDeck
+                  );
                 }
               }
             }
@@ -867,7 +929,15 @@ async function runAlgorithm(
           console.warn(
             "[matchmaking] No diverse swap found — applying partner rotation (forced repeat)"
           );
-          return executeMatch(supabase, sessionId, courtId, rotatedResult.teamA, rotatedResult.teamB, isMixedRotation, isOnDeck);
+          return executeMatch(
+            supabase,
+            sessionId,
+            courtId,
+            rotatedResult.teamA,
+            rotatedResult.teamB,
+            isMixedRotation,
+            isOnDeck
+          );
         }
       }
 
@@ -885,10 +955,18 @@ async function runAlgorithm(
       if (process.env.DEBUG_MATCHMAKING === "true") {
         console.log(
           `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +
-          (isMixed ? " (mixed level)" : "")
+            (isMixed ? " (mixed level)" : "")
         );
       }
-      return executeMatch(supabase, sessionId, courtId, draft.teamA, draft.teamB, isMixed, isOnDeck);
+      return executeMatch(
+        supabase,
+        sessionId,
+        courtId,
+        draft.teamA,
+        draft.teamB,
+        isMixed,
+        isOnDeck
+      );
     }
 
     if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -914,7 +992,7 @@ async function runAlgorithm(
     // Apply overlap penalties so we don't accidentally repeat exact matches
     const scoredFallback = scoreCandidates(candidates, overlapMap);
     const fallbackGroup = scoredFallback.slice(0, 3).map((s) => s.candidate);
-    
+
     if (fallbackGroup.length >= 3) {
       const allFour = [anchor, ...fallbackGroup];
       const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
@@ -938,7 +1016,7 @@ async function runAlgorithm(
     if (process.env.DEBUG_MATCHMAKING === "true") {
       console.log(
         `[matchmaking] Cap saturation signal: anchor=${anchor.display_name} ` +
-        `type=${anchorIsRedZone ? "red_zone" : "general"} — emitting broadcast`
+          `type=${anchorIsRedZone ? "red_zone" : "general"} — emitting broadcast`
       );
     }
     broadcastCapSaturation(sessionId, {
@@ -957,7 +1035,6 @@ async function runAlgorithm(
       "Check the Wait Time Monitor for players needing manual intervention.",
   };
 }
-
 
 // ─────────────────────────────────────────────────────────────
 // HELPER: fetchRecentRosters
@@ -1006,9 +1083,7 @@ async function fetchRecentRosters(
     rosterMap.set(row.match_id, list);
   }
 
-  return recentMatchIds
-    .map((id) => rosterMap.get(id) ?? [])
-    .filter((r) => r.length > 0);
+  return recentMatchIds.map((id) => rosterMap.get(id) ?? []).filter((r) => r.length > 0);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1081,7 +1156,7 @@ async function fetchPartnershipCounts(
   if (process.env.DEBUG_MATCHMAKING === "true") {
     console.log(
       `[matchmaking] fetchPartnershipCounts: ${counts.size} tracked pair(s) across ` +
-      `${sessionMatches.length} match(es) for session ${sessionId}`
+        `${sessionMatches.length} match(es) for session ${sessionId}`
     );
   }
 
@@ -1220,43 +1295,68 @@ async function executeMatch(
 ): Promise<MatchmakingResult> {
   // ── Atomic write: match + players + queue statuses + court ──
   // All steps run inside a single Postgres transaction via the
-  // create_match_with_players RPC (migration 20260421000000).
+  // create_match_with_players RPC.
   //
-  // Previously: 3 sequential writes with only partial compensation
-  //   — Write 3 (queue status update) had no error check, meaning
-  //     a failure left matched players stuck as "waiting" and the
-  //     engine could create a duplicate match for them on the next tick.
-  //   — A server crash between Write 1 and Write 2 produced a ghost
-  //     match row with 0 players visible across the TV board and
-  //     leaderboard queries.
+  // RPC evolution:
+  //   20260421000000 — initial atomic write (3 sequential writes → 1 RPC)
+  //   20260506000000 — adds p_is_published for Draft Mode (BUG-001)
+  //   20260507000000 — adds TOCTOU guards (Guard 0 + Guard 1 + Guard 2)
   //
-  // Now: Postgres rolls back the entire transaction on any failure.
+  // NULL return convention:
+  //   The RPC returns RETURNS uuid (scalar). When any guard detects a
+  //   conflict or a player no longer 'waiting', it returns NULL instead
+  //   of raising an exception. The Supabase JS client surfaces this as
+  //   { data: null, error: null } — distinct from a hard error
+  //   ({ data: null, error: PostgrestError }). The split checks below
+  //   rely on this scalar-NULL contract; if the RPC were ever changed to
+  //   RETURNS SETOF uuid, PostgREST would wrap null as [] and this
+  //   detection would break silently.
   const now = new Date().toISOString();
 
   // BUG-001 fix: pass p_is_published=false so the RPC skips the
   // queue_entries update for engine drafts. Players stay 'waiting'
   // until publishMatchAction promotes them to 'on_deck', preventing
   // the ON_DECK_WARNING alert from firing for an invisible match.
-  const { data: matchId, error: rpcError } = await supabase.rpc(
-    "create_match_with_players",
-    {
-      p_session_id:     sessionId,
-      p_court_id:       isOnDeck ? null : courtId,
-      p_status:         isOnDeck ? "pending" : "in_progress",
-      p_is_mixed_level: isMixedLevel,
-      p_started_at:     isOnDeck ? null : now,
-      p_is_on_deck:     isOnDeck,
-      p_team_a_ids:     teamA.map((p) => p.player_id),
-      p_team_b_ids:     teamB.map((p) => p.player_id),
-      p_origin:         "auto" as const,
-      p_is_published:   false,
-    }
-  );
+  const { data: matchId, error: rpcError } = await supabase.rpc("create_match_with_players", {
+    p_session_id: sessionId,
+    p_court_id: isOnDeck ? null : courtId,
+    p_status: isOnDeck ? "pending" : "in_progress",
+    p_is_mixed_level: isMixedLevel,
+    p_started_at: isOnDeck ? null : now,
+    p_is_on_deck: isOnDeck,
+    p_team_a_ids: teamA.map((p) => p.player_id),
+    p_team_b_ids: teamB.map((p) => p.player_id),
+    p_origin: "auto" as const,
+    p_is_published: false,
+  });
 
-  if (rpcError || !matchId) {
+  if (rpcError) {
+    // Hard DB error — surface as a genuine failure.
     return {
       success: false,
-      message: `Failed to create match: ${rpcError?.message ?? "Unknown error"}`,
+      message: `Failed to create match: ${rpcError.message}`,
+    };
+  }
+
+  if (!matchId) {
+    // RPC returned NULL: the DB-level TOCTOU guard detected that a
+    // concurrent transaction already committed one or more of the
+    // proposed players into an active match. This is not an error —
+    // it's the correct serialised outcome. Log a warning so operators
+    // can monitor frequency, then signal a graceful slot-skip to the
+    // caller (runEngineInternal logs the skip and moves to the next slot).
+    console.warn(
+      "[matchmaking] executeMatch: RPC returned NULL — concurrent matchmaking " +
+        "run already committed one or more of these players. Skipping slot gracefully.",
+      {
+        sessionId,
+        teamA: teamA.map((p) => p.display_name),
+        teamB: teamB.map((p) => p.display_name),
+      }
+    );
+    return {
+      success: false,
+      message: "Slot skipped: player already committed by a concurrent matchmaking run.",
     };
   }
 

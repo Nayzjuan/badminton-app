@@ -1,0 +1,167 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+
+const tables = [
+  { name: 'profiles',               pk: 'uuid = auth.users.id',  desc: 'One row per player — display name, skill level, PIN, VIP tag.' },
+  { name: 'sessions',               pk: 'uuid',                   desc: 'A game session (gym booking). Controls auto-matchmaking, scoring format, court time limit.' },
+  { name: 'session_organizers',     pk: 'uuid',                   desc: 'Append-only ACL. Presence of a row = organizer permission. NEVER delete.' },
+  { name: 'courts',                 pk: 'uuid',                   desc: 'Physical courts within a session. Status: available | in_use | closed.' },
+  { name: 'queue_entries',          pk: 'uuid',                   desc: 'One row per player per session. Tracks status, wait position, pause state, games played.' },
+  { name: 'matches',                pk: 'uuid',                   desc: 'A 2v2 game. Nullable court_id = on-deck. is_published = false means draft (hidden from players).' },
+  { name: 'match_players',          pk: 'uuid',                   desc: 'Junction: 4 rows per match assigning players to team "a" or "b".' },
+  { name: 'match_games',            pk: 'uuid',                   desc: 'Sub-records for best_of_3 / best_of_5 sets within a match.' },
+  { name: 'session_wrapped_stats',  pk: 'uuid',                   desc: 'End-of-session award stats computed by compute_session_wrapped() RPC.' },
+  { name: 'identity_migrations',    pk: 'uuid',                   desc: 'Audit log of PIN-based anonymous UUID reconnects.' },
+  { name: 'push_subscriptions',     pk: 'uuid',                   desc: 'Web Push / VAPID subscription records. Requires endpoint + p256dh + auth_key.' },
+];
+
+const enums = [
+  { name: 'skill_level',    values: 'beginner · lower_intermediate · intermediate · upper_intermediate · lower_advanced · advanced',  note: '⚠️ upper_beginner removed — never reference it' },
+  { name: 'court_status',   values: 'available · in_use · closed',                                                                   note: '' },
+  { name: 'queue_status',   values: 'waiting · on_deck · playing · left',                                                            note: 'State machine — see Flows for transitions' },
+  { name: 'match_status',   values: 'pending · in_progress · completed · cancelled',                                                 note: '' },
+  { name: 'match_origin',   values: 'auto · manual · modified',                                                                      note: '"manual" is sticky — never demoted back to "auto"' },
+  { name: 'scoring_format', values: 'single · best_of_3 · best_of_5',                                                               note: 'Set per session; drives match_games creation' },
+];
+
+const views = [
+  { name: 'v_queue_with_wait_time',    desc: 'queue_entries + profiles. Computes wait_minutes, is_bottleneck flag, skill_level_int.' },
+  { name: 'v_match_history',           desc: 'matches + match_players + profiles. Includes scores and game_scores JSON.' },
+  { name: 'v_recent_pairings',         desc: '⚠️ UNUSED — exists in DB but engine uses 3-step manual join instead. Safe to drop.' },
+  { name: 'v_session_leaderboard',     desc: 'Per-session stats: GP, W, L, Win%, PF, PA, +/−.' },
+  { name: 'v_alltime_leaderboard_mat', desc: 'Materialized all-time stats (same columns, no session filter). Refreshed via RPC.' },
+];
+
+const rpcs = [
+  { name: 'create_match_with_players(...)',       returns: 'uuid | NULL',  desc: 'Creates match + assigns players atomically. Returns NULL (not error) on TOCTOU conflict via 3 DB guards.' },
+  { name: 'swap_player_in_match(...)',            returns: 'void',          desc: 'Bench → on-deck swap: atomic DELETE+INSERT+UPDATE×2+recompute.' },
+  { name: 'swap_match_players(...)',              returns: 'void',          desc: 'Cross-match direct swap (Tap-to-Swap v2). Atomic.' },
+  { name: 'elevate_to_organizer(session, code)',  returns: 'void',          desc: 'Passcode-gated co-organizer promotion.' },
+  { name: 'rejoin_queue(session)',                returns: 'void',          desc: 'Reset status to "waiting", preserve games_played.' },
+  { name: 'migrate_player_identity(old, new)',    returns: 'void',          desc: 'PIN reconnect: rewires all FK references from old UUID to new UUID.' },
+  { name: 'compute_session_wrapped(session)',     returns: 'void',          desc: 'Upserts session_wrapped_stats for all players in session.' },
+  { name: 'get_h2h_record(teamA, teamB, session)',returns: 'table',         desc: 'Win counts for exact 2v2 pairing. Called for H2H strip on on-deck cards.' },
+  { name: 'toggle_auto_matchmaking(session)',     returns: 'bool',          desc: 'Atomic toggle, returns new boolean value.' },
+  { name: 'lookup_active_session(session)',       returns: 'table',         desc: 'Safe public lookup for QR-code join — no RLS exposure.' },
+  { name: 'skill_level_to_int(lvl)',              returns: 'int',           desc: 'Enum → numeric 1–6.' },
+  { name: 'refresh_alltime_leaderboard()',        returns: 'void',          desc: 'Refreshes the materialized leaderboard view.' },
+  { name: 'get_player_streaks(session?)',         returns: 'table',         desc: 'Win-streak per player, optionally scoped to session.' },
+];
+---
+
+<BaseLayout title="Database" description="Interactive schema explorer for all tables, enums, views, and RPCs.">
+  <PageHeader
+    title="Database Schema Explorer"
+    subtitle="All 9 tables, 6 enums, 5 views, and 13 Postgres RPCs. Interactive ER diagram and FK overlays coming in Phase 2."
+    phase={2}
+    phaseStatus="next"
+  />
+
+  <div class="px-8 py-8 space-y-10">
+
+    <!-- Tables -->
+    <section id="tables" class="scroll-mt-6">
+      <h2 class="text-lg font-bold text-ink mb-1">Tables <span class="text-ink-3 font-normal text-base ml-1">9</span></h2>
+      <p class="text-sm text-ink-3 mb-4">Phase 2 will add a full ER diagram with FK arrows, trigger annotations, and RLS policy summaries per table.</p>
+      <div class="dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th>Table</th>
+              <th>Primary Key</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tables.map(t => (
+              <tr>
+                <td><code class="font-mono text-accent text-xs">{t.name}</code></td>
+                <td class="text-xs text-ink-3 font-mono">{t.pk}</td>
+                <td class="text-xs text-ink-3">{t.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Enums -->
+    <section>
+      <h2 class="text-lg font-bold text-ink mb-1">Enums <span class="text-ink-3 font-normal text-base ml-1">6</span></h2>
+      <div class="dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th>Enum</th>
+              <th>Values</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {enums.map(e => (
+              <tr>
+                <td><code class="font-mono text-accent text-xs">{e.name}</code></td>
+                <td class="text-xs text-ink-3 font-mono">{e.values}</td>
+                <td class="text-xs text-warn">{e.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Views -->
+    <section>
+      <h2 class="text-lg font-bold text-ink mb-1">Views <span class="text-ink-3 font-normal text-base ml-1">5</span></h2>
+      <div class="dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th>View</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {views.map(v => (
+              <tr>
+                <td><code class="font-mono text-accent text-xs">{v.name}</code></td>
+                <td class="text-xs text-ink-3">{v.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- RPCs -->
+    <section>
+      <h2 class="text-lg font-bold text-ink mb-1">Postgres RPCs <span class="text-ink-3 font-normal text-base ml-1">13</span></h2>
+      <div class="dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th>Function</th>
+              <th>Returns</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rpcs.map(r => (
+              <tr>
+                <td><code class="font-mono text-accent text-xs whitespace-nowrap">{r.name}</code></td>
+                <td class="text-xs text-note font-mono whitespace-nowrap">{r.returns}</td>
+                <td class="text-xs text-ink-3">{r.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="text-xs text-ink-3 mt-2">
+        ⚠️ <code class="text-accent font-mono text-xs">create_match_with_players</code> returns <code class="font-mono text-xs">uuid</code> scalar (never <code class="font-mono text-xs">SETOF uuid</code>).
+        A NULL return = TOCTOU guard fired gracefully. A <code class="font-mono text-xs">PostgrestError</code> = hard DB error. Check separately.
+      </p>
+    </section>
+
+  </div>
+</BaseLayout>

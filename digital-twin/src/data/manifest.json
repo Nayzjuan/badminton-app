@@ -1,0 +1,1786 @@
+{
+  "_version": 2,
+  "_lastExtracted": "2026-05-10T06:50:01.439Z",
+  "tables": [
+    {
+      "name": "profiles",
+      "typeName": "Profile",
+      "desc": "profiles table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": "uuid — references auth.users"
+        },
+        {
+          "name": "display_name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "skill_level",
+          "type": "SkillLevel",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "pin",
+          "type": "string",
+          "nullable": true,
+          "note": "4-digit reconnect PIN"
+        },
+        {
+          "name": "vip_tag",
+          "type": "string",
+          "nullable": true,
+          "note": "VIP tag label shown as a floating badge (e.g. \"DEV\", \"MVP\"). Set directly in the Supabase dashboard. null = no tag."
+        },
+        {
+          "name": "vip_theme",
+          "type": "string",
+          "nullable": true,
+          "note": "VIP theme key that controls the visual treatment (neon/holo). Must match a key in VIP_THEMES from @/lib/vip-config."
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": "ISO 8601 timestamptz"
+        },
+        {
+          "name": "updated_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "sessions",
+      "typeName": "Session",
+      "desc": "sessions table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "created_by",
+          "type": "string",
+          "nullable": false,
+          "note": "uuid — references profiles.id"
+        },
+        {
+          "name": "organizer_passcode",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "scoring",
+          "type": "ScoringFormat",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "is_active",
+          "type": "boolean",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "is_auto_matchmaking_on",
+          "type": "boolean",
+          "nullable": false,
+          "note": "organizer toggle — auto-fill courts on match completion"
+        },
+        {
+          "name": "court_time_limit_minutes",
+          "type": "number",
+          "nullable": true,
+          "note": "per-session court time cap; null = no limit"
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "ended_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "session_organizers",
+      "typeName": "SessionOrganizer",
+      "desc": "session_organizers table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "granted_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "courts",
+      "typeName": "Court",
+      "desc": "courts table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "status",
+          "type": "CourtStatus",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "queue_entries",
+      "typeName": "QueueEntry",
+      "desc": "queue_entries table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "joined_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "games_played",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "status",
+          "type": "QueueStatus",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "position",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "is_paused",
+          "type": "boolean",
+          "nullable": false,
+          "note": "Soft-pause: player stays visible but is excluded from matchmaking."
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "matches",
+      "typeName": "Match",
+      "desc": "matches table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "court_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "status",
+          "type": "MatchStatus",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "team_a_score",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "team_b_score",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "is_mixed_level",
+          "type": "boolean",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "sort_order",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "origin",
+          "type": "MatchOrigin",
+          "nullable": false,
+          "note": "How the match was created. NOT NULL — defaults to 'auto' for all rows."
+        },
+        {
+          "name": "is_published",
+          "type": "boolean",
+          "nullable": false,
+          "note": "Draft Mode — false until the organizer explicitly publishes. Auto-engine matches start as false (drafts hidden from players/TV). Manual matches are inserted with true (bypass draft review)."
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "started_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "completed_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "match_games",
+      "typeName": "MatchGame",
+      "desc": "match_games table (for multi-set scoring)",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "match_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "game_number",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "team_a_score",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "team_b_score",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "completed_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "match_players",
+      "typeName": "MatchPlayer",
+      "desc": "match_players table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "match_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "team",
+          "type": "Team",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "push_subscriptions",
+      "typeName": "PushSubscription",
+      "desc": "push_subscriptions table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "endpoint",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "p256dh",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "auth_key",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "user_agent",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "session_wrapped_stats",
+      "typeName": "SessionWrappedStats",
+      "desc": "session_wrapped_stats table",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "computed_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "games_played",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wins",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "losses",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "points_for",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "points_against",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "point_diff",
+          "type": "number",
+          "nullable": false,
+          "note": "GENERATED ALWAYS AS (points_for - points_against)"
+        },
+        {
+          "name": "win_pct",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "win_streak",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_rank",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "earned_awards",
+          "type": "string[]",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "award_data",
+          "type": "Record<string, Record<string, unknown>>",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "intro_dismissed_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "carry_forward",
+          "type": "Record<string, unknown>",
+          "nullable": false,
+          "note": "Small payload written at session close, read by next session's RPC. Shape: { ended_on_win_streak: number, session_win_pct: number, session_id: string }"
+        }
+      ]
+    },
+    {
+      "name": "player_rivalries",
+      "typeName": "PlayerRivalry",
+      "desc": "player_rivalries table — running all-time H2H ledger between players (directional)",
+      "columns": [
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "rival_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wins_vs",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "losses_vs",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "sessions_faced",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "last_session_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "last_faced_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "player_partnerships",
+      "typeName": "PlayerPartnership",
+      "desc": "player_partnerships table — running all-time partnership ledger between players (directional)",
+      "columns": [
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "partner_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "games_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wins_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "losses_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "sessions_together",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "last_session_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "last_played_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "identity_migrations",
+      "typeName": "IdentityMigration",
+      "desc": "identity_migrations table — audit log of every old → new UUID reconnect",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "old_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "new_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "display_name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "migrated_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    }
+  ],
+  "views": [
+    {
+      "name": "v_queue_with_wait_time",
+      "typeName": "QueueWithWaitTime",
+      "desc": "v_queue_with_wait_time view",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "joined_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "games_played",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "status",
+          "type": "QueueStatus",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "position",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "is_paused",
+          "type": "boolean",
+          "nullable": false,
+          "note": "Soft-pause: player stays visible but is excluded from matchmaking."
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "display_name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "skill_level",
+          "type": "SkillLevel",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "skill_level_int",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wait_minutes",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "is_bottleneck",
+          "type": "boolean",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "v_match_history",
+      "typeName": "MatchHistory",
+      "desc": "v_match_history view",
+      "columns": [
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "match_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "court_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "court_name",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "team",
+          "type": "Team",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "team_a_score",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "team_b_score",
+          "type": "number",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "match_status",
+          "type": "MatchStatus",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "completed_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "match_origin",
+          "type": "MatchOrigin",
+          "nullable": false,
+          "note": "Origin of the match as recorded at completion time."
+        },
+        {
+          "name": "game_scores",
+          "type": "GameScore[]",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "teammates",
+          "type": "string[]",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "opponents",
+          "type": "string[]",
+          "nullable": true,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "v_recent_pairings",
+      "typeName": "RecentPairing",
+      "desc": "v_recent_pairings view",
+      "columns": [
+        {
+          "name": "player_a",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_b",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "completed_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "relationship",
+          "type": "\"teammate\" | \"opponent\"",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "v_session_leaderboard",
+      "typeName": "v_session_leaderboard",
+      "desc": "",
+      "columns": [
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "display_name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "games_played",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wins",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "losses",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "points_for",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "points_against",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "point_diff",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "win_pct",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "v_alltime_leaderboard_mat",
+      "typeName": "v_alltime_leaderboard_mat",
+      "desc": "",
+      "columns": [
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "display_name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "games_played",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "wins",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "losses",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "points_for",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "points_against",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "point_diff",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "win_pct",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    }
+  ],
+  "enums": [
+    {
+      "name": "skill_level",
+      "typeName": "SkillLevel",
+      "values": [
+        "beginner",
+        "lower_intermediate",
+        "intermediate",
+        "upper_intermediate",
+        "lower_advanced",
+        "advanced"
+      ]
+    },
+    {
+      "name": "court_status",
+      "typeName": "CourtStatus",
+      "values": ["available", "in_use", "closed"]
+    },
+    {
+      "name": "queue_status",
+      "typeName": "QueueStatus",
+      "values": ["waiting", "on_deck", "playing", "left"]
+    },
+    {
+      "name": "match_status",
+      "typeName": "MatchStatus",
+      "values": ["pending", "in_progress", "completed", "cancelled"]
+    },
+    {
+      "name": "scoring_format",
+      "typeName": "ScoringFormat",
+      "values": ["single", "best_of_3", "best_of_5"]
+    },
+    {
+      "name": "match_origin",
+      "typeName": "MatchOrigin",
+      "values": ["auto", "manual", "modified"]
+    }
+  ],
+  "rpcs": [
+    {
+      "name": "elevate_to_organizer",
+      "returns": "boolean",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_passcode",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "rejoin_queue",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "skill_level_to_int",
+      "returns": "number",
+      "args": [
+        {
+          "name": "lvl",
+          "type": "SkillLevel",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "get_player_streaks",
+      "returns": "{ player_id: string; win_streak: number }[]",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string | null",
+          "optional": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "get_alltime_snapshot_before",
+      "returns": "{ player_id: string; display_name: string; games_played: number; wins: number; losses: number; points_for: number; points_against: number; point_diff: number; win_pct: number; }[]",
+      "args": [
+        {
+          "name": "p_cutoff",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "refresh_alltime_leaderboard",
+      "returns": "void",
+      "args": [
+        {
+          "name": "—",
+          "type": "Record<string, never>",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "swap_player_in_match",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_out_player_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_in_player_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_team",
+          "type": "\"a\" | \"b\"",
+          "optional": false
+        },
+        {
+          "name": "p_is_published",
+          "type": "boolean",
+          "optional": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "swap_match_players",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_a_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_a_player_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_b_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_b_player_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "create_match_with_players",
+      "returns": "string",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_court_id",
+          "type": "string | null",
+          "optional": false
+        },
+        {
+          "name": "p_status",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_is_mixed_level",
+          "type": "boolean",
+          "optional": false
+        },
+        {
+          "name": "p_started_at",
+          "type": "string | null",
+          "optional": false
+        },
+        {
+          "name": "p_is_on_deck",
+          "type": "boolean",
+          "optional": false
+        },
+        {
+          "name": "p_team_a_ids",
+          "type": "string[]",
+          "optional": false
+        },
+        {
+          "name": "p_team_b_ids",
+          "type": "string[]",
+          "optional": false
+        },
+        {
+          "name": "p_origin",
+          "type": "MatchOrigin",
+          "optional": true
+        },
+        {
+          "name": "p_is_published",
+          "type": "boolean",
+          "optional": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "compute_session_wrapped",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "refresh_cross_session_stats",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "get_h2h_record",
+      "returns": "{ alltime_a: number; alltime_b: number; session_a: number; session_b: number; }[]",
+      "args": [
+        {
+          "name": "p_team_a",
+          "type": "string[]",
+          "optional": false
+        },
+        {
+          "name": "p_team_b",
+          "type": "string[]",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "toggle_auto_matchmaking",
+      "returns": "boolean | null",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "migrate_player_identity",
+      "returns": "boolean",
+      "args": [
+        {
+          "name": "p_old_user_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_new_user_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "lookup_active_session",
+      "returns": "{ id: string; name: string; is_active: boolean }[]",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    }
+  ],
+  "constants": [
+    {
+      "name": "BOTTLENECK_THRESHOLD_MINUTES",
+      "value": 20,
+      "desc": "Minutes before a player is flagged as a \"bottleneck\" in the wait time monitor."
+    },
+    {
+      "name": "SKILL_VARIANCE_TARGET",
+      "value": 1,
+      "desc": "Target skill level difference for matchmaking (+/- 1 level)."
+    },
+    {
+      "name": "SKILL_VARIANCE_MAX",
+      "value": 2,
+      "desc": "Absolute maximum skill level difference allowed (+/- 2 levels)."
+    },
+    {
+      "name": "PLAYERS_PER_MATCH",
+      "value": 4,
+      "desc": "Number of players per court (strictly doubles)."
+    },
+    {
+      "name": "ANTI_REPEAT_LOOKBACK",
+      "value": 5,
+      "desc": "Number of recent matches to check for anti-repeat logic."
+    },
+    {
+      "name": "FALLBACK_WAIT_MINUTES",
+      "value": 15,
+      "desc": "Minutes before the time-based fallback kicks in (bypasses skill windows entirely)."
+    },
+    {
+      "name": "CRITICAL_WAIT_MINUTES",
+      "value": 25,
+      "desc": "Red Zone threshold — wait time in minutes at which a player's priority overrides their game debt entirely. Score = 1000 + waitMinutes so they always anchor the next match regardless of how many games they've played."
+    },
+    {
+      "name": "GAME_PENALTY_MINUTES",
+      "value": 12,
+      "desc": "Game penalty applied in normal-queue priority scoring. Each game played subtracts this many \"virtual minutes\" from the player's effective wait time, so frequent players yield the queue to fresher ones. priorityScore = waitMinutes - (gamesPlayed * GAME_PENALTY_MINUTES)"
+    },
+    {
+      "name": "RED_ZONE_SCORE_FLOOR",
+      "value": 1000,
+      "desc": "Sentinel score floor for Red Zone players. Any player with priorityScore >= RED_ZONE_SCORE_FLOOR is in the Red Zone, meaning their urgency overrides game debt entirely. Score formula: 1000 + waitMinutes (always > any Normal-queue score)."
+    },
+    {
+      "name": "GATE_POOL_THRESHOLD",
+      "value": 4,
+      "desc": "Soft gate — maximum waiting-pool size that triggers cross-court mixing deferral in runEngineInternal. When the pool of waiting players is at or below this count AND at least one match is currently in progress, the engine holds on-deck generation so that returning players from the active court can be included in a larger, more diverse scheduling pool. Why 4: a pool of exactly 4 means there is only ONE possible combination — the same players who just finished together. The gate prevents this repeat by waiting for the active court to also finish, doubling the pool to 8."
+    },
+    {
+      "name": "GATE_HOLD_MINUTES",
+      "value": 8,
+      "desc": "Soft gate — minutes a player must wait before the gate releases automatically. Once any waiting player has been in the queue for this long, the gate stops holding and schedules from whatever pool is available (partner rotation then handles variety within the forced group). Set below FALLBACK_WAIT_MINUTES (15) so the gate never delays longer than the time-based fallback that already overrides skill matching."
+    },
+    {
+      "name": "ON_DECK_LOOKAHEAD",
+      "value": 1,
+      "desc": "Extra on-deck slots generated beyond the number of open courts. capacity = courtCount + ON_DECK_LOOKAHEAD, capped at MAX_ON_DECK_MATCHES. With the default of 1 and a cap of 2: 1 court  → 2 on-deck  (1 + 1 = 2, at cap) 2 courts → 2 on-deck  (2 + 1 = 3, capped to 2) 3 courts → 2 on-deck  (3 + 1 = 4, capped to 2) The lookahead match absorbs the gap between a court finishing and the engine refilling: even if two courts end almost simultaneously, there is always a queued match for the second one rather than a brief idle period. The engine's fill loop already stops gracefully when the pool is exhausted, so this never creates phantom matches."
+    },
+    {
+      "name": "MAX_ON_DECK_MATCHES",
+      "value": 2,
+      "desc": "Hard ceiling on the number of on-deck (pending) matches the engine will auto-generate. The uncapped formula (courtCount + ON_DECK_LOOKAHEAD) can produce 3-5 on-deck matches for 2-4 courts, which makes the queue list confusingly short and commits too many players to specific partners before new players arrive. Set to 2 so the organizer always sees at least 2 matches queued but the engine never speculates further than one match beyond what is immediately needed. Existing on-deck matches at session runtime are not affected — the cap only gates new generation."
+    },
+    {
+      "name": "MAX_AUTO_DRAFTS",
+      "value": 3,
+      "desc": "Hard cap on the combined total of published + unpublished pending matches the engine will auto-generate across successive runs. Previously the engine counted only published matches toward capacity, so unpublished drafts were invisible — each court-finish trigger generated up to 2 more drafts regardless of how many already existed, reaching 7+ drafts before the organizer could review any of them. Formula: slotsAvailable = max(0, MAX_AUTO_DRAFTS − published − drafts) Dynamic behaviour: 0 approved + 0 drafts → up to 3 new drafts (pool diversity cap applies) 2 approved + 0 drafts → 1 new draft  (prevents on-deck crowding) 2 approved + 1 draft  → 0            (at cap) 0 approved + 3 drafts → 0            (at cap)"
+    },
+    {
+      "name": "MIN_FREE_POOL_FOR_ON_DECK",
+      "value": 4,
+      "desc": "Minimum number of waiting players that must remain in the free pool after each on-deck match is generated (applies from the 2nd slot onwards). Before filling on-deck slot N (N ≥ 1), the engine checks: estimatedWaiting >= PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK Set to PLAYERS_PER_MATCH (4) so that after one on-deck generation, at least 4 players remain free. When those players return from a court, the pool grows back to 8 — enough for diverse scheduling without forcing the same group to re-play. Why first slot (i=0) is exempt: the engine must always be able to queue at least one match, otherwise the session stalls when the pool is small (e.g., 4 players waiting and no active courts). The soft gate already handles the \"wait for returning players\" case; this cap handles the \"don't pre-commit more matches than the pool can support\" case. Organizer bypass (callNextMatch with bypassGate=true) skips this cap."
+    },
+    {
+      "name": "MAX_PARTNERSHIP_REPEATS",
+      "value": 2,
+      "desc": "Hard cap on the number of times two players may appear on the same team within a single session. Once a pair reaches this count they are excluded from every team-assignment path (snakeDraft / rotatedDraft). No waivers — Red Zone urgency, last-resort fallback, and tier isolation do NOT bypass this cap. If no valid team split exists, the slot returns no-match and a saturation signal fires so the organizer can intervene. Manual organizer assignment is the only bypass."
+    }
+  ],
+  "actions": [
+    {
+      "file": "auth.ts",
+      "functions": [
+        "signInAnonymously",
+        "reconnectPlayer",
+        "signOut",
+        "playerLogOut",
+        "getCurrentProfile"
+      ]
+    },
+    {
+      "file": "dev.ts",
+      "functions": ["seedTestData", "seedNamedPlayers", "clearSessionData"]
+    },
+    {
+      "file": "h2h.ts",
+      "functions": ["getH2HRecord"]
+    },
+    {
+      "file": "leaderboard.ts",
+      "functions": ["getSessionLeaderboard", "getAllTimeLeaderboard", "getPlayerStats"]
+    },
+    {
+      "file": "match.ts",
+      "functions": [
+        "submitMatchScore",
+        "endMatchAction",
+        "updateMatchDetails",
+        "cancelMatchAction",
+        "createManualMatchAction",
+        "clearOnDeckMatch",
+        "reorderOnDeckMatches",
+        "publishMatchAction",
+        "publishAllDraftMatchesAction"
+      ]
+    },
+    {
+      "file": "matchmaking.ts",
+      "functions": ["callNextMatch", "runEngineForSession", "promoteOnDeckMatchInternal"]
+    },
+    {
+      "file": "notifications.ts",
+      "functions": ["sendPlayerNotification"]
+    },
+    {
+      "file": "profile.ts",
+      "functions": ["updatePlayerSkill", "getPlayerPin", "resetPlayerPin", "updatePlayerPin"]
+    },
+    {
+      "file": "queue.ts",
+      "functions": ["togglePlayerPause", "checkoutPlayer", "joinQueueAction"]
+    },
+    {
+      "file": "sessions.ts",
+      "functions": [
+        "createSession",
+        "joinAsCoOrganizer",
+        "toggleAutoMatchmaking",
+        "updateSessionSettings",
+        "closeSession"
+      ]
+    },
+    {
+      "file": "swap-player.ts",
+      "functions": ["swapPlayerInMatch", "swapMatchPlayers"]
+    },
+    {
+      "file": "tv.ts",
+      "functions": ["getTvData"]
+    },
+    {
+      "file": "wrapped.ts",
+      "functions": ["dismissWrappedIntro"]
+    }
+  ],
+  "channels": [],
+  "broadcasts": [],
+  "gotchas": [
+    {
+      "id": "type-not-interface",
+      "title": "`type` not `interface` for DB rows",
+      "body": "All DB row types in src/types/database.ts must be `type` aliases, never `interface`. Supabase's generic system requires sealed types — interfaces are open and cause silent type widening.",
+      "severity": "warn",
+      "category": "TypeScript",
+      "link": "/database"
+    },
+    {
+      "id": "service-client-mutations",
+      "title": "Service client for all cross-user mutations",
+      "body": "Any write that touches another user's row must use createServiceClient(). Using the RLS client silently returns 0 rows for the primary organizer — no error, no write.",
+      "severity": "critical",
+      "category": "Auth / RLS",
+      "link": "/actions"
+    },
+    {
+      "id": "sign-out-before-anonymous",
+      "title": "`signOut()` before `signInAnonymously()`",
+      "body": "reconnectPlayer always calls signOut() first. Skipping this causes a stale session conflict that silently fails the entire identity migration — the player loses their history.",
+      "severity": "critical",
+      "category": "Auth / RLS",
+      "link": "/flows"
+    },
+    {
+      "id": "auto-matchmaking-no-postgres-changes",
+      "title": "`is_auto_matchmaking_on` excluded from postgres_changes",
+      "body": "sessions RLS SELECT only grants access to the row creator. A co-organizer's postgres_changes subscription for this field is silently dropped. It must sync exclusively via the `auto_matchmaking_toggled` broadcast.",
+      "severity": "critical",
+      "category": "Realtime",
+      "link": "/realtime"
+    },
+    {
+      "id": "create-match-null-on-toctou",
+      "title": "`create_match_with_players` returns NULL on TOCTOU conflict",
+      "body": "{ data: null, error: null } means a DB guard fired — not a hard error. Always check rpcError and !matchId separately. !matchId with no error = graceful slot-skip (log + continue).",
+      "severity": "critical",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "engine-running-for-process-local",
+      "title": "`engineRunningFor` Set is process-local only",
+      "body": "Prevents double-runs within one Node.js process but is useless on Vercel serverless (each request = new worker). Cross-process serialization is handled exclusively by the DB-level TOCTOU guard in create_match_with_players.",
+      "severity": "critical",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "session-organizers-append-only",
+      "title": "`session_organizers` is append-only",
+      "body": "Never DELETE or UPDATE rows in session_organizers. Presence of a row = permission granted. Deleting a row removes organizer access with no undo.",
+      "severity": "critical",
+      "category": "Schema",
+      "link": "/database"
+    },
+    {
+      "id": "auth-users-trigger",
+      "title": "`auth.users` trigger auto-creates profile",
+      "body": "Inserting into auth.users auto-creates a profiles row via handle_new_user(). Do not also insert a profile manually — you will hit a PK conflict.",
+      "severity": "critical",
+      "category": "Schema",
+      "link": "/database"
+    },
+    {
+      "id": "sessions-trigger",
+      "title": "`sessions` trigger auto-inserts organizer row",
+      "body": "Inserting into sessions auto-inserts a session_organizers row for created_by via handle_new_session(). Do not also insert an organizer row manually.",
+      "severity": "critical",
+      "category": "Schema",
+      "link": "/database"
+    },
+    {
+      "id": "build-overlap-map-async",
+      "title": "`buildOverlapMap` is async/DB — not in matchmaking-core",
+      "body": "buildOverlapMap lives in matchmaking.ts (async DB call) not in matchmaking-core.ts (pure logic). Moving it to core would add a DB dependency to a pure function file.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "recent-rosters-hoisted",
+      "title": "`recentRosters` hoisted once; `overlapMap` per-anchor",
+      "body": "recentRosters is the same for all anchors in one engine run and is fetched once before the loop. overlapMap is anchor-specific and must be recomputed inside the per-anchor tick — not hoisted.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "cancel-match-auto-promotes",
+      "title": "`cancelMatchAction` auto-promotes oldest on-deck match",
+      "body": "Cancelling a match does not leave the court idle. It auto-promotes the oldest published on-deck match and re-runs the engine. Handle the cascade in the UI — don't assume cancellation is a no-op.",
+      "severity": "warn",
+      "category": "Match",
+      "link": "/actions"
+    },
+    {
+      "id": "draft-mode-blocks-call-next",
+      "title": "Draft mode blocks `callNextMatch`",
+      "body": "If all pending matches are drafts (is_published = false), callNextMatch returns hasDraftsBlocking: true instead of promoting a match. The organizer must publish drafts first.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "snake-draft-null-guard",
+      "title": "`snakeDraft` / `rotatedDraft` return `null` on cap block",
+      "body": "Both draft functions return null when MAX_PARTNERSHIP_REPEATS blocks every valid team split. null = slot failure, not an error. All callers must null-guard — an unguarded null propagates as a phantom match.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "ghost-requeue-prevention",
+      "title": "Ghost re-queue prevention on match end/cancel",
+      "body": "match end/cancel checks queue_entries.status before re-queuing. A player with status 'left' is NOT re-queued even if they appear in match_players. Prevents ghost players re-appearing after checkout.",
+      "severity": "warn",
+      "category": "Queue",
+      "link": "/actions"
+    },
+    {
+      "id": "active-match-rejoin-guard",
+      "title": "Active-match re-join guard in `joinQueueAction`",
+      "body": "joinQueueAction rejects if the player's current queue status is 'playing'. Guards against double-queue on rapid re-tap (e.g. network retry). Returns a clean error — not a silent no-op.",
+      "severity": "warn",
+      "category": "Queue",
+      "link": "/actions"
+    },
+    {
+      "id": "uuid-validation-all-actions",
+      "title": "UUID validation required before every DB call",
+      "body": "Every server action must call isValidUUID() on every UUID parameter. Malformed IDs return early with a clean error — they never reach PostgREST. Missing this guard exposes the action to injection via crafted UUIDs.",
+      "severity": "warn",
+      "category": "Actions",
+      "link": "/actions"
+    },
+    {
+      "id": "on-deck-actions-in-match-not-matchmaking",
+      "title": "On-deck actions live in `match.ts`, not `matchmaking.ts`",
+      "body": "clearOnDeckMatch, reorderOnDeckMatches, publishMatchAction, and publishAllDraftMatchesAction all live in match.ts. Only engine entry points (callNextMatch, runEngineForSession) live in matchmaking.ts.",
+      "severity": "warn",
+      "category": "Actions",
+      "link": "/actions"
+    },
+    {
+      "id": "max-auto-drafts-replaces-formula",
+      "title": "`MAX_AUTO_DRAFTS` replaces the old capacity formula",
+      "body": "MAX_ON_DECK_MATCHES and ON_DECK_LOOKAHEAD are no longer used by the live engine (kept in constants.ts for simulate-engine.ts only). The live engine uses slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending) with a single atomic count — never split into published/draft counts.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "skill-level-6-values",
+      "title": "Skill level has exactly 6 values — `upper_beginner` removed",
+      "body": "The skill_level enum is: beginner, lower_intermediate, intermediate, upper_intermediate, lower_advanced, advanced. upper_beginner was removed. Never reference it in code or migrations.",
+      "severity": "warn",
+      "category": "Schema",
+      "link": "/database"
+    },
+    {
+      "id": "sessions-ts-plural",
+      "title": "`sessions.ts` not `session.ts`",
+      "body": "The actions file is sessions.ts (plural). Creating a session.ts duplicate will silently shadow the original file and cause all session actions to 404 in production.",
+      "severity": "warn",
+      "category": "Actions",
+      "link": "/actions"
+    },
+    {
+      "id": "postgrest-update-empty-array",
+      "title": "PostgREST `UPDATE` matching 0 rows returns empty array",
+      "body": "An UPDATE matching 0 rows returns an empty array — not null and not an error. Using .single() on such a response throws. Use array + length check for atomic CAS guards.",
+      "severity": "warn",
+      "category": "Database",
+      "link": "/database"
+    },
+    {
+      "id": "dnd-kit-two-attrs",
+      "title": "dnd-kit: two attributes required on interactive children",
+      "body": "Both data-no-dnd attribute AND onPointerDown stopPropagation are required on interactive children (buttons, inputs) inside draggable containers. Missing either causes drag events to fire on button clicks.",
+      "severity": "info",
+      "category": "UI",
+      "link": "/components"
+    },
+    {
+      "id": "cookie-chunking",
+      "title": "@supabase/ssr chunks auth tokens",
+      "body": "@supabase/ssr splits auth tokens at 3180 encoded chars into .0, .1, .2 suffixed cookies. Any custom cookie handling must join these chunks before passing to the Supabase client.",
+      "severity": "info",
+      "category": "Auth / RLS",
+      "link": "/actions"
+    },
+    {
+      "id": "nextjs-16-breaking",
+      "title": "Next.js 16 breaking changes",
+      "body": "Do NOT assume Next.js 13/14/15 APIs. Key changes in 16: params and searchParams are now async Promises. Always await params in Server Components and use React.use() in Client Components.",
+      "severity": "info",
+      "category": "Framework"
+    },
+    {
+      "id": "vercel-bypass-header",
+      "title": "Vercel protection bypass for Playwright",
+      "body": "_vercel_share tokens do NOT work for Playwright E2E tests. The only working approach is the x-vercel-protection-bypass header in playwright.config.ts extraHTTPHeaders.",
+      "severity": "info",
+      "category": "CI / Testing"
+    },
+    {
+      "id": "postgrest-insert-single-safe",
+      "title": "PostgREST INSERT + `.select().single()` is safe",
+      "body": "Unlike UPDATE (which may match 0 rows), INSERT with .select().single() always returns exactly one row or throws. Safe to use .single() on INSERT — it will never return an empty array.",
+      "severity": "info",
+      "category": "Database",
+      "link": "/database"
+    }
+  ],
+  "components": [],
+  "scenarios": []
+}

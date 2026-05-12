@@ -35,11 +35,7 @@ export default async function OrganizerPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
   if (!profile) redirect("/");
 
@@ -64,7 +60,7 @@ export default async function OrganizerPage() {
             .from("queue_entries")
             .select("id", { count: "exact", head: true })
             .eq("session_id", session.id)
-            .in("status", ["waiting", "on_deck", "playing"]),
+            .in("status", ["waiting", "drafted", "on_deck", "playing"]),
           supabase
             .from("courts")
             .select("id", { count: "exact", head: true })

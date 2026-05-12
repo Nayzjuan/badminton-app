@@ -33,12 +33,13 @@ import { createClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
+import { isSessionOrganizer } from "@/app/actions/_shared";
 
 // ── Return types ──────────────────────────────────────────────
 
 export type SwapErrorCode =
-  | "MATCH_STARTED"       // match.status !== "pending" — close Sheet + toast
-  | "PLAYER_UNAVAILABLE"  // inPlayer not in "waiting" — keep Sheet open, re-pick
+  | "MATCH_STARTED" // match.status !== "pending" — close Sheet + toast
+  | "PLAYER_UNAVAILABLE" // inPlayer not in "waiting" — keep Sheet open, re-pick
   | "PLAYER_NOT_IN_MATCH"; // outPlayer already gone  — close Sheet + info toast
 
 export type SwapResult = {
@@ -50,7 +51,7 @@ export type SwapResult = {
 // ── Match-to-match swap return type ──────────────────────────
 
 export type SwapMatchPlayersErrorCode =
-  | "MATCH_STARTED"      // one/both matches started → toast + clear picking state
+  | "MATCH_STARTED" // one/both matches started → toast + clear picking state
   | "PLAYER_NOT_IN_MATCH"; // a player already moved → toast + clear picking state
 
 export type SwapMatchPlayersResult = {
@@ -68,28 +69,8 @@ async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
   return user;
 }
 
-async function isSessionOrganizer(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  sessionId: string
-): Promise<boolean> {
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .single();
-
-  if (session?.created_by === userId) return true;
-
-  const { data: membership } = await supabase
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .single();
-
-  return !!membership;
-}
+// isSessionOrganizer is imported from ./_shared (service-role based,
+// consistent with match.ts and queue.ts).
 
 // ── Main action ───────────────────────────────────────────────
 
@@ -140,7 +121,7 @@ export async function swapPlayerInMatch(
   }
 
   // ── Organizer auth (requires sessionId from match) ────────
-  const organizer = await isSessionOrganizer(supabase, user.id, match.session_id);
+  const organizer = await isSessionOrganizer(user.id, match.session_id);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -183,26 +164,40 @@ export async function swapPlayerInMatch(
   // If the server crashes mid-execution Postgres rolls back
   // automatically — no manual compensation needed.
   const { error: swapError } = await db.rpc("swap_player_in_match", {
-    p_match_id:      matchId,
+    p_match_id: matchId,
     p_out_player_id: outPlayerId,
-    p_in_player_id:  inPlayerId,
-    p_session_id:    match.session_id,
-    p_team:          outPlayerRow.team,
-    p_is_published:  match.is_published,
+    p_in_player_id: inPlayerId,
+    p_session_id: match.session_id,
+    p_team: outPlayerRow.team,
+    p_is_published: match.is_published,
   });
 
   if (swapError) {
-    return { success: false, message: `Failed to swap: ${swapError.message}` };
+    // The RPC now raises named exceptions for concurrent-race scenarios.
+    // Map them to the typed errorCode so the UI can respond appropriately.
+    const msg = swapError.message ?? "";
+    if (msg.includes("PLAYER_UNAVAILABLE")) {
+      return {
+        success: false,
+        errorCode: "PLAYER_UNAVAILABLE",
+        message:
+          "This player is no longer available — they may have been swapped by a concurrent action.",
+      };
+    }
+    if (msg.includes("MATCH_STARTED")) {
+      return {
+        success: false,
+        errorCode: "MATCH_STARTED",
+        message: "This match has already started — the swap was cancelled automatically.",
+      };
+    }
+    return { success: false, message: `Failed to swap: ${msg}` };
   }
 
   // ── Broadcast: notify outgoing player their on-deck slot is gone
   // The incoming player's dashboard will update via subscribeToMatchPlayers
   // Postgres realtime (new match_players row fires fetchMyMatch).
-  await broadcastOrganizerIntervention(
-    match.session_id,
-    "on_deck_cleared",
-    [outPlayerId]
-  );
+  await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", [outPlayerId]);
 
   return { success: true, message: "Swap complete." };
 }
@@ -234,16 +229,16 @@ export async function swapPlayerInMatch(
 // ============================================================
 
 export async function swapMatchPlayers(
-  aMatchId:  string,
+  aMatchId: string,
   aPlayerId: string,
-  bMatchId:  string,
+  bMatchId: string,
   bPlayerId: string,
-  sessionId: string,
+  sessionId: string
 ): Promise<SwapMatchPlayersResult> {
   if (
-    !isValidUUID(aMatchId)  ||
+    !isValidUUID(aMatchId) ||
     !isValidUUID(aPlayerId) ||
-    !isValidUUID(bMatchId)  ||
+    !isValidUUID(bMatchId) ||
     !isValidUUID(bPlayerId) ||
     !isValidUUID(sessionId)
   ) {
@@ -284,7 +279,7 @@ export async function swapMatchPlayers(
   }
 
   // ── Guard 3: Caller must be organizer of this session ─────
-  const organizer = await isSessionOrganizer(supabase, user.id, sessionId);
+  const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
@@ -295,12 +290,8 @@ export async function swapMatchPlayers(
     .select("match_id, player_id, team")
     .in("player_id", [aPlayerId, bPlayerId]);
 
-  const aRow = playerRows?.find(
-    (r) => r.match_id === aMatchId && r.player_id === aPlayerId
-  );
-  const bRow = playerRows?.find(
-    (r) => r.match_id === bMatchId && r.player_id === bPlayerId
-  );
+  const aRow = playerRows?.find((r) => r.match_id === aMatchId && r.player_id === aPlayerId);
+  const bRow = playerRows?.find((r) => r.match_id === bMatchId && r.player_id === bPlayerId);
 
   if (!aRow || !bRow) {
     return {
@@ -312,19 +303,27 @@ export async function swapMatchPlayers(
 
   // ── Atomic write via swap_match_players RPC ───────────────
   const { error: swapError } = await db.rpc("swap_match_players", {
-    p_a_match_id:  aMatchId,
+    p_a_match_id: aMatchId,
     p_a_player_id: aPlayerId,
-    p_b_match_id:  bMatchId,
+    p_b_match_id: bMatchId,
     p_b_player_id: bPlayerId,
   });
 
   if (swapError) {
     const msg = swapError.message ?? "";
     if (msg.includes("MATCH_STARTED")) {
-      return { success: false, errorCode: "MATCH_STARTED", message: "A match has already started." };
+      return {
+        success: false,
+        errorCode: "MATCH_STARTED",
+        message: "A match has already started.",
+      };
     }
     if (msg.includes("PLAYER_NOT_IN_MATCH")) {
-      return { success: false, errorCode: "PLAYER_NOT_IN_MATCH", message: "Player no longer in match." };
+      return {
+        success: false,
+        errorCode: "PLAYER_NOT_IN_MATCH",
+        message: "Player no longer in match.",
+      };
     }
     return { success: false, message: `Failed to swap: ${msg}` };
   }

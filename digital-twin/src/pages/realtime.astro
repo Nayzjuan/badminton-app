@@ -1,0 +1,613 @@
+---
+import { Code } from 'astro:components';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+
+// ── Channel catalog (curated — 7 total) ───────────────────────────────────────
+const channels = [
+  {
+    name:    'courts',
+    table:   'courts',
+    filter:  'session_id=eq.{id}',
+    monitor: true,
+    guard:   null,
+    cb:      'fetchCourtsRef',
+    desc:    'Court status changes (available / in_use / closed).',
+  },
+  {
+    name:    'queue_entries',
+    table:   'queue_entries',
+    filter:  'session_id=eq.{id}',
+    monitor: true,
+    guard:   'fetchQueueSeq',
+    cb:      'fetchQueueRef',
+    desc:    'Player join, leave, pause, and status changes.',
+  },
+  {
+    name:    'matches',
+    table:   'matches',
+    filter:  'session_id=eq.{id}',
+    monitor: true,
+    guard:   'fetchActiveMatchesSeq',
+    cb:      'fetchActiveMatchesRef',
+    desc:    'Match creation, score entry, publish, complete, cancel.',
+  },
+  {
+    name:    'match_players',
+    table:   'match_players',
+    filter:  'via matches.session_id',
+    monitor: true,
+    guard:   'fetchActiveMatchesSeq',
+    cb:      'fetchActiveMatchesRef',
+    desc:    'Player assignment changes — swaps, Tap-to-Swap v2.',
+  },
+  {
+    name:    'profiles',
+    table:   'profiles',
+    filter:  'session-scoped',
+    monitor: true,
+    guard:   'both seqs',
+    cb:      'fetchQueueRef + fetchActiveMatchesRef',
+    desc:    'Display name, skill level, VIP tag updates.',
+  },
+  {
+    name:    'session-settings',
+    table:   'sessions',
+    filter:  'id=eq.{id}',
+    monitor: false,
+    guard:   null,
+    cb:      'setAutoMatchmaking',
+    desc:    'Session settings (scoring format, court time limit).',
+  },
+  {
+    name:    'session-events',
+    table:   '— broadcast only —',
+    filter:  'realtime:session-events:{id}',
+    monitor: false,
+    guard:   null,
+    cb:      'useOrganizerBroadcast',
+    desc:    'Server REST broadcast: 4 event types (see catalog below).',
+  },
+];
+
+// ── Broadcast event catalog (4 events) ───────────────────────────────────────
+const broadcasts = [
+  {
+    event:   'organizer_intervention',
+    payload: '{ type: "on_deck_cleared" | "match_cancelled", affectedPlayerIds }',
+    emitter: 'clearOnDeckMatch, cancelMatchAction',
+    listener:'useOrganizerBroadcast → player toast',
+    why:     'Players need to know their on-deck slot was cleared so they stop waiting at the wrong court.',
+    severity: 'info',
+  },
+  {
+    event:   'session_closed',
+    payload: '{ — }',
+    emitter: 'closeSession',
+    listener:'useOrganizerBroadcast → redirect to /wrapped',
+    why:     'All connected players must be redirected simultaneously when the session ends.',
+    severity: 'info',
+  },
+  {
+    event:   'auto_matchmaking_toggled',
+    payload: '{ isOn: boolean }',
+    emitter: 'toggleAutoMatchmaking',
+    listener:'useOrganizerBroadcast → co-organizer UI sync',
+    why:     'sessions RLS SELECT only grants access to sessions.created_by. Co-organizer postgres_changes subscriptions are silently dropped by RLS — broadcast bypasses this entirely.',
+    severity: 'warn',
+  },
+  {
+    event:   'cap_saturation',
+    payload: '{ affectedPlayerIds, reason }',
+    emitter: 'runEngineInternal (partnership cap block)',
+    listener:'useOrganizerBroadcast → CapSaturationNotice banner',
+    why:     'Organizer needs to know the engine is blocked so they can intervene manually.',
+    severity: 'info',
+  },
+];
+
+// ── Code comparison strings (no internal backticks — safe in template literal) ─
+const wrongCode = `// ❌ Direct function reference — subscription rebuilt on every render
+//
+// React recreates fetchCourts on each render cycle.
+// The channel must be torn down + rebuilt whenever fetchCourts changes.
+// In a busy dashboard with frequent realtime events, this means
+// constant channel teardown + reconnect storms.
+
+useEffect(() => {
+  const channel = supabase
+    .channel('courts-' + sessionId)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'courts',
+        filter: 'session_id=eq.' + sessionId },
+      fetchCourts    // ← new reference on every render
+    )
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}, [sessionId, fetchCourts]);  // fetchCourts in deps → constant teardown`;
+
+const rightCode = `// ✓ Ref-callback pattern — stable channel, zero teardown
+//
+// The subscription holds a stable closure over the ref.
+// fetchCourtsRef.current is updated silently after each render
+// without triggering a new subscription or channel reconnect.
+// The channel is created exactly ONCE per sessionId.
+
+const fetchCourtsRef = useRef(fetchCourts);
+useEffect(() => {
+  fetchCourtsRef.current = fetchCourts; // keep ref fresh, no re-subscribe
+}); // ← no deps array: runs after every render
+
+useEffect(() => {
+  const channel = supabase
+    .channel('courts-' + sessionId)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'courts',
+        filter: 'session_id=eq.' + sessionId },
+      (...args) => fetchCourtsRef.current(...args) // stable closure over ref
+    )
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}, [sessionId]);  // ← only sessionId: rebuilt only when session changes`;
+---
+
+<BaseLayout
+  title="Realtime & State"
+  description="7 Supabase realtime channels, the ref-callback subscription pattern, monotonic sequence guards, and 4 broadcast event types."
+>
+  <PageHeader
+    title="Realtime & Global State"
+    subtitle="How Supabase Realtime drives every UI update — channel architecture, the ref-callback pattern that prevents subscription storms, and the broadcast events that bypass RLS."
+    phase={5}
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-8 space-y-12" data-pagefind-body>
+
+    <!-- Quick-nav -->
+    <nav class="flex flex-wrap gap-2 pb-4 border-b border-edge-dim" aria-label="Page sections">
+      {[
+        ['#channels',   'Channel Map'],
+        ['#ref-pattern','Ref Pattern'],
+        ['#broadcasts', 'Broadcast Catalog'],
+        ['#race-demo',  'Race Condition Demo'],
+      ].map(([href, label]) => (
+        <a
+          href={href}
+          class="text-xs font-mono text-ink-3 bg-raised border border-edge px-3 py-1.5 rounded-lg hover:text-accent-hi hover:border-accent-ring transition-all duration-75"
+        >
+          {label}
+        </a>
+      ))}
+    </nav>
+
+    <!-- ════════════════════════════════════════════════════
+         §1  CHANNEL MAP
+         ════════════════════════════════════════════════════ -->
+    <section id="channels" class="scroll-mt-8 space-y-6">
+      <div>
+        <h2 class="text-xl font-bold text-ink mb-1">Channel Map</h2>
+        <p class="text-xs text-ink-3">
+          <code class="text-accent font-mono">src/hooks/use-organizer-data.ts</code> ·
+          7 channels · 5 health-monitored · 2 monotonic sequence guards
+        </p>
+      </div>
+
+      <!-- Mermaid architecture diagram -->
+      <div class="mermaid">
+{`flowchart LR
+    subgraph SB["Supabase Realtime"]
+        courts["courts"]
+        qe["queue_entries"]
+        mt["matches"]
+        mp["match_players"]
+        pr["profiles"]
+        ss["sessions\\nsession-settings ch."]
+        bc["REST broadcast\\nsession-events ch."]
+    end
+
+    subgraph HK["useOrganizerData hook"]
+        subgraph GRD["Sequence guards"]
+            qs["fetchQueueSeq ①"]
+            as["fetchActiveMatchesSeq ②"]
+        end
+        subgraph CBS["Ref callbacks"]
+            fcr["fetchCourtsRef"]
+            fqr["fetchQueueRef"]
+            far["fetchActiveMatchesRef"]
+            sam["setAutoMatchmaking"]
+            obc["useOrganizerBroadcast"]
+        end
+    end
+
+    courts --> fcr
+    qe --> qs --> fqr
+    mt --> as --> far
+    mp --> as
+    pr --> qs & as
+    ss --> sam
+    bc --> obc`}
+      </div>
+
+      <!-- Detailed channel table -->
+      <div class="dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th>Channel</th>
+              <th>Filter</th>
+              <th>Health ⬡</th>
+              <th>Seq guard</th>
+              <th>Callback</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {channels.map(c => (
+              <tr>
+                <td>
+                  <code class="font-mono text-accent text-xs">{c.name}</code>
+                </td>
+                <td class="font-mono text-xs text-ink-3">{c.filter}</td>
+                <td class="text-center text-sm">{c.monitor ? '✓' : '—'}</td>
+                <td>
+                  {c.guard
+                    ? <code class="font-mono text-warn text-xs">{c.guard}</code>
+                    : <span class="text-ink-4">—</span>
+                  }
+                </td>
+                <td>
+                  <code class="font-mono text-accent-hi text-xs">{c.cb}</code>
+                </td>
+                <td class="text-xs text-ink-3">{c.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Key insight: auto_matchmaking exclusion -->
+      <div class="bg-warn-wash border border-warn/20 rounded-xl p-4 text-xs">
+        <span class="font-semibold text-warn">⚠ Gotcha:</span>
+        <span class="text-ink-3 ml-1">
+          <code class="text-accent font-mono">is_auto_matchmaking_on</code> is
+          intentionally excluded from postgres_changes.
+          The <code class="text-accent font-mono">sessions</code> RLS SELECT policy only grants
+          access to <code class="text-accent font-mono">sessions.created_by</code> — a co-organizer's
+          postgres_changes subscription would be silently dropped.
+          It syncs via the <code class="text-accent font-mono">auto_matchmaking_toggled</code>
+          broadcast instead.
+        </span>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════
+         §2  REF-CALLBACK PATTERN
+         ════════════════════════════════════════════════════ -->
+    <section id="ref-pattern" class="scroll-mt-8 space-y-5">
+      <div>
+        <h2 class="text-xl font-bold text-ink mb-1">The Ref-Callback Pattern</h2>
+        <p class="text-xs text-ink-3">
+          The single most critical pattern in the codebase — prevents subscription teardown storms
+          that would cause visible flicker and missed realtime events during busy sessions.
+        </p>
+      </div>
+
+      <!-- Key insight callout -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+        {[
+          {
+            title: 'The problem',
+            body: 'React recreates callback functions on every render. Subscriptions that capture callbacks directly must be torn down and rebuilt, causing channel reconnects.',
+            color: 'err',
+          },
+          {
+            title: 'The solution',
+            body: 'Store callbacks in a ref. The subscription captures the stable ref, not the callback. Only the ref\'s .current property is updated after each render — zero channel rebuilds.',
+            color: 'accent',
+          },
+          {
+            title: 'The result',
+            body: 'Each of the 5 health-monitored channels is created exactly ONCE per sessionId. No reconnect storms. Events never missed during a re-render cycle.',
+            color: 'ok',
+          },
+        ].map(i => (
+          <div class:list={['rounded-lg p-4 border', i.color === 'err' ? 'bg-err-wash border-err/20' : i.color === 'accent' ? 'bg-accent-wash border-accent-ring' : 'bg-ok-wash border-ok/20']}>
+            <div class:list={['font-heading font-bold text-sm mb-1 uppercase tracking-wider', `text-${i.color}`]}>
+              {i.title}
+            </div>
+            <p class="text-ink-3 leading-relaxed">{i.body}</p>
+          </div>
+        ))}
+      </div>
+
+      <!-- Side-by-side Shiki code comparison -->
+      <div class="rounded-xl overflow-hidden border border-edge">
+        <div class="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-edge">
+          <!-- Wrong -->
+          <div>
+            <div class="px-4 py-2.5 bg-err-wash border-b border-err/20 flex items-center gap-2">
+              <span class="text-err text-sm">✗</span>
+              <span class="text-xs font-semibold text-err">Direct capture — channel teardown on every render</span>
+            </div>
+            <Code code={wrongCode} lang="typescript" />
+          </div>
+
+          <!-- Right -->
+          <div>
+            <div class="px-4 py-2.5 bg-accent-wash border-b border-accent-ring flex items-center gap-2">
+              <span class="text-accent text-sm">✓</span>
+              <span class="text-xs font-semibold text-accent-hi">Ref-callback — stable channel, created once</span>
+            </div>
+            <Code code={rightCode} lang="typescript" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════
+         §3  BROADCAST CATALOG
+         ════════════════════════════════════════════════════ -->
+    <section id="broadcasts" class="scroll-mt-8 space-y-4">
+      <div>
+        <h2 class="text-xl font-bold text-ink mb-1">
+          Broadcast Event Catalog
+          <span class="text-sm font-normal text-ink-3 ml-2 font-sans">src/lib/broadcast.ts</span>
+        </h2>
+        <p class="text-xs text-ink-3">
+          Server-side REST broadcast — no WebSocket from the server.
+          Topic: <code class="text-accent font-mono">realtime:session-events:{'{'}sessionId{'}'}</code>
+        </p>
+      </div>
+
+      <div class="space-y-3">
+        {broadcasts.map(b => (
+          <div class="dt-card">
+            <div class="px-5 py-4 border-b border-edge flex items-start justify-between gap-4 flex-wrap">
+              <code class="font-mono font-bold text-accent text-base">{b.event}</code>
+              <span class="font-mono text-xs text-ink-3 bg-raised border border-edge-dim px-2.5 py-1 rounded-lg">
+                {b.payload}
+              </span>
+            </div>
+            <div class="px-5 py-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs border-b border-edge-dim">
+              <div>
+                <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-1">Emitter</div>
+                <div class="font-mono text-ink-3">{b.emitter}</div>
+              </div>
+              <div>
+                <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-1">Listener</div>
+                <div class="font-mono text-ink-3">{b.listener}</div>
+              </div>
+              <div class:list={[
+                'rounded-lg px-3 py-2 text-xs border',
+                b.severity === 'warn' ? 'bg-warn-wash border-warn/20' : 'bg-raised border-edge-dim',
+              ]}>
+                <span class:list={['font-semibold mr-1', b.severity === 'warn' ? 'text-warn' : 'text-ink-2']}>
+                  Why:
+                </span>
+                <span class="text-ink-3">{b.why}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════
+         §4  RACE CONDITION DEMO
+         ════════════════════════════════════════════════════ -->
+    <section id="race-demo" class="scroll-mt-8 space-y-4">
+      <div>
+        <h2 class="text-xl font-bold text-ink mb-1">Race Condition Demo</h2>
+        <p class="text-xs text-ink-3">
+          Two realtime events fire 50ms apart. Each increments
+          <code class="text-accent font-mono">fetchSeq</code> before its async DB fetch.
+          The faster response arrives and is applied. The slower one arrives later, checks
+          its captured seq against the current counter, and discards itself.
+        </p>
+      </div>
+
+      <div class="dt-card">
+        <!-- Demo header -->
+        <div class="px-5 py-4 border-b border-edge flex items-center justify-between flex-wrap gap-3">
+          <div class="flex items-center gap-4 text-xs">
+            <div>
+              <span class="text-ink-3">Current </span>
+              <code class="text-accent font-mono">fetchSeq</code>
+              <span class="text-ink-3">:</span>
+              <span id="rd-seq" class="font-mono font-bold text-ink ml-2 text-base">0</span>
+            </div>
+          </div>
+          <div id="rd-state" class="text-xs font-mono text-ink-3">
+            State: (not yet fetched)
+          </div>
+        </div>
+
+        <!-- Fetch tracks -->
+        <div class="px-5 py-5 space-y-5">
+          {[
+            { id: 'a', label: 'Event A', delay: '900ms', note: '(slow — will be discarded)' },
+            { id: 'b', label: 'Event B', delay: '250ms', note: '(fast — will be applied)' },
+          ].map(t => (
+            <div class="space-y-2">
+              <div class="flex items-center gap-3 text-xs">
+                <span class="font-semibold text-ink-2 w-16">{t.label}</span>
+                <code id={`rd-seq-${t.id}`} class="font-mono text-ink-4 text-[10px] bg-raised border border-edge px-1.5 py-0.5 rounded">
+                  seq=—
+                </code>
+                <span class="text-ink-4">{t.delay} fetch</span>
+                <span class="text-ink-4 italic">{t.note}</span>
+              </div>
+              <div class="rd-bar-container">
+                <div id={`rd-bar-${t.id}`} class="rd-bar"></div>
+              </div>
+              <div id={`rd-outcome-${t.id}`} class="text-xs font-mono h-4"></div>
+            </div>
+          ))}
+        </div>
+
+        <!-- Controls -->
+        <div class="px-5 py-4 border-t border-edge-dim flex items-center gap-3">
+          <button
+            id="rd-trigger"
+            class="text-xs font-semibold bg-accent-wash border border-accent-ring text-accent-hi px-4 py-2 rounded-lg hover:bg-lifted hover:border-accent transition-all duration-75"
+          >
+            Simulate 2 rapid realtime events
+          </button>
+          <button
+            id="rd-reset"
+            class="text-xs font-mono text-ink-3 bg-raised border border-edge px-3 py-2 rounded-lg hover:text-ink-2 hover:border-edge-hi transition-all duration-75"
+          >
+            Reset
+          </button>
+        </div>
+      </div>
+
+      <!-- Pseudocode explanation -->
+      <div class="dt-card p-5 text-xs space-y-2">
+        <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-3">
+          How fetchSeq works (from use-organizer-data.ts)
+        </div>
+        <Code
+          code={`// Shared counter — incremented before each async fetch
+let fetchActiveMatchesSeq = 0;
+
+async function fetchActiveMatches() {
+  const mySeq = ++fetchActiveMatchesSeq;  // capture BEFORE the await
+
+  const { data } = await supabase.from('matches').select('*');
+
+  if (mySeq !== fetchActiveMatchesSeq) {
+    return;  // a newer fetch started after us — our data is stale, discard it
+  }
+
+  setMatches(data);  // safe to apply — no newer fetch has started
+}`}
+          lang="typescript"
+        />
+      </div>
+    </section>
+
+  </div>
+</BaseLayout>
+
+<!-- ── Race condition demo — Vanilla JS island ──────────────────────── -->
+<script>
+  let rdFetchSeq = 0;
+  let rdRunning  = false;
+
+  const rdSeqEl    = document.getElementById('rd-seq')!;
+  const rdStateEl  = document.getElementById('rd-state')!;
+  const rdTrigger  = document.getElementById('rd-trigger')!;
+  const rdResetBtn = document.getElementById('rd-reset')!;
+
+  function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+  function rdReset() {
+    rdFetchSeq = 0;
+    rdRunning  = false;
+    rdSeqEl.textContent  = '0';
+    rdStateEl.textContent = 'State: (not yet fetched)';
+    rdStateEl.style.color = '';
+
+    (['a', 'b'] as const).forEach(id => {
+      const bar     = document.getElementById('rd-bar-'     + id)!;
+      const outcome = document.getElementById('rd-outcome-' + id)!;
+      const seqEl   = document.getElementById('rd-seq-'     + id)!;
+
+      bar.style.transition       = 'none';
+      bar.style.width            = '0%';
+      bar.style.backgroundColor  = '';
+      outcome.textContent        = '';
+      outcome.style.color        = '';
+      seqEl.textContent          = 'seq=—';
+    });
+  }
+
+  async function rdSimulate() {
+    if (rdRunning) return;
+    rdRunning = true;
+    rdReset();
+    rdRunning = true;          // re-set after reset clears it
+
+    await sleep(80);           // let CSS transitions settle after reset
+
+    // ── Event A fires — fetchSeq increments to 1 ──────────────────
+    const seqA   = ++rdFetchSeq;
+    rdSeqEl.textContent = String(rdFetchSeq);
+    (document.getElementById('rd-seq-a')!).textContent = 'seq=' + seqA;
+
+    const barA = document.getElementById('rd-bar-a')!;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      barA.style.transition = 'width 900ms linear';
+      barA.style.width      = '100%';
+    }));
+
+    // ── 50ms gap — Event B fires — fetchSeq increments to 2 ───────
+    await sleep(50);
+    const seqB   = ++rdFetchSeq;
+    rdSeqEl.textContent = String(rdFetchSeq);
+    (document.getElementById('rd-seq-b')!).textContent = 'seq=' + seqB;
+
+    const barB = document.getElementById('rd-bar-b')!;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      barB.style.transition = 'width 250ms linear';
+      barB.style.width      = '100%';
+    }));
+
+    // ── 250ms later — Event B response arrives ────────────────────
+    await sleep(250);
+    const outcomeB = document.getElementById('rd-outcome-b')!;
+    if (seqB === rdFetchSeq) {
+      barB.style.backgroundColor = 'oklch(76% 0.17 155)';   // accent
+      outcomeB.textContent = '✓ Applied — mySeq(' + seqB + ') === fetchSeq(' + rdFetchSeq + ')  →  setMatches(data)';
+      outcomeB.style.color = 'oklch(76% 0.17 155)';
+      rdStateEl.textContent = 'State: { data from Event B (faster fetch) }';
+      rdStateEl.style.color = 'oklch(76% 0.17 155)';
+    } else {
+      barB.style.backgroundColor = 'oklch(65% 0.20 22)';    // err
+      outcomeB.textContent = '⊘ Discarded — mySeq(' + seqB + ') !== fetchSeq(' + rdFetchSeq + ')';
+      outcomeB.style.color = 'oklch(65% 0.20 22)';
+    }
+
+    // ── 900ms total from A start — Event A response arrives ───────
+    await sleep(600);           // already waited 50 + 250 = 300ms; 900 - 300 = 600ms more
+    const outcomeA = document.getElementById('rd-outcome-a')!;
+    if (seqA === rdFetchSeq) {
+      barA.style.backgroundColor = 'oklch(76% 0.17 155)';
+      outcomeA.textContent = '✓ Applied — mySeq(' + seqA + ') === fetchSeq(' + rdFetchSeq + ')  →  setMatches(data)';
+      outcomeA.style.color = 'oklch(76% 0.17 155)';
+    } else {
+      barA.style.backgroundColor = 'oklch(65% 0.20 22)';
+      outcomeA.textContent = '⊘ Discarded — mySeq(' + seqA + ') !== fetchSeq(' + rdFetchSeq + ')  →  return (no state update)';
+      outcomeA.style.color = 'oklch(65% 0.20 22)';
+    }
+
+    rdRunning = false;
+  }
+
+  rdTrigger.addEventListener('click', rdSimulate);
+  rdResetBtn.addEventListener('click', () => { rdRunning = false; rdReset(); });
+</script>
+
+<!-- ── Race demo bar styles ──────────────────────────────────────────── -->
+<style is:global>
+  .rd-bar-container {
+    width: 100%;
+    height: 8px;
+    background: oklch(20% 0.022 245);   /* --color-raised */
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .rd-bar {
+    height: 100%;
+    width: 0%;
+    background: oklch(76% 0.17 155);    /* --color-accent  */
+    border-radius: 4px;
+    transition: none;
+  }
+</style>

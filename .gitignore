@@ -45,3 +45,8 @@ next-env.d.ts
 .playwright/
 playwright-report/
 test-results/
+
+# ── Backups (contain real data — keep local only) ─────────────
+backups/*.sql
+backups/backup_*/
+backups/__pycache__/

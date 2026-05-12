@@ -30,7 +30,7 @@ import {
   SKILL_VARIANCE_MAX,
   FALLBACK_WAIT_MINUTES,
   ANTI_REPEAT_LOOKBACK,
-  ON_DECK_LOOKAHEAD,
+  MAX_AUTO_DRAFTS,
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
 } from "../src/lib/constants";
@@ -46,7 +46,7 @@ const W = (s: string) => `\x1b[1m${s}\x1b[0m`;    // bold/white
 const D = (s: string) => `\x1b[2m${s}\x1b[0m`;    // dim
 
 const COURT_COUNT = 2;
-const CAPACITY    = COURT_COUNT + ON_DECK_LOOKAHEAD; // 3
+const CAPACITY    = MAX_AUTO_DRAFTS; // 3 — mirrors production MAX_AUTO_DRAFTS cap
 const SIM_ROUNDS  = parseInt(process.argv[2] ?? "6");
 const SESSION_ID  = "70358ca6-176a-46db-ba60-b3dcbb1ac6c5";
 // Simulated game duration in minutes

@@ -1,0 +1,648 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+
+// Constants from manifest, ordered by importance for the page narrative
+const constants = manifest.constants;
+---
+
+<BaseLayout
+  title="Matchmaking Engine"
+  description="Interactive pipeline flowchart, priority score calculator, partnership cap visualizer, and TOCTOU guard sequence diagram."
+>
+  <PageHeader
+    title="Matchmaking Engine"
+    subtitle="The full runEngineInternal pipeline — from atomic slot calculation through N-choose-3 candidate search to TOCTOU-guarded RPC execution."
+    phase={4}
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-8 space-y-12" data-pagefind-body>
+
+    <!-- ── Section quick-nav ──────────────────────────────────── -->
+    <nav class="flex flex-wrap gap-2 pb-4 border-b border-edge-dim" aria-label="Page sections">
+      {[
+        ['#pipeline',      'Pipeline Flowchart'],
+        ['#priority-calc', 'Priority Calculator'],
+        ['#cap-viz',       'Partnership Cap'],
+        ['#toctou',        'TOCTOU Sequence'],
+        ['#constants',     'Constants'],
+      ].map(([href, label]) => (
+        <a
+          href={href}
+          class="text-xs font-mono text-ink-3 bg-raised border border-edge px-3 py-1.5 rounded-lg hover:text-accent-hi hover:border-accent-ring transition-all duration-75"
+        >
+          {label}
+        </a>
+      ))}
+    </nav>
+
+    <!-- ════════════════════════════════════════════════════════
+         §1  ENGINE PIPELINE
+         ════════════════════════════════════════════════════════ -->
+    <section id="pipeline" class="scroll-mt-8">
+      <h2 class="text-xl font-bold text-ink mb-1">Engine Pipeline</h2>
+      <p class="text-xs text-ink-3 mb-4">
+        <code class="text-accent font-mono">runEngineInternal</code>
+        in <code class="text-accent font-mono">src/app/actions/matchmaking.ts</code> ·
+        Pure logic in <code class="text-accent font-mono">src/lib/matchmaking-core.ts</code>
+      </p>
+
+      <div class="mermaid">
+{`flowchart TD
+    COUNT["COUNT(*) pending\\nslotsAvailable = max(0, MAX_AUTO_DRAFTS − total)"]
+    SLOTS{"slots > 0?"}
+    GATE{"soft gate\\npasses?"}
+    ROSTERS["pre-fetch recentRosters\\n(hoisted — once per run)"]
+    ALGO["runAlgorithm(anchor)\\nfor each available slot"]
+    PARTNER["fetchPartnershipCounts\\nonce per runAlgorithm call"]
+    OVERLAP["buildOverlapMap(anchor)\\n3-step join · per-tick · async"]
+    SCORE["scoreCandidates\\nbuildCombinationGroup N-choose-3"]
+    GROUP{"valid group\\nfound?"}
+    EXPAND["widen skill window\\nTier 2 → Tier 3"]
+    DRAFT["snakeDraft / rotatedDraft\\nteam assignment"]
+    CAP{"partnership cap\\nblocks ALL splits?"}
+    RPC["create_match_with_players RPC\\ntransaction + 3 TOCTOU guards"]
+    RESULT{"RPC returns?"}
+    DONE1["return — at cap\\nMAX_AUTO_DRAFTS = 3"]
+    DONE2["defer — return early\\nsoft gate held"]
+    SAT["broadcastCapSaturation\\nreturn null"]
+    OK["match drafted\\nis_published = false"]
+    SKIP["TOCTOU guard fired\\ngraceful slot-skip"]
+    ERR["hard DB error\\nsurface to caller"]
+
+    COUNT --> SLOTS
+    SLOTS -->|"0 slots"| DONE1
+    SLOTS -->|"≥ 1 slot"| GATE
+    GATE -->|"hold"| DONE2
+    GATE -->|"pass"| ROSTERS
+    ROSTERS --> ALGO
+    ALGO --> PARTNER
+    PARTNER --> OVERLAP
+    OVERLAP --> SCORE
+    SCORE --> GROUP
+    GROUP -->|"no — too wide"| EXPAND
+    EXPAND --> SCORE
+    GROUP -->|"yes"| DRAFT
+    DRAFT --> CAP
+    CAP -->|"blocked"| SAT
+    CAP -->|"ok"| RPC
+    RPC --> RESULT
+    RESULT -->|"uuid"| OK
+    RESULT -->|"NULL, no error"| SKIP
+    RESULT -->|"NULL + error"| ERR`}
+      </div>
+
+      <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+        {[
+          { color: 'accent', label: '→ Happy path', desc: 'COUNT → gate → combine → RPC → draft created' },
+          { color: 'warn',   label: '→ Retry loop', desc: 'Expand skill window (Tier 2/3) and re-score' },
+          { color: 'err',    label: '→ Exit paths', desc: 'Cap (3 slots), defer (gate), saturation, TOCTOU, hard error' },
+        ].map(i => (
+          <div class="flex items-start gap-2 bg-overlay rounded-lg p-3 border border-edge-dim">
+            <span class:list={['mt-0.5 w-2 h-2 rounded-full shrink-0', `bg-${i.color}`]}></span>
+            <div>
+              <div class:list={['font-semibold font-mono', `text-${i.color}`]}>{i.label}</div>
+              <div class="text-ink-3 mt-0.5">{i.desc}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         §2  INTERACTIVE CALCULATORS
+         ════════════════════════════════════════════════════════ -->
+    <section>
+      <h2 class="text-xl font-bold text-ink mb-1">Interactive Calculators</h2>
+      <p class="text-xs text-ink-3 mb-6">
+        Drag the sliders to feel exactly where the Red Zone kicks in and how the overlap multiplier collapse changes candidate ranking.
+      </p>
+
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+        <!-- ── Priority Score Calculator ─────────────────────── -->
+        <div id="priority-calc" class="dt-card scroll-mt-8">
+          <div class="px-5 py-4 border-b border-edge">
+            <h3 class="font-heading font-bold text-base text-ink">Priority Score Calculator</h3>
+            <p class="text-xs text-ink-3 mt-0.5">
+              <code class="text-accent font-mono">computePriorityScore</code> in matchmaking-core.ts
+            </p>
+          </div>
+
+          <div class="px-5 py-5 space-y-5">
+            <!-- Slider: Wait time -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-xs font-semibold text-ink-2 font-heading uppercase tracking-wider">
+                  Wait time
+                </label>
+                <div class="flex items-center gap-2">
+                  <span id="pc-wait-val" class="text-sm font-mono font-bold text-ink">10</span>
+                  <span class="text-xs text-ink-3">min</span>
+                  <span id="pc-zone-chip" class="ml-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-raised border border-edge text-ink-3">
+                    NORMAL
+                  </span>
+                </div>
+              </div>
+              <input
+                type="range" id="pc-wait"
+                class="calc-slider" min="0" max="40" value="10"
+              />
+              <div class="flex justify-between text-[10px] text-ink-4 mt-1 font-mono">
+                <span>0</span>
+                <span class="text-warn">25 — Red Zone</span>
+                <span>40</span>
+              </div>
+            </div>
+
+            <!-- Slider: Games played -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-xs font-semibold text-ink-2 font-heading uppercase tracking-wider">
+                  Games played
+                </label>
+                <div class="flex items-center gap-2">
+                  <span id="pc-games-val" class="text-sm font-mono font-bold text-ink">3</span>
+                  <span class="text-xs text-ink-3">games</span>
+                </div>
+              </div>
+              <input
+                type="range" id="pc-games"
+                class="calc-slider" min="0" max="10" value="3"
+              />
+              <div class="flex justify-between text-[10px] text-ink-4 mt-1 font-mono">
+                <span>0</span>
+                <span>10</span>
+              </div>
+            </div>
+
+            <!-- Result display -->
+            <div id="pc-result" class="rounded-xl p-4 bg-overlay border border-edge space-y-3">
+              <!-- Populated by script -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Partnership Cap Visualizer ─────────────────────── -->
+        <div id="cap-viz" class="dt-card scroll-mt-8">
+          <div class="px-5 py-4 border-b border-edge flex items-start justify-between gap-4">
+            <div>
+              <h3 class="font-heading font-bold text-base text-ink">Partnership Cap Visualizer</h3>
+              <p class="text-xs text-ink-3 mt-0.5">
+                <code class="text-accent font-mono">MAX_PARTNERSHIP_REPEATS = 2</code>
+              </p>
+            </div>
+            <button
+              id="cap-reset"
+              class="text-[10px] font-mono text-ink-3 bg-raised border border-edge px-2.5 py-1.5 rounded-lg hover:text-accent-hi hover:border-accent-ring transition-all duration-75"
+            >
+              Reset
+            </button>
+          </div>
+
+          <div class="px-5 py-5 space-y-5">
+            <!-- Pair counters -->
+            <div>
+              <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-2">
+                Same-team appearances this session
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-2" id="cap-pairs">
+                <!-- Populated by script -->
+              </div>
+            </div>
+
+            <!-- Split results -->
+            <div>
+              <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-4 mb-2">
+                Available team splits
+              </div>
+              <div class="space-y-2" id="cap-splits">
+                <!-- Populated by script -->
+              </div>
+            </div>
+
+            <!-- Status banner -->
+            <div id="cap-status" class="rounded-lg px-4 py-3 text-xs font-semibold text-center">
+              <!-- Populated by script -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         §3  TOCTOU SEQUENCE
+         ════════════════════════════════════════════════════════ -->
+    <section id="toctou" class="scroll-mt-8">
+      <h2 class="text-xl font-bold text-ink mb-1">TOCTOU Guard Sequence</h2>
+      <p class="text-xs text-ink-3 mb-4">
+        Two concurrent Vercel serverless invocations racing on the same waiting pool.
+        The three DB-level guards in
+        <code class="text-accent font-mono">create_match_with_players</code>
+        (migration <code class="text-accent font-mono">20260507000000</code>) serialize them.
+        The process-level <code class="text-accent font-mono">engineRunningFor</code> Set
+        is process-local — ineffective on serverless, these DB guards are the primary defense.
+      </p>
+
+      <div class="mermaid">
+{`sequenceDiagram
+    participant T1 as Tick 1 (Vercel fn)
+    participant PG as Postgres
+    participant T2 as Tick 2 (Vercel fn)
+
+    Note over T1,T2: Two engine invocations start simultaneously
+
+    T1->>PG: Guard 0 — COUNT(*) WHERE status='waiting'
+    PG-->>T1: 4 players ✓
+    T2->>PG: Guard 0 — COUNT(*) WHERE status='waiting'
+    PG-->>T2: 4 players ✓
+    Note over T1,T2: Both pass — pool appears clear to both ticks
+
+    T1->>PG: Guard 1 — SELECT FOR UPDATE ORDER BY player_id
+    Note over PG: Row lock acquired by Tick 1
+    T2->>PG: Guard 1 — SELECT FOR UPDATE ORDER BY player_id
+    Note over PG: Tick 2 blocks (lock_timeout = 3s)
+
+    T1->>PG: Guard 2 — COUNT(*) active or pending conflicts
+    PG-->>T1: 0 conflicts ✓
+    T1->>PG: INSERT match + 4 match_players
+    PG-->>T1: matchId (uuid) — match created
+    Note over PG: Lock released
+
+    PG-->>T2: Unblocked — now at Guard 2
+    T2->>PG: Guard 2 — COUNT(*) active or pending conflicts
+    PG-->>T2: 4 conflicts detected
+    PG-->>T2: RETURN NULL (no error object)
+
+    Note over T2: executeMatch sees data:null + error:null
+    Note over T2: Graceful slot-skip — no crash or retry storm`}
+      </div>
+
+      <!-- Guard summary table -->
+      <div class="mt-6 dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th>Guard</th>
+              <th>Mechanism</th>
+              <th>Trigger → Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              {
+                guard:   '0 — Pre-flight',
+                mech:    "COUNT(*) WHERE status='waiting'",
+                action:  'count < 4 → RETURN NULL immediately',
+              },
+              {
+                guard:   '1 — Row lock',
+                mech:    "SELECT FOR UPDATE ORDER BY player_id + SET LOCAL lock_timeout='3s'",
+                action:  'Second tx blocks then falls through to Guard 2 on unlock',
+              },
+              {
+                guard:   '2 — Conflict check',
+                mech:    "COUNT(*) FROM match_players JOIN matches WHERE status IN ('pending','in_progress')",
+                action:  'Any conflict → RETURN NULL (graceful)',
+              },
+            ].map(r => (
+              <tr>
+                <td class="font-semibold text-ink text-xs">{r.guard}</td>
+                <td class="font-mono text-xs text-ink-3">{r.mech}</td>
+                <td class="text-xs text-ink-3">{r.action}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-xs text-ink-3 mt-3">
+        ⚠ <code class="text-accent font-mono">create_match_with_players</code> returns
+        <code class="text-accent font-mono">uuid</code> scalar (never
+        <code class="text-accent font-mono">SETOF uuid</code>).
+        <code class="text-ink-2 font-mono">{'{data: null, error: null}'}</code> = guard fired gracefully.
+        <code class="text-ink-2 font-mono">{'{data: null, error}'}</code> = hard DB error. Always check separately.
+      </p>
+    </section>
+
+    <!-- ════════════════════════════════════════════════════════
+         §4  CONSTANTS REFERENCE
+         ════════════════════════════════════════════════════════ -->
+    <section id="constants" class="scroll-mt-8">
+      <h2 class="text-xl font-bold text-ink mb-1">
+        Constants
+        <span class="text-sm text-ink-3 font-normal font-sans ml-2">src/lib/constants.ts</span>
+      </h2>
+      <p class="text-xs text-ink-3 mb-4">
+        Extracted live from the source. Every threshold the engine reads at runtime.
+      </p>
+
+      <div class="dt-card">
+        <table class="dt-table">
+          <thead>
+            <tr>
+              <th>Constant</th>
+              <th>Value</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {constants.map(c => (
+              <tr>
+                <td>
+                  <code class="font-mono text-accent text-xs">{c.name}</code>
+                </td>
+                <td>
+                  <span class="font-mono text-accent-hi text-sm font-bold">{c.value}</span>
+                </td>
+                <td class="text-xs text-ink-3 max-w-sm">{c.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-xs text-warn mt-3">
+        ⚠ <code class="font-mono text-xs">ON_DECK_LOOKAHEAD</code> and
+        <code class="font-mono text-xs">MAX_ON_DECK_MATCHES</code> are deprecated from engine capacity —
+        only used by simulate-engine.ts. The live engine uses <code class="font-mono text-xs">MAX_AUTO_DRAFTS</code>
+        via a single atomic <code class="font-mono text-xs">COUNT(*)</code>.
+      </p>
+    </section>
+
+  </div>
+</BaseLayout>
+
+<!-- ══════════════════════════════════════════════════════════════
+     Client-side island: Priority Score Calculator
+     + Partnership Cap Visualizer
+     Zero framework dependencies — vanilla TS in Astro's script pipeline.
+     ══════════════════════════════════════════════════════════════ -->
+<script>
+  // ── Priority Score Calculator ─────────────────────────────────
+
+  const waitSlider  = document.getElementById('pc-wait')  as HTMLInputElement;
+  const gamesSlider = document.getElementById('pc-games') as HTMLInputElement;
+
+  const CRITICAL_WAIT  = 25;
+  const GAME_PENALTY   = 12;
+  const RED_ZONE_FLOOR = 1000;
+
+  function updateSliderTrack(el: HTMLInputElement) {
+    const pct = ((+el.value - +el.min) / (+el.max - +el.min)) * 100;
+    el.style.setProperty('--pct', `${pct}%`);
+  }
+
+  function computePriority() {
+    const wait  = +waitSlider.value;
+    const games = +gamesSlider.value;
+    const isRed = wait >= CRITICAL_WAIT;
+
+    const priorityScore = isRed
+      ? RED_ZONE_FLOOR + wait
+      : Math.max(0, wait - games * GAME_PENALTY);
+
+    const multiplier = isRed ? 100 : 10_000;
+
+    // Update value readouts
+    (document.getElementById('pc-wait-val')  as HTMLElement).textContent = String(wait);
+    (document.getElementById('pc-games-val') as HTMLElement).textContent = String(games);
+
+    // Zone chip
+    const chip = document.getElementById('pc-zone-chip') as HTMLElement;
+    chip.textContent = isRed ? '🔴 RED ZONE' : '⚪ NORMAL';
+    chip.className = isRed
+      ? 'ml-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-err-wash border border-err/20 text-err'
+      : 'ml-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-raised border border-edge text-ink-3';
+
+    // Formula string
+    const formula = isRed
+      ? `${RED_ZONE_FLOOR} + ${wait} = ${priorityScore}`
+      : `max(0, ${wait} − (${games} × ${GAME_PENALTY})) = ${priorityScore}`;
+
+    const candidateNote = isRed
+      ? `Red Zone urgency overrides 1 prior overlap (${multiplier.toLocaleString()}× vs normal 10,000×)`
+      : `One prior pairing ≈ ${multiplier.toLocaleString()} min extra wait — strongly avoids repeats`;
+
+    const result = document.getElementById('pc-result') as HTMLElement;
+    result.className = `rounded-xl p-4 border space-y-3 ${isRed ? 'bg-err-wash border-err/20' : 'bg-overlay border-edge'}`;
+    result.innerHTML = `
+      <div class="space-y-1">
+        <div class="text-[10px] font-semibold uppercase tracking-wider ${isRed ? 'text-err' : 'text-ink-3'}">
+          Priority Score
+        </div>
+        <div class="font-mono text-lg font-bold ${isRed ? 'text-err' : 'text-ink'}">
+          ${priorityScore.toLocaleString()}
+        </div>
+        <div class="font-mono text-xs text-ink-3">${formula}</div>
+      </div>
+      <div class="h-px bg-edge"></div>
+      <div class="space-y-1">
+        <div class="text-[10px] font-semibold uppercase tracking-wider text-ink-3">
+          Overlap multiplier
+        </div>
+        <div class="font-mono text-base font-bold text-accent">
+          × ${multiplier.toLocaleString()}
+        </div>
+        <div class="text-xs text-ink-3">${candidateNote}</div>
+      </div>
+    `;
+
+    updateSliderTrack(waitSlider);
+    updateSliderTrack(gamesSlider);
+  }
+
+  waitSlider.addEventListener('input', computePriority);
+  gamesSlider.addEventListener('input', computePriority);
+  computePriority();
+
+  // ── Partnership Cap Visualizer ────────────────────────────────
+
+  const MAX_REPEATS = 2;
+
+  const PLAYERS: Record<string, { name: string; color: string }> = {
+    a: { name: 'Alice', color: 'oklch(76% 0.17 155)' },  // accent emerald
+    b: { name: 'Bob',   color: 'oklch(62% 0.14 240)' },  // blue
+    c: { name: 'Carol', color: 'oklch(78% 0.16 70)'  },  // amber
+    d: { name: 'Dave',  color: 'oklch(65% 0.18 295)' },  // violet
+  };
+
+  const PAIRS: { id: string; a: string; b: string }[] = [
+    { id: 'ab', a: 'a', b: 'b' },
+    { id: 'ac', a: 'a', b: 'c' },
+    { id: 'ad', a: 'a', b: 'd' },
+    { id: 'bc', a: 'b', b: 'c' },
+    { id: 'bd', a: 'b', b: 'd' },
+    { id: 'cd', a: 'c', b: 'd' },
+  ];
+
+  // Each split: the 2 pairs that share a team in that arrangement
+  const SPLITS: { label: string; teams: [string, string][]; teamPairs: [string, string] }[] = [
+    {
+      label:     'AB vs CD',
+      teams:     [['a', 'b'], ['c', 'd']],
+      teamPairs: ['ab', 'cd'],
+    },
+    {
+      label:     'AC vs BD',
+      teams:     [['a', 'c'], ['b', 'd']],
+      teamPairs: ['ac', 'bd'],
+    },
+    {
+      label:     'AD vs BC',
+      teams:     [['a', 'd'], ['b', 'c']],
+      teamPairs: ['ad', 'bc'],
+    },
+  ];
+
+  const counts: Record<string, number> = { ab: 0, ac: 0, ad: 0, bc: 0, bd: 0, cd: 0 };
+
+  function playerChip(id: string) {
+    const p = PLAYERS[id];
+    return `<span style="background:${p.color}22;border:1px solid ${p.color}55;color:${p.color};padding:2px 8px;border-radius:6px;font-size:11px;font-family:var(--font-mono);font-weight:600;">${p.name[0]}</span>`;
+  }
+
+  function renderPairs() {
+    const container = document.getElementById('cap-pairs')!;
+    container.innerHTML = PAIRS.map(p => {
+      const count   = counts[p.id];
+      const capped  = count >= MAX_REPEATS;
+      const pA = PLAYERS[p.a];
+      const pB = PLAYERS[p.b];
+      return `
+        <div class="flex items-center gap-2 bg-overlay rounded-lg px-3 py-2 border ${capped ? 'border-err/30 bg-err-wash' : 'border-edge-dim'}">
+          <div class="flex items-center gap-1">
+            ${playerChip(p.a)}
+            <span style="color:var(--color-ink-3);font-size:10px;">+</span>
+            ${playerChip(p.b)}
+          </div>
+          <div class="flex items-center gap-1.5 ml-auto">
+            <button
+              onclick="capDecr('${p.id}')"
+              class="w-5 h-5 rounded flex items-center justify-center text-sm bg-raised border border-edge text-ink-3 hover:text-accent-hi hover:border-accent-ring transition-all"
+              ${count === 0 ? 'disabled style="opacity:0.35;pointer-events:none"' : ''}
+            >−</button>
+            <span class="font-mono text-sm font-bold ${capped ? 'text-err' : 'text-ink'} w-3 text-center">${count}</span>
+            <button
+              onclick="capIncr('${p.id}')"
+              class="w-5 h-5 rounded flex items-center justify-center text-sm bg-raised border border-edge text-ink-3 hover:text-accent-hi hover:border-accent-ring transition-all"
+            >+</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderSplits() {
+    const container = document.getElementById('cap-splits')!;
+    container.innerHTML = SPLITS.map(s => {
+      const blockedPair = s.teamPairs.find(pid => counts[pid] >= MAX_REPEATS);
+      const blocked     = !!blockedPair;
+      const [tA, tB]    = s.teams;
+
+      const teamDisplay = (ids: string[]) =>
+        `<div class="flex items-center gap-1">${ids.map(playerChip).join('')}</div>`;
+
+      return `
+        <div class="flex items-center gap-3 rounded-lg px-4 py-3 border ${blocked ? 'bg-err-wash border-err/30' : 'bg-overlay border-edge-dim'}">
+          <span class="text-base shrink-0">${blocked ? '🚫' : '✓'}</span>
+          <div class="flex items-center gap-2 flex-1">
+            ${teamDisplay(tA)}
+            <span style="color:var(--color-ink-4);font-size:10px;font-family:var(--font-mono)">vs</span>
+            ${teamDisplay(tB)}
+          </div>
+          <span class="text-[10px] font-mono shrink-0 ${blocked ? 'text-err' : 'text-ink-4'}">
+            ${blocked ? `${blockedPair} capped (${counts[blockedPair!]}×)` : s.label}
+          </span>
+        </div>`;
+    }).join('');
+  }
+
+  function renderStatus() {
+    const el       = document.getElementById('cap-status')!;
+    const allBlock = SPLITS.every(s => s.teamPairs.some(p => counts[p] >= MAX_REPEATS));
+
+    if (allBlock) {
+      el.className = 'rounded-lg px-4 py-3 text-xs font-semibold text-center bg-err-wash border border-err/30 text-err';
+      el.innerHTML = '⚡ CAP SATURATION — All splits blocked. broadcastCapSaturation() fires. Organizer must assign manually.';
+    } else {
+      const blocked = SPLITS.filter(s => s.teamPairs.some(p => counts[p] >= MAX_REPEATS)).length;
+      el.className = 'rounded-lg px-4 py-3 text-xs font-semibold text-center bg-overlay border border-edge-dim text-ink-3';
+      el.innerHTML = blocked > 0
+        ? `${blocked} of 3 splits blocked — engine uses remaining ${3 - blocked}`
+        : 'All 3 splits available ✓';
+    }
+  }
+
+  function renderCap() {
+    renderPairs();
+    renderSplits();
+    renderStatus();
+  }
+
+  // Expose increment/decrement to inline onclick handlers
+  (window as any).capIncr = (id: string) => { counts[id] = Math.min(counts[id] + 1, 5); renderCap(); };
+  (window as any).capDecr = (id: string) => { counts[id] = Math.max(counts[id] - 1, 0); renderCap(); };
+
+  document.getElementById('cap-reset')!.addEventListener('click', () => {
+    Object.keys(counts).forEach(k => counts[k] = 0);
+    renderCap();
+  });
+
+  renderCap();
+</script>
+
+<!-- ── Slider styles (range input cross-browser) ─────────────── -->
+<style is:global>
+  .calc-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+    background: linear-gradient(
+      to right,
+      oklch(76% 0.17 155) 0%,
+      oklch(76% 0.17 155) var(--pct, 25%),
+      oklch(25% 0.025 245) var(--pct, 25%),
+      oklch(25% 0.025 245) 100%
+    );
+    transition: background 80ms;
+  }
+
+  .calc-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: oklch(76% 0.17 155);
+    cursor: pointer;
+    transition: background 80ms, transform 80ms, box-shadow 80ms;
+    box-shadow: 0 0 0 3px oklch(14% 0.048 155);
+  }
+  .calc-slider:hover::-webkit-slider-thumb,
+  .calc-slider:focus::-webkit-slider-thumb {
+    background: oklch(85% 0.15 155);
+    transform: scale(1.2);
+    box-shadow: 0 0 0 4px oklch(16% 0.06 155);
+  }
+
+  .calc-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: oklch(76% 0.17 155);
+    border: none;
+    cursor: pointer;
+  }
+  .calc-slider::-moz-range-progress {
+    background: oklch(76% 0.17 155);
+    height: 4px;
+    border-radius: 2px;
+  }
+</style>

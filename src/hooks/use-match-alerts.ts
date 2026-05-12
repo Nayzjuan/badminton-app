@@ -73,13 +73,13 @@ export function useMatchAlerts({
   // eagerly so the context is primed as soon as possible.
   useEffect(() => {
     const unlock = () => unlockAudio();
-    document.addEventListener("click",      unlock, { once: true });
+    document.addEventListener("click", unlock, { once: true });
     document.addEventListener("touchstart", unlock, { once: true, passive: true });
-    document.addEventListener("keydown",    unlock, { once: true });
+    document.addEventListener("keydown", unlock, { once: true });
     return () => {
-      document.removeEventListener("click",      unlock);
+      document.removeEventListener("click", unlock);
       document.removeEventListener("touchstart", unlock);
-      document.removeEventListener("keydown",    unlock);
+      document.removeEventListener("keydown", unlock);
     };
   }, []);
 
@@ -108,9 +108,7 @@ export function useMatchAlerts({
       // AudioContext being in a "running" state.  It is the reliable
       // fallback for mobile.
       try {
-        const { sendPlayerNotification } = await import(
-          "@/app/actions/notifications"
-        );
+        const { sendPlayerNotification } = await import("@/app/actions/notifications");
         await sendPlayerNotification(playerId, type);
       } catch (err) {
         // Non-critical — audio already fired; just log.
@@ -135,7 +133,7 @@ export function useMatchAlerts({
       .select("status")
       .eq("session_id", sessionId)
       .eq("player_id", playerId)
-      .in("status", ["waiting", "on_deck", "playing"])
+      .in("status", ["waiting", "drafted", "on_deck", "playing"])
       .maybeSingle();
 
     if (queueRow) {
@@ -156,7 +154,7 @@ export function useMatchAlerts({
         .select("id, status")
         .eq("session_id", sessionId)
         .in("id", matchIds)
-        .in("status", ["pending", "in_progress"])
+        .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -183,6 +181,19 @@ export function useMatchAlerts({
       lastQueueStatus.current = next as QueueStatus;
 
       console.log(`[useMatchAlerts] queue transition: ${prev} → ${next}`);
+
+      // ── Drafted: single short haptic, no audio ────────────────
+      // Signals "something is happening" without creating urgency —
+      // the draft may still be cancelled or reshuffled before publish.
+      // Audio is intentionally reserved for the confirmed on_deck moment.
+      // Guard mirrors the on_deck pattern (prev !== target) so it fires even
+      // if bootstrap lost the race and prev is still null when the event arrives.
+      if (next === "drafted" && prev !== "drafted") {
+        if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+          navigator.vibrate(80);
+        }
+        return;
+      }
 
       // ── FIX 1: check `next === target` not `prev === source`  ──
       // Old: if (prev === "waiting" && next === "on_deck")
@@ -254,12 +265,7 @@ export function useMatchAlerts({
   useEffect(() => {
     bootstrap();
 
-    const unsubQueue = subscribeToQueue(
-      supabase,
-      sessionId,
-      handleQueueChange,
-      "alerts-queue"
-    );
+    const unsubQueue = subscribeToQueue(supabase, sessionId, handleQueueChange, "alerts-queue");
 
     const unsubMatches = subscribeToMatches(
       supabase,
@@ -286,6 +292,6 @@ export function useMatchAlerts({
       unsubMatches();
       unsubPlayers();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId, playerId]);
 }

@@ -53,7 +53,7 @@ export default async function LobbyLeaderboardPage() {
         sessionId={null}
         sessions={sessions ?? []}
         currentUserId={user?.id ?? null}
-        variant="standalone"
+        variant="player-panel"
       />
     </main>
   );
