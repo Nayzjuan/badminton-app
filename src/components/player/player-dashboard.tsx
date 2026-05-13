@@ -43,6 +43,7 @@ import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import { VipTag } from "@/components/ui/vip-tag";
 import { submitMatchScore } from "@/app/actions/match";
+import { sanitizeScore } from "@/lib/score-input";
 import { checkoutPlayer } from "@/app/actions/queue";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { SignOutButton } from "@/components/sign-out-button";
@@ -565,24 +566,21 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
   const myScoreValue = myTeam === "a" ? teamAScore : teamBScore;
   const theirScoreValue = myTeam === "a" ? teamBScore : teamAScore;
 
-  function clampScore(val: string): string {
-    if (val === "") return "";
-    const num = parseInt(val, 10);
-    if (isNaN(num)) return "";
-    return String(Math.min(30, Math.max(0, num)));
-  }
-
+  // Sanitize-only (no clamping). The previous clamp made editing impossible:
+  // a user with "30" who wanted "29" couldn't lower it — every intermediate
+  // value above 30 re-clamped back to "30", trapping the field. We now allow
+  // any 0–999 input; range validation runs only at submit time.
   function handleMyScore(val: string) {
     setError(null);
-    const clamped = clampScore(val);
-    if (myTeam === "a") setTeamAScore(clamped);
-    else setTeamBScore(clamped);
+    const clean = sanitizeScore(val);
+    if (myTeam === "a") setTeamAScore(clean);
+    else setTeamBScore(clean);
   }
   function handleTheirScore(val: string) {
     setError(null);
-    const clamped = clampScore(val);
-    if (myTeam === "a") setTeamBScore(clamped);
-    else setTeamAScore(clamped);
+    const clean = sanitizeScore(val);
+    if (myTeam === "a") setTeamBScore(clean);
+    else setTeamAScore(clean);
   }
 
   function handleSubmit() {
@@ -649,14 +647,15 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
               {myScoreLabel}
             </p>
             <input
-              type="number"
+              type="text"
               inputMode="numeric"
-              min={0}
-              max={30}
+              pattern="[0-9]*"
+              maxLength={3}
               value={myScoreValue}
               onChange={(e) => handleMyScore(e.target.value)}
               disabled={isPending}
               placeholder="0"
+              aria-label={`${myScoreLabel} score`}
               className="w-full rounded-xl border border-slate-200 dark:border-border bg-white dark:bg-background px-3 py-3
                          text-center text-2xl font-black tabular-nums text-slate-900 dark:text-foreground
                          focus:outline-none focus:ring-2 focus:ring-emerald-400 dark:focus:ring-emerald-500
@@ -674,14 +673,15 @@ function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
               {theirScoreLabel}
             </p>
             <input
-              type="number"
+              type="text"
               inputMode="numeric"
-              min={0}
-              max={30}
+              pattern="[0-9]*"
+              maxLength={3}
               value={theirScoreValue}
               onChange={(e) => handleTheirScore(e.target.value)}
               disabled={isPending}
               placeholder="0"
+              aria-label={`${theirScoreLabel} score`}
               className="w-full rounded-xl border border-slate-200 dark:border-border bg-white dark:bg-background px-3 py-3
                          text-center text-2xl font-black tabular-nums text-slate-900 dark:text-foreground
                          focus:outline-none focus:ring-2 focus:ring-slate-400 dark:focus:ring-slate-500
