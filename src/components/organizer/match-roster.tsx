@@ -102,26 +102,14 @@ function SkillLevelDark({ level }: { level: SkillLevel }) {
 
 // ── Internal: VS badge ─────────────────────────────────────────
 
-function VsBadge({ dark }: { dark?: boolean }) {
-  if (dark) {
-    return (
-      <div className="flex flex-col items-center gap-1" aria-hidden="true">
-        <div className="w-px h-3.5 bg-cc-border" />
-        <span className="font-command text-[8px] font-bold text-cc-t3">VS</span>
-        <div className="w-px h-3.5 bg-cc-border" />
-      </div>
-    );
-  }
+function VsBadge({ dark: _dark }: { dark?: boolean }) {
+  // Both on-deck (light) and court cards (dark) use vertical lines + text
+  // per preview .vs-divider / .court-vs spec.
   return (
-    <div
-      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
-                 bg-white dark:bg-white/10 ring-1 ring-slate-200 dark:ring-white/20
-                 shadow-sm dark:shadow-none"
-      aria-hidden="true"
-    >
-      <span className="text-[10px] font-black tracking-tight text-slate-400 dark:text-white/50">
-        VS
-      </span>
+    <div className="flex flex-col items-center gap-1" aria-hidden="true">
+      <div className="w-px h-3.5 bg-cc-border" />
+      <span className="font-command text-[8px] font-bold text-cc-t3">VS</span>
+      <div className="w-px h-3.5 bg-cc-border" />
     </div>
   );
 }
