@@ -654,7 +654,12 @@ export type Database = {
       };
       publish_all_drafts: {
         Args: { p_session_id: string; p_user_id: string };
-        Returns: { success: boolean; error?: string; published_count?: number; skipped_count?: number };
+        Returns: {
+          success: boolean;
+          error?: string;
+          published_count?: number;
+          skipped_count?: number;
+        };
       };
       checkout_player_cleanup_drafts: {
         Args: { p_session_id: string; p_player_id: string };

@@ -140,14 +140,14 @@ export function subscribeToMatchPlayers(
 
   const channel = supabase
     .channel(channelName)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "match_players" },
-      (payload) => {
-        console.log(`[realtime] ${channelName} event:`, payload.eventType);
-        onChange(payload as RealtimePostgresChangesPayload<Database["public"]["Tables"]["match_players"]["Row"]>);
-      }
-    )
+    .on("postgres_changes", { event: "*", schema: "public", table: "match_players" }, (payload) => {
+      console.log(`[realtime] ${channelName} event:`, payload.eventType);
+      onChange(
+        payload as RealtimePostgresChangesPayload<
+          Database["public"]["Tables"]["match_players"]["Row"]
+        >
+      );
+    })
     .subscribe((status, err) => {
       if (err) {
         console.error(`[realtime] ${channelName} subscription error:`, err);
@@ -203,14 +203,10 @@ export function subscribeToOrganizerBroadcast(
         onIntervention(msg.payload);
       }
     )
-    .on(
-      "broadcast",
-      { event: "session_closed" },
-      (msg: { payload: SessionClosedPayload }) => {
-        console.log(`[realtime] ${channelName} session_closed:`, msg.payload);
-        onSessionClosed?.(msg.payload);
-      }
-    )
+    .on("broadcast", { event: "session_closed" }, (msg: { payload: SessionClosedPayload }) => {
+      console.log(`[realtime] ${channelName} session_closed:`, msg.payload);
+      onSessionClosed?.(msg.payload);
+    })
     .on(
       "broadcast",
       { event: "auto_matchmaking_toggled" },
@@ -219,14 +215,10 @@ export function subscribeToOrganizerBroadcast(
         onAutoMatchmakingToggled?.(msg.payload);
       }
     )
-    .on(
-      "broadcast",
-      { event: "cap_saturation" },
-      (msg: { payload: CapSaturationPayload }) => {
-        console.log(`[realtime] ${channelName} cap_saturation:`, msg.payload);
-        onCapSaturation?.(msg.payload);
-      }
-    )
+    .on("broadcast", { event: "cap_saturation" }, (msg: { payload: CapSaturationPayload }) => {
+      console.log(`[realtime] ${channelName} cap_saturation:`, msg.payload);
+      onCapSaturation?.(msg.payload);
+    })
     .subscribe((status, err) => {
       if (err) {
         console.error(`[realtime] ${channelName} broadcast subscription error:`, err);
@@ -253,14 +245,12 @@ export function subscribeToProfiles(
 
   const channel = supabase
     .channel(channelName)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "profiles" },
-      (payload) => {
-        console.log(`[realtime] ${channelName} event:`, payload.eventType);
-        onChange(payload as RealtimePostgresChangesPayload<Database["public"]["Tables"]["profiles"]["Row"]>);
-      }
-    )
+    .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (payload) => {
+      console.log(`[realtime] ${channelName} event:`, payload.eventType);
+      onChange(
+        payload as RealtimePostgresChangesPayload<Database["public"]["Tables"]["profiles"]["Row"]>
+      );
+    })
     .subscribe((status, err) => {
       if (err) {
         console.error(`[realtime] ${channelName} subscription error:`, err);

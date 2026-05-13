@@ -48,12 +48,12 @@ interface MatchAlertProps {
 // Dot color + label both shown for redundancy.
 
 const SKILL_TIER: Record<SkillLevel, { label: string; dotCls: string }> = {
-  beginner:           { label: "BEG", dotCls: "bg-emerald-400" },
+  beginner: { label: "BEG", dotCls: "bg-emerald-400" },
   lower_intermediate: { label: "BEG", dotCls: "bg-emerald-400" },
-  intermediate:       { label: "INT", dotCls: "bg-sky-400"     },
-  upper_intermediate: { label: "INT", dotCls: "bg-sky-500"     },
-  lower_advanced:     { label: "ADV", dotCls: "bg-purple-400"  },
-  advanced:           { label: "ADV", dotCls: "bg-purple-500"  },
+  intermediate: { label: "INT", dotCls: "bg-sky-400" },
+  upper_intermediate: { label: "INT", dotCls: "bg-sky-500" },
+  lower_advanced: { label: "ADV", dotCls: "bg-purple-400" },
+  advanced: { label: "ADV", dotCls: "bg-purple-500" },
 };
 
 // ── Player row inside the teams grid ──────────────────────────
@@ -75,24 +75,22 @@ function PlayerRow({
   // no dark: overrides needed; text stays dark in both light and dark mode.
   // Navy tone uses semantic tokens so it works on both the dark bg (dark mode)
   // and the light bg (light mode) versions of the in_progress overlay.
-  const tierLabelCls =
-    tone === "amber"
-      ? "text-amber-900/60"
-      : "text-muted-foreground/70";
+  const tierLabelCls = tone === "amber" ? "text-amber-900/60" : "text-muted-foreground/70";
 
-  const nameCls =
-    isMe
-      ? tone === "amber"
-        ? "font-bold text-amber-950"
-        : "font-bold text-foreground"
-      : tone === "amber"
+  const nameCls = isMe
+    ? tone === "amber"
+      ? "font-bold text-amber-950"
+      : "font-bold text-foreground"
+    : tone === "amber"
       ? "font-medium text-amber-900/80"
       : "font-medium text-foreground/80";
 
   return (
     <div className="flex items-center gap-2 py-1.5">
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tier.dotCls}`} />
-      <span className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.1em] ${tierLabelCls}`}>
+      <span
+        className={`shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.1em] ${tierLabelCls}`}
+      >
         {tier.label}
       </span>
       <span className={`flex-1 truncate text-sm ${nameCls}`}>{name}</span>
@@ -126,15 +124,9 @@ function TeamsGrid({
   const opp2 = opponents[1] ?? null;
 
   // Amber canvas is always bright; no dark: variants for amber tone.
-  const labelCls =
-    tone === "amber"
-      ? "text-amber-800/90"
-      : "text-muted-foreground";
+  const labelCls = tone === "amber" ? "text-amber-800/90" : "text-muted-foreground";
 
-  const vsCls =
-    tone === "amber"
-      ? "text-amber-800/80"
-      : "text-muted-foreground/60";
+  const vsCls = tone === "amber" ? "text-amber-800/80" : "text-muted-foreground/60";
 
   return (
     <div className="grid grid-cols-[1fr_auto_1fr] gap-x-3 items-start">
@@ -294,17 +286,15 @@ export function MatchAlert({
   // ── On Deck (pending) — breathing room (550ms) ───────────────
   const isNextUp = onDeckPosition === null || onDeckPosition === 1;
 
-  const pillText = isNextUp
-    ? "You're On Deck"
-    : `${onDeckPosition} of ${totalOnDeck} on deck`;
+  const pillText = isNextUp ? "You're On Deck" : `${onDeckPosition} of ${totalOnDeck} on deck`;
 
   const subText = isNextUp ? "Coming Up Next" : `#${onDeckPosition} On Deck`;
 
   const detailText = isNextUp
     ? "Find your team — a court is opening soon"
     : onDeckPosition === 2
-    ? "1 match ahead — get warmed up"
-    : `${(onDeckPosition ?? 1) - 1} matches ahead — be ready soon`;
+      ? "1 match ahead — get warmed up"
+      : `${(onDeckPosition ?? 1) - 1} matches ahead — be ready soon`;
 
   return (
     <div

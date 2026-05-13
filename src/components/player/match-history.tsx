@@ -73,9 +73,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
 
   if (loading) {
     return (
-      <div className="py-12 text-center text-sm text-muted-foreground">
-        Loading history...
-      </div>
+      <div className="py-12 text-center text-sm text-muted-foreground">Loading history...</div>
     );
   }
 
@@ -141,9 +139,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
           const draw = myScore !== null && theirScore !== null && myScore === theirScore;
           const lost = !won && !draw;
 
-          const completedDate = match.completed_at
-            ? new Date(match.completed_at)
-            : null;
+          const completedDate = match.completed_at ? new Date(match.completed_at) : null;
           const dateStr = completedDate
             ? completedDate.toLocaleDateString("en-US", {
                 month: "short",
@@ -160,18 +156,18 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
           const borderColor = won
             ? "border-emerald-200 dark:border-emerald-800/50"
             : draw
-            ? "border-slate-300 dark:border-border"
-            : "border-border";
+              ? "border-slate-300 dark:border-border"
+              : "border-border";
           const headerBg = won
             ? "bg-emerald-50 border-emerald-100 dark:bg-emerald-950/30 dark:border-emerald-800/40"
             : draw
-            ? "bg-slate-100 border-slate-200 dark:bg-muted/60 dark:border-border"
-            : "bg-slate-50 border-slate-100 dark:bg-muted/40 dark:border-border";
+              ? "bg-slate-100 border-slate-200 dark:bg-muted/60 dark:border-border"
+              : "bg-slate-50 border-slate-100 dark:bg-muted/40 dark:border-border";
           const badgeStyle = won
             ? "bg-emerald-500 text-white"
             : draw
-            ? "bg-slate-400 text-white dark:bg-slate-600"
-            : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400";
+              ? "bg-slate-400 text-white dark:bg-slate-600"
+              : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400";
           const badgeLabel = won ? "Won" : draw ? "Draw" : "Lost";
 
           return (
@@ -180,9 +176,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
               className={`rounded-2xl border overflow-hidden bg-card shadow-sm ${borderColor}`}
             >
               {/* Header */}
-              <div
-                className={`flex items-center justify-between px-4 py-2 border-b ${headerBg}`}
-              >
+              <div className={`flex items-center justify-between px-4 py-2 border-b ${headerBg}`}>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-medium text-slate-500 dark:text-muted-foreground">
                     Match {history.length - i}
@@ -192,7 +186,9 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
                 <div className="flex items-center gap-2">
                   {(dateStr || timeStr) && (
                     <span className="text-[10px] text-muted-foreground">
-                      {dateStr}{dateStr && timeStr ? " · " : ""}{timeStr}
+                      {dateStr}
+                      {dateStr && timeStr ? " · " : ""}
+                      {timeStr}
                     </span>
                   )}
                   <span
@@ -213,7 +209,9 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
                   >
                     {myScore ?? "?"}
                   </span>
-                  <span className="text-sm font-bold text-slate-300 dark:text-muted-foreground/40">–</span>
+                  <span className="text-sm font-bold text-slate-300 dark:text-muted-foreground/40">
+                    –
+                  </span>
                   <span
                     className={`text-3xl font-black tabular-nums
                                 ${lost ? "text-red-500 dark:text-red-400" : "text-muted-foreground"}`}

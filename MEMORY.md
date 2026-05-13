@@ -207,6 +207,7 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 **Vercel build was broken** at commit `5a5651f` due to Turbopack requiring all exports from `"use server"` files to be `async`. `isRpcNotFound` was a sync export in `_shared.ts`.
 
 **Fixes applied:**
+
 - `src/lib/rpc-utils.ts` — new file containing `isRpcNotFound` (pure sync util, moved out of "use server" scope)
 - `src/app/actions/_shared.ts` — removed `isRpcNotFound` export; updated comment
 - `src/app/actions/match.ts` + `queue.ts` — updated imports to use `@/lib/rpc-utils`
@@ -216,6 +217,7 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
   - Registered 7 missing draft-mode RPC function types: `revert_match_to_active`, `clear_on_deck_match_atomic`, `publish_match`, `publish_all_drafts`, `checkout_player_cleanup_drafts`, `join_queue`, `remove_player_from_queue_organizer`
 
 **Organizer dashboard ported** to match `preview-revamp.html` command-center design:
+
 - `organizer-dashboard.tsx`:
   - Auto-matchmaking toggle: emerald → electric teal `oklch(0.79 0.18 188)` (both mobile + desktop)
   - Mobile more-menu dropdown: white/slate → dark `oklch(0.19 0.020 238)` command-center

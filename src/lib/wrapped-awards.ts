@@ -24,7 +24,6 @@ export type AwardMeta = {
 };
 
 export const AWARD_META: Record<string, AwardMeta> = {
-
   // ── PERFORMANCE ────────────────────────────────────────────
   undefeated_champion: {
     slug: "undefeated_champion",
@@ -67,7 +66,8 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "point_machine",
     emoji: "🎯",
     title: "Point Machine",
-    subtitle: "{total_points} points scored tonight. The scoreboard was basically your highlight reel.",
+    subtitle:
+      "{total_points} points scored tonight. The scoreboard was basically your highlight reel.",
     rarity: "uncommon",
   },
   shutout_artist: {
@@ -157,7 +157,8 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "never_say_die",
     emoji: "🤞",
     title: "Never Say Die",
-    subtitle: "{losses} losses tonight. You're either building resilience or something is deeply wrong.",
+    subtitle:
+      "{losses} losses tonight. You're either building resilience or something is deeply wrong.",
     rarity: "uncommon",
   },
   sunset_surge: {
@@ -180,7 +181,8 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "my_nemesis",
     emoji: "😤",
     title: "Found My Nemesis",
-    subtitle: "{nemesis_name} beat you {loss_count} times tonight. Respectfully: we have a problem.",
+    subtitle:
+      "{nemesis_name} beat you {loss_count} times tonight. Respectfully: we have a problem.",
     rarity: "uncommon",
   },
   kryptonite: {
@@ -203,7 +205,8 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "heartbreaker",
     emoji: "💔",
     title: "The Heartbreaker",
-    subtitle: "Lost {narrow_losses} games by 2 points or less. The margin was this thin. Every. Single. Time.",
+    subtitle:
+      "Lost {narrow_losses} games by 2 points or less. The margin was this thin. Every. Single. Time.",
     rarity: "uncommon",
   },
   deuce_magnet: {
@@ -219,7 +222,8 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "participation_trophy",
     emoji: "🫶",
     title: "Participation Trophy",
-    subtitle: "0 wins. But you laced up your shoes and showed up. That's genuinely half the battle.",
+    subtitle:
+      "0 wins. But you laced up your shoes and showed up. That's genuinely half the battle.",
     rarity: "common",
   },
   the_punching_bag: {
@@ -430,14 +434,16 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "momentum",
     emoji: "🌊",
     title: "On a Wave",
-    subtitle: "You ended last session on a {prior_streak}-game streak and won your first game tonight. The momentum carried.",
+    subtitle:
+      "You ended last session on a {prior_streak}-game streak and won your first game tonight. The momentum carried.",
     rarity: "rare",
   },
   consistent_dominator: {
     slug: "consistent_dominator",
     emoji: "👑",
     title: "Consistent Dominator",
-    subtitle: "70%+ win rate in {dominant_sessions} of your last 3 sessions. You don't have off nights.",
+    subtitle:
+      "70%+ win rate in {dominant_sessions} of your last 3 sessions. You don't have off nights.",
     rarity: "legendary",
   },
   bounced_back: {
@@ -451,7 +457,8 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "nemesis_slayer",
     emoji: "⚔️",
     title: "Nemesis Slayer",
-    subtitle: "You finally beat the player who's had your number. They were up {alltime_deficit} on you all-time.",
+    subtitle:
+      "You finally beat the player who's had your number. They were up {alltime_deficit} on you all-time.",
     rarity: "rare",
   },
   settled_the_score: {
@@ -465,14 +472,16 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "the_dynasty",
     emoji: "🏛️",
     title: "The Dynasty",
-    subtitle: "You've beaten the same opponent {wins} times all-time with a 70%+ win rate. They know your name.",
+    subtitle:
+      "You've beaten the same opponent {wins} times all-time with a 70%+ win rate. They know your name.",
     rarity: "legendary",
   },
   serial_rivals: {
     slug: "serial_rivals",
     emoji: "🔁",
     title: "Serial Rivals",
-    subtitle: "You've faced the same opponent across {sessions_faced} different sessions. This is personal.",
+    subtitle:
+      "You've faced the same opponent across {sessions_faced} different sessions. This is personal.",
     rarity: "uncommon",
   },
   soulmates: {
@@ -486,7 +495,8 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "winning_formula",
     emoji: "🧪",
     title: "Winning Formula",
-    subtitle: "{win_rate}% win rate across {games} games with your go-to partner. Don't fix what ain't broken.",
+    subtitle:
+      "{win_rate}% win rate across {games} games with your go-to partner. Don't fix what ain't broken.",
     rarity: "uncommon",
   },
 };
@@ -494,9 +504,9 @@ export const AWARD_META: Record<string, AwardMeta> = {
 // Rarity sort order (legendary first)
 const RARITY_ORDER: Record<AwardRarity, number> = {
   legendary: 0,
-  rare:      1,
-  uncommon:  2,
-  common:    3,
+  rare: 1,
+  uncommon: 2,
+  common: 3,
 };
 
 /**

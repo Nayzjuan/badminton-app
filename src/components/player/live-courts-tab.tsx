@@ -20,7 +20,12 @@ interface LiveCourtsTabProps {
   myPlayerId?: string;
 }
 
-export function LiveCourtsTab({ inProgressMatches, onDeckMatches, loading, myPlayerId }: LiveCourtsTabProps) {
+export function LiveCourtsTab({
+  inProgressMatches,
+  onDeckMatches,
+  loading,
+  myPlayerId,
+}: LiveCourtsTabProps) {
   if (loading) {
     return <div className="py-16 text-center text-sm text-muted-foreground">Loading courts...</div>;
   }
@@ -61,7 +66,12 @@ export function LiveCourtsTab({ inProgressMatches, onDeckMatches, loading, myPla
 
           <div className="space-y-4">
             {inProgressMatches.map((match) => (
-              <CourtMatchCard key={match.id} match={match} variant="in_progress" myPlayerId={myPlayerId} />
+              <CourtMatchCard
+                key={match.id}
+                match={match}
+                variant="in_progress"
+                myPlayerId={myPlayerId}
+              />
             ))}
           </div>
         </section>
@@ -85,7 +95,12 @@ export function LiveCourtsTab({ inProgressMatches, onDeckMatches, loading, myPla
 
           <div className="space-y-4">
             {onDeckMatches.map((match) => (
-              <CourtMatchCard key={match.id} match={match} variant="on_deck" myPlayerId={myPlayerId} />
+              <CourtMatchCard
+                key={match.id}
+                match={match}
+                variant="on_deck"
+                myPlayerId={myPlayerId}
+              />
             ))}
           </div>
         </section>
@@ -187,7 +202,14 @@ function CourtMatchCard({
       </div>
 
       {/* Roster grid */}
-      <TeamsGrid dark={!isOnDeck} teamA={teamA} teamB={teamB} labelA="Team A" labelB="Team B" myPlayerId={myPlayerId} />
+      <TeamsGrid
+        dark={!isOnDeck}
+        teamA={teamA}
+        teamB={teamB}
+        labelA="Team A"
+        labelB="Team B"
+        myPlayerId={myPlayerId}
+      />
     </div>
   );
 }

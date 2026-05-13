@@ -73,23 +73,13 @@ export function QueueStatus({
       </p>
 
       {/* Thin rule */}
-      <div
-        className={`relative my-7 h-px w-8 ${
-          approaching ? "bg-amber-400/30" : "bg-border"
-        }`}
-      />
+      <div className={`relative my-7 h-px w-8 ${approaching ? "bg-amber-400/30" : "bg-border"}`} />
 
       {/* Stats row — waited · games · skill */}
       <div className="relative flex items-end gap-10">
         <Stat value={`${waitMinutes}m`} label="Waited" />
         <Stat value={`${gamesPlayed}`} label="Games" />
-        {skillLevel && (
-          <Stat
-            value={SKILL_ABBR[skillLevel]}
-            label="Skill"
-            tone="primary"
-          />
-        )}
+        {skillLevel && <Stat value={SKILL_ABBR[skillLevel]} label="Skill" tone="primary" />}
       </div>
     </div>
   );

@@ -22,12 +22,12 @@ interface WaitlistTabProps {
 }
 
 const SKILL_ABBREV: Record<SkillLevel, string> = {
-  beginner:           "BEG",
+  beginner: "BEG",
   lower_intermediate: "BEG",
-  intermediate:       "INT",
+  intermediate: "INT",
   upper_intermediate: "INT",
-  lower_advanced:     "ADV",
-  advanced:           "ADV",
+  lower_advanced: "ADV",
+  advanced: "ADV",
 };
 
 // Electric indigo — the "you are here" colour.
@@ -66,9 +66,7 @@ export function WaitlistTab({ waitlist, myPlayerId, loading }: WaitlistTabProps)
           <br />
           Waiting
         </h2>
-        <p className="mt-5 text-sm text-muted-foreground">
-          Be the first in line.
-        </p>
+        <p className="mt-5 text-sm text-muted-foreground">Be the first in line.</p>
       </div>
     );
   }
@@ -228,11 +226,7 @@ function WaitlistRow({
   // Top-4 positions use full primary (emerald), rest fade to muted.
   // #1 gets slightly larger rank numeral for natural emphasis.
   const rankColor =
-    position === 1
-      ? "text-primary"
-      : isTop
-      ? "text-primary/65"
-      : "text-muted-foreground/35";
+    position === 1 ? "text-primary" : isTop ? "text-primary/65" : "text-muted-foreground/35";
 
   const rankSize = position === 1 ? "30px" : isTop ? "28px" : "22px";
   const nameSize = isTop ? "17px" : "15px";

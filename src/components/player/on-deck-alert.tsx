@@ -19,19 +19,10 @@ interface OnDeckAlertProps {
   position: number | null;
 }
 
-export function OnDeckAlert({
-  matchStatus,
-  queueStatus,
-  position,
-}: OnDeckAlertProps) {
+export function OnDeckAlert({ matchStatus, queueStatus, position }: OnDeckAlertProps) {
   // Show only for waiting players near the front. Everything else is null —
   // active match states are owned by MatchAlert (full-screen overlay).
-  if (
-    matchStatus ||
-    queueStatus !== "waiting" ||
-    position === null ||
-    position > 4
-  ) {
+  if (matchStatus || queueStatus !== "waiting" || position === null || position > 4) {
     return null;
   }
 
@@ -41,10 +32,10 @@ export function OnDeckAlert({
     position === 1
       ? "You're Next!"
       : position === 2
-      ? "Almost there…"
-      : position === 3
-      ? "Get ready!"
-      : "Coming up soon";
+        ? "Almost there…"
+        : position === 3
+          ? "Get ready!"
+          : "Coming up soon";
 
   return (
     <div
@@ -58,18 +49,12 @@ export function OnDeckAlert({
         }`}
     >
       <span
-        className={`h-1.5 w-1.5 rounded-full ${
-          isUrgent ? "bg-amber-500" : "bg-sky-500"
-        }`}
+        className={`h-1.5 w-1.5 rounded-full ${isUrgent ? "bg-amber-500" : "bg-sky-500"}`}
         style={{ animation: "status-pulse 1.4s ease-in-out infinite" }}
       />
       <span
         className={`text-[11px] font-bold uppercase tracking-[0.14em]
-          ${
-            isUrgent
-              ? "text-amber-800 dark:text-amber-300"
-              : "text-sky-800 dark:text-sky-300"
-          }`}
+          ${isUrgent ? "text-amber-800 dark:text-amber-300" : "text-sky-800 dark:text-sky-300"}`}
       >
         {label}
       </span>
