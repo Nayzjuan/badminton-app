@@ -32,9 +32,7 @@ export function StadiumLeaderboard({
   currentUserId,
   onRefresh,
 }: StadiumLeaderboardProps) {
-  const me = currentUserId
-    ? rows.find((r) => r.player_id === currentUserId) ?? null
-    : null;
+  const me = currentUserId ? (rows.find((r) => r.player_id === currentUserId) ?? null) : null;
 
   // Podium positions 1-3 (with sparse fallback if fewer than 3 ranked players).
   const podium = [rows[0] ?? null, rows[1] ?? null, rows[2] ?? null];
@@ -52,7 +50,7 @@ export function StadiumLeaderboard({
           )}
           <h1
             className="font-display font-black italic uppercase leading-[0.85] text-foreground"
-            style={{ fontSize: "52px", letterSpacing: "-0.02em" }}
+            style={{ fontSize: "clamp(34px, 11vw, 52px)", letterSpacing: "-0.02em" }}
           >
             LEADER
             <br />
@@ -63,7 +61,7 @@ export function StadiumLeaderboard({
           <div className="text-right">
             <div
               className="font-display font-black italic text-accent leading-[0.9]"
-              style={{ fontSize: "44px" }}
+              style={{ fontSize: "clamp(28px, 9vw, 44px)" }}
             >
               {rows.length}
             </div>
@@ -90,8 +88,7 @@ export function StadiumLeaderboard({
         <div
           className="flex items-center gap-2.5 px-4 py-2.5 border-b border-accent/25"
           style={{
-            background:
-              "linear-gradient(to right, oklch(0.68 0.17 62 / 0.18), transparent)",
+            background: "linear-gradient(to right, oklch(0.68 0.17 62 / 0.18), transparent)",
           }}
         >
           <span
@@ -106,8 +103,10 @@ export function StadiumLeaderboard({
           >
             #{me.rank}
           </span>
-          <span className="flex-1 min-w-0 truncate font-display font-bold uppercase text-foreground"
-                style={{ fontSize: "18px", letterSpacing: "0.02em" }}>
+          <span
+            className="flex-1 min-w-0 truncate font-display font-bold uppercase text-foreground"
+            style={{ fontSize: "18px", letterSpacing: "0.02em" }}
+          >
             {me.display_name}
           </span>
           <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">
@@ -129,8 +128,7 @@ export function StadiumLeaderboard({
             <span
               className="flex-1 h-px"
               style={{
-                background:
-                  "linear-gradient(to right, oklch(0.78 0.17 62), transparent)",
+                background: "linear-gradient(to right, oklch(0.78 0.17 62), transparent)",
               }}
             />
             <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.2em] text-muted-foreground/40">
@@ -163,11 +161,7 @@ export function StadiumLeaderboard({
       {/* ── 5. Rows 4-N ──────────────────────────────────── */}
       <div>
         {tail.map((row) => (
-          <StadiumRow
-            key={row.player_id}
-            row={row}
-            isMe={row.player_id === currentUserId}
-          />
+          <StadiumRow key={row.player_id} row={row} isMe={row.player_id === currentUserId} />
         ))}
         {tail.length === 0 && rows.length > 0 && rows.length < 4 && (
           <p className="px-4 py-6 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -197,13 +191,13 @@ function PodiumCell({
   isMe: boolean;
 }) {
   const isFirst = place === 1;
-  const rankSize = isFirst ? 88 : 68;
+  const rankSize = isFirst ? "clamp(52px, 20vw, 88px)" : "clamp(40px, 15vw, 68px)";
   const rankColor =
     place === 1
       ? "text-accent dark:text-accent"
       : place === 2
-      ? "text-foreground/50 dark:text-muted-foreground"
-      : "text-amber-600 dark:text-amber-500";
+        ? "text-foreground/50 dark:text-muted-foreground"
+        : "text-amber-600 dark:text-amber-500";
 
   return (
     <div
@@ -212,8 +206,8 @@ function PodiumCell({
           isFirst
             ? "border-accent/55 px-2.5 pb-3 pt-5 bg-[oklch(0.91_0.014_245)] dark:bg-[oklch(0.15_0.018_245)]"
             : isMe
-            ? "border-accent/35 px-2.5 py-3 bg-accent/10"
-            : "border-border px-2.5 py-3 bg-card"
+              ? "border-accent/35 px-2.5 py-3 bg-accent/10"
+              : "border-border px-2.5 py-3 bg-card"
         }`}
     >
       {/* Oversized ghost watermark for #1 */}
@@ -221,7 +215,7 @@ function PodiumCell({
         <span
           className="pointer-events-none absolute -top-3 -right-1 font-display font-black italic leading-none select-none"
           style={{
-            fontSize: "100px",
+            fontSize: "clamp(60px, 25vw, 100px)",
             color: "oklch(0.68 0.17 62 / 0.14)",
           }}
           aria-hidden="true"
@@ -275,28 +269,16 @@ function PodiumCell({
 
 // ── Tail rows (rank 4+) ───────────────────────────────────────
 
-function StadiumRow({
-  row,
-  isMe,
-}: {
-  row: LeaderboardRow;
-  isMe: boolean;
-}) {
+function StadiumRow({ row, isMe }: { row: LeaderboardRow; isMe: boolean }) {
   const delta = row.rank_movement;
   const deltaCls =
     delta && delta > 0
       ? "text-primary"
       : delta && delta < 0
-      ? "text-destructive"
-      : "text-muted-foreground/40";
+        ? "text-destructive"
+        : "text-muted-foreground/40";
   const deltaText =
-    delta == null
-      ? "✦"
-      : delta === 0
-      ? "·"
-      : delta > 0
-      ? `↑${delta}`
-      : `↓${Math.abs(delta)}`;
+    delta == null ? "✦" : delta === 0 ? "·" : delta > 0 ? `↑${delta}` : `↓${Math.abs(delta)}`;
 
   return (
     <div
@@ -310,8 +292,10 @@ function StadiumRow({
       </span>
       <span className="flex items-center gap-1.5 min-w-0">
         {isMe && (
-          <span className="shrink-0 font-mono text-[8.5px] font-extrabold uppercase tracking-[0.14em]
-                           px-1.5 py-0.5 bg-accent text-accent-foreground">
+          <span
+            className="shrink-0 font-mono text-[8.5px] font-extrabold uppercase tracking-[0.14em]
+                           px-1.5 py-0.5 bg-accent text-accent-foreground"
+          >
             YOU
           </span>
         )}
@@ -322,7 +306,9 @@ function StadiumRow({
           {row.display_name}
         </span>
       </span>
-      <span className="font-mono text-[11px] text-muted-foreground text-right">{row.games_played}</span>
+      <span className="font-mono text-[11px] text-muted-foreground text-right">
+        {row.games_played}
+      </span>
       <span className="font-mono text-[11px] font-semibold text-right tabular-nums">
         <span className="text-primary">{row.wins}W</span>
         <span className="text-muted-foreground/40 mx-0.5">–</span>
@@ -334,9 +320,7 @@ function StadiumRow({
       >
         {row.win_pct.toFixed(1)}%
       </span>
-      <span className={`font-mono text-[10px] font-bold text-right ${deltaCls}`}>
-        {deltaText}
-      </span>
+      <span className={`font-mono text-[10px] font-bold text-right ${deltaCls}`}>{deltaText}</span>
     </div>
   );
 }

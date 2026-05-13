@@ -83,13 +83,22 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
 
   useEffect(() => {
     if (!menuOpen) return;
-    function onClickOutside(e: MouseEvent) {
+    function onPointerOutside(e: MouseEvent | TouchEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
     }
-    document.addEventListener("mousedown", onClickOutside);
-    return () => document.removeEventListener("mousedown", onClickOutside);
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerOutside);
+    document.addEventListener("touchstart", onPointerOutside as EventListener, { passive: true });
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerOutside);
+      document.removeEventListener("touchstart", onPointerOutside as EventListener);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [menuOpen]);
 
   async function handleCheckout() {
@@ -146,7 +155,9 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
     (currentMatch.match.status === "pending" || currentMatch.match.status === "in_progress");
 
   const isInQueue = myEntry !== null && myEntry.status !== "left";
-  const totalWaiting = queue.filter((q) => q.status === "waiting").length;
+  // Include drafted players in the waiting count — they occupy a session
+  // slot and are waiting for their match to publish.
+  const totalWaiting = queue.filter((q) => q.status === "waiting" || q.status === "drafted").length;
 
   // Header dot colour.
   const dotColor = hasActiveMatch

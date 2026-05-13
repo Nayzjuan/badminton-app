@@ -1,19 +1,19 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Barlow_Condensed, JetBrains_Mono, Chakra_Petch } from "next/font/google";
+import { Inter, Barlow_Condensed, JetBrains_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SerwistRegister } from "@/components/serwist-register";
 import { PwaNavBar } from "@/components/pwa-nav-bar";
 import "./globals.css";
 
-// ── New design font stack ─────────────────────────────────────
-// Inter:              body / UI default (player view) — exposed as --font-sans
+// ── Root font stack (player, TV, wrapped, leaderboard views) ──
+// Inter:              body / UI default — exposed as --font-sans
 // Barlow Condensed:   display headings + huge numerals (leaderboard, court hero)
 // JetBrains Mono:     stats, metadata pills, monospace labels
-// Chakra Petch:       organizer command-center accent (geometric, sporty)
 //
-// Each font exposes a CSS variable that globals.css wires to its semantic
-// role (--font-sans, --font-display, --font-mono, --font-command).
+// Chakra Petch (organizer command-center) is loaded in
+// src/app/organizer/layout.tsx so its preload hint is scoped to
+// organizer routes only and not shipped to every player page.
 const inter = Inter({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700", "800", "900"],
@@ -30,13 +30,6 @@ const jetbrains = JetBrains_Mono({
   weight: ["400", "500", "600", "700", "800"],
   variable: "--font-jetbrains",
 });
-const chakra = Chakra_Petch({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  style: ["normal", "italic"],
-  variable: "--font-chakra",
-});
-
 export const metadata: Metadata = {
   title: "Chillax Badminton",
   description: "Real-time badminton social queuing and matchmaking",
@@ -68,15 +61,11 @@ export const viewport: Viewport = {
   userScalable: false,
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#1D3A6F" },
-    { media: "(prefers-color-scheme: dark)",  color: "#120826" },
+    { media: "(prefers-color-scheme: dark)", color: "#120826" },
   ],
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     // suppressHydrationWarning prevents React from warning about the
     // class/style mismatch next-themes causes on the <html> element
@@ -84,7 +73,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${barlow.variable} ${jetbrains.variable} ${chakra.variable}`}
+      className={`${inter.variable} ${barlow.variable} ${jetbrains.variable}`}
     >
       <body className={`${inter.className} antialiased pb-12`}>
         <ThemeProvider
