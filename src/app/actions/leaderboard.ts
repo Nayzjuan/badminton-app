@@ -30,7 +30,7 @@ import type {
 } from "@/types/leaderboard";
 
 // ── Constants ─────────────────────────────────────────────────
-const MIN_SESSION_GP = 3;          // minimum games to appear on session board
+const MIN_SESSION_GP = 1;          // minimum games to appear on session board
 const MIN_ALLTIME_GP = 10;         // minimum games to appear on all-time board
 const RANK_MOVEMENT_DAYS = 7;      // compare current rank vs. N days ago
 const SESSION_CONFIDENCE_K = 3;    // confidence smoothing constant for session ranking
@@ -140,13 +140,15 @@ export async function getSessionLeaderboard(
       return { success: false, error: statsResult.error.message };
     }
 
+    // Streak failure is non-fatal — degrade gracefully with empty streak map
     if (streaksResult.error) {
-      console.error("[getSessionLeaderboard] streaks error:", streaksResult.error);
-      return { success: false, error: streaksResult.error.message };
+      console.warn("[getSessionLeaderboard] streaks unavailable (non-fatal):", streaksResult.error.message);
     }
 
     const rawStats = (statsResult.data ?? []) as SessionLeaderboardEntry[];
-    const streakMap = buildStreakMap((streaksResult.data ?? []) as PlayerStreak[]);
+    const streakMap = buildStreakMap(
+      streaksResult.error ? [] : ((streaksResult.data ?? []) as PlayerStreak[])
+    );
 
     // Sort, assign ranks, merge streaks
     const sorted = sortLeaderboard(rawStats, SESSION_CONFIDENCE_K);

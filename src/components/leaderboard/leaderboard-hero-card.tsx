@@ -23,7 +23,7 @@ import { VipTag } from "@/components/ui/vip-tag";
 import type { LeaderboardRow } from "@/types/leaderboard";
 
 // Minimum GP to appear on the board (matches server action constant)
-const MIN_SESSION_GP = 3;
+const MIN_SESSION_GP = 1;
 const MIN_ALLTIME_GP = 10;
 
 interface LeaderboardHeroCardProps {

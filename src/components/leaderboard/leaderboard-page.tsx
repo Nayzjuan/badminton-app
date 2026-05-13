@@ -34,7 +34,7 @@ import { LeaderboardHeroCard } from "./leaderboard-hero-card";
 import { getSessionLeaderboard, getAllTimeLeaderboard, getPlayerStats } from "@/app/actions/leaderboard";
 import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
 
-const MIN_SESSION_GP = 3;
+const MIN_SESSION_GP = 1;
 const MIN_ALLTIME_GP = 10;
 
 // ── Props ─────────────────────────────────────────────────────
@@ -236,7 +236,9 @@ export function LeaderboardPage({
           <div className="py-12 text-center">
             <p className="text-sm font-medium text-foreground">No ranked players yet</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Min. {MIN_SESSION_GP} games to appear on the board.
+              {MIN_SESSION_GP === 1
+                ? "Complete at least 1 game to appear."
+                : `Min. ${MIN_SESSION_GP} games to appear on the board.`}
             </p>
           </div>
         ) : (
@@ -381,7 +383,7 @@ export function LeaderboardPage({
         ) : activeRows.length === 0 && !activeLoading ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
             {scopeTab === "session"
-              ? `No players with ${MIN_SESSION_GP}+ games yet.`
+              ? (MIN_SESSION_GP === 1 ? "No completed games in this session yet." : `No players with ${MIN_SESSION_GP}+ games yet.`)
               : `No players with ${MIN_ALLTIME_GP}+ games yet.`}
           </div>
         ) : (
