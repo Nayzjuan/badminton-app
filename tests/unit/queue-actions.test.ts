@@ -24,11 +24,19 @@ vi.mock("@/utils/supabase/server", () => ({
   createClient: vi.fn(),
 }));
 
+// joinQueueAction now calls createServiceClient() then svc.rpc("join_queue").
+// Mock it so the RPC returns PGRST202 (not deployed), forcing the fallback
+// path that the existing test assertions cover.
+vi.mock("@/utils/supabase/service", () => ({
+  createServiceClient: vi.fn(),
+}));
+
 vi.mock("@/app/actions/matchmaking", () => ({
   runEngineForSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { createClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import { joinQueueAction } from "@/app/actions/queue";
 
 // ── Valid UUID that passes isValidUUID ─────────────────────────
@@ -81,8 +89,17 @@ function makeMockClient(fromResponses: MockResponse[]) {
   return { from, auth };
 }
 
+// Service client mock that always returns PGRST202 from rpc("join_queue"),
+// triggering the fallback path that the existing tests exercise.
+const PGRST202 = { code: "PGRST202", message: "Function not found" };
+const mockServiceClient = {
+  rpc: vi.fn().mockResolvedValue({ data: null, error: PGRST202 }),
+  from: vi.fn(),
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(createServiceClient).mockReturnValue(mockServiceClient as never);
 });
 
 // ── Guard: on_deck / playing statuses ─────────────────────────

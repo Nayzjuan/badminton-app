@@ -44,7 +44,7 @@ type MockResponse = {
 };
 
 /**
- * Generic chainable builder — awaitable, supports .single().
+ * Generic chainable builder — awaitable, supports .single() and .maybeSingle().
  * All query chain methods return `this` so the full chain resolves.
  */
 function makeBuilder(response: MockResponse) {
@@ -53,6 +53,7 @@ function makeBuilder(response: MockResponse) {
     Promise.resolve(response).then(onFulfilled, onRejected);
   b["catch"] = (onRejected: (e: unknown) => unknown) => Promise.resolve(response).catch(onRejected);
   b["single"] = () => Promise.resolve(response);
+  b["maybeSingle"] = () => Promise.resolve(response);
   for (const method of [
     "select",
     "eq",
@@ -71,36 +72,49 @@ function makeBuilder(response: MockResponse) {
 }
 
 /**
- * Argument-capturing builder for `.insert()` calls.
- * Useful when a test needs to assert what payload was passed to insert.
+ * Service client mock that captures rpc() calls so tests can assert
+ * on the arguments passed to create_match_with_players.
+ *
+ * createManualMatchAction now routes match creation through the
+ * create_match_with_players RPC (atomic, TOCTOU-safe) rather than
+ * a direct from("matches").insert(). The p_origin argument is what
+ * we verify to confirm "manual" vs "auto".
+ *
+ * isSessionOrganizer (called internally) also uses createServiceClient()
+ * and calls .maybeSingle() on the sessions table — wire that up too.
  */
-function makeCapturingBuilder(response: MockResponse) {
-  const insertCalls: unknown[] = [];
-  const b: Record<string, unknown> = {};
-  b["then"] = (onFulfilled: (v: MockResponse) => unknown, onRejected: (e: unknown) => unknown) =>
-    Promise.resolve(response).then(onFulfilled, onRejected);
-  b["catch"] = (onRejected: (e: unknown) => unknown) => Promise.resolve(response).catch(onRejected);
-  b["single"] = () => Promise.resolve(response);
-  for (const method of [
-    "select",
-    "eq",
-    "neq",
-    "in",
-    "or",
-    "order",
-    "limit",
-    "update",
-    "delete",
-    "insert",
-  ]) {
-    b[method] = (..._args: unknown[]) => b;
-  }
-  // Override insert to capture arguments for assertions
-  b["insert"] = (args: unknown) => {
-    insertCalls.push(args);
-    return b;
-  };
-  return { builder: b, insertCalls };
+function makeCapturingServiceClient(rpcResponse: MockResponse) {
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+
+  const rpc = vi.fn((name: string, args: Record<string, unknown>) => {
+    rpcCalls.push({ name, args });
+    return Promise.resolve(rpcResponse);
+  });
+
+  // Route from() calls by table name:
+  //   "sessions"      → isSessionOrganizer ownership check → { created_by: USER_ID }
+  //   "queue_entries" → player-in-queue validation → all PLAYER_IDS found
+  //   "profiles"      → skill-level fetch for is_mixed_level → all same level
+  const from = vi.fn((table: string) => {
+    if (table === "sessions") {
+      return makeBuilder({ data: { created_by: USER_ID }, error: null });
+    }
+    if (table === "queue_entries") {
+      return makeBuilder({
+        data: PLAYER_IDS.map((id) => ({ player_id: id })),
+        error: null,
+      });
+    }
+    if (table === "profiles") {
+      return makeBuilder({
+        data: PLAYER_IDS.map((id) => ({ id, skill_level: "intermediate" })),
+        error: null,
+      });
+    }
+    return makeBuilder({ data: null, error: null });
+  });
+
+  return { svcClient: { from, rpc }, rpcCalls };
 }
 
 // ── Test fixture UUIDs ─────────────────────────────────────────
@@ -125,39 +139,24 @@ beforeEach(() => {
 
 describe("createManualMatchAction — match origin", () => {
   /**
-   * Build a mock client that routes each from() call to the correct
-   * response.  The matches builder is argument-capturing so we can
-   * assert the exact insert payload.
+   * Build mock clients for the refactored createManualMatchAction.
+   *
+   * The action now uses the atomic create_match_with_players RPC via
+   * getServiceClient() rather than a direct from("matches").insert().
+   * isSessionOrganizer() also uses createServiceClient() internally.
+   *
+   * Both calls to createServiceClient() return the same mock (vi.mocked
+   * mockReturnValue applies to all calls), so the service mock handles:
+   *   1. isSessionOrganizer: from("sessions").maybeSingle()
+   *   2. Player validation: from("queue_entries").in()
+   *   3. Mixed-level check: from("profiles").in()
+   *   4. Match creation:   rpc("create_match_with_players", { p_origin: "manual", ... })
+   *
+   * The user client (createClient) handles: auth.getUser() only.
    */
-  function makeMockForManualMatch(matchInsertResponse: MockResponse) {
-    const { builder: matchBuilder, insertCalls: matchInsertCalls } =
-      makeCapturingBuilder(matchInsertResponse);
-
-    const from = vi.fn((table: string) => {
-      switch (table) {
-        // isSessionOrganizer: sessions fast path → created_by matches USER_ID
-        case "sessions":
-          return makeBuilder({ data: { created_by: USER_ID }, error: null });
-
-        // createManualMatchAction: validate players are in queue
-        case "queue_entries":
-          return makeBuilder({
-            data: PLAYER_IDS.map((id) => ({ player_id: id })),
-            error: null,
-          });
-
-        // createManualMatchAction: match row insert — we want to inspect this
-        case "matches":
-          return matchBuilder;
-
-        // createManualMatchAction: match_players insert
-        case "match_players":
-          return makeBuilder({ data: [], error: null });
-
-        default:
-          return makeBuilder({ data: null, error: null });
-      }
-    });
+  function makeMockForManualMatch(rpcResponse: MockResponse) {
+    const { svcClient, rpcCalls } = makeCapturingServiceClient(rpcResponse);
+    vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
 
     const mockClient = {
       auth: {
@@ -166,116 +165,80 @@ describe("createManualMatchAction — match origin", () => {
           error: null,
         }),
       },
-      from,
+      from: vi.fn(), // user client's from() is not called by createManualMatchAction
     };
+    vi.mocked(createClient).mockResolvedValue(mockClient as never);
 
-    // Step 3 of createManualMatchAction now uses getServiceClient() to bypass
-    // RLS on the queue_entries update. Wire up a no-op service client so these
-    // origin-focused tests don't crash on the service client call.
-    const svcFrom = vi.fn(() => makeBuilder({ data: null, error: null }));
-    vi.mocked(createServiceClient).mockReturnValue({ from: svcFrom } as never);
-
-    return { mockClient, matchInsertCalls };
+    return { mockClient, rpcCalls };
   }
 
   it("inserts the match row with origin: 'manual'", async () => {
-    const { mockClient, matchInsertCalls } = makeMockForManualMatch({
-      data: {
-        id: "match-abc",
-        session_id: SESSION_ID,
-        status: "pending",
-        origin: "manual",
-      },
+    const { rpcCalls } = makeMockForManualMatch({
+      data: "match-abc",
       error: null,
     });
-    vi.mocked(createClient).mockResolvedValue(mockClient as never);
 
     const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
     expect(result.success).toBe(true);
-    expect(matchInsertCalls).toHaveLength(1);
-    expect(matchInsertCalls[0]).toEqual(expect.objectContaining({ origin: "manual" }));
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].name).toBe("create_match_with_players");
+    expect(rpcCalls[0].args).toMatchObject({ p_origin: "manual" });
   });
 
   it("does NOT insert with origin: 'auto' or origin: 'modified'", async () => {
-    const { mockClient, matchInsertCalls } = makeMockForManualMatch({
-      data: { id: "match-abc", session_id: SESSION_ID, status: "pending", origin: "manual" },
-      error: null,
-    });
-    vi.mocked(createClient).mockResolvedValue(mockClient as never);
+    const { rpcCalls } = makeMockForManualMatch({ data: "match-abc", error: null });
 
     await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
-    expect(matchInsertCalls).toHaveLength(1);
-    const payload = matchInsertCalls[0] as Record<string, unknown>;
-    expect(payload.origin).toBe("manual");
-    expect(payload.origin).not.toBe("auto");
-    expect(payload.origin).not.toBe("modified");
+    expect(rpcCalls).toHaveLength(1);
+    const args = rpcCalls[0].args;
+    expect(args.p_origin).toBe("manual");
+    expect(args.p_origin).not.toBe("auto");
+    expect(args.p_origin).not.toBe("modified");
   });
 
-  it("returns early without touching matches when a player is not in the queue", async () => {
+  it("returns early without touching the RPC when a player is not in the queue", async () => {
     // queue_entries only returns 3 of the 4 players → missingPlayers guard fires
-    const from = vi.fn((table: string) => {
+    const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-abc", error: null });
+    // Override queue_entries to return only 3 players
+    vi.mocked(svcClient.from).mockImplementation((table: string) => {
       if (table === "sessions") {
-        return makeBuilder({ data: { created_by: USER_ID }, error: null });
+        return makeBuilder({ data: { created_by: USER_ID }, error: null }) as never;
       }
       if (table === "queue_entries") {
-        // Only 3 players found — one is missing
         return makeBuilder({
           data: PLAYER_IDS.slice(0, 3).map((id) => ({ player_id: id })),
           error: null,
-        });
+        }) as never;
       }
-      return makeBuilder({ data: null, error: null });
+      return makeBuilder({ data: null, error: null }) as never;
     });
-
-    const mockClient = {
-      auth: {
-        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
-      },
-      from,
-    };
-    vi.mocked(createClient).mockResolvedValue(mockClient as never);
+    vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
+    vi.mocked(createClient).mockResolvedValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      from: vi.fn(),
+    } as never);
 
     const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not in this session/i);
-    // matches table was never written
-    const matchesCalls = (from.mock.calls as string[][]).filter(([t]) => t === "matches");
-    expect(matchesCalls).toHaveLength(0);
+    // RPC was never called — guard fired before match creation
+    expect(rpcCalls).toHaveLength(0);
   });
 
-  it("returns failure when the match insert fails (DB error)", async () => {
-    const from = vi.fn((table: string) => {
-      if (table === "sessions") {
-        return makeBuilder({ data: { created_by: USER_ID }, error: null });
-      }
-      if (table === "queue_entries") {
-        return makeBuilder({
-          data: PLAYER_IDS.map((id) => ({ player_id: id })),
-          error: null,
-        });
-      }
-      if (table === "matches") {
-        // Insert fails
-        return makeBuilder({ data: null, error: { message: "insert failed" } });
-      }
-      return makeBuilder({ data: null, error: null });
+  it("returns failure when the RPC returns an error", async () => {
+    const { rpcCalls } = makeMockForManualMatch({
+      data: null,
+      error: { message: "insert failed" },
     });
-
-    const mockClient = {
-      auth: {
-        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
-      },
-      from,
-    };
-    vi.mocked(createClient).mockResolvedValue(mockClient as never);
 
     const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
     expect(result.success).toBe(false);
     expect(result.message).toContain("insert failed");
+    expect(rpcCalls).toHaveLength(1);
   });
 
   it("returns failure when the caller is not authenticated", async () => {
@@ -318,155 +281,77 @@ describe("createManualMatchAction — match origin", () => {
 // ─────────────────────────────────────────────────────────────
 
 describe("createManualMatchAction — queue status side-effect", () => {
-  /**
-   * Build a spy-capable service client mock that captures every
-   * queue_entries update call so we can assert the right payload
-   * was sent through the right client.
-   */
-  function makeServiceClientMock() {
-    const updateCalls: Array<{
-      filter: Record<string, unknown>;
-      payload: Record<string, unknown>;
-    }> = [];
+  // NOTE: The original tests verified that the queue update used the SERVICE
+  // client to bypass RLS (the Jackie B / Carlo incident fix). That guard is now
+  // enforced at a deeper level: the entire match creation — including queue
+  // promotion — is handled atomically inside create_match_with_players RPC,
+  // which runs as the service role within Postgres. There is no separate
+  // "queue_entries.update" step in TypeScript anymore.
+  //
+  // These tests have been updated to verify the invariants that the
+  // refactored action still guarantees:
+  //   1. The action calls the RPC via the service client (not the user client).
+  //   2. The RPC payload includes all 4 player IDs split into teamA / teamB.
+  //   3. When the RPC fails, success=false and the action does not retry.
 
-    // The service client builder records every .update() payload and
-    // the subsequent filter chain so the test can assert on both.
-    function makeServiceBuilder(tableName: string) {
-      const filterState: Record<string, unknown> = {};
-      let pendingPayload: Record<string, unknown> = {};
-
-      const b: Record<string, unknown> = {};
-      b["then"] = (
-        onFulfilled: (v: MockResponse) => unknown,
-        onRejected: (e: unknown) => unknown
-      ) => Promise.resolve({ data: null, error: null }).then(onFulfilled, onRejected);
-      b["catch"] = (onRejected: (e: unknown) => unknown) =>
-        Promise.resolve({ data: null, error: null }).catch(onRejected);
-      b["single"] = () => Promise.resolve({ data: null, error: null });
-
-      b["update"] = (payload: Record<string, unknown>) => {
-        pendingPayload = payload;
-        return b;
-      };
-      b["eq"] = (col: string, val: unknown) => {
-        filterState[col] = val;
-        return b;
-      };
-      b["in"] = (col: string, vals: unknown) => {
-        filterState[col] = vals;
-        // Flush the captured call when .in() resolves the chain
-        // (it's always the last filter in the queue update).
-        if (tableName === "queue_entries" && pendingPayload.status) {
-          updateCalls.push({ filter: { ...filterState }, payload: { ...pendingPayload } });
-        }
-        return b;
-      };
-      b["neq"] = (..._args: unknown[]) => b;
-      b["select"] = (..._args: unknown[]) => b;
-      b["insert"] = (..._args: unknown[]) => b;
-      b["delete"] = (..._args: unknown[]) => b;
-      b["order"] = (..._args: unknown[]) => b;
-      b["limit"] = (..._args: unknown[]) => b;
-      return b;
-    }
-
-    const svcFrom = vi.fn((table: string) => makeServiceBuilder(table));
-    const svcClient = { from: svcFrom };
-
-    return { svcClient, updateCalls };
-  }
-
-  function makeUserClientForQueueTest() {
-    const from = vi.fn((table: string) => {
-      switch (table) {
-        case "sessions":
-          return makeBuilder({ data: { created_by: USER_ID }, error: null });
-        case "queue_entries":
-          return makeBuilder({
-            data: PLAYER_IDS.map((id) => ({ player_id: id })),
-            error: null,
-          });
-        case "matches":
-          return makeBuilder({
-            data: { id: "match-xyz", session_id: SESSION_ID, status: "pending", origin: "manual" },
-            error: null,
-          });
-        case "match_players":
-          return makeBuilder({ data: [], error: null });
-        default:
-          return makeBuilder({ data: null, error: null });
-      }
-    });
-
-    return {
-      auth: {
-        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
-      },
-      from,
-    };
-  }
-
-  it("uses the SERVICE client (not the user client) for the on_deck queue update", async () => {
-    // This test would have FAILED before the fix — the old code only
-    // called createClient() and never touched createServiceClient().
-    const { svcClient, updateCalls } = makeServiceClientMock();
+  it("uses the SERVICE client (RPC) for match creation — not direct table inserts", async () => {
+    const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
-    vi.mocked(createClient).mockResolvedValue(makeUserClientForQueueTest() as never);
+    vi.mocked(createClient).mockResolvedValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      from: vi.fn(),
+    } as never);
 
     const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
     expect(result.success).toBe(true);
-    // The service client's queue_entries.update() must have been called at least once.
-    expect(svcClient.from).toHaveBeenCalledWith("queue_entries");
-    // And it must have carried the on_deck status payload.
-    const onDeckCall = updateCalls.find((c) => c.payload.status === "on_deck");
-    expect(onDeckCall).toBeDefined();
+    // RPC must have been called via the service client
+    expect(svcClient.rpc).toHaveBeenCalledWith("create_match_with_players", expect.any(Object));
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].args).toMatchObject({ p_is_published: true });
   });
 
-  it("sets ALL 4 player IDs to on_deck — not a subset", async () => {
-    // Before the fix, RLS silently blocked the update for players the
-    // organizer doesn't own, leaving 1–3 of 4 players still 'waiting'.
-    // This test asserts the payload always includes every player.
-    const { svcClient, updateCalls } = makeServiceClientMock();
+  it("sets ALL 4 player IDs in the RPC payload — not a subset", async () => {
+    const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
-    vi.mocked(createClient).mockResolvedValue(makeUserClientForQueueTest() as never);
+    vi.mocked(createClient).mockResolvedValue({
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      from: vi.fn(),
+    } as never);
 
     await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
-    const onDeckCall = updateCalls.find((c) => c.payload.status === "on_deck");
-    expect(onDeckCall).toBeDefined();
-
-    // The .in() filter must target all 4 player IDs.
-    const targetedIds = onDeckCall!.filter["player_id"] as string[];
-    expect(targetedIds).toHaveLength(4);
-    expect(targetedIds).toEqual(expect.arrayContaining([...TEAM_A, ...TEAM_B]));
+    expect(rpcCalls).toHaveLength(1);
+    const args = rpcCalls[0].args;
+    // All 4 player IDs must appear across both team arrays
+    const allIds = [...(args.p_team_a_ids as string[]), ...(args.p_team_b_ids as string[])];
+    expect(allIds).toHaveLength(4);
+    expect(allIds).toEqual(expect.arrayContaining([...TEAM_A, ...TEAM_B]));
   });
 
-  it("does NOT call the service client when match creation fails", async () => {
-    // If step 1 (match insert) fails, step 3 must never run — no partial state.
-    const { svcClient } = makeServiceClientMock();
-    vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
-
-    const from = vi.fn((table: string) => {
-      if (table === "sessions") return makeBuilder({ data: { created_by: USER_ID }, error: null });
+  it("does NOT call the RPC when the player-validation guard fires", async () => {
+    // missingPlayers guard fires before the RPC — partial state impossible.
+    const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
+    vi.mocked(svcClient.from).mockImplementation((table: string) => {
+      if (table === "sessions")
+        return makeBuilder({ data: { created_by: USER_ID }, error: null }) as never;
       if (table === "queue_entries")
-        return makeBuilder({ data: PLAYER_IDS.map((id) => ({ player_id: id })), error: null });
-      if (table === "matches")
-        return makeBuilder({ data: null, error: { message: "insert failed" } });
-      return makeBuilder({ data: null, error: null });
+        // Only 3 of 4 players found
+        return makeBuilder({
+          data: PLAYER_IDS.slice(0, 3).map((id) => ({ player_id: id })),
+          error: null,
+        }) as never;
+      return makeBuilder({ data: null, error: null }) as never;
     });
-
+    vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
     vi.mocked(createClient).mockResolvedValue({
-      auth: {
-        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
-      },
-      from,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      from: vi.fn(),
     } as never);
 
     const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
     expect(result.success).toBe(false);
-    // Service client queue update must NOT have been called — match never existed.
-    expect(svcClient.from).not.toHaveBeenCalledWith("queue_entries");
+    expect(rpcCalls).toHaveLength(0);
   });
 });
