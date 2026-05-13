@@ -157,10 +157,10 @@ function PlayerRowLight({
       {/* Line 1 — "Name | TAG" */}
       <div className="flex items-center gap-1.5 overflow-hidden">
         <span
-          className={`shrink min-w-0 truncate text-[13px] leading-none ${
+          className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
             isMe === false
-              ? "font-normal text-slate-500 dark:text-slate-400"
-              : "font-bold text-slate-800 dark:text-slate-100"
+              ? "font-medium text-cc-t2"
+              : "font-medium text-cc-t1"
           }`}
         >
           {player.display_name}
@@ -168,7 +168,7 @@ function PlayerRowLight({
         {hasTag && (
           <>
             <span
-              className="shrink-0 text-[11px] leading-none text-slate-300 dark:text-white/20 select-none"
+              className="shrink-0 text-[11px] leading-none text-cc-t3 select-none"
               aria-hidden="true"
             >
               |
