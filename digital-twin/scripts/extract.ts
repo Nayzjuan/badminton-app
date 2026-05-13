@@ -303,6 +303,30 @@ interface ActionEntry {
   functions: string[];
 }
 
+// ── Design-token types ────────────────────────────────────────────────────────
+
+interface FontEntry {
+  /** CSS variable exposed by next/font (e.g. "--font-inter") */
+  cssVar: string;
+  /** Tailwind semantic class (e.g. "font-sans") */
+  tailwindClass: string;
+  /** Google Font family name (e.g. "Inter") */
+  face: string;
+  /** Human role description */
+  role: string;
+  /** Route scope */
+  scope: string;
+}
+
+interface DesignTokens {
+  /** Fonts in declaration order from layout.tsx */
+  fonts: FontEntry[];
+  /** All CSS custom properties from :root {} */
+  lightTokens: Record<string, string>;
+  /** All CSS custom properties from .dark {} */
+  darkTokens: Record<string, string>;
+}
+
 interface Manifest {
   _version: number;
   _lastExtracted: string;
@@ -317,6 +341,8 @@ interface Manifest {
   gotchas: unknown[];
   components: unknown[];
   scenarios: unknown[];
+  /** Extracted from globals.css + layout.tsx — consumed by sync-design-tokens.ts */
+  designTokens: DesignTokens;
 }
 
 // ── TypeScript AST helpers ─────────────────────────────────────────────────────
@@ -678,6 +704,153 @@ function extractActions(actionsDir: string): ActionEntry[] {
     .filter((e) => e.functions.length > 0);
 }
 
+// ── Design token extraction ────────────────────────────────────────────────────
+
+/**
+ * Extract all CSS custom properties from a named selector block.
+ * Handles selectors nested inside @layer or similar at-rules.
+ *
+ * Returns a flat Record<varName, value> with inline comments stripped.
+ */
+function extractCssVars(css: string, selector: string): Record<string, string> {
+  // Find the selector (allow leading whitespace)
+  const idx = css.search(
+    new RegExp(`(?:^|\\s)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{`, "m")
+  );
+  if (idx === -1) return {};
+
+  const blockStart = css.indexOf("{", idx) + 1;
+  let depth = 1;
+  let pos = blockStart;
+  while (pos < css.length && depth > 0) {
+    if (css[pos] === "{") depth++;
+    else if (css[pos] === "}") depth--;
+    pos++;
+  }
+  const block = css.slice(blockStart, pos - 1);
+
+  const vars: Record<string, string> = {};
+  const re = /(--[\w-]+)\s*:\s*([^;]+);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(block)) !== null) {
+    const [, name, rawVal] = m;
+    // Strip trailing inline comment
+    const value = rawVal.replace(/\/\*.*?\*\//g, "").trim(); // non-greedy, handles * in comment body
+    vars[name.trim()] = value;
+  }
+  return vars;
+}
+
+/**
+ * Extract the font stack from layout.tsx.
+ *
+ * Looks for `const <ident> = <FontName>({` blocks and collects
+ * `variable` field values, then cross-references with the @theme
+ * block in globals.css to build the semantic → face mapping.
+ */
+function extractFonts(layoutPath: string, globalsPath: string): FontEntry[] {
+  // Combine all layout files — root + any sub-layouts that declare fonts.
+  // Chakra Petch is scoped to src/app/organizer/layout.tsx, not the root.
+  const extraLayouts = [resolve(HOST_ROOT, "src/app/organizer/layout.tsx")];
+  const allLayoutSrc = [layoutPath, ...extraLayouts]
+    .filter((p) => {
+      try {
+        readFileSync(p);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+    .map((p) => readFileSync(p, "utf8"))
+    .join("\n");
+  const layout = allLayoutSrc;
+  const css = readFileSync(globalsPath, "utf8");
+
+  // Find the @theme block to get semantic → CSS-var mapping
+  const themeIdx = css.indexOf("@theme");
+  const themeBlockStart = css.indexOf("{", themeIdx) + 1;
+  let depth = 1;
+  let pos = themeBlockStart;
+  while (pos < css.length && depth > 0) {
+    if (css[pos] === "{") depth++;
+    else if (css[pos] === "}") depth--;
+    pos++;
+  }
+  const themeBlock = css.slice(themeBlockStart, pos - 1);
+
+  // Build map: --font-sans → "var(--font-inter), ..."
+  const themeVars: Record<string, string> = {};
+  const themeRe = /(--font-[\w-]+)\s*:\s*([^;]+);/g;
+  let m: RegExpExecArray | null;
+  while ((m = themeRe.exec(themeBlock)) !== null) {
+    themeVars[m[1].trim()] = m[2].replace(/\/\*[^*]*\*\//, "").trim();
+  }
+
+  // Parse next/font declarations from layout.tsx:
+  // const <alias> = <FontName>({ ..., variable: "--font-xxx", ... })
+  const fontDeclRe =
+    /const\s+(\w+)\s*=\s*(\w+)\s*\(\{[\s\S]*?variable:\s*"(--font-[\w-]+)"[\s\S]*?\}\)/g;
+  const injectedVars: Record<string, string> = {}; // "--font-inter" → "Inter"
+  while ((m = fontDeclRe.exec(layout)) !== null) {
+    const [, , fontFn, cssVar] = m;
+    // Convert function name to font face: "Barlow_Condensed" → "Barlow Condensed"
+    injectedVars[cssVar] = fontFn.replace(/_/g, " ");
+  }
+
+  // Metadata hardcoded here — these are role/scope descriptions, not parseable from code.
+  // Update this table when new fonts are added.
+  const FONT_META: Record<string, { tailwindClass: string; role: string; scope: string }> = {
+    "--font-sans": {
+      tailwindClass: "font-sans",
+      role: "Body text, UI labels, Sonner toasts",
+      scope: "All routes",
+    },
+    "--font-display": {
+      tailwindClass: "font-display",
+      role: "Hero numerals, rank numbers, leaderboard",
+      scope: "All routes",
+    },
+    "--font-mono": {
+      tailwindClass: "font-mono",
+      role: "Stats, metadata pills, monospace labels",
+      scope: "All routes",
+    },
+    "--font-command": {
+      tailwindClass: "font-command",
+      role: "Organizer tab nav, card labels, command badges",
+      scope: "/organizer/* only",
+    },
+  };
+
+  // Build ordered output — match @theme declaration order
+  const result: FontEntry[] = [];
+  for (const [semanticVar, meta] of Object.entries(FONT_META)) {
+    const themeVal = themeVars[semanticVar] ?? "";
+    // Extract the first var(--font-xxx) reference to find the injected face
+    const injectedVarMatch = themeVal.match(/var\((--font-[\w-]+)\)/);
+    const face = injectedVarMatch
+      ? (injectedVars[injectedVarMatch[1]] ?? injectedVarMatch[1])
+      : "?";
+    result.push({
+      cssVar: semanticVar,
+      tailwindClass: meta.tailwindClass,
+      face,
+      role: meta.role,
+      scope: meta.scope,
+    });
+  }
+  return result;
+}
+
+function extractDesignTokens(globalsPath: string, layoutPath: string): DesignTokens {
+  const css = readFileSync(globalsPath, "utf8");
+  return {
+    fonts: extractFonts(layoutPath, globalsPath),
+    lightTokens: extractCssVars(css, ":root"),
+    darkTokens: extractCssVars(css, ".dark"),
+  };
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 function run(): void {
@@ -689,6 +862,10 @@ function run(): void {
   );
   const constants = extractConstants(resolve(HOST_ROOT, "src/lib/constants.ts"));
   const actions = extractActions(resolve(HOST_ROOT, "src/app/actions"));
+  const designTokens = extractDesignTokens(
+    resolve(HOST_ROOT, "src/app/globals.css"),
+    resolve(HOST_ROOT, "src/app/layout.tsx")
+  );
 
   const manifest: Manifest = {
     _version: 2,
@@ -704,18 +881,22 @@ function run(): void {
     gotchas: CURATED_GOTCHAS,
     components: [],
     scenarios: [],
+    designTokens,
   };
 
   writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + "\n");
 
   const ms = Date.now() - t0;
   console.log(`[extract] ✓ done in ${ms}ms`);
-  console.log(`  tables:    ${tables.length}`);
-  console.log(`  views:     ${views.length}`);
-  console.log(`  enums:     ${enums.length}`);
-  console.log(`  rpcs:      ${rpcs.length}`);
-  console.log(`  constants: ${constants.length}`);
-  console.log(`  actions:   ${actions.length} files`);
+  console.log(`  tables:       ${tables.length}`);
+  console.log(`  views:        ${views.length}`);
+  console.log(`  enums:        ${enums.length}`);
+  console.log(`  rpcs:         ${rpcs.length}`);
+  console.log(`  constants:    ${constants.length}`);
+  console.log(`  actions:      ${actions.length} files`);
+  console.log(
+    `  designTokens: ${Object.keys(designTokens.lightTokens).length} light / ${Object.keys(designTokens.darkTokens).length} dark tokens, ${designTokens.fonts.length} fonts`
+  );
   console.log(`  → ${OUT_PATH}`);
 }
 

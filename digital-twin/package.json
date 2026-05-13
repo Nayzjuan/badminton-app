@@ -8,6 +8,8 @@
     "preview": "astro preview",
     "check": "astro check",
     "extract": "tsx scripts/extract.ts",
+    "sync-tokens": "tsx scripts/sync-design-tokens.ts",
+    "sync-tokens:check": "tsx scripts/sync-design-tokens.ts --check",
     "watch:extract": "tsx scripts/watch.ts",
     "dev:full": "concurrently \"npm run watch:extract\" \"npm run dev\""
   },

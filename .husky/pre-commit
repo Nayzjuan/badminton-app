@@ -1,1 +1,20 @@
+#!/usr/bin/env sh
+set -e
+
+# ── Design-token sync ────────────────────────────────────────────────────────
+# If globals.css, layout.tsx, or organizer/layout.tsx are staged, re-extract
+# the manifest and patch APP_MANIFEST.md §4.1 token tables automatically.
+# The patched file is re-staged so it travels with the commit.
+# Failure aborts the commit (set -e propagates).
+DESIGN_STAGED=$(git diff --cached --name-only | grep -E \
+  'src/app/globals\.css|src/app/layout\.tsx|src/app/organizer/layout\.tsx' || true)
+
+if [ -n "$DESIGN_STAGED" ]; then
+  echo "[pre-commit] design token source changed — re-syncing APP_MANIFEST…"
+  (cd digital-twin && npx tsx scripts/extract.ts && npx tsx scripts/sync-design-tokens.ts) \
+    || { echo "[pre-commit] ✗ token sync failed — commit aborted"; exit 1; }
+  git add APP_MANIFEST.md
+fi
+
+# ── Lint-staged (Prettier, ESLint) ───────────────────────────────────────────
 npx lint-staged

@@ -780,26 +780,82 @@ A real-time list of all players whose `wait_minutes ≥ BOTTLENECK_THRESHOLD_MIN
 
 ### 4.1 Design System — "Court Nights" Theme
 
-**Philosophy:** Grounded gym environment. Feels like a lit sports hall, not a sci-fi terminal. Deep navy base, warm amber primary action, lime-green accent.
+**Philosophy:** Electric, competitive, readable from arm's length in a loud gym. Feels like a live sports broadcast / F1 timing screen — not a hospital portal. Two visual contexts co-exist: **player view** (clean, airy, legible) and **organizer command-center** (tactical dark, teal-lit, geometric).
 
-**Font:** Space Grotesk — geometric, sporty, readable at small sizes. OpenType `cv01` + `cv02` enabled globally. Weight 300 removed (too light for readability). Wired as `--font-sans` so Sonner toasts inherit it.
+#### Font Stack — 4 typefaces, 4 roles
 
-**Dark mode token values (CSS custom properties):**
+All loaded via `next/font/google` and exposed as Tailwind utility classes. Inter OpenType features `cv01 cv02 ss01` are enabled globally.
 
+| CSS variable     | Tailwind class | Typeface                            | Role                                              | Scope                                                                                                             |
+| ---------------- | -------------- | ----------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--font-sans`    | `font-sans`    | **Inter** 400–900                   | Body text, UI labels, Sonner toasts               | All routes                                                                                                        |
+| `--font-display` | `font-display` | **Barlow Condensed** 700–900 italic | Hero numerals, rank numbers, leaderboard headings | All routes                                                                                                        |
+| `--font-mono`    | `font-mono`    | **JetBrains Mono** 400–800          | Stats, metadata pills, monospace labels           | All routes                                                                                                        |
+| `--font-command` | `font-command` | **Chakra Petch** 400–700            | Organizer tab nav, card labels, badges            | `/organizer/*` only — scoped via `src/app/organizer/layout.tsx` so the preload hint is never sent to player pages |
+
+#### Color Space — OKLCH (perceptually uniform)
+
+All tokens use `oklch(L C H)` — L = lightness 0–1, C = chroma, H = hue angle 0–360. A `@supports not (color: oklch(0 0 0))` block in `globals.css` provides sRGB hex fallbacks for Safari < 15.4 and old Android WebViews (zero cost on modern browsers).
+
+#### Semantic tokens — Light mode (`:root`)
+
+```css
+--background:            oklch(0.96 0.006 245)  /* canvas / page floor */
+--foreground:            oklch(0.12 0.018 245)  /* primary text */
+--card:                  oklch(1 0 0)  /* card surface */
+--primary:               oklch(0.55 0.16 155)  /* emerald — in-queue, success */
+--primary-foreground:    oklch(1 0 0)  /* text on primary */
+--accent:                oklch(0.68 0.17 62)  /* amber — on-deck, urgency */
+--accent-foreground:     oklch(0.12 0.018 245)  /* text on accent */
+--muted:                 oklch(0.93 0.008 245)  /* subtle surface */
+--muted-foreground:      oklch(0.46 0.014 245)  /* secondary text */
+--border:                oklch(0.86 0.01 245)  /* dividers, card outlines */
+--destructive:           oklch(0.55 0.22 22)  /* danger, cancel */
+--command:               oklch(0.55 0.16 188)  /* organizer teal accent */
 ```
---background:    217 28% 8%    (deep navy court floor)
---card:          217 25% 11%   (lifted navy panel)
---primary:       38 92% 52%    (warm amber)
---primary-fg:    217 28% 8%    (dark navy on amber)
---accent:        82 58% 40%    (warm lime-green)
---border:        217 18% 22%   (clean navy border)
---ring:          38 92% 52%    (amber focus ring)
---court-cyan:    180 100% 70%  (court lines, net labels)
---court-lime:    80 100% 60%   (player name pills)
---amber-accent:  35 100% 60%   (mixed-level badge)
+
+#### Semantic tokens — Dark mode (`.dark`)
+
+```css
+--background:            oklch(0.07 0.012 245)  /* canvas / page floor */
+--foreground:            oklch(0.96 0.005 245)  /* primary text */
+--card:                  oklch(0.1 0.014 245)  /* card surface */
+--primary:               oklch(0.76 0.17 155)  /* emerald — in-queue, success */
+--accent:                oklch(0.78 0.17 62)  /* amber — on-deck, urgency */
+--muted:                 oklch(0.14 0.016 245)  /* subtle surface */
+--muted-foreground:      oklch(0.56 0.012 245)  /* secondary text */
+--border:                oklch(0.18 0.018 245)  /* dividers, card outlines */
+--destructive:           oklch(0.65 0.2 22)  /* danger, cancel */
+--command:               oklch(0.79 0.18 188)  /* organizer teal accent */
 ```
 
-**Light mode:** White background (`#FAFAF7` surface in organizer header), navy primary (`#1D3A6F`).
+#### Organizer Command-Center Token Namespace (`cc-*`)
+
+All organizer views consume a separate `cc-*` namespace — surfaces, borders, and accents that switch automatically with light/dark via `:root` / `.dark`. Exposed to Tailwind as `bg-cc-bg`, `border-cc-border`, `text-cc-accent-text`, etc.
+
+| Token              | Light                         | Dark                          | Purpose                       |
+| ------------------ | ----------------------------- | ----------------------------- | ----------------------------- |
+| `--cc-bg`          | `oklch(0.94 0.010 235)`       | `oklch(0.14 0.018 238)`       | Panel base surface            |
+| `--cc-bg-2`        | `oklch(0.99 0.005 235)`       | `oklch(0.19 0.020 238)`       | Card surface                  |
+| `--cc-bg-3`        | `oklch(0.91 0.014 235)`       | `oklch(0.23 0.022 240)`       | Header / raised section       |
+| `--cc-border`      | `oklch(0.80 0.022 235)`       | `oklch(0.30 0.025 240)`       | Standard border               |
+| `--cc-border-hi`   | `oklch(0.65 0.030 235)`       | `oklch(0.44 0.032 240)`       | Emphasized border             |
+| `--cc-accent`      | `oklch(0.50 0.18 188)`        | `oklch(0.79 0.18 188)`        | Teal text / icon              |
+| `--cc-accent-dim`  | `oklch(0.50 0.18 188 / 0.10)` | `oklch(0.79 0.18 188 / 0.14)` | Tinted bg tint                |
+| `--cc-accent-glow` | `oklch(0.50 0.18 188 / 0.18)` | `oklch(0.79 0.18 188 / 0.28)` | `drop-shadow()` glow value    |
+| `--cc-amber`       | `oklch(0.58 0.18 62)`         | `oklch(0.78 0.17 62)`         | In-progress / mixed-level     |
+| `--cc-deck-border` | `oklch(0.50 0.18 188 / 0.40)` | `oklch(0.79 0.18 188 / 0.50)` | Published on-deck card border |
+| `--cc-t1/t2/t3`    | dark-text scale               | light-text scale              | Layered text hierarchy        |
+
+**Geometry utilities** (defined in `globals.css`): `.clip-cut` (18px chamfer polygon on TR + BL), `.clip-cut-sm` (10px), `.clip-cut-badge` (6px single top-right corner), `.cc-corner-accent` (top-left teal L-bracket pseudo-element), `.cc-scan` / `.cc-scan-slow` (drift-down teal shimmer pseudo-element, composited `top` animation).
+
+#### Key components added in the revamp
+
+**`StadiumLeaderboard`** (`src/components/leaderboard/stadium-leaderboard.tsx`)
+Six-region asymmetric podium layout — readable at arm's length. Regions: (1) Header — Barlow Condensed `clamp(34px,11vw,52px)` italic "LEADERBOARD" + amber player count; (2) YOU strip — amber gradient tint row; (3) Podium — `[#2 left][#1 center+taller with ghost watermark + lightning bolt][#3 right]` using `clamp` rank numerals; (4) Column header grid `34px 1fr 30px 64px 52px 26px`; (5) Tail rows 4-N. Replaces the old `LeaderboardTable` for all three variants (player-panel, organizer-panel, standalone).
+
+**`WaitlistTab` — sporty scoreboard** (`src/components/player/waitlist-tab.tsx`)
+Live standings board aesthetic (F1 timing screen). Zero-padded Barlow Condensed italic rank numbers (`01`, `02`…). JetBrains Mono GP stats column. BEG/INT/ADV text abbreviations — no pill badges. "You" row renders on electric indigo canvas `oklch(0.55 0.24 270)` with white text. Top-4 positions colored `text-primary` (emerald), tail fades to `text-muted-foreground/35`. Dividers only between rows (no zone labels). Updates in real-time via Supabase subscription.
 
 ---
 
@@ -820,14 +876,16 @@ A real-time list of all players whose `wait_minutes ≥ BOTTLENECK_THRESHOLD_MIN
 
 ### 4.3 Typography Hierarchy
 
-| Element         | Treatment                                                                 |
-| --------------- | ------------------------------------------------------------------------- |
-| Section headers | `text-sm font-semibold uppercase tracking-wider text-muted-foreground`    |
-| Card headings   | `text-base font-semibold`                                                 |
-| Body / labels   | `text-sm` — minimum 14px, never smaller in production UI                  |
-| Score displays  | `text-3xl font-black tabular-nums` — `tabular-nums` prevents layout shift |
-| Stat numbers    | `tabular-nums` always, to prevent jitter on Realtime updates              |
-| Badges / tags   | `text-xs font-medium`                                                     |
+| Element                                   | Class pattern                                                         | Font             |
+| ----------------------------------------- | --------------------------------------------------------------------- | ---------------- |
+| Display hero (leaderboard, waitlist rank) | `font-display font-black italic uppercase`                            | Barlow Condensed |
+| Section / card headings                   | `font-sans text-base font-semibold`                                   | Inter            |
+| Section labels / metadata                 | `font-mono text-[10px] uppercase tracking-[0.20em]`                   | JetBrains Mono   |
+| Organizer command labels                  | `font-command text-[11px] uppercase tracking-[0.16em]`                | Chakra Petch     |
+| Body / UI labels                          | `text-sm` — minimum 14px, never smaller                               | Inter            |
+| Score / stat numbers                      | `font-mono text-3xl font-black tabular-nums`                          | JetBrains Mono   |
+| GP / win% stats                           | `font-mono tabular-nums` always — prevents jitter on Realtime updates | JetBrains Mono   |
+| Badges / tags                             | `text-xs font-medium`                                                 | Inter            |
 
 ---
 
@@ -1106,9 +1164,10 @@ src/
       player-match-alert-preview.tsx # Sandbox preview component
 
     leaderboard/
-      leaderboard-page.tsx       # Leaderboard shell (session + all-time tabs)
+      leaderboard-page.tsx       # Leaderboard shell — routes all variants to StadiumLeaderboard
+      stadium-leaderboard.tsx    # NEW — asymmetric podium + YOU strip + tail rows (all variants)
       leaderboard-hero-card.tsx  # Always-visible player status strip
-      leaderboard-table.tsx      # Sortable leaderboard table
+      leaderboard-table.tsx      # Legacy sortable table (kept for reference; no longer rendered)
       leaderboard-row.tsx        # Individual leaderboard row with rank flash
       advanced-stats-toggle.tsx  # Show/hide PF/PA/+/- advanced columns
 

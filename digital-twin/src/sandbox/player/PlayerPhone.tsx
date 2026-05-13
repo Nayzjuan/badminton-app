@@ -59,32 +59,24 @@ const MOCK_HISTORY = [
 ];
 
 // ── Skill helpers (3 levels matching sandbox) ─────────────────────────────────
+// Matches real app's SKILL_ABBREV in waitlist-tab.tsx: BEG/INT/ADV text only,
+// no pill badge — consistent with the sporty scoreboard aesthetic.
 
-const SKILL_CFG: Record<SkillLevel, { dot: string; abbr: string; badge: string }> = {
-  beginner: {
-    dot: "bg-emerald-500",
-    abbr: "Beg",
-    badge: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  },
-  intermediate: { dot: "bg-sky-500", abbr: "Int", badge: "bg-sky-100 text-sky-700 border-sky-200" },
-  advanced: {
-    dot: "bg-purple-500",
-    abbr: "Adv",
-    badge: "bg-purple-100 text-purple-700 border-purple-200",
-  },
+const SKILL_CFG: Record<SkillLevel, { dot: string; abbr: string }> = {
+  beginner: { dot: "bg-emerald-500", abbr: "BEG" },
+  intermediate: { dot: "bg-sky-500", abbr: "INT" },
+  advanced: { dot: "bg-purple-500", abbr: "ADV" },
 };
 
-function SkillBadge({ skill }: { skill: SkillLevel }) {
-  const c = SKILL_CFG[skill];
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${c.badge}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${c.dot}`} />
-      {c.abbr}
-    </span>
-  );
-}
+// "You" row electric-indigo constants — OKLCH values identical to real waitlist-tab.tsx.
+// Font sizes throughout WaitlistTab are scaled ~15% smaller than the real app
+// (e.g. 34px → 30px rank, 48px → 40px header) to fit the 375×780 phone shell.
+// The design language (font choices, color hierarchy, layout) is faithful; only
+// the raw pixel values are compressed.
+const YOU_BG = "oklch(0.55 0.24 270)";
+const YOU_TEXT = "oklch(0.97 0.008 270)";
+const YOU_TEXT_DIM = "oklch(0.97 0.008 270 / 0.65)";
+const YOU_RANK = "oklch(0.86 0.14 270)";
 
 function SkillIndicator({ skill }: { skill: SkillLevel }) {
   const c = SKILL_CFG[skill];
@@ -598,67 +590,189 @@ function LiveCourtsTab({ state }: { state: SandboxState }) {
   );
 }
 
-// ── Waitlist tab ──────────────────────────────────────────────────────────────
+// ── Waitlist tab — sporty scoreboard (matches real waitlist-tab.tsx) ──────────
+// Zero-padded Barlow Condensed italic rank nums, JetBrains Mono GP stats,
+// BEG/INT/ADV abbreviations, electric-indigo "you" canvas row.
 
 function WaitlistTab({ state }: { state: SandboxState }) {
   const queued = state.queueOrder.filter((id) => {
     const s = state.players[id]?.status;
     return s && s !== "left";
   });
-  const waitingOnly = queued.filter((id) => state.players[id]?.status === "waiting");
 
   if (queued.length === 0) {
-    return <div className="p-6 text-center text-sm text-slate-400">Queue is empty</div>;
+    return (
+      <div className="flex flex-col items-start px-4 pt-5 pb-12">
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-300" />
+          <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-slate-400">
+            Queue Empty
+          </p>
+        </div>
+        <div
+          className="font-display font-black italic uppercase leading-[0.88] text-slate-200"
+          style={{ fontSize: "44px", letterSpacing: "-0.03em" }}
+        >
+          No One
+          <br />
+          Waiting
+        </div>
+        <p className="mt-4 text-sm text-slate-400">Be the first in line.</p>
+      </div>
+    );
   }
 
   return (
-    <div className="divide-y divide-slate-100">
-      {queued.map((id) => {
+    <div className="px-3 pt-3 pb-4">
+      {/* ── Header: LINEUP + player count ── */}
+      <div className="flex items-end justify-between pb-3 border-b-2 border-slate-200 mb-1">
+        <div>
+          <div className="flex items-center gap-1.5 mb-1">
+            <span
+              className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+              style={{ animation: "status-pulse 1.4s ease-in-out infinite" }}
+            />
+            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.28em] text-emerald-600">
+              Live
+            </p>
+          </div>
+          <div
+            className="font-display font-black italic uppercase leading-none text-slate-900"
+            style={{ fontSize: "40px", letterSpacing: "-0.025em" }}
+          >
+            Lineup
+          </div>
+        </div>
+        <div className="text-right pb-0.5">
+          <div
+            className="font-display font-black italic text-slate-700 leading-none"
+            style={{ fontSize: "40px", letterSpacing: "-0.02em" }}
+          >
+            {queued.length}
+          </div>
+          <p className="font-mono text-[9px] uppercase tracking-[0.22em] text-slate-400 mt-0.5">
+            {queued.length === 1 ? "Player" : "Players"}
+          </p>
+        </div>
+      </div>
+
+      {/* ── Rows ── */}
+      {queued.map((id, idx) => {
         const p = state.players[id];
         if (!p) return null;
-        const isAlex = id === YOU_ID;
-        const waitPos = p.status === "waiting" ? waitingOnly.indexOf(id) + 1 : null;
+        const isMe = id === YOU_ID;
+        const position = idx + 1;
+        const rankStr = String(position).padStart(2, "0");
+        const isTop = position <= 4;
+        const isLast = idx === queued.length - 1;
+        const abbr = SKILL_CFG[p.skill].abbr;
+
+        // "You" row — electric indigo canvas
+        if (isMe) {
+          return (
+            <div
+              key={id}
+              className="grid items-center rounded-xl my-1"
+              style={{
+                backgroundColor: YOU_BG,
+                gridTemplateColumns: "48px 1fr auto",
+                gap: "0 10px",
+                padding: "14px", // matches real app py-3.5 / paddingLeft 14px
+              }}
+            >
+              <div
+                className="font-display font-black italic leading-none"
+                style={{ fontSize: "30px", letterSpacing: "-0.04em", color: YOU_RANK }}
+              >
+                {rankStr}
+              </div>
+              <div className="min-w-0">
+                <div
+                  className="font-display font-black uppercase truncate leading-tight"
+                  style={{ fontSize: "15px", letterSpacing: "0.02em", color: YOU_TEXT }}
+                >
+                  {p.name}
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span
+                    className="font-mono text-[9px] font-extrabold uppercase tracking-[0.12em]"
+                    style={{ color: YOU_TEXT_DIM }}
+                  >
+                    {abbr}
+                  </span>
+                  <span
+                    className="font-mono text-[8px] font-extrabold uppercase tracking-widest"
+                    style={{ color: YOU_TEXT_DIM }}
+                  >
+                    You
+                  </span>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div
+                  className="font-mono font-black tabular-nums leading-none"
+                  style={{ fontSize: "22px", color: YOU_TEXT }}
+                >
+                  {p.gamesPlayed}
+                </div>
+                <p
+                  className="font-mono text-[8px] uppercase tracking-[0.16em] mt-0.5"
+                  style={{ color: YOU_TEXT_DIM }}
+                >
+                  GP
+                </p>
+              </div>
+            </div>
+          );
+        }
+
+        // Standard row
+        const rankColor =
+          position === 1 ? "text-emerald-600" : isTop ? "text-emerald-600/65" : "text-slate-300";
+        const rankSize = position === 1 ? "26px" : isTop ? "24px" : "19px";
+        const nameSize = isTop ? "15px" : "13px";
+        const gpSize = isTop ? "17px" : "13px";
 
         return (
           <div
             key={id}
-            className={`flex items-center gap-3 px-4 py-3 ${isAlex ? "bg-sky-50" : "bg-white"}`}
+            className={`grid items-center py-2.5 ${isLast ? "" : "border-b border-slate-100"}`}
+            style={{
+              gridTemplateColumns: "48px 1fr auto",
+              gap: "0 10px",
+              paddingLeft: "2px",
+              paddingRight: "2px",
+            }}
           >
-            {/* Position badge */}
             <div
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
-                isAlex
-                  ? "bg-sky-500 text-white"
-                  : waitPos && waitPos <= 4
-                    ? "bg-slate-200 text-slate-700"
-                    : "bg-slate-100 text-slate-400"
-              }`}
+              className={`font-display font-black italic leading-none ${rankColor}`}
+              style={{ fontSize: rankSize, letterSpacing: "-0.04em" }}
             >
-              {waitPos ?? "—"}
+              {rankStr}
             </div>
-
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`text-sm font-semibold truncate ${isAlex ? "text-sky-700" : "text-slate-800"}`}
-                >
-                  {p.name}
-                </span>
-                {isAlex && (
-                  <span className="text-[9px] font-black uppercase tracking-widest text-sky-500">
-                    You
-                  </span>
-                )}
-                <SkillBadge skill={p.skill} />
+            <div className="min-w-0">
+              <div
+                className={`font-display font-bold uppercase truncate leading-tight ${isTop ? "text-slate-800" : "text-slate-400"}`}
+                style={{ fontSize: nameSize, letterSpacing: "0.02em" }}
+              >
+                {p.name}
               </div>
-              <p className="text-[10px] text-slate-400 mt-0.5 capitalize">
-                {p.status.replace("_", " ")}
-              </p>
+              <span
+                className={`font-mono text-[9px] font-semibold uppercase tracking-[0.12em] ${isTop ? "text-slate-400" : "text-slate-300"}`}
+              >
+                {abbr}
+              </span>
             </div>
-
-            <div className="shrink-0 text-right">
-              <span className="text-base font-bold text-slate-800">{p.gamesPlayed}</span>
-              <p className="text-[10px] text-slate-400">games</p>
+            <div className="text-right shrink-0">
+              <div
+                className={`font-mono font-black tabular-nums leading-none ${isTop ? "text-slate-600" : "text-slate-300"}`}
+                style={{ fontSize: gpSize }}
+              >
+                {p.gamesPlayed}
+              </div>
+              <p className="font-mono text-[7px] uppercase tracking-[0.14em] text-slate-300 mt-0.5">
+                GP
+              </p>
             </div>
           </div>
         );
@@ -868,7 +982,7 @@ export default function PlayerPhone({ state, soundEnabled }: Props) {
                 </h1>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className="text-xs text-slate-500">Alex</span>
-                  <SkillBadge skill="intermediate" />
+                  <SkillIndicator skill="intermediate" />
                   {/* Status dot */}
                   <span className={`ml-1 h-2 w-2 rounded-full ${dotCls}`} aria-hidden="true" />
                 </div>
