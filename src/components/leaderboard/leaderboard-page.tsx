@@ -28,11 +28,9 @@
 // ============================================================
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Trophy, RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
-import { LeaderboardTable } from "./leaderboard-table";
+import { RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { StadiumLeaderboard } from "./stadium-leaderboard";
 import { LeaderboardHeroCard } from "./leaderboard-hero-card";
-import { AdvancedStatsToggle } from "./advanced-stats-toggle";
 import { getSessionLeaderboard, getAllTimeLeaderboard, getPlayerStats } from "@/app/actions/leaderboard";
 import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
 
@@ -80,10 +78,9 @@ export function LeaderboardPage({
   currentUserId,
   variant = "player-panel",
 }: LeaderboardPageProps) {
-  const isCompact       = variant === "player-panel";
-  const showAllTimeTab  = variant === "organizer-panel" || variant === "standalone";
-  const showAdvToggle   = variant === "organizer-panel" || variant === "standalone";
-  const isCentered      = variant === "standalone";
+  const isCompact      = variant === "player-panel";
+  const showAllTimeTab = variant === "organizer-panel" || variant === "standalone";
+  const isCentered     = variant === "standalone";
 
   // ── State ──────────────────────────────────────────────────
   // Default to all-time tab when no session is pre-selected (lobby use case).
@@ -97,7 +94,6 @@ export function LeaderboardPage({
   const [alltimeLoading,   setAlltimeLoading] = useState(false);
   const [alltimeFetched,   setAlltimeFetched] = useState(false);
   const [error,            setError]          = useState<string | null>(null);
-  const [showAdvanced,     setShowAdvanced]   = useState(false);
   const [flashedIds,       setFlashedIds]     = useState<Set<string>>(new Set());
   /** Raw stats for the current user regardless of MIN_GP — drives LeaderboardHeroCard */
   const [myStats,          setMyStats]        = useState<LeaderboardRow | null>(null);
@@ -198,8 +194,7 @@ export function LeaderboardPage({
   // ── Derived state ─────────────────────────────────────────
   const activeRows    = scopeTab === "session" ? sessionRows    : alltimeRows;
   const activeLoading = scopeTab === "session" ? sessionLoading : alltimeLoading;
-  const minGP         = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
-  const showRankMov   = scopeTab === "alltime";
+  const minGP = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
   // Show session picker when on session tab but no session is selected yet
   const showSessionPicker = scopeTab === "session" && !activeSessionId && !!sessions?.length;
   const myRow         = currentUserId
@@ -260,50 +255,8 @@ export function LeaderboardPage({
   return (
     <div className={wrapperClass}>
 
-      {/* ── Header ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Trophy
-            className="h-5 w-5 text-amber-500 shrink-0"
-            aria-hidden="true"
-          />
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-foreground leading-tight">
-              Leaderboard
-            </h2>
-            {activeSessionName && scopeTab === "session" && (
-              <p className="text-xs text-muted-foreground truncate">
-                {activeSessionName}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {showAdvToggle && (
-            <AdvancedStatsToggle
-              isOpen={showAdvanced}
-              onToggle={() => setShowAdvanced((v) => !v)}
-            />
-          )}
-          <button
-            onClick={handleRefresh}
-            disabled={activeLoading}
-            aria-label="Refresh leaderboard"
-            className="flex items-center justify-center w-11 h-11 rounded-lg
-                       border border-slate-200 dark:border-border
-                       hover:bg-muted/50 transition-colors
-                       disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 text-muted-foreground ${
-                activeLoading ? "animate-spin" : ""
-              }`}
-              aria-hidden="true"
-            />
-          </button>
-        </div>
-      </div>
+      {/* StadiumLeaderboard owns its own header + refresh button —
+          no duplicate header needed here. */}
 
       {/* ── Scope tab switcher (organizer-panel + standalone) ── */}
       {showAllTimeTab && (
@@ -419,26 +372,26 @@ export function LeaderboardPage({
         />
       )}
 
-      {/* ── Leaderboard table — hidden during picker ───────── */}
+      {/* ── Leaderboard — hidden during picker ─────────────── */}
       {!showSessionPicker && (
-        <LeaderboardTable
-          rows={activeRows}
-          loading={activeLoading}
-          currentUserId={currentUserId}
-          flashedIds={flashedIds}
-          showAdvanced={showAdvanced}
-          showRankMovement={showRankMov}
-          minGP={minGP}
-        />
-      )}
-
-      {/* ── Footer note ────────────────────────────────────── */}
-      {!activeLoading && !showSessionPicker && activeRows.length > 0 && (
-        <p className="text-[10px] text-muted-foreground text-center">
-          {scopeTab === "session"
-            ? `Min. ${MIN_SESSION_GP} GP to appear · Ranked by confidence-weighted win rate`
-            : `Min. ${MIN_ALLTIME_GP} GP to appear · Ranked by confidence-weighted win rate`}
-        </p>
+        activeLoading && activeRows.length === 0 ? (
+          <div className="flex items-center justify-center py-16">
+            <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+          </div>
+        ) : activeRows.length === 0 && !activeLoading ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {scopeTab === "session"
+              ? `No players with ${MIN_SESSION_GP}+ games yet.`
+              : `No players with ${MIN_ALLTIME_GP}+ games yet.`}
+          </div>
+        ) : (
+          <StadiumLeaderboard
+            sessionName={scopeTab === "session" ? activeSessionName : undefined}
+            rows={activeRows}
+            currentUserId={currentUserId}
+            onRefresh={handleRefresh}
+          />
+        )
       )}
     </div>
   );
