@@ -191,13 +191,9 @@ function PlayerRowLight({
           </>
         )}
       </div>
-      {/* Line 2 — skill · swap icon */}
+      {/* Line 2 — skill level (colored text, no dot) + swap icon */}
       <div className="mt-1 flex items-center gap-1.5">
-        <SkillDot level={player.skill_level} />
-        {/* invisible spacer keeps line-2 height consistent */}
-        <span className="invisible text-[10px] leading-none" aria-hidden="true">
-          _
-        </span>
+        <SkillLevelDark level={player.skill_level} />
         {onSwapClick && (
           <ArrowLeftRight
             className="ml-auto h-3 w-3 flex-shrink-0 text-cc-accent opacity-0 transition-opacity group-hover:opacity-100"
