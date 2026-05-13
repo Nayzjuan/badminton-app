@@ -229,6 +229,25 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 
 **Pushed to `main`:** commits `ee6e4c6` (build fix) + `836df5d` (organizer port). Vercel should deploy cleanly now.
 
+### Leaderboard Fix (2026-05-13) — COMPLETE
+
+**Problem:** "This Session" leaderboard showed nothing despite ample match history.
+
+**Root causes fixed:**
+1. `MIN_SESSION_GP = 3` was filtering out all players in early sessions. Lowered to `1` in all three locations that define this constant:
+   - `src/app/actions/leaderboard.ts` (server action — the `.gte()` filter)
+   - `src/components/leaderboard/leaderboard-page.tsx` (UI empty-state copy + `minGP` variable)
+   - `src/components/leaderboard/leaderboard-hero-card.tsx` (hero card "below threshold" gate — caught by code review agent)
+2. `get_player_streaks` RPC failure was fatal. Changed to non-fatal: if it fails, logs a warning and continues with empty streak map (all streaks = 0).
+
+**Empty state copy updated:**
+- "Min. 1 games to appear" → "Complete at least 1 game to appear." (grammatically correct)
+- "No players with 1+ games yet." → "No completed games in this session yet."
+
+**Also removed:** `src/components/player/queue-toggle.tsx` — dead file with no importers (replaced by inline button in `player-dashboard.tsx`).
+
+**Pushed:** commit `1e91433` to `main`.
+
 ### Immediate Next Steps
 
 - (Optional) Add new Wrapped award metadata to `tests/unit/` or scaffold a per-award smoke test that verifies trigger conditions against a synthetic session.
