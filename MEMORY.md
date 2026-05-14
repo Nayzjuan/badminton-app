@@ -5,7 +5,7 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-12)
+## SESSION STATE (Last Updated: 2026-05-14)
 
 ### What Was Accomplished This Session — New UI Port (organizer + player) — ALL CHUNKS COMPLETE
 
@@ -201,6 +201,9 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 - Skill badge has no dark mode variant — renders washed out on dark navy. P1 fix pending.
 - `match_opponent_pairs` CTE in the Wrapped RPC still SELECTs `opp_a` / `opp_b` columns from `LEAST/GREATEST` even though they're not aggregated downstream. Postgres optimizes these out, but tidy-up could remove them.
 - 3 incremental fix migrations were applied to Supabase dev (`expand_wrapped_awards`, `fix_wrapped_awards_uuid_max`, `fix_wrapped_awards_array_append`, `fix_wrapped_awards_double_trouble_scope`). The local migration file `20260508000000_expand_wrapped_awards.sql` is the consolidated final version that also incorporates the `20260509` threshold tweaks. If migrations are ever replayed from scratch, only the consolidated `20260508` version + the `20260509` patch run; intermediate fix names won't reappear.
+- **Jake L duplicate profiles (data integrity, 2026-05-14):** Two profiles for the same human (PIN `0356`). `8d63e740…` (May 9, player) owns 29 match_players + 5 queue_entries across real sessions. `ea9f0ae5…` (May 12, organizer) owns all 5 real sessions via `sessions.created_by` but has zero play history. Both are post-migration profiles ending different branches of a chain that split on May 9 03:21 when two devices PIN-reconnected from the same `a3f26e57` ancestor. `migrate_player_identity` is supposed to consolidate but didn't. Fix: run `migrate_player_identity('8d63e740-4715-4fd4-b2d3-e3e59c87b840', 'ea9f0ae5-ccb8-492b-9907-5aeb72178d15')` to merge the player profile into the organizer profile (or vice versa) so Jake L's match history lives under one identity. Hold until tonight's session closes.
+- **Hero-card stats not refreshed by leaderboard realtime (2026-05-14):** `LeaderboardHeroCard`'s fallback `myStats` (used for below-`MIN_GP` players) is fetched once per `[currentUserId, scopeTab, activeSessionId]` change and not re-fetched by the new `subscribeToMatches` hook. A player who finishes a game while looking at the leaderboard but is still below threshold sees stale "Play N more games to appear" stats until they switch tabs. Low priority — only affects the very-early-session view.
+- **3 pre-existing `react-hooks/set-state-in-effect` lint errors in `leaderboard-page.tsx`** at the initial-load, lazy-load-alltime, and hero-card-stats useEffects. These predate today's realtime work — confirmed by stash-and-relint. Worth a dedicated cleanup pass alongside the same pattern in `use-player-match.ts`, `use-queue.ts`, `theme-toggle.tsx`.
 
 ### Build Fix + Organizer Port (2026-05-12) — COMPLETE
 
@@ -231,11 +234,121 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 
 **Pushed to `main`:** commits `ee6e4c6` (build fix) + `836df5d` (organizer port). Vercel should deploy cleanly now.
 
+### Leaderboard Live-Refresh + Variant Fix (2026-05-14) — COMPLETE
+
+Two follow-up bugs surfaced live during the May-14 Thursday session.
+
+**Bug 1 — embedded leaderboards stale.** Players who opened the
+in-dashboard Leaderboard tab before any matches had completed got stuck
+on "No ranked players yet" even after games started finishing. Root cause:
+`leaderboard-page.tsx` only fetched on mount — no realtime / polling /
+visibility refresh. The previous `use-leaderboard.ts` hook (deleted in
+the Stadium refactor) used to subscribe to match changes; that wiring
+was lost.
+
+**Fix (commit `125174c`) — `src/components/leaderboard/leaderboard-page.tsx`:**
+
+- New `useEffect` subscribes to `subscribeToMatches(supabase, activeSessionId, refetch, "leaderboard")` — only on session scope, debounced 500 ms so a score-submission cascade collapses to one refetch.
+- Ref-based callback (`fetchSessionRef.current = fetchSession` updated in a separate useEffect) keeps the subscription stable across renders. Subscription deps are `[scopeTab, activeSessionId]` only.
+- Channel prefix `"leaderboard"` so it doesn't collide with `use-organizer-data.ts`'s undefined-prefix `matches:<sessionId>` channel.
+- `fetchSessionSeq` + `fetchAllTimeSeq` monotonic ref counters (CLAUDE.md mandate) drop stale results — critical now that realtime can fire rapid refetches.
+- Refresh button added to both empty states (compact player-panel + standalone organizer/lobby) so users stuck on the empty state can recover without switching tabs.
+
+**Bug 2 — lobby `/leaderboard` route trapped on empty.** Screenshot showed the lobby page stuck on "No ranked players yet" with a Refresh button that did nothing. Root cause: `src/app/leaderboard/page.tsx` was passing `variant="player-panel"` — the compact embedded variant. With `sessionId={null}`, `fetchSession` bails on `if (!activeSessionId) return;` and `sessionRows` stays empty forever. The compact variant has no tab switcher and no session picker, so there's no UI affordance to recover.
+
+**Fix (commit `48246e9`) — `src/app/leaderboard/page.tsx`:**
+
+- `variant="player-panel"` → `variant="standalone"`. Inline comment added so this regression doesn't return.
+
+**Variant cheat-sheet — keep these straight:**
+
+| Variant           | `isCompact` | Tab switcher | Session picker | Use case                                                                          |
+| ----------------- | ----------- | ------------ | -------------- | --------------------------------------------------------------------------------- |
+| `player-panel`    | ✓           | ✗            | ✗              | embedded in player dashboard (sessionId always set)                               |
+| `organizer-panel` | ✗           | ✓            | ✗              | embedded in organizer dashboard (sessionId always set)                            |
+| `standalone`      | ✗           | ✓            | ✓              | public lobby `/leaderboard` (sessionId optional, falls back to All-Time + picker) |
+
+**Validation:** `npx tsc --noEmit` clean. ESLint clean on changed files (pre-existing `react-hooks/set-state-in-effect` errors on lines 165 / 171 / 222 of leaderboard-page.tsx were verified to predate this change — just line-number-shifted by the additions).
+
+**Follow-up:** Hero card's fallback `myStats` (for below-MIN_GP users) is not refreshed by the realtime subscription. A player who finishes a game while looking at the leaderboard but hasn't reached `MIN_SESSION_GP` yet will see stale "Play N more games to appear" stats until they switch tabs. Low priority.
+
+### Live Operations (2026-05-14) — PRODUCTION DB CLEANUP
+
+**Tonight's live session:** `Chillax Thursday Session 05/14` (`fd243c62-f75a-4ada-a02f-fc2e4f36e811`). 15 players queued, 2 active courts, 17 ranked entries in `v_session_leaderboard` as of mid-evening.
+
+**Test-data cleanup before session start:**
+
+- Deleted the `🤖 E2E SANDBOX — DO NOT JOIN` session (`6903896c…`) — cascaded 46 queue_entries, 34 matches, 136 match_players, 3 courts, 3 session_organizers.
+- Deleted 44 test profiles via `auth.users` (CASCADE → profiles → rivalries/partnerships): 4 `E2E_*` bots + 40 seed bots from `scripts/seed-sandbox-players.mjs`. Final DB: 5 sessions, 72 profiles, 0 test data.
+- Pre-deletion snapshot saved at `backup-test-cleanup-2026-05-14T15-27-34.json` (79 KB).
+- **One near-miss caught by the classifier:** my audit logic almost flagged `Jake L (ea9f0ae5…)` as test data because his only queue_entry was in the sandbox. He's actually the real organizer who owns all 5 real sessions via `sessions.created_by`. The audit heuristic was filtering on `queue_entries.player_id` (player participation) but not `sessions.created_by` (session ownership). Removed from deletion list. Documented in this file's "Known Bugs" section below.
+
+**`Chu (21b9380b…)` UI-stuck issue (mid-session):**
+
+- DB state was correct: `queue_entries.status = "playing"`, match `7204be9e…` `in_progress` on COURT 12, team A.
+- Client UI showed "Join Queue" landing instead of the COURT 12 match overlay. Root cause: anonymous auth identity drift — his `auth.uid()` no longer matched profile `21b9380b…`, so `WHERE player_id = auth.uid()` queries returned zero rows.
+- Recommended path: PIN reconnect from the 3-dot menu → enter PIN `1111` → `migrate_player_identity` consolidates back to profile.
+
+**⚠️ PENDING — cross-session ledger fixup owed at session close:**
+
+I called `refresh_cross_session_stats('fd243c62…')` as a "dry-run" at **2026-05-14 12:29:54 UTC** without realising the session had 16 completed matches by then. The RPC processed them into `player_rivalries` (+104 rows) and `player_partnerships` (+62 rows), tagging them all with `last_session_id = fd243c62…`. The RPC has an idempotency guard `IF EXISTS (... WHERE last_session_id = p_session_id) RETURN;` — so when `closeSession` runs tonight, `refresh_cross_session_stats` will return early and any matches completed **after 12:29:54 UTC** will NOT be aggregated into rivalries/partnerships.
+
+**Effect:** Session-only awards (51) work normally. The 9 cross-session awards (`nemesis_slayer`, `the_dynasty`, `soulmates`, `winning_formula`, etc.) will be computed from a partial-night snapshot — late matches missing from the lifetime ledger.
+
+**Fixup plan (run AFTER close, before players check Wrapped):**
+
+```sql
+-- 1. Apply deltas for matches completed > the dry-run timestamp.
+--    Mirrors refresh_cross_session_stats's INSERT...ON CONFLICT INCREMENT
+--    pattern, scoped to the late window. No double-counting.
+WITH late_completed AS (
+  SELECT m.id AS match_id, mp.player_id, mp.team,
+         CASE WHEN (mp.team='a' AND m.team_a_score > m.team_b_score)
+                OR (mp.team='b' AND m.team_b_score > m.team_a_score) THEN true ELSE false END AS won,
+         m.completed_at
+  FROM matches m JOIN match_players mp ON mp.match_id = m.id
+  WHERE m.session_id = 'fd243c62-f75a-4ada-a02f-fc2e4f36e811'
+    AND m.status = 'completed'
+    AND m.completed_at > '2026-05-14 12:29:54 UTC'
+    AND m.team_a_score IS NOT NULL AND m.team_b_score IS NOT NULL
+),
+rivalry_deltas AS (
+  SELECT p.player_id, opp.player_id AS rival_id,
+         SUM(CASE WHEN p.won THEN 1 ELSE 0 END)::int AS wins_vs,
+         SUM(CASE WHEN NOT p.won THEN 1 ELSE 0 END)::int AS losses_vs,
+         MAX(p.completed_at) AS last_faced_at
+  FROM late_completed p
+  JOIN match_players opp ON opp.match_id = p.match_id AND opp.team != p.team
+  GROUP BY p.player_id, opp.player_id
+)
+INSERT INTO player_rivalries (player_id, rival_id, wins_vs, losses_vs, sessions_faced,
+                              last_session_id, last_faced_at, updated_at)
+SELECT player_id, rival_id, wins_vs, losses_vs, 0,
+       'fd243c62-f75a-4ada-a02f-fc2e4f36e811', last_faced_at, now()
+FROM rivalry_deltas
+ON CONFLICT (player_id, rival_id) DO UPDATE SET
+  wins_vs       = player_rivalries.wins_vs   + EXCLUDED.wins_vs,
+  losses_vs     = player_rivalries.losses_vs + EXCLUDED.losses_vs,
+  last_faced_at = GREATEST(player_rivalries.last_faced_at, EXCLUDED.last_faced_at),
+  updated_at    = now();
+-- (sessions_faced intentionally not incremented — last_session_id was already fd243c62,
+-- meaning we're appending to a session that was already counted on the first call)
+
+-- 2. Same pattern for player_partnerships (partner.team = p.team, not !=).
+
+-- 3. Re-run compute_session_wrapped to regenerate awards with full data.
+--    session_wrapped_stats is UPSERT/array_remove+append, so this is idempotent.
+SELECT compute_session_wrapped('fd243c62-f75a-4ada-a02f-fc2e4f36e811'::uuid);
+```
+
+This was my mistake — I should have read the function source before invoking it. The fix is non-destructive and surgical.
+
 ### Leaderboard Fix (2026-05-13) — COMPLETE
 
 **Problem:** "This Session" leaderboard showed nothing despite ample match history.
 
 **Root causes fixed:**
+
 1. `MIN_SESSION_GP = 3` was filtering out all players in early sessions. Lowered to `1` in all three locations that define this constant:
    - `src/app/actions/leaderboard.ts` (server action — the `.gte()` filter)
    - `src/components/leaderboard/leaderboard-page.tsx` (UI empty-state copy + `minGP` variable)
@@ -243,6 +356,7 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 2. `get_player_streaks` RPC failure was fatal. Changed to non-fatal: if it fails, logs a warning and continues with empty streak map (all streaks = 0).
 
 **Empty state copy updated:**
+
 - "Min. 1 games to appear" → "Complete at least 1 game to appear." (grammatically correct)
 - "No players with 1+ games yet." → "No completed games in this session yet."
 
