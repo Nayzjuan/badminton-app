@@ -31,7 +31,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { StadiumLeaderboard } from "./stadium-leaderboard";
 import { LeaderboardHeroCard } from "./leaderboard-hero-card";
-import { getSessionLeaderboard, getAllTimeLeaderboard, getPlayerStats } from "@/app/actions/leaderboard";
+import {
+  getSessionLeaderboard,
+  getAllTimeLeaderboard,
+  getPlayerStats,
+} from "@/app/actions/leaderboard";
+import { createClient } from "@/utils/supabase/client";
+import { subscribeToMatches } from "@/lib/realtime";
 import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
 
 const MIN_SESSION_GP = 1;
@@ -78,29 +84,36 @@ export function LeaderboardPage({
   currentUserId,
   variant = "player-panel",
 }: LeaderboardPageProps) {
-  const isCompact      = variant === "player-panel";
+  const isCompact = variant === "player-panel";
   const showAllTimeTab = variant === "organizer-panel" || variant === "standalone";
-  const isCentered     = variant === "standalone";
+  const isCentered = variant === "standalone";
 
   // ── State ──────────────────────────────────────────────────
   // Default to all-time tab when no session is pre-selected (lobby use case).
-  const [scopeTab,         setScopeTab]       = useState<ScopeTab>(sessionId ? "session" : "alltime");
+  const [scopeTab, setScopeTab] = useState<ScopeTab>(sessionId ? "session" : "alltime");
   // Tracks the currently selected session (may differ from the prop after picker interaction).
-  const [activeSessionId,  setActiveSessionId] = useState<string | null>(sessionId ?? null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId ?? null);
   const [activeSessionName, setActiveSessionName] = useState<string | undefined>(sessionName);
-  const [sessionRows,      setSessionRows]    = useState<LeaderboardRow[]>([]);
-  const [alltimeRows,      setAlltimeRows]    = useState<LeaderboardRow[]>([]);
-  const [sessionLoading,   setSessionLoading] = useState(!!sessionId);
-  const [alltimeLoading,   setAlltimeLoading] = useState(false);
-  const [alltimeFetched,   setAlltimeFetched] = useState(false);
-  const [error,            setError]          = useState<string | null>(null);
-  const [flashedIds,       setFlashedIds]     = useState<Set<string>>(new Set());
+  const [sessionRows, setSessionRows] = useState<LeaderboardRow[]>([]);
+  const [alltimeRows, setAlltimeRows] = useState<LeaderboardRow[]>([]);
+  const [sessionLoading, setSessionLoading] = useState(!!sessionId);
+  const [alltimeLoading, setAlltimeLoading] = useState(false);
+  const [alltimeFetched, setAlltimeFetched] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [flashedIds, setFlashedIds] = useState<Set<string>>(new Set());
   /** Raw stats for the current user regardless of MIN_GP — drives LeaderboardHeroCard */
-  const [myStats,          setMyStats]        = useState<LeaderboardRow | null>(null);
-  const [myStatsLoading,   setMyStatsLoading] = useState(false);
+  const [myStats, setMyStats] = useState<LeaderboardRow | null>(null);
+  const [myStatsLoading, setMyStatsLoading] = useState(false);
 
   // Track previous row IDs to detect new entrants for flash effect.
   const prevIdsRef = useRef<Set<string>>(new Set());
+
+  // Monotonic sequence refs (CLAUDE.md mandate): discard stale concurrent
+  // fetch results so a slow-returning earlier fetch can't overwrite a
+  // faster-returning later fetch's data. Critical now that realtime can
+  // trigger refetches in rapid succession.
+  const fetchSessionSeq = useRef(0);
+  const fetchAllTimeSeq = useRef(0);
 
   // ── Flash helper ──────────────────────────────────────────
   const flashNewEntrants = useCallback((rows: LeaderboardRow[]) => {
@@ -117,9 +130,12 @@ export function LeaderboardPage({
   // ── Fetch functions ───────────────────────────────────────
   const fetchSession = useCallback(async () => {
     if (!activeSessionId) return;
+    const seq = ++fetchSessionSeq.current;
     setSessionLoading(true);
     setError(null);
     const result = await getSessionLeaderboard(activeSessionId);
+    // Stale-response guard: drop this result if a newer fetch has started.
+    if (seq !== fetchSessionSeq.current) return;
     setSessionLoading(false);
     if (result.success) {
       flashNewEntrants(result.rows);
@@ -130,9 +146,11 @@ export function LeaderboardPage({
   }, [activeSessionId, flashNewEntrants]);
 
   const fetchAllTime = useCallback(async () => {
+    const seq = ++fetchAllTimeSeq.current;
     setAlltimeLoading(true);
     setError(null);
     const result = await getAllTimeLeaderboard();
+    if (seq !== fetchAllTimeSeq.current) return;
     setAlltimeLoading(false);
     setAlltimeFetched(true);
     if (result.success) {
@@ -144,7 +162,9 @@ export function LeaderboardPage({
 
   // ── Initial load ──────────────────────────────────────────
   // fetchSession re-memoizes when activeSessionId changes, which re-triggers this effect.
-  useEffect(() => { fetchSession(); }, [fetchSession]);
+  useEffect(() => {
+    fetchSession();
+  }, [fetchSession]);
 
   // ── Lazy load all-time on first tab visit ─────────────────
   useEffect(() => {
@@ -152,6 +172,43 @@ export function LeaderboardPage({
       fetchAllTime();
     }
   }, [scopeTab, alltimeFetched, alltimeLoading, fetchAllTime]);
+
+  // ── Realtime: refetch session leaderboard on match changes ─
+  // Why we needed this: the component used to fetch only on mount,
+  // so players who opened the Leaderboard tab before any matches had
+  // completed got stuck on the "No ranked players yet" empty state
+  // even after games started finishing. Now any INSERT/UPDATE on the
+  // matches table (most importantly status → completed and score
+  // updates) triggers a debounced refetch.
+  //
+  // Ref-based callback (per CLAUDE.md mandate) keeps the subscription
+  // stable across re-renders — subscribing only re-runs when scopeTab
+  // or activeSessionId actually changes.
+  //
+  // Debounce 500 ms collapses bursts (score submit cascades into
+  // multiple match_players updates + a matches UPDATE) into one fetch.
+  //
+  // Only wires up on the session scope with a real session id — the
+  // all-time tab is intentionally not realtime (refresh button only).
+  const fetchSessionRef = useRef(fetchSession);
+  useEffect(() => {
+    fetchSessionRef.current = fetchSession;
+  }, [fetchSession]);
+
+  useEffect(() => {
+    if (scopeTab !== "session" || !activeSessionId) return;
+    const supabase = createClient();
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const refetch = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => fetchSessionRef.current(), 500);
+    };
+    const unsubscribe = subscribeToMatches(supabase, activeSessionId, refetch, "leaderboard");
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      unsubscribe();
+    };
+  }, [scopeTab, activeSessionId]);
 
   // ── Fetch current user's raw stats for the hero card ──────
   // Runs in parallel with the main board fetch whenever scope or
@@ -168,19 +225,20 @@ export function LeaderboardPage({
     }
 
     let cancelled = false;
-    setMyStats(null);          // clear stale immediately while loading
+    setMyStats(null); // clear stale immediately while loading
     setMyStatsLoading(true);
 
-    getPlayerStats(
-      currentUserId,
-      scopeTab === "session" ? activeSessionId! : null,
-    ).then((result) => {
-      if (cancelled) return;
-      setMyStatsLoading(false);
-      if (result.success) setMyStats(result.row);
-    });
+    getPlayerStats(currentUserId, scopeTab === "session" ? activeSessionId! : null).then(
+      (result) => {
+        if (cancelled) return;
+        setMyStatsLoading(false);
+        if (result.success) setMyStats(result.row);
+      }
+    );
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [currentUserId, scopeTab, activeSessionId]);
 
   // ── Session picker handler ────────────────────────────────
@@ -188,18 +246,16 @@ export function LeaderboardPage({
     setActiveSessionId(s.id);
     setActiveSessionName(s.name);
     setSessionRows([]); // clear stale rows immediately
-    setMyStats(null);   // clear stale hero card data
+    setMyStats(null); // clear stale hero card data
   }, []);
 
   // ── Derived state ─────────────────────────────────────────
-  const activeRows    = scopeTab === "session" ? sessionRows    : alltimeRows;
+  const activeRows = scopeTab === "session" ? sessionRows : alltimeRows;
   const activeLoading = scopeTab === "session" ? sessionLoading : alltimeLoading;
   const minGP = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
   // Show session picker when on session tab but no session is selected yet
   const showSessionPicker = scopeTab === "session" && !activeSessionId && !!sessions?.length;
-  const myRow         = currentUserId
-    ? activeRows.find((r) => r.player_id === currentUserId)
-    : null;
+  const myRow = currentUserId ? activeRows.find((r) => r.player_id === currentUserId) : null;
 
   const handleRefresh = () => {
     if (scopeTab === "session" && activeSessionId) fetchSession();
@@ -209,9 +265,11 @@ export function LeaderboardPage({
   // ── Layout classes ────────────────────────────────────────
   const wrapperClass = [
     "space-y-4",
-    isCompact  ? "px-4 py-4"      : "px-4 py-6",
+    isCompact ? "px-4 py-4" : "px-4 py-6",
     isCentered ? "max-w-2xl mx-auto" : "",
-  ].filter(Boolean).join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   // ── Render: player-panel → Stadium layout ─────────────────
   // The compact player-panel variant short-circuits the regular table
@@ -240,6 +298,22 @@ export function LeaderboardPage({
                 ? "Complete at least 1 game to appear."
                 : `Min. ${MIN_SESSION_GP} games to appear on the board.`}
             </p>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={sessionLoading}
+              aria-label="Refresh leaderboard"
+              className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-border
+                         bg-card px-3 py-1.5 text-xs font-medium text-foreground
+                         hover:bg-muted transition-colors disabled:opacity-50
+                         disabled:cursor-not-allowed"
+            >
+              <RefreshCw
+                className={`h-3 w-3 ${sessionLoading ? "animate-spin" : ""}`}
+                aria-hidden="true"
+              />
+              Refresh
+            </button>
           </div>
         ) : (
           <StadiumLeaderboard
@@ -256,7 +330,6 @@ export function LeaderboardPage({
   // ── Render: organizer / standalone ────────────────────────
   return (
     <div className={wrapperClass}>
-
       {/* StadiumLeaderboard owns its own header + refresh button —
           no duplicate header needed here. */}
 
@@ -288,8 +361,10 @@ export function LeaderboardPage({
 
       {/* ── Error banner ───────────────────────────────────── */}
       {error && !activeLoading && (
-        <div className="rounded-xl border border-destructive/50 bg-destructive/10
-                        px-3 py-3 text-sm text-destructive flex items-start gap-2">
+        <div
+          className="rounded-xl border border-destructive/50 bg-destructive/10
+                        px-3 py-3 text-sm text-destructive flex items-start gap-2"
+        >
           <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
           <span className="flex-1">Failed to load leaderboard data.</span>
           <button
@@ -304,9 +379,7 @@ export function LeaderboardPage({
       {/* ── Session picker — shown when no session is selected ── */}
       {showSessionPicker && (
         <div className="space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Choose a session to view its leaderboard
-          </p>
+          <p className="text-xs text-muted-foreground">Choose a session to view its leaderboard</p>
           <div className="space-y-2">
             {sessions!.map((s) => (
               <button
@@ -316,12 +389,12 @@ export function LeaderboardPage({
                            px-4 py-3 hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-foreground truncate">
-                    {s.name}
-                  </span>
+                  <span className="text-sm font-semibold text-foreground truncate">{s.name}</span>
                   {s.is_active && (
-                    <span className="text-[10px] font-bold uppercase tracking-wider
-                                     text-emerald-600 dark:text-emerald-400 shrink-0">
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wider
+                                     text-emerald-600 dark:text-emerald-400 shrink-0"
+                    >
                       ● Live
                     </span>
                   )}
@@ -329,8 +402,8 @@ export function LeaderboardPage({
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {new Date(s.created_at).toLocaleDateString("en-US", {
                     weekday: "short",
-                    month:   "short",
-                    day:     "numeric",
+                    month: "short",
+                    day: "numeric",
                   })}
                 </p>
               </button>
@@ -375,16 +448,36 @@ export function LeaderboardPage({
       )}
 
       {/* ── Leaderboard — hidden during picker ─────────────── */}
-      {!showSessionPicker && (
-        activeLoading && activeRows.length === 0 ? (
+      {!showSessionPicker &&
+        (activeLoading && activeRows.length === 0 ? (
           <div className="flex items-center justify-center py-16">
             <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
           </div>
         ) : activeRows.length === 0 && !activeLoading ? (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            {scopeTab === "session"
-              ? (MIN_SESSION_GP === 1 ? "No completed games in this session yet." : `No players with ${MIN_SESSION_GP}+ games yet.`)
-              : `No players with ${MIN_ALLTIME_GP}+ games yet.`}
+          <div className="py-12 text-center">
+            <p className="text-sm text-muted-foreground">
+              {scopeTab === "session"
+                ? MIN_SESSION_GP === 1
+                  ? "No completed games in this session yet."
+                  : `No players with ${MIN_SESSION_GP}+ games yet.`
+                : `No players with ${MIN_ALLTIME_GP}+ games yet.`}
+            </p>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={activeLoading}
+              aria-label="Refresh leaderboard"
+              className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-border
+                         bg-card px-3 py-1.5 text-xs font-medium text-foreground
+                         hover:bg-muted transition-colors disabled:opacity-50
+                         disabled:cursor-not-allowed"
+            >
+              <RefreshCw
+                className={`h-3 w-3 ${activeLoading ? "animate-spin" : ""}`}
+                aria-hidden="true"
+              />
+              Refresh
+            </button>
           </div>
         ) : (
           <StadiumLeaderboard
@@ -393,8 +486,7 @@ export function LeaderboardPage({
             currentUserId={currentUserId}
             onRefresh={handleRefresh}
           />
-        )
-      )}
+        ))}
     </div>
   );
 }
