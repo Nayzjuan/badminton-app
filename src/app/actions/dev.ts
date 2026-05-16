@@ -12,18 +12,53 @@
 // ============================================================
 
 import { createServiceClient } from "@/utils/supabase/service";
+import { getAuthenticatedUser } from "@/app/actions/_shared";
 import { SKILL_LEVELS, type SkillLevel } from "@/types/database";
 
 // ----------------------------------------------------------
 // Random name generator — produces realistic-ish badminton names
 // ----------------------------------------------------------
 const FIRST_NAMES = [
-  "Alex", "Jordan", "Sam", "Casey", "Riley", "Morgan", "Taylor",
-  "Avery", "Quinn", "Blake", "Drew", "Kai", "Reese", "Dakota",
-  "Skyler", "Jamie", "Peyton", "Cameron", "Hayden", "Rowan",
-  "Emery", "Finley", "Sage", "Ari", "Noel", "Remy", "Tatum",
-  "Harley", "Lennox", "Phoenix", "River", "Wren", "Eden", "Kit",
-  "Lee", "Jude", "Ellis", "Micah", "Shay", "Jules",
+  "Alex",
+  "Jordan",
+  "Sam",
+  "Casey",
+  "Riley",
+  "Morgan",
+  "Taylor",
+  "Avery",
+  "Quinn",
+  "Blake",
+  "Drew",
+  "Kai",
+  "Reese",
+  "Dakota",
+  "Skyler",
+  "Jamie",
+  "Peyton",
+  "Cameron",
+  "Hayden",
+  "Rowan",
+  "Emery",
+  "Finley",
+  "Sage",
+  "Ari",
+  "Noel",
+  "Remy",
+  "Tatum",
+  "Harley",
+  "Lennox",
+  "Phoenix",
+  "River",
+  "Wren",
+  "Eden",
+  "Kit",
+  "Lee",
+  "Jude",
+  "Ellis",
+  "Micah",
+  "Shay",
+  "Jules",
 ];
 
 const LAST_INITIALS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -76,18 +111,12 @@ export interface SeedResult {
 // actions should be disabled entirely (gated by NODE_ENV or a
 // feature flag). For now we at minimum require a valid session.
 async function requireAuth(): Promise<{ error: string } | null> {
-  // Inline import to avoid circular dep with server client.
-  const { createServerSupabaseClient } = await import("@/utils/supabase/server");
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getAuthenticatedUser();
   if (!user) return { error: "Not authenticated." };
   return null;
 }
 
-export async function seedTestData(
-  sessionId: string,
-  count: number = 35
-): Promise<SeedResult> {
+export async function seedTestData(sessionId: string, count: number = 35): Promise<SeedResult> {
   // P1-5: Require authentication before any service-role writes.
   const authErr = await requireAuth();
   if (authErr) return { success: false, message: authErr.error };
@@ -194,18 +223,16 @@ export async function seedTestData(
     }
 
     // ── Step 3: insert queue entry ────────────────────────────────────
-    const { error: queueError } = await supabase
-      .from("queue_entries")
-      .upsert(
-        {
-          session_id: sessionId,
-          player_id: userId,
-          status: "waiting" as const,
-          joined_at: joinedAt,
-          games_played: gamesPlayed,
-        },
-        { onConflict: "session_id,player_id" }
-      );
+    const { error: queueError } = await supabase.from("queue_entries").upsert(
+      {
+        session_id: sessionId,
+        player_id: userId,
+        status: "waiting" as const,
+        joined_at: joinedAt,
+        games_played: gamesPlayed,
+      },
+      { onConflict: "session_id,player_id" }
+    );
 
     if (queueError) {
       queueErrors++;
@@ -289,7 +316,10 @@ export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
     .single();
 
   if (sessionError || !session) {
-    return { success: false, message: `Session lookup failed: ${sessionError?.message ?? "not found"}` };
+    return {
+      success: false,
+      message: `Session lookup failed: ${sessionError?.message ?? "not found"}`,
+    };
   }
 
   const runId = crypto.randomUUID().slice(0, 8);
@@ -319,10 +349,7 @@ export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
     // Step 2: Upsert profile.
     const { error: profileError } = await supabase
       .from("profiles")
-      .upsert(
-        { id: userId, display_name: name, skill_level: skill },
-        { onConflict: "id" }
-      );
+      .upsert({ id: userId, display_name: name, skill_level: skill }, { onConflict: "id" });
 
     if (profileError) {
       errors++;
@@ -332,18 +359,16 @@ export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
     }
 
     // Step 3: Insert queue entry — new joiner (games_played: 0, joined_at: now).
-    const { error: queueError } = await supabase
-      .from("queue_entries")
-      .upsert(
-        {
-          session_id: sessionId,
-          player_id: userId,
-          status: "waiting" as const,
-          joined_at: now,
-          games_played: 0,
-        },
-        { onConflict: "session_id,player_id" }
-      );
+    const { error: queueError } = await supabase.from("queue_entries").upsert(
+      {
+        session_id: sessionId,
+        player_id: userId,
+        status: "waiting" as const,
+        joined_at: now,
+        games_played: 0,
+      },
+      { onConflict: "session_id,player_id" }
+    );
 
     if (queueError) {
       errors++;
@@ -354,7 +379,9 @@ export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
     inserted++;
   }
 
-  console.log(`[seedNamedPlayers] Done. ${inserted}/${NAMED_PLAYERS.length} players inserted. errors=${errors}`);
+  console.log(
+    `[seedNamedPlayers] Done. ${inserted}/${NAMED_PLAYERS.length} players inserted. errors=${errors}`
+  );
 
   if (inserted === 0) {
     return {
@@ -409,27 +436,18 @@ export async function clearSessionData(sessionId: string): Promise<ClearResult> 
 
   // 2. Delete match_games.
   if (matchIds.length > 0) {
-    const { error } = await supabase
-      .from("match_games")
-      .delete()
-      .in("match_id", matchIds);
+    const { error } = await supabase.from("match_games").delete().in("match_id", matchIds);
     if (error) console.error("[clearSessionData] match_games delete error:", error);
   }
 
   // 3. Delete match_players.
   if (matchIds.length > 0) {
-    const { error } = await supabase
-      .from("match_players")
-      .delete()
-      .in("match_id", matchIds);
+    const { error } = await supabase.from("match_players").delete().in("match_id", matchIds);
     if (error) console.error("[clearSessionData] match_players delete error:", error);
   }
 
   // 4. Delete matches.
-  const { error: matchError } = await supabase
-    .from("matches")
-    .delete()
-    .eq("session_id", sessionId);
+  const { error: matchError } = await supabase.from("matches").delete().eq("session_id", sessionId);
   if (matchError) console.error("[clearSessionData] matches delete error:", matchError);
 
   // 5. Delete queue entries.

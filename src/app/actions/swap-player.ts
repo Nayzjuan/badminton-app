@@ -29,11 +29,10 @@
 //   - Scenario D (double-tap):              isConfirming UI flag + guard 3 fallback
 // ============================================================
 
-import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { isSessionOrganizer } from "@/app/actions/_shared";
+import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
 
 // ── Return types ──────────────────────────────────────────────
 
@@ -60,17 +59,7 @@ export type SwapMatchPlayersResult = {
   errorCode?: SwapMatchPlayersErrorCode;
 };
 
-// ── Auth helpers (mirrors pattern in match.ts) ────────────────
-
-async function getAuthUser(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
-}
-
-// isSessionOrganizer is imported from ./_shared (service-role based,
-// consistent with match.ts and queue.ts).
+// getAuthenticatedUser and isSessionOrganizer are imported from ./_shared.
 
 // ── Main action ───────────────────────────────────────────────
 
@@ -84,11 +73,10 @@ export async function swapPlayerInMatch(
   }
   // Use RLS client for auth verification, service client for all DB writes
   // so Row Level Security doesn't interfere with cross-user mutations.
-  const supabase = await createServerSupabaseClient();
   const db = createServiceClient();
 
   // ── Guard 1: Authentication ───────────────────────────────
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
@@ -244,11 +232,10 @@ export async function swapMatchPlayers(
   ) {
     return { success: false, message: "Invalid match, player, or session ID." };
   }
-  const supabase = await createServerSupabaseClient();
   const db = createServiceClient();
 
   // ── Guard 1: Authentication ───────────────────────────────
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }

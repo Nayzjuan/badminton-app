@@ -35,7 +35,7 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { isSessionOrganizer } from "@/app/actions/_shared";
+import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
 
 // Service client singleton for this module — bypasses RLS for writes.
@@ -49,20 +49,8 @@ export interface MatchActionResult {
   message: string;
 }
 
-// ─── Auth helpers ─────────────────────────────────────────────
-
-/**
- * Verify that the calling user is authenticated.
- * Returns the user object or null.
- */
-async function getAuthUser(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
-}
-
-// isSessionOrganizer imported from ./_shared; isRpcNotFound from @/lib/rpc-utils.
+// getAuthenticatedUser and isSessionOrganizer imported from ./_shared.
+// isRpcNotFound from @/lib/rpc-utils.
 
 // ============================================================
 // submitMatchScore — player-initiated score submission
@@ -76,13 +64,13 @@ export async function submitMatchScore(
   teamAScore: number,
   teamBScore: number
 ): Promise<MatchActionResult> {
-  const supabase = await createServerSupabaseClient();
-
   // Identify the calling player.
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
+
+  const supabase = await createServerSupabaseClient();
 
   // Verify this player is in the match (prevents spoofed submissions).
   // Use .maybeSingle() — .single() throws if 0 rows, which would surface
@@ -124,11 +112,10 @@ export async function endMatchAction(
   teamBScore: number
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const supabase = await createServerSupabaseClient();
   const db = getServiceClient();
 
   // P0-3: Require authentication.
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
@@ -301,14 +288,13 @@ export async function updateMatchDetails(
   revertToActive = false
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const supabase = await createServerSupabaseClient();
   // All writes use the service client so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.
   // Auth is verified at the JS layer (getUser + isSessionOrganizer) before any write.
   const db = getServiceClient();
 
   // P0-3: Organizer-only action.
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
@@ -432,13 +418,11 @@ export async function updateMatchDetails(
 // ============================================================
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const supabase = await createServerSupabaseClient();
   const db = getServiceClient();
 
-  // Auth lookups use the RLS client; all DB writes use db (service client)
-  // so the primary organizer (sessions.created_by) is never silently blocked
-  // by write-side RLS policies that check session_organizers membership.
-  const user = await getAuthUser(supabase);
+  // All DB writes use db (service client) so the primary organizer
+  // (sessions.created_by) is never silently blocked by write-side RLS.
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
@@ -568,10 +552,8 @@ export async function createManualMatchAction(
   if (combinedPlayerIds.length === 0 || combinedPlayerIds.some((id) => !isValidUUID(id))) {
     return { success: false, message: "Invalid player ID in match." };
   }
-  const supabase = await createServerSupabaseClient();
-
   // Auth + organizer check.
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
@@ -663,8 +645,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   // Auth + organizer check — caller must be authenticated and an organizer
   // for the session this match belongs to.
-  const supabase = await createServerSupabaseClient();
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
@@ -792,10 +773,9 @@ export async function reorderOnDeckMatches(
   if (orderedMatchIds.some((id) => !isValidUUID(id))) {
     return { success: false, message: "Invalid match ID in reorder list." };
   }
-  const supabase = await createServerSupabaseClient();
   const db = getServiceClient();
 
-  const user = await getAuthUser(supabase);
+  const user = await getAuthenticatedUser();
   if (!user) return { success: false, message: "Unauthorized" };
 
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
@@ -841,7 +821,7 @@ export async function publishMatchAction(
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
 
   const db = await createServerSupabaseClient();
-  const user = await getAuthUser(db);
+  const user = await getAuthenticatedUser();
   if (!user) return { success: false, message: "Unauthorized" };
 
   const { data: match } = await db.from("matches").select("session_id").eq("id", matchId).single();
@@ -992,8 +972,7 @@ export async function publishAllDraftMatchesAction(
 ): Promise<{ success: boolean; message: string; publishedCount?: number; skippedCount?: number }> {
   if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
 
-  const db = await createServerSupabaseClient();
-  const user = await getAuthUser(db);
+  const user = await getAuthenticatedUser();
   if (!user) return { success: false, message: "Unauthorized" };
 
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);

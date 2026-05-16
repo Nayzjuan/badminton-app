@@ -34,6 +34,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createUnknownProfile } from "@/lib/utils";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import {
   subscribeToCourts,
@@ -342,16 +343,7 @@ export function useOrganizerData(
         .filter((mp) => mp.match_id === match.id)
         .map((mp) => ({
           ...mp,
-          profile: profileMap.get(mp.player_id) ?? {
-            id: mp.player_id,
-            display_name: "Unknown",
-            skill_level: "beginner" as const,
-            pin: null,
-            vip_tag: null,
-            vip_theme: null,
-            created_at: "",
-            updated_at: "",
-          },
+          profile: profileMap.get(mp.player_id) ?? createUnknownProfile(mp.player_id),
         }));
       return { ...match, court, players };
     });
