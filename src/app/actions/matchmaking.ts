@@ -54,7 +54,7 @@ import {
   pairKey,
   type ScoredPlayer,
 } from "@/lib/matchmaking-core";
-import type { QueueWithWaitTime } from "@/types/database";
+import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 
 // ── Process-level concurrency guard ──────────────────────────
@@ -126,28 +126,13 @@ export async function callNextMatch(
   } = await userClient.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
-  const service = createServiceClient();
-  const { data: sessionMeta } = await service
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .single();
-  if (!sessionMeta) return { success: false, message: "Session not found." };
-
-  if (sessionMeta.created_by !== user.id) {
-    const { data: coOrg } = await service
-      .from("session_organizers")
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!coOrg) {
-      return { success: false, message: "Not authorized. Organizer access required." };
-    }
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
   }
-  // ── End auth gate ─────────────────────────────────────────────
 
-  // Use the regular client only for the session-read (RLS-bound read is fine).
+  const service = createServiceClient();
+  // Use the RLS client only for the session-read (RLS-bound read is fine).
   // All writes (promote + engine) must use the service client so queue_entries
   // updates are never silently dropped by RLS for players the organizer doesn't
   // own — the same fix already applied to endMatchAction (match.ts line ~287).
@@ -640,7 +625,7 @@ async function runAlgorithm(
     .eq("is_paused", true);
 
   const pausedSet = new Set((pausedRows ?? []).map((r) => r.player_id));
-  let activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+  const activePool = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
 
   // ── 1c. (Removed) committedSet workaround ────────────────────────────────
   // Previously, draft players kept status='waiting', requiring a two-query

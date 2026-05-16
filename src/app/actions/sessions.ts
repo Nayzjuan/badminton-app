@@ -13,6 +13,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastSessionClosed, broadcastAutoMatchmakingToggled } from "@/lib/broadcast";
+import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 import type { ScoringFormat } from "@/types/database";
 
@@ -283,17 +284,9 @@ export async function toggleAutoMatchmaking(
     return { success: false, isOn: false, message: "Session not found." };
   }
 
-  if (sessionMeta.created_by !== user.id) {
-    const { data: coOrg } = await service
-      .from("session_organizers")
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (!coOrg) {
-      return { success: false, isOn: false, message: "Not authorized. Organizer access required." };
-    }
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) {
+    return { success: false, isOn: false, message: "Not authorized. Organizer access required." };
   }
 
   // Atomic flip via DB function — eliminates the read→write
@@ -349,27 +342,10 @@ export async function updateSessionSettings(
   } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
 
-  // Two-path organizer check: created_by fast-path first (the primary organizer
-  // never has a session_organizers row), then session_organizers membership.
-  // Uses service client so read-side RLS never blocks either query.
   const svc = createServiceClient();
-  const { data: sessionMeta } = await svc
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .maybeSingle();
 
-  const isPrimaryOrganizer = sessionMeta?.created_by === user.id;
-
-  if (!isPrimaryOrganizer) {
-    const { data: org } = await svc
-      .from("session_organizers")
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!org) return { error: "Not an organizer of this session." };
-  }
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) return { error: "Not an organizer of this session." };
 
   // Explicitly allowlist updatable fields — prevents a crafted call from
   // updating sensitive columns (is_active, organizer_passcode, created_by, etc.)
@@ -443,15 +419,8 @@ export async function getSessionForOrganizer(sessionId: string): Promise<GetSess
 
   if (!sessionMeta) return { success: false, error: "Session not found." };
 
-  if (sessionMeta.created_by !== user.id) {
-    const { data: membership } = await service
-      .from("session_organizers")
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!membership) return { success: false, error: "Not authorized. Organizer access required." };
-  }
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) return { success: false, error: "Not authorized. Organizer access required." };
 
   // ── Fetch full session row ────────────────────────────────────
   const { data, error } = await service.from("sessions").select("*").eq("id", sessionId).single();
@@ -507,18 +476,9 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   }
 
   // ── Organizer check ──────────────────────────────────────────
-  // Two-path check mirrors toggleAutoMatchmaking: primary organizer
-  // (created_by) OR any co-organizer row in session_organizers.
-  if (session.created_by !== user.id) {
-    const { data: coOrg } = await supabase
-      .from("session_organizers")
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!coOrg) {
-      return { success: false, message: "Not authorized. Organizer access required." };
-    }
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
   }
 
   // ── 0. Pre-compute Wrapped stats ────────────────────────────
