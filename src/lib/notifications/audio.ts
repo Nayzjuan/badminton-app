@@ -35,6 +35,27 @@ function getAudioContext(): AudioContext | null {
 }
 
 /**
+ * Attempt to resume a suspended AudioContext.
+ * Returns true if the context is running after the attempt.
+ *
+ * On Android Chrome the context starts suspended and ctx.resume() MUST
+ * be awaited before scheduling any oscillators — fire-and-forget is not
+ * sufficient. Returns false if resume threw (no prior user gesture) or
+ * if the context is still not running after the attempt.
+ */
+async function ensureAudioContextRunning(ctx: AudioContext): Promise<boolean> {
+  try {
+    // Calling resume() on an already-running context is a spec-defined no-op
+    // (returns a resolved Promise). We always call it so TypeScript's
+    // control-flow narrowing never concludes ctx.state ≠ "running" below.
+    await ctx.resume();
+  } catch {
+    return false;
+  }
+  return ctx.state === "running";
+}
+
+/**
  * Create an oscillator that plays for `duration` seconds at `frequency` Hz.
  * An envelope (attack + release) prevents clicks.
  */
@@ -76,19 +97,7 @@ function playTone(
  */
 export async function playWarningBeep(): Promise<void> {
   const ctx = getAudioContext();
-  if (!ctx) return;
-
-  // ── Critical: await resume before scheduling any tones ────
-  // On Android Chrome, the AudioContext starts suspended and
-  // ctx.resume() MUST be awaited — not just called fire-and-forget.
-  if (ctx.state !== "running") {
-    try {
-      await ctx.resume();
-    } catch {
-      return; // Browser blocked audio (no prior user gesture) — bail silently
-    }
-  }
-  if (ctx.state !== "running") return; // Still not running after resume attempt
+  if (!ctx || !(await ensureAudioContextRunning(ctx))) return;
 
   const now = ctx.currentTime;
   const noteLen = 0.30;
@@ -114,17 +123,7 @@ export async function playWarningBeep(): Promise<void> {
  */
 export async function playCourtCall(): Promise<void> {
   const ctx = getAudioContext();
-  if (!ctx) return;
-
-  // ── Critical: await resume ────────────────────────────────
-  if (ctx.state !== "running") {
-    try {
-      await ctx.resume();
-    } catch {
-      return;
-    }
-  }
-  if (ctx.state !== "running") return;
+  if (!ctx || !(await ensureAudioContextRunning(ctx))) return;
 
   const now  = ctx.currentTime;
   const step = 0.10; // 100 ms between notes — snappy
