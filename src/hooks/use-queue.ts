@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue } from "@/lib/realtime";
-import { joinQueueAction } from "@/app/actions/queue";
+import { joinQueueAction, checkoutPlayer } from "@/app/actions/queue";
 import type { QueueEntry } from "@/types/database";
 
 interface UseQueueResult {
@@ -54,7 +54,8 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
 
   // Initial fetch + real-time subscription.
   useEffect(() => {
-    fetchQueue();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchQueue();
 
     const unsub = subscribeToQueue(supabase, sessionId, () => {
       // Re-fetch the full queue on any change for consistent ordering.
@@ -109,16 +110,17 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
   }, [sessionId]);
 
   // Leave queue.
+  // Delegates to checkoutPlayer (server action) so the atomic
+  // checkout_player_cleanup_drafts RPC runs — removing the player from any
+  // unpublished draft matches and cancelling those drafts if they fall below
+  // 4 players. The old inline .update() skipped this cleanup entirely.
+  // Note: checkoutPlayer uses auth.getUser() server-side, which always equals
+  // the playerId prop in the only call site (player-dashboard.tsx).
   const leaveQueue = useCallback(async () => {
-    const { error } = await supabase
-      .from("queue_entries")
-      .update({ status: "left" as const })
-      .eq("session_id", sessionId)
-      .eq("player_id", playerId);
-
-    if (error) return { error: error.message };
+    const result = await checkoutPlayer(sessionId);
+    if (result.error) return { error: result.error };
     return {};
-  }, [supabase, sessionId, playerId]);
+  }, [sessionId]);
 
   return {
     queue,
