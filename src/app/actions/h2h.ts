@@ -10,7 +10,7 @@
 // them through unchanged — no double-sort.
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import type { H2HRecord } from "@/types/database";
 
 export async function getH2HRecord(
@@ -18,7 +18,7 @@ export async function getH2HRecord(
   teamBIds: string[],
   sessionId: string
 ): Promise<H2HRecord | null> {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Auth gate — match history is not public data
   const { data: { user } } = await supabase.auth.getUser();

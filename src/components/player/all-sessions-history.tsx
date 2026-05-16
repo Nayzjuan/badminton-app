@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { History } from "lucide-react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -267,7 +267,7 @@ function SessionSection({ group }: { group: SessionGroup }) {
 export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [loading, setLoading] = useState(true);
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const fetchAll = useCallback(async () => {
     // 1. All completed matches for this player, newest first.

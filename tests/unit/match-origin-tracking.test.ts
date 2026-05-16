@@ -24,13 +24,13 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 // ── Hoist mocks before any imports ────────────────────────────
 vi.mock("@/utils/supabase/server", () => ({
-  createClient: vi.fn(),
+  createServerSupabaseClient: vi.fn(),
 }));
 vi.mock("@/utils/supabase/service", () => ({
   createServiceClient: vi.fn(),
 }));
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { createManualMatchAction } from "@/app/actions/match";
 
@@ -152,7 +152,7 @@ describe("createManualMatchAction — match origin", () => {
    *   3. Mixed-level check: from("profiles").in()
    *   4. Match creation:   rpc("create_match_with_players", { p_origin: "manual", ... })
    *
-   * The user client (createClient) handles: auth.getUser() only.
+   * The user client (createServerSupabaseClient) handles: auth.getUser() only.
    */
   function makeMockForManualMatch(rpcResponse: MockResponse) {
     const { svcClient, rpcCalls } = makeCapturingServiceClient(rpcResponse);
@@ -167,7 +167,7 @@ describe("createManualMatchAction — match origin", () => {
       },
       from: vi.fn(), // user client's from() is not called by createManualMatchAction
     };
-    vi.mocked(createClient).mockResolvedValue(mockClient as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mockClient as never);
 
     return { mockClient, rpcCalls };
   }
@@ -215,7 +215,7 @@ describe("createManualMatchAction — match origin", () => {
       return makeBuilder({ data: null, error: null }) as never;
     });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
-    vi.mocked(createClient).mockResolvedValue({
+    vi.mocked(createServerSupabaseClient).mockResolvedValue({
       auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
       from: vi.fn(),
     } as never);
@@ -248,7 +248,7 @@ describe("createManualMatchAction — match origin", () => {
       },
       from: vi.fn(),
     };
-    vi.mocked(createClient).mockResolvedValue(mockClient as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mockClient as never);
 
     const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
@@ -297,7 +297,7 @@ describe("createManualMatchAction — queue status side-effect", () => {
   it("uses the SERVICE client (RPC) for match creation — not direct table inserts", async () => {
     const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
-    vi.mocked(createClient).mockResolvedValue({
+    vi.mocked(createServerSupabaseClient).mockResolvedValue({
       auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
       from: vi.fn(),
     } as never);
@@ -314,7 +314,7 @@ describe("createManualMatchAction — queue status side-effect", () => {
   it("sets ALL 4 player IDs in the RPC payload — not a subset", async () => {
     const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
-    vi.mocked(createClient).mockResolvedValue({
+    vi.mocked(createServerSupabaseClient).mockResolvedValue({
       auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
       from: vi.fn(),
     } as never);
@@ -344,7 +344,7 @@ describe("createManualMatchAction — queue status side-effect", () => {
       return makeBuilder({ data: null, error: null }) as never;
     });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
-    vi.mocked(createClient).mockResolvedValue({
+    vi.mocked(createServerSupabaseClient).mockResolvedValue({
       auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
       from: vi.fn(),
     } as never);

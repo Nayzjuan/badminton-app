@@ -36,7 +36,7 @@ import {
   getAllTimeLeaderboard,
   getPlayerStats,
 } from "@/app/actions/leaderboard";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
 import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
 
@@ -197,7 +197,7 @@ export function LeaderboardPage({
 
   useEffect(() => {
     if (scopeTab !== "session" || !activeSessionId) return;
-    const supabase = createClient();
+    const supabase = createBrowserSupabaseClient();
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const refetch = () => {
       if (debounce) clearTimeout(debounce);

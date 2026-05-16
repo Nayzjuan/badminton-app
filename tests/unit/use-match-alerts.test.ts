@@ -95,7 +95,7 @@ function buildMockClient() {
 }
 
 vi.mock("@/utils/supabase/client", () => ({
-  createClient: () => buildMockClient(),
+  createBrowserSupabaseClient: () => buildMockClient(),
 }));
 
 vi.mock("@/lib/realtime", () => ({

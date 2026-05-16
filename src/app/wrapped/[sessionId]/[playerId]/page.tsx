@@ -12,7 +12,7 @@
 // ============================================================
 
 import { notFound } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { WrappedShell, type WrappedStats } from "@/components/wrapped/wrapped-shell";
 
@@ -23,7 +23,7 @@ interface WrappedPageProps {
 export default async function WrappedPage({ params }: WrappedPageProps) {
   const { sessionId, playerId } = await params;
 
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // ── Fetch wrapped stats row ─────────────────────────────────
   const { data: statsRow, error: statsError } = await supabase

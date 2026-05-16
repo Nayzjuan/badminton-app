@@ -13,7 +13,7 @@
 // subsequent page loads — across all devices.
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { isValidUUID } from "@/lib/validate";
 
 // ── dismissWrappedIntro ───────────────────────────────────────
@@ -38,7 +38,7 @@ export async function dismissWrappedIntro(
   if (!isValidUUID(sessionId) || !isValidUUID(playerId)) {
     return { success: false, error: "Invalid session or player ID." };
   }
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   const { error } = await supabase
     .from("session_wrapped_stats")

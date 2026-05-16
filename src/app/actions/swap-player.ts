@@ -29,7 +29,7 @@
 //   - Scenario D (double-tap):              isConfirming UI flag + guard 3 fallback
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
@@ -62,7 +62,7 @@ export type SwapMatchPlayersResult = {
 
 // ── Auth helpers (mirrors pattern in match.ts) ────────────────
 
-async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
+async function getAuthUser(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -84,7 +84,7 @@ export async function swapPlayerInMatch(
   }
   // Use RLS client for auth verification, service client for all DB writes
   // so Row Level Security doesn't interfere with cross-user mutations.
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const db = createServiceClient();
 
   // ── Guard 1: Authentication ───────────────────────────────
@@ -244,7 +244,7 @@ export async function swapMatchPlayers(
   ) {
     return { success: false, message: "Invalid match, player, or session ID." };
   }
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const db = createServiceClient();
 
   // ── Guard 1: Authentication ───────────────────────────────

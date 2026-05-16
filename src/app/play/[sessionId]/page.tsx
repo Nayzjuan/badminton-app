@@ -6,7 +6,7 @@
 // ============================================================
 
 import { redirect, notFound } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { PlayerDashboard } from "@/components/player/player-dashboard";
 
 interface PageProps {
@@ -15,7 +15,7 @@ interface PageProps {
 
 export default async function PlayerDashboardPage({ params }: PageProps) {
   const { sessionId } = await params;
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Must be authenticated.
   const {

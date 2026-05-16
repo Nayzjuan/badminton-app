@@ -105,7 +105,7 @@ function buildMockClient() {
 // ── Mock Modules ──────────────────────────────────────────────
 
 vi.mock("@/utils/supabase/client", () => ({
-  createClient: () => buildMockClient(),
+  createBrowserSupabaseClient: () => buildMockClient(),
 }));
 
 let matchCallback: (() => void) | null = null;

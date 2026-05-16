@@ -21,7 +21,7 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("@/utils/supabase/server", () => ({
-  createClient: vi.fn(),
+  createServerSupabaseClient: vi.fn(),
 }));
 
 // joinQueueAction now calls createServiceClient() then svc.rpc("join_queue").
@@ -35,7 +35,7 @@ vi.mock("@/app/actions/matchmaking", () => ({
   runEngineForSession: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { joinQueueAction } from "@/app/actions/queue";
 
@@ -111,7 +111,7 @@ describe("joinQueueAction — active-match guard", () => {
       { data: { id: "entry-1", games_played: 2, status: "on_deck" }, error: null },
       // Step 2 would be floor query — should NOT be reached
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -126,7 +126,7 @@ describe("joinQueueAction — active-match guard", () => {
       // Step 1: existing row → playing
       { data: { id: "entry-2", games_played: 3, status: "playing" }, error: null },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -145,7 +145,7 @@ describe("joinQueueAction — active-match guard", () => {
       // Step 3a: update → success
       { data: null, error: null },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -161,7 +161,7 @@ describe("joinQueueAction — active-match guard", () => {
       { data: { games_played: 0 }, error: null },
       { data: null, error: null },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
@@ -176,7 +176,7 @@ describe("joinQueueAction — active-match guard", () => {
       // Step 3b: insert → success
       { data: null, error: null },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
@@ -197,7 +197,7 @@ describe("joinQueueAction — Inherited Games floor", () => {
       // Step 3a: update → success
       { data: null, error: null },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -214,7 +214,7 @@ describe("joinQueueAction — Inherited Games floor", () => {
       { data: { games_played: 2 }, error: null },
       { data: null, error: null },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
@@ -227,7 +227,7 @@ describe("joinQueueAction — Inherited Games floor", () => {
       // Update fails
       { data: null, error: { message: "connection lost" } },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBe("connection lost");
@@ -240,7 +240,7 @@ describe("joinQueueAction — Inherited Games floor", () => {
       // Insert fails
       { data: null, error: { message: "unique constraint" } },
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBe("unique constraint");
@@ -260,7 +260,7 @@ describe("joinQueueAction — auth guard", () => {
         }),
       },
     };
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toMatch(/not authenticated/i);
@@ -269,7 +269,7 @@ describe("joinQueueAction — auth guard", () => {
   });
 
   it("returns an error for an invalid session UUID", async () => {
-    // isValidUUID check fires before createClient, so no mock needed
+    // isValidUUID check fires before createServerSupabaseClient, so no mock needed
     const result = await joinQueueAction("not-a-uuid");
     expect(result.error).toMatch(/invalid session/i);
   });

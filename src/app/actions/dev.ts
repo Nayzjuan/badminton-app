@@ -77,8 +77,8 @@ export interface SeedResult {
 // feature flag). For now we at minimum require a valid session.
 async function requireAuth(): Promise<{ error: string } | null> {
   // Inline import to avoid circular dep with server client.
-  const { createClient } = await import("@/utils/supabase/server");
-  const supabase = await createClient();
+  const { createServerSupabaseClient } = await import("@/utils/supabase/server");
+  const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
   return null;

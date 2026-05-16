@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trophy, History } from "lucide-react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
 
@@ -27,7 +27,7 @@ interface MatchHistoryProps {
 export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) {
   const [history, setHistory] = useState<MatchHistoryType[]>([]);
   const [loading, setLoading] = useState(true);
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const fetchHistory = useCallback(async () => {
     let query = supabase

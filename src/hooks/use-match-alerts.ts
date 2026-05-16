@@ -33,7 +33,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useRef, useMemo } from "react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue, subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
 import { playWarningBeep, playCourtCall, unlockAudio } from "@/lib/notifications/audio";
 import type { QueueStatus, MatchStatus, QueueEntry, Match, MatchPlayer } from "@/types/database";
@@ -57,7 +57,7 @@ export function useMatchAlerts({
   playerId,
   audioEnabled = true,
 }: UseMatchAlertsOptions): void {
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   // Last-known status refs — used only to detect transitions and
   // suppress duplicate alerts for the same state.

@@ -20,7 +20,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
 import type { OrganizerInterventionPayload } from "@/lib/broadcast";
 
@@ -28,20 +28,23 @@ import type { OrganizerInterventionPayload } from "@/lib/broadcast";
 const TOAST_MESSAGES: Record<OrganizerInterventionPayload["type"], string> = {
   on_deck_cleared:
     "The organizer adjusted the queue. Your match has been rescheduled — you're back in line.",
-  match_cancelled:
-    "The organizer cancelled your match. You've been returned to the queue.",
+  match_cancelled: "The organizer cancelled your match. You've been returned to the queue.",
 };
 
 export function useOrganizerBroadcast(sessionId: string, playerId: string): void {
-  const supabase = useMemo(() => createClient(), []);
-  const router   = useRouter();
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
+  const router = useRouter();
 
   // Keep stable refs so the subscription callback always reads
   // current values without re-registering the channel.
   const playerIdRef = useRef(playerId);
-  const routerRef   = useRef(router);
-  useEffect(() => { playerIdRef.current = playerId; });
-  useEffect(() => { routerRef.current   = router;   });
+  const routerRef = useRef(router);
+  useEffect(() => {
+    playerIdRef.current = playerId;
+  });
+  useEffect(() => {
+    routerRef.current = router;
+  });
 
   useEffect(() => {
     const unsub = subscribeToOrganizerBroadcast(supabase, sessionId, {

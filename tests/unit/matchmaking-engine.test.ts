@@ -28,14 +28,14 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 // ── Hoist mock before any imports ─────────────────────────────
 vi.mock("@/utils/supabase/server", () => ({
-  createClient: vi.fn(),
+  createServerSupabaseClient: vi.fn(),
 }));
 
 vi.mock("@/utils/supabase/service", () => ({
   createServiceClient: vi.fn(),
 }));
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import {
   promoteOnDeckMatchInternal,
@@ -174,7 +174,7 @@ beforeEach(() => {
 // promoteOnDeckMatchInternal
 // ─────────────────────────────────────────────────────────────
 // Takes the Supabase client directly as a parameter —
-// no createClient mock needed for these tests.
+// no createServerSupabaseClient mock needed for these tests.
 
 describe("promoteOnDeckMatchInternal", () => {
   it("returns success:false when there is no pending match (empty array)", async () => {
@@ -397,7 +397,7 @@ describe("runEngineForSession", () => {
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: false }, error: null }, // sessions
     ]);
-    // runEngineForSession uses createServiceClient (service-role) internally — not createClient.
+    // runEngineForSession uses createServiceClient (service-role) internally — not createServerSupabaseClient.
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
@@ -593,7 +593,7 @@ describe("runEngineForSession", () => {
 
 describe("callNextMatch", () => {
   // callNextMatch now passes the service client to both promoteOnDeckMatchInternal
-  // and runEngineInternal. The user client (createClient) is used only for:
+  // and runEngineInternal. The user client (createServerSupabaseClient) is used only for:
   //   1. auth.getUser() (always, no from() call)
   //   2. sessions toggle check (only when promotion fails)
   //
@@ -622,7 +622,7 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null },               // [6] runEngineInternal: courts
       { count: 3, data: null, error: null },               // [7] runEngineInternal: pending count → slotsAvailable=0
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     const result = await callNextMatch(SESSION_ID, COURT_ID);
@@ -649,7 +649,7 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null },               // [6] ← first post-promotion = courts (not sessions)
       { count: 3, data: null, error: null },               // [7] pending count → slotsAvailable=0
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     await callNextMatch(SESSION_ID, COURT_ID);
@@ -674,7 +674,7 @@ describe("callNextMatch", () => {
       { data: [], error: null },                           // [1] matches fetch → empty
       { count: 0, data: null, error: null },               // [2] draft-blocking check → 0 drafts
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     const result = await callNextMatch(SESSION_ID, COURT_ID);
@@ -705,7 +705,7 @@ describe("callNextMatch", () => {
       { data: [], error: null },                           // [8] promote 2: no published pending
       { count: 2, data: null, error: null },               // [9] promote 2: 2 drafts → hasDraftsBlocking
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     const result = await callNextMatch(SESSION_ID, COURT_ID);
@@ -738,7 +738,7 @@ describe("callNextMatch", () => {
       { data: [], error: null },                           // [8] promote 2: still no pending
       { count: 0, data: null, error: null },               // [9] promote 2: 0 drafts
     ]);
-    vi.mocked(createClient).mockResolvedValue(mock as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     const result = await callNextMatch(SESSION_ID, COURT_ID);

@@ -100,12 +100,12 @@ export async function playWarningBeep(): Promise<void> {
   if (!ctx || !(await ensureAudioContextRunning(ctx))) return;
 
   const now = ctx.currentTime;
-  const noteLen = 0.30;
-  const gap    = 0.08;
+  const noteLen = 0.3;
+  const gap = 0.08;
 
-  playTone(ctx, 523.25, now,                       noteLen, 0.75, "sine"); // C5
-  playTone(ctx, 659.25, now + noteLen + gap,        noteLen, 0.75, "sine"); // E5
-  playTone(ctx, 783.99, now + (noteLen + gap) * 2,  noteLen, 0.80, "sine"); // G5
+  playTone(ctx, 523.25, now, noteLen, 0.75, "sine"); // C5
+  playTone(ctx, 659.25, now + noteLen + gap, noteLen, 0.75, "sine"); // E5
+  playTone(ctx, 783.99, now + (noteLen + gap) * 2, noteLen, 0.8, "sine"); // G5
 
   // Tactile: vibrate on mobile regardless of audio state
   if (typeof navigator !== "undefined" && navigator.vibrate) {
@@ -125,21 +125,21 @@ export async function playCourtCall(): Promise<void> {
   const ctx = getAudioContext();
   if (!ctx || !(await ensureAudioContextRunning(ctx))) return;
 
-  const now  = ctx.currentTime;
-  const step = 0.10; // 100 ms between notes — snappy
+  const now = ctx.currentTime;
+  const step = 0.1; // 100 ms between notes — snappy
 
   // First pass
-  playTone(ctx, 523.25, now,              0.10, 0.70, "square"); // C5
-  playTone(ctx, 659.25, now + step,       0.10, 0.75, "square"); // E5
-  playTone(ctx, 783.99, now + step * 2,   0.10, 0.80, "square"); // G5
-  playTone(ctx, 1046.5, now + step * 3,   0.40, 0.85, "square"); // C6 held
+  playTone(ctx, 523.25, now, 0.1, 0.7, "square"); // C5
+  playTone(ctx, 659.25, now + step, 0.1, 0.75, "square"); // E5
+  playTone(ctx, 783.99, now + step * 2, 0.1, 0.8, "square"); // G5
+  playTone(ctx, 1046.5, now + step * 3, 0.4, 0.85, "square"); // C6 held
 
   // Short gap then repeat for urgency
-  const pass2 = step * 3 + 0.50;
-  playTone(ctx, 523.25, now + pass2,              0.10, 0.70, "square"); // C5
-  playTone(ctx, 659.25, now + pass2 + step,       0.10, 0.75, "square"); // E5
-  playTone(ctx, 783.99, now + pass2 + step * 2,   0.10, 0.80, "square"); // G5
-  playTone(ctx, 1046.5, now + pass2 + step * 3,   0.55, 0.90, "square"); // C6 held longer
+  const pass2 = step * 3 + 0.5;
+  playTone(ctx, 523.25, now + pass2, 0.1, 0.7, "square"); // C5
+  playTone(ctx, 659.25, now + pass2 + step, 0.1, 0.75, "square"); // E5
+  playTone(ctx, 783.99, now + pass2 + step * 2, 0.1, 0.8, "square"); // G5
+  playTone(ctx, 1046.5, now + pass2 + step * 3, 0.55, 0.9, "square"); // C6 held longer
 
   // Tactile: aggressive double-pulse for court call
   if (typeof navigator !== "undefined" && navigator.vibrate) {

@@ -34,7 +34,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import {
   subscribeToCourts,
   subscribeToQueue,
@@ -166,7 +166,7 @@ export function useOrganizerData(
   sessionId: string,
   initialSession: Session
 ): UseOrganizerDataResult {
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const [session, setSession] = useState<Session>(initialSession);
   const [courts, setCourts] = useState<Court[]>([]);
   const [queue, setQueue] = useState<QueueWithWaitTime[]>([]);

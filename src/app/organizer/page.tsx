@@ -17,7 +17,7 @@
 // ============================================================
 
 import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { OrganizerEntry } from "@/components/organizer/organizer-entry";
 import type { Session } from "@/types/database";
 
@@ -28,7 +28,7 @@ export type SessionWithStats = Session & {
 };
 
 export default async function OrganizerPage() {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   const {
     data: { user },

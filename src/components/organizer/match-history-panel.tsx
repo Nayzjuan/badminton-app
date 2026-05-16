@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Trophy, History, Pencil, RotateCcw, Ban } from "lucide-react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import { MatchTimer } from "@/components/ui/match-timer";
@@ -38,7 +38,7 @@ interface MatchHistoryPanelProps {
 }
 
 export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const [matches, setMatches] = useState<CompletedMatch[]>([]);
   const [loading, setLoading] = useState(true);
 

@@ -12,7 +12,7 @@
 // ============================================================
 
 import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { LoginForm } from "@/components/login-form";
 
 interface JoinPageProps {
@@ -27,7 +27,7 @@ export default async function JoinPage({ searchParams }: JoinPageProps) {
     redirect("/play");
   }
 
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Verify the session exists and is still active.
   //

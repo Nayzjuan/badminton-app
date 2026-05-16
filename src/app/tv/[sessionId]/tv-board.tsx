@@ -12,7 +12,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MatchTimer } from "@/components/ui/match-timer";
 import { VipTag } from "@/components/ui/vip-tag";
@@ -34,7 +34,7 @@ interface TvBoardProps {
 export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
   const [matches, setMatches] = useState<TvMatch[]>(initialMatches);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const refresh = useCallback(async () => {
     const { matches: fresh } = await getTvData(sessionId);

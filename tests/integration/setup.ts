@@ -10,7 +10,7 @@
 //      global-setup's dotenv.config() is inherited, but we
 //      load again for safety and to surface clear errors).
 //   2. Install the @/utils/supabase/server mock (Option B).
-//      All Server Actions import createClient() from that module.
+//      All Server Actions import createServerSupabaseClient() from that module.
 //      The mock returns a real service-role Supabase client with
 //      auth.getUser() controlled via mockAuthAs().
 // ============================================================
@@ -27,7 +27,7 @@ dotenv.config({
 });
 
 // ── 2. Shared auth identity state ───────────────────────────
-// mockAuthAs() writes here; the mocked createClient() reads it.
+// mockAuthAs() writes here; the mocked createServerSupabaseClient() reads it.
 // Stored on the module so the mock closure captures it by reference.
 export const authState: { currentUserId: string | null } = {
   currentUserId: null,
@@ -38,7 +38,7 @@ export const authState: { currentUserId: string | null } = {
 // transformer, so it applies before any test file imports the
 // module under test.
 //
-// The mock factory is called each time createClient() is invoked.
+// The mock factory is called each time createServerSupabaseClient() is invoked.
 // It creates a real service-role Supabase client (no RLS) and
 // wraps it in a Proxy that intercepts auth.getUser() to return
 // the identity set by mockAuthAs().
@@ -51,13 +51,13 @@ export const authState: { currentUserId: string | null } = {
 //   • auth.getUser() is the only auth concern we need to fake:
 //     "who is calling this action?"
 vi.mock("@/utils/supabase/server", () => ({
-  createClient: async (): Promise<ReturnType<typeof createSupabaseClient<Database>>> => {
+  createServerSupabaseClient: async (): Promise<ReturnType<typeof createSupabaseClient<Database>>> => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!url || !key) {
       throw new Error(
-        "[mock createClient] NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set.\n" +
+        "[mock createServerSupabaseClient] NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set.\n" +
           "Ensure tests/integration/.env is loaded before tests run."
       );
     }

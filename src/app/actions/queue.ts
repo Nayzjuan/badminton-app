@@ -32,7 +32,7 @@
 // • Player already on_deck/playing → allowed by DB; UI prevents
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
@@ -72,7 +72,7 @@ export async function togglePlayerPause(
   if (!isValidUUID(sessionId) || !isValidUUID(playerId)) {
     return { success: false, error: "Invalid session or player ID." };
   }
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   const {
     data: { user },
@@ -110,7 +110,7 @@ export async function togglePlayerPause(
 
 export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult> {
   if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   const {
     data: { user },
@@ -194,7 +194,7 @@ export interface JoinQueueResult {
 
 export async function joinQueueAction(sessionId: string): Promise<JoinQueueResult> {
   if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   const {
     data: { user },
@@ -265,7 +265,7 @@ export async function removePlayerFromQueue(
     return { success: false, error: "Invalid session or player ID." };
   }
 
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -336,7 +336,7 @@ export async function removePlayerFromQueue(
 // This mirrors the pre-RPC logic and carries the same benign TOCTOU caveats
 // documented in the original inline comments.
 async function joinQueueFallback(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string,
   playerId: string
 ): Promise<JoinQueueResult> {

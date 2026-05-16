@@ -9,7 +9,7 @@
 // closeSession        — archives an active session
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastSessionClosed, broadcastAutoMatchmakingToggled } from "@/lib/broadcast";
@@ -68,7 +68,7 @@ export async function createSession(opts: {
   passcode?: string;
 }): Promise<CreateSessionResult> {
   // Auth gate
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -188,7 +188,7 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
   const INVALID = "Invalid passcode. No active session found.";
 
   // Auth gate
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -263,7 +263,7 @@ export async function toggleAutoMatchmaking(
   }
 
   // Auth gate
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -343,7 +343,7 @@ export async function updateSessionSettings(
 ): Promise<{ error?: string }> {
   if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
 
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -424,7 +424,7 @@ export interface GetSessionResult {
 export async function getSessionForOrganizer(sessionId: string): Promise<GetSessionResult> {
   if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
 
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -477,7 +477,7 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   // closeSession is a destructive operation — all callers must be an
   // organizer of the session. Without this check any authenticated user
   // who learns a session UUID can close it (service client bypasses RLS).
-  const userClient = await createClient();
+  const userClient = await createServerSupabaseClient();
   const {
     data: { user },
   } = await userClient.auth.getUser();

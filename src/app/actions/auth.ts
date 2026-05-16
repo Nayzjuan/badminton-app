@@ -7,7 +7,7 @@
 // and reconnect flow for returning players.
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
@@ -46,7 +46,7 @@ export async function signInAnonymously(formData: FormData) {
   }
   const pin = pinResult.data;
 
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Check if already signed in.
   const {
@@ -281,7 +281,7 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
   // newUserId === oldUserId and migrate_player_identity throws its same-UUID
   // safety guard → "Failed to migrate". Sign out first to guarantee a fresh
   // identity is minted, regardless of whether the player still has a cookie.
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   await supabase.auth.signOut();
 
   const { data: authData, error: authError } = await supabase.auth.signInAnonymously({
@@ -496,7 +496,7 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
 // ── Sign Out ─────────────────────────────────────────────────
 
 export async function signOut() {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   await supabase.auth.signOut();
   redirect("/");
 }
@@ -510,7 +510,7 @@ export async function signOut() {
  * player wants to switch accounts or hand the device to someone else.
  */
 export async function playerLogOut(): Promise<void> {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   await supabase.auth.signOut();
   redirect("/");
 }
@@ -518,7 +518,7 @@ export async function playerLogOut(): Promise<void> {
 // ── Get Current Profile ──────────────────────────────────────
 
 export async function getCurrentProfile() {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

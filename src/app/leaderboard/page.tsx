@@ -12,11 +12,11 @@
 
 import Link from "next/link";
 import { ChevronLeft, Trophy } from "lucide-react";
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 
 export default async function LobbyLeaderboardPage() {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Auth is best-effort — a logged-out player can still browse All-Time.
   const {

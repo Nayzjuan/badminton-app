@@ -8,7 +8,7 @@
 
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
@@ -16,7 +16,7 @@ import { VipTag } from "@/components/ui/vip-tag";
 import { Trophy } from "lucide-react";
 
 export default async function PlayPage() {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Must be authenticated.
   const {

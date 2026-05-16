@@ -6,7 +6,7 @@
 // are unavailable (iOS Safari without permission, etc.).
 // ============================================================
 
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -96,7 +96,7 @@ export async function subscribeAndPersist(userId: string): Promise<boolean> {
   const authBase64 = btoa(String.fromCharCode(...new Uint8Array(auth)));
 
   // 4. Persist to Supabase (upsert so re-registrations don't error).
-  const supabase = createClient();
+  const supabase = createBrowserSupabaseClient();
   const { error } = await supabase.from("push_subscriptions").upsert(
     {
       user_id: userId,
@@ -133,7 +133,7 @@ export async function unsubscribeAndRemove(userId: string): Promise<boolean> {
       const endpoint = subscription.endpoint;
       await subscription.unsubscribe();
 
-      const supabase = createClient();
+      const supabase = createBrowserSupabaseClient();
       await supabase
         .from("push_subscriptions")
         .delete()

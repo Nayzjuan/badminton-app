@@ -30,7 +30,7 @@
 //   so all business-logic validation runs server-side.
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
@@ -55,7 +55,7 @@ export interface MatchActionResult {
  * Verify that the calling user is authenticated.
  * Returns the user object or null.
  */
-async function getAuthUser(supabase: Awaited<ReturnType<typeof createClient>>) {
+async function getAuthUser(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -76,7 +76,7 @@ export async function submitMatchScore(
   teamAScore: number,
   teamBScore: number
 ): Promise<MatchActionResult> {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Identify the calling player.
   const user = await getAuthUser(supabase);
@@ -124,7 +124,7 @@ export async function endMatchAction(
   teamBScore: number
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const db = getServiceClient();
 
   // P0-3: Require authentication.
@@ -301,7 +301,7 @@ export async function updateMatchDetails(
   revertToActive = false
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   // All writes use the service client so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.
   // Auth is verified at the JS layer (getUser + isSessionOrganizer) before any write.
@@ -432,7 +432,7 @@ export async function updateMatchDetails(
 // ============================================================
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const db = getServiceClient();
 
   // Auth lookups use the RLS client; all DB writes use db (service client)
@@ -568,7 +568,7 @@ export async function createManualMatchAction(
   if (combinedPlayerIds.length === 0 || combinedPlayerIds.some((id) => !isValidUUID(id))) {
     return { success: false, message: "Invalid player ID in match." };
   }
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Auth + organizer check.
   const user = await getAuthUser(supabase);
@@ -663,7 +663,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   // Auth + organizer check — caller must be authenticated and an organizer
   // for the session this match belongs to.
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const user = await getAuthUser(supabase);
   if (!user) {
     return { success: false, message: "Not authenticated." };
@@ -792,7 +792,7 @@ export async function reorderOnDeckMatches(
   if (orderedMatchIds.some((id) => !isValidUUID(id))) {
     return { success: false, message: "Invalid match ID in reorder list." };
   }
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const db = getServiceClient();
 
   const user = await getAuthUser(supabase);
@@ -840,7 +840,7 @@ export async function publishMatchAction(
 ): Promise<{ success: boolean; message: string }> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
 
-  const db = await createClient();
+  const db = await createServerSupabaseClient();
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 
@@ -992,7 +992,7 @@ export async function publishAllDraftMatchesAction(
 ): Promise<{ success: boolean; message: string; publishedCount?: number; skippedCount?: number }> {
   if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
 
-  const db = await createClient();
+  const db = await createServerSupabaseClient();
   const user = await getAuthUser(db);
   if (!user) return { success: false, message: "Unauthorized" };
 

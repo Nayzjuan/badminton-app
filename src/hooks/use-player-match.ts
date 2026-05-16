@@ -10,7 +10,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
 import type { Match, MatchPlayer, Court, Profile, Team } from "@/types/database";
 
@@ -47,7 +47,7 @@ export function usePlayerMatch(
 ): UsePlayerMatchResult {
   const [currentMatch, setCurrentMatch] = useState<PlayerMatchInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   // ── Sequence guard ────────────────────────────────────────────
   // fetchMyMatch makes 5–6 sequential DB queries. When two Realtime

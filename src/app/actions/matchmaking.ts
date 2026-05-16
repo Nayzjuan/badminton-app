@@ -25,7 +25,7 @@
 //   executeMatch / buildOverlapMap / snakeDraft / isGroupValid / etc.
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastCapSaturation } from "@/lib/broadcast";
 import {
@@ -120,7 +120,7 @@ export async function callNextMatch(
   // The downstream engine now uses the service-role client (see
   // runEngineForSession) so RLS no longer rescues us — the gate
   // must live here, in the public entry point.
-  const userClient = await createClient();
+  const userClient = await createServerSupabaseClient();
   const {
     data: { user },
   } = await userClient.auth.getUser();
@@ -151,7 +151,7 @@ export async function callNextMatch(
   // All writes (promote + engine) must use the service client so queue_entries
   // updates are never silently dropped by RLS for players the organizer doesn't
   // own — the same fix already applied to endMatchAction (match.ts line ~287).
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // 1. Try to promote an existing on-deck match.
   let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
@@ -221,7 +221,7 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
     // grant SELECT to the calling user (e.g. anonymous queue history or
     // co-organizer-owned rows).
     //
-    // Using the user-context client (createClient) caused a hard-to-spot
+    // Using the user-context client (createServerSupabaseClient) caused a hard-to-spot
     // bug in production: when toggleAutoMatchmaking enabled auto, the
     // engine read 0 waiting players from v_queue_with_wait_time even
     // though 30 were inserted, because the view's underlying RLS hid
@@ -281,7 +281,7 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // Fills slots up to slotsAvailable, stopping when queue is exhausted.
 
 async function runEngineInternal(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string,
   bypassGate = false
 ): Promise<void> {
@@ -449,7 +449,7 @@ async function runEngineInternal(
 // ─────────────────────────────────────────────────────────────
 
 async function createOneOnDeckMatch(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string,
   recentRosters?: string[][]
 ): Promise<{ created: boolean; message: string }> {
@@ -462,7 +462,7 @@ async function createOneOnDeckMatch(
 // ─────────────────────────────────────────────────────────────
 
 export async function promoteOnDeckMatchInternal(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string,
   courtId: string
 ): Promise<MatchmakingResult> {
@@ -609,7 +609,7 @@ export async function promoteOnDeckMatchInternal(
 //      if their priorityScore ≥ 1000.
 
 async function runAlgorithm(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string,
   courtId: string | null,
   isOnDeck: boolean,
@@ -1055,7 +1055,7 @@ async function runAlgorithm(
 // runAlgorithm call rather than re-fetching per slot.
 
 async function fetchRecentRosters(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string
 ): Promise<string[][]> {
   const { data: recentMatchRows } = await supabase
@@ -1099,7 +1099,7 @@ async function fetchRecentRosters(
 // selection loop) so it is NOT re-fetched per candidate scan.
 
 async function fetchPartnershipCounts(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string
 ): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
@@ -1186,7 +1186,7 @@ async function fetchPartnershipCounts(
 //   Step 3 — fetch all co-players + teams, compute weighted map
 
 async function buildOverlapMap(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string,
   anchorPlayerId: string
 ): Promise<Map<string, number>> {
@@ -1285,7 +1285,7 @@ async function buildOverlapMap(
 // court_id) and direct (in_progress, real court_id).
 
 async function executeMatch(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   sessionId: string,
   courtId: string | null,
   teamA: ScoredPlayer[],

@@ -17,7 +17,7 @@
 //   Anti-ghost: players with < MIN_ALLTIME_GP are excluded.
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { isValidUUID } from "@/lib/validate";
 import type {
   SessionLeaderboardEntry,
@@ -99,7 +99,7 @@ function buildStreakMap(streaks: PlayerStreak[]): Map<string, number> {
 // Fetches vip_tag + vip_theme from profiles for a list of player IDs.
 // Returns a Map<player_id, { vip_tag, vip_theme }>.
 async function buildVipMap(
-  supabase: Awaited<ReturnType<typeof import("@/utils/supabase/server").createClient>>,
+  supabase: Awaited<ReturnType<typeof import("@/utils/supabase/server").createServerSupabaseClient>>,
   playerIds: string[]
 ): Promise<Map<string, { vip_tag: string | null; vip_theme: string | null }>> {
   if (playerIds.length === 0) return new Map();
@@ -123,7 +123,7 @@ export async function getSessionLeaderboard(
 ): Promise<GetSessionLeaderboardResult> {
   if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
   try {
-    const supabase = await createClient();
+    const supabase = await createServerSupabaseClient();
 
     // Fetch session stats and streaks in parallel
     const [statsResult, streaksResult] = await Promise.all([
@@ -197,7 +197,7 @@ export async function getSessionLeaderboard(
 // ============================================================
 export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResult> {
   try {
-    const supabase = await createClient();
+    const supabase = await createServerSupabaseClient();
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - RANK_MOVEMENT_DAYS);
@@ -310,7 +310,7 @@ export async function getPlayerStats(
     return { success: false, error: "Invalid session ID." };
   }
   try {
-    const supabase = await createClient();
+    const supabase = await createServerSupabaseClient();
 
     if (sessionId) {
       // ── Session scope ────────────────────────────────────────

@@ -16,7 +16,7 @@
 // user could modify any other player's profile.
 // ============================================================
 
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import type { SkillLevel } from "@/types/database";
 
@@ -29,7 +29,7 @@ import type { SkillLevel } from "@/types/database";
  * is checked — the service client is only used for the actual write.
  */
 async function verifyAuthenticated(): Promise<{ userId: string } | { error: string }> {
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
   return { userId: user.id };

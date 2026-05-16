@@ -11,7 +11,7 @@
 // ============================================================
 
 import { notFound } from "next/navigation";
-import { createClient } from "@/utils/supabase/server";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 
 interface PageProps {
@@ -20,7 +20,7 @@ interface PageProps {
 
 export default async function PublicLeaderboardPage({ params }: PageProps) {
   const { sessionId } = await params;
-  const supabase = await createClient();
+  const supabase = await createServerSupabaseClient();
 
   // Fetch session — required (404 on missing session)
   const { data: session } = await supabase

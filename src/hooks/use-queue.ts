@@ -9,7 +9,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue } from "@/lib/realtime";
 import { joinQueueAction } from "@/app/actions/queue";
 import type { QueueEntry } from "@/types/database";
@@ -36,7 +36,7 @@ interface UseQueueResult {
 export function useQueue(sessionId: string, playerId: string): UseQueueResult {
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const supabase = useMemo(() => createClient(), []);
+  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   // Fetch the full queue for this session.
   const fetchQueue = useCallback(async () => {
