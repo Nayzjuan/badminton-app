@@ -44,11 +44,9 @@ export function useOrganizerBroadcast(sessionId: string, playerId: string): void
   useEffect(() => { routerRef.current   = router;   });
 
   useEffect(() => {
-    const unsub = subscribeToOrganizerBroadcast(
-      supabase,
-      sessionId,
+    const unsub = subscribeToOrganizerBroadcast(supabase, sessionId, {
       // ── organizer_intervention ────────────────────────────
-      (payload: OrganizerInterventionPayload) => {
+      onIntervention: (payload: OrganizerInterventionPayload) => {
         if (!payload.affectedPlayerIds.includes(playerIdRef.current)) return;
 
         const message = TOAST_MESSAGES[payload.type] ?? TOAST_MESSAGES.match_cancelled;
@@ -59,21 +57,18 @@ export function useOrganizerBroadcast(sessionId: string, playerId: string): void
         });
       },
       // ── session_closed ────────────────────────────────────
-      () => {
+      onSessionClosed: () => {
         // Brief toast so the player knows what's happening, then redirect.
         toast.info("Session's over — time to see your awards! 🏆", {
           duration: 2_000,
         });
         // Give the toast 800ms to render before navigating.
         setTimeout(() => {
-          routerRef.current.push(
-            `/wrapped/${sessionId}/${playerIdRef.current}`
-          );
+          routerRef.current.push(`/wrapped/${sessionId}/${playerIdRef.current}`);
         }, 800);
-      }
-    );
+      },
+    });
 
     return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId]);
 }

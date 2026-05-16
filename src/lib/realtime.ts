@@ -25,6 +25,41 @@ type TypedClient = SupabaseClient<Database>;
 type ChangeHandler<T extends Record<string, unknown>> = (
   payload: RealtimePostgresChangesPayload<T>
 ) => void;
+type StatusHandler = (channelId: string, connected: boolean) => void;
+
+/**
+ * Returns a reusable Supabase channel `.subscribe()` callback that logs
+ * connection status and calls `onStatus` (if provided) so callers can
+ * track per-channel connectivity state in a Set rather than a counter.
+ *
+ * Common failure: the table is in the realtime publication but the
+ * caller's JWT fails the SELECT RLS policy. Supabase silently drops
+ * events server-side; if the channel itself errors you'll see it via
+ * the onStatus(channelId, false) call.
+ */
+function createStatusHandler(
+  channelName: string,
+  onStatus?: StatusHandler
+): (status: string, err?: Error) => void {
+  return (status, err) => {
+    if (err) {
+      console.error(`[realtime] ${channelName} subscription error:`, err);
+      onStatus?.(channelName, false);
+    } else {
+      console.log(`[realtime] ${channelName} →`, status);
+      // Expected statuses:
+      //   SUBSCRIBED      — channel is live and receiving events ✓
+      //   CHANNEL_ERROR   — something went wrong (check err above)
+      //   TIMED_OUT       — no response from server within timeout
+      //   CLOSED          — channel removed (cleanup called)
+      if (status === "SUBSCRIBED") {
+        onStatus?.(channelName, true);
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        onStatus?.(channelName, false);
+      }
+    }
+  };
+}
 
 /**
  * Subscribe to all changes on a table, filtered by session_id.
@@ -65,28 +100,7 @@ function subscribeToTable<T extends Record<string, unknown>>(
         onChange(payload);
       }
     )
-    .subscribe((status, err) => {
-      if (err) {
-        // The most common cause: the table is in the realtime publication
-        // but the user lacks a SELECT RLS policy. Supabase silently drops
-        // the event server-side, but if the channel itself fails you'll
-        // see it here.
-        console.error(`[realtime] ${channelName} subscription error:`, err);
-        onStatus?.(channelName, false);
-      } else {
-        console.log(`[realtime] ${channelName} →`, status);
-        // Expected statuses:
-        //   SUBSCRIBED      — channel is live and receiving events ✓
-        //   CHANNEL_ERROR   — something went wrong (check err above)
-        //   TIMED_OUT       — no response from server within timeout
-        //   CLOSED          — channel removed (cleanup called)
-        if (status === "SUBSCRIBED") {
-          onStatus?.(channelName, true);
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          onStatus?.(channelName, false);
-        }
-      }
-    });
+    .subscribe(createStatusHandler(channelName, onStatus));
 
   return () => {
     supabase.removeChannel(channel);
@@ -148,19 +162,7 @@ export function subscribeToMatchPlayers(
         >
       );
     })
-    .subscribe((status, err) => {
-      if (err) {
-        console.error(`[realtime] ${channelName} subscription error:`, err);
-        onStatus?.(channelName, false);
-      } else {
-        console.log(`[realtime] ${channelName} →`, status);
-        if (status === "SUBSCRIBED") {
-          onStatus?.(channelName, true);
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          onStatus?.(channelName, false);
-        }
-      }
-    });
+    .subscribe(createStatusHandler(channelName, onStatus));
 
   return () => {
     supabase.removeChannel(channel);
@@ -168,29 +170,36 @@ export function subscribeToMatchPlayers(
 }
 
 /**
- * Subscribe to all profile changes. Profiles have no session_id, so
- * this subscribes broadly — the callback should re-fetch relevant
- * data (queue view, match players, etc.) to pick up the new skill.
+ * Handlers for the session-level broadcast channel.
+ * `onIntervention` is required; all others are optional so callers can
+ * subscribe only to the events they actually handle.
  */
+export type OrganizerBroadcastHandlers = {
+  /** Fired after an organizer clears an on-deck match or cancels an in-progress one. */
+  onIntervention: (payload: OrganizerInterventionPayload) => void;
+  /** Fired when the organizer closes the session; clients should redirect to Wrapped. */
+  onSessionClosed?: (payload: SessionClosedPayload) => void;
+  /** Fired when any organizer flips the auto-matchmaking toggle. */
+  onAutoMatchmakingToggled?: (payload: AutoMatchmakingToggledPayload) => void;
+  /** Fired when the partner-pair cap blocks match formation for a waiting player. */
+  onCapSaturation?: (payload: CapSaturationPayload) => void;
+};
+
 /**
- * Subscribe to organizer intervention broadcast events on the
- * session's dedicated broadcast channel.
+ * Subscribe to organizer broadcast events on the session's dedicated channel.
  *
- * The server emits these after clearOnDeckMatch and cancelMatchAction
- * so affected players can be shown a contextual toast instead of
- * experiencing a silent UI state change.
+ * The server emits these after organizer actions (match clear/cancel,
+ * session close, auto-matchmaking toggle) so clients react immediately
+ * without polling. Pass only the handlers you need — the rest are optional.
  *
  * Channel: "session-events:{sessionId}"
- * Event:   "organizer_intervention"
  */
 export function subscribeToOrganizerBroadcast(
   supabase: TypedClient,
   sessionId: string,
-  onIntervention: (payload: OrganizerInterventionPayload) => void,
-  onSessionClosed?: (payload: SessionClosedPayload) => void,
-  onAutoMatchmakingToggled?: (payload: AutoMatchmakingToggledPayload) => void,
-  onCapSaturation?: (payload: CapSaturationPayload) => void
+  handlers: OrganizerBroadcastHandlers
 ): () => void {
+  const { onIntervention, onSessionClosed, onAutoMatchmakingToggled, onCapSaturation } = handlers;
   const channelName = `session-events:${sessionId}`;
 
   const channel = supabase
@@ -232,6 +241,11 @@ export function subscribeToOrganizerBroadcast(
   };
 }
 
+/**
+ * Subscribe to all profile changes. Profiles have no session_id column, so
+ * this subscribes broadly — the callback should re-fetch the queue view,
+ * match players, or any derived data to pick up the updated skill level.
+ */
 export function subscribeToProfiles(
   supabase: TypedClient,
   sessionId: string,
@@ -251,19 +265,7 @@ export function subscribeToProfiles(
         payload as RealtimePostgresChangesPayload<Database["public"]["Tables"]["profiles"]["Row"]>
       );
     })
-    .subscribe((status, err) => {
-      if (err) {
-        console.error(`[realtime] ${channelName} subscription error:`, err);
-        onStatus?.(channelName, false);
-      } else {
-        console.log(`[realtime] ${channelName} →`, status);
-        if (status === "SUBSCRIBED") {
-          onStatus?.(channelName, true);
-        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          onStatus?.(channelName, false);
-        }
-      }
-    });
+    .subscribe(createStatusHandler(channelName, onStatus));
 
   return () => {
     supabase.removeChannel(channel);

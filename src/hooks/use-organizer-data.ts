@@ -510,15 +510,10 @@ export function useOrganizerData(
     // "auto_matchmaking_toggled" on session-events:{sessionId}.
     // All co-organizers on this channel receive it immediately,
     // regardless of their RLS SELECT access on the sessions table.
-    const unsubBroadcast = subscribeToOrganizerBroadcast(
-      supabase,
-      sessionId,
-      // organizer_intervention handler — not used here (players handle it),
-      // but the function signature requires it.
-      () => {},
-      // session_closed handler — not used by organizer dashboard.
-      undefined,
-      (payload: AutoMatchmakingToggledPayload) => {
+    const unsubBroadcast = subscribeToOrganizerBroadcast(supabase, sessionId, {
+      // organizer_intervention is player-side only; no-op in the organizer dashboard.
+      onIntervention: () => {},
+      onAutoMatchmakingToggled: (payload: AutoMatchmakingToggledPayload) => {
         // Invalidate any in-flight fetchSession poll. A poll that started
         // before this toggle write may carry a stale is_auto_matchmaking_on
         // value. Bumping the sequence counter ensures that poll's mySeq
@@ -529,10 +524,10 @@ export function useOrganizerData(
           is_auto_matchmaking_on: payload.isOn,
         }));
       },
-      (payload: CapSaturationPayload) => {
+      onCapSaturation: (payload: CapSaturationPayload) => {
         setCapSaturation(payload);
-      }
-    );
+      },
+    });
 
     const unsubs = [
       subscribeToCourts(
