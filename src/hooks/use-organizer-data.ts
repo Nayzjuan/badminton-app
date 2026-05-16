@@ -33,7 +33,7 @@
 // has started. Stale results are silently discarded.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEnrichedMatches, type EnrichedMatch } from "@/hooks/use-enriched-matches";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import {
@@ -69,17 +69,39 @@ import {
   removePlayerFromQueue as removePlayerFromQueueAction,
 } from "@/app/actions/queue";
 import { updateSessionSettings, getSessionForOrganizer } from "@/app/actions/sessions";
-import type {
-  Court,
-  Profile,
-  QueueWithWaitTime,
-  Session,
-} from "@/types/database";
+import type { Court, Profile, QueueWithWaitTime, Session } from "@/types/database";
 
 // Number of table channels tracked for the realtimeConnected health indicator.
 // Declared at module scope so useCallback([]) can reference it without
 // needing to list it in the dep array.
 const REALTIME_CHANNEL_COUNT = 5; // courts, queue_entries, matches, match_players, profiles
+
+/**
+ * Factory for thin server-action wrappers that:
+ *   1. Call the action with the supplied arguments.
+ *   2. Return `{ error }` on failure (normalising message/error field names).
+ *   3. Await all refreshers in parallel on success, then return `{}`.
+ *
+ * Only use for wrappers that match this exact pattern — wrappers with
+ * optimistic updates, unique return shapes, or side effects should remain
+ * as explicit useCallback calls.
+ */
+function useAction<TArgs extends unknown[]>(
+  action: (...args: TArgs) => Promise<{ success: boolean; message?: string; error?: string }>,
+  refreshers: (() => Promise<void>)[],
+  deps: React.DependencyList
+): (...args: TArgs) => Promise<{ error?: string }> {
+  return useCallback(
+    async (...args: TArgs): Promise<{ error?: string }> => {
+      const result = await action(...args);
+      if (!result.success) return { error: result.message ?? result.error ?? "Action failed" };
+      await Promise.all(refreshers.map((r) => r()));
+      return {};
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    deps
+  );
+}
 
 // EnrichedMatch type is imported from use-enriched-matches.ts.
 // Re-export so existing consumers (Chunk C) don't need to update their imports.
@@ -237,12 +259,10 @@ export function useOrganizerData(
     [] // setProfiles is a stable setState dispatcher — no deps needed
   );
 
-  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(
-    supabase,
-    sessionId,
-    courtsRef,
-    { includeDrafts: true, onProfilesLoaded }
-  );
+  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(supabase, sessionId, courtsRef, {
+    includeDrafts: true,
+    onProfilesLoaded,
+  });
 
   // ---- Fetch functions ----
 
@@ -635,27 +655,15 @@ export function useOrganizerData(
     [fetchCourts, fetchActiveMatches]
   );
 
-  const cancelMatch = useCallback(
-    async (matchId: string) => {
-      const result = await cancelMatchAction(matchId);
-      if (!result.success) return { error: result.message };
-      // Explicit refresh — removes the cancelled match immediately.
-      await Promise.all([fetchCourts(), fetchActiveMatches()]);
-      return {};
-    },
-    [fetchCourts, fetchActiveMatches]
-  );
+  const cancelMatch = useAction(cancelMatchAction, [fetchCourts, fetchActiveMatches], [
+    fetchCourts,
+    fetchActiveMatches,
+  ]);
 
-  const clearOnDeckMatch = useCallback(
-    async (matchId: string) => {
-      const result = await clearOnDeckMatchAction(matchId);
-      if (!result.success) return { error: result.message };
-      // Refresh both the match list and the queue so players appear waiting again.
-      await Promise.all([fetchQueue(), fetchActiveMatches()]);
-      return {};
-    },
-    [fetchQueue, fetchActiveMatches]
-  );
+  const clearOnDeckMatch = useAction(clearOnDeckMatchAction, [fetchQueue, fetchActiveMatches], [
+    fetchQueue,
+    fetchActiveMatches,
+  ]);
 
   const reorderOnDeckMatches = useCallback(
     async (orderedMatchIds: string[]) => {
@@ -674,24 +682,18 @@ export function useOrganizerData(
   // player is in (published or draft) before setting their status='left',
   // preventing the contradictory state where queue shows 'left' but the
   // on-deck panel still shows the player inside a match.
-  const removeFromQueue = useCallback(
-    async (playerId: string) => {
-      const result = await removePlayerFromQueueAction(sessionId, playerId);
-      if (!result.success) return { error: result.error };
-      return {};
-    },
+  // Realtime handles the subsequent queue refresh — no explicit refresher needed.
+  const removeFromQueue = useAction(
+    (playerId: string) => removePlayerFromQueueAction(sessionId, playerId),
+    [],
     [sessionId]
   );
 
   // Soft pause: keeps player in queue but excludes them from matchmaking.
   // joined_at and games_played are NEVER modified — position is preserved.
-  const pausePlayer = useCallback(
-    async (playerId: string, isPaused: boolean) => {
-      const result = await togglePlayerPause(sessionId, playerId, isPaused);
-      if (!result.success) return { error: result.error };
-      await fetchQueue();
-      return {};
-    },
+  const pausePlayer = useAction(
+    (playerId: string, isPaused: boolean) => togglePlayerPause(sessionId, playerId, isPaused),
+    [fetchQueue],
     [sessionId, fetchQueue]
   );
 
@@ -760,11 +762,24 @@ export function useOrganizerData(
     [sessionId]
   );
 
-  // Derived splits — avoids the dashboard needing to filter itself.
-  const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
-  const draftMatches = onDeckMatches.filter((m) => !m.is_published);
-  const publishedOnDeckMatches = onDeckMatches.filter((m) => m.is_published);
-  const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
+  // Derived splits — memoized so downstream components only re-render
+  // when activeMatches actually changes, not on every parent render.
+  const onDeckMatches = useMemo(
+    () => activeMatches.filter((m) => m.status === "pending"),
+    [activeMatches]
+  );
+  const draftMatches = useMemo(
+    () => onDeckMatches.filter((m) => !m.is_published),
+    [onDeckMatches]
+  );
+  const publishedOnDeckMatches = useMemo(
+    () => onDeckMatches.filter((m) => m.is_published),
+    [onDeckMatches]
+  );
+  const inProgressMatches = useMemo(
+    () => activeMatches.filter((m) => m.status === "in_progress"),
+    [activeMatches]
+  );
 
   // ── Cap saturation ────────────────────────────────────────────
 
