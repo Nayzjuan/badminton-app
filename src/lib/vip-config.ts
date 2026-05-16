@@ -104,8 +104,8 @@ export const VIP_THEMES: Record<VipTheme, VipThemeConfig> = {
 
 /** Returns the theme config for a key, or null if invalid/missing. */
 export function getVipThemeConfig(theme: string | null | undefined): VipThemeConfig | null {
-  if (!theme) return null;
-  return VIP_THEMES[theme as VipTheme] ?? null;
+  if (!theme || !isVipTheme(theme)) return null;
+  return VIP_THEMES[theme];
 }
 
 /** Type guard: is this string a valid VipTheme key? */
