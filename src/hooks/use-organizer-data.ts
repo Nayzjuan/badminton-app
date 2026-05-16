@@ -34,7 +34,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createUnknownProfile } from "@/lib/utils";
+import { useEnrichedMatches, type EnrichedMatch } from "@/hooks/use-enriched-matches";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import {
   subscribeToCourts,
@@ -71,8 +71,6 @@ import {
 import { updateSessionSettings, getSessionForOrganizer } from "@/app/actions/sessions";
 import type {
   Court,
-  Match,
-  MatchPlayer,
   Profile,
   QueueWithWaitTime,
   Session,
@@ -83,11 +81,9 @@ import type {
 // needing to list it in the dep array.
 const REALTIME_CHANNEL_COUNT = 5; // courts, queue_entries, matches, match_players, profiles
 
-/** A match enriched with its player profiles + court info. */
-export interface EnrichedMatch extends Match {
-  court: Court | null;
-  players: (MatchPlayer & { profile: Profile })[];
-}
+// EnrichedMatch type is imported from use-enriched-matches.ts.
+// Re-export so existing consumers (Chunk C) don't need to update their imports.
+export type { EnrichedMatch };
 
 export interface UseOrganizerDataResult {
   /** Live session record — updates in real-time when settings change. */
@@ -171,7 +167,6 @@ export function useOrganizerData(
   const [session, setSession] = useState<Session>(initialSession);
   const [courts, setCourts] = useState<Court[]>([]);
   const [queue, setQueue] = useState<QueueWithWaitTime[]>([]);
-  const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map());
   const [loading, setLoading] = useState(true);
   // Starts true — channels report SUBSCRIBED within ~1 s of mounting, so
@@ -226,9 +221,28 @@ export function useOrganizerData(
   // 4 "promoted to on_deck" events). The guard ensures only the
   // last-started call wins.
   // ------------------------------------------------------------------
-  const fetchActiveMatchesSeq = useRef(0);
   const fetchQueueSeq = useRef(0);
   const fetchSessionSeq = useRef(0);
+
+  // ── onProfilesLoaded: stable callback that merges match-player profiles
+  // into the organizer's profiles Map (used by the queue panel).
+  const onProfilesLoaded = useCallback(
+    (profileMap: Map<string, Profile>) => {
+      setProfiles((prev) => {
+        const next = new Map(prev);
+        profileMap.forEach((v, k) => next.set(k, v));
+        return next;
+      });
+    },
+    [] // setProfiles is a stable setState dispatcher — no deps needed
+  );
+
+  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(
+    supabase,
+    sessionId,
+    courtsRef,
+    { includeDrafts: true, onProfilesLoaded }
+  );
 
   // ---- Fetch functions ----
 
@@ -281,75 +295,6 @@ export function useOrganizerData(
       const pauseMap = new Map((pauseData ?? []).map((r) => [r.player_id, r.is_paused]));
       setQueue(data.map((row) => ({ ...row, is_paused: pauseMap.get(row.player_id) ?? false })));
     }
-  }, [supabase, sessionId]);
-
-  const fetchActiveMatches = useCallback(async () => {
-    // Capture this call's sequence number. If a newer call starts
-    // before we finish, we will discard our stale results.
-    const mySeq = ++fetchActiveMatchesSeq.current;
-
-    const { data: matches, error: matchError } = await supabase
-      .from("matches")
-      .select("*")
-      .eq("session_id", sessionId)
-      .in("status", ["pending", "in_progress"])
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("created_at", { ascending: true });
-
-    // Abort if superseded.
-    if (mySeq !== fetchActiveMatchesSeq.current) return;
-
-    if (matchError) {
-      console.error("[useOrganizerData] fetchActiveMatches error:", matchError);
-    }
-
-    if (!matches || matches.length === 0) {
-      setActiveMatches([]);
-      return;
-    }
-
-    const matchIds = matches.map((m) => m.id);
-    const { data: matchPlayers } = await supabase
-      .from("match_players")
-      .select("*")
-      .in("match_id", matchIds);
-
-    // Abort if superseded.
-    if (mySeq !== fetchActiveMatchesSeq.current) return;
-
-    const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
-    let profileMap = new Map<string, Profile>();
-    if (playerIds.length > 0) {
-      const { data: profileData } = await supabase.from("profiles").select("*").in("id", playerIds);
-
-      // Abort if superseded.
-      if (mySeq !== fetchActiveMatchesSeq.current) return;
-
-      profileMap = new Map((profileData ?? []).map((p) => [p.id, p]));
-    }
-
-    setProfiles((prev) => {
-      const next = new Map(prev);
-      profileMap.forEach((v, k) => next.set(k, v));
-      return next;
-    });
-
-    // Use the ref instead of the `courts` state value — this removes
-    // `courts` from the dependency array and prevents the subscription
-    // teardown cascade.
-    const enriched: EnrichedMatch[] = matches.map((match) => {
-      const court = courtsRef.current.find((c) => c.id === match.court_id) ?? null;
-      const players = (matchPlayers ?? [])
-        .filter((mp) => mp.match_id === match.id)
-        .map((mp) => ({
-          ...mp,
-          profile: profileMap.get(mp.player_id) ?? createUnknownProfile(mp.player_id),
-        }));
-      return { ...match, court, players };
-    });
-
-    setActiveMatches(enriched);
-    // NOTE: deps no longer include `courts` — we read from courtsRef instead.
   }, [supabase, sessionId]);
 
   const fetchQueueProfiles = useCallback(async () => {

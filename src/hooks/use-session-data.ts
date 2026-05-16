@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { createUnknownProfile } from "@/lib/utils";
+import { useEnrichedMatches, type EnrichedMatch } from "@/hooks/use-enriched-matches";
 import {
   subscribeToCourts,
   subscribeToQueue,
@@ -25,18 +26,15 @@ import {
   subscribeToMatchPlayers,
   subscribeToProfiles,
 } from "@/lib/realtime";
-import type { Court, Match, MatchPlayer, Profile, QueueEntry } from "@/types/database";
+import type { Court, Profile, QueueEntry } from "@/types/database";
 
 // ── Types ────────────────────────────────────────────────────
 
-export interface EnrichedMatchPlayer extends MatchPlayer {
-  profile: Profile;
-}
-
-export interface SessionMatch extends Match {
-  court: Court | null;
-  players: EnrichedMatchPlayer[];
-}
+// EnrichedMatch (imported from use-enriched-matches) replaces the former
+// local SessionMatch type. Re-export both names so components importing
+// SessionMatch or EnrichedMatchPlayer from this file don't need to update.
+export type SessionMatch = EnrichedMatch;
+export type EnrichedMatchPlayer = EnrichedMatch["players"][number];
 
 export interface QueueEntryWithProfile extends QueueEntry {
   profile: Profile;
@@ -61,19 +59,29 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const [courts, setCourts] = useState<Court[]>([]);
-  const [activeMatches, setActiveMatches] = useState<SessionMatch[]>([]);
   const [waitlist, setWaitlist] = useState<QueueEntryWithProfile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Stable ref for courts (used inside fetchActiveMatches).
+  // Stable ref for courts — passed to useEnrichedMatches so it can resolve
+  // court names without needing courts in its dep array (avoids teardown cascade).
   const courtsRef = useRef<Court[]>([]);
   useEffect(() => {
     courtsRef.current = courts;
   }, [courts]);
 
-  // Race-condition guards for concurrent fetches.
-  const fetchSeq = useRef(0);
+  // Race-condition guard for fetchWaitlist (fetchActiveMatches uses its own
+  // internal seqRef inside useEnrichedMatches).
   const fetchWaitlistSeq = useRef(0);
+
+  // ── Active match enrichment (shared hook) ─────────────────
+  // includeDrafts: false — draft firewall: players and TV only see
+  // published pending matches and in_progress matches.
+  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(
+    supabase,
+    sessionId,
+    courtsRef,
+    { includeDrafts: false }
+  );
 
   // ── Fetch courts ──────────────────────────────────────────
 
@@ -84,59 +92,6 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true });
     if (data) setCourts(data);
-  }, [supabase, sessionId]);
-
-  // ── Fetch active matches (pending + in_progress) ──────────
-
-  const fetchActiveMatches = useCallback(async () => {
-    const mySeq = ++fetchSeq.current;
-
-    // Draft Mode firewall: in_progress matches are always visible;
-    // pending matches are only visible when is_published=true.
-    // This prevents players and the TV from seeing engine drafts.
-    const { data: matches } = await supabase
-      .from("matches")
-      .select("*")
-      .eq("session_id", sessionId)
-      .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)")
-      .order("created_at", { ascending: true });
-
-    if (mySeq !== fetchSeq.current) return;
-
-    if (!matches || matches.length === 0) {
-      setActiveMatches([]);
-      return;
-    }
-
-    const matchIds = matches.map((m) => m.id);
-    const { data: matchPlayers } = await supabase
-      .from("match_players")
-      .select("*")
-      .in("match_id", matchIds);
-
-    if (mySeq !== fetchSeq.current) return;
-
-    const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
-    let profileMap = new Map<string, Profile>();
-    if (playerIds.length > 0) {
-      const { data: profiles } = await supabase.from("profiles").select("*").in("id", playerIds);
-
-      if (mySeq !== fetchSeq.current) return;
-      profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
-    }
-
-    const enriched: SessionMatch[] = matches.map((match) => {
-      const court = courtsRef.current.find((c) => c.id === match.court_id) ?? null;
-      const players = (matchPlayers ?? [])
-        .filter((mp) => mp.match_id === match.id)
-        .map((mp) => ({
-          ...mp,
-          profile: profileMap.get(mp.player_id) ?? createUnknownProfile(mp.player_id),
-        }));
-      return { ...match, court, players };
-    });
-
-    setActiveMatches(enriched);
   }, [supabase, sessionId]);
 
   // ── Fetch waitlist (waiting queue entries + profiles) ──────
