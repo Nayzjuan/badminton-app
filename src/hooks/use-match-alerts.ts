@@ -36,7 +36,8 @@ import { useCallback, useEffect, useRef, useMemo } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue, subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
 import { playWarningBeep, playCourtCall, unlockAudio } from "@/lib/notifications/audio";
-import type { QueueStatus, MatchStatus, QueueEntry, Match, MatchPlayer } from "@/types/database";
+import { sendPlayerNotification } from "@/app/actions/notifications";
+import type { QueueStatus, MatchStatus, QueueEntry, Match } from "@/types/database";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
 // ── Types ────────────────────────────────────────────────────
@@ -108,7 +109,6 @@ export function useMatchAlerts({
       // AudioContext being in a "running" state.  It is the reliable
       // fallback for mobile.
       try {
-        const { sendPlayerNotification } = await import("@/app/actions/notifications");
         await sendPlayerNotification(playerId, type);
       } catch (err) {
         // Non-critical — audio already fired; just log.
@@ -277,7 +277,7 @@ export function useMatchAlerts({
     const unsubPlayers = subscribeToMatchPlayers(
       supabase,
       sessionId,
-      (_payload: RealtimePostgresChangesPayload<MatchPlayer>) => {
+      () => {
         // Player assignment changed — re-seed the match ref so subsequent
         // match status events are correctly attributed.
         assignedMatchId.current = null;

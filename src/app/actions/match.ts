@@ -38,11 +38,6 @@ import { isValidUUID } from "@/lib/validate";
 import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
 
-// Service client singleton for this module — bypasses RLS for writes.
-// Auth is always verified at the JS layer before any service client write.
-function getServiceClient() {
-  return createServiceClient();
-}
 
 export interface MatchActionResult {
   success: boolean;
@@ -112,7 +107,7 @@ export async function endMatchAction(
   teamBScore: number
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const db = getServiceClient();
+  const db = createServiceClient();
 
   // P0-3: Require authentication.
   const user = await getAuthenticatedUser();
@@ -291,7 +286,7 @@ export async function updateMatchDetails(
   // All writes use the service client so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.
   // Auth is verified at the JS layer (getUser + isSessionOrganizer) before any write.
-  const db = getServiceClient();
+  const db = createServiceClient();
 
   // P0-3: Organizer-only action.
   const user = await getAuthenticatedUser();
@@ -418,7 +413,7 @@ export async function updateMatchDetails(
 // ============================================================
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
-  const db = getServiceClient();
+  const db = createServiceClient();
 
   // All DB writes use db (service client) so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.
@@ -563,7 +558,7 @@ export async function createManualMatchAction(
   }
 
   const allPlayerIds = [...teamAPlayerIds, ...teamBPlayerIds];
-  const svc = getServiceClient();
+  const svc = createServiceClient();
 
   // Validate all players are in this session's queue (any status).
   // Gives a clear "not in session" error before hitting the RPC.
@@ -773,7 +768,7 @@ export async function reorderOnDeckMatches(
   if (orderedMatchIds.some((id) => !isValidUUID(id))) {
     return { success: false, message: "Invalid match ID in reorder list." };
   }
-  const db = getServiceClient();
+  const db = createServiceClient();
 
   const user = await getAuthenticatedUser();
   if (!user) return { success: false, message: "Unauthorized" };
