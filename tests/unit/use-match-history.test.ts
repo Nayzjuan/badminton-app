@@ -69,11 +69,7 @@ const knownProfile = {
 
 // ── Mock client factory ────────────────────────────────────────
 
-type FromTable =
-  | "matches"
-  | "match_players"
-  | "profiles"
-  | "courts";
+type FromTable = "matches" | "match_players" | "profiles" | "courts";
 
 function buildMockClient(overrides: Partial<Record<FromTable, unknown>> = {}) {
   const defaults: Record<FromTable, unknown> = {
@@ -111,7 +107,7 @@ describe("useMatchHistory", () => {
   describe("MH-1: Loading state", () => {
     it("starts with loading = true and matches = []", () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient() as ReturnType<typeof createBrowserSupabaseClient>
+        buildMockClient() as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       expect(result.current.loading).toBe(true);
@@ -120,7 +116,7 @@ describe("useMatchHistory", () => {
 
     it("sets loading = false after fetch completes", async () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient() as ReturnType<typeof createBrowserSupabaseClient>
+        buildMockClient() as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -130,7 +126,7 @@ describe("useMatchHistory", () => {
   describe("MH-2: Empty result", () => {
     it("returns empty matches array when no history exists", async () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient({ matches: [] }) as ReturnType<typeof createBrowserSupabaseClient>
+        buildMockClient({ matches: [] }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -141,7 +137,7 @@ describe("useMatchHistory", () => {
   describe("MH-3: Enriches with player profiles", () => {
     it("attaches profile to each match player", async () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient() as ReturnType<typeof createBrowserSupabaseClient>
+        buildMockClient() as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.matches.length).toBe(1));
@@ -159,7 +155,7 @@ describe("useMatchHistory", () => {
         buildMockClient({
           match_players: [{ match_id: MATCH_ID, player_id: UNKNOWN_ID, team: "b", id: "mp-2" }],
           profiles: [], // no profile exists for UNKNOWN_ID
-        }) as ReturnType<typeof createBrowserSupabaseClient>
+        }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.matches.length).toBe(1));
@@ -174,7 +170,7 @@ describe("useMatchHistory", () => {
   describe("MH-5: Court name enrichment", () => {
     it("attaches court name to match", async () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient() as ReturnType<typeof createBrowserSupabaseClient>
+        buildMockClient() as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.matches.length).toBe(1));
@@ -187,7 +183,7 @@ describe("useMatchHistory", () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
         buildMockClient({
           matches: [{ ...completedMatch, court_id: null }],
-        }) as ReturnType<typeof createBrowserSupabaseClient>
+        }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.matches.length).toBe(1));
@@ -198,7 +194,7 @@ describe("useMatchHistory", () => {
   describe("MH-7: Realtime subscription triggers re-fetch", () => {
     it("wires subscribeToMatches with org-history prefix", async () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient() as ReturnType<typeof createBrowserSupabaseClient>
+        buildMockClient() as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(subscribeToMatches).toHaveBeenCalled());
@@ -209,16 +205,22 @@ describe("useMatchHistory", () => {
     });
 
     it("calls fetchHistory when realtime fires", async () => {
-      let realtimeCallback: (() => void) | null = null;
-      vi.mocked(subscribeToMatches).mockImplementation(
-        (_, __, cb) => { realtimeCallback = cb; return vi.fn(); }
-      );
+      // subscribeToMatches passes a typed payload to its callback, but the
+      // hook calls it without arguments (the payload is unused). Cast to any
+      // so we can capture and invoke it in tests without the full type.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let realtimeCallback: ((...args: any[]) => void) | null = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked(subscribeToMatches).mockImplementation((_: any, __: any, cb: any) => {
+        realtimeCallback = cb;
+        return vi.fn();
+      });
 
       let fetchCount = 0;
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
         buildMockClient({
           matches: [completedMatch],
-        }) as ReturnType<typeof createBrowserSupabaseClient>
+        }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
 
       // Track fetch calls via mock
@@ -227,7 +229,9 @@ describe("useMatchHistory", () => {
       fetchCount = 1;
 
       // Simulate realtime event
-      await act(async () => { realtimeCallback?.(); });
+      await act(async () => {
+        realtimeCallback?.();
+      });
       await waitFor(() => expect(result.current.matches.length).toBeGreaterThanOrEqual(fetchCount));
     });
   });
@@ -244,13 +248,19 @@ describe("useMatchHistory", () => {
             order: () => chain,
             then: (resolve: (v: { data: unknown; error: null }) => void) => {
               if (table === "matches") callCount++;
-              const data = table === "matches"
-                ? (callCount > 1 ? [completedMatch, { ...completedMatch, id: "match-2", completed_at: "2026-01-02T10:00:00Z" }] : [completedMatch])
-                : table === "match_players"
-                ? [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }]
-                : table === "profiles"
-                ? [knownProfile]
-                : [{ id: COURT_ID, name: "Court X" }];
+              const data =
+                table === "matches"
+                  ? callCount > 1
+                    ? [
+                        completedMatch,
+                        { ...completedMatch, id: "match-2", completed_at: "2026-01-02T10:00:00Z" },
+                      ]
+                    : [completedMatch]
+                  : table === "match_players"
+                    ? [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }]
+                    : table === "profiles"
+                      ? [knownProfile]
+                      : [{ id: COURT_ID, name: "Court X" }];
               resolve({ data, error: null });
             },
           };
@@ -258,7 +268,7 @@ describe("useMatchHistory", () => {
         },
       };
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        client as ReturnType<typeof createBrowserSupabaseClient>
+        client as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
 
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
@@ -271,7 +281,12 @@ describe("useMatchHistory", () => {
 
   describe("MH-9: Fetches completed AND cancelled", () => {
     it("includes cancelled matches in history", async () => {
-      const cancelledMatch = { ...completedMatch, id: "match-cancel", status: "cancelled", completed_at: null };
+      const cancelledMatch = {
+        ...completedMatch,
+        id: "match-cancel",
+        status: "cancelled",
+        completed_at: null,
+      };
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
         buildMockClient({
           matches: [completedMatch, cancelledMatch],
@@ -279,7 +294,7 @@ describe("useMatchHistory", () => {
             { match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" },
             { match_id: "match-cancel", player_id: PLAYER_ID, team: "a", id: "mp-2" },
           ],
-        }) as ReturnType<typeof createBrowserSupabaseClient>
+        }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.matches.length).toBe(2));

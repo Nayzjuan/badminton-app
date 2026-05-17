@@ -55,6 +55,10 @@ function makeCtx(
     outTeam: "a" as const,
     outPlayerName: "Alice",
     outPlayerSkill: "intermediate" as const,
+    currentPlayers: [
+      { player_id: PLAYER_ALICE, skill_level: "intermediate" as const, display_name: "Alice" },
+      { player_id: PLAYER_BOB,   skill_level: "intermediate" as const, display_name: "Bob"   },
+    ],
     ...overrides,
   };
 }
@@ -130,7 +134,11 @@ describe("useSwapState", () => {
 
       await waitFor(() => expect(swapMatchPlayers).toHaveBeenCalled());
       expect(swapMatchPlayers).toHaveBeenCalledWith(
-        MATCH_A, PLAYER_ALICE, MATCH_B, PLAYER_BOB, SESSION_ID
+        MATCH_A,
+        PLAYER_ALICE,
+        MATCH_B,
+        PLAYER_BOB,
+        SESSION_ID
       );
     });
 
@@ -138,16 +146,11 @@ describe("useSwapState", () => {
       const slow = vi.fn(
         () => new Promise<{ success: boolean }>((r) => setTimeout(() => r({ success: true }), 100))
       );
-      const { result } = setup(
-        [makeMatch(MATCH_A), makeMatch(MATCH_B)],
-        slow
-      );
+      const { result } = setup([makeMatch(MATCH_A), makeMatch(MATCH_B)], slow);
 
       act(() => result.current.handlePlayerTap(makeCtx()));
       act(() =>
-        result.current.handlePlayerTap(
-          makeCtx({ matchId: MATCH_B, outPlayerId: PLAYER_BOB })
-        )
+        result.current.handlePlayerTap(makeCtx({ matchId: MATCH_B, outPlayerId: PLAYER_BOB }))
       );
 
       // Context should be null immediately (before server resolves)
@@ -167,9 +170,7 @@ describe("useSwapState", () => {
       rerender({ matches: [makeMatch(MATCH_B)] });
 
       await waitFor(() => expect(result.current.swapContext).toBeNull());
-      expect(toast.warning).toHaveBeenCalledWith(
-        expect.stringMatching(/match has started/i)
-      );
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/match has started/i));
     });
 
     it("does NOT clear context when a different match is promoted", async () => {
@@ -282,14 +283,12 @@ describe("useSwapState", () => {
       const { result, swapMatchPlayers } = setup([makeMatch(MATCH_B)]);
 
       // Manually enter picking mode for match A (which is no longer on-deck).
-      act(() => result.current.setSwapContext({ ...makeCtx(), mode: "picking" }));
+      act(() => result.current.setSwapContext({ ...makeCtx(), mode: "picking" as const }));
 
       // Second tap: Bob in match B. executeMatchSwap fires (unawaited internally),
       // detects match A is gone, sets context null and warns — flush microtasks.
       await act(async () => {
-        result.current.handlePlayerTap(
-          makeCtx({ matchId: MATCH_B, outPlayerId: PLAYER_BOB })
-        );
+        result.current.handlePlayerTap(makeCtx({ matchId: MATCH_B, outPlayerId: PLAYER_BOB }));
         // Flush the microtask that runs the pre-check inside executeMatchSwap.
         await Promise.resolve();
       });
@@ -297,9 +296,7 @@ describe("useSwapState", () => {
       // swapMatchPlayers must never have been called (pre-check should block it).
       expect(swapMatchPlayers).not.toHaveBeenCalled();
       // Warning toast confirms the pre-check branch fired.
-      expect(toast.warning).toHaveBeenCalledWith(
-        expect.stringMatching(/match has started/i)
-      );
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/match has started/i));
     });
   });
 
@@ -328,8 +325,8 @@ describe("useSwapState", () => {
       // Undo: swap Bob (who came in) back out, Alice (who went out) back in
       expect(swapPlayer).toHaveBeenCalledWith(
         MATCH_A,
-        PLAYER_BOB,   // inPlayerId → becomes the "out" player on undo
-        PLAYER_ALICE  // outPlayerId → comes back in
+        PLAYER_BOB, // inPlayerId → becomes the "out" player on undo
+        PLAYER_ALICE // outPlayerId → comes back in
       );
     });
   });
