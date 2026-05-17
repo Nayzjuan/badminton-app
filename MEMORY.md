@@ -5,7 +5,33 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-16)
+## SESSION STATE (Last Updated: 2026-05-17)
+
+### Code-Quality Refactor Pass (2026-05-17) — Chunk B + Minor Issue Fixes — ALL COMPLETE
+
+**Context:** External audit surfaced 9 issues in `src/hooks/*`, `src/app/actions/*`. B-8 was already fixed; B-9 deferred. Fixed B-1 through B-7 in 6 commits, then fixed all 5 minor issues flagged in the review. Every step validated with tsc, lint, vitest 174/174, and independent review gate.
+
+**Chunk B commits (73d8f87 → e79a772):**
+
+- `73d8f87` **B-1:** `getAuthenticatedUser()` → `_shared.ts`; `createUnknownProfile()` → `lib/utils.ts`; replaced inline patterns across `match.ts`, `swap-player.ts`, `dev.ts`, both hooks.
+- `6b7c0d3` **B-2:** `use-match-alerts.ts` dynamic import → static import; `match.ts` `getServiceClient()` wrapper removed.
+- `74fd2a2` **B-3:** `use-queue.ts` `leaveQueue` now delegates to `checkoutPlayer` server action — fixes silent draft-cleanup bypass (`checkout_player_cleanup_drafts` RPC was never called).
+- `d186c87` **B-4:** `sessions.ts` (4 functions) + `matchmaking.ts` (`callNextMatch`): inline 2-path organizer checks → `isSessionOrganizer()`.
+- `81988fe` **B-5:** New `src/hooks/use-enriched-matches.ts` shared hook; `includeDrafts: boolean` controls draft firewall; `onProfilesLoaded` callback for organizer profiles Map sync. Removes duplicated 4-query enrichment from both consumer hooks.
+- `e79a772` **B-6:** `useAction` factory at module scope (replaces 4 identical action wrappers); 4 derived-state slices memoized with `useMemo`.
+
+**Minor issue fix commit (7a7ac72):**
+
+- `sessions.ts` `toggleAutoMatchmaking` + `getSessionForOrganizer`: removed redundant pre-fetch of `sessions.created_by` — `isSessionOrganizer` already does that query.
+- `matchmaking.ts` `callNextMatch`: removed duplicate `createServerSupabaseClient()` instantiation; `is_auto_matchmaking_on` read now uses service client — **real bug fix**: co-organizers were silently getting null from the RLS-scoped client.
+- `_shared.ts`: fixed JSDoc placement for `isSessionOrganizer`.
+- `use-enriched-matches.ts`: removed `courtsRef` from `useCallback` dep array (stable ref identity, redundant).
+- `use-organizer-data.ts` `useAction`: added dep-array contract comment.
+- `tests/unit/matchmaking-engine.test.ts`: updated 3 test mock setups to reflect `is_auto_matchmaking_on` moving to the service client.
+
+**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent review: LGTM.
+
+---
 
 ### Code-Quality Refactor Pass (2026-05-16) — A-1 through A-5 — ALL COMPLETE
 
@@ -391,6 +417,7 @@ This was my mistake — I should have read the function source before invoking i
 
 ### Immediate Next Steps
 
+- **(Optional) B-9 (deferred):** `updateTimeLimit` in `use-organizer-data.ts` has optimistic-update + rollback logic intentionally excluded from `useAction` factory in B-6. Revisit if the pattern is simplified later.
 - (Optional) Add new Wrapped award metadata to `tests/unit/` or scaffold a per-award smoke test that verifies trigger conditions against a synthetic session.
 - (Optional) Leaderboard Direction A — plan exists at `~/.claude/plans/idempotent-meandering-wigderson.md`. Fonts, YouStrip, LeaderboardPodium, StadiumLeaderboardRow, leaderboard-page.tsx Stadium branch — all new files, no existing files modified.
 - Apply the P0–P1 UX fixes from DASHBOARD_UX_AUDIT.md: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
