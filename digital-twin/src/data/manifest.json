@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-05-10T06:50:01.439Z",
+  "_lastExtracted": "2026-05-17T05:22:02.961Z",
   "tables": [
     {
       "name": "profiles",
@@ -1095,27 +1095,50 @@
     {
       "name": "court_status",
       "typeName": "CourtStatus",
-      "values": ["available", "in_use", "closed"]
+      "values": [
+        "available",
+        "in_use",
+        "closed"
+      ]
     },
     {
       "name": "queue_status",
       "typeName": "QueueStatus",
-      "values": ["waiting", "on_deck", "playing", "left"]
+      "values": [
+        "waiting",
+        "on_deck",
+        "playing",
+        "left",
+        "drafted"
+      ]
     },
     {
       "name": "match_status",
       "typeName": "MatchStatus",
-      "values": ["pending", "in_progress", "completed", "cancelled"]
+      "values": [
+        "pending",
+        "in_progress",
+        "completed",
+        "cancelled"
+      ]
     },
     {
       "name": "scoring_format",
       "typeName": "ScoringFormat",
-      "values": ["single", "best_of_3", "best_of_5"]
+      "values": [
+        "single",
+        "best_of_3",
+        "best_of_5"
+      ]
     },
     {
       "name": "match_origin",
       "typeName": "MatchOrigin",
-      "values": ["auto", "manual", "modified"]
+      "values": [
+        "auto",
+        "manual",
+        "modified"
+      ]
     }
   ],
   "rpcs": [
@@ -1403,6 +1426,130 @@
         }
       ],
       "note": ""
+    },
+    {
+      "name": "revert_match_to_active",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "clear_on_deck_match_atomic",
+      "returns": "string[]",
+      "args": [
+        {
+          "name": "p_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "publish_match",
+      "returns": "string",
+      "args": [
+        {
+          "name": "p_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_user_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "publish_all_drafts",
+      "returns": "{ success: boolean; error?: string; published_count?: number; skipped_count?: number; }",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_user_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "checkout_player_cleanup_drafts",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_player_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "join_queue",
+      "returns": "{ success: boolean; error?: string; action?: string; games_played?: number }",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_player_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "remove_player_from_queue_organizer",
+      "returns": "string[]",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_player_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
     }
   ],
   "constants": [
@@ -1489,6 +1636,13 @@
   ],
   "actions": [
     {
+      "file": "_shared.ts",
+      "functions": [
+        "getAuthenticatedUser",
+        "isSessionOrganizer"
+      ]
+    },
+    {
       "file": "auth.ts",
       "functions": [
         "signInAnonymously",
@@ -1500,24 +1654,29 @@
     },
     {
       "file": "dev.ts",
-      "functions": ["seedTestData", "seedNamedPlayers", "clearSessionData"]
+      "functions": [
+        "seedTestData",
+        "seedNamedPlayers",
+        "clearSessionData"
+      ]
     },
     {
       "file": "h2h.ts",
-      "functions": ["getH2HRecord"]
+      "functions": [
+        "getH2HRecord"
+      ]
     },
     {
       "file": "leaderboard.ts",
-      "functions": ["getSessionLeaderboard", "getAllTimeLeaderboard", "getPlayerStats"]
+      "functions": [
+        "getSessionLeaderboard",
+        "getAllTimeLeaderboard",
+        "getPlayerStats"
+      ]
     },
     {
-      "file": "match.ts",
+      "file": "match-drafts.ts",
       "functions": [
-        "submitMatchScore",
-        "endMatchAction",
-        "updateMatchDetails",
-        "cancelMatchAction",
-        "createManualMatchAction",
         "clearOnDeckMatch",
         "reorderOnDeckMatches",
         "publishMatchAction",
@@ -1525,20 +1684,46 @@
       ]
     },
     {
+      "file": "match-lifecycle.ts",
+      "functions": [
+        "submitMatchScore",
+        "endMatchAction",
+        "updateMatchDetails",
+        "cancelMatchAction",
+        "createManualMatchAction"
+      ]
+    },
+    {
       "file": "matchmaking.ts",
-      "functions": ["callNextMatch", "runEngineForSession", "promoteOnDeckMatchInternal"]
+      "functions": [
+        "callNextMatch",
+        "runEngineForSession",
+        "promoteOnDeckMatchInternal"
+      ]
     },
     {
       "file": "notifications.ts",
-      "functions": ["sendPlayerNotification"]
+      "functions": [
+        "sendPlayerNotification"
+      ]
     },
     {
       "file": "profile.ts",
-      "functions": ["updatePlayerSkill", "getPlayerPin", "resetPlayerPin", "updatePlayerPin"]
+      "functions": [
+        "updatePlayerSkill",
+        "getPlayerPin",
+        "resetPlayerPin",
+        "updatePlayerPin"
+      ]
     },
     {
       "file": "queue.ts",
-      "functions": ["togglePlayerPause", "checkoutPlayer", "joinQueueAction"]
+      "functions": [
+        "togglePlayerPause",
+        "checkoutPlayer",
+        "joinQueueAction",
+        "removePlayerFromQueue"
+      ]
     },
     {
       "file": "sessions.ts",
@@ -1547,20 +1732,28 @@
         "joinAsCoOrganizer",
         "toggleAutoMatchmaking",
         "updateSessionSettings",
+        "getSessionForOrganizer",
         "closeSession"
       ]
     },
     {
       "file": "swap-player.ts",
-      "functions": ["swapPlayerInMatch", "swapMatchPlayers"]
+      "functions": [
+        "swapPlayerInMatch",
+        "swapMatchPlayers"
+      ]
     },
     {
       "file": "tv.ts",
-      "functions": ["getTvData"]
+      "functions": [
+        "getTvData"
+      ]
     },
     {
       "file": "wrapped.ts",
-      "functions": ["dismissWrappedIntro"]
+      "functions": [
+        "dismissWrappedIntro"
+      ]
     }
   ],
   "channels": [],
@@ -1782,5 +1975,136 @@
     }
   ],
   "components": [],
-  "scenarios": []
+  "scenarios": [],
+  "designTokens": {
+    "fonts": [
+      {
+        "cssVar": "--font-sans",
+        "tailwindClass": "font-sans",
+        "face": "Inter",
+        "role": "Body text, UI labels, Sonner toasts",
+        "scope": "All routes"
+      },
+      {
+        "cssVar": "--font-display",
+        "tailwindClass": "font-display",
+        "face": "Barlow Condensed",
+        "role": "Hero numerals, rank numbers, leaderboard",
+        "scope": "All routes"
+      },
+      {
+        "cssVar": "--font-mono",
+        "tailwindClass": "font-mono",
+        "face": "JetBrains Mono",
+        "role": "Stats, metadata pills, monospace labels",
+        "scope": "All routes"
+      },
+      {
+        "cssVar": "--font-command",
+        "tailwindClass": "font-command",
+        "face": "Chakra Petch",
+        "role": "Organizer tab nav, card labels, command badges",
+        "scope": "/organizer/* only"
+      }
+    ],
+    "lightTokens": {
+      "--background": "oklch(0.96 0.006 245)",
+      "--foreground": "oklch(0.12 0.018 245)",
+      "--card": "oklch(1 0 0)",
+      "--card-foreground": "oklch(0.12 0.018 245)",
+      "--popover": "oklch(1 0 0)",
+      "--popover-foreground": "oklch(0.12 0.018 245)",
+      "--primary": "oklch(0.55 0.16 155)",
+      "--primary-foreground": "oklch(1 0 0)",
+      "--secondary": "oklch(0.94 0.008 245)",
+      "--secondary-foreground": "oklch(0.12 0.018 245)",
+      "--muted": "oklch(0.93 0.008 245)",
+      "--muted-foreground": "oklch(0.46 0.014 245)",
+      "--accent": "oklch(0.68 0.17 62)",
+      "--accent-foreground": "oklch(0.12 0.018 245)",
+      "--destructive": "oklch(0.55 0.22 22)",
+      "--destructive-foreground": "oklch(1 0 0)",
+      "--border": "oklch(0.86 0.01 245)",
+      "--input": "oklch(0.93 0.008 245)",
+      "--ring": "oklch(0.55 0.16 155)",
+      "--radius": "0.875rem",
+      "--command": "oklch(0.55 0.16 188)",
+      "--cc-bg": "oklch(0.94 0.01 235)",
+      "--cc-bg-2": "oklch(0.99 0.005 235)",
+      "--cc-bg-3": "oklch(0.91 0.014 235)",
+      "--cc-border": "oklch(0.8 0.022 235)",
+      "--cc-border-hi": "oklch(0.65 0.03 235)",
+      "--cc-accent": "oklch(0.5 0.18 188)",
+      "--cc-accent-dim": "oklch(0.5 0.18 188 / 0.1)",
+      "--cc-accent-glow": "oklch(0.5 0.18 188 / 0.18)",
+      "--cc-accent-text": "oklch(0.5 0.18 188)",
+      "--cc-amber": "oklch(0.58 0.18 62)",
+      "--cc-amber-dim": "oklch(0.58 0.18 62 / 0.12)",
+      "--cc-blue": "oklch(0.48 0.2 255)",
+      "--cc-blue-dim": "oklch(0.48 0.2 255 / 0.12)",
+      "--cc-red": "oklch(0.52 0.22 25)",
+      "--cc-red-dim": "oklch(0.52 0.22 25 / 0.1)",
+      "--cc-t1": "oklch(0.18 0.02 238)",
+      "--cc-t2": "oklch(0.4 0.018 238)",
+      "--cc-t3": "oklch(0.58 0.016 238)",
+      "--cc-header-bg": "oklch(0.99 0.005 235 / 0.97)",
+      "--cc-grid-color": "oklch(0.72 0.022 235 / 0.3)",
+      "--cc-scan-color": "oklch(0.5 0.18 188 / 0.02)",
+      "--cc-deck-border": "oklch(0.5 0.18 188 / 0.4)",
+      "--cc-badge-progress-bg": "oklch(0.58 0.18 62 / 0.14)",
+      "--cc-btn-on-accent": "oklch(1 0 0)",
+      "--court-cyan-hsl": "180 100% 70%",
+      "--court-lime-hsl": "80 100% 60%",
+      "--amber-accent-hsl": "35 100% 60%"
+    },
+    "darkTokens": {
+      "--background": "oklch(0.07 0.012 245)",
+      "--foreground": "oklch(0.96 0.005 245)",
+      "--card": "oklch(0.1 0.014 245)",
+      "--card-foreground": "oklch(0.96 0.005 245)",
+      "--popover": "oklch(0.1 0.014 245)",
+      "--popover-foreground": "oklch(0.96 0.005 245)",
+      "--primary": "oklch(0.76 0.17 155)",
+      "--primary-foreground": "oklch(0.07 0.012 245)",
+      "--secondary": "oklch(0.18 0.018 245)",
+      "--secondary-foreground": "oklch(0.96 0.005 245)",
+      "--muted": "oklch(0.14 0.016 245)",
+      "--muted-foreground": "oklch(0.56 0.012 245)",
+      "--accent": "oklch(0.78 0.17 62)",
+      "--accent-foreground": "oklch(0.07 0.012 245)",
+      "--destructive": "oklch(0.65 0.2 22)",
+      "--destructive-foreground": "oklch(1 0 0)",
+      "--border": "oklch(0.18 0.018 245)",
+      "--input": "oklch(0.14 0.016 245)",
+      "--ring": "oklch(0.76 0.17 155)",
+      "--command": "oklch(0.79 0.18 188)",
+      "--cc-bg": "oklch(0.14 0.018 238)",
+      "--cc-bg-2": "oklch(0.19 0.02 238)",
+      "--cc-bg-3": "oklch(0.23 0.022 240)",
+      "--cc-border": "oklch(0.3 0.025 240)",
+      "--cc-border-hi": "oklch(0.44 0.032 240)",
+      "--cc-accent": "oklch(0.79 0.18 188)",
+      "--cc-accent-dim": "oklch(0.79 0.18 188 / 0.14)",
+      "--cc-accent-glow": "oklch(0.79 0.18 188 / 0.28)",
+      "--cc-accent-text": "oklch(0.79 0.18 188)",
+      "--cc-amber": "oklch(0.78 0.17 62)",
+      "--cc-amber-dim": "oklch(0.78 0.17 62 / 0.14)",
+      "--cc-blue": "oklch(0.65 0.19 255)",
+      "--cc-blue-dim": "oklch(0.65 0.19 255 / 0.14)",
+      "--cc-red": "oklch(0.65 0.21 25)",
+      "--cc-red-dim": "oklch(0.65 0.21 25 / 0.1)",
+      "--cc-t1": "oklch(0.94 0.008 238)",
+      "--cc-t2": "oklch(0.68 0.014 238)",
+      "--cc-t3": "oklch(0.48 0.016 238)",
+      "--cc-header-bg": "oklch(0.11 0.016 238 / 0.95)",
+      "--cc-grid-color": "oklch(0.3 0.025 240 / 0.12)",
+      "--cc-scan-color": "oklch(0.79 0.18 188 / 0.04)",
+      "--cc-deck-border": "oklch(0.79 0.18 188 / 0.5)",
+      "--cc-badge-progress-bg": "oklch(0.78 0.17 62 / 0.14)",
+      "--cc-btn-on-accent": "oklch(0.11 0.016 238)",
+      "--court-cyan-hsl": "180 100% 70%",
+      "--court-lime-hsl": "80 100% 60%",
+      "--amber-accent-hsl": "35 100% 60%"
+    }
+  }
 }

@@ -43,8 +43,8 @@
 
 ```ts
 // RLS-respecting — use for auth lookups and player-facing reads
-createBrowserClient(); // client components
-createServerClient(); // server components / actions
+createBrowserSupabaseClient(); // client components
+createServerSupabaseClient(); // server components / actions
 
 // Bypasses RLS — use only for cross-user mutations in server actions
 createServiceClient(); // uses service role key
@@ -60,6 +60,17 @@ createServiceClient(); // uses service role key
 - `session_closed` — redirects all connected players to `/wrapped/{sessionId}/{playerId}`.
 - `auto_matchmaking_toggled` — `{ isOn: boolean }` → syncs auto-matchmaking state to all co-organizers (bypasses the sessions RLS SELECT policy that would silently drop postgres_changes for non-creator organizers).
 - `cap_saturation` — `{ affectedPlayerIds, reason }` → fires when `MAX_PARTNERSHIP_REPEATS` blocks every possible team split. Surfaces a `CapSaturationNotice` banner in the on-deck panel so the organizer knows to intervene manually.
+
+### Shared Server Action Helpers
+
+**File:** `src/app/actions/_shared.ts`
+
+Two helpers used by all organizer-gated server actions to avoid reimplementing the same auth/organizer checks:
+
+- **`getAuthenticatedUser()`** — thin wrapper around `auth.getUser()`; all server actions that need auth call this instead of instantiating their own server client.
+- **`isSessionOrganizer(userId, sessionId)`** — two-path organizer check: fast-path via `sessions.created_by` equality, then fallback lookup in `session_organizers`; used by all organizer-gated actions.
+
+Both functions use the service-role client to bypass RLS.
 
 ---
 
@@ -699,7 +710,7 @@ Does not affect `games_played`. Does not change `queue_status`.
 
 ### 3.15 Player Self-Scoring
 
-**File:** `src/app/actions/match.ts`, `src/components/player/match-alert.tsx`
+**File:** `src/app/actions/match-lifecycle.ts`, `src/components/player/match-alert.tsx`
 
 Any player assigned to an `in_progress` match can submit the final score from their phone. Submission is guarded: only players in `match_players` for that match can call the action. Triggers the same cascade as organizer score entry (games_played increment, on-deck promotion, engine refill).
 
@@ -1083,9 +1094,11 @@ src/
       dev.ts           # Dev-only actions (seed data, reset state)
       h2h.ts           # getH2HRecord — calls get_h2h_record RPC
       leaderboard.ts   # getSessionLeaderboard, getAllTimeLeaderboard, getPlayerStats
-      match.ts         # submitMatchScore, endMatchAction, cancelMatchAction, updateMatchDetails,
-                       #   createManualMatchAction, clearOnDeckMatch, reorderOnDeckMatches,
-                       #   publishMatchAction, publishAllDraftMatchesAction
+      _shared.ts       # getAuthenticatedUser(), isSessionOrganizer() — used by all organizer actions
+      match-lifecycle.ts # submitMatchScore, endMatchAction, cancelMatchAction, updateMatchDetails,
+                       #   createManualMatchAction
+      match-drafts.ts  # clearOnDeckMatch, reorderOnDeckMatches, publishMatchAction,
+                       #   publishAllDraftMatchesAction
       matchmaking.ts   # callNextMatch, runEngineForSession, runEngineInternal, promoteOnDeckMatchInternal
       notifications.ts # sendPlayerNotification — Web Push via VAPID
       profile.ts       # updatePlayerSkill, getPlayerPin, resetPlayerPin, updatePlayerPin
@@ -1150,6 +1163,9 @@ src/
       share-session-dialog.tsx   # QR code + copy link dialog for organizer
       dashboard-cards-preview.tsx # Sandbox preview component
       dev-tools.tsx              # Dev tools panel — env-gated (development only)
+      court-card.tsx             # CourtCard — extracted from active-courts.tsx
+      sortable-card.tsx          # SortableCard, OverlayCard, CapSaturationNotice — from on-deck-panel.tsx
+      edit-match-dialog.tsx      # Score correction + revert-to-active — extracted from match-history-panel.tsx
 
     player/
       player-dashboard.tsx       # Player view shell (My Status, Live Courts, Waitlist tabs)
@@ -1162,6 +1178,8 @@ src/
       match-history.tsx          # Player's in-session match history
       all-sessions-history.tsx   # Cross-session match history (bottom sheet)
       player-match-alert-preview.tsx # Sandbox preview component
+      score-input-card.tsx       # Player score submission card — uses useScoreForm
+      my-status-tab.tsx          # MyStatusTab + QueueSubTab — extracted from player-dashboard.tsx
 
     leaderboard/
       leaderboard-page.tsx       # Leaderboard shell — routes all variants to StadiumLeaderboard
@@ -1174,7 +1192,10 @@ src/
     wrapped/
       wrapped-intro.tsx          # Full-screen 9-layer animated intro overlay
       wrapped-award-card.tsx     # Individual award card (rarity-coded, capture-safe)
-      wrapped-shell.tsx          # Wrapped page layout shell
+      wrapped-shell.tsx          # Thin composer — wraps WrappedStatsCard, WrappedAwardsFeed, WrappedMatchRecap
+      wrapped-stats-card.tsx     # Stats summary card — extracted from wrapped-shell.tsx
+      wrapped-awards-feed.tsx    # Awards feed section — extracted from wrapped-shell.tsx
+      wrapped-match-recap.tsx    # Match recap with inline styles — extracted from wrapped-shell.tsx
 
     notifications/
       notification-enrollment.tsx # Push notification permission + subscription UI
@@ -1192,6 +1213,7 @@ src/
       sheet.tsx                  # Shadcn Sheet primitive
 
     login-form.tsx               # Anonymous auth form (name + skill + 4-digit PIN) with Zod validation
+    reconnect-modal.tsx          # PIN reconnect modal — extracted from login-form.tsx
     pwa-nav-bar.tsx              # PWA bottom navigation bar
     session-list.tsx             # Session cards on organizer / player landing pages
     sign-out-button.tsx          # Sign out button
@@ -1199,26 +1221,34 @@ src/
     theme-provider.tsx           # next-themes ThemeProvider wrapper
 
   hooks/
-    use-organizer-data.ts        # All organizer Realtime state (ref pattern, monotonic seq, 5 channels)
+    use-organizer-data.ts        # Thin composer over 4 sub-hooks — public API unchanged
+    use-organizer-courts.ts      # Court state, courtsRef, court CRUD + updateTimeLimit
+    use-organizer-queue.ts       # Queue state, profiles, pause/remove, realtime subs
+    use-organizer-matches.ts     # Match enrichment, all match + swap actions, realtime subs
+    use-organizer-session.ts     # Live session, realtimeConnected, capSaturation, broadcast
+    use-enriched-matches.ts      # Shared enrichment hook (organizer + player); includeDrafts param
     use-session-data.ts          # Player-side read-only session state
     use-queue.ts                 # Player's own queue entry + join/leave
     use-player-match.ts          # Player's current match assignment
     use-h2h.ts                   # H2H record fetch + cache
     use-leaderboard.ts           # Leaderboard data fetch + Realtime
     use-match-alerts.ts          # Player match alert state (on-deck + playing)
+    use-match-history.ts         # Completed + cancelled match history with realtime refresh
+    use-swap-state.ts            # Tap-to-Swap state machine; Layer 2 race guard; bench + direct swap
+    use-score-form.ts            # Shared score input state (player + organizer); enforces 0–30 range
     use-organizer-broadcast.ts   # Server broadcast listener (organizer_intervention, session_closed)
     use-visibility-refresh.ts    # Re-fetch on tab focus / app foreground
 
   lib/
     matchmaking-core.ts          # Pure: computePriorityScore, scoreCandidates, buildCombinationGroup,
                                  #   snakeDraft, rotatedDraft, isDiversityViolation, getEffectiveLookback
-    constants.ts                 # All numeric thresholds (single source of truth)
+    constants.ts                 # All numeric thresholds + SKILL_META (single source of truth for all 6 skill levels)
     vip-config.ts                # VIP_THEMES record — 10 presets, neon + holo configs
     wrapped-awards.ts            # AWARD_META record — all award slugs with emoji/title/subtitle/rarity
     broadcast.ts                 # Server-side REST broadcast helpers (fire-and-forget)
     realtime.ts                  # Supabase channel subscriptions (courts, queue, matches, etc.)
     validate.ts                  # isValidUUID — type-narrowing UUID guard for all server actions
-    utils.ts                     # cn() and other shared utilities
+    utils.ts                     # cn(), createUnknownProfile(id) — fallback profile for unknown player IDs
     notifications/
       push-client.ts             # Browser-side push subscription registration
       audio.ts                   # In-app notification audio (louder on Android)
@@ -1230,8 +1260,8 @@ src/
     leaderboard.ts               # SessionLeaderboardEntry, AllTimeEntry, PlayerStreak types
 
   utils/supabase/
-    client.ts                    # createBrowserClient
-    server.ts                    # createServerClient
+    client.ts                    # createBrowserSupabaseClient
+    server.ts                    # createServerSupabaseClient
     service.ts                   # createServiceClient (service role, bypasses RLS)
     middleware.ts                # Supabase middleware session refresh helper
 
@@ -1242,6 +1272,9 @@ tests/
     session-simulation.test.ts   # Multi-round simulations (30-player, diversity saturation)
     queue-actions.test.ts        # Queue join/leave/ghost-requeue guards
     match-origin-tracking.test.ts # origin enum transitions and stickiness
+    use-score-form.test.ts       # Score validation boundaries (SF-1–8); clearError regression pin
+    use-swap-state.test.ts       # Swap state machine (SS-1–10); undo arg reversal pin (SS-7)
+    use-match-history.test.ts    # Match history enrichment (MH-1–9); createUnknownProfile fallback
   e2e/
     scenario-a-swap.spec.ts      # Bench→deck swap, undo
     scenario-b-engine-flows.spec.ts # Auto-matchmaking, gate, cap
@@ -1252,6 +1285,11 @@ tests/
     scenario-g-h2h-records.spec.ts # H2H strip after first meeting
     scenario-h-diversity.spec.ts # Anti-repeat + rotated draft
     scenario-i-thirty-player-simulation.spec.ts # 30-player load simulation
+    scenario-k-auth-login.spec.ts        # Login, reconnect modal
+    scenario-l-session-management.spec.ts # Create session, add courts, toggle auto-matchmaking
+    scenario-m-player-queue.spec.ts       # Join queue, see position number
+    scenario-n-leaderboard.spec.ts        # Leaderboard tab (player + organizer)
+    scenario-o-player-scoring.spec.ts     # In-progress score input + submission
   helpers/
     teardown.ts                  # resetSandboxSession(), seedSession()
     init-sandbox.ts              # One-time sandbox session setup
@@ -1298,7 +1336,7 @@ APP_MANIFEST.md                  # This file — the living document
 19. **Skill level has 6 values** — `upper_beginner` was removed. The enum is: `beginner`, `lower_intermediate`, `intermediate`, `upper_intermediate`, `lower_advanced`, `advanced`. Never reference `upper_beginner` in code or migrations.
 20. **`sessions.ts` not `session.ts`** — the actions file is `sessions.ts` (plural). Don't create a `session.ts` duplicate.
 21. **`is_auto_matchmaking_on` excluded from postgres_changes** — sessions RLS SELECT only grants access to the row creator. Co-organizers would never receive the UPDATE event. This field is synced exclusively via the `auto_matchmaking_toggled` broadcast. Never try to sync it through the sessions postgres_changes channel.
-22. **On-deck match actions are in `match.ts`, not `matchmaking.ts`** — `clearOnDeckMatch`, `reorderOnDeckMatches`, `publishMatchAction`, and `publishAllDraftMatchesAction` all live in `src/app/actions/match.ts`. Only the engine logic (`callNextMatch`, `runEngineForSession`) lives in `matchmaking.ts`.
+22. **On-deck match actions are in `match-drafts.ts`, not `matchmaking.ts`** — `clearOnDeckMatch`, `reorderOnDeckMatches`, `publishMatchAction`, and `publishAllDraftMatchesAction` all live in `src/app/actions/match-drafts.ts`. Match lifecycle actions (`submitMatchScore`, `endMatchAction`, `cancelMatchAction`, `updateMatchDetails`, `createManualMatchAction`) live in `src/app/actions/match-lifecycle.ts`. Only the engine logic (`callNextMatch`, `runEngineForSession`) lives in `matchmaking.ts`. The original `match.ts` was split into `match-lifecycle.ts` + `match-drafts.ts` during the Chunks A–D refactoring.
 23. **`MAX_AUTO_DRAFTS` replaces the old capacity formula** — `MAX_ON_DECK_MATCHES` and `ON_DECK_LOOKAHEAD` are no longer imported by `matchmaking.ts` (still in `constants.ts` for `simulate-engine.ts`). The live engine uses `slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)` where `totalPending` is a single atomic query counting **all** `pending` matches (published + unpublished). Do not add a separate published/draft count query — that reintroduces the race window.
 24. **`create_match_with_players` returns `NULL` on TOCTOU conflict** — `{ data: null, error: null }` from the Supabase JS client means a DB guard fired, not a hard error. Always check `rpcError` and `!matchId` **separately**: `rpcError` = DB error (fail loudly); `!matchId` with no error = graceful slot-skip (log warning, continue). If the RPC is ever changed from `RETURNS uuid` to `RETURNS SETOF uuid`, the `!matchId` detection breaks silently.
 25. **`engineRunningFor` Set is process-local only** — it prevents double-runs within a single Node.js process (e.g. two simultaneous queue joins), but is completely ineffective in Vercel serverless where each request may land on a different worker. Cross-process serialization is enforced exclusively by the DB-level TOCTOU guards inside `create_match_with_players` (migration `20260507000000`).

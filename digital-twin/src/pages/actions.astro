@@ -40,10 +40,21 @@ const annotations: Record<string, {
     desc:     'Session leaderboard (live Postgres view) and all-time leaderboard (materialized view).',
     tags:     ['Leaderboard', 'Stats'],
   },
-  'match.ts': {
-    desc:     'Score submission, match lifecycle (end / cancel / update), manual creation, and draft-mode publish controls.',
-    tags:     ['Match', 'Score', 'Draft'],
-    note:     'cancelMatchAction auto-promotes the oldest on-deck match and re-runs the engine. On-deck actions (clearOnDeckMatch, publishMatchAction, reorderOnDeckMatches) live here, not in matchmaking.ts.',
+  '_shared.ts': {
+    desc:     'Shared server action helpers: getAuthenticatedUser() and isSessionOrganizer().',
+    tags:     ['Auth', 'Shared'],
+    note:     'All organizer-gated actions call isSessionOrganizer() instead of reimplementing the two-path check. getAuthenticatedUser() wraps auth.getUser() so callers don\'t need their own server client.',
+  },
+  'match-lifecycle.ts': {
+    desc:     'Score submission and match lifecycle: end, cancel, update details, and manual match creation.',
+    tags:     ['Match', 'Score', 'Lifecycle'],
+    note:     'submitMatchScore is called by the player-side ScoreInputCard. cancelMatchAction auto-promotes the oldest on-deck match and re-runs the engine.',
+    severity: 'info',
+  },
+  'match-drafts.ts': {
+    desc:     'On-deck management and draft publishing: clear, reorder, publish single, publish all drafts.',
+    tags:     ['Match', 'Draft', 'On-Deck'],
+    note:     'On-deck actions live here, not in matchmaking.ts. Reordering updates sort_order; publishing promotes players from waiting → on_deck and enforces the stale-player guard.',
     severity: 'info',
   },
   'matchmaking.ts': {
