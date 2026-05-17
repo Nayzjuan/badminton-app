@@ -7,6 +7,31 @@
 
 ## SESSION STATE (Last Updated: 2026-05-17)
 
+### Code-Quality Refactor Pass (2026-05-17) — Chunk D: Gap Fixes — ALL COMPLETE
+
+**Context:** 3 refactor commits + 2 minor-fix commits addressing audit gaps left from Chunks B and C. Starting SHA: `9c41e17`.
+
+**Commits landed (9c41e17 → f2f2018):**
+
+- `41def3e` **D-1:** `CapSaturationNotice` (+ props interface) extracted from `on-deck-panel.tsx` → `sortable-card.tsx`. Exported as named export. `on-deck-panel.tsx` imports it from `./sortable-card`.
+- `6355c41` **D-2:** `match.ts` (1,147 lines) split into `match-lifecycle.ts` (submitMatchScore, endMatchAction, cancelMatchAction, updateMatchDetails, createManualMatchAction) and `match-drafts.ts` (clearOnDeckMatch, reorderOnDeckMatches, publishMatchAction, publishAllDraftMatchesAction). Deleted `match.ts`. Updated all import sites.
+- `8e94aa2` **D-3:** `use-organizer-data.ts` (842 lines) split into 4 focused sub-hooks:
+  - `use-organizer-courts.ts` — court CRUD, courtsRef, updateTimeLimit
+  - `use-organizer-queue.ts` — queue state, profiles, pause/remove actions, queue+profile realtime
+  - `use-organizer-matches.ts` — useEnrichedMatches wrapper, match/match_players realtime, all match actions
+  - `use-organizer-session.ts` — liveSession, realtimeConnected, capSaturation, broadcast realtime, handleChannelStatus
+  - `use-organizer-data.ts` — thin composer (245 lines); public API unchanged
+- `800413c` **D-fix-1:** Remove inline lambda wrappers for handleChannelStatus (were causing 5 subscription restarts per render); remove dead `onProfilesLoaded` param from `useOrganizerQueue`.
+- `f2f2018` **D-fix-2:** Stabilize `onProfileChange` callback via named `useCallback` + stable `fetchActiveMatchesRef` dep — eliminates profiles subscription churn on every render.
+
+**Remaining minor (cosmetic, no action needed):**
+- `MatchActionResult` type duplicated in `match-lifecycle.ts` and `match-drafts.ts` — file-local only, not exported, no runtime impact.
+- `use-organizer-data.ts` is 245 lines vs. ≤150 spec — overage is the 70-line `UseOrganizerDataResult` interface (logic is thin).
+
+**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent review: LGTM · pushed to origin/main.
+
+---
+
 ### Code-Quality Refactor Pass (2026-05-17) — Chunk C: 7 Sequential Refactor Commits — ALL COMPLETE
 
 **Context:** 7 focused refactor commits on `main` branch. Each validated with `npx tsc --noEmit` + `npx eslint --max-warnings=0` before committing. All 174 vitest tests pass at the end.
