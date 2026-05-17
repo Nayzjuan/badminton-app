@@ -107,8 +107,14 @@ export function useOrganizerData(
 
   // ── Session sub-hook ──────────────────────────────────────────
   // Owns: liveSession, realtimeConnected, capSaturation, channel health tracking.
-  const { liveSession, setSession, realtimeConnected, capSaturation, dismissCapSaturation, handleChannelStatus } =
-    useOrganizerSession(sessionId, initialSession, supabase);
+  const {
+    liveSession,
+    setSession,
+    realtimeConnected,
+    capSaturation,
+    dismissCapSaturation,
+    handleChannelStatus,
+  } = useOrganizerSession(sessionId, initialSession, supabase);
 
   // ── Courts sub-hook ───────────────────────────────────────────
   // Needs setSession for the updateTimeLimit optimistic update.
@@ -121,13 +127,18 @@ export function useOrganizerData(
     updateCourtStatus,
     removeCourt,
     updateTimeLimit,
-  } = useOrganizerCourts(sessionId, supabase, setSession, (id, ok) => handleChannelStatus(id, ok));
+  } = useOrganizerCourts(sessionId, supabase, setSession, handleChannelStatus);
 
   // ── onProfilesLoaded bridge ───────────────────────────────────
   // When useEnrichedMatches finishes enriching match players, it fires this
   // callback with the resulting profile Map. We merge it into the queue's
   // profiles state so player cards in the queue panel reflect updated data.
   // useCallback with setProfiles (stable dispatcher) → no deps needed.
+  // onProfilesLoaded bridges useOrganizerMatches → useOrganizerQueue:
+  // when match enrichment fetches player profiles, it merges them into the
+  // queue's profiles Map so player cards in the queue panel stay fresh.
+  // setProfiles is declared after the queue hook; captured via closure — safe
+  // because React state dispatchers are stable across renders.
   const onProfilesLoaded = useCallback(
     (profileMap: Map<string, Profile>) => {
       setProfiles((prev) => {
@@ -136,9 +147,8 @@ export function useOrganizerData(
         return next;
       });
     },
-    // setProfiles is captured below via closure; declared after the queue hook.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+    [] // stable: setProfiles dispatcher never changes identity
   );
 
   // ── Matches sub-hook ──────────────────────────────────────────
@@ -175,8 +185,8 @@ export function useOrganizerData(
     onProfilesLoaded,
     fetchCourts,
     () => fetchQueueRef.current(),
-    (id, ok) => handleChannelStatus(id, ok),
-    (id, ok) => handleChannelStatus(id, ok)
+    handleChannelStatus,
+    handleChannelStatus
   );
 
   // ── Queue sub-hook ────────────────────────────────────────────
@@ -200,9 +210,8 @@ export function useOrganizerData(
   } = useOrganizerQueue(
     sessionId,
     supabase,
-    onProfilesLoaded,
-    (id, ok) => handleChannelStatus(id, ok),
-    (id, ok) => handleChannelStatus(id, ok),
+    handleChannelStatus,
+    handleChannelStatus,
     () => fetchActiveMatchesRef.current()
   );
 

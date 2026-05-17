@@ -8,7 +8,10 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { subscribeToQueue, subscribeToProfiles } from "@/lib/realtime";
-import { togglePlayerPause, removePlayerFromQueue as removePlayerFromQueueAction } from "@/app/actions/queue";
+import {
+  togglePlayerPause,
+  removePlayerFromQueue as removePlayerFromQueueAction,
+} from "@/app/actions/queue";
 import type { Profile, QueueWithWaitTime } from "@/types/database";
 
 /**
@@ -37,7 +40,6 @@ function useAction<TArgs extends unknown[]>(
 export function useOrganizerQueue(
   sessionId: string,
   supabase: SupabaseClient<Database>,
-  onProfilesLoaded?: (profileMap: Map<string, Profile>) => void,
   onChannelStatusQueue?: (channelId: string, connected: boolean) => void,
   onChannelStatusProfiles?: (channelId: string, connected: boolean) => void,
   /**
