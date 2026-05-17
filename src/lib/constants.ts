@@ -150,3 +150,21 @@ export const MIN_FREE_POOL_FOR_ON_DECK = 4;
  * Manual organizer assignment is the only bypass.
  */
 export const MAX_PARTNERSHIP_REPEATS = 2;
+
+// ── Skill level display metadata ─────────────────────────────────────────────
+// Single source of truth for skill level labels, abbreviations, and dot colors.
+// Used by match-roster.tsx (on-deck / active courts) and tv-board.tsx (TV view).
+//
+// lower_advanced uses fuchsia (not amber) to avoid colliding with
+// the app's amber semantic for "pending / on-deck / warning".
+
+import type { SkillLevel } from "@/types/database";
+
+export const SKILL_META: Record<SkillLevel, { label: string; abbr: string; dot: string }> = {
+  beginner:           { label: "Beginner",           abbr: "Beg",   dot: "bg-emerald-500 dark:bg-emerald-400" },
+  lower_intermediate: { label: "Lower Intermediate", abbr: "L.Int", dot: "bg-teal-500    dark:bg-teal-400"    },
+  intermediate:       { label: "Intermediate",       abbr: "Int",   dot: "bg-sky-500     dark:bg-sky-400"     },
+  upper_intermediate: { label: "Upper Intermediate", abbr: "U.Int", dot: "bg-indigo-500  dark:bg-indigo-400"  },
+  lower_advanced:     { label: "Lower Advanced",     abbr: "L.Adv", dot: "bg-fuchsia-500 dark:bg-fuchsia-400" },
+  advanced:           { label: "Advanced",           abbr: "Adv",   dot: "bg-purple-500  dark:bg-purple-400"  },
+};

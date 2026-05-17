@@ -19,6 +19,7 @@ import { VipTag } from "@/components/ui/vip-tag";
 import { getTvData } from "@/app/actions/tv";
 import type { TvMatch, TvSession } from "@/app/actions/tv";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { SKILL_META } from "@/lib/constants";
 import type { SkillLevel } from "@/types/database";
 
 // ─── Props ────────────────────────────────────────────────────
@@ -43,16 +44,12 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
   }, [sessionId]);
 
   const refreshRef = useRef(refresh);
+  // eslint-disable-next-line react-hooks/refs
   refreshRef.current = refresh;
 
   useEffect(() => {
     // Real-time subscriptions (fire when match state or players change)
-    const unsubMatches = subscribeToMatches(
-      supabase,
-      sessionId,
-      () => refreshRef.current(),
-      "tv"
-    );
+    const unsubMatches = subscribeToMatches(supabase, sessionId, () => refreshRef.current(), "tv");
     const unsubPlayers = subscribeToMatchPlayers(
       supabase,
       sessionId,
@@ -76,7 +73,6 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#FAFAF7] dark:bg-background">
-
       {/* ── Header ──────────────────────────────────────────── */}
       <header
         className="shrink-0 flex items-center justify-between px-8 py-4
@@ -84,9 +80,7 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
                    dark:border-b dark:border-border shadow-lg"
       >
         <div>
-          <h1 className="text-2xl font-black text-white tracking-tight">
-            {session.name}
-          </h1>
+          <h1 className="text-2xl font-black text-white tracking-tight">{session.name}</h1>
           <p className="text-xs font-medium text-white/50 mt-0.5 uppercase tracking-widest">
             Live Scoreboard
           </p>
@@ -95,8 +89,10 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
         <div className="flex items-center gap-5">
           <LiveClock />
           {!session.is_active && (
-            <span className="rounded-full bg-white/15 border border-white/30 px-3 py-1
-                             text-[10px] font-bold uppercase tracking-wider text-white/70">
+            <span
+              className="rounded-full bg-white/15 border border-white/30 px-3 py-1
+                             text-[10px] font-bold uppercase tracking-wider text-white/70"
+            >
               Session Closed
             </span>
           )}
@@ -109,7 +105,6 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
 
       {/* ── Two-column body ─────────────────────────────────── */}
       <div className="flex-1 grid grid-cols-2 min-h-0">
-
         {/* Active Courts */}
         <section className="border-r border-slate-200 dark:border-border overflow-y-auto p-6 space-y-5">
           <SectionLabel
@@ -121,9 +116,7 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
           {inProgress.length === 0 ? (
             <EmptyState message="No courts in play right now" />
           ) : (
-            inProgress.map((match) => (
-              <TvCourtCard key={match.id} match={match} />
-            ))
+            inProgress.map((match) => <TvCourtCard key={match.id} match={match} />)
           )}
         </section>
 
@@ -138,9 +131,7 @@ export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
           {onDeck.length === 0 ? (
             <EmptyState message="No matches queued yet" />
           ) : (
-            onDeck.map((match, idx) => (
-              <TvOnDeckCard key={match.id} match={match} index={idx} />
-            ))
+            onDeck.map((match, idx) => <TvOnDeckCard key={match.id} match={match} index={idx} />)
           )}
         </section>
       </div>
@@ -185,9 +176,7 @@ function TvCourtCard({ match }: { match: TvMatch }) {
     >
       {/* Card header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
-        <h3 className="text-2xl font-black text-white">
-          {match.court_name ?? "Court"}
-        </h3>
+        <h3 className="text-2xl font-black text-white">{match.court_name ?? "Court"}</h3>
         <span
           className="shrink-0 rounded-full border px-3 py-0.5
                      text-xs font-bold uppercase tracking-widest
@@ -197,11 +186,7 @@ function TvCourtCard({ match }: { match: TvMatch }) {
         </span>
         {/* Live match timer — TV-scale text for long-distance legibility */}
         {match.started_at && (
-          <MatchTimer
-            startedAt={match.started_at}
-            variant="live"
-            className="text-base"
-          />
+          <MatchTimer startedAt={match.started_at} variant="live" className="text-base" />
         )}
         {match.is_mixed_level && <MixedLevelBadge />}
       </div>
@@ -217,9 +202,8 @@ function TvCourtCard({ match }: { match: TvMatch }) {
 function TvOnDeckCard({ match, index }: { match: TvMatch; index: number }) {
   const teamA = match.players.filter((p) => p.team === "a");
   const teamB = match.players.filter((p) => p.team === "b");
-  const minutesWaiting = Math.floor(
-    (Date.now() - new Date(match.created_at).getTime()) / 60_000
-  );
+  // eslint-disable-next-line react-hooks/purity
+  const minutesWaiting = Math.floor((Date.now() - new Date(match.created_at).getTime()) / 60_000);
 
   return (
     <div
@@ -240,9 +224,7 @@ function TvOnDeckCard({ match, index }: { match: TvMatch; index: number }) {
           {match.is_mixed_level && <MixedLevelBadge />}
         </div>
         <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
-          {minutesWaiting === 0
-            ? "Just formed"
-            : `${minutesWaiting}m ago`}
+          {minutesWaiting === 0 ? "Just formed" : `${minutesWaiting}m ago`}
         </span>
       </div>
 
@@ -275,17 +257,7 @@ interface TvPlayerInfo {
   vip_theme: string | null;
 }
 
-// All 6 levels shown distinctly — mirrors match-roster.tsx palette.
-// fuchsia for lower_advanced (not amber) avoids semantic collision with
-// the app's amber = "pending / on-deck / warning" usage.
-const TV_SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner:           { dot: "bg-emerald-500 dark:bg-emerald-400", abbr: "Beg"   },
-  lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400",    abbr: "L.Int" },
-  intermediate:       { dot: "bg-sky-500     dark:bg-sky-400",     abbr: "Int"   },
-  upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400",  abbr: "U.Int" },
-  lower_advanced:     { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
-  advanced:           { dot: "bg-purple-500  dark:bg-purple-400",  abbr: "Adv"   },
-};
+// SKILL_META from constants.ts provides dot + abbr for all 6 levels.
 
 function TvTeamsGrid({
   teamA,
@@ -304,10 +276,7 @@ function TvTeamsGrid({
   if (!a0 || !a1 || !b0 || !b1) return null;
 
   return (
-    <div
-      className="grid gap-y-3 px-4 py-4"
-      style={{ gridTemplateColumns: "1fr 64px 1fr" }}
-    >
+    <div className="grid gap-y-3 px-4 py-4" style={{ gridTemplateColumns: "1fr 64px 1fr" }}>
       {/* Row 1 — column labels */}
       <div style={{ gridColumn: 1, gridRow: 1 }}>
         <span
@@ -381,7 +350,7 @@ function TvPlayerRow({
   teamColor: string;
 }) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
-  const { dot, abbr } = TV_SKILL_CONFIG[player.skill_level] ?? { dot: "bg-slate-400", abbr: "?" };
+  const { dot, abbr } = SKILL_META[player.skill_level] ?? { dot: "bg-slate-400", abbr: "?" };
 
   return (
     <div

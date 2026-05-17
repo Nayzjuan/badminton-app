@@ -23,6 +23,7 @@
 
 import { ArrowLeftRight } from "lucide-react";
 import { VipTag } from "@/components/ui/vip-tag";
+import { SKILL_META } from "@/lib/constants";
 import type { SkillLevel } from "@/types/database";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -37,33 +38,10 @@ export interface RosterPlayer {
   vip_theme?: string | null;
 }
 
-// ── Skill config ───────────────────────────────────────────────
-// All 6 levels shown distinctly — no bucket collapsing.
-// Two maps: SKILL_CONFIG for themed surfaces (light/dark via dark:),
-// SKILL_CONFIG_DARK for the always-dark navy court visualization.
-//
-// lower_advanced uses fuchsia (not amber) to avoid colliding with
-// the app's amber semantic for "pending / on-deck / warning" — an
-// amber dot inside an amber-themed on-deck card had no contrast.
-//
-// Abbreviations mirror SkillBadge labels (shortened for small UI):
-//   Beginner       → Beg
-//   Lower Int.     → L.Int
-//   Intermediate   → Int
-//   Upper Int.     → U.Int
-//   Lower Adv.     → L.Adv
-//   Advanced       → Adv
-
-const SKILL_CONFIG: Record<SkillLevel, { dot: string; abbr: string }> = {
-  beginner: { dot: "bg-emerald-500 dark:bg-emerald-400", abbr: "Beg" },
-  lower_intermediate: { dot: "bg-teal-500    dark:bg-teal-400", abbr: "L.Int" },
-  intermediate: { dot: "bg-sky-500     dark:bg-sky-400", abbr: "Int" },
-  upper_intermediate: { dot: "bg-indigo-500  dark:bg-indigo-400", abbr: "U.Int" },
-  lower_advanced: { dot: "bg-fuchsia-500 dark:bg-fuchsia-400", abbr: "L.Adv" },
-  advanced: { dot: "bg-purple-500  dark:bg-purple-400", abbr: "Adv" },
-};
-
-// Always-dark navy court — level text color only (no dot), matching preview spec.
+// ── Skill config (dark only) ────────────────────────────────────
+// SKILL_META (from constants.ts) handles the themed light/dark dot colors.
+// SKILL_CONFIG_DARK covers the always-dark navy court visualization where
+// dot → text color only, matching the preview spec.
 // ADV/U.INT → amber, INT/L.INT → teal, L.ADV → blue, BEG → muted
 const SKILL_CONFIG_DARK: Record<SkillLevel, { color: string; abbr: string }> = {
   beginner:           { color: "text-cc-t3",     abbr: "Beg"   },
@@ -76,8 +54,9 @@ const SKILL_CONFIG_DARK: Record<SkillLevel, { color: string; abbr: string }> = {
 
 // ── Internal: skill indicators ─────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function SkillDot({ level }: { level: SkillLevel }) {
-  const { dot, abbr } = SKILL_CONFIG[level] ?? { dot: "bg-slate-400", abbr: "?" };
+  const { dot, abbr } = SKILL_META[level] ?? { dot: "bg-slate-400", abbr: "?" };
   return (
     <div className="flex shrink-0 items-center gap-1" aria-label={level}>
       <span className={`h-2 w-2 rounded-full ${dot}`} aria-hidden="true" />
@@ -102,6 +81,7 @@ function SkillLevelDark({ level }: { level: SkillLevel }) {
 
 // ── Internal: VS badge ─────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function VsBadge({ dark: _dark }: { dark?: boolean }) {
   // Both on-deck (light) and court cards (dark) use vertical lines + text
   // per preview .vs-divider / .court-vs spec.
