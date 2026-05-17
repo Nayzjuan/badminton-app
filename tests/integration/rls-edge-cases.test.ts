@@ -24,7 +24,7 @@ import { makeProfile, makeSession, makeQueueEntry, makeCompletedMatch } from "./
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { closeSession } from "@/app/actions/sessions";
-import { publishMatchAction } from "@/app/actions/match";
+import { publishMatchAction } from "@/app/actions/match-drafts";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { makeMatch } from "./factories";
 

@@ -20,7 +20,7 @@ import { Faker, en } from "@faker-js/faker";
 import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeMatch } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import { endMatchAction, submitMatchScore, cancelMatchAction } from "@/app/actions/match";
+import { endMatchAction, submitMatchScore, cancelMatchAction } from "@/app/actions/match-lifecycle";
 
 const faker = new Faker({ locale: [en] });
 faker.seed(7001);

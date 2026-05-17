@@ -30,7 +30,8 @@ import { Faker, en } from "@faker-js/faker";
 import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeMatchViaRpc } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import { updateMatchDetails, clearOnDeckMatch, reorderOnDeckMatches } from "@/app/actions/match";
+import { updateMatchDetails } from "@/app/actions/match-lifecycle";
+import { clearOnDeckMatch, reorderOnDeckMatches } from "@/app/actions/match-drafts";
 
 const faker = new Faker({ locale: [en] });
 faker.seed(10005);
@@ -152,7 +153,8 @@ describe("updateMatchDetails — Suite N", () => {
 
   // ── N-3 ────────────────────────────────────────────────────
   it("N-3: non-organizer is rejected", async () => {
-    const { organizer, session, players } = await seedSessionWithPlayers(4);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { organizer: _organizer, session, players } = await seedSessionWithPlayers(4);
     const rando = await makeProfile({ faker });
     const match = await makeMatchViaRpc({
       sessionId: session.id,
@@ -319,7 +321,8 @@ describe("clearOnDeckMatch — Suite N", () => {
 
   // ── N-8 ────────────────────────────────────────────────────
   it("N-8: non-organizer is rejected", async () => {
-    const { organizer, session, players } = await seedSessionWithPlayers(4);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { organizer: _organizer, session, players } = await seedSessionWithPlayers(4);
     const rando = await makeProfile({ faker });
     const match = await makeMatchViaRpc({
       sessionId: session.id,
@@ -406,7 +409,8 @@ describe("reorderOnDeckMatches — Suite N", () => {
 
   // ── N-11 ───────────────────────────────────────────────────
   it("N-11: non-organizer is rejected", async () => {
-    const { organizer, session, players } = await seedSessionWithPlayers(4);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { organizer: _organizer, session, players } = await seedSessionWithPlayers(4);
     const rando = await makeProfile({ faker });
     const m1 = await makeMatchViaRpc({
       sessionId: session.id,

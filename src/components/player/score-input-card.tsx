@@ -5,7 +5,7 @@
 // ============================================================
 
 import { CheckCircle2, BarChart2 } from "lucide-react";
-import { submitMatchScore } from "@/app/actions/match";
+import { submitMatchScore } from "@/app/actions/match-lifecycle";
 import { sanitizeScore } from "@/lib/score-input";
 import { useScoreForm } from "@/hooks/use-score-form";
 
@@ -15,11 +15,19 @@ interface ScoreInputCardProps {
 }
 
 export function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
-  const { teamAScore, setTeamAScore, teamBScore, setTeamBScore, error, submitted, isPending, handleSubmit } =
-    useScoreForm(async (a, b) => {
-      const result = await submitMatchScore(matchId, a, b);
-      return { error: result.success ? undefined : (result.message ?? "Failed to submit score.") };
-    });
+  const {
+    teamAScore,
+    setTeamAScore,
+    teamBScore,
+    setTeamBScore,
+    error,
+    submitted,
+    isPending,
+    handleSubmit,
+  } = useScoreForm(async (a, b) => {
+    const result = await submitMatchScore(matchId, a, b);
+    return { error: result.success ? undefined : (result.message ?? "Failed to submit score.") };
+  });
 
   const myScoreLabel = myTeam === "a" ? "Your Team" : "Opponents";
   const theirScoreLabel = myTeam === "a" ? "Opponents" : "Your Team";

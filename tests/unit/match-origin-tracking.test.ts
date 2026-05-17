@@ -32,7 +32,7 @@ vi.mock("@/utils/supabase/service", () => ({
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { createManualMatchAction } from "@/app/actions/match";
+import { createManualMatchAction } from "@/app/actions/match-lifecycle";
 
 // ─────────────────────────────────────────────────────────────
 // Mock infrastructure
@@ -66,6 +66,7 @@ function makeBuilder(response: MockResponse) {
     "delete",
     "insert",
   ]) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     b[method] = (..._args: unknown[]) => b;
   }
   return b;
@@ -216,7 +217,9 @@ describe("createManualMatchAction — match origin", () => {
     });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
     vi.mocked(createServerSupabaseClient).mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
+      },
       from: vi.fn(),
     } as never);
 
@@ -298,7 +301,9 @@ describe("createManualMatchAction — queue status side-effect", () => {
     const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
     vi.mocked(createServerSupabaseClient).mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
+      },
       from: vi.fn(),
     } as never);
 
@@ -315,7 +320,9 @@ describe("createManualMatchAction — queue status side-effect", () => {
     const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
     vi.mocked(createServerSupabaseClient).mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
+      },
       from: vi.fn(),
     } as never);
 
@@ -345,7 +352,9 @@ describe("createManualMatchAction — queue status side-effect", () => {
     });
     vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
     vi.mocked(createServerSupabaseClient).mockResolvedValue({
-      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }) },
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
+      },
       from: vi.fn(),
     } as never);
 

@@ -35,7 +35,7 @@ import { Faker, en } from "@faker-js/faker";
 import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeMatchViaRpc } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import { createManualMatchAction, cancelMatchAction } from "@/app/actions/match";
+import { createManualMatchAction, cancelMatchAction } from "@/app/actions/match-lifecycle";
 import { swapPlayerInMatch, swapMatchPlayers } from "@/app/actions/swap-player";
 
 const faker = new Faker({ locale: [en] });

@@ -37,7 +37,7 @@ import {
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs } from "./helpers/mock-auth";
-import { publishMatchAction } from "@/app/actions/match";
+import { publishMatchAction } from "@/app/actions/match-drafts";
 import { runEngineForSession, callNextMatch } from "@/app/actions/matchmaking";
 
 const faker = new Faker({ locale: [en] });

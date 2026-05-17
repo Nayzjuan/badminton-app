@@ -29,7 +29,7 @@ import {
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match";
+import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match-drafts";
 import { callNextMatch } from "@/app/actions/matchmaking";
 
 const faker = new Faker({ locale: [en] });

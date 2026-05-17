@@ -47,11 +47,8 @@ import {
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import {
-  publishMatchAction,
-  publishAllDraftMatchesAction,
-  cancelMatchAction,
-} from "@/app/actions/match";
+import { cancelMatchAction } from "@/app/actions/match-lifecycle";
+import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match-drafts";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { joinQueueAction } from "@/app/actions/queue";
 import { closeSession } from "@/app/actions/sessions";

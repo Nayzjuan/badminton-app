@@ -6,7 +6,7 @@
 
 import { useState, useTransition } from "react";
 import { Pencil, RotateCcw } from "lucide-react";
-import { updateMatchDetails } from "@/app/actions/match";
+import { updateMatchDetails } from "@/app/actions/match-lifecycle";
 import {
   Dialog,
   DialogContent,
