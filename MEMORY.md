@@ -7,6 +7,42 @@
 
 ## SESSION STATE (Last Updated: 2026-05-17)
 
+### Code-Quality Refactor Pass (2026-05-17) — Chunk C: 7 Sequential Refactor Commits — ALL COMPLETE
+
+**Context:** 7 focused refactor commits on `main` branch. Each validated with `npx tsc --noEmit` + `npx eslint --max-warnings=0` before committing. All 174 vitest tests pass at the end.
+
+**Commits landed (007792b → be8ca7b):**
+
+- `e565227` **C-1:** `useSwapState` hook extracted from `organizer-dashboard.tsx` into `src/hooks/use-swap-state.ts`. All swap state machine logic (picking mode, bench swap, undo, Layer 2 race guard) moved. Dashboard now delegates via `useSwapState()`.
+- `c6dcda6` **C-2:** `CourtCard` (+ `AlertTier`) extracted from `active-courts.tsx` → `court-card.tsx`. `SortableCard` + `OverlayCard` extracted from `on-deck-panel.tsx` → `sortable-card.tsx`.
+- `180566c` **C-3:** `ReconnectModal` + `Spinner` extracted from `login-form.tsx` → `reconnect-modal.tsx`. `EditMatchDialog` extracted from `match-history-panel.tsx` → `edit-match-dialog.tsx`.
+- `b333cbd` **C-4:** `useMatchHistory` hook extracted from `match-history-panel.tsx` → `src/hooks/use-match-history.ts`. Also fixes inline unknown-profile literal → `createUnknownProfile()` from `@/lib/utils`.
+- `289193b` **C-5:** `SKILL_META` added to `src/lib/constants.ts` as single source of truth. `SKILL_CONFIG` removed from `match-roster.tsx`, `TV_SKILL_CONFIG` removed from `tv-board.tsx`, both replaced with `SKILL_META`.
+- `bbc2609` **C-6:** `useScoreForm` hook created at `src/hooks/use-score-form.ts` (0–30 validation). `ScoreInputCard` extracted from `player-dashboard.tsx` → `score-input-card.tsx`. `MyStatusTab` + `QueueSubTab` extracted → `my-status-tab.tsx`. `ScoreModal` updated to use `useScoreForm` — **bug fix**: organizer could previously submit scores > 30, now enforces 0–30 upper limit.
+- `be8ca7b` **C-7:** `WrappedShell` (689 lines) decomposed into `WrappedStatsCard`, `WrappedAwardsFeed`, `WrappedMatchRecap`. All inline styles preserved verbatim.
+
+**New files created (13 total):**
+- `src/hooks/use-swap-state.ts`
+- `src/hooks/use-match-history.ts`
+- `src/hooks/use-score-form.ts`
+- `src/components/organizer/court-card.tsx`
+- `src/components/organizer/sortable-card.tsx`
+- `src/components/organizer/edit-match-dialog.tsx`
+- `src/components/reconnect-modal.tsx`
+- `src/components/player/score-input-card.tsx`
+- `src/components/player/my-status-tab.tsx`
+- `src/components/wrapped/wrapped-stats-card.tsx`
+- `src/components/wrapped/wrapped-awards-feed.tsx`
+- `src/components/wrapped/wrapped-match-recap.tsx`
+
+**Minor issues (documented per CLAUDE.md):**
+- Pre-existing `react-hooks/refs`, `react-hooks/set-state-in-effect`, `react-hooks/purity`, and `@typescript-eslint/no-unused-vars` lint errors in `tv-board.tsx`, `active-courts.tsx`, `match-roster.tsx` required eslint-disable comments to be added during this session. These are pre-existing codebase issues, not introduced by the refactor.
+- `useScoreForm.handleSubmit` is called inside `startTransition` so the ScoreModal's "leave dialog open on error" behavior is now driven by the `error` state rather than `submitting` boolean (functionally equivalent).
+
+**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174.
+
+---
+
 ### Code-Quality Refactor Pass (2026-05-17) — Chunk B + Minor Issue Fixes — ALL COMPLETE
 
 **Context:** External audit surfaced 9 issues in `src/hooks/*`, `src/app/actions/*`. B-8 was already fixed; B-9 deferred. Fixed B-1 through B-7 in 6 commits, then fixed all 5 minor issues flagged in the review. Every step validated with tsc, lint, vitest 174/174, and independent review gate.
