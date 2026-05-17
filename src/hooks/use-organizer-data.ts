@@ -199,6 +199,15 @@ export function useOrganizerData(
   // Keep ref current on every render.
   fetchActiveMatchesRef.current = fetchActiveMatches;
 
+  // Stable callback — closes over the ref so it always calls the latest
+  // fetchActiveMatches without a new function identity each render.
+  // This prevents the profiles realtime subscription from restarting on
+  // every parent render (same pattern as handleChannelStatus pass-through).
+  const onProfileChange = useCallback(
+    () => fetchActiveMatchesRef.current(),
+    [fetchActiveMatchesRef] // stable: created via useMemo with empty deps
+  );
+
   const {
     queue,
     profiles,
@@ -207,13 +216,7 @@ export function useOrganizerData(
     loading: queueLoading,
     removeFromQueue,
     pausePlayer,
-  } = useOrganizerQueue(
-    sessionId,
-    supabase,
-    handleChannelStatus,
-    handleChannelStatus,
-    () => fetchActiveMatchesRef.current()
-  );
+  } = useOrganizerQueue(sessionId, supabase, handleChannelStatus, handleChannelStatus, onProfileChange);
 
   // Wire fetchQueue into the ref so useOrganizerMatches can call it.
   fetchQueueRef.current = fetchQueue;
