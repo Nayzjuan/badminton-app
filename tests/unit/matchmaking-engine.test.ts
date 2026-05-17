@@ -64,13 +64,10 @@ function makeBuilder(response: MockResponse) {
   const b: Record<string, unknown> = {};
 
   // Make the builder itself awaitable (for patterns that don't call .single())
-  b["then"] = (
-    onFulfilled: (v: MockResponse) => unknown,
-    onRejected: (e: unknown) => unknown
-  ) => Promise.resolve(response).then(onFulfilled, onRejected);
+  b["then"] = (onFulfilled: (v: MockResponse) => unknown, onRejected: (e: unknown) => unknown) =>
+    Promise.resolve(response).then(onFulfilled, onRejected);
 
-  b["catch"] = (onRejected: (e: unknown) => unknown) =>
-    Promise.resolve(response).catch(onRejected);
+  b["catch"] = (onRejected: (e: unknown) => unknown) => Promise.resolve(response).catch(onRejected);
 
   // .single() returns a new Promise — same resolved value
   b["single"] = () => Promise.resolve(response);
@@ -114,10 +111,7 @@ function makeBuilder(response: MockResponse) {
  * Steps 2 and 3 are only reached when the anchor has prior matches (Step 1 non-empty).
  * Tests with empty queues will never reach any of these — no mock responses needed.
  */
-function makeMockClient(
-  fromResponses: MockResponse[],
-  rpcResponses: MockResponse[] = []
-) {
+function makeMockClient(fromResponses: MockResponse[], rpcResponses: MockResponse[] = []) {
   let fromIdx = 0;
   let rpcIdx = 0;
   const queriedTables: string[] = [];
@@ -149,7 +143,7 @@ function makeMockClient(
 // Valid v4 UUID format required so they pass the isValidUUID guard
 // added in Wave 1 to callNextMatch and runEngineForSession.
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
-const COURT_ID   = "00000000-0000-4000-8000-000000000002";
+const COURT_ID = "00000000-0000-4000-8000-000000000002";
 
 // Convenience for the most common match object returned by the pending query
 const MOCK_MATCH = { id: "match-1", is_mixed_level: false };
@@ -179,15 +173,11 @@ beforeEach(() => {
 describe("promoteOnDeckMatchInternal", () => {
   it("returns success:false when there is no pending match (empty array)", async () => {
     const mock = makeMockClient([
-      { data: [], error: null },              // matches fetch → empty
+      { data: [], error: null }, // matches fetch → empty
       { count: 0, data: null, error: null }, // draft-blocking secondary check → 0 unpublished drafts
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/no on-deck/i);
@@ -201,15 +191,11 @@ describe("promoteOnDeckMatchInternal", () => {
     // "no on-deck" message. Production sets hasDraftsBlocking=true so the UI can render
     // an amber warning toast instead of the default empty-state message.
     const mock = makeMockClient([
-      { data: [], error: null },              // matches fetch → 0 published pending
+      { data: [], error: null }, // matches fetch → 0 published pending
       { count: 2, data: null, error: null }, // draft check → 2 unpublished drafts blocking
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(false);
     expect(result.hasDraftsBlocking).toBe(true);
@@ -227,11 +213,7 @@ describe("promoteOnDeckMatchInternal", () => {
       { data: null, error: { message: "connection timeout" } }, // matches fetch → DB error
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(false);
     // Error path returns the real DB message — NOT the "no on-deck" fallback
@@ -242,15 +224,11 @@ describe("promoteOnDeckMatchInternal", () => {
     // CAS race: another request already promoted the match.
     // The UPDATE affects 0 rows → .single() resolves with data:null, error:null.
     const mock = makeMockClient([
-      { data: [MOCK_MATCH], error: null },  // matches fetch → 1 pending
-      { data: null, error: null },          // matches update → 0 rows (CAS guard fails)
+      { data: [MOCK_MATCH], error: null }, // matches fetch → 1 pending
+      { data: null, error: null }, // matches update → 0 rows (CAS guard fails)
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/already promoted/i);
@@ -260,15 +238,11 @@ describe("promoteOnDeckMatchInternal", () => {
 
   it("returns success:false with error detail on a DB error during the CAS update", async () => {
     const mock = makeMockClient([
-      { data: [MOCK_MATCH], error: null },                         // fetch
-      { data: null, error: { message: "FK violation" } },         // update → DB error
+      { data: [MOCK_MATCH], error: null }, // fetch
+      { data: null, error: { message: "FK violation" } }, // update → DB error
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(false);
     expect(result.message).toContain("FK violation");
@@ -278,18 +252,14 @@ describe("promoteOnDeckMatchInternal", () => {
     // Sequence (5 from() calls — no queue_entries since matchPlayers=[]):
     // matches(fetch), matches(update CAS), courts(update), match_players(select=[]), profiles(select=[])
     const mock = makeMockClient([
-      { data: [MOCK_MATCH], error: null },   // matches fetch
+      { data: [MOCK_MATCH], error: null }, // matches fetch
       { data: { id: "match-1" }, error: null }, // matches update (CAS passes)
-      { data: null, error: null },           // courts update
-      { data: [], error: null },             // match_players → empty
-      { data: [], error: null },             // profiles → empty
+      { data: null, error: null }, // courts update
+      { data: [], error: null }, // match_players → empty
+      { data: [], error: null }, // profiles → empty
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(true);
     expect(result.matchId).toBe("match-1");
@@ -297,11 +267,11 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.teamB).toEqual([]);
     // Full query sequence: fetch pending → CAS update → courts update → match_players → profiles
     expect(mock.queriedTables).toEqual([
-      "matches",       // fetch pending on-deck match
-      "matches",       // CAS status update
-      "courts",        // mark court occupied
+      "matches", // fetch pending on-deck match
+      "matches", // CAS status update
+      "courts", // mark court occupied
       "match_players", // load match player list (empty)
-      "profiles",      // resolve display names (empty)
+      "profiles", // resolve display names (empty)
     ]);
   });
 
@@ -313,27 +283,23 @@ describe("promoteOnDeckMatchInternal", () => {
       { data: { id: "match-1" }, error: null },
       { data: null, error: null },
       { data: MOCK_MATCH_PLAYERS, error: null },
-      { data: null, error: null },  // queue_entries update
+      { data: null, error: null }, // queue_entries update
       { data: MOCK_PROFILES, error: null },
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(true);
     expect(result.teamA).toEqual(["Alice", "Bob"]);
     expect(result.teamB).toEqual(["Charlie", "Diana"]);
     // Full query sequence includes queue_entries update (players moved from waiting → playing)
     expect(mock.queriedTables).toEqual([
-      "matches",        // fetch pending on-deck match
-      "matches",        // CAS status update
-      "courts",         // mark court occupied
-      "match_players",  // load match player list (non-empty → triggers queue_entries update)
-      "queue_entries",  // mark matched players status = in_match
-      "profiles",       // resolve display names
+      "matches", // fetch pending on-deck match
+      "matches", // CAS status update
+      "courts", // mark court occupied
+      "match_players", // load match player list (non-empty → triggers queue_entries update)
+      "queue_entries", // mark matched players status = in_match
+      "profiles", // resolve display names
     ]);
   });
 
@@ -343,15 +309,11 @@ describe("promoteOnDeckMatchInternal", () => {
       { data: [mixedMatch], error: null },
       { data: { id: "match-1" }, error: null },
       { data: null, error: null },
-      { data: [], error: null },    // match_players empty
-      { data: [], error: null },    // profiles empty
+      { data: [], error: null }, // match_players empty
+      { data: [], error: null }, // profiles empty
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(true);
     expect(result.isMixedLevel).toBe(true);
@@ -373,11 +335,7 @@ describe("promoteOnDeckMatchInternal", () => {
       { data: partialProfiles, error: null },
     ]);
 
-    const result = await promoteOnDeckMatchInternal(
-      mock as never,
-      SESSION_ID,
-      COURT_ID
-    );
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
 
     expect(result.success).toBe(true);
     expect(result.teamA).toEqual(["Alice", "Bob"]);
@@ -409,7 +367,7 @@ describe("runEngineForSession", () => {
   it("queries courts when toggle is ON (proceeds into runEngineInternal)", async () => {
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
-      { data: [], error: null },                               // courts → 0 courts
+      { data: [], error: null }, // courts → 0 courts
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
@@ -423,7 +381,7 @@ describe("runEngineForSession", () => {
   it("stops after courts query when courtCount is 0 (nothing to fill)", async () => {
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
-      { data: [], error: null },                               // courts → 0
+      { data: [], error: null }, // courts → 0
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
@@ -436,9 +394,9 @@ describe("runEngineForSession", () => {
   it("stops filling when on-deck is already at capacity", async () => {
     // 3 total pending (atomic query) → MAX_AUTO_DRAFTS(3) − 3 = 0 → skipping
     const mock = makeMockClient([
-      { data: { is_auto_matchmaking_on: true }, error: null },  // sessions
-      { data: [{ id: "c1" }, { id: "c2" }], error: null },      // courts (2)
-      { count: 3, data: null, error: null },                    // total pending = 3 → slotsAvailable=0
+      { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
+      { data: [{ id: "c1" }, { id: "c2" }], error: null }, // courts (2)
+      { count: 3, data: null, error: null }, // total pending = 3 → slotsAvailable=0
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
@@ -500,15 +458,15 @@ describe("runEngineForSession", () => {
 
     const mock = makeMockClient(
       [
-        { data: { is_auto_matchmaking_on: true }, error: null },  // [0] sessions
-        { data: [{ id: "c1" }, { id: "c2" }], error: null },      // [1] courts (2)
-        { count: 0, data: null, error: null },                    // [2] total pending → 0 (atomic) → slotsAvailable=3
-        { data: fourPlayers, error: null },                       // [3] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4)
-        { data: [], error: null },                                 // [4] fetchRecentRosters: recent matches → []
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
+        { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
+        { count: 0, data: null, error: null }, // [2] total pending → 0 (atomic) → slotsAvailable=3
+        { data: fourPlayers, error: null }, // [3] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4)
+        { data: [], error: null }, // [4] fetchRecentRosters: recent matches → []
         // (match_players not queried since recentMatchIds is empty)
-        { data: fourPlayers, error: null },                       // [5] runAlgorithm: v_queue_with_wait_time → 4 players
-        { data: [], error: null },                                 // [6] queue_entries paused → []
-        { data: [], error: null },                                 // [7] fetchPartnershipCounts: matches (no prior session matches → empty map)
+        { data: fourPlayers, error: null }, // [5] runAlgorithm: v_queue_with_wait_time → 4 players
+        { data: [], error: null }, // [6] queue_entries paused → []
+        { data: [], error: null }, // [7] fetchPartnershipCounts: matches (no prior session matches → empty map)
         // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback
         //     → anchorRows=null → early return; empty overlapMap
         // rpc fails → loop breaks (slot 1 never reached — estimatedWaiting=4 < MIN_POOL=8)
@@ -558,18 +516,18 @@ describe("runEngineForSession", () => {
 
     const mock = makeMockClient(
       [
-        { data: { is_auto_matchmaking_on: true }, error: null },  // [0] sessions
-        { data: [{ id: "c1" }, { id: "c2" }], error: null },      // [1] courts (2)
-        { count: 0, data: null, error: null },                    // [2] total pending → 0 (atomic) → slotsAvailable=3
-        { data: eightPlayers, error: null },                      // [3] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered)
-        { data: [], error: null },                                 // [4] fetchRecentRosters: recent matches → []
-        { data: eightPlayers, error: null },                      // [5] runAlgorithm slot 0: v_queue_with_wait_time → 8 players
-        { data: [], error: null },                                 // [6] queue_entries paused → []
-        { data: [], error: null },                                 // [7] fetchPartnershipCounts: matches (no prior matches → empty map)
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
+        { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
+        { count: 0, data: null, error: null }, // [2] total pending → 0 (atomic) → slotsAvailable=3
+        { data: eightPlayers, error: null }, // [3] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered)
+        { data: [], error: null }, // [4] fetchRecentRosters: recent matches → []
+        { data: eightPlayers, error: null }, // [5] runAlgorithm slot 0: v_queue_with_wait_time → 8 players
+        { data: [], error: null }, // [6] queue_entries paused → []
+        { data: [], error: null }, // [7] fetchPartnershipCounts: matches (no prior matches → empty map)
         // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback → empty overlapMap
         // rpc succeeds → estimatedWaiting=8-4=4; slot 1: 4 < MIN_POOL(8) → cap fires → break
       ],
-      [{ data: "new-match-id", error: null }]  // rpc → success for slot 0
+      [{ data: "new-match-id", error: null }] // rpc → success for slot 0
     );
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
@@ -614,13 +572,13 @@ describe("callNextMatch", () => {
     ]);
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [MOCK_MATCH], error: null },                 // [1] matches fetch → pending non-empty
-      { data: { id: "match-1" }, error: null },            // [2] matches update (CAS)
-      { data: null, error: null },                         // [3] courts update
-      { data: [], error: null },                           // [4] match_players → empty
-      { data: [], error: null },                           // [5] profiles → empty (no player ids)
-      { data: [{ id: "c1" }], error: null },               // [6] runEngineInternal: courts
-      { count: 3, data: null, error: null },               // [7] runEngineInternal: pending count → slotsAvailable=0
+      { data: [MOCK_MATCH], error: null }, // [1] matches fetch → pending non-empty
+      { data: { id: "match-1" }, error: null }, // [2] matches update (CAS)
+      { data: null, error: null }, // [3] courts update
+      { data: [], error: null }, // [4] match_players → empty
+      { data: [], error: null }, // [5] profiles → empty (no player ids)
+      { data: [{ id: "c1" }], error: null }, // [6] runEngineInternal: courts
+      { count: 3, data: null, error: null }, // [7] runEngineInternal: pending count → slotsAvailable=0
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -641,13 +599,13 @@ describe("callNextMatch", () => {
     ]);
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [MOCK_MATCH], error: null },                 // [1] matches fetch → pending non-empty
-      { data: { id: "match-1" }, error: null },            // [2] matches update (CAS)
-      { data: null, error: null },                         // [3] courts update
-      { data: [], error: null },                           // [4] match_players → empty
-      { data: [], error: null },                           // [5] profiles → empty
-      { data: [{ id: "c1" }], error: null },               // [6] ← first post-promotion = courts (not sessions)
-      { count: 3, data: null, error: null },               // [7] pending count → slotsAvailable=0
+      { data: [MOCK_MATCH], error: null }, // [1] matches fetch → pending non-empty
+      { data: { id: "match-1" }, error: null }, // [2] matches update (CAS)
+      { data: null, error: null }, // [3] courts update
+      { data: [], error: null }, // [4] match_players → empty
+      { data: [], error: null }, // [5] profiles → empty
+      { data: [{ id: "c1" }], error: null }, // [6] ← first post-promotion = courts (not sessions)
+      { count: 3, data: null, error: null }, // [7] pending count → slotsAvailable=0
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -665,14 +623,15 @@ describe("callNextMatch", () => {
 
   it("returns 'paused' message when no on-deck match exists and toggle is OFF", async () => {
     // promoteOnDeckMatchInternal: matches → empty → draft-blocking check → 0 drafts.
-    // Then user client toggle check: sessions → OFF → return paused message.
-    const mock = makeMockClient([
-      { data: { is_auto_matchmaking_on: false }, error: null }, // toggle check → OFF
-    ]);
+    // Then service client toggle check: sessions → OFF → return paused message.
+    // Note: is_auto_matchmaking_on is now read via service client (not RLS client)
+    // so co-organizers (blocked by sessions RLS SELECT) also get the correct value.
+    const mock = makeMockClient([]);
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [], error: null },                           // [1] matches fetch → empty
-      { count: 0, data: null, error: null },               // [2] draft-blocking check → 0 drafts
+      { data: [], error: null }, // [1] matches fetch → empty
+      { count: 0, data: null, error: null }, // [2] draft-blocking check → 0 drafts
+      { data: { is_auto_matchmaking_on: false }, error: null }, // [3] toggle check → OFF
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -685,25 +644,24 @@ describe("callNextMatch", () => {
 
   it("propagates hasDraftsBlocking when drafts are blocking after engine inline run", async () => {
     // Attempt 1: no published pending + 2 drafts → hasDraftsBlocking=true
-    // Toggle check (user client): sessions → ON
+    // Toggle check (service client): sessions → ON
     // runEngineInternal: courts [c1], pending=2 → slotsAvailable=1 → tries to fill
     // runAlgorithm: empty queue → stops
     // Attempt 2: no published pending + 2 drafts → hasDraftsBlocking=true
     // callNextMatch propagates hasDraftsBlocking:true
-    const mock = makeMockClient([
-      { data: { is_auto_matchmaking_on: true }, error: null }, // toggle check → ON
-    ]);
+    const mock = makeMockClient([]);
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [], error: null },                           // [1] promote 1: no published pending
-      { count: 2, data: null, error: null },               // [2] promote 1: 2 drafts → hasDraftsBlocking
-      { data: [{ id: "c1" }], error: null },               // [3] runEngine: courts
-      { count: 2, data: null, error: null },               // [4] runEngine: total pending → slotsAvailable=1
-      { data: [], error: null },                           // [5] runEngine: fetchRecentRosters → []
-      { data: [], error: null },                           // [6] runAlgorithm: queue → []
-      { data: [], error: null },                           // [7] runAlgorithm: paused queue → []
-      { data: [], error: null },                           // [8] promote 2: no published pending
-      { count: 2, data: null, error: null },               // [9] promote 2: 2 drafts → hasDraftsBlocking
+      { data: [], error: null }, // [1] promote 1: no published pending
+      { count: 2, data: null, error: null }, // [2] promote 1: 2 drafts → hasDraftsBlocking
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [3] toggle check → ON
+      { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
+      { count: 2, data: null, error: null }, // [5] runEngine: total pending → slotsAvailable=1
+      { data: [], error: null }, // [6] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [7] runAlgorithm: queue → []
+      { data: [], error: null }, // [8] runAlgorithm: paused queue → []
+      { data: [], error: null }, // [9] promote 2: no published pending
+      { count: 2, data: null, error: null }, // [10] promote 2: 2 drafts → hasDraftsBlocking
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -718,25 +676,24 @@ describe("callNextMatch", () => {
 
   it("returns 'not enough players' when toggle is ON but queue is empty", async () => {
     // Attempt 1: empty pending + 0 drafts
-    // Toggle check (user client): sessions → ON
+    // Toggle check (service client): sessions → ON
     // runEngineInternal: courts [c1], pending=0 → slotsAvailable=3 → tries to fill
     // runAlgorithm: empty queue → "Not enough active players"
     // Attempt 2: still empty pending + 0 drafts
     // hasDraftsBlocking=false → "not enough players"
-    const mock = makeMockClient([
-      { data: { is_auto_matchmaking_on: true }, error: null }, // toggle check → ON
-    ]);
+    const mock = makeMockClient([]);
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [], error: null },                           // [1] promote 1: no pending
-      { count: 0, data: null, error: null },               // [2] promote 1: 0 drafts
-      { data: [{ id: "c1" }], error: null },               // [3] runEngine: courts
-      { count: 0, data: null, error: null },               // [4] runEngine: total pending → slotsAvailable=3
-      { data: [], error: null },                           // [5] runEngine: fetchRecentRosters → []
-      { data: [], error: null },                           // [6] runAlgorithm: queue → []
-      { data: [], error: null },                           // [7] runAlgorithm: paused queue → []
-      { data: [], error: null },                           // [8] promote 2: still no pending
-      { count: 0, data: null, error: null },               // [9] promote 2: 0 drafts
+      { data: [], error: null }, // [1] promote 1: no pending
+      { count: 0, data: null, error: null }, // [2] promote 1: 0 drafts
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [3] toggle check → ON
+      { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
+      { count: 0, data: null, error: null }, // [5] runEngine: total pending → slotsAvailable=3
+      { data: [], error: null }, // [6] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [7] runAlgorithm: queue → []
+      { data: [], error: null }, // [8] runAlgorithm: paused queue → []
+      { data: [], error: null }, // [9] promote 2: still no pending
+      { count: 0, data: null, error: null }, // [10] promote 2: 0 drafts
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -746,5 +703,4 @@ describe("callNextMatch", () => {
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not enough players/i);
   });
-
 });

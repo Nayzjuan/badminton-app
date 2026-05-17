@@ -132,11 +132,6 @@ export async function callNextMatch(
   }
 
   const service = createServiceClient();
-  // Use the RLS client only for the session-read (RLS-bound read is fine).
-  // All writes (promote + engine) must use the service client so queue_entries
-  // updates are never silently dropped by RLS for players the organizer doesn't
-  // own — the same fix already applied to endMatchAction (match.ts line ~287).
-  const supabase = await createServerSupabaseClient();
 
   // 1. Try to promote an existing on-deck match.
   let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
@@ -147,7 +142,10 @@ export async function callNextMatch(
   }
 
   // 2. No on-deck match — check toggle.
-  const { data: session } = await supabase
+  // Must use the service client: the sessions table RLS SELECT policy only
+  // grants read to sessions.created_by, so co-organizers would silently
+  // receive null from an RLS-scoped client.
+  const { data: session } = await service
     .from("sessions")
     .select("is_auto_matchmaking_on")
     .eq("id", sessionId)

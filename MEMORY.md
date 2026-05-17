@@ -5,6 +5,31 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-16)
+
+### Code-Quality Refactor Pass (2026-05-16) — A-1 through A-5 — ALL COMPLETE
+
+**Context:** External audit surfaced 5 code-quality issues in `src/lib/*` and `src/utils/supabase/*`. Verified all 5 issues were present, then fixed them in 4 sequential commits with full validation (tsc, lint, vitest 174/174) and independent review gate (LGTM).
+
+**Commits landed (oldest → newest):**
+
+- `2ae349f` **A-5 (vip-config.ts):** `getVipThemeConfig` now uses `isVipTheme()` guard instead of `as VipTheme` unsafe cast. Runtime behaviour identical; type system now validates the key.
+- `89663a1` **A-2 (audio.ts):** Extracted `ensureAudioContextRunning()` private helper. Both `playWarningBeep` and `playCourtCall` replaced their 8-line identical resume-guard blocks with a 1-line call. Helper always calls `resume()` (spec no-op when running) to avoid TypeScript control-flow narrowing false positive.
+- `6bb4ea2` **A-3+A-4 (realtime.ts + 2 hooks):**
+  - A-3a: Deleted orphaned JSDoc (was floating above `subscribeToOrganizerBroadcast`); relocated it correctly to `subscribeToProfiles`.
+  - A-3b: Extracted `createStatusHandler()` factory; replaced 3 copy-pasted `.subscribe()` callbacks in `subscribeToTable`, `subscribeToMatchPlayers`, `subscribeToProfiles`.
+  - A-4: Replaced positional optional-callback signature of `subscribeToOrganizerBroadcast` with `OrganizerBroadcastHandlers` object type (exported). Updated both call-sites: `use-organizer-broadcast.ts` (now `{onIntervention, onSessionClosed}`), `use-organizer-data.ts` (now `{onIntervention: () => {}, onAutoMatchmakingToggled, onCapSaturation}`). Removed stale `eslint-disable-next-line` in `use-organizer-broadcast.ts` that the refactor made unnecessary.
+- `e789b21` **A-1 (createClient rename):** 39 call-sites updated.
+  - `src/utils/supabase/client.ts`: `createClient` → `createBrowserSupabaseClient`
+  - `src/utils/supabase/server.ts`: `createClient` → `createServerSupabaseClient`
+  - Also updated: `tests/integration/setup.ts` vi.mock factory key (missed in initial scope count), fixed external `@supabase/supabase-js` import that was caught in bulk replace.
+
+**Validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent reviewer: LGTM.
+
+**Pre-existing lint issues NOT introduced by this work** (in `matchmaking.ts`, `use-queue.ts`, `use-player-match.ts`): `prefer-const activePool`, `setState-in-effect` warnings — pre-existed before this session.
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-14)
 
 ### What Was Accomplished This Session — New UI Port (organizer + player) — ALL CHUNKS COMPLETE
@@ -829,8 +854,8 @@ src/
     leaderboard.ts             # Leaderboard-specific types
 
   utils/supabase/
-    client.ts                  # createBrowserClient
-    server.ts                  # createServerClient
+    client.ts                  # createBrowserSupabaseClient — browser Supabase client
+    server.ts                  # createServerSupabaseClient — server Supabase client (async, reads cookies)
     service.ts                 # createServiceClient (bypasses RLS)
 
 tests/

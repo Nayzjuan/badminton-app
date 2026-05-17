@@ -85,6 +85,13 @@ const REALTIME_CHANNEL_COUNT = 5; // courts, queue_entries, matches, match_playe
  * Only use for wrappers that match this exact pattern — wrappers with
  * optimistic updates, unique return shapes, or side effects should remain
  * as explicit useCallback calls.
+ *
+ * ⚠️  Dep-array contract: `action` and `refreshers` are captured in the
+ * closure but intentionally omitted from the `deps` array (see eslint-disable
+ * below). To avoid stale closures, every value that `action` or any refresher
+ * closes over MUST appear in the caller-supplied `deps`. For example, if
+ * `action` is `(id) => doThing(sessionId, id)`, then `sessionId` must be
+ * in `deps`, and any refresher functions must also be listed.
  */
 function useAction<TArgs extends unknown[]>(
   action: (...args: TArgs) => Promise<{ success: boolean; message?: string; error?: string }>,
@@ -655,15 +662,17 @@ export function useOrganizerData(
     [fetchCourts, fetchActiveMatches]
   );
 
-  const cancelMatch = useAction(cancelMatchAction, [fetchCourts, fetchActiveMatches], [
-    fetchCourts,
-    fetchActiveMatches,
-  ]);
+  const cancelMatch = useAction(
+    cancelMatchAction,
+    [fetchCourts, fetchActiveMatches],
+    [fetchCourts, fetchActiveMatches]
+  );
 
-  const clearOnDeckMatch = useAction(clearOnDeckMatchAction, [fetchQueue, fetchActiveMatches], [
-    fetchQueue,
-    fetchActiveMatches,
-  ]);
+  const clearOnDeckMatch = useAction(
+    clearOnDeckMatchAction,
+    [fetchQueue, fetchActiveMatches],
+    [fetchQueue, fetchActiveMatches]
+  );
 
   const reorderOnDeckMatches = useCallback(
     async (orderedMatchIds: string[]) => {
@@ -768,10 +777,7 @@ export function useOrganizerData(
     () => activeMatches.filter((m) => m.status === "pending"),
     [activeMatches]
   );
-  const draftMatches = useMemo(
-    () => onDeckMatches.filter((m) => !m.is_published),
-    [onDeckMatches]
-  );
+  const draftMatches = useMemo(() => onDeckMatches.filter((m) => !m.is_published), [onDeckMatches]);
   const publishedOnDeckMatches = useMemo(
     () => onDeckMatches.filter((m) => m.is_published),
     [onDeckMatches]

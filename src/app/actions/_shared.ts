@@ -25,16 +25,6 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 
 /**
- * Returns true when `userId` is an organizer of `sessionId`.
- *
- * Accepts either:
- *   • sessions.created_by === userId  (fast path — avoids a second query)
- *   • a row in session_organizers with (session_id, user_id)
- *
- * Uses the service-role client so the primary organizer is never
- * blocked by read-side RLS on sessions or session_organizers.
- */
-/**
  * Returns the currently authenticated Supabase user, or null if the
  * request is unauthenticated. Creates its own server client so callers
  * do not need to instantiate one solely for the auth check.
@@ -47,6 +37,16 @@ export async function getAuthenticatedUser() {
   return user;
 }
 
+/**
+ * Returns true when `userId` is an organizer of `sessionId`.
+ *
+ * Accepts either:
+ *   • sessions.created_by === userId  (fast path — avoids a second query)
+ *   • a row in session_organizers with (session_id, user_id)
+ *
+ * Uses the service-role client so the primary organizer is never
+ * blocked by read-side RLS on sessions or session_organizers.
+ */
 export async function isSessionOrganizer(userId: string, sessionId: string): Promise<boolean> {
   const svc = createServiceClient();
 

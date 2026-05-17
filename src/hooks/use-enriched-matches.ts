@@ -99,10 +99,7 @@ export function useEnrichedMatches(
     const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
     let profileMap = new Map<string, Profile>();
     if (playerIds.length > 0) {
-      const { data: profileData } = await supabase
-        .from("profiles")
-        .select("*")
-        .in("id", playerIds);
+      const { data: profileData } = await supabase.from("profiles").select("*").in("id", playerIds);
 
       if (mySeq !== seqRef.current) return;
 
@@ -126,7 +123,11 @@ export function useEnrichedMatches(
     }));
 
     setActiveMatches(enriched);
-  }, [supabase, sessionId, includeDrafts, onProfilesLoaded, courtsRef]);
+  // courtsRef is intentionally excluded: MutableRefObject identity is stable
+  // across renders (React never reassigns the wrapper object), so listing it
+  // would be redundant and misleading.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabase, sessionId, includeDrafts, onProfilesLoaded]);
 
   return { activeMatches, setActiveMatches, fetchActiveMatches };
 }

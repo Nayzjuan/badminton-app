@@ -272,18 +272,8 @@ export async function toggleAutoMatchmaking(
 
   const service = createServiceClient();
 
-  // Verify caller is an organizer of this session (primary or co-organizer).
-  // Uses the two-path check: sessions.created_by first, then session_organizers.
-  const { data: sessionMeta } = await service
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .single();
-
-  if (!sessionMeta) {
-    return { success: false, isOn: false, message: "Session not found." };
-  }
-
+  // isSessionOrganizer queries sessions.created_by (fast path) then falls back
+  // to session_organizers — one round-trip instead of two.
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) {
     return { success: false, isOn: false, message: "Not authorized. Organizer access required." };
@@ -408,17 +398,8 @@ export async function getSessionForOrganizer(sessionId: string): Promise<GetSess
 
   const service = createServiceClient();
 
-  // ── Two-path organizer check ──────────────────────────────────
-  // Primary organizer: sessions.created_by === user.id (fast path).
-  // Co-organizer:      session_organizers row exists for this user.
-  const { data: sessionMeta } = await service
-    .from("sessions")
-    .select("created_by")
-    .eq("id", sessionId)
-    .maybeSingle();
-
-  if (!sessionMeta) return { success: false, error: "Session not found." };
-
+  // isSessionOrganizer does the created_by fast-path + session_organizers
+  // fallback in a single helper — no need for a separate existence fetch.
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, error: "Not authorized. Organizer access required." };
 
