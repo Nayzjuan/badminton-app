@@ -42,7 +42,7 @@ interface ScoreModalProps {
 }
 
 export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) {
-  const { teamAScore, setTeamAScore, teamBScore, setTeamBScore, error, isPending, handleSubmit } =
+  const { teamAScore, setTeamAScore, teamBScore, setTeamBScore, error, isPending, handleSubmit, clearError } =
     useScoreForm(async (a, b) => {
       const result = await onSubmit(a, b);
       return { error: result.error };
@@ -50,16 +50,19 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
   const teamARef = useRef<HTMLInputElement>(null);
 
   // Reset form each time the dialog opens for a new match.
+  // clearError ensures a stale validation message from a previous
+  // submission doesn't bleed into the next time the modal is opened.
   useEffect(() => {
     if (open) {
       setTeamAScore("");
       setTeamBScore("");
+      clearError();
       // Small delay so Radix has finished its focus-trap setup.
       const t = setTimeout(() => teamARef.current?.focus(), 80);
       return () => clearTimeout(t);
     }
-  // setTeamAScore and setTeamBScore are stable (from useState)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // setTeamAScore, setTeamBScore, clearError are stable (from useState)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Derive display data — use cached values when match is null during
@@ -79,7 +82,9 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
     !isNaN(aVal) &&
     !isNaN(bVal) &&
     aVal >= 0 &&
-    bVal >= 0;
+    bVal >= 0 &&
+    aVal <= 30 &&
+    bVal <= 30;
 
   return (
     <Dialog
@@ -93,9 +98,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
         {/* ── Header ─────────────────────────────────────────── */}
         <DialogHeader>
           <DialogTitle>Input Final Scores</DialogTitle>
-          {courtName && (
-            <DialogDescription>{courtName}</DialogDescription>
-          )}
+          {courtName && <DialogDescription>{courtName}</DialogDescription>}
         </DialogHeader>
 
         {/* ── Score inputs ────────────────────────────────────── */}
@@ -180,8 +183,8 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
               {aVal > bVal
                 ? `Team A wins · ${aVal} – ${bVal}`
                 : bVal > aVal
-                ? `Team B wins · ${aVal} – ${bVal}`
-                : `Draw · ${aVal} – ${bVal}`}
+                  ? `Team B wins · ${aVal} – ${bVal}`
+                  : `Draw · ${aVal} – ${bVal}`}
             </p>
           )}
 

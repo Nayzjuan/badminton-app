@@ -33,5 +33,19 @@ export function useScoreForm(
     });
   }
 
-  return { teamAScore, setTeamAScore, teamBScore, setTeamBScore, error, submitted, isPending, handleSubmit };
+  function clearError() {
+    setError(null);
+  }
+
+  return {
+    teamAScore,
+    setTeamAScore,
+    teamBScore,
+    setTeamBScore,
+    error,
+    submitted,
+    isPending,
+    handleSubmit,
+    clearError,
+  };
 }
