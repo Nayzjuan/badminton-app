@@ -20,7 +20,7 @@
 //   />
 // ============================================================
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { useScoreForm } from "@/hooks/use-score-form";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 
 interface ScoreModalProps {
@@ -41,10 +42,11 @@ interface ScoreModalProps {
 }
 
 export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) {
-  const [teamAScore, setTeamAScore] = useState("");
-  const [teamBScore, setTeamBScore] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { teamAScore, setTeamAScore, teamBScore, setTeamBScore, error, isPending, handleSubmit } =
+    useScoreForm(async (a, b) => {
+      const result = await onSubmit(a, b);
+      return { error: result.error };
+    });
   const teamARef = useRef<HTMLInputElement>(null);
 
   // Reset form each time the dialog opens for a new match.
@@ -52,31 +54,13 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
     if (open) {
       setTeamAScore("");
       setTeamBScore("");
-      setError(null);
-      setSubmitting(false);
       // Small delay so Radix has finished its focus-trap setup.
       const t = setTimeout(() => teamARef.current?.focus(), 80);
       return () => clearTimeout(t);
     }
+  // setTeamAScore and setTeamBScore are stable (from useState)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  async function handleSubmit() {
-    const a = parseInt(teamAScore, 10);
-    const b = parseInt(teamBScore, 10);
-    if (isNaN(a) || isNaN(b) || a < 0 || b < 0) {
-      setError("Enter valid scores (0 or above) for both teams.");
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    const result = await onSubmit(a, b);
-    if (result.error) {
-      setError(result.error);
-      setSubmitting(false);
-      // Leave dialog open on error so organizer can correct.
-    }
-    // On success the parent sets open=false, which closes the dialog.
-  }
 
   // Derive display data — use cached values when match is null during
   // the close animation so the content doesn't vanish mid-transition.
@@ -89,7 +73,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
   const aVal = parseInt(teamAScore, 10);
   const bVal = parseInt(teamBScore, 10);
   const canSubmit =
-    !submitting &&
+    !isPending &&
     teamAScore !== "" &&
     teamBScore !== "" &&
     !isNaN(aVal) &&
@@ -213,7 +197,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
         <DialogFooter>
           <button
             onClick={onClose}
-            disabled={submitting}
+            disabled={isPending}
             className="rounded-lg border border-border px-5 py-2.5 text-sm font-medium
                        text-foreground hover:bg-muted disabled:opacity-50
                        disabled:cursor-not-allowed transition-colors"
@@ -228,7 +212,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
                        disabled:opacity-40 disabled:cursor-not-allowed
                        transition-colors shadow-sm"
           >
-            {submitting ? (
+            {isPending ? (
               <>
                 <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
                 Saving…
