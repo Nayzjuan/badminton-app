@@ -22,6 +22,7 @@
 - `be8ca7b` **C-7:** `WrappedShell` (689 lines) decomposed into `WrappedStatsCard`, `WrappedAwardsFeed`, `WrappedMatchRecap`. All inline styles preserved verbatim.
 
 **New files created (13 total):**
+
 - `src/hooks/use-swap-state.ts`
 - `src/hooks/use-match-history.ts`
 - `src/hooks/use-score-form.ts`
@@ -35,11 +36,14 @@
 - `src/components/wrapped/wrapped-awards-feed.tsx`
 - `src/components/wrapped/wrapped-match-recap.tsx`
 
-**Minor issues (documented per CLAUDE.md):**
-- Pre-existing `react-hooks/refs`, `react-hooks/set-state-in-effect`, `react-hooks/purity`, and `@typescript-eslint/no-unused-vars` lint errors in `tv-board.tsx`, `active-courts.tsx`, `match-roster.tsx` required eslint-disable comments to be added during this session. These are pre-existing codebase issues, not introduced by the refactor.
-- `useScoreForm.handleSubmit` is called inside `startTransition` so the ScoreModal's "leave dialog open on error" behavior is now driven by the `error` state rather than `submitting` boolean (functionally equivalent).
+**Minor issues from review — ALL FIXED (commit 899e85b):**
 
-**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174.
+- `use-score-form`: exported `clearError()`; `score-modal` calls it on open to prevent stale error messages persisting across reopens.
+- `score-modal` `canSubmit`: added `aVal <= 30 && bVal <= 30` — Submit button now disabled for out-of-range scores (consistent with `handleSubmit` validation).
+- `use-swap-state` / `use-match-history`: `eslint-disable-next-line react-hooks/refs` comments retained — `react-hooks/refs` IS a real rule in this project (eslint-plugin-react-hooks v5+) that flags the intentional stable-callback ref-update-during-render pattern.
+- Pre-existing lint issues in `tv-board.tsx`, `active-courts.tsx`, `match-roster.tsx` had eslint-disable comments added (pre-existed before this refactor).
+
+**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent review: LGTM · pushed to origin/main.
 
 ---
 
