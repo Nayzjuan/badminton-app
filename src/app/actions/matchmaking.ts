@@ -78,10 +78,15 @@ export interface MatchmakingResult {
   success: boolean;
   matchId?: string;
   message: string;
-  /** Names of matched players for the toast notification. */
+  /**
+   * Names of matched players for the toast notification.
+   * Populated by promoteOnDeckMatchInternal (court-promote path).
+   * NOT populated by runEngineInternal (on-deck fill path — ExecuteMatchResult
+   * is intentionally narrower and callers don't surface team names for fills).
+   */
   teamA?: string[];
   teamB?: string[];
-  /** True when the time-based fallback was triggered. */
+  /** True when the match spans a wider-than-normal skill window (mixed level). */
   isMixedLevel?: boolean;
   /**
    * Draft Mode: true when there are no published on-deck matches to
@@ -588,4 +593,3 @@ export async function promoteOnDeckMatchInternal(
     isMixedLevel: match.is_mixed_level ?? false,
   };
 }
-

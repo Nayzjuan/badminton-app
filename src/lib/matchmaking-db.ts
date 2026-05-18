@@ -21,7 +21,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QueueWithWaitTime } from "@/types/database";
 import { ANTI_REPEAT_LOOKBACK } from "@/lib/constants";
-import { pairKey, type MatchProposal, type ScoredPlayer } from "@/lib/matchmaking-core";
+import { pairKey, type MatchProposal } from "@/lib/matchmaking-core";
 
 // Convenience alias: all engine helpers run under the service-role client.
 export type DbClient = SupabaseClient<Database>;
@@ -335,8 +335,8 @@ export async function executeMatch(
     p_is_mixed_level: isMixedLevel,
     p_started_at: isOnDeck ? null : now,
     p_is_on_deck: isOnDeck,
-    p_team_a_ids: teamA.map((p: ScoredPlayer) => p.player_id),
-    p_team_b_ids: teamB.map((p: ScoredPlayer) => p.player_id),
+    p_team_a_ids: teamA.map((p) => p.player_id),
+    p_team_b_ids: teamB.map((p) => p.player_id),
     p_origin: "auto" as const,
     p_is_published: false,
   });
@@ -356,8 +356,8 @@ export async function executeMatch(
         "run already committed one or more of these players. Skipping slot gracefully.",
       {
         sessionId,
-        teamA: teamA.map((p: ScoredPlayer) => p.display_name),
-        teamB: teamB.map((p: ScoredPlayer) => p.display_name),
+        teamA: teamA.map((p) => p.display_name),
+        teamB: teamB.map((p) => p.display_name),
       }
     );
     return {
