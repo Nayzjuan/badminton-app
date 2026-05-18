@@ -88,7 +88,7 @@ export function useMatchHistory(sessionId: string) {
     return unsub;
   }, [supabase, sessionId]);
 
-  const refresh = useCallback(() => fetchHistory(), [fetchHistory]);
-
-  return { matches, loading, refresh };
+  // fetchHistory is already stable (useCallback with [supabase, sessionId] deps),
+  // so returning it directly is equivalent to wrapping it in another useCallback.
+  return { matches, loading, refresh: fetchHistory };
 }

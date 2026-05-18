@@ -126,7 +126,9 @@ describe("useMatchHistory", () => {
   describe("MH-2: Empty result", () => {
     it("returns empty matches array when no history exists", async () => {
       vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient({ matches: [] }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
+        buildMockClient({ matches: [] }) as unknown as ReturnType<
+          typeof createBrowserSupabaseClient
+        >
       );
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.loading).toBe(false));
@@ -216,23 +218,46 @@ describe("useMatchHistory", () => {
         return vi.fn();
       });
 
-      let fetchCount = 0;
-      vi.mocked(createBrowserSupabaseClient).mockReturnValue(
-        buildMockClient({
-          matches: [completedMatch],
-        }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
-      );
+      // Mock returns different data on the 2nd fetch so we can prove the
+      // re-fetch actually ran — the previous assertion (≥ fetchCount) was a
+      // false positive because both fetches returned the same single match.
+      let matchFetchCount = 0;
+      const match2 = { ...completedMatch, id: "match-2" };
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue({
+        from: (table: string) => {
+          const chain: Record<string, unknown> = {
+            select: () => chain,
+            eq: () => chain,
+            in: () => chain,
+            order: () => chain,
+            then: (resolve: (v: { data: unknown; error: null }) => void) => {
+              if (table === "matches") {
+                matchFetchCount++;
+                resolve({
+                  data: matchFetchCount === 1 ? [completedMatch] : [completedMatch, match2],
+                  error: null,
+                });
+              } else if (table === "match_players") {
+                resolve({ data: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }], error: null });
+              } else if (table === "profiles") {
+                resolve({ data: [knownProfile], error: null });
+              } else {
+                resolve({ data: [{ id: COURT_ID, name: "Court X" }], error: null });
+              }
+            },
+          };
+          return chain;
+        },
+      } as unknown as ReturnType<typeof createBrowserSupabaseClient>);
 
-      // Track fetch calls via mock
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.matches.length).toBe(1));
-      fetchCount = 1;
 
-      // Simulate realtime event
-      await act(async () => {
-        realtimeCallback?.();
-      });
-      await waitFor(() => expect(result.current.matches.length).toBeGreaterThanOrEqual(fetchCount));
+      // Simulate realtime event — second fetch returns 2 matches.
+      await act(async () => { realtimeCallback?.(); });
+
+      // If realtime wiring is broken, this stays at 1 and the test fails.
+      await waitFor(() => expect(result.current.matches.length).toBe(2));
     });
   });
 
