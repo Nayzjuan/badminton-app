@@ -79,7 +79,14 @@ export interface UseLeaderboardResult {
   alltimeLoading: boolean;
   error: string | null;
 
-  // Flash (new row pulse for 1.2 s)
+  /**
+   * Flash (new row pulse for 1.2 s): IDs of players who are new to the board
+   * since the last refetch. Maintained by the hook's flash-detection logic.
+   *
+   * NOTE: currently not wired to StadiumLeaderboard — the component doesn't yet
+   * pass this prop. Hook maintains state correctly; connecting it requires adding
+   * a `flashedIds` prop to StadiumLeaderboard and passing it at the call sites.
+   */
   flashedIds: Set<string>;
 
   // Hero card raw stats (below-threshold users)

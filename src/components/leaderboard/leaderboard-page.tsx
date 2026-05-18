@@ -22,12 +22,7 @@
 import { RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { StadiumLeaderboard } from "./stadium-leaderboard";
 import { LeaderboardHeroCard } from "./leaderboard-hero-card";
-import {
-  useLeaderboard,
-  MIN_SESSION_GP,
-  MIN_ALLTIME_GP,
-  type LeaderboardSessionOption,
-} from "@/hooks/use-leaderboard";
+import { useLeaderboard, type LeaderboardSessionOption } from "@/hooks/use-leaderboard";
 import type { LeaderboardVariant } from "@/types/leaderboard";
 
 // ── Props ─────────────────────────────────────────────────────
@@ -81,6 +76,7 @@ export function LeaderboardPage({
     myStatsLoading,
     activeRows,
     activeLoading,
+    minGP,
     myRow,
     handleRefresh,
   } = useLeaderboard({
@@ -126,9 +122,9 @@ export function LeaderboardPage({
           <div className="py-12 text-center">
             <p className="text-sm font-medium text-foreground">No ranked players yet</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {MIN_SESSION_GP === 1
+              {minGP === 1
                 ? "Complete at least 1 game to appear."
-                : `Min. ${MIN_SESSION_GP} games to appear on the board.`}
+                : `Min. ${minGP} games to appear on the board.`}
             </p>
             <button
               type="button"
@@ -284,11 +280,9 @@ export function LeaderboardPage({
         ) : activeRows.length === 0 && !activeLoading ? (
           <div className="py-12 text-center">
             <p className="text-sm text-muted-foreground">
-              {scopeTab === "session"
-                ? MIN_SESSION_GP === 1
-                  ? "No completed games in this session yet."
-                  : `No players with ${MIN_SESSION_GP}+ games yet.`
-                : `No players with ${MIN_ALLTIME_GP}+ games yet.`}
+              {minGP === 1
+                ? "No completed games in this session yet."
+                : `No players with ${minGP}+ games yet.`}
             </p>
             <button
               type="button"
