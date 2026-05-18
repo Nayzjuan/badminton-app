@@ -313,7 +313,7 @@ test.describe("MatchAlert — [B] On-deck position 2 shows #2 copy", () => {
       });
 
       // Sub-line mentions 1 match ahead
-      await expect(page.getByText(/1 match ahead/i)).toBeVisible({ timeout: 8_000 });
+      await expect(page.getByText(/1 match ahead/i).first()).toBeVisible({ timeout: 8_000 });
     } finally {
       await context.close();
     }
@@ -350,8 +350,8 @@ test.describe("MatchAlert — [C] In-progress card shows court name", () => {
       // Team labels still present — scoped to the alert card to avoid
       // other "Your Team" labels that may appear in sibling UI (e.g. ScoreInputCard)
       const inProgressCard = page.getByRole("alert").first();
-      await expect(inProgressCard.getByText("Your Team", { exact: true })).toBeVisible();
-      await expect(inProgressCard.getByText("Opponents", { exact: true })).toBeVisible();
+      await expect(inProgressCard.getByText("Your Team", { exact: true }).first()).toBeVisible();
+      await expect(inProgressCard.getByText("Opponents", { exact: true }).first()).toBeVisible();
     } finally {
       await context.close();
     }

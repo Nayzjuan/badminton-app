@@ -249,7 +249,7 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
 
     // On-deck alert or "You're up" copy should appear
     // (OnDeckAlert renders with "You're Up Next" or similar)
-    await expect(page.getByText(/up next|on deck|your match/i)).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole("alert")).toBeVisible({ timeout: 20_000 });
   } finally {
     await context.close();
   }

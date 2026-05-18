@@ -65,18 +65,36 @@ export function useSwapState(
   // ~100ms after promotion so the organizer sees a clear warning rather
   // than a server error.
   //
-  // Checks swapContext.matchId (the first selected player's match).
-  // If the TARGET match (second player) starts while picking, executeMatchSwap
-  // catches it via its own pre-check before calling the server.
+  // Two triggers:
+  //   a) The SELECTED player's match left on-deck (original guard).
+  //   b) Any match left on-deck while in picking mode (extended guard).
+  //      Covers the scenario where the TARGET player's match starts
+  //      between the first and second tap — the player pill disappears
+  //      from the on-deck panel, so the pre-flight check in executeMatchSwap
+  //      never runs. Cancelling proactively gives the organizer a clean
+  //      starting point.
   //
   // Zero new subscriptions needed — onDeckMatches is already driven
   // by the existing subscribeToMatches → fetchActiveMatches pipeline.
+  const prevOnDeckLengthRef = useRef(onDeckMatches.length);
   useEffect(() => {
+    const prevLen = prevOnDeckLengthRef.current;
+    prevOnDeckLengthRef.current = onDeckMatches.length;
+
     if (!swapContext) return;
+
+    // (a) Selected player's own match left on-deck
     const matchStillPending = onDeckMatches.some((m) => m.id === swapContext.matchId);
     if (!matchStillPending) {
       setSwapContext(null);
       toast.warning("Match has started — the swap was cancelled automatically.");
+      return;
+    }
+
+    // (b) Any other match left on-deck — target player pool changed
+    if (onDeckMatches.length < prevLen) {
+      setSwapContext(null);
+      toast.warning("A match moved to a court — tap a player to try again.");
     }
   }, [onDeckMatches, swapContext]);
 
