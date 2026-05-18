@@ -1,57 +1,40 @@
 "use client";
 
 // ============================================================
-// LeaderboardPage — Orchestrates all leaderboard variants
+// LeaderboardPage — Layout shell for all leaderboard variants
 // ============================================================
 // Three variants controlled by the `variant` prop:
 //
 //   player-panel    — embedded in player dashboard tab.
-//                     Session stats only. No advanced toggle.
-//                     Compact padding.
+//                     Session stats only. Compact padding.
 //
 //   organizer-panel — embedded in organizer dashboard tab.
 //                     Session + All-Time tabs.
-//                     Advanced stats toggle (PF/PA/+/-).
 //
 //   standalone      — public /leaderboard/[sessionId] page.
-//                     Session + All-Time tabs.
-//                     Advanced stats toggle.
-//                     Max-width centered layout.
+//                     Session + All-Time tabs. Max-width centered.
 //
-// Data flow:
-//   Session tab  → getSessionLeaderboard(sessionId)
-//   All-Time tab → getAllTimeLeaderboard() (lazy: fetched on first visit)
-//
-// Flash: rows new to the board after a refresh pulse for 1.2 s.
-// Hero card: current user's row is pinned above the table so
-//   they can always see their rank without scrolling.
+// All data fetching, realtime subscription, flash detection, and
+// derived state live in useLeaderboard (src/hooks/use-leaderboard.ts).
+// This component is a near-pure layout renderer.
 // ============================================================
 
-import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { StadiumLeaderboard } from "./stadium-leaderboard";
 import { LeaderboardHeroCard } from "./leaderboard-hero-card";
 import {
-  getSessionLeaderboard,
-  getAllTimeLeaderboard,
-  getPlayerStats,
-} from "@/app/actions/leaderboard";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
-import { subscribeToMatches } from "@/lib/realtime";
-import type { LeaderboardRow, LeaderboardVariant } from "@/types/leaderboard";
-
-const MIN_SESSION_GP = 1;
-const MIN_ALLTIME_GP = 10;
+  useLeaderboard,
+  MIN_SESSION_GP,
+  MIN_ALLTIME_GP,
+  type LeaderboardSessionOption,
+} from "@/hooks/use-leaderboard";
+import type { LeaderboardVariant } from "@/types/leaderboard";
 
 // ── Props ─────────────────────────────────────────────────────
 
-/** Session metadata used by the picker when sessionId is null */
-export type LeaderboardSessionOption = {
-  id: string;
-  name: string;
-  created_at: string;
-  is_active: boolean;
-};
+// LeaderboardSessionOption is re-exported from useLeaderboard for
+// callers that need to construct the sessions array.
+export type { LeaderboardSessionOption } from "@/hooks/use-leaderboard";
 
 interface LeaderboardPageProps {
   /**
@@ -71,10 +54,6 @@ interface LeaderboardPageProps {
   variant?: LeaderboardVariant;
 }
 
-// ── Scope tab type ────────────────────────────────────────────
-
-type ScopeTab = "session" | "alltime";
-
 // ── Component ─────────────────────────────────────────────────
 
 export function LeaderboardPage({
@@ -88,179 +67,32 @@ export function LeaderboardPage({
   const showAllTimeTab = variant === "organizer-panel" || variant === "standalone";
   const isCentered = variant === "standalone";
 
-  // ── State ──────────────────────────────────────────────────
-  // Default to all-time tab when no session is pre-selected (lobby use case).
-  const [scopeTab, setScopeTab] = useState<ScopeTab>(sessionId ? "session" : "alltime");
-  // Tracks the currently selected session (may differ from the prop after picker interaction).
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(sessionId ?? null);
-  const [activeSessionName, setActiveSessionName] = useState<string | undefined>(sessionName);
-  const [sessionRows, setSessionRows] = useState<LeaderboardRow[]>([]);
-  const [alltimeRows, setAlltimeRows] = useState<LeaderboardRow[]>([]);
-  const [sessionLoading, setSessionLoading] = useState(!!sessionId);
-  const [alltimeLoading, setAlltimeLoading] = useState(false);
-  const [alltimeFetched, setAlltimeFetched] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [flashedIds, setFlashedIds] = useState<Set<string>>(new Set());
-  /** Raw stats for the current user regardless of MIN_GP — drives LeaderboardHeroCard */
-  const [myStats, setMyStats] = useState<LeaderboardRow | null>(null);
-  const [myStatsLoading, setMyStatsLoading] = useState(false);
+  const {
+    scopeTab,
+    setScopeTab,
+    activeSessionId,
+    activeSessionName,
+    handleSessionPick,
+    handleClearSession,
+    sessionRows,
+    sessionLoading,
+    error,
+    myStats,
+    myStatsLoading,
+    activeRows,
+    activeLoading,
+    myRow,
+    handleRefresh,
+  } = useLeaderboard({
+    initialSessionId: sessionId,
+    initialSessionName: sessionName,
+    currentUserId,
+  });
 
-  // Track previous row IDs to detect new entrants for flash effect.
-  const prevIdsRef = useRef<Set<string>>(new Set());
-
-  // Monotonic sequence refs (CLAUDE.md mandate): discard stale concurrent
-  // fetch results so a slow-returning earlier fetch can't overwrite a
-  // faster-returning later fetch's data. Critical now that realtime can
-  // trigger refetches in rapid succession.
-  const fetchSessionSeq = useRef(0);
-  const fetchAllTimeSeq = useRef(0);
-
-  // ── Flash helper ──────────────────────────────────────────
-  const flashNewEntrants = useCallback((rows: LeaderboardRow[]) => {
-    const toFlash = new Set<string>();
-    rows.forEach((r) => {
-      if (!prevIdsRef.current.has(r.player_id)) toFlash.add(r.player_id);
-    });
-    prevIdsRef.current = new Set(rows.map((r) => r.player_id));
-    if (toFlash.size === 0) return;
-    setFlashedIds(toFlash);
-    setTimeout(() => setFlashedIds(new Set()), 1200);
-  }, []);
-
-  // ── Fetch functions ───────────────────────────────────────
-  const fetchSession = useCallback(async () => {
-    if (!activeSessionId) return;
-    const seq = ++fetchSessionSeq.current;
-    setSessionLoading(true);
-    setError(null);
-    const result = await getSessionLeaderboard(activeSessionId);
-    // Stale-response guard: drop this result if a newer fetch has started.
-    if (seq !== fetchSessionSeq.current) return;
-    setSessionLoading(false);
-    if (result.success) {
-      flashNewEntrants(result.rows);
-      setSessionRows(result.rows);
-    } else {
-      setError(result.error);
-    }
-  }, [activeSessionId, flashNewEntrants]);
-
-  const fetchAllTime = useCallback(async () => {
-    const seq = ++fetchAllTimeSeq.current;
-    setAlltimeLoading(true);
-    setError(null);
-    const result = await getAllTimeLeaderboard();
-    if (seq !== fetchAllTimeSeq.current) return;
-    setAlltimeLoading(false);
-    setAlltimeFetched(true);
-    if (result.success) {
-      setAlltimeRows(result.rows);
-    } else {
-      setError(result.error);
-    }
-  }, []);
-
-  // ── Initial load ──────────────────────────────────────────
-  // fetchSession re-memoizes when activeSessionId changes, which re-triggers this effect.
-  useEffect(() => {
-    fetchSession();
-  }, [fetchSession]);
-
-  // ── Lazy load all-time on first tab visit ─────────────────
-  useEffect(() => {
-    if (scopeTab === "alltime" && !alltimeFetched && !alltimeLoading) {
-      fetchAllTime();
-    }
-  }, [scopeTab, alltimeFetched, alltimeLoading, fetchAllTime]);
-
-  // ── Realtime: refetch session leaderboard on match changes ─
-  // Why we needed this: the component used to fetch only on mount,
-  // so players who opened the Leaderboard tab before any matches had
-  // completed got stuck on the "No ranked players yet" empty state
-  // even after games started finishing. Now any INSERT/UPDATE on the
-  // matches table (most importantly status → completed and score
-  // updates) triggers a debounced refetch.
-  //
-  // Ref-based callback (per CLAUDE.md mandate) keeps the subscription
-  // stable across re-renders — subscribing only re-runs when scopeTab
-  // or activeSessionId actually changes.
-  //
-  // Debounce 500 ms collapses bursts (score submit cascades into
-  // multiple match_players updates + a matches UPDATE) into one fetch.
-  //
-  // Only wires up on the session scope with a real session id — the
-  // all-time tab is intentionally not realtime (refresh button only).
-  const fetchSessionRef = useRef(fetchSession);
-  useEffect(() => {
-    fetchSessionRef.current = fetchSession;
-  }, [fetchSession]);
-
-  useEffect(() => {
-    if (scopeTab !== "session" || !activeSessionId) return;
-    const supabase = createBrowserSupabaseClient();
-    let debounce: ReturnType<typeof setTimeout> | null = null;
-    const refetch = () => {
-      if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => fetchSessionRef.current(), 500);
-    };
-    const unsubscribe = subscribeToMatches(supabase, activeSessionId, refetch, "leaderboard");
-    return () => {
-      if (debounce) clearTimeout(debounce);
-      unsubscribe();
-    };
-  }, [scopeTab, activeSessionId]);
-
-  // ── Fetch current user's raw stats for the hero card ──────
-  // Runs in parallel with the main board fetch whenever scope or
-  // session changes. Returns a rank-0 LeaderboardRow so the hero
-  // card can show the below-threshold state even when the user
-  // isn't in the qualified rows.  Cancelled on unmount / dep change
-  // via the cleanup flag so stale responses are never applied.
-  useEffect(() => {
-    if (!currentUserId) return;
-    if (scopeTab === "session" && !activeSessionId) {
-      // Session picker is showing — clear stale data and bail.
-      setMyStats(null);
-      return;
-    }
-
-    let cancelled = false;
-    setMyStats(null); // clear stale immediately while loading
-    setMyStatsLoading(true);
-
-    getPlayerStats(currentUserId, scopeTab === "session" ? activeSessionId! : null).then(
-      (result) => {
-        if (cancelled) return;
-        setMyStatsLoading(false);
-        if (result.success) setMyStats(result.row);
-      }
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserId, scopeTab, activeSessionId]);
-
-  // ── Session picker handler ────────────────────────────────
-  const handleSessionPick = useCallback((s: LeaderboardSessionOption) => {
-    setActiveSessionId(s.id);
-    setActiveSessionName(s.name);
-    setSessionRows([]); // clear stale rows immediately
-    setMyStats(null); // clear stale hero card data
-  }, []);
-
-  // ── Derived state ─────────────────────────────────────────
-  const activeRows = scopeTab === "session" ? sessionRows : alltimeRows;
-  const activeLoading = scopeTab === "session" ? sessionLoading : alltimeLoading;
-  const minGP = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
-  // Show session picker when on session tab but no session is selected yet
+  // Show session picker when on session tab but no session is selected.
+  // Computed here (not in the hook) because it depends on the `sessions`
+  // prop that is only available in the component.
   const showSessionPicker = scopeTab === "session" && !activeSessionId && !!sessions?.length;
-  const myRow = currentUserId ? activeRows.find((r) => r.player_id === currentUserId) : null;
-
-  const handleRefresh = () => {
-    if (scopeTab === "session" && activeSessionId) fetchSession();
-    else if (scopeTab === "alltime") fetchAllTime();
-  };
 
   // ── Layout classes ────────────────────────────────────────
   const wrapperClass = [
@@ -415,11 +247,7 @@ export function LeaderboardPage({
       {/* ── "Change session" back button (picker mode, session selected) ── */}
       {scopeTab === "session" && activeSessionId && sessions && (
         <button
-          onClick={() => {
-            setActiveSessionId(null);
-            setActiveSessionName(undefined);
-            setSessionRows([]);
-          }}
+          onClick={handleClearSession}
           className="flex items-center gap-1 text-xs text-muted-foreground
                      hover:text-foreground transition-colors py-2 -my-2"
         >
