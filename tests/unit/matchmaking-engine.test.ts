@@ -18,10 +18,18 @@
 //     no on-deck + toggle ON + empty queue.
 //
 // Mock strategy:
-//   @/utils/supabase/server is replaced by vi.mock().
-//   Each test builds a queue-based mock client where each from()
-//   call consumes the next pre-configured response. queriedTables
-//   tracks which DB tables were accessed for order verification.
+//   @/utils/supabase/service is replaced by vi.mock() and the returned
+//   client is passed down to matchmaking-db helpers (fetchActivePool,
+//   fetchPartnershipCounts, buildOverlapMap, executeMatch) which use
+//   it directly. Each test builds a queue-based mock client where each
+//   from() call consumes the next pre-configured response.
+//   queriedTables tracks the DB table-access order for assertions.
+//
+// Per-slot query order inside runEngineInternal:
+//   fetchActivePool:        v_queue_with_wait_time, queue_entries
+//   fetchPartnershipCounts: matches (+ match_players if non-empty)
+//   buildOverlapMap:        match_players, matches, match_players (if non-empty)
+//   executeMatch:           rpc("create_match_with_players")
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -428,17 +436,17 @@ describe("runEngineForSession", () => {
     //   [1] courts(2)
     //   [2] matches: total pending count=0 (single atomic query) → slotsAvailable=3
     //   [3] v_queue_with_wait_time: soft gate — 4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
-    //        → gateTimedOut=true → gate releases; no active-courts query; estimatedWaiting=4
+    //        → gateTimedOut=true → gate releases; estimatedWaiting=4
     //   [4] matches: fetchRecentRosters → [] (empty; no match_players query follows)
     //   slot 0 (i=0 exempt from pool-diversity cap):
-    //   [5] v_queue_with_wait_time: runAlgorithm raw pool → 4 players
-    //   [6] queue_entries: paused filter → []
-    //       (activePool=4 ≥ 4 → continues past the "not enough" guard)
-    //   [7] matches: fetchPartnershipCounts → [] (no prior session matches → empty map)
-    //   [8] match_players: buildOverlapMap step 1 (anchor prior matches) → null/undefined
+    //   [5] v_queue_with_wait_time: fetchActivePool → 4 players
+    //   [6] queue_entries: fetchActivePool paused filter → []
+    //       (pool=4 ≥ 4 → continues)
+    //   [7] matches: fetchPartnershipCounts step 1 → [] (no prior matches → empty map; no step 2)
+    //   [8] match_players: buildOverlapMap step 1 → beyond array → default {data:null,error:null}
     //        → anchorRows=null → early return; empty overlapMap
-    //   → group built → snakeDraft → executeMatch → rpc FAILS
-    //   → loop breaks (slot 1 never reached — estimatedWaiting=4 < MIN_POOL=8)
+    //   → runAlgorithm(pool, counts, overlap, rosters) → proposal → executeMatch → rpc FAILS
+    //   → loop breaks (slot 1: estimatedWaiting=4 < MIN_POOL=8 → cap fires anyway)
     const fourPlayers = Array.from({ length: 4 }, (_, i) => ({
       id: `entry-p${i}`,
       session_id: SESSION_ID,
@@ -492,7 +500,7 @@ describe("runEngineForSession", () => {
     // slotsAvailable = 3 (0 total pending → MAX_AUTO_DRAFTS=3 − 0 = 3, single atomic query).
     // waitingCount = 8: soft gate not triggered (8 > GATE_POOL_THRESHOLD=4).
     //
-    // Slot 0 (i=0): exempt from pool-diversity cap → fires → RPC succeeds → estimatedWaiting = 4.
+    // Slot 0 (i=0): exempt from pool-diversity cap → fetchActivePool(8) → runAlgorithm → RPC succeeds → estimatedWaiting=4.
     // Slot 1 (i=1): cap check: i>0 && estimatedWaiting(4) < PLAYERS_PER_MATCH(4)+MIN_FREE_POOL(4)=8
     //               → cap fires → break (slotsAvailable=3 not reached).
     //
@@ -521,11 +529,12 @@ describe("runEngineForSession", () => {
         { count: 0, data: null, error: null }, // [2] total pending → 0 (atomic) → slotsAvailable=3
         { data: eightPlayers, error: null }, // [3] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered)
         { data: [], error: null }, // [4] fetchRecentRosters: recent matches → []
-        { data: eightPlayers, error: null }, // [5] runAlgorithm slot 0: v_queue_with_wait_time → 8 players
-        { data: [], error: null }, // [6] queue_entries paused → []
-        { data: [], error: null }, // [7] fetchPartnershipCounts: matches (no prior matches → empty map)
-        // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback → empty overlapMap
-        // rpc succeeds → estimatedWaiting=8-4=4; slot 1: 4 < MIN_POOL(8) → cap fires → break
+        { data: eightPlayers, error: null }, // [5] fetchActivePool: v_queue_with_wait_time → 8 players
+        { data: [], error: null }, // [6] fetchActivePool: queue_entries paused → []
+        { data: [], error: null }, // [7] fetchPartnershipCounts: matches → [] (no prior matches → empty map)
+        // [8] buildOverlapMap step 1: match_players → beyond array → default fallback → empty overlapMap
+        // runAlgorithm → proposal → rpc succeeds → estimatedWaiting=8-4=4
+        // slot 1: estimatedWaiting(4) < MIN_POOL(8) → cap fires → break
       ],
       [{ data: "new-match-id", error: null }] // rpc → success for slot 0
     );
@@ -658,8 +667,8 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
       { count: 2, data: null, error: null }, // [5] runEngine: total pending → slotsAvailable=1
       { data: [], error: null }, // [6] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [7] runAlgorithm: queue → []
-      { data: [], error: null }, // [8] runAlgorithm: paused queue → []
+      { data: [], error: null }, // [7] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
+      { data: [], error: null }, // [8] fetchActivePool: queue_entries paused → []
       { data: [], error: null }, // [9] promote 2: no published pending
       { count: 2, data: null, error: null }, // [10] promote 2: 2 drafts → hasDraftsBlocking
     ]);
@@ -690,8 +699,8 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
       { count: 0, data: null, error: null }, // [5] runEngine: total pending → slotsAvailable=3
       { data: [], error: null }, // [6] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [7] runAlgorithm: queue → []
-      { data: [], error: null }, // [8] runAlgorithm: paused queue → []
+      { data: [], error: null }, // [7] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
+      { data: [], error: null }, // [8] fetchActivePool: queue_entries paused → []
       { data: [], error: null }, // [9] promote 2: still no pending
       { count: 0, data: null, error: null }, // [10] promote 2: 0 drafts
     ]);

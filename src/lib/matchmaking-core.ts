@@ -6,13 +6,22 @@
 // data with no side effects. This makes them directly unit-testable
 // without mocking Supabase or Next.js server infrastructure.
 //
-// runAlgorithm() (in matchmaking.ts) composes these building blocks.
+// DB-coupled helpers (fetchActivePool, buildOverlapMap, etc.) and
+// the executeMatch write live in matchmaking-db.ts.
+//
+// runAlgorithm() is the pure orchestration layer that composes the
+// building blocks below. It accepts pre-fetched data and returns a
+// MatchProposal (or null) with no side effects.
 // ============================================================
 
 import {
   CRITICAL_WAIT_MINUTES,
+  FALLBACK_WAIT_MINUTES,
   GAME_PENALTY_MINUTES,
+  MAX_PARTNERSHIP_REPEATS,
   RED_ZONE_SCORE_FLOOR,
+  SKILL_VARIANCE_MAX,
+  SKILL_VARIANCE_TARGET,
 } from "@/lib/constants";
 import type { QueueWithWaitTime } from "@/types/database";
 
@@ -355,5 +364,358 @@ export function rotatedDraft(
   }
 
   return null;
+}
+
+// ═════════════════════════════════════════════════════════════
+// PURE ALGORITHM LAYER
+// ═════════════════════════════════════════════════════════════
+// scoreAndSortPool, runAlgorithm, MatchProposal, AlgorithmResult
+//
+// These are all pure functions — zero DB calls, zero side effects.
+// matchmaking-db.ts fetches the inputs; matchmaking.ts orchestrates
+// and commits the output via executeMatch.
+// ═════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: MatchProposal
+// ─────────────────────────────────────────────────────────────
+// The decision output of runAlgorithm: which players, which teams,
+// mixed-level flag. Does NOT include execution context (courtId,
+// isOnDeck) — those are supplied to executeMatch by the orchestrator.
+
+export type MatchProposal = {
+  teamA: ScoredPlayer[];
+  teamB: ScoredPlayer[];
+  isMixedLevel: boolean;
+};
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: AlgorithmResult
+// ─────────────────────────────────────────────────────────────
+// Returned by runAlgorithm. When proposal is null, capSaturation
+// indicates whether the partnership cap (not a lack of players)
+// was the reason no match could be formed. Callers use this to
+// decide whether to broadcast a cap-saturation warning.
+
+export type AlgorithmResult = {
+  proposal: MatchProposal | null;
+  /** True when the partnership cap shrank the candidate pool and no match was formed. */
+  capSaturation: boolean;
+};
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: scoreAndSortPool
+// ─────────────────────────────────────────────────────────────
+// Enriches each raw QueueWithWaitTime player with a priorityScore,
+// then sorts descending so pool[0] is always the highest-urgency
+// anchor for runAlgorithm.
+//
+// Kept separate from fetchActivePool (matchmaking-db.ts) so the
+// DB helper stays a pure data-fetch and this step is independently
+// testable with no Supabase mock.
+// (QueueWithWaitTime is already imported at the top of this module.)
+
+export function scoreAndSortPool(rawPool: QueueWithWaitTime[]): ScoredPlayer[] {
+  return rawPool
+    .map((p) => ({ ...p, priorityScore: computePriorityScore(p) }))
+    .sort((a, b) => {
+      const diff = b.priorityScore - a.priorityScore;
+      if (Math.abs(diff) > 0.001) return diff;
+      // Same score bucket → earlier joiner wins (joined_at ASC tiebreaker).
+      return new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime();
+    });
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: runAlgorithm
+// ─────────────────────────────────────────────────────────────
+// Pure match-selection algorithm. Accepts pre-fetched, pre-scored,
+// pre-sorted pool data and returns a MatchProposal (or null).
+//
+// pool[0] is the anchor (highest priority player).
+// partnershipCounts, overlapMap, recentRosters are fetched by the
+// orchestrator in matchmaking.ts and passed in.
+//
+// Pipeline:
+//   1. Filter candidates: remove anchor + cap-blocked players
+//   2. Progressive skill expansion: ±VARIANCE_TARGET → ±VARIANCE_MAX
+//      (→ ±3, ±4 when anchor is Red Zone)
+//   3. Per window: scoreCandidates → buildCombinationGroup
+//      → diversity check → Tier-1 swap → Tier-2 expanded swap
+//      → Tier-3 rotated draft → snakeDraft
+//   4. Last-resort fallback (anchor wait > FALLBACK_WAIT_MINUTES)
+//   5. No-match: return { proposal: null, capSaturation }
+
+export function runAlgorithm(
+  pool: ScoredPlayer[],
+  partnershipCounts: Map<string, number>,
+  overlapMap: Map<string, number>,
+  recentRosters: string[][]
+): AlgorithmResult {
+  // pool must be pre-scored and pre-sorted (pool[0] = anchor).
+  const anchor = pool[0];
+  const anchorSkill = anchor.skill_level_int;
+  const anchorWaitMinutes = anchor.wait_minutes ?? 0;
+  const anchorIsRedZone = anchor.priorityScore >= RED_ZONE_SCORE_FLOOR;
+
+  if (process.env.DEBUG_MATCHMAKING === "true") {
+    console.log(
+      `[matchmaking] anchor=${anchor.display_name} skill=${anchorSkill} ` +
+        `wait=${anchorWaitMinutes.toFixed(1)}min priority=${anchor.priorityScore.toFixed(1)} ` +
+        `redZone=${anchorIsRedZone} pool=${pool.length}`
+    );
+  }
+
+  // ── 1. Build candidate list ───────────────────────────────
+  // Pre-filter: remove anchor + any player who has already hit the
+  // partnership cap with the anchor. This is the universal enforcement
+  // point — it propagates through every downstream path.
+  const candidates = pool
+    .slice(1)
+    .filter(
+      (c) =>
+        (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
+        MAX_PARTNERSHIP_REPEATS
+    );
+
+  // Track whether the cap reduced the candidate pool.
+  const capWasActive = pool.length - 1 > candidates.length;
+
+  if (process.env.DEBUG_MATCHMAKING === "true") {
+    const filtered = pool.length - 1 - candidates.length;
+    if (filtered > 0) {
+      console.log(
+        `[matchmaking] Partner-cap pre-filter: removed ${filtered} candidate(s) at cap with anchor ${anchor.display_name}`
+      );
+    }
+  }
+
+  // ── 2. Build skill window list ────────────────────────────
+  // Red Zone anchor: try ±1, ±2, ±3, ±4 to guarantee a match.
+  // Normal anchor:   try ±1, ±2 only.
+  const skillWindows = anchorIsRedZone
+    ? [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX, 3, 4]
+    : [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX];
+
+  // ── 3. Progressive expansion ──────────────────────────────
+  for (const maxVariance of skillWindows) {
+    const eligible = candidates.filter(
+      (c) => Math.abs(c.skill_level_int - anchorSkill) <= maxVariance
+    );
+
+    if (eligible.length < 3) {
+      if (process.env.DEBUG_MATCHMAKING === "true") {
+        console.log(
+          `[matchmaking] ±${maxVariance} window: only ${eligible.length} eligible, need 3 — expanding`
+        );
+      }
+      continue;
+    }
+
+    const effectiveLookback = getEffectiveLookback(eligible.length + 1);
+    const activeRosters = recentRosters.slice(0, effectiveLookback);
+
+    if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.log(
+        `[matchmaking] ±${maxVariance} window: pool=${eligible.length + 1} → lookback=${effectiveLookback}`
+      );
+    }
+
+    const scored = scoreCandidates(eligible, overlapMap);
+    const group = buildCombinationGroup(anchor, scored, maxVariance);
+
+    if (group.length === 3) {
+      const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
+
+      if (isDiversityViolation(proposedIds, activeRosters)) {
+        if (process.env.DEBUG_MATCHMAKING === "true") {
+          console.log(
+            `[matchmaking] Diversity violation for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
+          );
+        }
+
+        const swapTarget = group[2];
+        if (swapTarget.priorityScore >= RED_ZONE_SCORE_FLOOR) {
+          if (process.env.DEBUG_MATCHMAKING === "true") {
+            console.warn(
+              `[matchmaking] Swap target ${swapTarget.display_name} is Red Zone ` +
+                `(score=${swapTarget.priorityScore.toFixed(1)}) — diversity swap skipped`
+            );
+          }
+          // Fall through to snakeDraft with the original group.
+        } else {
+          // ── Tier 1: primary swap within current skill window ──────
+          const fixedTwo = group.slice(0, 2);
+          const alreadyInGroup = new Set(group.map((g) => g.player_id));
+          const swapPool = scored.filter(
+            ({ candidate }) => !alreadyInGroup.has(candidate.player_id)
+          );
+
+          for (const { candidate } of swapPool) {
+            const swapGroup = [...fixedTwo, candidate];
+            if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
+
+            const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
+            if (!isDiversityViolation(swappedIds, activeRosters)) {
+              const draft = snakeDraft(
+                [anchor, ...swapGroup],
+                partnershipCounts,
+                MAX_PARTNERSHIP_REPEATS
+              );
+              if (!draft) {
+                if (process.env.DEBUG_MATCHMAKING === "true") {
+                  console.log(
+                    `[matchmaking] Tier-1 swap: all team splits capped for ${candidate.display_name} — skipping`
+                  );
+                }
+                continue;
+              }
+              if (process.env.DEBUG_MATCHMAKING === "true") {
+                console.log(
+                  `[matchmaking] Tier-1 swap succeeded — replaced with ${candidate.display_name}`
+                );
+              }
+              const isMixedSwap = maxVariance > SKILL_VARIANCE_MAX;
+              return {
+                proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: isMixedSwap },
+                capSaturation: false,
+              };
+            }
+          }
+
+          // ── Tier 2: expanded swap at ±SKILL_VARIANCE_MAX ──────────
+          if (swapPool.length === 0 && maxVariance < SKILL_VARIANCE_MAX) {
+            const widerEligible = candidates.filter(
+              (c) =>
+                Math.abs(c.skill_level_int - anchorSkill) <= SKILL_VARIANCE_MAX &&
+                !alreadyInGroup.has(c.player_id)
+            );
+
+            if (widerEligible.length > 0) {
+              const widerScored = scoreCandidates(widerEligible, overlapMap);
+              for (const { candidate } of widerScored) {
+                const swapGroup = [...fixedTwo, candidate];
+                if (!isGroupValid([anchor, ...swapGroup], SKILL_VARIANCE_MAX)) continue;
+
+                const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
+                if (!isDiversityViolation(swappedIds, activeRosters)) {
+                  const draft = snakeDraft(
+                    [anchor, ...swapGroup],
+                    partnershipCounts,
+                    MAX_PARTNERSHIP_REPEATS
+                  );
+                  if (!draft) {
+                    if (process.env.DEBUG_MATCHMAKING === "true") {
+                      console.log(
+                        `[matchmaking] Tier-2 expanded swap: all team splits capped for ${candidate.display_name} — skipping`
+                      );
+                    }
+                    continue;
+                  }
+                  if (process.env.DEBUG_MATCHMAKING === "true") {
+                    console.log(
+                      `[matchmaking] Tier-2 expanded swap (±${SKILL_VARIANCE_MAX}) — replaced with ${candidate.display_name}`
+                    );
+                  }
+                  return {
+                    proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: false },
+                    capSaturation: false,
+                  };
+                }
+              }
+            }
+          }
+
+          // ── Tier 3: partner rotation ───────────────────────────────
+          const isMixedRotation = maxVariance > SKILL_VARIANCE_MAX;
+          const rotatedResult = rotatedDraft(
+            [anchor, ...group],
+            recentRosters,
+            partnershipCounts,
+            MAX_PARTNERSHIP_REPEATS
+          );
+          if (!rotatedResult) {
+            if (process.env.DEBUG_MATCHMAKING === "true") {
+              console.warn(
+                "[matchmaking] Tier-3 rotation: all team splits capped — expanding skill window"
+              );
+            }
+            continue;
+          }
+          console.warn(
+            "[matchmaking] No diverse swap found — applying partner rotation (forced repeat)"
+          );
+          return {
+            proposal: {
+              teamA: rotatedResult.teamA,
+              teamB: rotatedResult.teamB,
+              isMixedLevel: isMixedRotation,
+            },
+            capSaturation: false,
+          };
+        }
+      }
+
+      const isMixed = maxVariance > SKILL_VARIANCE_MAX;
+      const allFour = [anchor, ...group];
+      const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+      if (!draft) {
+        if (process.env.DEBUG_MATCHMAKING === "true") {
+          console.log(
+            `[matchmaking] ±${maxVariance} window: group valid but all team splits capped — expanding`
+          );
+        }
+        continue;
+      }
+      if (process.env.DEBUG_MATCHMAKING === "true") {
+        console.log(
+          `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +
+            (isMixed ? " (mixed level)" : "")
+        );
+      }
+      return {
+        proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: isMixed },
+        capSaturation: false,
+      };
+    }
+
+    if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.log(
+        `[matchmaking] ±${maxVariance} window: only built group of ${group.length} — expanding`
+      );
+    }
+  }
+
+  // ── 4. Last-resort fallback (anchor wait > FALLBACK_WAIT_MINUTES) ──
+  // Skips skill validation entirely. Always flagged isMixedLevel=true.
+  // Only fires when ALL skill-window expansion passes fail.
+  if (anchorWaitMinutes > FALLBACK_WAIT_MINUTES) {
+    if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.log(
+        `[matchmaking] LAST-RESORT FALLBACK — anchor waited ${anchorWaitMinutes.toFixed(1)}min > ${FALLBACK_WAIT_MINUTES}min`
+      );
+    }
+    const scoredFallback = scoreCandidates(candidates, overlapMap);
+    const fallbackGroup = scoredFallback.slice(0, 3).map((s) => s.candidate);
+
+    if (fallbackGroup.length >= 3) {
+      const allFour = [anchor, ...fallbackGroup];
+      const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+      if (draft) {
+        return {
+          proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: true },
+          capSaturation: false,
+        };
+      }
+      if (process.env.DEBUG_MATCHMAKING === "true") {
+        console.log("[matchmaking] LAST-RESORT FALLBACK: all team splits capped — no match formed");
+      }
+    }
+  }
+
+  // ── 5. No match ───────────────────────────────────────────────────
+  // capSaturation: true tells the orchestrator to broadcast a warning
+  // to the organizer. Broadcast itself is a side effect handled there.
+  return { proposal: null, capSaturation: capWasActive };
 }
 
