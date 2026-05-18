@@ -5,7 +5,96 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-17)
+## SESSION STATE (Last Updated: 2026-05-18)
+
+### E2E Fixture Fix: is_published on seeded pending matches (2026-05-18) — COMPLETE
+
+**Root cause:** `tests/helpers/teardown.ts` seeded `status: "pending"` matches without `is_published: true`. The `draft_mode_is_published` migration (20260502100000) added the column with default `false`. Unpublished pending matches render as "Draft #N" in the organizer panel, not "On Deck #N". All 25 E2E failures were `getByText("On Deck #1")` timeouts.
+
+**Commit:** `tests/helpers/teardown.ts` — three fixes:
+1. `first_match_on_deck` preset: `is_published: status === "pending"` (handles both pending and in_progress via the same insert block)
+2. `two_matches_on_deck` match 1: `is_published: true`
+3. `two_matches_on_deck` match 2: `is_published: true`
+
+**E2E before fix:** 67 passed, 25 failed. **Expected after fix:** ~92 passed.
+
+---
+
+### Architectural Deepening — Candidate 4: MatchActionResult lift (2026-05-18) — COMPLETE
+
+**Goal:** Remove identical `interface MatchActionResult { success; message }` duplicated in match-lifecycle.ts and match-drafts.ts.
+
+**Commit (9a24772 → d443328):**
+
+- `d443328`: `export type MatchActionResult` added to `_shared.ts` with JSDoc noting the Turbopack type-erasure exemption. Both action files import `type MatchActionResult` from `_shared.ts`; local definitions deleted.
+
+---
+
+### Architectural Deepening — Candidate 3: useLeaderboard hook (2026-05-18) — COMPLETE
+
+**Goal:** Re-extract useLeaderboard hook from 492-line LeaderboardPage (hook was deleted in the Stadium refactor; component re-absorbed the logic).
+
+**Commits (e39cb47 → 9a24772):**
+
+- `d06a13c` **E-3:** `src/hooks/use-leaderboard.ts` (298 lines) created. Owns: fetchSession / fetchAllTime callbacks, monotonic sequence refs (fetchSessionSeq / fetchAllTimeSeq), flash detection (prevIdsRef, flashNewEntrants), realtime subscription with 500ms debounce (fetchSessionRef stable-callback pattern), hero card stats fetch (cancellation flag), handleSessionPick, handleClearSession, handleRefresh (useCallback-wrapped), all derived state (activeRows, activeLoading, minGP, myRow). `leaderboard-page.tsx`: 492 → 320 lines; near-pure layout renderer. `showSessionPicker` one-liner stays in component (depends on `sessions` prop). Component imports `minGP` from hook (replaces raw constants).
+- `9a24772` **E-3 fix:** Document `flashedIds` gap (maintained in hook, not yet wired to StadiumLeaderboard — pre-existing); use `minGP` from hook in JSX (removes redundant `MIN_SESSION_GP`/`MIN_ALLTIME_GP` imports).
+
+**Known gap:** `flashedIds` is computed by `flashNewEntrants` on every refetch but not passed to `StadiumLeaderboard` — pre-existing. Fix requires adding a `flashedIds` prop to `StadiumLeaderboard` and wiring it at call sites.
+
+---
+
+### Architectural Deepening — Candidate 2: useOrganizerDashboard controller hook (2026-05-18) — COMPLETE
+
+**Goal:** Extract UI controller state out of 770-line OrganizerDashboard into a focused, testable hook.
+
+**Commits (1f5ceb4 → e39cb47):**
+
+- `b246b67` **E-2:** `src/hooks/use-organizer-dashboard.ts` (271 lines) created.
+  Owns: tab navigation (activeTab, tabs config w/ draft/bottleneck badges), dropdown/dialog open states (sessionSwitcher, moreMenu, shareDialog, closeDialog), click-outside handlers, auto-matchmaking optimistic toggle (pendingAuto + yield-back effect), session close flow, Esc key binding, joinQueue callback, isClosed derived value.
+  `organizer-dashboard.tsx`: 770 → 652 lines. Three hooks compose cleanly: `useOrganizerData` (data) + `useSwapState` (swap state machine) + `useOrganizerDashboard` (UI state + handlers). Component body is now near-pure layout.
+- `e39cb47` **E-2 fix:** Corrected stale-closure comment on Esc-key effect: `handleCancelSwap` is a plain function (not stable), but safe because it internally calls the stable `setSwapContext` dispatcher.
+
+**Design decisions:**
+- `router` retained in component for inline session-switcher navigation; `handleCloseSession` gets its own `useRouter()` inside the hook — idiomatic, no problem (Next.js router is a singleton)
+- `setMoreMenuOpen` exposed as `Dispatch<SetStateAction<boolean>>` (required for `(v) => !v` updater call) while other dialog setters use `(open: boolean) => void` — documented asymmetry, not a bug
+- `handleCancelSwap` stale-closure safety: works because `setSwapContext` (called inside) is a stable React dispatcher
+
+**Test leverage gained:**
+- `useOrganizerDashboard` is now unit-testable via `renderHook` — modal lifecycle, toggle flows, tab badge logic all testable without mounting OrganizerDashboard
+
+---
+
+### Architectural Deepening — Candidate 1: matchmaking algorithm/data seam (2026-05-18) — COMPLETE
+
+**Goal:** Make `runAlgorithm` a pure, zero-DB-mock-testable function by extracting DB helpers into a dedicated module.
+
+**Commits (f2f2018 → 1f5ceb4):**
+
+- `94f4c43` **E-1:** Extract `src/lib/matchmaking-db.ts` — 5 DB helpers:
+  - `fetchActivePool` (v_queue_with_wait_time + paused filter; returns unscored `QueueWithWaitTime[]`)
+  - `fetchRecentRosters`, `fetchPartnershipCounts`, `buildOverlapMap` (moved verbatim)
+  - `executeMatch` (accepts `MatchProposal` instead of teamA/teamB args)
+  - `DbClient` alias, `ExecuteMatchResult` type
+  Add to `matchmaking-core.ts`: `MatchProposal`, `AlgorithmResult`, `scoreAndSortPool` (pure), `runAlgorithm` (pure — all Tier-1/2/3 logic, fallback, capSaturation signal; 0 DB calls).
+  Restructure `matchmaking.ts` (591 lines ← 1,354): imports from matchmaking-db + matchmaking-core; `runEngineInternal` now calls fetch → scoreAndSortPool → runAlgorithm → executeMatch per slot; `createOneOnDeckMatch` deleted; 5 private helper functions deleted.
+- `1f5ceb4` **E-1 fix:** Remove redundant `ScoredPlayer` casts in `executeMatch`; clarify `MatchmakingResult.teamA/teamB` asymmetry (only populated by promote path).
+
+**Design decisions recorded:**
+- `fetchActivePool` returns raw `QueueWithWaitTime[]` (not scored) — scoring is `scoreAndSortPool` in `matchmaking-core.ts`, keeping data layer free of algorithm logic
+- `partnershipCounts` is re-fetched per-slot (new drafts change pairs within a multi-slot run)
+- `recentRosters` is hoisted once outside the slot loop (stable snapshot)
+- `capSaturation` signal returns to orchestrator via `AlgorithmResult.capSaturation`; `broadcastCapSaturation` side effect stays in `matchmaking.ts`
+- `isOnDeck=false` (direct court assignment) path was dead code; removed cleanly
+
+**Test leverage gained:**
+- `runAlgorithm` is now testable in `matchmaking-core.test.ts` with zero Supabase mock
+- `matchmaking-engine.test.ts` mocks service client → flows through matchmaking-db transparently (query sequence unchanged)
+- 217/217 pass, independent review: LGTM
+
+**Remaining minor (logged for completeness):**
+- `MatchActionResult` type duplicated in `match-lifecycle.ts` and `match-drafts.ts` — Candidate 4 from the architectural review (quick lift to `_shared.ts`)
+
+---
 
 ### Code-Quality Refactor Pass (2026-05-17) — Chunk D: Gap Fixes — ALL COMPLETE
 
@@ -25,6 +114,7 @@
 - `f2f2018` **D-fix-2:** Stabilize `onProfileChange` callback via named `useCallback` + stable `fetchActiveMatchesRef` dep — eliminates profiles subscription churn on every render.
 
 **Remaining minor (cosmetic, no action needed):**
+
 - `MatchActionResult` type duplicated in `match-lifecycle.ts` and `match-drafts.ts` — file-local only, not exported, no runtime impact.
 - `use-organizer-data.ts` is 245 lines vs. ≤150 spec — overage is the 70-line `UseOrganizerDataResult` interface (logic is thin).
 

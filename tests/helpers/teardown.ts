@@ -398,6 +398,10 @@ export async function seedSession(
         status,
         is_mixed_level: false,
         sort_order: 1,
+        // Pending matches must be published so they appear as "On Deck"
+        // rather than "Draft" in the organizer panel (is_published defaults
+        // to false in the DB since the draft-mode migration).
+        is_published: status === "pending",
       })
       .select("id")
       .single();
@@ -619,7 +623,7 @@ export async function seedSession(
     // ── Match 1: alice/bob (Team A) vs cara/dan (Team B) ─────────
     const { data: m1, error: m1Err } = await db
       .from("matches")
-      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 1 })
+      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 1, is_published: true })
       .select("id")
       .single();
     if (m1Err || !m1) throw new Error(`[seed:two_matches_on_deck] Failed to create match 1: ${m1Err?.message}`);
@@ -640,7 +644,7 @@ export async function seedSession(
     // ── Match 2: eve/frank (Team A) vs grace/henry (Team B) ──────
     const { data: m2, error: m2Err } = await db
       .from("matches")
-      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 2 })
+      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 2, is_published: true })
       .select("id")
       .single();
     if (m2Err || !m2) throw new Error(`[seed:two_matches_on_deck] Failed to create match 2: ${m2Err?.message}`);

@@ -178,6 +178,10 @@ async function seedOnDeckMatch() {
       status: "pending",
       is_mixed_level: false,
       sort_order: 1,
+      // Pending matches must be published so they render as "On Deck"
+      // rather than "Draft" (is_published defaults to false since the
+      // draft-mode migration 20260502100000_draft_mode_is_published.sql).
+      is_published: true,
     })
     .select("id")
     .single();

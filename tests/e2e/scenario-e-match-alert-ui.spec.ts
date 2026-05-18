@@ -109,6 +109,10 @@ async function seedOrganizerInMatch(
       court_id:       opts.status === "in_progress" ? courtId : null,
       status:         opts.status,
       is_mixed_level: false,
+      // Pending matches must be published so the UI renders them as "On Deck"
+      // rather than "Draft" (is_published defaults to false since the
+      // draft-mode migration 20260502100000_draft_mode_is_published.sql).
+      ...(opts.status === "pending" && { is_published: true }),
       ...(opts.status === "in_progress" && { started_at: new Date().toISOString() }),
     })
     .select("id")
@@ -147,7 +151,7 @@ async function seedLeadingMatch() {
   ]);
   const { data: mData } = await db
     .from("matches")
-    .insert({ session_id: SESSION_ID, status: "pending", is_mixed_level: false })
+    .insert({ session_id: SESSION_ID, status: "pending", is_mixed_level: false, is_published: true })
     .select("id")
     .single();
   if (!mData) throw new Error("[seed] leading match failed");
