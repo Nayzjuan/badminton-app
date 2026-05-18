@@ -15,12 +15,7 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
-
-export interface MatchActionResult {
-  success: boolean;
-  message: string;
-}
+import { getAuthenticatedUser, isSessionOrganizer, type MatchActionResult } from "@/app/actions/_shared";
 
 // ============================================================
 // submitMatchScore — player-initiated score submission

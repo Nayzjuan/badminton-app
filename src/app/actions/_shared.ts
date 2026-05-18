@@ -12,9 +12,14 @@
 // client just for the auth check — they can still create a separate
 // service client for DB writes.
 //
+// MatchActionResult is the standard return shape for all match
+// server actions. Defined once here; previously duplicated in both
+// match-lifecycle.ts and match-drafts.ts.
+//
 // Note: isRpcNotFound is in src/lib/rpc-utils.ts (pure sync util,
 // not a server action — Turbopack requires all "use server" exports
-// to be async functions).
+// to be async functions). Type-only exports (like MatchActionResult)
+// are erased at compile time and are not subject to that constraint.
 //
 // Client usage:
 //   getAuthenticatedUser — uses createServerSupabaseClient (user-context, respects RLS)
@@ -23,6 +28,19 @@
 //                          so the primary organizer is never blocked by read-side
 //                          RLS on sessions or session_organizers.
 // ============================================================
+
+/**
+ * Standard return shape for match server actions.
+ *
+ * Consistent with the broader action convention used in sessions.ts,
+ * matchmaking.ts, and queue.ts. The `message` field is always present
+ * so callers can surface a human-readable reason for both success and
+ * failure without null-checking.
+ */
+export type MatchActionResult = {
+  success: boolean;
+  message: string;
+};
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
