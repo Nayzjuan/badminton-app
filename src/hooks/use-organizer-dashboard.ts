@@ -175,7 +175,11 @@ export function useOrganizerDashboard({
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-    // handleCancelSwap is stable (defined inside useSwapState with no deps)
+    // handleCancelSwap is a plain function (redeclared each render), so this
+    // effect captures a stale closure. This is safe because handleCancelSwap
+    // only calls setSwapContext(null) — a stable React dispatcher that never
+    // changes identity. If handleCancelSwap ever reads from a ref or closes
+    // over other state, revisit this with a stable useCallback wrapper.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
