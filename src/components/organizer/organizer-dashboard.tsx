@@ -4,11 +4,10 @@
 // Organizer Dashboard — Main shell with tab navigation
 // ============================================================
 
-import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
 import { useOrganizerData } from "@/hooks/use-organizer-data";
 import { useSwapState } from "@/hooks/use-swap-state";
+import { useOrganizerDashboard } from "@/hooks/use-organizer-dashboard";
 import { ActiveCourts } from "./active-courts";
 import { OnDeckPanel } from "./on-deck-panel";
 import { SwapSheet } from "./swap-sheet";
@@ -19,8 +18,6 @@ import { MatchHistoryPanel } from "./match-history-panel";
 import { DevTools } from "./dev-tools";
 import { ShareSessionDialog } from "./share-session-dialog";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
-import { joinQueueAction } from "@/app/actions/queue";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,82 +54,14 @@ interface OrganizerDashboardProps {
   otherSessions?: Session[];
 }
 
-type Tab = "courts" | "queue" | "monitor" | "history" | "leaderboard";
-
 export function OrganizerDashboard({
   profile,
   session,
   otherSessions = [],
 }: OrganizerDashboardProps) {
+  // router is used for inline navigation in the session switcher JSX.
+  // Session close navigation lives inside useOrganizerDashboard.
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<Tab>(session.is_active ? "courts" : "history");
-  const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
-  const [closeOpen, setCloseOpen] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const [pendingAuto, setPendingAuto] = useState<boolean | null>(null);
-  const [togglingAuto, setTogglingAuto] = useState(false);
-  const switcherRef = useRef<HTMLDivElement>(null);
-  const moreMenuRef = useRef<HTMLDivElement>(null);
-
-  // ── Tap-to-Swap state (see useSwapState hook) ───────────────
-
-  async function handleCloseSession() {
-    setClosing(true);
-    const result = await closeSession(session.id);
-    if (result.success) {
-      router.push("/organizer");
-    } else {
-      setClosing(false);
-      alert(result.message);
-    }
-  }
-
-  async function handleToggleAuto() {
-    setTogglingAuto(true);
-    setPendingAuto(!liveSession.is_auto_matchmaking_on); // optimistic
-    const result = await toggleAutoMatchmaking(session.id);
-    if (result.success) {
-      // Hold the server-confirmed value as authoritative until the broadcast
-      // updates liveSession. This prevents the toggle from flickering OFF
-      // while we wait for the realtime broadcast to arrive.
-      setPendingAuto(result.isOn);
-    } else {
-      // Revert to liveSession value on failure.
-      setPendingAuto(null);
-    }
-    setTogglingAuto(false);
-    if (!result.success) {
-      toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
-    }
-  }
-
-  // Close switcher on outside click.
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (switcherRef.current && !switcherRef.current.contains(e.target as Node)) {
-        setSwitcherOpen(false);
-      }
-    }
-    if (switcherOpen) {
-      document.addEventListener("mousedown", handleClick);
-      return () => document.removeEventListener("mousedown", handleClick);
-    }
-  }, [switcherOpen]);
-
-  // Close mobile more-menu on outside click.
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
-        setMoreMenuOpen(false);
-      }
-    }
-    if (moreMenuOpen) {
-      document.addEventListener("mousedown", handleClick);
-      return () => document.removeEventListener("mousedown", handleClick);
-    }
-  }, [moreMenuOpen]);
 
   const {
     session: liveSession,
@@ -164,37 +93,6 @@ export function OrganizerDashboard({
     dismissCapSaturation,
   } = useOrganizerData(session.id, session);
 
-  // Derived toggle display value: show the optimistic value while the
-  // server round-trip is in-flight, otherwise use the authoritative
-  // liveSession value (kept live via the broadcast channel in use-organizer-data).
-  // This eliminates the dual-source-of-truth problem where a stale captured
-  // `prev` could overwrite the broadcast-confirmed value on failure.
-  const autoMatchmaking = pendingAuto ?? liveSession.is_auto_matchmaking_on;
-
-  // ── pendingAuto yield-back ──────────────────────────────────
-  // Once the broadcast updates liveSession to agree with pendingAuto,
-  // clear pendingAuto so liveSession becomes the sole source of truth.
-  // Without this, pendingAuto permanently shadows liveSession — meaning
-  // a co-organizer toggle in another tab would update liveSession via
-  // broadcast but our local pendingAuto would still override it.
-  useEffect(() => {
-    if (pendingAuto !== null && liveSession.is_auto_matchmaking_on === pendingAuto) {
-      setPendingAuto(null);
-    }
-  }, [liveSession.is_auto_matchmaking_on, pendingAuto]);
-
-  // ── Organizer self-join ─────────────────────────────────────
-  // Allows the organizer to add themselves to the queue directly from
-  // the organizer dashboard — useful when running a session and also
-  // wanting to play. joinQueueAction uses the caller's auth session to
-  // resolve the player_id, so no extra arguments are needed.
-  const joinQueue = useCallback(async () => {
-    const result = await joinQueueAction(session.id);
-    if (result.error) {
-      toast.error(result.error);
-    }
-  }, [session.id]);
-
   const {
     swapContext,
     handlePlayerTap,
@@ -204,50 +102,38 @@ export function OrganizerDashboard({
     showFloatingBar,
   } = useSwapState(session.id, onDeckMatches, swapMatchPlayers, swapPlayer);
 
-  // Esc key cancels picking mode.
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        handleCancelSwap();
-      }
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  // handleCancelSwap is stable (defined inside hook with no deps)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const isClosed = !session.is_active;
-  const bottleneckCount = queue.filter((q) => q.is_bottleneck).length;
-
-  // Draft Mode: show an amber badge on the Courts tab when the organizer
-  // is on a different tab and drafts are waiting for approval. When they're
-  // already on the Courts tab the Publish All banner handles the prompt —
-  // no need to double up the indicator.
-  const draftCount = draftMatches.length;
-
-  const tabs: { key: Tab; label: string; badge?: number; badgeVariant?: "default" | "amber" }[] =
-    isClosed
-      ? [
-          { key: "history", label: "Match History" },
-          { key: "leaderboard", label: "Leaderboard" },
-        ]
-      : [
-          {
-            key: "courts",
-            label: "Active Courts",
-            badge: draftCount > 0 && activeTab !== "courts" ? draftCount : undefined,
-            badgeVariant: "amber",
-          },
-          { key: "queue", label: "Queue & Match Control" },
-          {
-            key: "monitor",
-            label: "Wait Time Monitor",
-            badge: bottleneckCount > 0 ? bottleneckCount : undefined,
-          },
-          { key: "history", label: "Match History" },
-          { key: "leaderboard", label: "Leaderboard" },
-        ];
+  const {
+    activeTab,
+    setActiveTab,
+    tabs,
+    switcherOpen,
+    setSwitcherOpen,
+    moreMenuOpen,
+    setMoreMenuOpen,
+    shareOpen,
+    setShareOpen,
+    closeOpen,
+    setCloseOpen,
+    switcherRef,
+    moreMenuRef,
+    closing,
+    handleCloseSession,
+    autoMatchmaking,
+    togglingAuto,
+    handleToggleAuto,
+    joinQueue,
+    isClosed,
+  } = useOrganizerDashboard({
+    sessionId: session.id,
+    sessionIsActive: session.is_active,
+    liveAutoMatchmaking: liveSession.is_auto_matchmaking_on,
+    bottleneckCount: queue.filter((q) => q.is_bottleneck).length,
+    // Draft Mode badge: amber on Courts tab when drafts need approval.
+    // Suppress badge when organizer is already on Courts tab — the
+    // Publish All banner handles the prompt there.
+    draftCount: draftMatches.length,
+    handleCancelSwap,
+  });
 
   if (loading) {
     return (
@@ -428,9 +314,7 @@ export function OrganizerDashboard({
                             <Repeat className="h-3.5 w-3.5 text-cc-t3" />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-cc-t1 truncate">
-                              {s.name}
-                            </p>
+                            <p className="text-sm font-semibold text-cc-t1 truncate">{s.name}</p>
                             <p className="text-[10px] text-cc-t3">
                               Created{" "}
                               {new Date(s.created_at).toLocaleDateString("en-US", {
@@ -524,9 +408,7 @@ export function OrganizerDashboard({
                   {autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
 
-                <ThemeToggle
-                  className="text-cc-t2 hover:text-cc-t1 hover:bg-cc-bg-3"
-                />
+                <ThemeToggle className="text-cc-t2 hover:text-cc-t1 hover:bg-cc-bg-3" />
                 {process.env.NODE_ENV === "development" && <DevTools sessionId={session.id} />}
 
                 {/* TV View */}
@@ -591,9 +473,7 @@ export function OrganizerDashboard({
                 </>
               )}
               <span className="text-cc-t3">·</span>
-              <ThemeToggle
-                className="text-cc-t3 hover:text-cc-t1 hover:bg-cc-bg-3 -my-1"
-              />
+              <ThemeToggle className="text-cc-t3 hover:text-cc-t1 hover:bg-cc-bg-3 -my-1" />
             </div>
           )}
         </div>
