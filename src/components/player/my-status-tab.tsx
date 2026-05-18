@@ -165,6 +165,41 @@ function QueueSubTab({
     );
   }
 
+  // ── Match forming — drafted by organizer ──────────────────────
+  // Player is assigned to a pending match that is not yet published.
+  // The organizer is reviewing / finalising the line-up before revealing
+  // it to players. Show a holding card rather than falling through to the
+  // "Ready to play?" empty state.
+  if (isInQueue && myEntry?.status === "drafted") {
+    return (
+      <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+          <h2
+            className="text-3xl font-extrabold leading-tight text-foreground"
+            style={{ letterSpacing: "-0.02em" }}
+          >
+            Match Forming
+          </h2>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Hang tight — you&apos;ve been selected for the next match.
+          </p>
+          <div className="my-7 h-px w-8 bg-border" />
+          <span className="text-sm font-medium text-muted-foreground">Match forming</span>
+          <p className="mt-1 text-xs text-muted-foreground">
+            selected from {totalWaiting} queued
+          </p>
+        </div>
+        <button
+          onClick={() => leaveQueue()}
+          className="mt-2 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
+                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+        >
+          Leave Queue
+        </button>
+      </div>
+    );
+  }
+
   // ── Waiting in queue ────────────────────────────────────────
   if (isInQueue && myEntry?.status === "waiting") {
     const isApproaching = myPosition !== null && myPosition <= 2;

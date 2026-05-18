@@ -103,7 +103,7 @@ test.describe("Tap-to-Swap v2 — [A] Picking mode activation", () => {
 
       // Floating bar should have "Pick from Bench" and Cancel buttons
       await expect(
-        page.getByTestId("swap-floating-bar").getByRole("button", { name: "Pick from Bench" })
+        page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" })
       ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "Cancel swap" })
@@ -413,7 +413,7 @@ test.describe("Tap-to-Swap v2 — [H] Pick from Bench escape", () => {
 
       // Click "Pick from Bench"
       await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Pick from Bench" })
+        .getByRole("button", { name: "Bench" })
         .click();
 
       // Floating bar should disappear (mode switches to "sheet")

@@ -338,7 +338,10 @@ export async function executeMatch(
     p_team_a_ids: teamA.map((p) => p.player_id),
     p_team_b_ids: teamB.map((p) => p.player_id),
     p_origin: "auto" as const,
-    p_is_published: false,
+    // Auto-created on-deck matches are published immediately — they come
+    // from the engine's algorithm, not the organizer's draft review flow.
+    // Manually-created draft matches (organizer UI) use p_is_published: false.
+    p_is_published: isOnDeck,
   });
 
   if (rpcError) {

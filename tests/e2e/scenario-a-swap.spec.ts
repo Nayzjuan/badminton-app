@@ -112,7 +112,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
         // "Pick from Bench" escalates from picking mode to the legacy SwapSheet dialog.
         await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
         await page.getByTestId("swap-floating-bar")
-          .getByRole("button", { name: "Pick from Bench" })
+          .getByRole("button", { name: "Bench" })
           .click();
 
         // Sheet is open and shows the outgoing player.
@@ -254,7 +254,7 @@ test.describe("Tap-to-Swap — Skill Mismatch Warning", () => {
 
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
       await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Pick from Bench" })
+        .getByRole("button", { name: "Bench" })
         .click();
 
       await expect(page.getByRole("dialog")).toBeVisible();
@@ -307,7 +307,7 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
       ).click();
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
       await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Pick from Bench" })
+        .getByRole("button", { name: "Bench" })
         .click();
       await expect(page.getByRole("dialog")).toBeVisible();
 
@@ -378,7 +378,7 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
       ).click();
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
       await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Pick from Bench" })
+        .getByRole("button", { name: "Bench" })
         .click();
       await expect(page.getByRole("dialog")).toBeVisible();
 
@@ -433,7 +433,7 @@ test.describe("Tap-to-Swap — Undo", () => {
       // v2: tap → picking mode (floating bar) → "Pick from Bench" → SwapSheet dialog
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
       await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Pick from Bench" })
+        .getByRole("button", { name: "Bench" })
         .click();
       await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
       await page.locator(
