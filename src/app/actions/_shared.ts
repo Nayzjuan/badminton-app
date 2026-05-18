@@ -16,9 +16,12 @@
 // not a server action — Turbopack requires all "use server" exports
 // to be async functions).
 //
-// All helpers use the service-role client so they bypass RLS;
-// auth is always verified by the calling action via getUser()
-// before any of these helpers are invoked.
+// Client usage:
+//   getAuthenticatedUser — uses createServerSupabaseClient (user-context, respects RLS)
+//                          because it calls auth.getUser() which is always user-scoped.
+//   isSessionOrganizer   — uses createServiceClient (service-role, bypasses RLS)
+//                          so the primary organizer is never blocked by read-side
+//                          RLS on sessions or session_organizers.
 // ============================================================
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";

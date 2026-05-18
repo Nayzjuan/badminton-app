@@ -238,7 +238,10 @@ describe("useMatchHistory", () => {
                   error: null,
                 });
               } else if (table === "match_players") {
-                resolve({ data: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }], error: null });
+                resolve({
+                  data: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }],
+                  error: null,
+                });
               } else if (table === "profiles") {
                 resolve({ data: [knownProfile], error: null });
               } else {
@@ -254,7 +257,9 @@ describe("useMatchHistory", () => {
       await waitFor(() => expect(result.current.matches.length).toBe(1));
 
       // Simulate realtime event — second fetch returns 2 matches.
-      await act(async () => { realtimeCallback?.(); });
+      await act(async () => {
+        realtimeCallback?.();
+      });
 
       // If realtime wiring is broken, this stays at 1 and the test fails.
       await waitFor(() => expect(result.current.matches.length).toBe(2));
@@ -300,7 +305,9 @@ describe("useMatchHistory", () => {
       await waitFor(() => expect(result.current.matches.length).toBe(1));
 
       await act(async () => result.current.refresh());
-      await waitFor(() => expect(result.current.matches.length).toBeGreaterThanOrEqual(1));
+      // Second fetch returns 2 matches — toBe(2) proves refresh() actually ran,
+      // not just that the first fetch's result is still present.
+      await waitFor(() => expect(result.current.matches.length).toBe(2));
     });
   });
 

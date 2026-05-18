@@ -70,7 +70,7 @@ Two helpers used by all organizer-gated server actions to avoid reimplementing t
 - **`getAuthenticatedUser()`** — thin wrapper around `auth.getUser()`; all server actions that need auth call this instead of instantiating their own server client.
 - **`isSessionOrganizer(userId, sessionId)`** — two-path organizer check: fast-path via `sessions.created_by` equality, then fallback lookup in `session_organizers`; used by all organizer-gated actions.
 
-Both functions use the service-role client to bypass RLS.
+`getAuthenticatedUser` uses the user-context server client (`createServerSupabaseClient`) because `auth.getUser()` is always user-scoped. `isSessionOrganizer` uses the service-role client (`createServiceClient`) so the primary organizer is never blocked by read-side RLS on `sessions` or `session_organizers`.
 
 ---
 
@@ -811,33 +811,26 @@ All tokens use `oklch(L C H)` — L = lightness 0–1, C = chroma, H = hue angle
 #### Semantic tokens — Light mode (`:root`)
 
 ```css
---background:            oklch(0.96 0.006 245)  /* canvas / page floor */
---foreground:            oklch(0.12 0.018 245)  /* primary text */
---card:                  oklch(1 0 0)  /* card surface */
---primary:               oklch(0.55 0.16 155)  /* emerald — in-queue, success */
---primary-foreground:    oklch(1 0 0)  /* text on primary */
---accent:                oklch(0.68 0.17 62)  /* amber — on-deck, urgency */
---accent-foreground:     oklch(0.12 0.018 245)  /* text on accent */
---muted:                 oklch(0.93 0.008 245)  /* subtle surface */
---muted-foreground:      oklch(0.46 0.014 245)  /* secondary text */
---border:                oklch(0.86 0.01 245)  /* dividers, card outlines */
---destructive:           oklch(0.55 0.22 22)  /* danger, cancel */
---command:               oklch(0.55 0.16 188)  /* organizer teal accent */
+--background: oklch(0.96 0.006 245) /* canvas / page floor */ --foreground: oklch(0.12 0.018 245)
+  /* primary text */ --card: oklch(1 0 0) /* card surface */ --primary: oklch(0.55 0.16 155)
+  /* emerald — in-queue, success */ --primary-foreground: oklch(1 0 0) /* text on primary */
+  --accent: oklch(0.68 0.17 62) /* amber — on-deck, urgency */
+  --accent-foreground: oklch(0.12 0.018 245) /* text on accent */ --muted: oklch(0.93 0.008 245)
+  /* subtle surface */ --muted-foreground: oklch(0.46 0.014 245) /* secondary text */
+  --border: oklch(0.86 0.01 245) /* dividers, card outlines */ --destructive: oklch(0.55 0.22 22)
+  /* danger, cancel */ --command: oklch(0.55 0.16 188) /* organizer teal accent */;
 ```
 
 #### Semantic tokens — Dark mode (`.dark`)
 
 ```css
---background:            oklch(0.07 0.012 245)  /* canvas / page floor */
---foreground:            oklch(0.96 0.005 245)  /* primary text */
---card:                  oklch(0.1 0.014 245)  /* card surface */
---primary:               oklch(0.76 0.17 155)  /* emerald — in-queue, success */
---accent:                oklch(0.78 0.17 62)  /* amber — on-deck, urgency */
---muted:                 oklch(0.14 0.016 245)  /* subtle surface */
---muted-foreground:      oklch(0.56 0.012 245)  /* secondary text */
---border:                oklch(0.18 0.018 245)  /* dividers, card outlines */
---destructive:           oklch(0.65 0.2 22)  /* danger, cancel */
---command:               oklch(0.79 0.18 188)  /* organizer teal accent */
+--background: oklch(0.07 0.012 245) /* canvas / page floor */ --foreground: oklch(0.96 0.005 245)
+  /* primary text */ --card: oklch(0.1 0.014 245) /* card surface */ --primary: oklch(0.76 0.17 155)
+  /* emerald — in-queue, success */ --accent: oklch(0.78 0.17 62) /* amber — on-deck, urgency */
+  --muted: oklch(0.14 0.016 245) /* subtle surface */ --muted-foreground: oklch(0.56 0.012 245)
+  /* secondary text */ --border: oklch(0.18 0.018 245) /* dividers, card outlines */
+  --destructive: oklch(0.65 0.2 22) /* danger, cancel */ --command: oklch(0.79 0.18 188)
+  /* organizer teal accent */;
 ```
 
 #### Organizer Command-Center Token Namespace (`cc-*`)
