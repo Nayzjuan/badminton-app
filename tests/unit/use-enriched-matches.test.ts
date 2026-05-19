@@ -437,16 +437,16 @@ describe("useEnrichedMatches — Unit Suite", () => {
   });
 
   // ── EM-new-2 ────────────────────────────────────────────────
-  it("EM-new-2: race guard fires between match_players and profiles fetch — result discarded (mid-profiles race)", async () => {
-    // Extends EM-6 to verify the race guard inside the profiles-fetch block
-    // (line 104: `if (mySeq !== seqRef.current) return`).
+  it("EM-new-2: race guard on matches query — first fetch superseded before reaching match_players", async () => {
+    // Verifies the race guard at line 96 (`if (mySeq !== seqRef.current) return`)
+    // when a first fetch is still waiting on the matches query while a second
+    // fetch completes fully. The first fetch is released after seqRef has been
+    // incremented, so it discards its (stale) result.
     //
-    // Sequence:
-    //   Fetch 1 starts: resolves matches + match_players quickly, but then
-    //     another fetch increments seqRef before fetch 1 checks the guard
-    //     inside the profiles block.
-    //   Fetch 2 starts and completes before fetch 1 proceeds.
-    //   Fetch 1 finds seqRef changed → returns early (guard fires).
+    // Note: this does NOT exercise the race guard at line 104 (inside the
+    // profiles block). That guard requires the first fetch to hang specifically
+    // between match_players and profiles — a two-phase hang that a future test
+    // could add using a table-scoped mock.
     //
     // Observable: only fetch 2's result is applied; no crash.
 

@@ -334,6 +334,52 @@ describe("useSwapState", () => {
     });
   });
 
+  // ── SS-new-5 / SS-new-6 / SS-new-7: executeMatchSwap initial failure branches
+  // Lines 175–180 in use-swap-state.ts: when the INITIAL swapMatchPlayers call
+  // (not the undo) returns an error, each error code maps to a specific toast.
+
+  describe("SS-new-5/6/7: executeMatchSwap initial swap failure toasts", () => {
+    async function triggerInitialSwapFailure(swapResult: {
+      success: boolean;
+      errorCode?: string;
+      message?: string;
+    }) {
+      const swapMatchPlayersMock = vi.fn().mockResolvedValue(swapResult);
+      const { result } = setup([makeMatch(MATCH_A), makeMatch(MATCH_B)], swapMatchPlayersMock);
+
+      // First tap selects Alice from match A
+      act(() => result.current.handlePlayerTap(makeCtx()));
+      // Second tap on Bob in match B → triggers executeMatchSwap which fails
+      await act(async () =>
+        result.current.handlePlayerTap(
+          makeCtx({ matchId: MATCH_B, outPlayerId: PLAYER_BOB, outPlayerName: "Bob" })
+        )
+      );
+      await waitFor(() => expect(swapMatchPlayersMock).toHaveBeenCalledTimes(1));
+    }
+
+    it("SS-new-5: initial swap with MATCH_STARTED error fires 'already started' toast", async () => {
+      await triggerInitialSwapFailure({ success: false, errorCode: "MATCH_STARTED" });
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/already started/i)
+      );
+    });
+
+    it("SS-new-6: initial swap with PLAYER_NOT_IN_MATCH error fires 'already moved' toast", async () => {
+      await triggerInitialSwapFailure({ success: false, errorCode: "PLAYER_NOT_IN_MATCH" });
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/already moved/i)
+      );
+    });
+
+    it("SS-new-7: initial swap with generic error fires 'Swap failed' toast with message", async () => {
+      await triggerInitialSwapFailure({ success: false, message: "DB constraint violated" });
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/swap failed.*DB constraint violated/i)
+      );
+    });
+  });
+
   // ── SS-new-1 / SS-new-2: handleUndoMatchSwap error branches ──────────────
   // Lines 213–216 in use-swap-state.ts: the undo-match-swap error paths
   // (MATCH_STARTED error code and generic fallback error).
@@ -365,16 +411,12 @@ describe("useSwapState", () => {
 
     it("SS-new-1: undo fires 'match has already started' toast when errorCode=MATCH_STARTED", async () => {
       await triggerUndoMatchSwap({ success: false, errorCode: "MATCH_STARTED" });
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/match has already started/i)
-      );
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/match has already started/i));
     });
 
     it("SS-new-2: undo fires 'match may have changed' toast for generic failure (no errorCode)", async () => {
       await triggerUndoMatchSwap({ success: false });
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/match may have changed/i)
-      );
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/match may have changed/i));
     });
   });
 
@@ -408,16 +450,12 @@ describe("useSwapState", () => {
 
     it("SS-new-3: bench undo fires 'match has already started' toast when errorCode=MATCH_STARTED", async () => {
       await triggerUndoSwap({ success: false, errorCode: "MATCH_STARTED" });
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/match has already started/i)
-      );
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/match has already started/i));
     });
 
     it("SS-new-4: bench undo fires 'match may have changed' toast for generic failure (no errorCode)", async () => {
       await triggerUndoSwap({ success: false });
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/match may have changed/i)
-      );
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/match may have changed/i));
     });
   });
 });

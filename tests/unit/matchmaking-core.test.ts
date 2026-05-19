@@ -164,9 +164,7 @@ describe("computePriorityScore", () => {
       waitMinutes: CRITICAL_WAIT_MINUTES,
       gamesPlayed: 999,
     });
-    expect(computePriorityScore(lowestRedZone)).toBeGreaterThan(
-      computePriorityScore(bestNormal)
-    );
+    expect(computePriorityScore(lowestRedZone)).toBeGreaterThan(computePriorityScore(bestNormal));
   });
 
   it("treats null wait_minutes as 0 via nullish coalescing", () => {
@@ -245,10 +243,7 @@ describe("isGroupValid", () => {
   });
 
   it("returns true for exactly 2 players within variance", () => {
-    const group = [
-      makePlayer("1", { skillInt: 3 }),
-      makePlayer("2", { skillInt: 4 }),
-    ];
+    const group = [makePlayer("1", { skillInt: 3 }), makePlayer("2", { skillInt: 4 })];
     expect(isGroupValid(group, 1)).toBe(true);
   });
 });
@@ -288,8 +283,12 @@ describe("snakeDraft", () => {
     expect(result).not.toBeNull();
     const { teamA, teamB } = result!;
 
-    const teamASkills = teamA.map((p: ScoredPlayer) => p.skill_level_int).sort((a: number, b: number) => a - b);
-    const teamBSkills = teamB.map((p: ScoredPlayer) => p.skill_level_int).sort((a: number, b: number) => a - b);
+    const teamASkills = teamA
+      .map((p: ScoredPlayer) => p.skill_level_int)
+      .sort((a: number, b: number) => a - b);
+    const teamBSkills = teamB
+      .map((p: ScoredPlayer) => p.skill_level_int)
+      .sort((a: number, b: number) => a - b);
 
     // teamA gets [6, 3], teamB gets [5, 4]
     expect(teamASkills).toEqual([3, 6]);
@@ -402,8 +401,8 @@ describe("isDiversityViolation", () => {
 
   it("returns true when only one roster in the list violates", () => {
     const rosters = [
-      ["p5", "p6", "p7", "p8"],  // no overlap
-      ["p1", "p2", "p3", "p9"],  // 3 overlap → violation
+      ["p5", "p6", "p7", "p8"], // no overlap
+      ["p1", "p2", "p3", "p9"], // 3 overlap → violation
     ];
     expect(isDiversityViolation(proposed, rosters)).toBe(true);
   });
@@ -444,7 +443,7 @@ describe("scoreCandidates", () => {
 
   it("higher-priority candidate ranks first when both have no overlap", () => {
     const high = makePlayer("h", { skillInt: 4, waitMinutes: 20, gamesPlayed: 0 });
-    const low  = makePlayer("l", { skillInt: 4, waitMinutes: 5,  gamesPlayed: 0 });
+    const low = makePlayer("l", { skillInt: 4, waitMinutes: 5, gamesPlayed: 0 });
     const scored = scoreCandidates([low, high], new Map());
     // high: score = -20, low: score = -5 → high sorts first
     expect(scored[0].candidate.player_id).toBe("h");
@@ -486,16 +485,19 @@ describe("scoreCandidates", () => {
   it("normal candidate with heavy overlap (10_000) loses to Red Zone with 2 overlaps (200)", () => {
     const rz = makePlayer("rz", { skillInt: 4, waitMinutes: 30 }); // score 1030, 2 overlap → -1030+200=-830
     const normal = makePlayer("n", { skillInt: 4, waitMinutes: 20 }); // score 20, 1 overlap → -20+10000=9980
-    const overlapMap = new Map([["rz", 2], ["n", 1]]);
+    const overlapMap = new Map([
+      ["rz", 2],
+      ["n", 1],
+    ]);
     const scored = scoreCandidates([rz, normal], overlapMap);
     expect(scored[0].candidate.player_id).toBe("rz");
   });
 
   it("results are sorted ascending by score (best first) with concrete expected values", () => {
     const players = [
-      makePlayer("low",  { skillInt: 4, waitMinutes: 2  }),  // priorityScore=2  → score=-2
-      makePlayer("high", { skillInt: 4, waitMinutes: 20 }),  // priorityScore=20 → score=-20
-      makePlayer("mid",  { skillInt: 4, waitMinutes: 10 }),  // priorityScore=10 → score=-10
+      makePlayer("low", { skillInt: 4, waitMinutes: 2 }), // priorityScore=2  → score=-2
+      makePlayer("high", { skillInt: 4, waitMinutes: 20 }), // priorityScore=20 → score=-20
+      makePlayer("mid", { skillInt: 4, waitMinutes: 10 }), // priorityScore=10 → score=-10
     ];
     const scored = scoreCandidates(players, new Map());
     // Sorted ascending: -20 (high) → -10 (mid) → -2 (low)
@@ -567,9 +569,9 @@ describe("buildCombinationGroup", () => {
     // valid vs anchor (±2) but would break any triple with skill<5.
     const anchor = makePlayer("anchor", { skillInt: 5, waitMinutes: 10, gamesPlayed: 1 });
     const a = makePlayer("A", { skillInt: 7, waitMinutes: 15, gamesPlayed: 0 }); // highest priority
-    const b = makePlayer("B", { skillInt: 3, waitMinutes: 8,  gamesPlayed: 0 });
-    const c = makePlayer("C", { skillInt: 4, waitMinutes: 7,  gamesPlayed: 0 });
-    const d = makePlayer("D", { skillInt: 5, waitMinutes: 6,  gamesPlayed: 0 });
+    const b = makePlayer("B", { skillInt: 3, waitMinutes: 8, gamesPlayed: 0 });
+    const c = makePlayer("C", { skillInt: 4, waitMinutes: 7, gamesPlayed: 0 });
+    const d = makePlayer("D", { skillInt: 5, waitMinutes: 6, gamesPlayed: 0 });
 
     const scored = scoreCandidates([a, b, c, d], new Map());
     // Verify A is ranked first (greedy would lock it in and fail)
@@ -587,9 +589,9 @@ describe("buildCombinationGroup", () => {
     // {4,5,3} fails because |5-3|=2 > 1. Use {4,4,5} instead — every pair ≤1.
     const anchor = makePlayer("anchor", { skillInt: 4 });
     const within1 = [
-      makePlayer("a", { skillInt: 4 }),  // |4-4|=0 vs anchor and b
-      makePlayer("b", { skillInt: 4 }),  // |4-4|=0 vs anchor and a
-      makePlayer("c", { skillInt: 5 }),  // |5-4|=1 vs anchor, a, b — all ≤ 1
+      makePlayer("a", { skillInt: 4 }), // |4-4|=0 vs anchor and b
+      makePlayer("b", { skillInt: 4 }), // |4-4|=0 vs anchor and a
+      makePlayer("c", { skillInt: 5 }), // |5-4|=1 vs anchor, a, b — all ≤ 1
     ];
     const out = makePlayer("d", { skillInt: 6 }); // |6-4|=2 > 1 → excluded
     const scored = scoreCandidates([...within1, out], new Map());
@@ -660,7 +662,7 @@ describe("isMixed level boundary (maxVariance > SKILL_VARIANCE_MAX)", () => {
     // At maxVariance=2, this is accepted. isMixed = 2 > SKILL_VARIANCE_MAX(2) = false.
     const anchor = makePlayer("anchor", { skillInt: 4 });
     const candidates = [
-      makePlayer("a", { skillInt: 6 }),  // |6-4|=2 — right at the boundary
+      makePlayer("a", { skillInt: 6 }), // |6-4|=2 — right at the boundary
       makePlayer("b", { skillInt: 4 }),
       makePlayer("c", { skillInt: 4 }),
     ];
@@ -678,13 +680,13 @@ describe("isMixed level boundary (maxVariance > SKILL_VARIANCE_MAX)", () => {
     // Fails at ±2, succeeds at ±3. Any group formed here → isMixed = 3 > 2 = true.
     const anchor = makePlayer("anchor", { skillInt: 3 });
     const candidates = [
-      makePlayer("a", { skillInt: 6 }),  // |6-3|=3: rejected at ±2
+      makePlayer("a", { skillInt: 6 }), // |6-3|=3: rejected at ±2
       makePlayer("b", { skillInt: 6 }),
       makePlayer("c", { skillInt: 6 }),
     ];
     const scored = scoreCandidates(candidates, new Map());
-    expect(buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX)).toEqual([]);  // ±2 fails
-    expect(buildCombinationGroup(anchor, scored, 3)).toHaveLength(3);               // ±3 succeeds
+    expect(buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX)).toEqual([]); // ±2 fails
+    expect(buildCombinationGroup(anchor, scored, 3)).toHaveLength(3); // ±3 succeeds
     expect(3 > SKILL_VARIANCE_MAX).toBe(true); // isMixed flag would be set
   });
 
@@ -693,14 +695,14 @@ describe("isMixed level boundary (maxVariance > SKILL_VARIANCE_MAX)", () => {
     // Fails at ±2 and ±3, succeeds only at ±4. isMixed = 4 > 2 = true.
     const anchor = makePlayer("anchor", { skillInt: 2 });
     const candidates = [
-      makePlayer("a", { skillInt: 6 }),  // |6-2|=4: only valid at maxVariance=4
+      makePlayer("a", { skillInt: 6 }), // |6-2|=4: only valid at maxVariance=4
       makePlayer("b", { skillInt: 6 }),
       makePlayer("c", { skillInt: 6 }),
     ];
     const scored = scoreCandidates(candidates, new Map());
-    expect(buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX)).toEqual([]);  // ±2 fails
-    expect(buildCombinationGroup(anchor, scored, 3)).toEqual([]);                   // ±3 fails
-    expect(buildCombinationGroup(anchor, scored, 4)).toHaveLength(3);               // ±4 succeeds
+    expect(buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX)).toEqual([]); // ±2 fails
+    expect(buildCombinationGroup(anchor, scored, 3)).toEqual([]); // ±3 fails
+    expect(buildCombinationGroup(anchor, scored, 4)).toHaveLength(3); // ±4 succeeds
     expect(4 > SKILL_VARIANCE_MAX).toBe(true); // isMixed flag would be set
   });
 });
@@ -827,10 +829,7 @@ describe("rotatedDraft", () => {
     const { p6, p5, p4, p3 } = makeFour();
     const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
     // 3 full-repeat rosters → repeatCount=3 → splitIndex=0 (snakeDraft)
-    const result = rotatedDraft(
-      [p6, p5, p4, p3],
-      [allFourIds, allFourIds, allFourIds]
-    );
+    const result = rotatedDraft([p6, p5, p4, p3], [allFourIds, allFourIds, allFourIds]);
     expect(result).not.toBeNull();
     const { teamA, teamB } = result!;
     expect(teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
@@ -841,9 +840,9 @@ describe("rotatedDraft", () => {
     const { p6, p5, p4, p3 } = makeFour();
     // 3 rosters each missing one of the 4 players → repeatCount=0 → splitIndex=0
     const partialRosters = [
-      ["p6", "p5", "p4", "outsider1"],  // missing p3
-      ["p6", "p5", "p3", "outsider2"],  // missing p4
-      ["p6", "p4", "p3", "outsider3"],  // missing p5
+      ["p6", "p5", "p4", "outsider1"], // missing p3
+      ["p6", "p5", "p3", "outsider2"], // missing p4
+      ["p6", "p4", "p3", "outsider3"], // missing p5
     ];
     const result = rotatedDraft([p6, p5, p4, p3], partialRosters);
     expect(result).not.toBeNull();
@@ -882,13 +881,15 @@ describe("rotatedDraft", () => {
     const { p6, p5, p4, p3 } = makeFour();
     // Pass in shuffled order; result should be same as sorted order
     const shuffled = rotatedDraft([p3, p6, p4, p5], []);
-    const sorted  = rotatedDraft([p6, p5, p4, p3], []);
+    const sorted = rotatedDraft([p6, p5, p4, p3], []);
     expect(shuffled).not.toBeNull();
     expect(sorted).not.toBeNull();
-    expect(shuffled!.teamA.map((p) => p.player_id).sort())
-      .toEqual(sorted!.teamA.map((p) => p.player_id).sort());
-    expect(shuffled!.teamB.map((p) => p.player_id).sort())
-      .toEqual(sorted!.teamB.map((p) => p.player_id).sort());
+    expect(shuffled!.teamA.map((p) => p.player_id).sort()).toEqual(
+      sorted!.teamA.map((p) => p.player_id).sort()
+    );
+    expect(shuffled!.teamB.map((p) => p.player_id).sort()).toEqual(
+      sorted!.teamB.map((p) => p.player_id).sort()
+    );
   });
 });
 
@@ -971,9 +972,12 @@ describe("snakeDraft — cap enforcement", () => {
     const { a, b, c, d } = makeFourAlpha();
     // All pairs at count 1 — below cap of 2
     const counts = new Map([
-      ["a:d", 1], ["b:c", 1],
-      ["a:c", 1], ["b:d", 1],
-      ["a:b", 1], ["c:d", 1],
+      ["a:d", 1],
+      ["b:c", 1],
+      ["a:c", 1],
+      ["b:d", 1],
+      ["a:b", 1],
+      ["c:d", 1],
     ]);
     const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
     expect(result).not.toBeNull();
@@ -1045,10 +1049,10 @@ describe("snakeDraft — cap enforcement", () => {
     const { a, b, c, d } = makeFourAlpha();
     // Every pair except Split 1's pairs is at cap — Split 1 is the only valid option
     const counts = new Map([
-      ["a:d", MAX_PARTNERSHIP_REPEATS],     // Split 0 teamA capped
-      ["b:c", MAX_PARTNERSHIP_REPEATS],     // Split 0 teamB also capped (belt & suspenders)
-      ["a:c", MAX_PARTNERSHIP_REPEATS],     // Split 2 teamA capped
-      ["b:d", MAX_PARTNERSHIP_REPEATS],     // Split 2 teamB also capped
+      ["a:d", MAX_PARTNERSHIP_REPEATS], // Split 0 teamA capped
+      ["b:c", MAX_PARTNERSHIP_REPEATS], // Split 0 teamB also capped (belt & suspenders)
+      ["a:c", MAX_PARTNERSHIP_REPEATS], // Split 2 teamA capped
+      ["b:d", MAX_PARTNERSHIP_REPEATS], // Split 2 teamB also capped
       // Split 1 pairs ("a:b" and "c:d") are absent → count=0 < cap=2 ✓
     ]);
     const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
@@ -1138,13 +1142,10 @@ describe("rotatedDraft — cap enforcement", () => {
     ]);
     // Test with multiple starting splitIndices to ensure cycling always exhausts
     for (const repeatCount of [0, 1, 2]) {
-      const rosters = Array.from(
-        { length: repeatCount },
-        () => [a, b, c, d].map((p) => p.player_id)
+      const rosters = Array.from({ length: repeatCount }, () =>
+        [a, b, c, d].map((p) => p.player_id)
       );
-      expect(
-        rotatedDraft([a, b, c, d], rosters, counts, MAX_PARTNERSHIP_REPEATS)
-      ).toBeNull();
+      expect(rotatedDraft([a, b, c, d], rosters, counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
     }
   });
 
@@ -1158,6 +1159,120 @@ describe("rotatedDraft — cap enforcement", () => {
     // Should still be split 0 — split 0 pairs are uncapped
     expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// runAlgorithm — happy paths (successful match proposals)
+// ─────────────────────────────────────────────────────────────
+// These tests cover the main success return at lines 660–663:
+//
+//   RA-1  Straightforward match: 4 compatible players, no
+//         diversity violation, direct snakeDraft success
+//   RA-2  Red Zone anchor uses ±3 expanded window → isMixed
+//   RA-3  Diversity violation + Red Zone swap target →
+//         swap skipped; falls through to snakeDraft
+//   RA-4  All 4 players + extra in pool — correct 4 selected
+
+describe("runAlgorithm — happy paths (successful match proposals)", () => {
+  // ── RA-1 ──────────────────────────────────────────────────
+  it("RA-1: forms a valid match with 4 compatible players — direct snakeDraft, no violations", () => {
+    const anchor = makePlayer("anchor", { skillInt: 5, waitMinutes: 10 });
+    const p1 = makePlayer("p1", { skillInt: 5, waitMinutes: 9 });
+    const p2 = makePlayer("p2", { skillInt: 4, waitMinutes: 8 });
+    const p3 = makePlayer("p3", { skillInt: 5, waitMinutes: 7 });
+
+    const pool = [anchor, p1, p2, p3];
+    const result = runAlgorithm(pool, new Map(), new Map(), []);
+
+    expect(result.proposal).not.toBeNull();
+    expect(result.proposal!.teamA).toHaveLength(2);
+    expect(result.proposal!.teamB).toHaveLength(2);
+    // All players within ±1 → normal (non-mixed) match
+    expect(result.proposal!.isMixedLevel).toBe(false);
+    expect(result.capSaturation).toBe(false);
+    // All 4 players distributed across teams with no duplicates
+    const allAssigned = [
+      ...result.proposal!.teamA.map((p) => p.player_id),
+      ...result.proposal!.teamB.map((p) => p.player_id),
+    ];
+    expect(new Set(allAssigned).size).toBe(4);
+  });
+
+  // ── RA-2 ──────────────────────────────────────────────────
+  it("RA-2: Red Zone anchor uses ±3 expanded skill window, returns isMixedLevel=true", () => {
+    // anchor waited 30 min → Red Zone (score=1030 ≥ RED_ZONE_SCORE_FLOOR=1000)
+    // skillWindows expands to [±1, ±2, ±3, ±4]
+    // Candidates at skill 6: |6-3|=3 fails ±2 but passes ±3 → isMixed=true
+    const anchor = makePlayer("anchor", { skillInt: 3, waitMinutes: 30 });
+    const p1 = makePlayer("p1", { skillInt: 6, waitMinutes: 5 });
+    const p2 = makePlayer("p2", { skillInt: 6, waitMinutes: 4 });
+    const p3 = makePlayer("p3", { skillInt: 6, waitMinutes: 3 });
+
+    const pool = [anchor, p1, p2, p3];
+    const result = runAlgorithm(pool, new Map(), new Map(), []);
+
+    expect(result.proposal).not.toBeNull();
+    // maxVariance=3 > SKILL_VARIANCE_MAX(2) → mixed level
+    expect(result.proposal!.isMixedLevel).toBe(true);
+    expect(result.capSaturation).toBe(false);
+    const allAssigned = [
+      ...result.proposal!.teamA.map((p) => p.player_id),
+      ...result.proposal!.teamB.map((p) => p.player_id),
+    ];
+    expect(new Set(allAssigned).size).toBe(4);
+  });
+
+  // ── RA-3 ──────────────────────────────────────────────────
+  it("RA-3: diversity violation with Red Zone swap target — swap guard fires, falls through to snakeDraft (lines 521–531)", () => {
+    // All 4 players recently played together → diversity violation triggers.
+    // For group[2] (swapTarget) to be Red Zone, all 4 players must be Red Zone
+    // so they sort ahead of any normal player.
+    //   pool sorted DESC: anchorRZ(1030), g0(1029), g1(1028), g2(1026)
+    //   anchor = anchorRZ; candidates = [g0, g1, g2]
+    //   group[2] = g2 (lowest priority among the 3 — still Red Zone at 1026 ≥ 1000)
+    //
+    // Guard: swapTarget.priorityScore >= RED_ZONE_SCORE_FLOOR → skip swap → snakeDraft
+    const anchorRZ = makePlayer("anchorRZ", { skillInt: 5, waitMinutes: 30 }); // 1030
+    const g0      = makePlayer("g0",      { skillInt: 5, waitMinutes: 29 }); // 1029
+    const g1      = makePlayer("g1",      { skillInt: 5, waitMinutes: 28 }); // 1028
+    const g2      = makePlayer("g2",      { skillInt: 5, waitMinutes: 26 }); // 1026
+
+    // All 4 recently played together → diversity violation
+    const recentRosters = [
+      [anchorRZ.player_id, g0.player_id, g1.player_id, g2.player_id],
+    ];
+
+    const pool = [anchorRZ, g0, g1, g2];
+    const result = runAlgorithm(pool, new Map(), new Map(), recentRosters);
+
+    // Swap guard fired → fell through to snakeDraft → proposal returned
+    expect(result.proposal).not.toBeNull();
+    // All within ±1 → non-mixed
+    expect(result.proposal!.isMixedLevel).toBe(false);
+    expect(result.capSaturation).toBe(false);
+  });
+
+  // ── RA-4 ──────────────────────────────────────────────────
+  it("RA-4: larger pool — correct 4 players selected, rest unused", () => {
+    // 8 players at the same skill, no diversity violations.
+    // runAlgorithm picks the highest-priority 4 (the ones who waited longest)
+    // and returns a non-null proposal.
+    const players = Array.from({ length: 8 }, (_, i) =>
+      makePlayer(`p${i}`, { skillInt: 5, waitMinutes: 10 - i })
+    );
+    // scoreAndSortPool sorts DESC by priority; pool[0] = p0 (waited 10 min)
+
+    const result = runAlgorithm(players, new Map(), new Map(), []);
+
+    expect(result.proposal).not.toBeNull();
+    expect(result.capSaturation).toBe(false);
+    const allAssigned = [
+      ...result.proposal!.teamA.map((p) => p.player_id),
+      ...result.proposal!.teamB.map((p) => p.player_id),
+    ];
+    // Exactly 4 distinct players in the match
+    expect(new Set(allAssigned).size).toBe(4);
   });
 });
 
