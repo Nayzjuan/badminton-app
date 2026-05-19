@@ -49,9 +49,10 @@ export const pinSchema = z
 
 export const skillLevelSchema = z
   .string({ error: "Please select your skill level." })
-  .refine((val): val is SkillLevel => SKILL_LEVELS.some((s) => s.value === val), {
-    message: "Please select a valid skill level.",
-  });
+  .refine(
+    (val): val is SkillLevel => SKILL_LEVELS.some((s) => s.value === val),
+    { message: "Please select a valid skill level." }
+  );
 
 // ── Full registration input ───────────────────────────────────
 
