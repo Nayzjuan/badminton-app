@@ -84,9 +84,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
     try {
       // Lazy locator declarations — Playwright resolves these at the moment
       // each action runs, so defining them before the step blocks is fine.
-      const alicePill = page.locator(
-        `[data-testid="player-pill-${seeded.players.alice.userId}"]`
-      );
+      const alicePill = page.locator(`[data-testid="player-pill-${seeded.players.alice.userId}"]`);
       const eveCandidate = page.locator(
         `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
       );
@@ -94,9 +92,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
 
       // ── Steps 1–2 ───────────────────────────────────────────
       await test.step("1–2 · Navigate to dashboard and verify on-deck card", async () => {
-        await page.goto(
-          `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-        );
+        await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
         // Wait for the courts tab (active by default) to load
         await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
         // The OnDeckPanel renders on the courts tab alongside ActiveCourts.
@@ -111,9 +107,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
 
         // "Pick from Bench" escalates from picking mode to the legacy SwapSheet dialog.
         await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
-        await page.getByTestId("swap-floating-bar")
-          .getByRole("button", { name: "Bench" })
-          .click();
+        await page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" }).click();
 
         // Sheet is open and shows the outgoing player.
         // Scope to the dialog to avoid strict-mode violation with the player
@@ -156,13 +150,13 @@ test.describe("Tap-to-Swap — Happy Path", () => {
 
         // Sonner toast confirms the swap (data-sonner-toast is Sonner's DOM marker).
         await expect(
-          page.locator('[data-sonner-toast]').filter({ hasText: "Swapped" })
+          page.locator("[data-sonner-toast]").filter({ hasText: "Swapped" })
         ).toBeVisible({ timeout: 5_000 });
 
         // On-deck card: Eve is now shown (testid avoids matching toast text).
-        await expect(
-          page.getByTestId(`player-pill-${seeded.players.eve.userId}`)
-        ).toBeVisible({ timeout: 5_000 });
+        await expect(page.getByTestId(`player-pill-${seeded.players.eve.userId}`)).toBeVisible({
+          timeout: 5_000,
+        });
 
         // Alice is back in the waiting queue — her pill must be gone from the card.
         await expect(
@@ -189,9 +183,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
         expect(matchPlayers).toHaveLength(4);
 
         // Eve inherits Alice's team slot ("a").
-        const eveRow = (matchPlayers ?? []).find(
-          (p) => p.player_id === seeded.players.eve.userId
-        );
+        const eveRow = (matchPlayers ?? []).find((p) => p.player_id === seeded.players.eve.userId);
         expect(eveRow?.team).toBe("a");
 
         // queue_entries: Eve promoted to on_deck; Alice demoted to waiting.
@@ -199,12 +191,9 @@ test.describe("Tap-to-Swap — Happy Path", () => {
           .from("queue_entries")
           .select("player_id, status")
           .eq("session_id", seeded.sessionId)
-          .in("player_id", [
-            seeded.players.alice.userId,
-            seeded.players.eve.userId,
-          ]);
+          .in("player_id", [seeded.players.alice.userId, seeded.players.eve.userId]);
 
-        const eveQueue  = queueEntries?.find((q) => q.player_id === seeded.players.eve.userId);
+        const eveQueue = queueEntries?.find((q) => q.player_id === seeded.players.eve.userId);
         const aliceQueue = queueEntries?.find((q) => q.player_id === seeded.players.alice.userId);
 
         expect(eveQueue?.status).toBe("on_deck");
@@ -226,9 +215,7 @@ test.describe("Tap-to-Swap — Happy Path", () => {
 });
 
 test.describe("Tap-to-Swap — Skill Mismatch Warning", () => {
-  test("mismatch banner shown when replacement creates mixed-level match", async ({
-    browser,
-  }) => {
+  test("mismatch banner shown when replacement creates mixed-level match", async ({ browser }) => {
     // Re-seed: make Eve advanced (mismatch with the intermediate team)
     const db = adminDb();
     await db
@@ -242,37 +229,25 @@ test.describe("Tap-to-Swap — Skill Mismatch Warning", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
-      await page.locator(
-        `[data-testid="player-pill-${seeded.players.alice.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="player-pill-${seeded.players.alice.userId}"]`).click();
 
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
-      await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Bench" })
-        .click();
+      await page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" }).click();
 
       await expect(page.getByRole("dialog")).toBeVisible();
 
       // Select Eve (advanced vs intermediate team)
-      await page.locator(
-        `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="swap-candidate-${seeded.players.eve.userId}"]`).click();
 
       // Mismatch warning banner should be visible
-      await expect(
-        page.getByText("mixed-level match")
-      ).toBeVisible({ timeout: 3_000 });
+      await expect(page.getByText("mixed-level match")).toBeVisible({ timeout: 3_000 });
 
       // Confirm button should still be enabled (warning is non-blocking)
-      await expect(
-        page.locator('[data-testid="swap-confirm"]')
-      ).toBeEnabled();
+      await expect(page.locator('[data-testid="swap-confirm"]')).toBeEnabled();
 
       // Dismiss the warning
       await page.getByLabel("Dismiss mixed-level warning").click();
@@ -284,9 +259,7 @@ test.describe("Tap-to-Swap — Skill Mismatch Warning", () => {
 });
 
 test.describe("Tap-to-Swap — Negative Paths", () => {
-  test("MATCH_STARTED: sheet auto-closes when match is promoted mid-swap", async ({
-    browser,
-  }) => {
+  test("MATCH_STARTED: sheet auto-closes when match is promoted mid-swap", async ({ browser }) => {
     const db = adminDb();
     const matchId = seeded.matchId!;
 
@@ -296,19 +269,13 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
-      await page.locator(
-        `[data-testid="player-pill-${seeded.players.alice.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="player-pill-${seeded.players.alice.userId}"]`).click();
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
-      await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Bench" })
-        .click();
+      await page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
 
       // Simulate match being promoted while sheet is open:
@@ -331,9 +298,7 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
         ]);
 
       // Select Eve and confirm the swap
-      await page.locator(
-        `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="swap-candidate-${seeded.players.eve.userId}"]`).click();
       await page.locator('[data-testid="swap-confirm"]').click();
 
       // The sheet should close (either MATCH_STARTED error or Layer 2 useEffect)
@@ -367,25 +332,17 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
-      await page.locator(
-        `[data-testid="player-pill-${seeded.players.alice.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="player-pill-${seeded.players.alice.userId}"]`).click();
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
-      await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Bench" })
-        .click();
+      await page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
 
       // Select Eve
-      await page.locator(
-        `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="swap-candidate-${seeded.players.eve.userId}"]`).click();
 
       // Simulate Eve being put on_deck by another organizer before confirm
       await db
@@ -399,9 +356,7 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
 
       // Sheet should stay open with inline error (PLAYER_UNAVAILABLE)
       await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
-      await expect(
-        page.getByText("no longer available")
-      ).toBeVisible({ timeout: 5_000 });
+      await expect(page.getByText("no longer available")).toBeVisible({ timeout: 5_000 });
 
       // "Retry" button allows trying again
       await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -421,30 +376,20 @@ test.describe("Tap-to-Swap — Undo", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Perform the swap (Alice → Eve) via v2 flow
-      await page.locator(
-        `[data-testid="player-pill-${seeded.players.alice.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="player-pill-${seeded.players.alice.userId}"]`).click();
       // v2: tap → picking mode (floating bar) → "Pick from Bench" → SwapSheet dialog
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
-      await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Bench" })
-        .click();
+      await page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" }).click();
       await expect(page.getByRole("dialog")).toBeVisible({ timeout: 5_000 });
-      await page.locator(
-        `[data-testid="swap-candidate-${seeded.players.eve.userId}"]`
-      ).click();
+      await page.locator(`[data-testid="swap-candidate-${seeded.players.eve.userId}"]`).click();
       await page.locator('[data-testid="swap-confirm"]').click();
 
       // Wait for the undo toast
-      const toast = page
-        .locator("[data-sonner-toast]")
-        .filter({ hasText: "Swapped" });
+      const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Swapped" });
       await expect(toast).toBeVisible({ timeout: 5_000 });
 
       // Click the "Undo" action button on the toast
@@ -452,12 +397,12 @@ test.describe("Tap-to-Swap — Undo", () => {
 
       // After undo, Alice should be back in the on-deck card (use testid to
       // avoid matching the lingering "Swapped E2E_Alice → E2E_Eve" toast text).
-      await expect(
-        page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
-      ).toBeVisible({ timeout: 8_000 });
-      await expect(
-        page.getByTestId(`player-pill-${seeded.players.eve.userId}`)
-      ).not.toBeVisible({ timeout: 3_000 });
+      await expect(page.getByTestId(`player-pill-${seeded.players.alice.userId}`)).toBeVisible({
+        timeout: 8_000,
+      });
+      await expect(page.getByTestId(`player-pill-${seeded.players.eve.userId}`)).not.toBeVisible({
+        timeout: 3_000,
+      });
 
       // DB verification
       const matchId = seeded.matchId!;
@@ -475,17 +420,10 @@ test.describe("Tap-to-Swap — Undo", () => {
         .from("queue_entries")
         .select("player_id, status")
         .eq("session_id", seeded.sessionId)
-        .in("player_id", [
-          seeded.players.alice.userId,
-          seeded.players.eve.userId,
-        ]);
+        .in("player_id", [seeded.players.alice.userId, seeded.players.eve.userId]);
 
-      const aliceQueue = queueEntries?.find(
-        (q) => q.player_id === seeded.players.alice.userId
-      );
-      const eveQueue = queueEntries?.find(
-        (q) => q.player_id === seeded.players.eve.userId
-      );
+      const aliceQueue = queueEntries?.find((q) => q.player_id === seeded.players.alice.userId);
+      const eveQueue = queueEntries?.find((q) => q.player_id === seeded.players.eve.userId);
 
       expect(aliceQueue?.status).toBe("on_deck");
       expect(eveQueue?.status).toBe("waiting");

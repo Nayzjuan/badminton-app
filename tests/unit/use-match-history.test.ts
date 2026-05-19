@@ -319,7 +319,7 @@ describe("useMatchHistory", () => {
         buildMockClient({
           matches: [completedMatch],
           match_players: [], // no players → playerIds = []
-          profiles: [],      // should never be queried
+          profiles: [], // should never be queried
         }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
       );
 

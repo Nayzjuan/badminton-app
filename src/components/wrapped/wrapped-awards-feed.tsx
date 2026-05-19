@@ -66,8 +66,7 @@ export function WrappedAwardsFeed({ stats, sorted }: WrappedAwardsFeedProps) {
             Participation Trophy
           </p>
           <p style={{ fontSize: "0.875rem", color: "rgba(255,255,255,0.5)", margin: 0 }}>
-            You showed up and put in the hours. Come back next session — the awards will
-            follow.
+            You showed up and put in the hours. Come back next session — the awards will follow.
           </p>
         </div>
       )}

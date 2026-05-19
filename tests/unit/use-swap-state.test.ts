@@ -360,16 +360,12 @@ describe("useSwapState", () => {
 
     it("SS-new-5: initial swap with MATCH_STARTED error fires 'already started' toast", async () => {
       await triggerInitialSwapFailure({ success: false, errorCode: "MATCH_STARTED" });
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/already started/i)
-      );
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/already started/i));
     });
 
     it("SS-new-6: initial swap with PLAYER_NOT_IN_MATCH error fires 'already moved' toast", async () => {
       await triggerInitialSwapFailure({ success: false, errorCode: "PLAYER_NOT_IN_MATCH" });
-      expect(toast.error).toHaveBeenCalledWith(
-        expect.stringMatching(/already moved/i)
-      );
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/already moved/i));
     });
 
     it("SS-new-7: initial swap with generic error fires 'Swap failed' toast with message", async () => {

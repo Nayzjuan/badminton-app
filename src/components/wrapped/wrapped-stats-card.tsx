@@ -97,9 +97,7 @@ export function WrappedStatsCard({ stats }: WrappedStatsCardProps) {
               alignItems: "baseline",
             }}
           >
-            <span
-              style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", fontWeight: 600 }}
-            >
+            <span style={{ fontSize: "11px", color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>
               Win Rate
             </span>
             <span style={{ fontSize: "13px", color: "#F59E0B", fontWeight: 700 }}>

@@ -25,11 +25,7 @@ export default async function PlayPage() {
   if (!user) redirect("/");
 
   // Get profile.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
   if (!profile) redirect("/");
 
@@ -49,16 +45,12 @@ export default async function PlayPage() {
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-foreground">
-                Hey, {profile.display_name}!
-              </h1>
+              <h1 className="text-xl font-bold text-foreground">Hey, {profile.display_name}!</h1>
               {profile.vip_tag && profile.vip_theme && (
                 <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
               )}
             </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              Pick a session to join.
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">Pick a session to join.</p>
           </div>
 
           <SignOutButton variant="icon" />
@@ -70,7 +62,9 @@ export default async function PlayPage() {
         ) : (
           <div className="rounded-xl border border-dashed border-border p-8 text-center">
             <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-              <span className="text-xl" aria-hidden="true">🏸</span>
+              <span className="text-xl" aria-hidden="true">
+                🏸
+              </span>
             </div>
             <p className="text-sm font-semibold text-foreground">No active sessions yet</p>
             <p className="text-xs text-muted-foreground mt-1">

@@ -30,11 +30,11 @@ import type {
 } from "@/types/leaderboard";
 
 // ── Constants ─────────────────────────────────────────────────
-const MIN_SESSION_GP = 1;          // minimum games to appear on session board
-const MIN_ALLTIME_GP = 10;         // minimum games to appear on all-time board
-const RANK_MOVEMENT_DAYS = 7;      // compare current rank vs. N days ago
-const SESSION_CONFIDENCE_K = 3;    // confidence smoothing constant for session ranking
-const ALLTIME_CONFIDENCE_K = 10;   // confidence smoothing constant for all-time ranking
+const MIN_SESSION_GP = 1; // minimum games to appear on session board
+const MIN_ALLTIME_GP = 10; // minimum games to appear on all-time board
+const RANK_MOVEMENT_DAYS = 7; // compare current rank vs. N days ago
+const SESSION_CONFIDENCE_K = 3; // confidence smoothing constant for session ranking
+const ALLTIME_CONFIDENCE_K = 10; // confidence smoothing constant for all-time ranking
 
 // ── Confidence-Weighted Score ─────────────────────────────────
 // Adjusts raw win% to reward playing more games.
@@ -50,10 +50,15 @@ function computeConfidenceScore(win_pct: number, games_played: number, k: number
 // ── Tie-Breaker Sort ─────────────────────────────────────────
 // Primary: confidence-weighted win rate DESC
 // Then:    raw win% DESC → point diff DESC → points for DESC → name ASC
-function sortLeaderboard<T extends { win_pct: number; games_played: number; point_diff: number; points_for: number; display_name: string }>(
-  rows: T[],
-  confidenceK: number
-): T[] {
+function sortLeaderboard<
+  T extends {
+    win_pct: number;
+    games_played: number;
+    point_diff: number;
+    points_for: number;
+    display_name: string;
+  },
+>(rows: T[], confidenceK: number): T[] {
   return [...rows].sort((a, b) => {
     const scoreA = computeConfidenceScore(a.win_pct, a.games_played, confidenceK);
     const scoreB = computeConfidenceScore(b.win_pct, b.games_played, confidenceK);
@@ -69,21 +74,20 @@ function sortLeaderboard<T extends { win_pct: number; games_played: number; poin
 // Assigns 1-based ranks using standard (competition) ranking:
 // two players tied at position 1 both receive rank 1, and the
 // next distinct player receives rank 3 — not rank 2 (dense).
-function assignRanks<T extends { win_pct: number; games_played: number; point_diff: number; points_for: number }>(
-  sorted: T[],
-  confidenceK: number
-): (T & { rank: number })[] {
+function assignRanks<
+  T extends { win_pct: number; games_played: number; point_diff: number; points_for: number },
+>(sorted: T[], confidenceK: number): (T & { rank: number })[] {
   let currentRank = 1;
   return sorted.map((row, i) => {
     if (i > 0) {
       const prev = sorted[i - 1];
-      const scoreRow  = computeConfidenceScore(row.win_pct,  row.games_played,  confidenceK);
+      const scoreRow = computeConfidenceScore(row.win_pct, row.games_played, confidenceK);
       const scorePrev = computeConfidenceScore(prev.win_pct, prev.games_played, confidenceK);
       const tied =
         Math.abs(scoreRow - scorePrev) <= 0.001 &&
-        row.win_pct     === prev.win_pct &&
-        row.point_diff  === prev.point_diff &&
-        row.points_for  === prev.points_for;
+        row.win_pct === prev.win_pct &&
+        row.point_diff === prev.point_diff &&
+        row.points_for === prev.points_for;
       if (!tied) currentRank = i + 1;
     }
     return { ...row, rank: currentRank };
@@ -99,7 +103,9 @@ function buildStreakMap(streaks: PlayerStreak[]): Map<string, number> {
 // Fetches vip_tag + vip_theme from profiles for a list of player IDs.
 // Returns a Map<player_id, { vip_tag, vip_theme }>.
 async function buildVipMap(
-  supabase: Awaited<ReturnType<typeof import("@/utils/supabase/server").createServerSupabaseClient>>,
+  supabase: Awaited<
+    ReturnType<typeof import("@/utils/supabase/server").createServerSupabaseClient>
+  >,
   playerIds: string[]
 ): Promise<Map<string, { vip_tag: string | null; vip_theme: string | null }>> {
   if (playerIds.length === 0) return new Map();
@@ -108,10 +114,7 @@ async function buildVipMap(
     .select("id, vip_tag, vip_theme")
     .in("id", playerIds);
   return new Map(
-    (data ?? []).map((p) => [
-      p.id,
-      { vip_tag: p.vip_tag ?? null, vip_theme: p.vip_theme ?? null },
-    ])
+    (data ?? []).map((p) => [p.id, { vip_tag: p.vip_tag ?? null, vip_theme: p.vip_theme ?? null }])
   );
 }
 
@@ -142,7 +145,10 @@ export async function getSessionLeaderboard(
 
     // Streak failure is non-fatal — degrade gracefully with empty streak map
     if (streaksResult.error) {
-      console.warn("[getSessionLeaderboard] streaks unavailable (non-fatal):", streaksResult.error.message);
+      console.warn(
+        "[getSessionLeaderboard] streaks unavailable (non-fatal):",
+        streaksResult.error.message
+      );
     }
 
     const rawStats = (statsResult.data ?? []) as SessionLeaderboardEntry[];
@@ -155,7 +161,10 @@ export async function getSessionLeaderboard(
     const ranked = assignRanks(sorted, SESSION_CONFIDENCE_K);
 
     // Batch-fetch VIP fields for all qualified players
-    const vipMap = await buildVipMap(supabase, ranked.map((r) => r.player_id));
+    const vipMap = await buildVipMap(
+      supabase,
+      ranked.map((r) => r.player_id)
+    );
 
     const rows: LeaderboardRow[] = ranked.map((entry) => ({
       player_id: entry.player_id,
@@ -170,7 +179,7 @@ export async function getSessionLeaderboard(
       rank: entry.rank,
       win_streak: streakMap.get(entry.player_id) ?? 0,
       rank_movement: null, // session tab never shows rank movement
-      vip_tag:   vipMap.get(entry.player_id)?.vip_tag   ?? null,
+      vip_tag: vipMap.get(entry.player_id)?.vip_tag ?? null,
       vip_theme: vipMap.get(entry.player_id)?.vip_theme ?? null,
     }));
 
@@ -206,10 +215,7 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
     // Fetch current mat-view, previous stats, and streaks in parallel
     const [currentResult, previousResult, streaksResult] = await Promise.all([
       // Current: from materialized view (fast, pre-aggregated)
-      supabase
-        .from("v_alltime_leaderboard_mat")
-        .select("*")
-        .gte("games_played", MIN_ALLTIME_GP),
+      supabase.from("v_alltime_leaderboard_mat").select("*").gte("games_played", MIN_ALLTIME_GP),
 
       // Previous: raw aggregation on v_match_history filtered by date
       // We re-aggregate here rather than using the matview because the
@@ -248,7 +254,10 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
     }
 
     // Batch-fetch VIP fields for all qualified players
-    const vipMap = await buildVipMap(supabase, rankedCurrent.map((r) => r.player_id));
+    const vipMap = await buildVipMap(
+      supabase,
+      rankedCurrent.map((r) => r.player_id)
+    );
 
     // Assemble final rows with rank movement + VIP fields
     const rows: LeaderboardRow[] = rankedCurrent.map((entry) => {
@@ -271,7 +280,7 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
         rank: entry.rank,
         win_streak: streakMap.get(entry.player_id) ?? 0,
         rank_movement,
-        vip_tag:   vipMap.get(entry.player_id)?.vip_tag   ?? null,
+        vip_tag: vipMap.get(entry.player_id)?.vip_tag ?? null,
         vip_theme: vipMap.get(entry.player_id)?.vip_theme ?? null,
       };
     });
@@ -303,7 +312,7 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
 // ============================================================
 export async function getPlayerStats(
   playerId: string,
-  sessionId: string | null   // null = all-time scope
+  sessionId: string | null // null = all-time scope
 ): Promise<GetPlayerStatsResult> {
   if (!isValidUUID(playerId)) return { success: false, error: "Invalid player ID." };
   if (sessionId !== null && !isValidUUID(sessionId)) {
@@ -330,20 +339,20 @@ export async function getPlayerStats(
 
       const entry = data as SessionLeaderboardEntry;
       const row: LeaderboardRow = {
-        player_id:      entry.player_id,
-        display_name:   entry.display_name,
-        games_played:   entry.games_played,
-        wins:           entry.wins,
-        losses:         entry.losses,
-        points_for:     entry.points_for,
+        player_id: entry.player_id,
+        display_name: entry.display_name,
+        games_played: entry.games_played,
+        wins: entry.wins,
+        losses: entry.losses,
+        points_for: entry.points_for,
         points_against: entry.points_against,
-        point_diff:     entry.point_diff,
-        win_pct:        entry.win_pct,
-        rank:           0,    // not on ranked board
-        win_streak:     0,    // not shown in below-threshold state
-        rank_movement:  null,
-        vip_tag:        null, // not shown in below-threshold state
-        vip_theme:      null,
+        point_diff: entry.point_diff,
+        win_pct: entry.win_pct,
+        rank: 0, // not on ranked board
+        win_streak: 0, // not shown in below-threshold state
+        rank_movement: null,
+        vip_tag: null, // not shown in below-threshold state
+        vip_theme: null,
       };
 
       return { success: true, row };
@@ -364,20 +373,20 @@ export async function getPlayerStats(
 
       const entry = data as AllTimeLeaderboardEntry;
       const row: LeaderboardRow = {
-        player_id:      entry.player_id,
-        display_name:   entry.display_name,
-        games_played:   entry.games_played,
-        wins:           entry.wins,
-        losses:         entry.losses,
-        points_for:     entry.points_for,
+        player_id: entry.player_id,
+        display_name: entry.display_name,
+        games_played: entry.games_played,
+        wins: entry.wins,
+        losses: entry.losses,
+        points_for: entry.points_for,
         points_against: entry.points_against,
-        point_diff:     entry.point_diff,
-        win_pct:        entry.win_pct,
-        rank:           0,    // not on ranked board
-        win_streak:     0,    // not shown in below-threshold state
-        rank_movement:  null,
-        vip_tag:        null, // not shown in below-threshold state
-        vip_theme:      null,
+        point_diff: entry.point_diff,
+        win_pct: entry.win_pct,
+        rank: 0, // not on ranked board
+        win_streak: 0, // not shown in below-threshold state
+        rank_movement: null,
+        vip_tag: null, // not shown in below-threshold state
+        vip_theme: null,
       };
 
       return { success: true, row };

@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": ["Bash(git push origin main)", "Bash(git push origin main 2>&1)"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | { read -r f; echo \"$f\" | grep -qE '\\.(ts|tsx|js|jsx|json|css|md)$' && npx prettier --write \"$f\"; } 2>/dev/null || true",
+            "statusMessage": "Formatting with Prettier..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "agent",
+            "prompt": "You are an independent code reviewer for a Next.js 16 / TypeScript / Tailwind badminton queue app. STEP 1 - Check for changes: run `git diff --name-only HEAD` and `git diff --cached --name-only`. If there are NO changed .ts or .tsx files, output exactly: 'No code changes - skipping review.' and stop. STEP 2 - Review (only if .ts/.tsx files changed): read each changed file, then write a concise independent code review covering: (1) correctness and logic bugs, (2) React rules of hooks compliance, (3) TypeScript type safety, (4) edge cases and unhandled states, (5) any clear performance issues. Format your response as: ## Independent Code Review **Files reviewed:** [list] [findings - be direct and specific, max 250 words] **Verdict:** LGTM / Minor issues / Needs fixes",
+            "timeout": 120,
+            "statusMessage": "Running independent code review..."
+          }
+        ]
+      }
+    ]
+  }
+}

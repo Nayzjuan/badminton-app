@@ -50,3 +50,14 @@ test-results/
 backups/*.sql
 backups/backup_*/
 backups/__pycache__/
+# Database snapshots dumped to the repo root (real player data — local only)
+/backup-*.json
+
+# ── Local tool artifacts ─────────────────────────────────────
+# Claude Code agent worktrees (ephemeral)
+.claude/worktrees/
+# Serena LSP/code-intel config (local; each dev runs their own init)
+.serena/
+# Supabase CLI working state
+supabase/.branches/
+supabase/.temp/

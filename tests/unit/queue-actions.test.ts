@@ -53,17 +53,22 @@ type MockResponse = { data?: unknown; error?: { message: string } | null };
  */
 function makeBuilder(response: MockResponse) {
   const b: Record<string, unknown> = {};
-  b["then"] = (
-    res: (v: MockResponse) => unknown,
-    rej: (e: unknown) => unknown
-  ) => Promise.resolve(response).then(res, rej);
-  b["catch"] = (rej: (e: unknown) => unknown) =>
-    Promise.resolve(response).catch(rej);
+  b["then"] = (res: (v: MockResponse) => unknown, rej: (e: unknown) => unknown) =>
+    Promise.resolve(response).then(res, rej);
+  b["catch"] = (rej: (e: unknown) => unknown) => Promise.resolve(response).catch(rej);
   b["maybeSingle"] = () => Promise.resolve(response);
   b["single"] = () => Promise.resolve(response);
   for (const m of [
-    "select", "eq", "neq", "in", "or", "order", "limit",
-    "update", "insert", "upsert",
+    "select",
+    "eq",
+    "neq",
+    "in",
+    "or",
+    "order",
+    "limit",
+    "update",
+    "insert",
+    "upsert",
   ]) {
     b[m] = (..._args: unknown[]) => b;
   }
@@ -235,8 +240,8 @@ describe("joinQueueAction — Inherited Games floor", () => {
 
   it("returns an error when the insert DB call fails for a first-time joiner", async () => {
     const mock = makeMockClient([
-      { data: null, error: null },  // no existing row
-      { data: null, error: null },  // floor query → empty
+      { data: null, error: null }, // no existing row
+      { data: null, error: null }, // floor query → empty
       // Insert fails
       { data: null, error: { message: "unique constraint" } },
     ]);

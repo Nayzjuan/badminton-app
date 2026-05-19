@@ -9,6 +9,22 @@
 
 ### What Was Accomplished This Session — Full Architecture Audit + 6-Phase Remediation (2026-05-19)
 
+---
+
+### Uncommitted-Work Cleanup + Push (2026-05-19) — COMPLETE
+
+**Goal:** User asked to "push everything" from a working tree with 38 modified files + 31 untracked. Two of the untracked files were production data backups — those needed gitignore treatment, not commits.
+
+**Commits landed (cc2c1a6 → 9d0519c, all on origin/main):**
+
+- `cc2c1a6` **chore(gitignore):** ignore local tool artifacts and root-level db backups
+- `43d35a9` **chore: snapshot in-progress local work** — 58 files, +9227/-1228
+- `9d0519c` **style: apply prettier formatting to settings.json and e2e scenarios K-O**
+
+---
+
+### QA Improvements Pass (2026-05-19) — ALL COMPLETE
+
 **Goal:** Pull latest `main`, run a 3-pillar architecture audit (magic strings, JSDoc quality, layer bleeding), then fix every violation in severity order (P0 → P1 → P2).
 
 **Audit scope:** 108-file merge from main. Spawned 4 parallel audit agents covering hooks, server actions, organizer/player components, and lib/wrapped/TV layer.

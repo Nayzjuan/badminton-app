@@ -1234,14 +1234,12 @@ describe("runAlgorithm — happy paths (successful match proposals)", () => {
     //
     // Guard: swapTarget.priorityScore >= RED_ZONE_SCORE_FLOOR → skip swap → snakeDraft
     const anchorRZ = makePlayer("anchorRZ", { skillInt: 5, waitMinutes: 30 }); // 1030
-    const g0      = makePlayer("g0",      { skillInt: 5, waitMinutes: 29 }); // 1029
-    const g1      = makePlayer("g1",      { skillInt: 5, waitMinutes: 28 }); // 1028
-    const g2      = makePlayer("g2",      { skillInt: 5, waitMinutes: 26 }); // 1026
+    const g0 = makePlayer("g0", { skillInt: 5, waitMinutes: 29 }); // 1029
+    const g1 = makePlayer("g1", { skillInt: 5, waitMinutes: 28 }); // 1028
+    const g2 = makePlayer("g2", { skillInt: 5, waitMinutes: 26 }); // 1026
 
     // All 4 recently played together → diversity violation
-    const recentRosters = [
-      [anchorRZ.player_id, g0.player_id, g1.player_id, g2.player_id],
-    ];
+    const recentRosters = [[anchorRZ.player_id, g0.player_id, g1.player_id, g2.player_id]];
 
     const pool = [anchorRZ, g0, g1, g2];
     const result = runAlgorithm(pool, new Map(), new Map(), recentRosters);

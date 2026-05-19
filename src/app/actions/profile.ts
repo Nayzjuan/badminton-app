@@ -30,7 +30,9 @@ import type { SkillLevel } from "@/types/database";
  */
 async function verifyAuthenticated(): Promise<{ userId: string } | { error: string }> {
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return { error: "Not authenticated." };
   return { userId: user.id };
 }
@@ -91,11 +93,7 @@ export async function getPlayerPin(userId: string): Promise<PinResult> {
 
   const supabase = createServiceClient();
 
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("pin")
-    .eq("id", userId)
-    .single();
+  const { data, error } = await supabase.from("profiles").select("pin").eq("id", userId).single();
 
   if (error || !data) {
     return { success: false, message: error?.message ?? "Player not found." };
@@ -115,10 +113,7 @@ export async function resetPlayerPin(userId: string): Promise<PinResult> {
   const supabase = createServiceClient();
   const newPin = String(Math.floor(1000 + Math.random() * 9000)); // 1000-9999
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({ pin: newPin })
-    .eq("id", userId);
+  const { error } = await supabase.from("profiles").update({ pin: newPin }).eq("id", userId);
 
   if (error) {
     return { success: false, message: error.message };
@@ -128,10 +123,7 @@ export async function resetPlayerPin(userId: string): Promise<PinResult> {
 }
 
 /** Set a player's PIN to a specific value (organizer override). */
-export async function updatePlayerPin(
-  userId: string,
-  newPin: string
-): Promise<PinResult> {
+export async function updatePlayerPin(userId: string, newPin: string): Promise<PinResult> {
   if (!/^\d{4}$/.test(newPin)) {
     return { success: false, message: "PIN must be exactly 4 digits." };
   }
@@ -144,10 +136,7 @@ export async function updatePlayerPin(
 
   const supabase = createServiceClient();
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({ pin: newPin })
-    .eq("id", userId);
+  const { error } = await supabase.from("profiles").update({ pin: newPin }).eq("id", userId);
 
   if (error) {
     return { success: false, message: error.message };

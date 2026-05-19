@@ -41,10 +41,7 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import {
-  resetSandboxSession,
-  softResetSandboxSession,
-} from "../helpers/teardown";
+import { resetSandboxSession, softResetSandboxSession } from "../helpers/teardown";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -61,38 +58,38 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 // All other players use PIN 1234.
 const PLAYER_DEFS = [
   // Base 5 — intermediate, PIN 1234
-  { name: "E2E_Alice", skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Bob",   skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Cara",  skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Dan",   skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Eve",   skill: "intermediate",       pin: "1234" },
+  { name: "E2E_Alice", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Bob", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Cara", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Dan", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Eve", skill: "intermediate", pin: "1234" },
   // Reconnect candidates — PIN 5678
-  { name: "E2E_Frank", skill: "intermediate",       pin: "5678" },
+  { name: "E2E_Frank", skill: "intermediate", pin: "5678" },
   { name: "E2E_Grace", skill: "upper_intermediate", pin: "5678" },
   { name: "E2E_Henry", skill: "lower_intermediate", pin: "5678" },
-  { name: "E2E_Iris",  skill: "intermediate",       pin: "5678" },
-  { name: "E2E_Jake",  skill: "intermediate",       pin: "5678" },
+  { name: "E2E_Iris", skill: "intermediate", pin: "5678" },
+  { name: "E2E_Jake", skill: "intermediate", pin: "5678" },
   // Mixed-skill block — PIN 1234
-  { name: "E2E_Kate",  skill: "beginner",           pin: "1234" },
-  { name: "E2E_Leo",   skill: "beginner",           pin: "1234" },
-  { name: "E2E_Mia",   skill: "lower_intermediate", pin: "1234" },
-  { name: "E2E_Noah",  skill: "lower_intermediate", pin: "1234" },
-  { name: "E2E_Ola",   skill: "lower_intermediate", pin: "1234" },
-  { name: "E2E_Pat",   skill: "lower_intermediate", pin: "1234" },
-  { name: "E2E_Quinn", skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Rosa",  skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Sam",   skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Tara",  skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Uma",   skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Vera",  skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Will",  skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Xena",  skill: "intermediate",       pin: "1234" },
-  { name: "E2E_Yuki",  skill: "upper_intermediate", pin: "1234" },
-  { name: "E2E_Zach",  skill: "upper_intermediate", pin: "1234" },
-  { name: "E2E_Ana",   skill: "upper_intermediate", pin: "1234" },
-  { name: "E2E_Ben",   skill: "lower_advanced",     pin: "1234" },
-  { name: "E2E_Celia", skill: "lower_advanced",     pin: "1234" },
-  { name: "E2E_Diego", skill: "advanced",           pin: "1234" },
+  { name: "E2E_Kate", skill: "beginner", pin: "1234" },
+  { name: "E2E_Leo", skill: "beginner", pin: "1234" },
+  { name: "E2E_Mia", skill: "lower_intermediate", pin: "1234" },
+  { name: "E2E_Noah", skill: "lower_intermediate", pin: "1234" },
+  { name: "E2E_Ola", skill: "lower_intermediate", pin: "1234" },
+  { name: "E2E_Pat", skill: "lower_intermediate", pin: "1234" },
+  { name: "E2E_Quinn", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Rosa", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Sam", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Tara", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Uma", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Vera", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Will", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Xena", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Yuki", skill: "upper_intermediate", pin: "1234" },
+  { name: "E2E_Zach", skill: "upper_intermediate", pin: "1234" },
+  { name: "E2E_Ana", skill: "upper_intermediate", pin: "1234" },
+  { name: "E2E_Ben", skill: "lower_advanced", pin: "1234" },
+  { name: "E2E_Celia", skill: "lower_advanced", pin: "1234" },
+  { name: "E2E_Diego", skill: "advanced", pin: "1234" },
 ] as const;
 
 // ── Per-suite shared state ────────────────────────────────────
@@ -104,7 +101,7 @@ type PlayerRecord = {
 };
 
 let allPlayers: PlayerRecord[] = [];
-let currentCourtIds: string[]  = [];
+let currentCourtIds: string[] = [];
 
 const sessionId = process.env.TEST_SESSION_ID!;
 
@@ -151,10 +148,7 @@ async function seedInProgressMatchOnCourt(courtId: string) {
     { match_id: match.id, player_id: playerIds[3], team: "b" as const },
   ]);
 
-  await db
-    .from("courts")
-    .update({ status: "in_use" })
-    .eq("id", courtId);
+  await db.from("courts").update({ status: "in_use" }).eq("id", courtId);
 
   await db
     .from("queue_entries")
@@ -234,10 +228,14 @@ test.beforeAll(async ({ browser }) => {
     if (userErr) {
       if (userErr.message?.toLowerCase().includes("already been registered")) {
         // User exists from a previous run — fetch their id
-        const { data: { users } } = await db.auth.admin.listUsers({ perPage: 1000 });
+        const {
+          data: { users },
+        } = await db.auth.admin.listUsers({ perPage: 1000 });
         const existing = users?.find((u) => u.email === email);
         if (!existing) {
-          throw new Error(`[I-setup] User ${def.name} exists but could not be found: ${userErr.message}`);
+          throw new Error(
+            `[I-setup] User ${def.name} exists but could not be found: ${userErr.message}`
+          );
         }
         userId = existing.id;
       } else {
@@ -249,10 +247,12 @@ test.beforeAll(async ({ browser }) => {
       userId = userData.user.id;
     }
 
-    await db.from("profiles").upsert(
-      { id: userId, display_name: def.name, skill_level: def.skill, pin: def.pin },
-      { onConflict: "id" }
-    );
+    await db
+      .from("profiles")
+      .upsert(
+        { id: userId, display_name: def.name, skill_level: def.skill, pin: def.pin },
+        { onConflict: "id" }
+      );
 
     allPlayers.push({ userId, displayName: def.name, skill: def.skill, pin: def.pin });
   }
@@ -306,7 +306,8 @@ test.beforeEach(async () => {
     .insert(courtInserts)
     .select("id");
 
-  if (courtErr || !courts) throw new Error(`[I-beforeEach] Failed to insert courts: ${courtErr?.message}`);
+  if (courtErr || !courts)
+    throw new Error(`[I-beforeEach] Failed to insert courts: ${courtErr?.message}`);
   currentCourtIds = courts.map((c) => c.id);
 
   // Insert 30 queue entries (all waiting, games_played=0)
@@ -372,21 +373,22 @@ test.describe("Group 1 — Player Registration", () => {
       // DB IS THE SOURCE OF TRUTH: verify the new player's profile was
       // created.  The signInAnonymously action creates an auth user and
       // upserts a profile with the supplied display_name.
-      await expect.poll(
-        async () => {
-          const { data: profiles } = await db
-            .from("profiles")
-            .select("id")
-            .eq("display_name", uniqueName);
-          return profiles?.length ?? 0;
-        },
-        { timeout: 12_000, intervals: [500, 1_000, 1_000, 2_000] }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data: profiles } = await db
+              .from("profiles")
+              .select("id")
+              .eq("display_name", uniqueName);
+            return profiles?.length ?? 0;
+          },
+          { timeout: 12_000, intervals: [500, 1_000, 1_000, 2_000] }
+        )
+        .toBeGreaterThan(0);
 
       // The user must NOT have ended up locked at the organizer dashboard
       // for the sandbox session — that would indicate cookie cross-wiring.
       expect(page.url()).not.toContain(`/organizer/${sessionId}`);
-
     } finally {
       await ctx.close();
 
@@ -421,7 +423,9 @@ test.describe("Group 1 — Player Registration", () => {
     });
     if (createErr) {
       if (createErr.message?.toLowerCase().includes("already been registered")) {
-        const { data: { users } } = await db.auth.admin.listUsers({ perPage: 1000 });
+        const {
+          data: { users },
+        } = await db.auth.admin.listUsers({ perPage: 1000 });
         const existing = users?.find((u) => u.email === dupEmail);
         if (!existing) throw new Error("[I-1b] dup-tester user lookup failed");
         dupUserId = existing.id;
@@ -433,10 +437,12 @@ test.describe("Group 1 — Player Registration", () => {
       dupUserId = created.user.id;
     }
 
-    await db.from("profiles").upsert(
-      { id: dupUserId, display_name: dupName, skill_level: "intermediate", pin: "9999" },
-      { onConflict: "id" }
-    );
+    await db
+      .from("profiles")
+      .upsert(
+        { id: dupUserId, display_name: dupName, skill_level: "intermediate", pin: "9999" },
+        { onConflict: "id" }
+      );
     await db.from("queue_entries").upsert(
       {
         session_id: sessionId,
@@ -476,13 +482,13 @@ test.describe("Group 1 — Player Registration", () => {
         const lower = errorText.toLowerCase();
         expect(
           lower.includes("name") ||
-          lower.includes("taken") ||
-          lower.includes("exists") ||
-          lower.includes("already") ||
-          lower.includes("error") ||
-          lower.includes("reconnect") ||
-          lower.includes("played") ||
-          lower.includes("before")
+            lower.includes("taken") ||
+            lower.includes("exists") ||
+            lower.includes("already") ||
+            lower.includes("error") ||
+            lower.includes("reconnect") ||
+            lower.includes("played") ||
+            lower.includes("before")
         ).toBe(true);
       }
     } finally {
@@ -494,9 +500,7 @@ test.describe("Group 1 — Player Registration", () => {
   });
 
   // [I-1c] Submitting without a PIN (empty) is blocked
-  test("[I-1c] form requires a 4-digit PIN — empty PIN is rejected", async ({
-    browser,
-  }) => {
+  test("[I-1c] form requires a 4-digit PIN — empty PIN is rejected", async ({ browser }) => {
     const ctx = await browser.newContext({ extraHTTPHeaders: BYPASS_HEADERS });
     const page = await ctx.newPage();
 
@@ -528,9 +532,7 @@ test.describe("Group 1 — Player Registration", () => {
 
 test.describe("Group 2 — PIN Reconnect", () => {
   // [I-2a] Correct name + PIN lets the player reclaim their session
-  test("[I-2a] player reconnects with correct display name and PIN", async ({
-    browser,
-  }) => {
+  test("[I-2a] player reconnects with correct display name and PIN", async ({ browser }) => {
     // The seeded E2E_Frank cannot be used here — the reconnect server action
     // also runs the display name through the same Zod schema that rejects
     // underscores (see lib/schemas/auth.ts).  Seed a no-underscore reconnect
@@ -549,7 +551,9 @@ test.describe("Group 2 — PIN Reconnect", () => {
     });
     if (createErr) {
       if (createErr.message?.toLowerCase().includes("already been registered")) {
-        const { data: { users } } = await db.auth.admin.listUsers({ perPage: 1000 });
+        const {
+          data: { users },
+        } = await db.auth.admin.listUsers({ perPage: 1000 });
         const existing = users?.find((u) => u.email === reconEmail);
         if (!existing) throw new Error("[I-2a] reconnect-tester user lookup failed");
         reconUserId = existing.id;
@@ -561,10 +565,12 @@ test.describe("Group 2 — PIN Reconnect", () => {
       reconUserId = created.user.id;
     }
 
-    await db.from("profiles").upsert(
-      { id: reconUserId, display_name: reconName, skill_level: "intermediate", pin: reconPin },
-      { onConflict: "id" }
-    );
+    await db
+      .from("profiles")
+      .upsert(
+        { id: reconUserId, display_name: reconName, skill_level: "intermediate", pin: reconPin },
+        { onConflict: "id" }
+      );
     await db.from("queue_entries").upsert(
       {
         session_id: sessionId,
@@ -612,7 +618,7 @@ test.describe("Group 2 — PIN Reconnect", () => {
       await page.waitForFunction(
         () => {
           const dialogOpen = !!document.querySelector('[role="dialog"]');
-          const onPlay = window.location.pathname.startsWith('/play');
+          const onPlay = window.location.pathname.startsWith("/play");
           return !dialogOpen || onPlay;
         },
         { timeout: 20_000 }
@@ -674,9 +680,7 @@ test.describe("Group 2 — PIN Reconnect", () => {
   });
 
   // [I-2c] Non-existent display name is rejected
-  test("[I-2c] reconnect with non-existent name shows error", async ({
-    browser,
-  }) => {
+  test("[I-2c] reconnect with non-existent name shows error", async ({ browser }) => {
     const ctx = await browser.newContext({ extraHTTPHeaders: BYPASS_HEADERS });
     const page = await ctx.newPage();
 
@@ -712,11 +716,12 @@ test.describe("Group 2 — PIN Reconnect", () => {
 
 test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
   // [I-3a] Auto ON with 30 players → ≥2 on-deck matches generated
-  test("[I-3a] Auto ON generates multiple on-deck matches with 30 players", async ({
-    browser,
-  }) => {
+  test("[I-3a] Auto ON generates multiple on-deck matches with 30 players", async ({ browser }) => {
     const db = adminDb();
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -735,17 +740,19 @@ test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
       // The button text update is OPTIMISTIC (set in handleToggleAuto before
       // the server action returns), so without this DB check the next poll
       // could race against a still-OFF toggle.
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("sessions")
-            .select("is_auto_matchmaking_on")
-            .eq("id", sessionId)
-            .single();
-          return data?.is_auto_matchmaking_on ?? false;
-        },
-        { timeout: 10_000 }
-      ).toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("sessions")
+              .select("is_auto_matchmaking_on")
+              .eq("id", sessionId)
+              .single();
+            return data?.is_auto_matchmaking_on ?? false;
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
 
       // Note on engine output: in the deployed test environment the engine
       // (runEngineForSession) frequently fails to materialize pending
@@ -779,7 +786,10 @@ test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
         const callBtns = page.getByText("Call Next Match");
         const callCount = await callBtns.count();
         for (let i = 0; i < Math.min(callCount, 2); i++) {
-          await callBtns.nth(i).click().catch(() => undefined);
+          await callBtns
+            .nth(i)
+            .click()
+            .catch(() => undefined);
           await page.waitForTimeout(500);
         }
       }
@@ -805,10 +815,11 @@ test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
   });
 
   // [I-3b] Auto OFF — queue stays dormant even with 30 players
-  test("[I-3b] Auto OFF: 30 players waiting produces no on-deck matches", async ({
-    browser,
-  }) => {
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+  test("[I-3b] Auto OFF: 30 players waiting produces no on-deck matches", async ({ browser }) => {
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -833,7 +844,10 @@ test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
     browser,
   }) => {
     const db = adminDb();
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -846,17 +860,19 @@ test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
       await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
 
       // Confirm DB toggle flipped (button text is optimistic — see [I-3a]).
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("sessions")
-            .select("is_auto_matchmaking_on")
-            .eq("id", sessionId)
-            .single();
-          return data?.is_auto_matchmaking_on ?? false;
-        },
-        { timeout: 10_000 }
-      ).toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("sessions")
+              .select("is_auto_matchmaking_on")
+              .eq("id", sessionId)
+              .single();
+            return data?.is_auto_matchmaking_on ?? false;
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
 
       // Best-effort wait for the toggle-triggered engine run.  Per the
       // [I-3a] note, engine output is not guaranteed in this deployment.
@@ -921,7 +937,10 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
     browser,
   }) => {
     const db = adminDb();
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -938,17 +957,19 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
       await callBtn.click();
 
       // Wait for the engine to write an in_progress match to DB
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", sessionId)
-            .eq("status", "in_progress");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000 }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", sessionId)
+              .eq("status", "in_progress");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000 }
+        )
+        .toBeGreaterThan(0);
 
       await page.waitForTimeout(2_000);
       await page.reload({ waitUntil: "networkidle" });
@@ -965,15 +986,16 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
   });
 
   // [I-4b] Input score → match completes → appears in Match History
-  test("[I-4b] scoring a match completes it and records it in history", async ({
-    browser,
-  }) => {
+  test("[I-4b] scoring a match completes it and records it in history", async ({ browser }) => {
     const db = adminDb();
 
     // Pre-seed an in-progress match on court 1 via DB (faster than UI)
     await seedInProgressMatchOnCourt(currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1005,17 +1027,19 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
       await endMatchBtn.click();
 
       // DB: match should be completed
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("status")
-            .eq("session_id", sessionId)
-            .eq("status", "completed");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000 }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("status")
+              .eq("session_id", sessionId)
+              .eq("status", "completed");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000 }
+        )
+        .toBeGreaterThan(0);
 
       // Switch to History tab and verify the match appears
       await page.waitForTimeout(2_000);
@@ -1039,7 +1063,10 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
     const db = adminDb();
     await seedInProgressMatchOnCourt(currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1060,51 +1087,58 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
       // Confirmation UI must appear — "Yes, Cancel" and "Keep Playing"
       await expect(page.getByText("Yes, Cancel")).toBeVisible({ timeout: 5_000 });
       await expect(page.getByText("Keep Playing")).toBeVisible({ timeout: 3_000 });
-      await expect(page.getByText("Cancel this match? Players return to queue.")).toBeVisible({ timeout: 3_000 });
+      await expect(page.getByText("Cancel this match? Players return to queue.")).toBeVisible({
+        timeout: 3_000,
+      });
 
       // Step 2 — confirm the cancel
       await page.getByText("Yes, Cancel").click();
 
       // DB: match should be cancelled
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("status")
-            .eq("session_id", sessionId)
-            .eq("status", "cancelled");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000 }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("status")
+              .eq("session_id", sessionId)
+              .eq("status", "cancelled");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000 }
+        )
+        .toBeGreaterThan(0);
 
       // DB: the 4 matched players should be back to "waiting"
       const playerIds = allPlayers.slice(0, 4).map((p) => p.userId);
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("queue_entries")
-            .select("status")
-            .eq("session_id", sessionId)
-            .in("player_id", playerIds)
-            .eq("status", "waiting");
-          return data?.length ?? 0;
-        },
-        { timeout: 8_000 }
-      ).toBe(4);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("queue_entries")
+              .select("status")
+              .eq("session_id", sessionId)
+              .in("player_id", playerIds)
+              .eq("status", "waiting");
+            return data?.length ?? 0;
+          },
+          { timeout: 8_000 }
+        )
+        .toBe(4);
     } finally {
       await ctx.close();
     }
   });
 
   // [I-4c-dismiss] Clicking "Keep Playing" aborts the cancel — match stays In Progress
-  test("[I-4c-dismiss] dismissing cancel keeps the match running", async ({
-    browser,
-  }) => {
+  test("[I-4c-dismiss] dismissing cancel keeps the match running", async ({ browser }) => {
     const db = adminDb();
     await seedInProgressMatchOnCourt(currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1142,13 +1176,14 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
   });
 
   // [I-4d] Clear on-deck match → on-deck panel returns to empty state
-  test("[I-4d] clearing an on-deck match removes it from the panel", async ({
-    browser,
-  }) => {
+  test("[I-4d] clearing an on-deck match removes it from the panel", async ({ browser }) => {
     const db = adminDb();
     await seedOnDeckMatch();
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1164,17 +1199,19 @@ test.describe("Group 4 — Manual Match Lifecycle", () => {
       await page.getByRole("button", { name: "Clear" }).click();
 
       // DB: pending match must be deleted / cancelled
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", sessionId)
-            .eq("status", "pending");
-          return data?.length ?? 0;
-        },
-        { timeout: 8_000 }
-      ).toBe(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", sessionId)
+              .eq("status", "pending");
+            return data?.length ?? 0;
+          },
+          { timeout: 8_000 }
+        )
+        .toBe(0);
 
       // Wait for replica and reload
       await page.waitForTimeout(2_000);
@@ -1197,7 +1234,10 @@ test.describe("Group 5 — Court Management", () => {
   // [I-5a] Add a new court → it appears in the grid
   test("[I-5a] organizer can add a new court by name", async ({ browser }) => {
     const db = adminDb();
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1208,17 +1248,19 @@ test.describe("Group 5 — Court Management", () => {
       await page.getByText("+ Add Court").click();
 
       // DB: new court must appear
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("courts")
-            .select("id")
-            .eq("session_id", sessionId)
-            .eq("name", "Court E2E-Test");
-          return data?.length ?? 0;
-        },
-        { timeout: 8_000 }
-      ).toBe(1);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("courts")
+              .select("id")
+              .eq("session_id", sessionId)
+              .eq("name", "Court E2E-Test");
+            return data?.length ?? 0;
+          },
+          { timeout: 8_000 }
+        )
+        .toBe(1);
 
       // UI: new court card appears
       await page.waitForTimeout(2_000);
@@ -1233,7 +1275,10 @@ test.describe("Group 5 — Court Management", () => {
   // [I-5b] Close an available court → status badge shows "Closed"
   test("[I-5b] closing a court changes its status to Closed", async ({ browser }) => {
     const db = adminDb();
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1252,17 +1297,19 @@ test.describe("Group 5 — Court Management", () => {
       await closeBtn.click();
 
       // DB: at least one court should now be "closed"
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("courts")
-            .select("id")
-            .eq("session_id", sessionId)
-            .eq("status", "closed");
-          return data?.length ?? 0;
-        },
-        { timeout: 8_000 }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("courts")
+              .select("id")
+              .eq("session_id", sessionId)
+              .eq("status", "closed");
+            return data?.length ?? 0;
+          },
+          { timeout: 8_000 }
+        )
+        .toBeGreaterThan(0);
 
       // UI: "Reopen Court" button must appear (confirming closed state)
       await page.waitForTimeout(2_000);
@@ -1275,18 +1322,16 @@ test.describe("Group 5 — Court Management", () => {
   });
 
   // [I-5c] Reopen a closed court → status returns to Available
-  test("[I-5c] reopening a closed court makes it Available again", async ({
-    browser,
-  }) => {
+  test("[I-5c] reopening a closed court makes it Available again", async ({ browser }) => {
     const db = adminDb();
 
     // Pre-close one court via DB
-    await db
-      .from("courts")
-      .update({ status: "closed" })
-      .eq("id", currentCourtIds[0]);
+    await db.from("courts").update({ status: "closed" }).eq("id", currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1299,35 +1344,35 @@ test.describe("Group 5 — Court Management", () => {
       await page.getByText("Reopen Court").first().click();
 
       // DB: court should be available again
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("courts")
-            .select("status")
-            .eq("id", currentCourtIds[0])
-            .single();
-          return data?.status;
-        },
-        { timeout: 8_000 }
-      ).toBe("available");
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("courts")
+              .select("status")
+              .eq("id", currentCourtIds[0])
+              .single();
+            return data?.status;
+          },
+          { timeout: 8_000 }
+        )
+        .toBe("available");
     } finally {
       await ctx.close();
     }
   });
 
   // [I-5d] Remove a closed court → it disappears from the grid
-  test("[I-5d] removing a closed court removes it from the dashboard", async ({
-    browser,
-  }) => {
+  test("[I-5d] removing a closed court removes it from the dashboard", async ({ browser }) => {
     const db = adminDb();
 
     // Pre-close court 1
-    await db
-      .from("courts")
-      .update({ status: "closed" })
-      .eq("id", currentCourtIds[0]);
+    await db.from("courts").update({ status: "closed" }).eq("id", currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1336,37 +1381,32 @@ test.describe("Group 5 — Court Management", () => {
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
-      const courtsBefore = await db
-        .from("courts")
-        .select("id")
-        .eq("session_id", sessionId);
+      const courtsBefore = await db.from("courts").select("id").eq("session_id", sessionId);
       const countBefore = courtsBefore.data?.length ?? 0;
 
       await page.getByText("Remove").first().click();
 
       // DB: court count drops by 1
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("courts")
-            .select("id")
-            .eq("session_id", sessionId);
-          return data?.length ?? 0;
-        },
-        { timeout: 8_000 }
-      ).toBe(countBefore - 1);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db.from("courts").select("id").eq("session_id", sessionId);
+            return data?.length ?? 0;
+          },
+          { timeout: 8_000 }
+        )
+        .toBe(countBefore - 1);
 
       // DB: specifically the removed court should no longer exist
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("courts")
-            .select("id")
-            .eq("id", currentCourtIds[0]);
-          return data?.length ?? 0;
-        },
-        { timeout: 5_000 }
-      ).toBe(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db.from("courts").select("id").eq("id", currentCourtIds[0]);
+            return data?.length ?? 0;
+          },
+          { timeout: 5_000 }
+        )
+        .toBe(0);
     } finally {
       await ctx.close();
     }
@@ -1385,12 +1425,12 @@ test.describe("Group 6 — Negative: Insufficient Players", () => {
     const db = adminDb();
 
     // Remove all queue entries — simulate an empty gym
-    await db
-      .from("queue_entries")
-      .delete()
-      .eq("session_id", sessionId);
+    await db.from("queue_entries").delete().eq("session_id", sessionId);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1442,7 +1482,10 @@ test.describe("Group 6 — Negative: Insufficient Players", () => {
         .in("player_id", idsToDelete);
     }
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1478,7 +1521,10 @@ test.describe("Group 6 — Negative: Insufficient Players", () => {
     // Clear the queue
     await db.from("queue_entries").delete().eq("session_id", sessionId);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1516,7 +1562,10 @@ test.describe("Group 7 — Score Input Validation", () => {
   }) => {
     await seedInProgressMatchOnCourt(currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1541,13 +1590,14 @@ test.describe("Group 7 — Score Input Validation", () => {
   });
 
   // [I-7b] 0-0 score is a valid final score and should be submittable
-  test("[I-7b] score of 0-0 is accepted and ends the match", async ({
-    browser,
-  }) => {
+  test("[I-7b] score of 0-0 is accepted and ends the match", async ({ browser }) => {
     const db = adminDb();
     await seedInProgressMatchOnCourt(currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1570,29 +1620,32 @@ test.describe("Group 7 — Score Input Validation", () => {
       await endMatchBtn.click();
 
       // Match should be completed in DB
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("status")
-            .eq("session_id", sessionId)
-            .eq("status", "completed");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000 }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("status")
+              .eq("session_id", sessionId)
+              .eq("status", "completed");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000 }
+        )
+        .toBeGreaterThan(0);
     } finally {
       await ctx.close();
     }
   });
 
   // [I-7c] Partially filled score (one team filled, other empty) keeps button disabled
-  test("[I-7c] partially filled score keeps End Match button disabled", async ({
-    browser,
-  }) => {
+  test("[I-7c] partially filled score keeps End Match button disabled", async ({ browser }) => {
     await seedInProgressMatchOnCourt(currentCourtIds[0]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1626,10 +1679,11 @@ test.describe("Group 7 — Score Input Validation", () => {
 
 test.describe("Group 8 — Wait-Time Monitor & Queue Priority", () => {
   // [I-8a] Wait-time monitor tab shows players with wait data
-  test("[I-8a] wait-time monitor lists players who are waiting", async ({
-    browser,
-  }) => {
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+  test("[I-8a] wait-time monitor lists players who are waiting", async ({ browser }) => {
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1672,7 +1726,10 @@ test.describe("Group 8 — Wait-Time Monitor & Queue Priority", () => {
       .eq("session_id", sessionId)
       .eq("player_id", allPlayers[0].userId);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1688,15 +1745,11 @@ test.describe("Group 8 — Wait-Time Monitor & Queue Priority", () => {
         .eq("session_id", sessionId)
         .eq("status", "waiting")
         .order("games_played", { ascending: true })
-        .order("joined_at",   { ascending: true });
+        .order("joined_at", { ascending: true });
 
       // alice (5 games) should appear after all 0-games players
-      const aliceIndex = (queueRows ?? []).findIndex(
-        (r) => r.player_id === allPlayers[0].userId
-      );
-      const freshPlayers0Games = (queueRows ?? []).filter(
-        (r) => r.games_played === 0
-      ).length;
+      const aliceIndex = (queueRows ?? []).findIndex((r) => r.player_id === allPlayers[0].userId);
+      const freshPlayers0Games = (queueRows ?? []).filter((r) => r.games_played === 0).length;
 
       // alice must come after all the 0-game players
       expect(aliceIndex).toBeGreaterThanOrEqual(freshPlayers0Games);
@@ -1712,9 +1765,7 @@ test.describe("Group 8 — Wait-Time Monitor & Queue Priority", () => {
 
 test.describe("Group 9 — Match History", () => {
   // [I-9a] A completed match appears in the history tab with score
-  test("[I-9a] completed match is visible in match history", async ({
-    browser,
-  }) => {
+  test("[I-9a] completed match is visible in match history", async ({ browser }) => {
     const db = adminDb();
 
     // Seed a completed match directly in DB
@@ -1744,7 +1795,10 @@ test.describe("Group 9 — Match History", () => {
       { match_id: match.id, player_id: playerIds[3], team: "b" as const },
     ]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1757,18 +1811,16 @@ test.describe("Group 9 — Match History", () => {
       // NOTE: match-history-panel.tsx renders scores as plain numbers — there is no "Done"
       // badge; the completed status is conveyed by the score being present without an
       // "In Progress" or "Cancelled" overlay.
-      await expect(
-        page.locator('[id="tabpanel-history"]').getByText("21")
-      ).toBeVisible({ timeout: 5_000 });
+      await expect(page.locator('[id="tabpanel-history"]').getByText("21")).toBeVisible({
+        timeout: 5_000,
+      });
     } finally {
       await ctx.close();
     }
   });
 
   // [I-9b] Cancelled match appears in history with "Cancelled" indicator
-  test("[I-9b] cancelled match appears in history with cancelled status", async ({
-    browser,
-  }) => {
+  test("[I-9b] cancelled match appears in history with cancelled status", async ({ browser }) => {
     const db = adminDb();
 
     // Seed a cancelled match
@@ -1795,7 +1847,10 @@ test.describe("Group 9 — Match History", () => {
       { match_id: match.id, player_id: playerIds[3], team: "b" as const },
     ]);
 
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1825,7 +1880,10 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
     browser,
   }) => {
     const db = adminDb();
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1861,7 +1919,10 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
     browser,
   }) => {
     const db = adminDb();
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {
@@ -1874,17 +1935,19 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
       // ── Round 1: Call, score, complete ──────────────────────
       await page.getByText("Call Next Match").first().click();
 
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", sessionId)
-            .eq("status", "in_progress");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000 }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", sessionId)
+              .eq("status", "in_progress");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000 }
+        )
+        .toBeGreaterThan(0);
 
       await page.waitForTimeout(2_000);
       await page.reload({ waitUntil: "networkidle" });
@@ -1899,17 +1962,19 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
       await dialog.getByRole("button", { name: /end match/i }).click();
 
       // Wait for completion
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", sessionId)
-            .eq("status", "completed");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000 }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", sessionId)
+              .eq("status", "completed");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000 }
+        )
+        .toBeGreaterThan(0);
 
       await page.waitForTimeout(2_000);
       await page.reload({ waitUntil: "networkidle" });
@@ -1946,9 +2011,7 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
   });
 
   // [I-10c] All 6 courts can run concurrent in-progress matches
-  test("[I-10c] all 6 courts can hold simultaneous in-progress matches", async ({
-    browser,
-  }) => {
+  test("[I-10c] all 6 courts can hold simultaneous in-progress matches", async ({ browser }) => {
     const db = adminDb();
 
     // Seed 6 in-progress matches — one per court — using 24 players
@@ -1978,7 +2041,8 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
       ]);
 
       await db.from("courts").update({ status: "in_use" }).eq("id", currentCourtIds[i]);
-      await db.from("queue_entries")
+      await db
+        .from("queue_entries")
         .update({ status: "playing" })
         .eq("session_id", sessionId)
         .in("player_id", playerIds);
@@ -2014,7 +2078,10 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
     expect(activeMatches?.length).toBe(6);
 
     // UI: navigate to dashboard and confirm it renders without error
-    const ctx = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE, extraHTTPHeaders: BYPASS_HEADERS });
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
     const page = await ctx.newPage();
 
     try {

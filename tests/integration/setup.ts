@@ -51,7 +51,9 @@ export const authState: { currentUserId: string | null } = {
 //   • auth.getUser() is the only auth concern we need to fake:
 //     "who is calling this action?"
 vi.mock("@/utils/supabase/server", () => ({
-  createServerSupabaseClient: async (): Promise<ReturnType<typeof createSupabaseClient<Database>>> => {
+  createServerSupabaseClient: async (): Promise<
+    ReturnType<typeof createSupabaseClient<Database>>
+  > => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
