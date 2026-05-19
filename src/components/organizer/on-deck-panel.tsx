@@ -29,7 +29,7 @@
 //   organizer can freely reorder across draft/published boundaries.
 // ============================================================
 
-import { memo, useState, useEffect, useRef, useCallback } from "react";
+import { memo, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -258,18 +258,37 @@ function OnDeckPanelInner({
     // naturally by the useEffect above.
   }
 
+  // ── Derived section lists ──────────────────────────────────
+  // Both sections reference orderedMatches so drag across the
+  // draft/published boundary preserves the global sort order.
+  // Memoised: filters run only when orderedMatches or optimisticPublishedIds
+  // change — not on every loading-state update (clearingIds, publishingIds, etc.).
+  // Declared before handlePublishAll so the callback can close over draftMatches
+  // without a temporal dead zone error.
+  const draftMatches = useMemo(
+    () => orderedMatches.filter((m) => !m.is_published && !optimisticPublishedIds.has(m.id)),
+    [orderedMatches, optimisticPublishedIds]
+  );
+  const publishedMatches = useMemo(
+    () => orderedMatches.filter((m) => m.is_published || optimisticPublishedIds.has(m.id)),
+    [orderedMatches, optimisticPublishedIds]
+  );
+  const draftCount = draftMatches.length;
+
+  // Stable identity for SortableContext — recreated only when the match
+  // set changes, not on every loading-state update inside the component.
+  const sortableIds = useMemo(() => orderedMatches.map((m) => m.id), [orderedMatches]);
+
   // ── Publish All handler ────────────────────────────────────
 
   const handlePublishAll = useCallback(async () => {
     setIsPublishingAll(true);
     setPublishAllError(null);
-    // Only include matches that are still truly draft (exclude any already in
-    // optimisticPublishedIds from a concurrent per-card publish in-flight).
+    // draftMatches is already memoised to (!is_published && !optimisticPublished),
+    // so we read it directly — no duplicate filter needed.
     // This prevents a failing Publish All from reverting a separate in-flight
     // individual publish that happened to overlap.
-    const draftIds = orderedMatches
-      .filter((m) => !m.is_published && !optimisticPublishedIds.has(m.id))
-      .map((m) => m.id);
+    const draftIds = draftMatches.map((m) => m.id);
     setOptimisticPublishedIds((prev) => {
       const next = new Set(prev);
       draftIds.forEach((id) => next.add(id));
@@ -291,18 +310,7 @@ function OnDeckPanelInner({
     }
     // On success, realtime will resolve final is_published=true state;
     // optimistic IDs will be cleaned up naturally by the useEffect above.
-  }, [orderedMatches, optimisticPublishedIds, onPublishAllDrafts]);
-
-  // ── Derived section lists ──────────────────────────────────
-  // Both sections reference orderedMatches so drag across the
-  // draft/published boundary preserves the global sort order.
-  const draftMatches = orderedMatches.filter(
-    (m) => !m.is_published && !optimisticPublishedIds.has(m.id)
-  );
-  const publishedMatches = orderedMatches.filter(
-    (m) => m.is_published || optimisticPublishedIds.has(m.id)
-  );
-  const draftCount = draftMatches.length;
+  }, [draftMatches, onPublishAllDrafts]);
 
   // ── Empty state ──────────────────────────────────────────────
   // NOTE: still wraps in space-y-4 so the cap saturation notice can
@@ -379,7 +387,7 @@ function OnDeckPanelInner({
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
-        <SortableContext items={orderedMatches.map((m) => m.id)} strategy={rectSortingStrategy}>
+        <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
           {/* ── Drafts section ─────────────────────────────── */}
           {draftMatches.length > 0 && (
             <div className="space-y-3">

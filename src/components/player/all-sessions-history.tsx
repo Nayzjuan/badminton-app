@@ -263,15 +263,23 @@ function SessionSection({ group }: { group: SessionGroup }) {
 export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const fetchAll = useCallback(async () => {
+    setFetchError(null);
     // 1. All completed matches for this player, newest first.
-    const { data: matches } = await supabase
+    const { data: matches, error: matchError } = await supabase
       .from("v_match_history")
       .select("*")
       .eq("player_id", playerId)
       .order("completed_at", { ascending: false });
+
+    if (matchError) {
+      setFetchError("Failed to load match history. Please refresh.");
+      setLoading(false);
+      return;
+    }
 
     if (!matches || matches.length === 0) {
       setLoading(false);
@@ -289,10 +297,15 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
     }
 
     // 3. Fetch session metadata.
-    const { data: sessions } = await supabase
+    const { data: sessions, error: sessionError } = await supabase
       .from("sessions")
       .select("id, name, created_at, ended_at")
       .in("id", sessionIdOrder);
+
+    if (sessionError) {
+      // Non-fatal — proceed with fallback session labels (date derived from match timestamps).
+      console.error("[AllSessionsHistory] sessions fetch error:", sessionError.message);
+    }
 
     const sessionMap = new Map<string, SessionMeta>(
       (sessions ?? []).map((s) => [s.id, s as SessionMeta])
@@ -384,6 +397,14 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
             </div>
           </div>
         ))}
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="rounded-2xl border border-red-200 dark:border-red-800/50 bg-red-50 dark:bg-red-950/30 px-6 py-8 text-center">
+        <p className="text-sm font-medium text-red-700 dark:text-red-400">{fetchError}</p>
       </div>
     );
   }

@@ -5,6 +5,29 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-19 — Performance & Reliability Audit Pass)
+
+### Performance & Reliability Audit (2026-05-19) — ALL COMPLETE
+
+**Goal:** Principal performance/reliability audit: dead code, render performance, error swallowing, data leaks.
+
+**Files changed (11 fixes across 9 files):**
+- `src/hooks/use-swap-state.ts` — removed `setSwapContext` and `lastSwapRef` from return object (no external consumers; raw setter bypassed guard logic)
+- `src/components/organizer/on-deck-panel.tsx` — `useMemo` for `draftMatches`, `publishedMatches`, `sortableIds`; `handlePublishAll` simplified to use memoised `draftMatches`; TDZ fixed by moving memos before callback
+- `src/components/organizer/swap-sheet.tsx` — `useMemo` for all 4 computed values (`currentMatchPlayerIds`, `activeMatchPlayerIds`, `allCandidates`, `filteredCandidates`)
+- `src/hooks/use-session-data.ts` — `useMemo` for `inProgressMatches`/`onDeckMatches`; error guards in `fetchCourts` and `fetchWaitlist`
+- `src/hooks/use-enriched-matches.ts` — error guards at all 3 fetch phases; preserves stale state on error (no blank-screen on transient failures)
+- `src/components/player/match-history.tsx` — `fetchError` state + red error card (prevents "No matches yet" on query failure)
+- `src/app/actions/match-lifecycle.ts` — per-player update error now logged in `endMatchAction` re-queue loop (previously silent; could leave players stuck in "playing")
+- `src/components/player/all-sessions-history.tsx` — `fetchError` state + red error card for primary query; non-fatal logging for sessions sub-query
+- `src/components/pwa-nav-bar.tsx` — `focusTimerRef`/`blurTimerRef` + cleanup effect cancels both `setTimeout`s on unmount
+
+**Known design note (from review):** `currentMatchPlayerIds` in `swap-sheet.tsx` uses `[context?.matchId, context?.outPlayerId]` as deps instead of `context?.currentPlayers` (which is a new array each render and would defeat the memo). This is correct for all current data flows. Theoretical stale-Set edge case: if a 4th player were added/removed from the same match while the sheet is open *without* changing `matchId` or `outPlayerId`. This cannot occur in the current data model (match composition is fixed at creation; all mid-match changes go through swap actions that always change `outPlayerId`).
+
+**Lint baseline:** 0 errors, 99 warnings (same 0 error floor; +1 pre-existing stale disable directive surfaced, unrelated to this pass).
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-19 — 6-Issue Fix Pass)
 
 ### 6-Issue Fix Pass (2026-05-19) — ALL COMPLETE

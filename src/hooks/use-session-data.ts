@@ -83,11 +83,17 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   // ── Fetch courts ──────────────────────────────────────────
 
   const fetchCourts = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("courts")
       .select("*")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true });
+    if (error) {
+      // Preserve stale courts rather than clearing — transient failures should
+      // not wipe the panel. The next realtime event will trigger a re-fetch.
+      console.error("[useSessionData] fetchCourts error:", error.message);
+      return;
+    }
     if (data) setCourts(data);
   }, [supabase, sessionId]);
 
@@ -96,7 +102,7 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const fetchWaitlist = useCallback(async () => {
     const mySeq = ++fetchWaitlistSeq.current;
 
-    const { data: entries } = await supabase
+    const { data: entries, error: entriesError } = await supabase
       .from("queue_entries")
       .select("*")
       .eq("session_id", sessionId)
@@ -106,15 +112,28 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
 
     if (mySeq !== fetchWaitlistSeq.current) return;
 
+    if (entriesError) {
+      console.error("[useSessionData] fetchWaitlist queue_entries error:", entriesError.message);
+      return; // preserve stale waitlist
+    }
+
     if (!entries || entries.length === 0) {
       setWaitlist([]);
       return;
     }
 
     const playerIds = entries.map((e) => e.player_id);
-    const { data: profiles } = await supabase.from("profiles").select("*").in("id", playerIds);
+    const { data: profiles, error: profilesError } = await supabase
+      .from("profiles")
+      .select("*")
+      .in("id", playerIds);
 
     if (mySeq !== fetchWaitlistSeq.current) return;
+
+    if (profilesError) {
+      console.error("[useSessionData] fetchWaitlist profiles error:", profilesError.message);
+      return; // preserve stale waitlist
+    }
 
     const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
 
@@ -175,9 +194,16 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   }, [supabase, sessionId]);
 
   // ── Derived splits ────────────────────────────────────────
-
-  const inProgressMatches = activeMatches.filter((m) => m.status === "in_progress");
-  const onDeckMatches = activeMatches.filter((m) => m.status === "pending");
+  // Memoised: avoids re-filtering on every parent render (e.g. when courts or
+  // waitlist state changes) when activeMatches itself hasn't changed.
+  const inProgressMatches = useMemo(
+    () => activeMatches.filter((m) => m.status === "in_progress"),
+    [activeMatches]
+  );
+  const onDeckMatches = useMemo(
+    () => activeMatches.filter((m) => m.status === "pending"),
+    [activeMatches]
+  );
 
   const refresh = useCallback(async () => {
     await Promise.all([fetchCourts(), fetchActiveMatches(), fetchWaitlist()]);

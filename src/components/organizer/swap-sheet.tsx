@@ -28,7 +28,7 @@
 //   - PLAYER_UNAVAILABLE / generic → keep sheet open, show error
 // ============================================================
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { AlertTriangle, Pause, Search, Users } from "lucide-react";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import {
@@ -117,37 +117,59 @@ export function SwapSheet({
   // ── Build player list ──────────────────────────────────────
   // Players already in this match are excluded.
   // All waiting players shown; paused ones rendered as disabled.
+  //
+  // All four derived values are memoised — the two Set constructions are
+  // O(match×player) and O(queue) respectively, and the sort is O(n log n).
+  // Without memo these run on every render including every keystroke in the
+  // search box, which is the hottest re-render path in this component.
 
-  const currentMatchPlayerIds = new Set(context?.currentPlayers.map((p) => p.player_id) ?? []);
+  const currentMatchPlayerIds = useMemo(
+    () => new Set(context?.currentPlayers.map((p) => p.player_id) ?? []),
+    // Intentionally use matchId/outPlayerId as deps — currentPlayers is derived
+    // from context and changes identity every render, so using it directly would
+    // defeat the memo. The context itself is only replaced when matchId or
+    // outPlayerId changes, which is exactly when currentPlayers needs to re-derive.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [context?.matchId, context?.outPlayerId]
+  );
 
   // Build a set of ALL player IDs currently assigned to any active match
   // (both pending on-deck and in_progress on-court). This prevents players
   // who are physically on a court from appearing as swap candidates, even
   // if Realtime hasn't yet updated the queue status to "playing".
-  const activeMatchPlayerIds = new Set(
-    activeMatches.flatMap((m) => m.players.map((p) => p.player_id))
+  const activeMatchPlayerIds = useMemo(
+    () => new Set(activeMatches.flatMap((m) => m.players.map((p) => p.player_id))),
+    [activeMatches]
   );
 
-  const allCandidates = queue
-    .filter((p) => {
-      // Must not already be in this match
-      if (currentMatchPlayerIds.has(p.player_id)) return false;
-      // Must not be assigned to any other active match (on-court or on-deck)
-      if (activeMatchPlayerIds.has(p.player_id)) return false;
-      // Must be waiting (on_deck/playing/left excluded — they're not available)
-      if (p.status !== "waiting") return false;
-      return true;
-    })
-    .sort((a, b) => {
-      // Next-up players first — same sort order as matchmaking
-      if (a.games_played !== b.games_played) return a.games_played - b.games_played;
-      return new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime();
-    });
+  const allCandidates = useMemo(
+    () =>
+      queue
+        .filter((p) => {
+          // Must not already be in this match
+          if (currentMatchPlayerIds.has(p.player_id)) return false;
+          // Must not be assigned to any other active match (on-court or on-deck)
+          if (activeMatchPlayerIds.has(p.player_id)) return false;
+          // Must be waiting (on_deck/playing/left excluded — they're not available)
+          if (p.status !== "waiting") return false;
+          return true;
+        })
+        .sort((a, b) => {
+          // Next-up players first — same sort order as matchmaking
+          if (a.games_played !== b.games_played) return a.games_played - b.games_played;
+          return new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime();
+        }),
+    [queue, currentMatchPlayerIds, activeMatchPlayerIds]
+  );
 
   // Search filter (applied after sort so order is stable)
-  const filteredCandidates = search.trim()
-    ? allCandidates.filter((p) => p.display_name.toLowerCase().includes(search.toLowerCase()))
-    : allCandidates;
+  const filteredCandidates = useMemo(
+    () =>
+      search.trim()
+        ? allCandidates.filter((p) => p.display_name.toLowerCase().includes(search.toLowerCase()))
+        : allCandidates,
+    [allCandidates, search]
+  );
 
   // ── Skill mismatch detection ───────────────────────────────
   // Evaluate when a replacement is selected (not at browse time —

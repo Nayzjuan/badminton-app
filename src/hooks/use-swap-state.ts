@@ -287,12 +287,13 @@ export function useSwapState(
 
   return {
     swapContext,
-    setSwapContext,
+    // setSwapContext intentionally NOT exported — use handler functions for all
+    // state transitions so the Layer-2 guard and pre-flight checks are never bypassed.
     handlePlayerTap,
     handleOpenBenchSwap,
     handleCancelSwap,
     handleSwapComplete,
-    lastSwapRef,
+    // lastSwapRef intentionally NOT exported — only needed internally for the undo toast.
     showFloatingBar: swapContext?.mode === "picking",
   };
 }

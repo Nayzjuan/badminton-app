@@ -30,12 +30,26 @@ export function PwaNavBar() {
   const [origin, setOrigin] = useState("");
 
   const inputRef = useRef<HTMLInputElement>(null);
+  // Timer refs — tracked so both can be cancelled in the cleanup effect below,
+  // preventing stale setState calls on an unmounted component.
+  // React 19: useRef requires an explicit initial value; null signals "no timer active".
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Grab origin client-side (window is unavailable on SSR). Empty dep array means
   // this runs once on mount; setOrigin is called once and never triggers re-entry.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setOrigin(window.location.origin);
+  }, []);
+
+  // Cancel any in-flight focus/blur timers when the component unmounts
+  // to prevent calling setState on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+      if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
+    };
   }, []);
 
   // The Wrapped experience is a full-bleed immersive overlay —
@@ -51,7 +65,8 @@ export function PwaNavBar() {
     setInputValue(full);
     setEditing(true);
     // Select all text after the input mounts so the user can type immediately.
-    setTimeout(() => {
+    // Timer is tracked so it can be cancelled on unmount.
+    focusTimerRef.current = setTimeout(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
     }, 10);
@@ -119,8 +134,8 @@ export function PwaNavBar() {
             onKeyDown={handleKeyDown}
             onBlur={() => {
               // Short delay so the "Go" button click registers before blur
-              // collapses the input.
-              setTimeout(() => setEditing(false), 150);
+              // collapses the input. Timer is tracked for unmount cleanup.
+              blurTimerRef.current = setTimeout(() => setEditing(false), 150);
             }}
             spellCheck={false}
             autoComplete="off"

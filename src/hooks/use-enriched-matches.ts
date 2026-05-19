@@ -74,7 +74,7 @@ export function useEnrichedMatches(
     const mySeq = ++seqRef.current;
 
     // ── Phase 1: fetch matches ─────────────────────────────────
-    const { data: matches } = includeDrafts
+    const matchQuery = includeDrafts
       ? await supabase
           .from("matches")
           .select("*")
@@ -92,6 +92,14 @@ export function useEnrichedMatches(
 
     if (mySeq !== seqRef.current) return;
 
+    if (matchQuery.error) {
+      // Do NOT call setActiveMatches([]) — preserve last-good state so a
+      // transient network error doesn't blank the entire on-deck panel.
+      console.error("[useEnrichedMatches] matches fetch error:", matchQuery.error.message);
+      return;
+    }
+
+    const matches = matchQuery.data;
     if (!matches || matches.length === 0) {
       setActiveMatches([]);
       return;
@@ -99,20 +107,33 @@ export function useEnrichedMatches(
 
     // ── Phase 2: fetch match players ───────────────────────────
     const matchIds = matches.map((m) => m.id);
-    const { data: matchPlayers } = await supabase
+    const { data: matchPlayers, error: mpError } = await supabase
       .from("match_players")
       .select("*")
       .in("match_id", matchIds);
 
     if (mySeq !== seqRef.current) return;
 
+    if (mpError) {
+      console.error("[useEnrichedMatches] match_players fetch error:", mpError.message);
+      return; // preserve stale state
+    }
+
     // ── Phase 3: fetch profiles ────────────────────────────────
     const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
     let profileMap = new Map<string, Profile>();
     if (playerIds.length > 0) {
-      const { data: profileData } = await supabase.from("profiles").select("*").in("id", playerIds);
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("*")
+        .in("id", playerIds);
 
       if (mySeq !== seqRef.current) return;
+
+      if (profileError) {
+        console.error("[useEnrichedMatches] profiles fetch error:", profileError.message);
+        return; // preserve stale state
+      }
 
       profileMap = new Map((profileData ?? []).map((p) => [p.id, p]));
     }

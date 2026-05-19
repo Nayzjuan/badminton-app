@@ -286,7 +286,9 @@ describe("useSwapState", () => {
       const { result, swapMatchPlayers } = setup([makeMatch(MATCH_B)]);
 
       // Manually enter picking mode for match A (which is no longer on-deck).
-      act(() => result.current.setSwapContext({ ...makeCtx(), mode: "picking" as const }));
+      // handlePlayerTap on a fresh hook (no prior context) sets mode="picking" —
+      // it does NOT check onDeckMatches on the first tap, only executeMatchSwap does.
+      act(() => result.current.handlePlayerTap(makeCtx()));
 
       // Second tap: Bob in match B. executeMatchSwap fires (unawaited internally),
       // detects match A is gone, sets context null and warns — flush microtasks.

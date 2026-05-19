@@ -27,9 +27,11 @@ interface MatchHistoryProps {
 export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) {
   const [history, setHistory] = useState<MatchHistoryType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const fetchHistory = useCallback(async () => {
+    setFetchError(null);
     let query = supabase
       .from("v_match_history")
       .select("*")
@@ -46,8 +48,12 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
       query = query.limit(limit);
     }
 
-    const { data } = await query;
-    if (data) setHistory(data);
+    const { data, error } = await query;
+    if (error) {
+      setFetchError("Failed to load match history. Please refresh.");
+    } else if (data) {
+      setHistory(data);
+    }
     setLoading(false);
   }, [supabase, sessionId, playerId, limit]);
 
@@ -81,6 +87,14 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
   if (loading) {
     return (
       <div className="py-12 text-center text-sm text-muted-foreground">Loading history...</div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="rounded-2xl border border-red-200 dark:border-red-800/50 bg-red-50 dark:bg-red-950/30 px-6 py-8 text-center">
+        <p className="text-sm font-medium text-red-700 dark:text-red-400">{fetchError}</p>
+      </div>
     );
   }
 
