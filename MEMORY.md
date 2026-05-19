@@ -5,286 +5,51 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-19)
+## SESSION STATE (Last Updated: 2026-05-17)
 
-### QA Improvements Pass (2026-05-19) — ALL COMPLETE
+### What Was Accomplished This Session — Code Quality Chunk B — ALL 6 COMMITS COMPLETE
 
-**Goal:** Address the Senior QA assessment's top gaps: expand vitest coverage scope, add 4 missing hook unit tests, add 2 component smoke tests, fix the 4 remaining E2E failures.
+**Goal:** Apply 9 code-quality fixes surfaced by external audit of `src/hooks/`, `src/app/actions/`, and `src/middleware.ts`. (B-8 was already fixed; B-9 deferred to future session.)
 
-**Commits landed (53b8e46 → 08d7dbe):**
+**Commits landed (all on top of Chunk A — e789b21):**
 
-- `53b8e46` **E2E final 4 failures:**
-  - `src/hooks/use-swap-state.ts`: Extended Layer 2 guard with `prevOnDeckLengthRef`. Now cancels picking mode when ANY match leaves on-deck (not just selected player's match). Toast: "A match moved to a court — tap a player to try again."
-  - `tests/e2e/scenario-e-match-alert-ui.spec.ts`: `.first()` on strict-mode locators that matched multiple elements after `is_published` fix made overlay fully visible
-  - `tests/e2e/scenario-j-drafted-status.spec.ts`: Changed `[B]` assertion from `/up next|on deck|your match/i` → `getByRole("alert")` with 20s timeout (queue realtime fires before match realtime; fetchMyMatch chain takes 4–8s)
-  - `tests/unit/use-swap-state.test.ts`: Updated SS-4b to match new Layer 2 guard behavior (now expects context to clear + "moved to a court" toast)
+| SHA | Commit | What changed |
+|-----|--------|-------------|
+| 73d8f87 | B-1: getAuthenticatedUser + createUnknownProfile | Added `getAuthenticatedUser()` to `_shared.ts`; added `createUnknownProfile(id)` to `lib/utils.ts`; replaced inline auth patterns in `match.ts`, `swap-player.ts`, `dev.ts`; replaced inline unknown-profile objects in `use-organizer-data.ts` + `use-session-data.ts` |
+| 6b7c0d3 | B-2: static import + getServiceClient removal | `use-match-alerts.ts`: dynamic import → static `import { sendPlayerNotification }`; `match.ts`: removed `getServiceClient()` wrapper, replaced 5 call sites with `createServiceClient()` directly |
+| 74fd2a2 | B-3: leaveQueue → checkoutPlayer | `use-queue.ts`: `leaveQueue` delegates to `checkoutPlayer(sessionId)` server action; previously bypassed draft-cleanup RPC (`checkout_player_cleanup_drafts`) |
+| d186c87 | B-4: isSessionOrganizer consolidation | `sessions.ts` (4 functions) + `matchmaking.ts` (`callNextMatch`): replaced inline 2-path organizer checks (fetch session → check `created_by` → fallback to `session_organizers` query) with single `isSessionOrganizer(user.id, sessionId)` call |
+| 81988fe | B-5: useEnrichedMatches extraction | New `src/hooks/use-enriched-matches.ts` shared hook; `use-organizer-data.ts` + `use-session-data.ts` remove duplicated 4-query enrichment logic; `includeDrafts: boolean` controls draft firewall; `onProfilesLoaded` callback keeps organizer profiles Map in sync |
+| e79a772 | B-6: useAction factory + useMemo derived state | `use-organizer-data.ts`: `useAction` factory at module scope replaces 4 identical action wrappers (`cancelMatch`, `clearOnDeckMatch`, `removeFromQueue`, `pausePlayer`); 4 derived-state slices memoized with `useMemo` |
 
-- `4d566bb` **4 new hook unit test suites + vitest config expansion:**
-  - `tests/unit/use-organizer-dashboard.test.ts` (19 tests, OD-1..OD-10+): tab config, draft/bottleneck badges, optimistic auto-matchmaking toggle, pendingAuto yield-back, Esc key → handleCancelSwap, handleCloseSession success/error, joinQueue error handling
-  - `tests/unit/use-queue.test.ts` (10 tests, Q-1..Q-10): loading state, empty queue, myEntry, myPosition 1-based among "waiting" only, null for on_deck/drafted, realtime re-fetch, joinQueue → joinQueueAction, leaveQueue → checkoutPlayer (not direct supabase)
-  - `tests/unit/use-enriched-matches.test.ts` (8 tests, EM-1..EM-8): includeDrafts branching, empty matches, enrichment, unknown profile fallback (createUnknownProfile), race condition guard (seqRef), courtsRef lookup, onProfilesLoaded callback
-  - `tests/unit/use-leaderboard.test.ts` (9 tests, LB-1..LB-8): initial scopeTab, fetch on mount, myRow derivation, null when absent, handleSessionPick, handleClearSession, handleRefresh, error state
-  - `vitest.config.ts`: coverage scope expanded from 1 file → 12 files; `setupFiles: ["tests/setup/jest-dom.ts"]`; added `tests/unit/**/*.test.tsx` to include
+**Validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 (all passes).
 
-- `08d7dbe` **Component smoke test suites:**
-  - `tests/unit/match-alert.test.tsx` (12 tests, MA-1..MA-12): pins MatchAlert overlay for pending (amber: "Heads Up.", "You're On Deck" pill, eyebrow variants "Coming Up Next"/"#2 On Deck", "1 MATCH AHEAD IN LINE", "Your Team"/"Opponents", "You" row label, Mixed Level banner) and in_progress (navy: court name heading, "Active Court" eyebrow, "Match in Progress" pill, Mixed Level)
-  - `tests/unit/queue-sub-tab.test.tsx` (11 tests, QST-1..QST-11): pins QueueSubTab all 4 states via MyStatusTab (not-in-queue, waiting/position numeral, drafted/"Match Forming", paused/"On a break", session name eyebrow)
-  - `tests/setup/jest-dom.ts`: `import "@testing-library/jest-dom/vitest"` (DOM matchers setup)
-  - `package.json`: added `@testing-library/jest-dom` devDep
+**Independent code review verdict: Minor issues (acceptable pass per CLAUDE.md).**
 
-**Final state:** 286/286 unit tests pass (up from 217 pre-session). All 3 commits pushed to origin/main at `08d7dbe`. Vercel deployment `dpl_CwKjoUXSHiwgtzqb6bKmmY4A15dN` READY.
+Minor issues to log (non-blocking, no fixes required now):
+1. **Redundant session fetch in `toggleAutoMatchmaking` + `getSessionForOrganizer` (sessions.ts):** Both functions still fetch `sessions.select("created_by")` to guard "Session not found", then call `isSessionOrganizer()` which does the exact same query internally as its fast path — a double round-trip. The "Session not found" vs "Not authorized" error-message distinction is the only functional difference. Pre-existing to B-4 but made visible by the consolidation. Low priority cleanup.
+2. **Two `createServerSupabaseClient()` instances in `callNextMatch` (matchmaking.ts):** `userClient` for auth, then separate `supabase` for the `is_auto_matchmaking_on` read. Pre-existing before Chunk B; not a regression. Low priority.
+3. **`useAction` factory: `action` + `refreshers` closure not in dep list — footgun for future maintainers.** In practice safe because all current usages list the captured values in the explicit `deps` param. The `eslint-disable` comment acknowledges this. Document the "you must mirror closured values in deps" contract when adding new useAction calls.
+4. **`courtsRef` in `useEnrichedMatches` dep array** — `MutableRefObject` identity is stable; including it is harmless but unnecessary. Cosmetic inconsistency.
+5. **JSDoc for `isSessionOrganizer` misplaced in `_shared.ts`** — the comment block ends just before `getAuthenticatedUser()` instead of before `isSessionOrganizer()`. Cosmetic.
 
-**Minor issues from code review (no fixes required, tracked here):**
-1. `vitest.config.ts` thresholds dropped from 55/60/40/55 → 40/40/30/40 to accommodate new hook files at lower coverage. Raise incrementally as hook coverage improves.
-2. `use-enriched-matches.test.ts` EM-6 race mock counts all `from()` calls across all tables — a future pre-flight query addition could silently break the test. Consider table-specific mock tracking.
-3. `use-enriched-matches.test.ts` EM-1 `or()` assertion checks individual substrings rather than the full compound `and(status.eq.pending,is_published.eq.true)` string. Could tighten.
-
-**E2E re-run result:** 92/92 confirmed (ran immediately after this session's commits).
-
----
-
-### Coverage Improvement Pass (2026-05-19) — ALL COMPLETE
-
-**Goal:** Close the gaps identified in the QA gap analysis. 26 new tests across 10 files.
-
-**Coverage before → after:**
-- Statements: 80.5% → 85.8% (+5.3pp)
-- Branches: 66.5% → 72.7% (+6.2pp)
-- Functions: 87.4% → 90.4% (+3pp)
-- Lines: 82.1% → 87.4% (+5.3pp)
-
-**Commits:** Single commit with all 26 tests.
-
-**New tests added per file:**
-- `matchmaking-core.test.ts`: MC-new-1..4 — `runAlgorithm` last-resort fallback (isMixedLevel=true), fallback + all-splits-capped (proposal:null), threshold boundary (fallback NOT firing), all-candidates-cap-blocked (capSaturation:true)
-- `matchmaking-engine.test.ts`: ME-new-1/2 — cap saturation broadcast fires silently; console.error logged for skill/diversity exhaustion
-- `use-swap-state.test.ts`: SS-new-1..4 — `handleUndoMatchSwap` and `handleUndoSwap` MATCH_STARTED and generic error toast paths
-- `use-match-alerts.test.ts`: UA-new-1..3 — bootstrap seeds assignedMatchId (no-crash smoke), bootstrap fast-path verification, match_players realtime callback re-bootstrap
-- `use-player-match.test.ts`: U-new-1/2 — completed match → null (line 100), null allPlayers guard (lines 154-156)
-- `use-organizer-dashboard.test.ts`: OD-new-1/2 — moreMenu click-outside closes, click inside keeps open
-- `use-leaderboard.test.ts`: LB-new-1..3 — all-time error state, handleRefresh on alltime tab, realtime subscription cleanup on unmount
-- `use-queue.test.ts`: Q-new-1/2 — null data from fetchQueue (line 51 false-branch), subscription cleanup on unmount
-- `use-enriched-matches.test.ts`: EM-new-1/2 — no match_players rows skips profiles (line 99 false-branch), mid-profiles race guard
-- `use-match-history.test.ts`: MH-new-1/2 — no players skips profiles, no court_id skips courts
-
-**Minor issues from code review (no fixes needed, tracked here):**
-1. `PLAYER_A2` / `PLAYER_B2` dead constants in `use-enriched-matches.test.ts` — **FIXED inline** (removed both).
-2. UA-new-1 (`use-match-alerts.test.ts`) tests no-crash behaviour only; cannot independently verify `assignedMatchId` was set by bootstrap. UA-new-2 covers the actual fast-path verification. UA-new-1 should be re-described as a no-crash smoke test at next opportunity.
-3. LB-new-3 asserts mock wiring (unsubscribe called) not debounce-timer cleanup — acceptable for the realtime-subscription cleanup path.
-4. ME-new-1 requires `wait_minutes ≥ GATE_HOLD_MINUTES` on all gate-check players to avoid an extra active-court query in the mock sequence. If GATE_HOLD_MINUTES constant changes, ME-new-1 may need updating.
-
-**Pending:**
-- Re-run E2E suite against `08d7dbe` deployment with fresh auth state (`rm .playwright/organizer-storage-state.json` first) to confirm 92/92.
+**Files modified:**
+- `src/app/actions/_shared.ts` — `getAuthenticatedUser()`
+- `src/lib/utils.ts` — `createUnknownProfile()`
+- `src/app/actions/match.ts` — auth refactor, `getServiceClient()` removal
+- `src/app/actions/swap-player.ts` — auth refactor
+- `src/app/actions/dev.ts` — auth refactor
+- `src/app/actions/sessions.ts` — `isSessionOrganizer` consolidation (4 functions)
+- `src/app/actions/matchmaking.ts` — `isSessionOrganizer` consolidation, unused import/let cleanup
+- `src/hooks/use-match-alerts.ts` — static import
+- `src/hooks/use-queue.ts` — `leaveQueue` delegation
+- `src/hooks/use-organizer-data.ts` — `useEnrichedMatches`, `createUnknownProfile`, `useAction`, `useMemo`
+- `src/hooks/use-session-data.ts` — `useEnrichedMatches`
+- `src/hooks/use-enriched-matches.ts` — NEW file
 
 ---
 
-### E2E Fixture Fix: is_published on seeded pending matches (2026-05-18) — COMPLETE
-
-**Root cause:** `tests/helpers/teardown.ts` seeded `status: "pending"` matches without `is_published: true`. The `draft_mode_is_published` migration (20260502100000) added the column with default `false`. Unpublished pending matches render as "Draft #N" in the organizer panel, not "On Deck #N". All 25 E2E failures were `getByText("On Deck #1")` timeouts.
-
-**Commit:** `tests/helpers/teardown.ts` — three fixes:
-1. `first_match_on_deck` preset: `is_published: status === "pending"` (handles both pending and in_progress via the same insert block)
-2. `two_matches_on_deck` match 1: `is_published: true`
-3. `two_matches_on_deck` match 2: `is_published: true`
-
-**E2E before fix:** 67 passed, 25 failed. **Expected after fix:** ~92 passed.
-
----
-
-### Architectural Deepening — Candidate 4: MatchActionResult lift (2026-05-18) — COMPLETE
-
-**Goal:** Remove identical `interface MatchActionResult { success; message }` duplicated in match-lifecycle.ts and match-drafts.ts.
-
-**Commit (9a24772 → d443328):**
-
-- `d443328`: `export type MatchActionResult` added to `_shared.ts` with JSDoc noting the Turbopack type-erasure exemption. Both action files import `type MatchActionResult` from `_shared.ts`; local definitions deleted.
-
----
-
-### Architectural Deepening — Candidate 3: useLeaderboard hook (2026-05-18) — COMPLETE
-
-**Goal:** Re-extract useLeaderboard hook from 492-line LeaderboardPage (hook was deleted in the Stadium refactor; component re-absorbed the logic).
-
-**Commits (e39cb47 → 9a24772):**
-
-- `d06a13c` **E-3:** `src/hooks/use-leaderboard.ts` (298 lines) created. Owns: fetchSession / fetchAllTime callbacks, monotonic sequence refs (fetchSessionSeq / fetchAllTimeSeq), flash detection (prevIdsRef, flashNewEntrants), realtime subscription with 500ms debounce (fetchSessionRef stable-callback pattern), hero card stats fetch (cancellation flag), handleSessionPick, handleClearSession, handleRefresh (useCallback-wrapped), all derived state (activeRows, activeLoading, minGP, myRow). `leaderboard-page.tsx`: 492 → 320 lines; near-pure layout renderer. `showSessionPicker` one-liner stays in component (depends on `sessions` prop). Component imports `minGP` from hook (replaces raw constants).
-- `9a24772` **E-3 fix:** Document `flashedIds` gap (maintained in hook, not yet wired to StadiumLeaderboard — pre-existing); use `minGP` from hook in JSX (removes redundant `MIN_SESSION_GP`/`MIN_ALLTIME_GP` imports).
-
-**Known gap:** `flashedIds` is computed by `flashNewEntrants` on every refetch but not passed to `StadiumLeaderboard` — pre-existing. Fix requires adding a `flashedIds` prop to `StadiumLeaderboard` and wiring it at call sites.
-
----
-
-### Architectural Deepening — Candidate 2: useOrganizerDashboard controller hook (2026-05-18) — COMPLETE
-
-**Goal:** Extract UI controller state out of 770-line OrganizerDashboard into a focused, testable hook.
-
-**Commits (1f5ceb4 → e39cb47):**
-
-- `b246b67` **E-2:** `src/hooks/use-organizer-dashboard.ts` (271 lines) created.
-  Owns: tab navigation (activeTab, tabs config w/ draft/bottleneck badges), dropdown/dialog open states (sessionSwitcher, moreMenu, shareDialog, closeDialog), click-outside handlers, auto-matchmaking optimistic toggle (pendingAuto + yield-back effect), session close flow, Esc key binding, joinQueue callback, isClosed derived value.
-  `organizer-dashboard.tsx`: 770 → 652 lines. Three hooks compose cleanly: `useOrganizerData` (data) + `useSwapState` (swap state machine) + `useOrganizerDashboard` (UI state + handlers). Component body is now near-pure layout.
-- `e39cb47` **E-2 fix:** Corrected stale-closure comment on Esc-key effect: `handleCancelSwap` is a plain function (not stable), but safe because it internally calls the stable `setSwapContext` dispatcher.
-
-**Design decisions:**
-- `router` retained in component for inline session-switcher navigation; `handleCloseSession` gets its own `useRouter()` inside the hook — idiomatic, no problem (Next.js router is a singleton)
-- `setMoreMenuOpen` exposed as `Dispatch<SetStateAction<boolean>>` (required for `(v) => !v` updater call) while other dialog setters use `(open: boolean) => void` — documented asymmetry, not a bug
-- `handleCancelSwap` stale-closure safety: works because `setSwapContext` (called inside) is a stable React dispatcher
-
-**Test leverage gained:**
-- `useOrganizerDashboard` is now unit-testable via `renderHook` — modal lifecycle, toggle flows, tab badge logic all testable without mounting OrganizerDashboard
-
----
-
-### Architectural Deepening — Candidate 1: matchmaking algorithm/data seam (2026-05-18) — COMPLETE
-
-**Goal:** Make `runAlgorithm` a pure, zero-DB-mock-testable function by extracting DB helpers into a dedicated module.
-
-**Commits (f2f2018 → 1f5ceb4):**
-
-- `94f4c43` **E-1:** Extract `src/lib/matchmaking-db.ts` — 5 DB helpers:
-  - `fetchActivePool` (v_queue_with_wait_time + paused filter; returns unscored `QueueWithWaitTime[]`)
-  - `fetchRecentRosters`, `fetchPartnershipCounts`, `buildOverlapMap` (moved verbatim)
-  - `executeMatch` (accepts `MatchProposal` instead of teamA/teamB args)
-  - `DbClient` alias, `ExecuteMatchResult` type
-  Add to `matchmaking-core.ts`: `MatchProposal`, `AlgorithmResult`, `scoreAndSortPool` (pure), `runAlgorithm` (pure — all Tier-1/2/3 logic, fallback, capSaturation signal; 0 DB calls).
-  Restructure `matchmaking.ts` (591 lines ← 1,354): imports from matchmaking-db + matchmaking-core; `runEngineInternal` now calls fetch → scoreAndSortPool → runAlgorithm → executeMatch per slot; `createOneOnDeckMatch` deleted; 5 private helper functions deleted.
-- `1f5ceb4` **E-1 fix:** Remove redundant `ScoredPlayer` casts in `executeMatch`; clarify `MatchmakingResult.teamA/teamB` asymmetry (only populated by promote path).
-
-**Design decisions recorded:**
-- `fetchActivePool` returns raw `QueueWithWaitTime[]` (not scored) — scoring is `scoreAndSortPool` in `matchmaking-core.ts`, keeping data layer free of algorithm logic
-- `partnershipCounts` is re-fetched per-slot (new drafts change pairs within a multi-slot run)
-- `recentRosters` is hoisted once outside the slot loop (stable snapshot)
-- `capSaturation` signal returns to orchestrator via `AlgorithmResult.capSaturation`; `broadcastCapSaturation` side effect stays in `matchmaking.ts`
-- `isOnDeck=false` (direct court assignment) path was dead code; removed cleanly
-
-**Test leverage gained:**
-- `runAlgorithm` is now testable in `matchmaking-core.test.ts` with zero Supabase mock
-- `matchmaking-engine.test.ts` mocks service client → flows through matchmaking-db transparently (query sequence unchanged)
-- 217/217 pass, independent review: LGTM
-
-**Remaining minor (logged for completeness):**
-- `MatchActionResult` type duplicated in `match-lifecycle.ts` and `match-drafts.ts` — Candidate 4 from the architectural review (quick lift to `_shared.ts`)
-
----
-
-### Code-Quality Refactor Pass (2026-05-17) — Chunk D: Gap Fixes — ALL COMPLETE
-
-**Context:** 3 refactor commits + 2 minor-fix commits addressing audit gaps left from Chunks B and C. Starting SHA: `9c41e17`.
-
-**Commits landed (9c41e17 → f2f2018):**
-
-- `41def3e` **D-1:** `CapSaturationNotice` (+ props interface) extracted from `on-deck-panel.tsx` → `sortable-card.tsx`. Exported as named export. `on-deck-panel.tsx` imports it from `./sortable-card`.
-- `6355c41` **D-2:** `match.ts` (1,147 lines) split into `match-lifecycle.ts` (submitMatchScore, endMatchAction, cancelMatchAction, updateMatchDetails, createManualMatchAction) and `match-drafts.ts` (clearOnDeckMatch, reorderOnDeckMatches, publishMatchAction, publishAllDraftMatchesAction). Deleted `match.ts`. Updated all import sites.
-- `8e94aa2` **D-3:** `use-organizer-data.ts` (842 lines) split into 4 focused sub-hooks:
-  - `use-organizer-courts.ts` — court CRUD, courtsRef, updateTimeLimit
-  - `use-organizer-queue.ts` — queue state, profiles, pause/remove actions, queue+profile realtime
-  - `use-organizer-matches.ts` — useEnrichedMatches wrapper, match/match_players realtime, all match actions
-  - `use-organizer-session.ts` — liveSession, realtimeConnected, capSaturation, broadcast realtime, handleChannelStatus
-  - `use-organizer-data.ts` — thin composer (245 lines); public API unchanged
-- `800413c` **D-fix-1:** Remove inline lambda wrappers for handleChannelStatus (were causing 5 subscription restarts per render); remove dead `onProfilesLoaded` param from `useOrganizerQueue`.
-- `f2f2018` **D-fix-2:** Stabilize `onProfileChange` callback via named `useCallback` + stable `fetchActiveMatchesRef` dep — eliminates profiles subscription churn on every render.
-
-**Remaining minor (cosmetic, no action needed):**
-
-- `MatchActionResult` type duplicated in `match-lifecycle.ts` and `match-drafts.ts` — file-local only, not exported, no runtime impact.
-- `use-organizer-data.ts` is 245 lines vs. ≤150 spec — overage is the 70-line `UseOrganizerDataResult` interface (logic is thin).
-
-**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent review: LGTM · pushed to origin/main.
-
----
-
-### Code-Quality Refactor Pass (2026-05-17) — Chunk C: 7 Sequential Refactor Commits — ALL COMPLETE
-
-**Context:** 7 focused refactor commits on `main` branch. Each validated with `npx tsc --noEmit` + `npx eslint --max-warnings=0` before committing. All 174 vitest tests pass at the end.
-
-**Commits landed (007792b → be8ca7b):**
-
-- `e565227` **C-1:** `useSwapState` hook extracted from `organizer-dashboard.tsx` into `src/hooks/use-swap-state.ts`. All swap state machine logic (picking mode, bench swap, undo, Layer 2 race guard) moved. Dashboard now delegates via `useSwapState()`.
-- `c6dcda6` **C-2:** `CourtCard` (+ `AlertTier`) extracted from `active-courts.tsx` → `court-card.tsx`. `SortableCard` + `OverlayCard` extracted from `on-deck-panel.tsx` → `sortable-card.tsx`.
-- `180566c` **C-3:** `ReconnectModal` + `Spinner` extracted from `login-form.tsx` → `reconnect-modal.tsx`. `EditMatchDialog` extracted from `match-history-panel.tsx` → `edit-match-dialog.tsx`.
-- `b333cbd` **C-4:** `useMatchHistory` hook extracted from `match-history-panel.tsx` → `src/hooks/use-match-history.ts`. Also fixes inline unknown-profile literal → `createUnknownProfile()` from `@/lib/utils`.
-- `289193b` **C-5:** `SKILL_META` added to `src/lib/constants.ts` as single source of truth. `SKILL_CONFIG` removed from `match-roster.tsx`, `TV_SKILL_CONFIG` removed from `tv-board.tsx`, both replaced with `SKILL_META`.
-- `bbc2609` **C-6:** `useScoreForm` hook created at `src/hooks/use-score-form.ts` (0–30 validation). `ScoreInputCard` extracted from `player-dashboard.tsx` → `score-input-card.tsx`. `MyStatusTab` + `QueueSubTab` extracted → `my-status-tab.tsx`. `ScoreModal` updated to use `useScoreForm` — **bug fix**: organizer could previously submit scores > 30, now enforces 0–30 upper limit.
-- `be8ca7b` **C-7:** `WrappedShell` (689 lines) decomposed into `WrappedStatsCard`, `WrappedAwardsFeed`, `WrappedMatchRecap`. All inline styles preserved verbatim.
-
-**New files created (13 total):**
-
-- `src/hooks/use-swap-state.ts`
-- `src/hooks/use-match-history.ts`
-- `src/hooks/use-score-form.ts`
-- `src/components/organizer/court-card.tsx`
-- `src/components/organizer/sortable-card.tsx`
-- `src/components/organizer/edit-match-dialog.tsx`
-- `src/components/reconnect-modal.tsx`
-- `src/components/player/score-input-card.tsx`
-- `src/components/player/my-status-tab.tsx`
-- `src/components/wrapped/wrapped-stats-card.tsx`
-- `src/components/wrapped/wrapped-awards-feed.tsx`
-- `src/components/wrapped/wrapped-match-recap.tsx`
-
-**Minor issues from review — ALL FIXED (commit 899e85b):**
-
-- `use-score-form`: exported `clearError()`; `score-modal` calls it on open to prevent stale error messages persisting across reopens.
-- `score-modal` `canSubmit`: added `aVal <= 30 && bVal <= 30` — Submit button now disabled for out-of-range scores (consistent with `handleSubmit` validation).
-- `use-swap-state` / `use-match-history`: `eslint-disable-next-line react-hooks/refs` comments retained — `react-hooks/refs` IS a real rule in this project (eslint-plugin-react-hooks v5+) that flags the intentional stable-callback ref-update-during-render pattern.
-- Pre-existing lint issues in `tv-board.tsx`, `active-courts.tsx`, `match-roster.tsx` had eslint-disable comments added (pre-existed before this refactor).
-
-**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent review: LGTM · pushed to origin/main.
-
----
-
-### Code-Quality Refactor Pass (2026-05-17) — Chunk B + Minor Issue Fixes — ALL COMPLETE
-
-**Context:** External audit surfaced 9 issues in `src/hooks/*`, `src/app/actions/*`. B-8 was already fixed; B-9 deferred. Fixed B-1 through B-7 in 6 commits, then fixed all 5 minor issues flagged in the review. Every step validated with tsc, lint, vitest 174/174, and independent review gate.
-
-**Chunk B commits (73d8f87 → e79a772):**
-
-- `73d8f87` **B-1:** `getAuthenticatedUser()` → `_shared.ts`; `createUnknownProfile()` → `lib/utils.ts`; replaced inline patterns across `match.ts`, `swap-player.ts`, `dev.ts`, both hooks.
-- `6b7c0d3` **B-2:** `use-match-alerts.ts` dynamic import → static import; `match.ts` `getServiceClient()` wrapper removed.
-- `74fd2a2` **B-3:** `use-queue.ts` `leaveQueue` now delegates to `checkoutPlayer` server action — fixes silent draft-cleanup bypass (`checkout_player_cleanup_drafts` RPC was never called).
-- `d186c87` **B-4:** `sessions.ts` (4 functions) + `matchmaking.ts` (`callNextMatch`): inline 2-path organizer checks → `isSessionOrganizer()`.
-- `81988fe` **B-5:** New `src/hooks/use-enriched-matches.ts` shared hook; `includeDrafts: boolean` controls draft firewall; `onProfilesLoaded` callback for organizer profiles Map sync. Removes duplicated 4-query enrichment from both consumer hooks.
-- `e79a772` **B-6:** `useAction` factory at module scope (replaces 4 identical action wrappers); 4 derived-state slices memoized with `useMemo`.
-
-**Minor issue fix commit (7a7ac72):**
-
-- `sessions.ts` `toggleAutoMatchmaking` + `getSessionForOrganizer`: removed redundant pre-fetch of `sessions.created_by` — `isSessionOrganizer` already does that query.
-- `matchmaking.ts` `callNextMatch`: removed duplicate `createServerSupabaseClient()` instantiation; `is_auto_matchmaking_on` read now uses service client — **real bug fix**: co-organizers were silently getting null from the RLS-scoped client.
-- `_shared.ts`: fixed JSDoc placement for `isSessionOrganizer`.
-- `use-enriched-matches.ts`: removed `courtsRef` from `useCallback` dep array (stable ref identity, redundant).
-- `use-organizer-data.ts` `useAction`: added dep-array contract comment.
-- `tests/unit/matchmaking-engine.test.ts`: updated 3 test mock setups to reflect `is_auto_matchmaking_on` moving to the service client.
-
-**Final validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent review: LGTM.
-
----
-
-### Code-Quality Refactor Pass (2026-05-16) — A-1 through A-5 — ALL COMPLETE
-
-**Context:** External audit surfaced 5 code-quality issues in `src/lib/*` and `src/utils/supabase/*`. Verified all 5 issues were present, then fixed them in 4 sequential commits with full validation (tsc, lint, vitest 174/174) and independent review gate (LGTM).
-
-**Commits landed (oldest → newest):**
-
-- `2ae349f` **A-5 (vip-config.ts):** `getVipThemeConfig` now uses `isVipTheme()` guard instead of `as VipTheme` unsafe cast. Runtime behaviour identical; type system now validates the key.
-- `89663a1` **A-2 (audio.ts):** Extracted `ensureAudioContextRunning()` private helper. Both `playWarningBeep` and `playCourtCall` replaced their 8-line identical resume-guard blocks with a 1-line call. Helper always calls `resume()` (spec no-op when running) to avoid TypeScript control-flow narrowing false positive.
-- `6bb4ea2` **A-3+A-4 (realtime.ts + 2 hooks):**
-  - A-3a: Deleted orphaned JSDoc (was floating above `subscribeToOrganizerBroadcast`); relocated it correctly to `subscribeToProfiles`.
-  - A-3b: Extracted `createStatusHandler()` factory; replaced 3 copy-pasted `.subscribe()` callbacks in `subscribeToTable`, `subscribeToMatchPlayers`, `subscribeToProfiles`.
-  - A-4: Replaced positional optional-callback signature of `subscribeToOrganizerBroadcast` with `OrganizerBroadcastHandlers` object type (exported). Updated both call-sites: `use-organizer-broadcast.ts` (now `{onIntervention, onSessionClosed}`), `use-organizer-data.ts` (now `{onIntervention: () => {}, onAutoMatchmakingToggled, onCapSaturation}`). Removed stale `eslint-disable-next-line` in `use-organizer-broadcast.ts` that the refactor made unnecessary.
-- `e789b21` **A-1 (createClient rename):** 39 call-sites updated.
-  - `src/utils/supabase/client.ts`: `createClient` → `createBrowserSupabaseClient`
-  - `src/utils/supabase/server.ts`: `createClient` → `createServerSupabaseClient`
-  - Also updated: `tests/integration/setup.ts` vi.mock factory key (missed in initial scope count), fixed external `@supabase/supabase-js` import that was caught in bulk replace.
-
-**Validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 · independent reviewer: LGTM.
-
-**Pre-existing lint issues NOT introduced by this work** (in `matchmaking.ts`, `use-queue.ts`, `use-player-match.ts`): `prefer-const activePool`, `setState-in-effect` warnings — pre-existed before this session.
-
----
-
-## SESSION STATE (Last Updated: 2026-05-14)
-
-### What Was Accomplished This Session — New UI Port (organizer + player) — ALL CHUNKS COMPLETE
+### What Was Accomplished This Session (Previous) — New UI Port (organizer + player) — ALL CHUNKS COMPLETE
 
 **Goal:** port `preview-revamp.html` (organizer) + `preview-player.html` (player) designs into the real Next.js app.
 
@@ -643,7 +408,8 @@ This was my mistake — I should have read the function source before invoking i
 
 ### Immediate Next Steps
 
-- **(Optional) B-9 (deferred):** `updateTimeLimit` in `use-organizer-data.ts` has optimistic-update + rollback logic intentionally excluded from `useAction` factory in B-6. Revisit if the pattern is simplified later.
+- **Code Quality Chunk B — minor issues (low priority, no action required now):** See the 5 minor review findings logged in the Chunk B session section above. Safe to ignore until a dedicated cleanup pass.
+- **(Optional) B-9 (deferred):** `updateTimeLimit` in `use-organizer-data.ts` has optimistic-update + rollback logic that was intentionally excluded from the `useAction` factory in B-6. If a future session simplifies that pattern, consider revisiting.
 - (Optional) Add new Wrapped award metadata to `tests/unit/` or scaffold a per-award smoke test that verifies trigger conditions against a synthetic session.
 - (Optional) Leaderboard Direction A — plan exists at `~/.claude/plans/idempotent-meandering-wigderson.md`. Fonts, YouStrip, LeaderboardPodium, StadiumLeaderboardRow, leaderboard-page.tsx Stadium branch — all new files, no existing files modified.
 - Apply the P0–P1 UX fixes from DASHBOARD_UX_AUDIT.md: touch targets, ARIA tab roles, gradient removal, violet→indigo in score modal, skill badge dark mode.
@@ -1107,8 +873,8 @@ src/
     leaderboard.ts             # Leaderboard-specific types
 
   utils/supabase/
-    client.ts                  # createBrowserSupabaseClient — browser Supabase client
-    server.ts                  # createServerSupabaseClient — server Supabase client (async, reads cookies)
+    client.ts                  # createBrowserClient
+    server.ts                  # createServerClient
     service.ts                 # createServiceClient (bypasses RLS)
 
 tests/
