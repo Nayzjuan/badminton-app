@@ -57,7 +57,7 @@ function makeCtx(
     outPlayerSkill: "intermediate" as const,
     currentPlayers: [
       { player_id: PLAYER_ALICE, skill_level: "intermediate" as const, display_name: "Alice" },
-      { player_id: PLAYER_BOB,   skill_level: "intermediate" as const, display_name: "Bob"   },
+      { player_id: PLAYER_BOB, skill_level: "intermediate" as const, display_name: "Bob" },
     ],
     ...overrides,
   };
@@ -173,18 +173,21 @@ describe("useSwapState", () => {
       expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/match has started/i));
     });
 
-    it("does NOT clear context when a different match is promoted", async () => {
-      const { result, rerender } = setup();
+    it("clears context when a different match is promoted (extended Layer 2 guard)", async () => {
+      // Extended guard (commit 53b8e46): when onDeckMatches.length decreases while
+      // in picking mode, the bar closes even if Alice's match is still on-deck.
+      // Rationale: the target player pool changed — starting fresh is safer UX.
+      const { result, rerender } = setup([makeMatch(MATCH_A), makeMatch(MATCH_B)]);
 
       // Enter picking mode for match A
       act(() => result.current.handlePlayerTap(makeCtx()));
+      expect(result.current.swapContext).not.toBeNull();
 
-      // Match B is promoted — match A still pending
+      // Match B promoted (count drops from 2 → 1); match A still pending
       rerender({ matches: [makeMatch(MATCH_A)] });
 
-      // Context for match A should remain
-      expect(result.current.swapContext).not.toBeNull();
-      expect(toast.warning).not.toHaveBeenCalled();
+      await waitFor(() => expect(result.current.swapContext).toBeNull());
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/moved to a court/i));
     });
   });
 
