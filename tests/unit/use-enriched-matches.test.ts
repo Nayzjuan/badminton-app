@@ -39,7 +39,11 @@ const COURT_ID = "court-em-1";
 
 // ── Fixtures ──────────────────────────────────────────────────
 
-function makeMatch(id: string, status: Match["status"] = "pending", courtId: string | null = null): Match {
+function makeMatch(
+  id: string,
+  status: Match["status"] = "pending",
+  courtId: string | null = null
+): Match {
   return {
     id,
     session_id: SESSION_ID,
@@ -130,10 +134,10 @@ function buildMockClient(responses: TableResponses, queryLogs: QueryLog[]) {
             table === "matches"
               ? (responses.matches ?? [])
               : table === "match_players"
-              ? (responses.match_players ?? [])
-              : table === "profiles"
-              ? (responses.profiles ?? [])
-              : [];
+                ? (responses.match_players ?? [])
+                : table === "profiles"
+                  ? (responses.profiles ?? [])
+                  : [];
           return Promise.resolve({ data: rows, error: null }).then(onFulfilled);
         },
       };
@@ -154,7 +158,7 @@ function renderWithCourts(
 
   return renderHook(() => {
     const courtsRef = useRef<Court[]>(courts);
-    return useEnrichedMatches(client, SESSION_ID, courtsRef, options);
+    return useEnrichedMatches(client as unknown as Parameters<typeof useEnrichedMatches>[0], SESSION_ID, courtsRef, options);
   });
 }
 
@@ -300,9 +304,13 @@ describe("useEnrichedMatches — Unit Suite", () => {
             }
             // All other calls (second fetch, match_players, profiles) resolve immediately.
             const rows =
-              _table === "matches" ? [makeMatch(MATCH_ID_2, "pending")] :
-              _table === "match_players" ? [] :
-              _table === "profiles" ? [] : [];
+              _table === "matches"
+                ? [makeMatch(MATCH_ID_2, "pending")]
+                : _table === "match_players"
+                  ? []
+                  : _table === "profiles"
+                    ? []
+                    : [];
             return Promise.resolve({ data: rows, error: null }).then(onFulfilled);
           },
         };
@@ -312,14 +320,16 @@ describe("useEnrichedMatches — Unit Suite", () => {
 
     const { result } = renderHook(() => {
       const courtsRef = useRef<Court[]>([]);
-      return useEnrichedMatches(racingClient, SESSION_ID, courtsRef, { includeDrafts: true });
+      return useEnrichedMatches(racingClient as unknown as Parameters<typeof useEnrichedMatches>[0], SESSION_ID, courtsRef, { includeDrafts: true });
     });
 
     // Start first fetch (will hang until resolveFirst is called).
     // We intentionally do NOT await here — we want it to remain in-flight
     // so the second fetch can start before it resolves.
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    const firstFetch = act(async () => { await result.current.fetchActiveMatches(); });
+    const firstFetch = act(async () => {
+      await result.current.fetchActiveMatches();
+    });
 
     // Start second fetch immediately (resolves with MATCH_ID_2).
     await act(async () => {

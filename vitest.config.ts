@@ -4,13 +4,16 @@ import path from "path";
 export default defineConfig({
   test: {
     environment: "node",
-    globals: true,                  // enables describe/it/expect without imports
-    include: ["tests/unit/**/*.test.ts"],
-    reporters: ["verbose"],         // shows each test name in the terminal
+    globals: true, // enables describe/it/expect without imports
+    // Setup: extends Vitest expect with @testing-library/jest-dom matchers
+    // (toBeInTheDocument, toBeVisible, etc.) for component smoke tests.
+    setupFiles: ["tests/setup/jest-dom.ts"],
+    include: ["tests/unit/**/*.test.ts", "tests/unit/**/*.test.tsx"],
+    reporters: ["verbose"], // shows each test name in the terminal
 
     coverage: {
-      provider: "v8",               // requires @vitest/coverage-v8 devDep
-      reporter: ["text", "lcov"],   // text → terminal summary; lcov → CI/IDE integration
+      provider: "v8", // requires @vitest/coverage-v8 devDep
+      reporter: ["text", "lcov"], // text → terminal summary; lcov → CI/IDE integration
 
       // Coverage scope expanded from single-file to all hooks + core actions.
       // Each file that has a companion test suite is listed explicitly so
@@ -47,11 +50,7 @@ export default defineConfig({
         "src/lib/matchmaking-core.ts",
         "src/lib/score-input.ts",
       ],
-      exclude: [
-        "**/*.d.ts",
-        "**/__tests__/**",
-        "**/node_modules/**",
-      ],
+      exclude: ["**/*.d.ts", "**/__tests__/**", "**/node_modules/**"],
 
       // perFile: true enforces each file in include[] must independently
       // meet the thresholds. Without it, a well-covered file can mask a
