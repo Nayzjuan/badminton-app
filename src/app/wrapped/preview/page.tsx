@@ -23,11 +23,12 @@ interface AwardDef {
   name: string;
   archetype: Archetype;
   rarity: Rarity;
-  tagline: string;           // short punchy one-liner shown on the card
-  flavour: string;           // longer description shown below
-  stat?: string;             // optional hero stat (e.g. "11 matches")
-  subStat?: string;          // optional secondary stat
-  partnerChip?: {            // for social awards that reference another player
+  tagline: string; // short punchy one-liner shown on the card
+  flavour: string; // longer description shown below
+  stat?: string; // optional hero stat (e.g. "11 matches")
+  subStat?: string; // optional secondary stat
+  partnerChip?: {
+    // for social awards that reference another player
     name: string;
     skill: string;
     skillColor: string;
@@ -341,11 +342,17 @@ const AWARDS: AwardDef[] = [
 
 // ── Colour maps ───────────────────────────────────────────────
 
-const ARCHETYPE_STYLES: Record<Archetype, {
-  bg: string; border: string; iconBg: string;
-  label: string; labelColor: string;
-  statColor: string;
-}> = {
+const ARCHETYPE_STYLES: Record<
+  Archetype,
+  {
+    bg: string;
+    border: string;
+    iconBg: string;
+    label: string;
+    labelColor: string;
+    statColor: string;
+  }
+> = {
   performance: {
     bg: "from-amber-950 to-amber-900",
     border: "border-amber-700/40",
@@ -397,9 +404,9 @@ const ARCHETYPE_STYLES: Record<Archetype, {
 };
 
 const RARITY_LABEL: Record<Rarity, { text: string; color: string }> = {
-  common:    { text: "Common",    color: "text-slate-400" },
-  uncommon:  { text: "Uncommon",  color: "text-blue-400" },
-  rare:      { text: "Rare",      color: "text-amber-400" },
+  common: { text: "Common", color: "text-slate-400" },
+  uncommon: { text: "Uncommon", color: "text-blue-400" },
+  rare: { text: "Rare", color: "text-amber-400" },
   legendary: { text: "✦ Legendary", color: "text-yellow-300" },
 };
 
@@ -423,14 +430,14 @@ function AwardCard({ award, compact = false }: { award: AwardDef; compact?: bool
         <span className={`text-[10px] font-black uppercase tracking-widest ${style.labelColor}`}>
           {style.label}
         </span>
-        <span className={`text-[10px] font-semibold ${rarity.color}`}>
-          {rarity.text}
-        </span>
+        <span className={`text-[10px] font-semibold ${rarity.color}`}>{rarity.text}</span>
       </div>
 
       {/* Icon + name row */}
       <div className="flex items-center gap-3">
-        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${style.iconBg}`}>
+        <div
+          className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${style.iconBg}`}
+        >
           <span className="text-2xl">{award.emoji}</span>
         </div>
         <div className="min-w-0">
@@ -445,9 +452,7 @@ function AwardCard({ award, compact = false }: { award: AwardDef; compact?: bool
           <p className={`text-2xl font-black tabular-nums leading-none ${style.statColor}`}>
             {award.stat}
           </p>
-          {award.subStat && (
-            <p className="text-[11px] text-white/50 mt-0.5">{award.subStat}</p>
-          )}
+          {award.subStat && <p className="text-[11px] text-white/50 mt-0.5">{award.subStat}</p>}
         </div>
       )}
 
@@ -460,7 +465,10 @@ function AwardCard({ award, compact = false }: { award: AwardDef; compact?: bool
           <span className="text-sm font-semibold text-white">{award.partnerChip.name}</span>
           <span
             className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
-            style={{ backgroundColor: award.partnerChip.skillColor + "40", color: award.partnerChip.skillColor }}
+            style={{
+              backgroundColor: award.partnerChip.skillColor + "40",
+              color: award.partnerChip.skillColor,
+            }}
           >
             {award.partnerChip.skill}
           </span>
@@ -479,9 +487,22 @@ function AwardCard({ award, compact = false }: { award: AwardDef; compact?: bool
 
 // ── Base Stats Card ───────────────────────────────────────────
 
-function BaseStatsCard({ name, gp, w, l, winPct, rank, total }: {
-  name: string; gp: number; w: number; l: number;
-  winPct: number; rank: number; total: number;
+function BaseStatsCard({
+  name,
+  gp,
+  w,
+  l,
+  winPct,
+  rank,
+  total,
+}: {
+  name: string;
+  gp: number;
+  w: number;
+  l: number;
+  winPct: number;
+  rank: number;
+  total: number;
 }) {
   return (
     <div className="rounded-2xl border border-[#1D3A6F]/60 bg-[#0E1C3A] p-6 space-y-5">
@@ -498,8 +519,8 @@ function BaseStatsCard({ name, gp, w, l, winPct, rank, total }: {
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: "Played", value: gp, color: "text-white" },
-          { label: "Won",    value: w,  color: "text-emerald-400" },
-          { label: "Lost",   value: l,  color: "text-red-400" },
+          { label: "Won", value: w, color: "text-emerald-400" },
+          { label: "Lost", value: l, color: "text-red-400" },
         ].map(({ label, value, color }) => (
           <div key={label} className="rounded-xl bg-white/5 px-3 py-3 text-center">
             <p className={`text-3xl font-black tabular-nums leading-none ${color}`}>{value}</p>
@@ -515,10 +536,7 @@ function BaseStatsCard({ name, gp, w, l, winPct, rank, total }: {
           <span className="text-xl font-black text-amber-400 tabular-nums">{winPct}%</span>
         </div>
         <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
-          <div
-            className="h-full rounded-full bg-amber-400"
-            style={{ width: `${winPct}%` }}
-          />
+          <div className="h-full rounded-full bg-amber-400" style={{ width: `${winPct}%` }} />
         </div>
       </div>
 
@@ -538,7 +556,7 @@ function BaseStatsCard({ name, gp, w, l, winPct, rank, total }: {
 
 // ── No Awards State ───────────────────────────────────────────
 
-function NoAwardsCard({ name, gp }: { name: string; gp: number }) {
+function NoAwardsCard({ name: _name, gp }: { name: string; gp: number }) {
   return (
     <div className="rounded-2xl border border-slate-700/40 bg-gradient-to-br from-slate-800 to-slate-900 p-6 space-y-4">
       {/* Icon */}
@@ -557,15 +575,13 @@ function NoAwardsCard({ name, gp }: { name: string; gp: number }) {
 
       {/* Stat */}
       <div className="text-center">
-        <p className="text-4xl font-black tabular-nums text-slate-400">
-          {gp}
-        </p>
+        <p className="text-4xl font-black tabular-nums text-slate-400">{gp}</p>
         <p className="text-xs text-slate-500 mt-1">match{gp !== 1 ? "es" : ""} played tonight</p>
       </div>
 
       <p className="text-[12px] text-slate-500 text-center leading-relaxed border-t border-slate-700 pt-4">
-        Not everyone makes it out. Not everyone laces up and shows face.
-        You did. That&apos;s the whole thing, honestly.
+        Not everyone makes it out. Not everyone laces up and shows face. You did. That&apos;s the
+        whole thing, honestly.
       </p>
 
       {/* Encouragement */}
@@ -583,17 +599,25 @@ function NoAwardsCard({ name, gp }: { name: string; gp: number }) {
 type Scenario = "many_awards" | "few_awards" | "no_awards";
 
 const SCENARIO_AWARDS: Record<Scenario, string[]> = {
-  many_awards:  ["top_dog", "undefeated", "dynamic_duo", "stone_cold", "thirty_all", "iron_shuttle"],
-  few_awards:   ["slow_burn", "generous"],
-  no_awards:    [],
+  many_awards: ["top_dog", "undefeated", "dynamic_duo", "stone_cold", "thirty_all", "iron_shuttle"],
+  few_awards: ["slow_burn", "generous"],
+  no_awards: [],
 };
 
-const SCENARIO_PLAYER: Record<Scenario, {
-  name: string; gp: number; w: number; l: number; winPct: number; rank: number;
-}> = {
-  many_awards:  { name: "Miggy",  gp: 9,  w: 8, l: 1, winPct: 89, rank: 1 },
-  few_awards:   { name: "Carlos", gp: 8,  w: 4, l: 4, winPct: 50, rank: 9 },
-  no_awards:    { name: "Sam",    gp: 2,  w: 0, l: 2, winPct: 0,  rank: 18 },
+const SCENARIO_PLAYER: Record<
+  Scenario,
+  {
+    name: string;
+    gp: number;
+    w: number;
+    l: number;
+    winPct: number;
+    rank: number;
+  }
+> = {
+  many_awards: { name: "Miggy", gp: 9, w: 8, l: 1, winPct: 89, rank: 1 },
+  few_awards: { name: "Carlos", gp: 8, w: 4, l: 4, winPct: 50, rank: 9 },
+  no_awards: { name: "Sam", gp: 2, w: 0, l: 2, winPct: 0, rank: 18 },
 };
 
 // ── Main Page ─────────────────────────────────────────────────
@@ -605,12 +629,11 @@ export default function WrappedPreview() {
 
   const scenarioAwardKeys = SCENARIO_AWARDS[activeScenario];
   const player = SCENARIO_PLAYER[activeScenario];
-  const scenarioAwards = AWARDS.filter(a => scenarioAwardKeys.includes(a.key));
+  const scenarioAwards = AWARDS.filter((a) => scenarioAwardKeys.includes(a.key));
   const displayedAwards = showAll ? AWARDS : AWARDS.slice(0, 12);
 
   return (
     <div className="min-h-screen bg-[#080F1C] text-white pb-24">
-
       {/* ── Animated intro overlay ───────────────────────────── */}
       {showIntro && (
         <WrappedIntro
@@ -625,7 +648,9 @@ export default function WrappedPreview() {
       <div className="border-b border-white/10 bg-[#0E1C3A]/80 backdrop-blur px-4 py-3 sticky top-0 z-10">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
           <div>
-            <p className="text-xs font-black uppercase tracking-widest text-amber-400">Preview Mode</p>
+            <p className="text-xs font-black uppercase tracking-widest text-amber-400">
+              Preview Mode
+            </p>
             <p className="text-sm font-semibold text-white/70">Session Wrapped — Design Preview</p>
           </div>
           <div className="flex items-center gap-2">
@@ -639,8 +664,10 @@ export default function WrappedPreview() {
             >
               ▶ Play Intro
             </button>
-            <span className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30
-                             rounded-full px-2.5 py-1 font-bold hidden sm:inline">
+            <span
+              className="text-[10px] bg-amber-500/20 text-amber-400 border border-amber-500/30
+                             rounded-full px-2.5 py-1 font-bold hidden sm:inline"
+            >
               Static / No DB
             </span>
           </div>
@@ -648,7 +675,6 @@ export default function WrappedPreview() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 space-y-12 pt-8">
-
         {/* ── Section 1: Scenario switcher ───────────────────── */}
         <section className="space-y-4">
           <div>
@@ -665,9 +691,9 @@ export default function WrappedPreview() {
           <div className="grid grid-cols-3 gap-2">
             {(["many_awards", "few_awards", "no_awards"] as Scenario[]).map((s) => {
               const labels: Record<Scenario, { title: string; sub: string; emoji: string }> = {
-                many_awards: { title: "The Champion",  sub: "8W–1L · 6 awards",   emoji: "🏆" },
-                few_awards:  { title: "The Average",   sub: "4W–4L · 2 awards",   emoji: "🤷" },
-                no_awards:   { title: "Rough Night",   sub: "0W–2L · 0 awards",   emoji: "🥲" },
+                many_awards: { title: "The Champion", sub: "8W–1L · 6 awards", emoji: "🏆" },
+                few_awards: { title: "The Average", sub: "4W–4L · 2 awards", emoji: "🤷" },
+                no_awards: { title: "Rough Night", sub: "0W–2L · 0 awards", emoji: "🥲" },
               };
               const l = labels[s];
               return (
@@ -675,9 +701,10 @@ export default function WrappedPreview() {
                   key={s}
                   onClick={() => setActiveScenario(s)}
                   className={`flex flex-col items-center rounded-2xl border px-3 py-4 transition-all text-center
-                    ${activeScenario === s
-                      ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
-                      : "bg-white/5 border-white/10 text-white/50 hover:bg-white/10"
+                    ${
+                      activeScenario === s
+                        ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
+                        : "bg-white/5 border-white/10 text-white/50 hover:bg-white/10"
                     }`}
                 >
                   <span className="text-2xl mb-1.5">{l.emoji}</span>
@@ -710,10 +737,11 @@ export default function WrappedPreview() {
           ) : (
             <div className="space-y-3">
               <p className="text-[11px] font-semibold text-white/30 uppercase tracking-widest">
-                {scenarioAwards.length} award{scenarioAwards.length !== 1 ? "s" : ""} earned this session
+                {scenarioAwards.length} award{scenarioAwards.length !== 1 ? "s" : ""} earned this
+                session
               </p>
               <div className="space-y-3">
-                {scenarioAwards.map(a => (
+                {scenarioAwards.map((a) => (
                   <AwardCard key={a.key} award={a} />
                 ))}
               </div>
@@ -738,9 +766,17 @@ export default function WrappedPreview() {
 
           {/* Archetype legend */}
           <div className="flex flex-wrap gap-2">
-            {(Object.entries(ARCHETYPE_STYLES) as [Archetype, typeof ARCHETYPE_STYLES[Archetype]][]).map(([key, s]) => (
-              <span key={key} className={`text-[10px] font-bold uppercase tracking-widest ${s.labelColor}
-                                          bg-white/5 rounded-full px-2.5 py-1`}>
+            {(
+              Object.entries(ARCHETYPE_STYLES) as [
+                Archetype,
+                (typeof ARCHETYPE_STYLES)[Archetype],
+              ][]
+            ).map(([key, s]) => (
+              <span
+                key={key}
+                className={`text-[10px] font-bold uppercase tracking-widest ${s.labelColor}
+                                          bg-white/5 rounded-full px-2.5 py-1`}
+              >
                 {s.label}
               </span>
             ))}
@@ -748,7 +784,7 @@ export default function WrappedPreview() {
 
           {/* Grid */}
           <div className="space-y-3">
-            {displayedAwards.map(a => (
+            {displayedAwards.map((a) => (
               <AwardCard key={a.key} award={a} />
             ))}
           </div>
@@ -777,9 +813,11 @@ export default function WrappedPreview() {
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {AWARDS.filter(a =>
-              ["marathoner","hot_hand","glue","human_yoyo","slow_burn","stone_cold"].includes(a.key)
-            ).map(a => (
+            {AWARDS.filter((a) =>
+              ["marathoner", "hot_hand", "glue", "human_yoyo", "slow_burn", "stone_cold"].includes(
+                a.key
+              )
+            ).map((a) => (
               <AwardCard key={a.key} award={a} compact />
             ))}
           </div>
@@ -791,10 +829,10 @@ export default function WrappedPreview() {
             This is a static design preview. No database queries. All data is mocked.
           </p>
           <p className="text-xs text-white/20">
-            Delete <code className="text-amber-400/60 text-[10px]">src/app/wrapped/preview/</code> once the real route is built.
+            Delete <code className="text-amber-400/60 text-[10px]">src/app/wrapped/preview/</code>{" "}
+            once the real route is built.
           </p>
         </div>
-
       </div>
     </div>
   );

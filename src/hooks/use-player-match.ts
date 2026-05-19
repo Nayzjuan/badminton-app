@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
-import type { Match, MatchPlayer, Court, Profile, Team } from "@/types/database";
+import type { Match, Court, Profile, Team } from "@/types/database";
 
 interface PlayerMatchInfo {
   match: Match;

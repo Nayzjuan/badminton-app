@@ -12,42 +12,40 @@ import { useState } from "react";
 import { VipTag } from "@/components/ui/vip-tag";
 import { VIP_THEMES } from "@/lib/vip-config";
 import type { VipTheme } from "@/lib/vip-config";
-import { SkillBadge } from "@/components/ui/skill-badge";
 import type { SkillLevel } from "@/types/database";
 
 // ── Preview config ────────────────────────────────────────────
 // Edit this map to change which tag/theme each player uses in the preview.
 const PREVIEW_PLAYERS: Record<string, { tag: string; theme: VipTheme }> = {
-  miggy:  { tag: "DEV",     theme: "cyber-neon"     },
-  stelle: { tag: "8080",    theme: "violet-spark"    },
-  cogs:   { tag: "MVP",     theme: "gold-prestige"   },
-  raf:    { tag: "BOSS",    theme: "crimson-elite"   },
-  jun:    { tag: "LEGEND",  theme: "emerald-legend"  },
-  nino:   { tag: "FLARE",   theme: "solar-flare"     },
-  lou:    { tag: "ICE",     theme: "arctic-ice"      },
-  mika:   { tag: "TITAN",   theme: "rose-titan"      },
-  jan:    { tag: "TOXIC",   theme: "toxic-lime"      },
-  gab:    { tag: "GHOST",   theme: "silver-phantom"  },
+  miggy: { tag: "DEV", theme: "cyber-neon" },
+  stelle: { tag: "8080", theme: "violet-spark" },
+  cogs: { tag: "MVP", theme: "gold-prestige" },
+  raf: { tag: "BOSS", theme: "crimson-elite" },
+  jun: { tag: "LEGEND", theme: "emerald-legend" },
+  nino: { tag: "FLARE", theme: "solar-flare" },
+  lou: { tag: "ICE", theme: "arctic-ice" },
+  mika: { tag: "TITAN", theme: "rose-titan" },
+  jan: { tag: "TOXIC", theme: "toxic-lime" },
+  gab: { tag: "GHOST", theme: "silver-phantom" },
 };
 
 // ── MockPill ──────────────────────────────────────────────────
 
-function MockPill({ name, skill = "intermediate" }: {
-  name:   string;
-  skill?: string;
-}) {
+function MockPill({ name, skill = "intermediate" }: { name: string; skill?: string }) {
   const vip = PREVIEW_PLAYERS[name.toLowerCase()];
 
   const skillColors: Record<string, string> = {
-    beginner:     "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    beginner: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
     intermediate: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-    advanced:     "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+    advanced: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
   };
 
   return (
     <div className="inline-flex flex-col items-center gap-1">
-      <div className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-semibold
-                      bg-white/90 text-slate-900 dark:bg-black/60 dark:text-[hsl(80_100%_60%)]">
+      <div
+        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-semibold
+                      bg-white/90 text-slate-900 dark:bg-black/60 dark:text-[hsl(80_100%_60%)]"
+      >
         <span>{name}</span>
         {vip && (
           <>
@@ -56,10 +54,12 @@ function MockPill({ name, skill = "intermediate" }: {
           </>
         )}
       </div>
-      <span className={[
-        "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-        skillColors[skill] ?? skillColors.intermediate,
-      ].join(" ")}>
+      <span
+        className={[
+          "rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+          skillColors[skill] ?? skillColors.intermediate,
+        ].join(" ")}
+      >
         {skill}
       </span>
     </div>
@@ -69,24 +69,28 @@ function MockPill({ name, skill = "intermediate" }: {
 // ── CourtCard ─────────────────────────────────────────────────
 
 const COURT_ROWS: Array<{ name: string; skill: SkillLevel }> = [
-  { name: "Miggy",  skill: "advanced"           },
-  { name: "Stelle", skill: "intermediate"        },
-  { name: "Cogs",   skill: "beginner"            },
-  { name: "Raf",    skill: "advanced"            },
-  { name: "Jun",    skill: "lower_intermediate"  },
-  { name: "Nino",   skill: "upper_intermediate"  },
+  { name: "Miggy", skill: "advanced" },
+  { name: "Stelle", skill: "intermediate" },
+  { name: "Cogs", skill: "beginner" },
+  { name: "Raf", skill: "advanced" },
+  { name: "Jun", skill: "lower_intermediate" },
+  { name: "Nino", skill: "upper_intermediate" },
 ];
 
 function CourtCard({ dark }: { dark: boolean }) {
   return (
-    <div className={[
-      "rounded-xl p-5 space-y-2.5",
-      dark ? "bg-emerald-800" : "bg-[#FAFAF7] border border-slate-200",
-    ].join(" ")}>
-      <p className={[
-        "text-[10px] font-semibold uppercase tracking-widest mb-3",
-        dark ? "text-white/50" : "text-slate-400",
-      ].join(" ")}>
+    <div
+      className={[
+        "rounded-xl p-5 space-y-2.5",
+        dark ? "bg-emerald-800" : "bg-[#FAFAF7] border border-slate-200",
+      ].join(" ")}
+    >
+      <p
+        className={[
+          "text-[10px] font-semibold uppercase tracking-widest mb-3",
+          dark ? "text-white/50" : "text-slate-400",
+        ].join(" ")}
+      >
         {dark ? "Active Courts — dark" : "On Deck — light"}
       </p>
       <div className="flex flex-wrap gap-3">
@@ -100,26 +104,25 @@ function CourtCard({ dark }: { dark: boolean }) {
 
 // ── InlinePill — "Username | VipTag" side-by-side layout ──────
 
-function InlinePill({ name, skill = "intermediate" }: {
-  name: string;
-  skill?: string;
-}) {
+function InlinePill({ name, skill = "intermediate" }: { name: string; skill?: string }) {
   const vip = PREVIEW_PLAYERS[name.toLowerCase()];
 
   const skillColors: Record<string, string> = {
-    beginner:     "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
+    beginner: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300",
     intermediate: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300",
-    advanced:     "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+    advanced: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
   };
 
   return (
     <div className="inline-flex flex-col items-center gap-1">
       {/* Name pill with VIP tag inline */}
-      <div className="inline-flex items-center gap-1.5 rounded-full px-3 py-2
+      <div
+        className="inline-flex items-center gap-1.5 rounded-full px-3 py-2
                       text-sm font-bold shadow-md
                       bg-white text-slate-900 shadow-black/15
                       dark:bg-black/60 dark:text-[hsl(80_100%_60%)]
-                      dark:ring-1 dark:ring-[hsl(80_100%_60%)]/30">
+                      dark:ring-1 dark:ring-[hsl(80_100%_60%)]/30"
+      >
         <span>{name}</span>
         {vip && (
           <>
@@ -129,10 +132,12 @@ function InlinePill({ name, skill = "intermediate" }: {
         )}
       </div>
       {/* Skill badge below */}
-      <span className={[
-        "rounded-full px-2.5 py-0.5 text-[10px] font-semibold",
-        skillColors[skill] ?? skillColors.intermediate,
-      ].join(" ")}>
+      <span
+        className={[
+          "rounded-full px-2.5 py-0.5 text-[10px] font-semibold",
+          skillColors[skill] ?? skillColors.intermediate,
+        ].join(" ")}
+      >
         {skill}
       </span>
     </div>
@@ -141,14 +146,18 @@ function InlinePill({ name, skill = "intermediate" }: {
 
 function InlineCourtCard({ dark }: { dark: boolean }) {
   return (
-    <div className={[
-      "rounded-xl p-5 space-y-2.5",
-      dark ? "bg-emerald-800" : "bg-[#FAFAF7] border border-slate-200",
-    ].join(" ")}>
-      <p className={[
-        "text-[10px] font-semibold uppercase tracking-widest mb-3",
-        dark ? "text-white/50" : "text-slate-400",
-      ].join(" ")}>
+    <div
+      className={[
+        "rounded-xl p-5 space-y-2.5",
+        dark ? "bg-emerald-800" : "bg-[#FAFAF7] border border-slate-200",
+      ].join(" ")}
+    >
+      <p
+        className={[
+          "text-[10px] font-semibold uppercase tracking-widest mb-3",
+          dark ? "text-white/50" : "text-slate-400",
+        ].join(" ")}
+      >
         {dark ? "Inline style — dark" : "Inline style — light"}
       </p>
       <div className="flex flex-wrap gap-3">
@@ -165,26 +174,30 @@ function InlineCourtCard({ dark }: { dark: boolean }) {
 function ThemeLegend() {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-      {(Object.entries(VIP_THEMES) as [VipTheme, (typeof VIP_THEMES)[VipTheme]][]).map(([key, t]) => {
-        const previewPlayer = Object.values(PREVIEW_PLAYERS).find((p) => p.theme === key);
-        const tag = previewPlayer?.tag ?? key.toUpperCase().slice(0, 4);
+      {(Object.entries(VIP_THEMES) as [VipTheme, (typeof VIP_THEMES)[VipTheme]][]).map(
+        ([key, t]) => {
+          const previewPlayer = Object.values(PREVIEW_PLAYERS).find((p) => p.theme === key);
+          const tag = previewPlayer?.tag ?? key.toUpperCase().slice(0, 4);
 
-        return (
-          <div key={key} className="space-y-2">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{t.label}</p>
-            {/* Dark swatch */}
-            <div className="rounded-lg bg-emerald-800 px-3 py-2 inline-flex items-center gap-1.5">
-              <span className="text-[10px] text-white/40">🌙</span>
-              <VipTag tag={tag} theme={key} />
+          return (
+            <div key={key} className="space-y-2">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">
+                {t.label}
+              </p>
+              {/* Dark swatch */}
+              <div className="rounded-lg bg-emerald-800 px-3 py-2 inline-flex items-center gap-1.5">
+                <span className="text-[10px] text-white/40">🌙</span>
+                <VipTag tag={tag} theme={key} />
+              </div>
+              {/* Light swatch */}
+              <div className="rounded-lg bg-[#FAFAF7] border border-slate-200 px-3 py-2 inline-flex items-center gap-1.5">
+                <span className="text-[10px] text-slate-300">☀️</span>
+                <VipTag tag={tag} theme={key} />
+              </div>
             </div>
-            {/* Light swatch */}
-            <div className="rounded-lg bg-[#FAFAF7] border border-slate-200 px-3 py-2 inline-flex items-center gap-1.5">
-              <span className="text-[10px] text-slate-300">☀️</span>
-              <VipTag tag={tag} theme={key} />
-            </div>
-          </div>
-        );
-      })}
+          );
+        }
+      )}
     </div>
   );
 }
@@ -198,7 +211,6 @@ export default function VipPreviewPage() {
     <div className={darkMode ? "dark" : ""}>
       <div className="min-h-screen bg-background text-foreground">
         <div className="mx-auto max-w-4xl px-4 py-10 space-y-10">
-
           {/* Header */}
           <div className="flex items-start justify-between">
             <div>
@@ -258,21 +270,35 @@ export default function VipPreviewPage() {
           <section className="rounded-xl border border-border bg-muted/30 p-5 space-y-3">
             <h2 className="text-sm font-semibold">How to Assign a Tag</h2>
             <ol className="text-sm text-muted-foreground space-y-1.5 list-decimal list-inside">
-              <li>Open <strong>Supabase Dashboard → Table Editor → profiles</strong></li>
-              <li>Find the player by <code className="text-xs">display_name</code></li>
-              <li>Set <code className="text-xs">vip_tag</code> = label (e.g. <code className="text-xs">"DEV"</code>) and <code className="text-xs">vip_theme</code> = preset key (e.g. <code className="text-xs">"cyber-neon"</code>)</li>
-              <li>To remove: set both columns to <code className="text-xs">NULL</code></li>
+              <li>
+                Open <strong>Supabase Dashboard → Table Editor → profiles</strong>
+              </li>
+              <li>
+                Find the player by <code className="text-xs">display_name</code>
+              </li>
+              <li>
+                Set <code className="text-xs">vip_tag</code> = label (e.g.{" "}
+                <code className="text-xs">&quot;DEV&quot;</code>) and{" "}
+                <code className="text-xs">vip_theme</code> = preset key (e.g.{" "}
+                <code className="text-xs">&quot;cyber-neon&quot;</code>)
+              </li>
+              <li>
+                To remove: set both columns to <code className="text-xs">NULL</code>
+              </li>
             </ol>
             <div className="pt-1 space-y-1">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Available theme keys</p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Available theme keys
+              </p>
               <div className="flex flex-wrap gap-1.5">
                 {Object.keys(VIP_THEMES).map((key) => (
-                  <code key={key} className="text-xs bg-muted px-1.5 py-0.5 rounded">{key}</code>
+                  <code key={key} className="text-xs bg-muted px-1.5 py-0.5 rounded">
+                    {key}
+                  </code>
                 ))}
               </div>
             </div>
           </section>
-
         </div>
       </div>
     </div>

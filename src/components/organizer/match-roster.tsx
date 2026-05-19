@@ -81,7 +81,6 @@ function SkillLevelDark({ level }: { level: SkillLevel }) {
 
 // ── Internal: VS badge ─────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function VsBadge({ dark: _dark }: { dark?: boolean }) {
   // Both on-deck (light) and court cards (dark) use vertical lines + text
   // per preview .vs-divider / .court-vs spec.

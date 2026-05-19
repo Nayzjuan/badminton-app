@@ -24,7 +24,7 @@ export function ThemeToggle({ className = "" }: ThemeToggleProps) {
   const [mounted, setMounted] = useState(false);
 
   // Avoid hydration mismatch — only render on the client.
-  useEffect(() => setMounted(true), []);
+  useEffect(() => setMounted(true), []); // eslint-disable-line react-hooks/set-state-in-effect
   if (!mounted) return <div className="h-[30px] w-[30px]" />;
 
   const isDark = theme === "dark";
@@ -37,11 +37,7 @@ export function ThemeToggle({ className = "" }: ThemeToggleProps) {
       className={`inline-flex items-center justify-center rounded-lg p-1.5
                   transition-colors ${className}`}
     >
-      {isDark ? (
-        <Sun className="h-4 w-4" />
-      ) : (
-        <Moon className="h-4 w-4" />
-      )}
+      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
     </button>
   );
 }

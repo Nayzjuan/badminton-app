@@ -74,7 +74,7 @@ function nextResponse(table: string): unknown[] {
 function buildMockClient() {
   return {
     from: (table: string) => ({
-      select: (cols: string) => {
+      select: (_cols: string) => {
         const chain: Record<string, unknown> = {
           eq: () => chain,
           in: () => chain,
@@ -109,7 +109,7 @@ vi.mock("@/utils/supabase/client", () => ({
 }));
 
 let matchCallback: (() => void) | null = null;
-let playerCallback: (() => void) | null = null;
+let playerCallback: (() => void) | null = null; // eslint-disable-line @typescript-eslint/no-unused-vars
 
 vi.mock("@/lib/realtime", () => ({
   subscribeToMatches: (_client: unknown, _sessionId: string, cb: () => void) => {

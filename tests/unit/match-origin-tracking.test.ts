@@ -66,7 +66,6 @@ function makeBuilder(response: MockResponse) {
     "delete",
     "insert",
   ]) {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     b[method] = (..._args: unknown[]) => b;
   }
   return b;

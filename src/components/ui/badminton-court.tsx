@@ -67,7 +67,7 @@ interface BadmintonCourtProps {
 export function BadmintonCourt({
   teamA,
   teamB,
-  isOnDeck = false,
+  isOnDeck: _isOnDeck = false,
   onPlayerClick,
   selectedPlayerId,
   isSwapModeActive = false,
@@ -85,8 +85,10 @@ export function BadmintonCourt({
 
       {/* ── Team A (top half) — sky-blue identity ──────────── */}
       <div className="relative px-4 pt-5 pb-4">
-        <p className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
-                      text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
+        <p
+          className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
+                      text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60"
+        >
           Team A
         </p>
         <div className="grid grid-cols-2 gap-3">
@@ -106,10 +108,12 @@ export function BadmintonCourt({
       {/* ── Net (center divider) ───────────────────────────── */}
       <div className="relative flex items-center px-3">
         <div className="flex-1 border-t border-dashed border-white/25 dark:border-[hsl(var(--court-cyan-hsl))]/40" />
-        <span className="mx-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-full
+        <span
+          className="mx-2 flex h-6 w-6 shrink-0 items-center justify-center rounded-full
                          bg-white/20 dark:bg-[hsl(180_100%_50%)]/15
                          text-[9px] font-black text-white/80 dark:text-[hsl(var(--court-cyan-hsl))]
-                         backdrop-blur-sm">
+                         backdrop-blur-sm"
+        >
           VS
         </span>
         <div className="flex-1 border-t border-dashed border-white/25 dark:border-[hsl(var(--court-cyan-hsl))]/40" />
@@ -117,8 +121,10 @@ export function BadmintonCourt({
 
       {/* ── Team B (bottom half) — amber identity ──────────── */}
       <div className="relative px-4 pt-4 pb-5">
-        <p className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
-                      text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60">
+        <p
+          className="mb-3 text-center text-[10px] font-black uppercase tracking-[0.2em]
+                      text-white/50 dark:text-[hsl(var(--court-cyan-hsl))]/60"
+        >
           Team B
         </p>
         <div className="grid grid-cols-2 gap-3">
@@ -175,7 +181,13 @@ interface PlayerPillProps {
   isValidTarget?: boolean;
 }
 
-function PlayerPill({ player, team, onPlayerClick, isSelected = false, isValidTarget = false }: PlayerPillProps) {
+function PlayerPill({
+  player,
+  team,
+  onPlayerClick,
+  isSelected = false,
+  isValidTarget = false,
+}: PlayerPillProps) {
   const teamDot = (
     <span
       aria-hidden
@@ -209,14 +221,18 @@ function PlayerPill({ player, team, onPlayerClick, isSelected = false, isValidTa
           ? "group-hover:bg-amber-50 dark:group-hover:bg-amber-950/40 group-hover:ring-2 group-hover:ring-amber-400 dark:group-hover:ring-amber-500/60"
           : "",
         "transition-all duration-150",
-      ].filter(Boolean).join(" ")}
+      ]
+        .filter(Boolean)
+        .join(" ")}
       title={player.display_name}
     >
       {teamDot}
       <span className="min-w-0 max-w-[6rem] truncate">{player.display_name}</span>
       {player.vip_tag && player.vip_theme && (
         <>
-          <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">|</span>
+          <span className="shrink-0 select-none font-normal text-slate-300 dark:text-white/20">
+            |
+          </span>
           <VipTag tag={player.vip_tag} theme={player.vip_theme} />
         </>
       )}
@@ -276,10 +292,10 @@ function PlayerPill({ player, team, onPlayerClick, isSelected = false, isValidTa
             ? "scale-105 ring-2 ring-amber-400 ring-offset-2 ring-offset-emerald-700 dark:ring-offset-[hsl(0_0%_2%)]"
             : "",
           // Valid target: scale on hover
-          isValidTarget && !isSelected
-            ? "hover:scale-[1.03] active:scale-95"
-            : "active:scale-95",
-        ].filter(Boolean).join(" ")}
+          isValidTarget && !isSelected ? "hover:scale-[1.03] active:scale-95" : "active:scale-95",
+        ]
+          .filter(Boolean)
+          .join(" ")}
       >
         {pillBubble(true)}
         {skillBadge}

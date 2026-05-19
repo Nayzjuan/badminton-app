@@ -1472,7 +1472,6 @@ test.describe("Group 6 — Negative: Insufficient Players", () => {
     // this test specifically asserts must NOT be created.  We delete the
     // unwanted IDs explicitly with `.in(...)` instead — same semantics,
     // unambiguous syntax.
-    const threePlayerIds = allPlayers.slice(0, 3).map((p) => p.userId);
     const idsToDelete = allPlayers.slice(3).map((p) => p.userId);
     if (idsToDelete.length > 0) {
       await db

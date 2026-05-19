@@ -153,7 +153,6 @@ describe("updateMatchDetails — Suite N", () => {
 
   // ── N-3 ────────────────────────────────────────────────────
   it("N-3: non-organizer is rejected", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { organizer: _organizer, session, players } = await seedSessionWithPlayers(4);
     const rando = await makeProfile({ faker });
     const match = await makeMatchViaRpc({
@@ -321,7 +320,6 @@ describe("clearOnDeckMatch — Suite N", () => {
 
   // ── N-8 ────────────────────────────────────────────────────
   it("N-8: non-organizer is rejected", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { organizer: _organizer, session, players } = await seedSessionWithPlayers(4);
     const rando = await makeProfile({ faker });
     const match = await makeMatchViaRpc({
@@ -409,7 +407,6 @@ describe("reorderOnDeckMatches — Suite N", () => {
 
   // ── N-11 ───────────────────────────────────────────────────
   it("N-11: non-organizer is rejected", async () => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { organizer: _organizer, session, players } = await seedSessionWithPlayers(4);
     const rando = await makeProfile({ faker });
     const m1 = await makeMatchViaRpc({

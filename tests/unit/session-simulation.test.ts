@@ -91,22 +91,40 @@ function makeSimPlayer(
 
 const THIRTY_PLAYERS: Array<{ id: string; skill: number }> = [
   // Skill 1
-  { id: "p01", skill: 1 }, { id: "p02", skill: 1 }, { id: "p03", skill: 1 },
+  { id: "p01", skill: 1 },
+  { id: "p02", skill: 1 },
+  { id: "p03", skill: 1 },
   // Skill 2
-  { id: "p04", skill: 2 }, { id: "p05", skill: 2 }, { id: "p06", skill: 2 },
-  { id: "p07", skill: 2 }, { id: "p08", skill: 2 },
+  { id: "p04", skill: 2 },
+  { id: "p05", skill: 2 },
+  { id: "p06", skill: 2 },
+  { id: "p07", skill: 2 },
+  { id: "p08", skill: 2 },
   // Skill 3
-  { id: "p09", skill: 3 }, { id: "p10", skill: 3 }, { id: "p11", skill: 3 },
-  { id: "p12", skill: 3 }, { id: "p13", skill: 3 }, { id: "p14", skill: 3 },
+  { id: "p09", skill: 3 },
+  { id: "p10", skill: 3 },
+  { id: "p11", skill: 3 },
+  { id: "p12", skill: 3 },
+  { id: "p13", skill: 3 },
+  { id: "p14", skill: 3 },
   // Skill 4
-  { id: "p15", skill: 4 }, { id: "p16", skill: 4 }, { id: "p17", skill: 4 },
-  { id: "p18", skill: 4 }, { id: "p19", skill: 4 }, { id: "p20", skill: 4 },
+  { id: "p15", skill: 4 },
+  { id: "p16", skill: 4 },
+  { id: "p17", skill: 4 },
+  { id: "p18", skill: 4 },
+  { id: "p19", skill: 4 },
+  { id: "p20", skill: 4 },
   { id: "p21", skill: 4 },
   // Skill 5
-  { id: "p22", skill: 5 }, { id: "p23", skill: 5 }, { id: "p24", skill: 5 },
-  { id: "p25", skill: 5 }, { id: "p26", skill: 5 },
+  { id: "p22", skill: 5 },
+  { id: "p23", skill: 5 },
+  { id: "p24", skill: 5 },
+  { id: "p25", skill: 5 },
+  { id: "p26", skill: 5 },
   // Skill 6
-  { id: "p27", skill: 6 }, { id: "p28", skill: 6 }, { id: "p29", skill: 6 },
+  { id: "p27", skill: 6 },
+  { id: "p28", skill: 6 },
+  { id: "p29", skill: 6 },
   // Skill 7
   { id: "p30", skill: 7 },
 ];
@@ -116,10 +134,7 @@ const THIRTY_PLAYERS: Array<{ id: string; skill: number }> = [
 // ─────────────────────────────────────────────────────────────
 
 /** Build a per-anchor overlap map from the recent roster history. */
-function buildSimOverlapMap(
-  anchorId: string,
-  recentRosters: string[][]
-): Map<string, number> {
+function buildSimOverlapMap(anchorId: string, recentRosters: string[][]): Map<string, number> {
   const map = new Map<string, number>();
   for (const roster of recentRosters.slice(0, ANTI_REPEAT_LOOKBACK)) {
     if (!roster.includes(anchorId)) continue;
@@ -162,8 +177,11 @@ function simRunAlgorithm(
   partnershipCounts: Map<string, number>,
   recentRosters: string[][]
 ): SimResult {
-  const noMatch = (capSignal: boolean, anchorIsRedZone: boolean, anchorName: string): SimResult =>
-    ({ formed: false, capSignal, anchorIsRedZone, anchorName });
+  const noMatch = (
+    capSignal: boolean,
+    anchorIsRedZone: boolean,
+    anchorName: string
+  ): SimResult => ({ formed: false, capSignal, anchorIsRedZone, anchorName });
 
   if (pool.length < 4) {
     return noMatch(false, false, "N/A");
@@ -185,11 +203,13 @@ function simRunAlgorithm(
   const overlapMap = buildSimOverlapMap(anchor.player_id, recentRosters);
 
   // ── 3. Cap pre-filter ─────────────────────────────────────
-  const candidates = sorted.slice(1).filter(
-    (c) =>
-      (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
-      MAX_PARTNERSHIP_REPEATS
-  );
+  const candidates = sorted
+    .slice(1)
+    .filter(
+      (c) =>
+        (partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
+        MAX_PARTNERSHIP_REPEATS
+    );
   const capWasActive = sorted.length - 1 > candidates.length;
 
   // ── 4. Skill window expansion ─────────────────────────────
@@ -215,9 +235,7 @@ function simRunAlgorithm(
     if (isDiversityViolation(proposedIds, activeRosters)) {
       // ── Tier 1: swap 3rd companion ─────────────────────────
       const alreadyInGroup = new Set(group.map((g) => g.player_id));
-      const swapPool = scored.filter(
-        ({ candidate }) => !alreadyInGroup.has(candidate.player_id)
-      );
+      const swapPool = scored.filter(({ candidate }) => !alreadyInGroup.has(candidate.player_id));
       const fixedTwo = group.slice(0, 2);
 
       for (const { candidate } of swapPool) {
@@ -233,7 +251,11 @@ function simRunAlgorithm(
         if (!draft) continue;
         return {
           formed: true,
-          match: { teamA: draft.teamA, teamB: draft.teamB, isMixed: maxVariance > SKILL_VARIANCE_MAX },
+          match: {
+            teamA: draft.teamA,
+            teamB: draft.teamB,
+            isMixed: maxVariance > SKILL_VARIANCE_MAX,
+          },
         };
       }
 
@@ -257,15 +279,15 @@ function simRunAlgorithm(
       // rotatedDraft returned null → all splits capped → expand window
     } else {
       // ── No diversity violation: snakeDraft with cap ────────
-      const draft = snakeDraft(
-        [anchor, ...group],
-        partnershipCounts,
-        MAX_PARTNERSHIP_REPEATS
-      );
+      const draft = snakeDraft([anchor, ...group], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
       if (draft) {
         return {
           formed: true,
-          match: { teamA: draft.teamA, teamB: draft.teamB, isMixed: maxVariance > SKILL_VARIANCE_MAX },
+          match: {
+            teamA: draft.teamA,
+            teamB: draft.teamB,
+            isMixed: maxVariance > SKILL_VARIANCE_MAX,
+          },
         };
       }
       // All splits capped → expand window
@@ -361,9 +383,7 @@ function runSimulation(
   const waitMinutes = new Map<string, number>(players.map((p) => [p.id, 0]));
   // joinedAgo: stagger slightly so tiebreaking is deterministic
   // (player index × 0.1 min = earlier join for lower index)
-  const joinedAgo = new Map<string, number>(
-    players.map((p, i) => [p.id, i * 0.1])
-  );
+  const joinedAgo = new Map<string, number>(players.map((p, i) => [p.id, i * 0.1]));
 
   const partnershipCounts = new Map<string, number>();
   const recentRosters: string[][] = [];
@@ -410,9 +430,7 @@ function runSimulation(
         matchesThisRound++;
 
         // Remove matched players from the queue for this round
-        const matchedIds = new Set(
-          [...match.teamA, ...match.teamB].map((p) => p.player_id)
-        );
+        const matchedIds = new Set([...match.teamA, ...match.teamB].map((p) => p.player_id));
         queue = queue.filter((p) => !matchedIds.has(p.player_id));
 
         // Update per-player state
@@ -486,9 +504,9 @@ describe("30-player session simulation", () => {
     const bar = "■".repeat(r.matchesFormed) + (r.noMatchReturns > 0 ? "✗" : "");
     console.log(
       `  Round ${String(r.round).padStart(2)}: ${bar.padEnd(6)} ` +
-      `[${r.matchesFormed} matches | ` +
-      `${r.noMatchReturns} no-match | ` +
-      `${r.capSignals > 0 ? `⚑ ${r.capSignals} cap signal(s)` : "no cap signals"}]`
+        `[${r.matchesFormed} matches | ` +
+        `${r.noMatchReturns} no-match | ` +
+        `${r.capSignals > 0 ? `⚑ ${r.capSignals} cap signal(s)` : "no cap signals"}]`
     );
   }
   if (stats.capSaturationAnchorNames.length > 0) {
@@ -511,11 +529,10 @@ describe("30-player session simulation", () => {
   for (const p of THIRTY_PLAYERS) {
     const total = playerPartnerCounts.get(p.id) ?? 0;
     // Count how many unique partners this player has hit the cap with
-    const capsHit = [...stats.finalPartnershipCounts.entries()].filter(
-      ([key, count]) =>
-        key.includes(`:${p.id}`) || key.startsWith(`${p.id}:`)
-          ? count >= MAX_PARTNERSHIP_REPEATS
-          : false
+    const capsHit = [...stats.finalPartnershipCounts.entries()].filter(([key, count]) =>
+      key.includes(`:${p.id}`) || key.startsWith(`${p.id}:`)
+        ? count >= MAX_PARTNERSHIP_REPEATS
+        : false
     ).length;
     if (total > 0) {
       console.log(
@@ -598,8 +615,8 @@ describe("30-player session simulation", () => {
     // doesn't apply to them, and a match forms — which is correct
     // behaviour but not what this invariant is testing.
     const base = makeSimPlayer("anchor", 4, 20, 0); // score=20 → highest priority
-    const others = ["p1", "p2", "p3", "p4", "p5"].map((id, i) =>
-      makeSimPlayer(id, 4, i + 1, 0) // scores 1-5 → all below anchor
+    const others = ["p1", "p2", "p3", "p4", "p5"].map(
+      (id, i) => makeSimPlayer(id, 4, i + 1, 0) // scores 1-5 → all below anchor
     );
     const pool = [base, ...others];
 
@@ -623,9 +640,7 @@ describe("30-player session simulation", () => {
     const redZoneAnchor = makeSimPlayer("rz", 4, CRITICAL_WAIT_MINUTES + 5, 0);
     expect(redZoneAnchor.priorityScore).toBeGreaterThanOrEqual(RED_ZONE_SCORE_FLOOR);
 
-    const others = ["q1", "q2", "q3", "q4"].map((id, i) =>
-      makeSimPlayer(id, 4, i * 2, 0)
-    );
+    const others = ["q1", "q2", "q3", "q4"].map((id, i) => makeSimPlayer(id, 4, i * 2, 0));
     const pool = [redZoneAnchor, ...others];
 
     const cappedCounts = new Map<string, number>();
@@ -648,9 +663,9 @@ describe("30-player session simulation", () => {
   // ─────────────────────────────────────────────────────────
   it("does not block a pair that has played once (count=1 < cap=2)", () => {
     const a = makeSimPlayer("a", 4, 10, 1);
-    const b = makeSimPlayer("b", 4, 9,  1);
-    const c = makeSimPlayer("c", 4, 8,  1);
-    const d = makeSimPlayer("d", 4, 7,  1);
+    const b = makeSimPlayer("b", 4, 9, 1);
+    const c = makeSimPlayer("c", 4, 8, 1);
+    const d = makeSimPlayer("d", 4, 7, 1);
 
     // All pairs played together once — still below cap
     const onceCounts = new Map<string, number>();
@@ -760,7 +775,7 @@ describe("small isolated pool — cap saturation scenario", () => {
     expect(matches.length).toBeGreaterThanOrEqual(1);
 
     // Every pair count must be within cap
-    for (const [pair, count] of counts.entries()) {
+    for (const [_pair, count] of counts.entries()) {
       expect(count).toBeLessThanOrEqual(MAX_PARTNERSHIP_REPEATS);
     }
   });

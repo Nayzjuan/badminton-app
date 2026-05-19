@@ -13,6 +13,24 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  // Project-wide rule overrides.
+  {
+    rules: {
+      // Exempt underscore-prefixed identifiers from the unused-vars rule.
+      // Convention: _name signals "intentionally unused" (e.g. destructured
+      // but discarded, mock stub params, catch-clause vars).
+      // eslint-config-next does not set these patterns by default.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

@@ -8,13 +8,17 @@
 // a mix of states to expose the alignment issue in light mode.
 // ============================================================
 
-import { Trophy, XCircle, Plus, Swords, Trash2 } from "lucide-react";
+import { Trophy, XCircle, Plus, Swords } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 
 // ── Mock players ─────────────────────────────────────────────
 
-const makePlayer = (id: string, name: string, skill: RosterPlayer["skill_level"]): RosterPlayer => ({
+const makePlayer = (
+  id: string,
+  name: string,
+  skill: RosterPlayer["skill_level"]
+): RosterPlayer => ({
   player_id: id,
   display_name: name,
   skill_level: skill,
@@ -49,7 +53,10 @@ const COURTS = [
     name: "Court 4",
     state: "in_progress" as const,
     timer: "28:51",
-    teamA: [makePlayer("p9", "Taylor", "lower_intermediate"), makePlayer("p10", "Quinn", "intermediate")],
+    teamA: [
+      makePlayer("p9", "Taylor", "lower_intermediate"),
+      makePlayer("p10", "Quinn", "intermediate"),
+    ],
     teamB: [makePlayer("p11", "Morgan", "advanced"), makePlayer("p12", "Casey", "beginner")],
   },
   {
@@ -64,7 +71,7 @@ const COURTS = [
   },
 ];
 
-function CourtCardMock({ court }: { court: typeof COURTS[number] }) {
+function CourtCardMock({ court }: { court: (typeof COURTS)[number] }) {
   const isActive = court.state === "in_progress";
 
   return (
@@ -116,15 +123,15 @@ function CourtCardMock({ court }: { court: typeof COURTS[number] }) {
               court.state === "in_progress"
                 ? "bg-blue-600 text-white border-blue-700"
                 : court.state === "available"
-                ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                : "bg-gray-100 text-gray-600 border-gray-200"
+                  ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                  : "bg-gray-100 text-gray-600 border-gray-200"
             }`}
           >
             {court.state === "in_progress"
               ? "In Progress"
               : court.state === "available"
-              ? "Available"
-              : "Closed"}
+                ? "Available"
+                : "Closed"}
           </span>
         </div>
       </div>
@@ -214,7 +221,8 @@ export default function ActiveCourtsGridPage() {
           Active Courts — Light Mode Grid
         </h1>
         <p className="mt-2 mb-8 text-sm text-muted-foreground">
-          Mixed states: 4 in-progress (dark navy) + 1 available + 1 closed. This reproduces the alignment issue in light mode.
+          Mixed states: 4 in-progress (dark navy) + 1 available + 1 closed. This reproduces the
+          alignment issue in light mode.
         </p>
 
         {/* The exact same grid as in active-courts.tsx */}
@@ -226,7 +234,9 @@ export default function ActiveCourtsGridPage() {
 
         {/* Row-by-row diagnostic */}
         <div className="mt-16">
-          <h2 className="mb-4 text-lg font-bold text-foreground">Row 1 — in_progress vs available (the main mismatch)</h2>
+          <h2 className="mb-4 text-lg font-bold text-foreground">
+            Row 1 — in_progress vs available (the main mismatch)
+          </h2>
           <div className="grid grid-cols-2 gap-5">
             <CourtCardMock court={COURTS[0]} />
             <CourtCardMock court={COURTS[1]} />
@@ -234,7 +244,9 @@ export default function ActiveCourtsGridPage() {
         </div>
 
         <div className="mt-10">
-          <h2 className="mb-4 text-lg font-bold text-foreground">Row 2 — two in_progress side by side</h2>
+          <h2 className="mb-4 text-lg font-bold text-foreground">
+            Row 2 — two in_progress side by side
+          </h2>
           <div className="grid grid-cols-2 gap-5">
             <CourtCardMock court={COURTS[2]} />
             <CourtCardMock court={COURTS[3]} />

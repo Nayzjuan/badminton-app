@@ -236,7 +236,7 @@ test.describe("Player Scoring — [O-2] Score submission", () => {
       // Strategy: find the first enabled button in the score input section
       // (after both inputs are filled, the submit button becomes enabled).
       // We look inside the section that also contains "Submit Final Score".
-      const scoreSection = page
+      const _scoreSection = page
         .getByText(/submit final score/i)
         .first()
         .locator("..")

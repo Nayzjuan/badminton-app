@@ -334,7 +334,6 @@ describe("useEnrichedMatches — Unit Suite", () => {
     // Start first fetch (will hang until resolveFirst is called).
     // We intentionally do NOT await here — we want it to remain in-flight
     // so the second fetch can start before it resolves.
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     const firstFetch = act(async () => {
       await result.current.fetchActiveMatches();
     });
@@ -501,7 +500,6 @@ describe("useEnrichedMatches — Unit Suite", () => {
     });
 
     // Start first fetch (hangs on matches query).
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     const firstFetch = act(async () => {
       await result.current.fetchActiveMatches();
     });

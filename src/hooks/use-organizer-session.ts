@@ -117,7 +117,6 @@ export function useOrganizerSession(
           // Apply all session field changes EXCEPT is_auto_matchmaking_on.
           // That field is synced via Broadcast so co-organizers also receive it.
           const next = payload.new as Partial<Session>;
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { is_auto_matchmaking_on: _, ...rest } = next;
           setSession((prev) => ({ ...prev, ...rest }));
         }

@@ -411,6 +411,7 @@ function MyStatusTab({ state }: { state: SandboxState }) {
     return s && s !== "left";
   }).length;
 
+  // eslint-disable-next-line react-hooks/purity -- demo component, Date.now() is intentional
   const waitMinutes = Math.round((Date.now() - alex.joinedAt) / 60000);
 
   // Active match for Alex
@@ -465,7 +466,7 @@ function MyStatusTab({ state }: { state: SandboxState }) {
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Match Forming</p>
           <p className="mt-1 text-lg font-bold text-slate-700">Hang tight…</p>
           <p className="mt-2 text-sm text-slate-500">
-            You've been selected for an upcoming match. The organizer will confirm it shortly.
+            You&apos;ve been selected for an upcoming match. The organizer will confirm it shortly.
           </p>
         </div>
         <QueueStatus
@@ -493,7 +494,7 @@ function MyStatusTab({ state }: { state: SandboxState }) {
       {position !== null && position <= 4 && (
         <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-center">
           <p className="text-xs font-semibold text-amber-700">
-            You're in the top 4 — a court may open soon!
+            You&apos;re in the top 4 — a court may open soon!
           </p>
         </div>
       )}
@@ -894,6 +895,7 @@ export default function PlayerPhone({ state, soundEnabled }: Props) {
   // Auto-switch to My Status on significant alerts
   useEffect(() => {
     if (alexStatus === "on_deck" || alexStatus === "in_progress") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- demo component, local-only tab state
       setActiveTab("status");
     }
   }, [alexStatus]);
