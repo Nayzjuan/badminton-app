@@ -260,6 +260,33 @@
 
 ---
 
+### Security Headers (2026-05-19) — COMPLETE
+
+**Goal:** External security scanner flagged 7 issues. Verified each against the codebase; implemented all real fixes.
+
+**Verdict per issue:**
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Missing CSP (HIGH) | Fixed — added to `next.config.ts` |
+| 2 | Missing X-Frame-Options (MEDIUM) | Fixed — added to `next.config.ts` |
+| 3 | Missing X-Content-Type-Options (MEDIUM) | Fixed — added to `next.config.ts` |
+| 4 | Missing Referrer-Policy (MEDIUM) | Fixed — added to `next.config.ts` |
+| 5 | Missing Permissions-Policy (LOW) | Fixed — added to `next.config.ts` |
+| 6 | Password Autocomplete (LOW) | **False positive** — all PIN inputs already have `autoComplete="off"` (login-form.tsx:208, organizer-entry.tsx:479,531) |
+| 7 | No Rate Limiting (MEDIUM) | **Accepted risk** — Vercel edge protects DDoS; PIN reconnect brute-force has minimal blast radius (queue slot only, not account access) |
+
+**CSP notes:**
+- `script-src` and `style-src` use `unsafe-inline` (required by Next.js App Router hydration — no way around this without nonce middleware)
+- `connect-src` allows `*.supabase.co` + `wss://*.supabase.co` for Realtime
+- `frame-ancestors 'none'` (modern) + `X-Frame-Options: DENY` (legacy compat) for clickjacking
+- Google Fonts: NOT needed in CSP — `next/font/google` self-hosts fonts at build time in `/_next/static/media/`, no runtime requests to `fonts.gstatic.com`
+- `worker-src 'self' blob:` covers the hand-crafted service worker at `public/sw.js`
+
+**Commit:** `8e4c6e0` feat(security): add HTTP security headers to all routes
+
+---
+
 ### What Was Accomplished This Session — Full Architecture Audit + 6-Phase Remediation (2026-05-19)
 
 ---
