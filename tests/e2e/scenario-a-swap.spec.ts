@@ -395,10 +395,15 @@ test.describe("Tap-to-Swap — Undo", () => {
       // Click the "Undo" action button on the toast
       await toast.getByRole("button", { name: "Undo" }).click();
 
-      // After undo, Alice should be back in the on-deck card (use testid to
-      // avoid matching the lingering "Swapped E2E_Alice → E2E_Eve" toast text).
+      // Wait for the server action to confirm success before checking DB.
+      // Without this, the UI optimistic update can land before the DB write commits.
+      await expect(
+        page.locator("[data-sonner-toast]").filter({ hasText: "Swap undone" })
+      ).toBeVisible({ timeout: 8_000 });
+
+      // After undo, Alice should be back in the on-deck card.
       await expect(page.getByTestId(`player-pill-${seeded.players.alice.userId}`)).toBeVisible({
-        timeout: 8_000,
+        timeout: 5_000,
       });
       await expect(page.getByTestId(`player-pill-${seeded.players.eve.userId}`)).not.toBeVisible({
         timeout: 3_000,

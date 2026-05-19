@@ -336,10 +336,6 @@ describe("useOrganizerDashboard", () => {
         message: "Cannot close: active matches",
       });
 
-      // happy-dom does not define window.alert — stub it globally
-      const alertFn = vi.fn();
-      vi.stubGlobal("alert", alertFn);
-
       const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
 
       await act(async () => {
@@ -348,9 +344,7 @@ describe("useOrganizerDashboard", () => {
 
       expect(result.current.closing).toBe(false);
       expect(mockRouter.push).not.toHaveBeenCalled();
-      expect(alertFn).toHaveBeenCalledWith("Cannot close: active matches");
-
-      vi.unstubAllGlobals();
+      expect(toast.error).toHaveBeenCalledWith("Cannot close: active matches");
     });
   });
 
