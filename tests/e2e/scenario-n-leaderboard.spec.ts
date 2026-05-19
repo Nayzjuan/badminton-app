@@ -38,7 +38,7 @@ import {
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
 
-const BASE_URL   = process.env.TEST_BASE_URL!;
+const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
 
 // ── One-time global setup ─────────────────────────────────────
@@ -89,9 +89,7 @@ test.describe("Leaderboard — [N-1] Player dashboard leaderboard tab", () => {
       // We assert something leaderboard-related is visible — either a
       // table header "Rank" or an empty-state message.
       await expect(
-        page
-          .getByText(/rank|no ranked players|minimum|leaderboard/i)
-          .first()
+        page.getByText(/rank|no ranked players|minimum|leaderboard/i).first()
       ).toBeVisible({ timeout: 12_000 });
     } finally {
       await context.close();
@@ -125,9 +123,7 @@ test.describe("Leaderboard — [N-2] Organizer dashboard leaderboard tab", () =>
       // The LeaderboardPage component renders either rows or an empty-state
       // message about minimum games played.
       await expect(
-        page
-          .getByText(/rank|no ranked players|minimum|leaderboard/i)
-          .first()
+        page.getByText(/rank|no ranked players|minimum|leaderboard/i).first()
       ).toBeVisible({ timeout: 12_000 });
     } finally {
       await context.close();

@@ -40,7 +40,7 @@ import {
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
 
-const BASE_URL   = process.env.TEST_BASE_URL!;
+const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
 
 let organizerUserId: string;

@@ -48,7 +48,7 @@ import {
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
 
-const BASE_URL   = process.env.TEST_BASE_URL!;
+const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
 
 let organizerUserId: string;
@@ -82,10 +82,12 @@ async function createBot(displayName: string): Promise<{ userId: string }> {
     throw new Error(`[seed] createBot(${displayName}): ${error?.message}`);
   }
   const userId = data.user.id;
-  await db.from("profiles").upsert(
-    { id: userId, display_name: displayName, skill_level: "intermediate", pin: "1234" },
-    { onConflict: "id" }
-  );
+  await db
+    .from("profiles")
+    .upsert(
+      { id: userId, display_name: displayName, skill_level: "intermediate", pin: "1234" },
+      { onConflict: "id" }
+    );
   return { userId };
 }
 
@@ -115,8 +117,8 @@ async function seedOrganizerInProgressMatch(): Promise<{ matchId: string; courtI
     .from("matches")
     .insert({
       session_id: SESSION_ID,
-      court_id:   courtId,
-      status:     "in_progress",
+      court_id: courtId,
+      status: "in_progress",
       is_mixed_level: false,
       started_at: new Date().toISOString(),
     })
@@ -128,18 +130,42 @@ async function seedOrganizerInProgressMatch(): Promise<{ matchId: string; courtI
   // Assign players to teams: organizer + bot2 on Team A, bot3 + bot4 on Team B.
   await db.from("match_players").insert([
     { match_id: matchId, player_id: organizerUserId, team: "a" },
-    { match_id: matchId, player_id: bot2.userId,     team: "a" },
-    { match_id: matchId, player_id: bot3.userId,     team: "b" },
-    { match_id: matchId, player_id: bot4.userId,     team: "b" },
+    { match_id: matchId, player_id: bot2.userId, team: "a" },
+    { match_id: matchId, player_id: bot3.userId, team: "b" },
+    { match_id: matchId, player_id: bot4.userId, team: "b" },
   ]);
 
   // Add all four players to queue_entries with status="playing" so the
   // player dashboard hooks recognise them as active participants.
   await db.from("queue_entries").insert([
-    { session_id: SESSION_ID, player_id: organizerUserId, status: "playing", games_played: 0, position: 1 },
-    { session_id: SESSION_ID, player_id: bot2.userId,     status: "playing", games_played: 0, position: 2 },
-    { session_id: SESSION_ID, player_id: bot3.userId,     status: "playing", games_played: 0, position: 3 },
-    { session_id: SESSION_ID, player_id: bot4.userId,     status: "playing", games_played: 0, position: 4 },
+    {
+      session_id: SESSION_ID,
+      player_id: organizerUserId,
+      status: "playing",
+      games_played: 0,
+      position: 1,
+    },
+    {
+      session_id: SESSION_ID,
+      player_id: bot2.userId,
+      status: "playing",
+      games_played: 0,
+      position: 2,
+    },
+    {
+      session_id: SESSION_ID,
+      player_id: bot3.userId,
+      status: "playing",
+      games_played: 0,
+      position: 3,
+    },
+    {
+      session_id: SESSION_ID,
+      player_id: bot4.userId,
+      status: "playing",
+      games_played: 0,
+      position: 4,
+    },
   ]);
 
   return { matchId, courtId };
@@ -164,9 +190,7 @@ test.describe("Player Scoring — [O-1] Score input form is visible", () => {
       // Give the dashboard time to fetch the in_progress match via usePlayerMatch.
       // Use .first() because the text can match multiple elements in the DOM tree
       // (the <p> header text element and a parent container that includes it).
-      await expect(
-        page.getByText(/submit final score/i).first()
-      ).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByText(/submit final score/i).first()).toBeVisible({ timeout: 15_000 });
 
       // The card contains two score input fields labelled "Your Team" and "Opponents".
       await expect(page.getByLabel(/your team score/i)).toBeVisible({ timeout: 8_000 });
@@ -195,13 +219,11 @@ test.describe("Player Scoring — [O-2] Score submission", () => {
       await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
 
       // Wait for the score input card to appear.
-      await expect(
-        page.getByText(/submit final score/i).first()
-      ).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByText(/submit final score/i).first()).toBeVisible({ timeout: 20_000 });
 
       // Fill in team scores using the aria-labelled inputs.
       // The organizer is on Team A, so "Your Team" label maps to Team A score.
-      const myScoreInput   = page.getByLabel(/your team score/i);
+      const myScoreInput = page.getByLabel(/your team score/i);
       const theirScoreInput = page.getByLabel(/opponents score/i);
 
       await myScoreInput.fill("21");
@@ -214,34 +236,47 @@ test.describe("Player Scoring — [O-2] Score submission", () => {
       // Strategy: find the first enabled button in the score input section
       // (after both inputs are filled, the submit button becomes enabled).
       // We look inside the section that also contains "Submit Final Score".
-      const scoreSection = page.getByText(/submit final score/i).first().locator("..").locator("..");
+      const scoreSection = page
+        .getByText(/submit final score/i)
+        .first()
+        .locator("..")
+        .locator("..");
       // Fallback: directly click any enabled button near the score inputs.
       // The submit button sits at the bottom of a space-y-4 div. It's the only button
       // in the score card (the inputs use type="text"). Find it by type and near context.
       await expect(
-        page.getByRole("button", { disabled: false }).filter({ hasText: /submit/i }).first()
+        page
+          .getByRole("button", { disabled: false })
+          .filter({ hasText: /submit/i })
+          .first()
       ).toBeVisible({ timeout: 8_000 });
-      await page.getByRole("button", { disabled: false }).filter({ hasText: /submit/i }).first().click();
+      await page
+        .getByRole("button", { disabled: false })
+        .filter({ hasText: /submit/i })
+        .first()
+        .click();
 
       // Assert success: verify the match was scored (either via UI text or DB).
       // The ScoreInputCard shows "Score submitted!" on success.
       // The MatchAlert may also update to show the player returned to queue.
       // Check the DB as the authoritative source — the match should now have scores.
       const db = adminDb();
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("team_a_score, team_b_score, status")
-            .eq("session_id", SESSION_ID)
-            .in("status", ["completed", "in_progress"])
-            .limit(1)
-            .single();
-          // Score submission either completes the match or records pending scores.
-          return (data?.team_a_score ?? null) !== null;
-        },
-        { timeout: 15_000, intervals: [500, 1000, 2000] }
-      ).toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("team_a_score, team_b_score, status")
+              .eq("session_id", SESSION_ID)
+              .in("status", ["completed", "in_progress"])
+              .limit(1)
+              .single();
+            // Score submission either completes the match or records pending scores.
+            return (data?.team_a_score ?? null) !== null;
+          },
+          { timeout: 15_000, intervals: [500, 1000, 2000] }
+        )
+        .toBe(true);
     } finally {
       await context.close();
     }
