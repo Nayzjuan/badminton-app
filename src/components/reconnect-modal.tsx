@@ -29,14 +29,7 @@ export function Spinner() {
       viewBox="0 0 24 24"
       aria-hidden="true"
     >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path
         className="opacity-75"
         fill="currentColor"
@@ -50,13 +43,7 @@ export function Spinner() {
 // Reconnect Modal
 // ─────────────────────────────────────────────────────────────
 
-export function ReconnectModal({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+export function ReconnectModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [pin, setPin] = useState("");
@@ -117,17 +104,12 @@ export function ReconnectModal({
       <DialogContent className="w-full max-w-sm p-6 space-y-5">
         <DialogHeader>
           <DialogTitle>Reconnect</DialogTitle>
-          <DialogDescription>
-            Enter the name and PIN you used when joining.
-          </DialogDescription>
+          <DialogDescription>Enter the name and PIN you used when joining.</DialogDescription>
         </DialogHeader>
 
         {/* Player Name */}
         <div className="space-y-2">
-          <label
-            htmlFor="reconnect_name"
-            className="block text-sm font-semibold text-foreground"
-          >
+          <label htmlFor="reconnect_name" className="block text-sm font-semibold text-foreground">
             Player Name
           </label>
           <input
@@ -146,10 +128,7 @@ export function ReconnectModal({
 
         {/* PIN */}
         <div className="space-y-2">
-          <label
-            htmlFor="reconnect_pin"
-            className="block text-sm font-semibold text-foreground"
-          >
+          <label htmlFor="reconnect_pin" className="block text-sm font-semibold text-foreground">
             PIN
           </label>
           <input
@@ -207,11 +186,7 @@ export function ReconnectModal({
                 strokeWidth={2.5}
                 aria-hidden="true"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>

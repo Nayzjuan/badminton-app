@@ -27,9 +27,7 @@ function getAdminClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !key) {
-    throw new Error(
-      "[teardown] Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"
-    );
+    throw new Error("[teardown] Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
 
   return createClient(url, key, {
@@ -93,14 +91,13 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     .eq("session_id", sessionId);
 
   if (wrappedStatsErr) {
-    throw new Error(`[teardown] Failed to delete session_wrapped_stats: ${wrappedStatsErr.message}`);
+    throw new Error(
+      `[teardown] Failed to delete session_wrapped_stats: ${wrappedStatsErr.message}`
+    );
   }
 
   // ── Step 2: Fetch all match IDs for this session ────────────
-  const { data: matches } = await db
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId);
+  const { data: matches } = await db.from("matches").select("id").eq("session_id", sessionId);
 
   const matchIds = (matches ?? []).map((m) => m.id);
 
@@ -218,18 +215,18 @@ export interface SeedResult {
   };
   /** Extra bot players created for extended presets (e.g. soft_gate, two_matches_on_deck). */
   extraPlayers: Record<string, BotPlayer>;
-  matchId?: string;  // Primary / first match ID
+  matchId?: string; // Primary / first match ID
   matchId2?: string; // Second match ID (two_matches_on_deck preset only)
 }
 
 export type QueuePreset =
-  | "all_waiting"             // all 5 players waiting, no matches
-  | "first_match_on_deck"     // alice/bob/cara/dan in a pending match; eve waiting
+  | "all_waiting" // all 5 players waiting, no matches
+  | "first_match_on_deck" // alice/bob/cara/dan in a pending match; eve waiting
   | "first_match_in_progress" // alice/bob/cara/dan in active match; eve waiting
-  | "soft_gate"               // alice/bob/cara/dan in active match; eve/frank/grace/henry waiting (4 = GATE_POOL_THRESHOLD)
-  | "two_matches_on_deck"     // match1: alice/bob vs cara/dan (pending); match2: eve/frank vs grace/henry (pending)
-  | "diversity_pool_8"        // 8 intermediates waiting + 1 COMPLETED match (alice/bob vs cara/dan); used by scenario-h [H-1]
-  | "diversity_pool_4";       // ONLY alice/bob/cara/dan waiting (mixed skills) + 1 COMPLETED match; used by scenario-h [H-2]
+  | "soft_gate" // alice/bob/cara/dan in active match; eve/frank/grace/henry waiting (4 = GATE_POOL_THRESHOLD)
+  | "two_matches_on_deck" // match1: alice/bob vs cara/dan (pending); match2: eve/frank vs grace/henry (pending)
+  | "diversity_pool_8" // 8 intermediates waiting + 1 COMPLETED match (alice/bob vs cara/dan); used by scenario-h [H-1]
+  | "diversity_pool_4"; // ONLY alice/bob/cara/dan waiting (mixed skills) + 1 COMPLETED match; used by scenario-h [H-2]
 
 // ── softResetSandboxSession ───────────────────────────────────
 // Clears all match/queue/court data for the sandbox session but
@@ -258,16 +255,11 @@ export async function softResetSandboxSession(): Promise<void> {
   }
 
   if (!session.name.startsWith("🤖 E2E SANDBOX")) {
-    throw new Error(
-      `[soft-teardown] Session "${session.name}" is not a sandbox. Refusing.`
-    );
+    throw new Error(`[soft-teardown] Session "${session.name}" is not a sandbox. Refusing.`);
   }
 
   // Step 1: Collect match IDs
-  const { data: matches } = await db
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId);
+  const { data: matches } = await db.from("matches").select("id").eq("session_id", sessionId);
   const matchIds = (matches ?? []).map((m) => m.id);
 
   // Step 2: Delete match_players
@@ -307,10 +299,10 @@ export async function seedSession(
   // ── Create bot auth users ──────────────────────────────────
   const playerDefs = [
     { key: "alice", name: "E2E_Alice", skill: "intermediate" },
-    { key: "bob",   name: "E2E_Bob",   skill: "intermediate" },
-    { key: "cara",  name: "E2E_Cara",  skill: "intermediate" },
-    { key: "dan",   name: "E2E_Dan",   skill: "intermediate" },
-    { key: "eve",   name: "E2E_Eve",   skill: "intermediate" },
+    { key: "bob", name: "E2E_Bob", skill: "intermediate" },
+    { key: "cara", name: "E2E_Cara", skill: "intermediate" },
+    { key: "dan", name: "E2E_Dan", skill: "intermediate" },
+    { key: "eve", name: "E2E_Eve", skill: "intermediate" },
   ] as const;
 
   const bots: Record<string, BotPlayer> = {};
@@ -415,9 +407,9 @@ export async function seedSession(
     // Assign players to the match
     const matchPlayers = [
       { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
-      { match_id: matchId, player_id: bots.bob.userId,   team: "a" as const },
-      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
-      { match_id: matchId, player_id: bots.dan.userId,   team: "b" as const },
+      { match_id: matchId, player_id: bots.bob.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.cara.userId, team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId, team: "b" as const },
     ];
 
     const { error: mpErr } = await db.from("match_players").insert(matchPlayers);
@@ -427,7 +419,10 @@ export async function seedSession(
 
     // Update queue statuses for matched players
     const matchedPlayerIds = [
-      bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId,
+      bots.alice.userId,
+      bots.bob.userId,
+      bots.cara.userId,
+      bots.dan.userId,
     ];
     const matchedQueueStatus = status === "pending" ? "on_deck" : "playing";
 
@@ -439,10 +434,7 @@ export async function seedSession(
 
     // If in_progress, mark the court as in_use
     if (preset === "first_match_in_progress") {
-      await db
-        .from("courts")
-        .update({ status: "in_use" })
-        .eq("id", courts[0].id);
+      await db.from("courts").update({ status: "in_use" }).eq("id", courts[0].id);
     }
   }
 
@@ -482,12 +474,16 @@ export async function seedSession(
 
       const userId = userData.user.id;
 
-      const { error: profileErr } = await db.from("profiles").upsert(
-        { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
-        { onConflict: "id" }
-      );
+      const { error: profileErr } = await db
+        .from("profiles")
+        .upsert(
+          { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
+          { onConflict: "id" }
+        );
       if (profileErr) {
-        throw new Error(`[seed:soft_gate] Failed to upsert profile ${def.name}: ${profileErr.message}`);
+        throw new Error(
+          `[seed:soft_gate] Failed to upsert profile ${def.name}: ${profileErr.message}`
+        );
       }
 
       extraPlayers[def.key] = {
@@ -519,9 +515,9 @@ export async function seedSession(
 
     const matchPlayers = [
       { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
-      { match_id: matchId, player_id: bots.bob.userId,   team: "a" as const },
-      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
-      { match_id: matchId, player_id: bots.dan.userId,   team: "b" as const },
+      { match_id: matchId, player_id: bots.bob.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.cara.userId, team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId, team: "b" as const },
     ];
 
     const { error: mpErr } = await db.from("match_players").insert(matchPlayers);
@@ -537,26 +533,41 @@ export async function seedSession(
       .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId]);
 
     // Mark court 1 as in_use
-    await db
-      .from("courts")
-      .update({ status: "in_use" })
-      .eq("id", courts[0].id);
+    await db.from("courts").update({ status: "in_use" }).eq("id", courts[0].id);
 
     // ── Add frank/grace/henry to queue (eve is already in queue at pos 5) ──
     // Combined waiting pool: eve (pos 5) + frank/grace/henry (pos 6-8) = 4 waiting
     // 4 == GATE_POOL_THRESHOLD — the gate holds when these are the only players available
     const extraQueueInserts = [
-      { session_id: sessionId, player_id: extraPlayers.frank.userId, status: "waiting" as const, games_played: 0, position: 6 },
-      { session_id: sessionId, player_id: extraPlayers.grace.userId, status: "waiting" as const, games_played: 0, position: 7 },
-      { session_id: sessionId, player_id: extraPlayers.henry.userId, status: "waiting" as const, games_played: 0, position: 8 },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.frank.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 6,
+      },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.grace.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 7,
+      },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.henry.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 8,
+      },
     ];
 
-    const { error: extraQueueErr } = await db
-      .from("queue_entries")
-      .insert(extraQueueInserts);
+    const { error: extraQueueErr } = await db.from("queue_entries").insert(extraQueueInserts);
 
     if (extraQueueErr) {
-      throw new Error(`[seed:soft_gate] Failed to create extra queue entries: ${extraQueueErr.message}`);
+      throw new Error(
+        `[seed:soft_gate] Failed to create extra queue entries: ${extraQueueErr.message}`
+      );
     }
   }
 
@@ -587,17 +598,23 @@ export async function seedSession(
       });
 
       if (userErr || !userData.user) {
-        throw new Error(`[seed:two_matches_on_deck] Failed to create user ${def.name}: ${userErr?.message}`);
+        throw new Error(
+          `[seed:two_matches_on_deck] Failed to create user ${def.name}: ${userErr?.message}`
+        );
       }
 
       const userId = userData.user.id;
 
-      const { error: profileErr } = await db.from("profiles").upsert(
-        { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
-        { onConflict: "id" }
-      );
+      const { error: profileErr } = await db
+        .from("profiles")
+        .upsert(
+          { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
+          { onConflict: "id" }
+        );
       if (profileErr) {
-        throw new Error(`[seed:two_matches_on_deck] Failed to upsert profile ${def.name}: ${profileErr.message}`);
+        throw new Error(
+          `[seed:two_matches_on_deck] Failed to upsert profile ${def.name}: ${profileErr.message}`
+        );
       }
 
       extraPlayers[def.key] = {
@@ -610,33 +627,62 @@ export async function seedSession(
 
     // Queue entries for frank, grace, henry (alice–eve already inserted above)
     const extraQueueInserts = [
-      { session_id: sessionId, player_id: extraPlayers.frank.userId, status: "waiting" as const, games_played: 0, position: 6 },
-      { session_id: sessionId, player_id: extraPlayers.grace.userId, status: "waiting" as const, games_played: 0, position: 7 },
-      { session_id: sessionId, player_id: extraPlayers.henry.userId, status: "waiting" as const, games_played: 0, position: 8 },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.frank.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 6,
+      },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.grace.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 7,
+      },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.henry.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 8,
+      },
     ];
 
     const { error: extraQueueErr } = await db.from("queue_entries").insert(extraQueueInserts);
     if (extraQueueErr) {
-      throw new Error(`[seed:two_matches_on_deck] Failed to create extra queue entries: ${extraQueueErr.message}`);
+      throw new Error(
+        `[seed:two_matches_on_deck] Failed to create extra queue entries: ${extraQueueErr.message}`
+      );
     }
 
     // ── Match 1: alice/bob (Team A) vs cara/dan (Team B) ─────────
     const { data: m1, error: m1Err } = await db
       .from("matches")
-      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 1, is_published: true })
+      .insert({
+        session_id: sessionId,
+        court_id: null,
+        status: "pending",
+        is_mixed_level: false,
+        sort_order: 1,
+        is_published: true,
+      })
       .select("id")
       .single();
-    if (m1Err || !m1) throw new Error(`[seed:two_matches_on_deck] Failed to create match 1: ${m1Err?.message}`);
+    if (m1Err || !m1)
+      throw new Error(`[seed:two_matches_on_deck] Failed to create match 1: ${m1Err?.message}`);
     matchId = m1.id;
 
     await db.from("match_players").insert([
       { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
-      { match_id: matchId, player_id: bots.bob.userId,   team: "a" as const },
-      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
-      { match_id: matchId, player_id: bots.dan.userId,   team: "b" as const },
+      { match_id: matchId, player_id: bots.bob.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.cara.userId, team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId, team: "b" as const },
     ]);
 
-    await db.from("queue_entries")
+    await db
+      .from("queue_entries")
       .update({ status: "on_deck" })
       .eq("session_id", sessionId)
       .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId]);
@@ -644,23 +690,37 @@ export async function seedSession(
     // ── Match 2: eve/frank (Team A) vs grace/henry (Team B) ──────
     const { data: m2, error: m2Err } = await db
       .from("matches")
-      .insert({ session_id: sessionId, court_id: null, status: "pending", is_mixed_level: false, sort_order: 2, is_published: true })
+      .insert({
+        session_id: sessionId,
+        court_id: null,
+        status: "pending",
+        is_mixed_level: false,
+        sort_order: 2,
+        is_published: true,
+      })
       .select("id")
       .single();
-    if (m2Err || !m2) throw new Error(`[seed:two_matches_on_deck] Failed to create match 2: ${m2Err?.message}`);
+    if (m2Err || !m2)
+      throw new Error(`[seed:two_matches_on_deck] Failed to create match 2: ${m2Err?.message}`);
     matchId2 = m2.id;
 
     await db.from("match_players").insert([
-      { match_id: matchId2, player_id: bots.eve.userId,         team: "a" as const },
+      { match_id: matchId2, player_id: bots.eve.userId, team: "a" as const },
       { match_id: matchId2, player_id: extraPlayers.frank.userId, team: "a" as const },
       { match_id: matchId2, player_id: extraPlayers.grace.userId, team: "b" as const },
       { match_id: matchId2, player_id: extraPlayers.henry.userId, team: "b" as const },
     ]);
 
-    await db.from("queue_entries")
+    await db
+      .from("queue_entries")
       .update({ status: "on_deck" })
       .eq("session_id", sessionId)
-      .in("player_id", [bots.eve.userId, extraPlayers.frank.userId, extraPlayers.grace.userId, extraPlayers.henry.userId]);
+      .in("player_id", [
+        bots.eve.userId,
+        extraPlayers.frank.userId,
+        extraPlayers.grace.userId,
+        extraPlayers.henry.userId,
+      ]);
   }
 
   if (preset === "diversity_pool_8") {
@@ -695,17 +755,23 @@ export async function seedSession(
       });
 
       if (userErr || !userData.user) {
-        throw new Error(`[seed:diversity_pool_8] Failed to create user ${def.name}: ${userErr?.message}`);
+        throw new Error(
+          `[seed:diversity_pool_8] Failed to create user ${def.name}: ${userErr?.message}`
+        );
       }
 
       const userId = userData.user.id;
 
-      const { error: profileErr } = await db.from("profiles").upsert(
-        { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
-        { onConflict: "id" }
-      );
+      const { error: profileErr } = await db
+        .from("profiles")
+        .upsert(
+          { id: userId, display_name: def.name, skill_level: def.skill, pin: "1234" },
+          { onConflict: "id" }
+        );
       if (profileErr) {
-        throw new Error(`[seed:diversity_pool_8] Failed to upsert profile ${def.name}: ${profileErr.message}`);
+        throw new Error(
+          `[seed:diversity_pool_8] Failed to upsert profile ${def.name}: ${profileErr.message}`
+        );
       }
 
       extraPlayers[def.key] = {
@@ -732,14 +798,34 @@ export async function seedSession(
     //     stable sort then picks the first 3 by query order — still a
     //     mix that keeps overlap with the completed roster ≤ 2.
     const extraQueueInserts = [
-      { session_id: sessionId, player_id: extraPlayers.frank.userId, status: "waiting" as const, games_played: 0, position: 6 },
-      { session_id: sessionId, player_id: extraPlayers.grace.userId, status: "waiting" as const, games_played: 0, position: 7 },
-      { session_id: sessionId, player_id: extraPlayers.henry.userId, status: "waiting" as const, games_played: 0, position: 8 },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.frank.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 6,
+      },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.grace.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 7,
+      },
+      {
+        session_id: sessionId,
+        player_id: extraPlayers.henry.userId,
+        status: "waiting" as const,
+        games_played: 0,
+        position: 8,
+      },
     ];
 
     const { error: extraQueueErr } = await db.from("queue_entries").insert(extraQueueInserts);
     if (extraQueueErr) {
-      throw new Error(`[seed:diversity_pool_8] Failed to create extra queue entries: ${extraQueueErr.message}`);
+      throw new Error(
+        `[seed:diversity_pool_8] Failed to create extra queue entries: ${extraQueueErr.message}`
+      );
     }
 
     // ── Create the COMPLETED match: alice/bob vs cara/dan ────────
@@ -762,19 +848,23 @@ export async function seedSession(
       .single();
 
     if (completedErr || !completedMatch) {
-      throw new Error(`[seed:diversity_pool_8] Failed to create completed match: ${completedErr?.message}`);
+      throw new Error(
+        `[seed:diversity_pool_8] Failed to create completed match: ${completedErr?.message}`
+      );
     }
 
     matchId = completedMatch.id;
 
     const { error: completedMpErr } = await db.from("match_players").insert([
       { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
-      { match_id: matchId, player_id: bots.bob.userId,   team: "a" as const },
-      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
-      { match_id: matchId, player_id: bots.dan.userId,   team: "b" as const },
+      { match_id: matchId, player_id: bots.bob.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.cara.userId, team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId, team: "b" as const },
     ]);
     if (completedMpErr) {
-      throw new Error(`[seed:diversity_pool_8] Failed to create completed match players: ${completedMpErr.message}`);
+      throw new Error(
+        `[seed:diversity_pool_8] Failed to create completed match players: ${completedMpErr.message}`
+      );
     }
 
     // ── Bump games_played for the 4 who played the completed match ──
@@ -827,7 +917,9 @@ export async function seedSession(
       .update({ skill_level: "lower_intermediate" })
       .eq("id", bots.alice.userId);
     if (aliceSkillErr) {
-      throw new Error(`[seed:diversity_pool_4] Failed to update alice skill: ${aliceSkillErr.message}`);
+      throw new Error(
+        `[seed:diversity_pool_4] Failed to update alice skill: ${aliceSkillErr.message}`
+      );
     }
 
     const { error: danSkillErr } = await db
@@ -848,7 +940,9 @@ export async function seedSession(
       .eq("session_id", sessionId)
       .eq("player_id", bots.eve.userId);
     if (eveDelErr) {
-      throw new Error(`[seed:diversity_pool_4] Failed to remove eve from queue: ${eveDelErr.message}`);
+      throw new Error(
+        `[seed:diversity_pool_4] Failed to remove eve from queue: ${eveDelErr.message}`
+      );
     }
 
     // ── Create the COMPLETED match: alice+dan vs bob+cara ────────
@@ -874,19 +968,23 @@ export async function seedSession(
       .single();
 
     if (completedErr || !completedMatch) {
-      throw new Error(`[seed:diversity_pool_4] Failed to create completed match: ${completedErr?.message}`);
+      throw new Error(
+        `[seed:diversity_pool_4] Failed to create completed match: ${completedErr?.message}`
+      );
     }
 
     matchId = completedMatch.id;
 
     const { error: completedMpErr } = await db.from("match_players").insert([
       { match_id: matchId, player_id: bots.alice.userId, team: "a" as const },
-      { match_id: matchId, player_id: bots.dan.userId,   team: "a" as const },
-      { match_id: matchId, player_id: bots.bob.userId,   team: "b" as const },
-      { match_id: matchId, player_id: bots.cara.userId,  team: "b" as const },
+      { match_id: matchId, player_id: bots.dan.userId, team: "a" as const },
+      { match_id: matchId, player_id: bots.bob.userId, team: "b" as const },
+      { match_id: matchId, player_id: bots.cara.userId, team: "b" as const },
     ]);
     if (completedMpErr) {
-      throw new Error(`[seed:diversity_pool_4] Failed to create completed match players: ${completedMpErr.message}`);
+      throw new Error(
+        `[seed:diversity_pool_4] Failed to create completed match players: ${completedMpErr.message}`
+      );
     }
 
     // ── Bump games_played for all 4 (they played the completed match) ──

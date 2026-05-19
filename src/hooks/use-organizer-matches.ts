@@ -73,7 +73,11 @@ export function useOrganizerMatches(
   loading: boolean;
   callNextMatch: (courtId: string) => Promise<MatchmakingResult>;
   createManualMatch: (teamA: string[], teamB: string[]) => Promise<{ error?: string }>;
-  endMatch: (matchId: string, teamAScore: number, teamBScore: number) => Promise<{ error?: string }>;
+  endMatch: (
+    matchId: string,
+    teamAScore: number,
+    teamBScore: number
+  ) => Promise<{ error?: string }>;
   cancelMatch: (matchId: string) => Promise<{ error?: string }>;
   clearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   reorderOnDeckMatches: (orderedMatchIds: string[]) => Promise<{ error?: string }>;
@@ -133,10 +137,7 @@ export function useOrganizerMatches(
     () => activeMatches.filter((m) => m.status === "pending"),
     [activeMatches]
   );
-  const draftMatches = useMemo(
-    () => onDeckMatches.filter((m) => !m.is_published),
-    [onDeckMatches]
-  );
+  const draftMatches = useMemo(() => onDeckMatches.filter((m) => !m.is_published), [onDeckMatches]);
   const publishedOnDeckMatches = useMemo(
     () => onDeckMatches.filter((m) => m.is_published),
     [onDeckMatches]
@@ -203,13 +204,13 @@ export function useOrganizerMatches(
     return result.success ? {} : { error: result.message };
   }, []);
 
-  const publishAllDrafts = useCallback(
-    async (): Promise<{ error?: string; publishedCount?: number }> => {
-      const result = await publishAllDraftMatchesAction(sessionId);
-      return result.success ? { publishedCount: result.publishedCount } : { error: result.message };
-    },
-    [sessionId]
-  );
+  const publishAllDrafts = useCallback(async (): Promise<{
+    error?: string;
+    publishedCount?: number;
+  }> => {
+    const result = await publishAllDraftMatchesAction(sessionId);
+    return result.success ? { publishedCount: result.publishedCount } : { error: result.message };
+  }, [sessionId]);
 
   const swapPlayer = useCallback(
     async (matchId: string, outPlayerId: string, inPlayerId: string): Promise<SwapResult> => {

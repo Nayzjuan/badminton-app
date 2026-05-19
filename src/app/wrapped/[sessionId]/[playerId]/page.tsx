@@ -58,35 +58,51 @@ export default async function WrappedPage({ params }: WrappedPageProps) {
   // Show a "no stats yet" shell rather than 404.
   if (statsError || !statsRow) {
     const emptyStats: WrappedStats = {
-      playerName:    profile.display_name,
-      games:         0,
-      wins:          0,
-      losses:        0,
-      pointsFor:     0,
+      playerName: profile.display_name,
+      games: 0,
+      wins: 0,
+      losses: 0,
+      pointsFor: 0,
       pointsAgainst: 0,
-      pointDiff:     0,
-      winPct:        0,
-      sessionRank:   null,
-      earnedAwards:  [],
-      awardData:     {},
+      pointDiff: 0,
+      winPct: 0,
+      sessionRank: null,
+      earnedAwards: [],
+      awardData: {},
     };
-    return <WrappedShell stats={emptyStats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} introDismissed={false} />;
+    return (
+      <WrappedShell
+        stats={emptyStats}
+        sessionId={sessionId}
+        playerId={playerId}
+        matchHistory={matchHistory ?? []}
+        introDismissed={false}
+      />
+    );
   }
 
   // ── Build the typed stats object ────────────────────────────
   const stats: WrappedStats = {
-    playerName:    profile.display_name,
-    games:         statsRow.games_played,
-    wins:          statsRow.wins,
-    losses:        statsRow.losses,
-    pointsFor:     statsRow.points_for,
+    playerName: profile.display_name,
+    games: statsRow.games_played,
+    wins: statsRow.wins,
+    losses: statsRow.losses,
+    pointsFor: statsRow.points_for,
     pointsAgainst: statsRow.points_against,
-    pointDiff:     statsRow.point_diff ?? (statsRow.points_for - statsRow.points_against),
-    winPct:        Number(statsRow.win_pct),
-    sessionRank:   statsRow.session_rank,
-    earnedAwards:  statsRow.earned_awards ?? [],
-    awardData:     (statsRow.award_data as Record<string, Record<string, unknown>>) ?? {},
+    pointDiff: statsRow.point_diff ?? statsRow.points_for - statsRow.points_against,
+    winPct: Number(statsRow.win_pct),
+    sessionRank: statsRow.session_rank,
+    earnedAwards: statsRow.earned_awards ?? [],
+    awardData: (statsRow.award_data as Record<string, Record<string, unknown>>) ?? {},
   };
 
-  return <WrappedShell stats={stats} sessionId={sessionId} playerId={playerId} matchHistory={matchHistory ?? []} introDismissed={!!statsRow.intro_dismissed_at} />;
+  return (
+    <WrappedShell
+      stats={stats}
+      sessionId={sessionId}
+      playerId={playerId}
+      matchHistory={matchHistory ?? []}
+      introDismissed={!!statsRow.intro_dismissed_at}
+    />
+  );
 }

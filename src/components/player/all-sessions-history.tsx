@@ -69,7 +69,7 @@ function MatchCard({
   total,
 }: {
   match: MatchHistoryType;
-  index: number;   // 0-based, oldest first
+  index: number; // 0-based, oldest first
   total: number;
 }) {
   const isTeamA = match.team === "a";
@@ -90,28 +90,28 @@ function MatchCard({
   const borderColor = won
     ? "border-emerald-200 dark:border-emerald-800/50"
     : draw
-    ? "border-slate-300 dark:border-border"
-    : "border-slate-200 dark:border-border";
+      ? "border-slate-300 dark:border-border"
+      : "border-slate-200 dark:border-border";
 
   const headerBg = won
     ? "bg-emerald-50 border-emerald-100 dark:bg-emerald-950/30 dark:border-emerald-800/40"
     : draw
-    ? "bg-slate-100 border-slate-200 dark:bg-muted/60 dark:border-border"
-    : "bg-slate-50 border-slate-100 dark:bg-muted/40 dark:border-border";
+      ? "bg-slate-100 border-slate-200 dark:bg-muted/60 dark:border-border"
+      : "bg-slate-50 border-slate-100 dark:bg-muted/40 dark:border-border";
 
   const badgeStyle = won
     ? "bg-emerald-500 text-white"
     : draw
-    ? "bg-slate-400 text-white dark:bg-slate-600"
-    : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400";
+      ? "bg-slate-400 text-white dark:bg-slate-600"
+      : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400";
 
   const badgeLabel = won ? "Won" : draw ? "Draw" : "Lost";
 
   const scoreColorMine = won
     ? "text-emerald-600 dark:text-emerald-400"
     : draw
-    ? "text-slate-500 dark:text-muted-foreground"
-    : "text-slate-400 dark:text-muted-foreground";
+      ? "text-slate-500 dark:text-muted-foreground"
+      : "text-slate-400 dark:text-muted-foreground";
 
   const scoreColorTheirs = lost
     ? "text-red-500 dark:text-red-400"
@@ -129,11 +129,11 @@ function MatchCard({
         </span>
         <div className="flex items-center gap-2">
           {timeStr && (
-            <span className="text-[10px] text-slate-400 dark:text-muted-foreground">
-              {timeStr}
-            </span>
+            <span className="text-[10px] text-slate-400 dark:text-muted-foreground">{timeStr}</span>
           )}
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${badgeStyle}`}>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${badgeStyle}`}
+          >
             {badgeLabel}
           </span>
         </div>
@@ -200,9 +200,7 @@ function MatchCard({
 function SessionSection({ group }: { group: SessionGroup }) {
   const [open, setOpen] = useState(true);
   const winPct =
-    group.matches.length > 0
-      ? Math.round((group.wins / group.matches.length) * 100)
-      : 0;
+    group.matches.length > 0 ? Math.round((group.wins / group.matches.length) * 100) : 0;
 
   return (
     <div className="space-y-3">
@@ -237,8 +235,11 @@ function SessionSection({ group }: { group: SessionGroup }) {
           </span>
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-black tabular-nums
-              ${winPct >= 50 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400"
-                            : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}
+              ${
+                winPct >= 50
+                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400"
+                  : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+              }`}
           >
             {winPct}%
           </span>
@@ -249,12 +250,7 @@ function SessionSection({ group }: { group: SessionGroup }) {
       {open && (
         <div className="space-y-3 pl-4 border-l-2 border-border">
           {group.matches.map((match, i) => (
-            <MatchCard
-              key={match.match_id}
-              match={match}
-              index={i}
-              total={group.matches.length}
-            />
+            <MatchCard key={match.match_id} match={match} index={i} total={group.matches.length} />
           ))}
         </div>
       )}

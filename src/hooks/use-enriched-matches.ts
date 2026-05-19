@@ -123,10 +123,10 @@ export function useEnrichedMatches(
     }));
 
     setActiveMatches(enriched);
-  // courtsRef is intentionally excluded: MutableRefObject identity is stable
-  // across renders (React never reassigns the wrapper object), so listing it
-  // would be redundant and misleading.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // courtsRef is intentionally excluded: MutableRefObject identity is stable
+    // across renders (React never reassigns the wrapper object), so listing it
+    // would be redundant and misleading.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, sessionId, includeDrafts, onProfilesLoaded]);
 
   return { activeMatches, setActiveMatches, fetchActiveMatches };

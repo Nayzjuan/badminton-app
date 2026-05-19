@@ -76,12 +76,9 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   // ── Active match enrichment (shared hook) ─────────────────
   // includeDrafts: false — draft firewall: players and TV only see
   // published pending matches and in_progress matches.
-  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(
-    supabase,
-    sessionId,
-    courtsRef,
-    { includeDrafts: false }
-  );
+  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(supabase, sessionId, courtsRef, {
+    includeDrafts: false,
+  });
 
   // ── Fetch courts ──────────────────────────────────────────
 

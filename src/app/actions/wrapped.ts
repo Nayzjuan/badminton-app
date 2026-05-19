@@ -20,7 +20,7 @@ import { isValidUUID } from "@/lib/validate";
 
 export interface DismissWrappedIntroResult {
   success: boolean;
-  error?:  string;
+  error?: string;
 }
 
 /**
@@ -33,7 +33,7 @@ export interface DismissWrappedIntroResult {
  */
 export async function dismissWrappedIntro(
   sessionId: string,
-  playerId:  string,
+  playerId: string
 ): Promise<DismissWrappedIntroResult> {
   if (!isValidUUID(sessionId) || !isValidUUID(playerId)) {
     return { success: false, error: "Invalid session or player ID." };
@@ -44,7 +44,7 @@ export async function dismissWrappedIntro(
     .from("session_wrapped_stats")
     .update({ intro_dismissed_at: new Date().toISOString() })
     .eq("session_id", sessionId)
-    .eq("player_id",  playerId)
+    .eq("player_id", playerId)
     .is("intro_dismissed_at", null); // no-op if already dismissed
 
   if (error) {

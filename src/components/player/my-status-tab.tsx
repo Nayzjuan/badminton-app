@@ -185,9 +185,7 @@ function QueueSubTab({
           </p>
           <div className="my-7 h-px w-8 bg-border" />
           <span className="text-sm font-medium text-muted-foreground">Match forming</span>
-          <p className="mt-1 text-xs text-muted-foreground">
-            selected from {totalWaiting} queued
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">selected from {totalWaiting} queued</p>
         </div>
         <button
           onClick={() => leaveQueue()}

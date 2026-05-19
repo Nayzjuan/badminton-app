@@ -216,7 +216,13 @@ export function useOrganizerData(
     loading: queueLoading,
     removeFromQueue,
     pausePlayer,
-  } = useOrganizerQueue(sessionId, supabase, handleChannelStatus, handleChannelStatus, onProfileChange);
+  } = useOrganizerQueue(
+    sessionId,
+    supabase,
+    handleChannelStatus,
+    handleChannelStatus,
+    onProfileChange
+  );
 
   // Wire fetchQueue into the ref so useOrganizerMatches can call it.
   fetchQueueRef.current = fetchQueue;

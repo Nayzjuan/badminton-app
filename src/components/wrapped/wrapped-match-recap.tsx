@@ -49,11 +49,7 @@ export function WrappedMatchRecap({ matchHistory }: WrappedMatchRecapProps) {
             : draw
               ? "rgba(255,255,255,0.12)"
               : "rgba(255,255,255,0.08)";
-          const badgeBg = won
-            ? "#10B981"
-            : draw
-              ? "rgba(255,255,255,0.2)"
-              : "rgba(239,68,68,0.25)";
+          const badgeBg = won ? "#10B981" : draw ? "rgba(255,255,255,0.2)" : "rgba(239,68,68,0.25)";
           const badgeColor = won ? "#fff" : draw ? "rgba(255,255,255,0.8)" : "#FCA5A5";
           const badgeLabel = won ? "Won" : draw ? "Draw" : "Lost";
           const myScoreColor = won

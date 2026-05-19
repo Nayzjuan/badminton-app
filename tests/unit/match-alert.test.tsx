@@ -73,7 +73,13 @@ describe("MatchAlert — Component Smoke Tests", () => {
   // ── MA-1 ─────────────────────────────────────────────────────
   it("MA-1: pending renders Heads Up heading and You're On Deck pill", () => {
     render(
-      <MatchAlert {...baseProps} matchStatus="pending" court={null} onDeckPosition={1} totalOnDeck={1} />
+      <MatchAlert
+        {...baseProps}
+        matchStatus="pending"
+        court={null}
+        onDeckPosition={1}
+        totalOnDeck={1}
+      />
     );
 
     expect(screen.getByRole("heading", { name: /heads up/i })).toBeInTheDocument();
@@ -83,7 +89,13 @@ describe("MatchAlert — Component Smoke Tests", () => {
   // ── MA-2 ─────────────────────────────────────────────────────
   it("MA-2: pending position 1 shows 'Coming Up Next' eyebrow", () => {
     render(
-      <MatchAlert {...baseProps} matchStatus="pending" court={null} onDeckPosition={1} totalOnDeck={1} />
+      <MatchAlert
+        {...baseProps}
+        matchStatus="pending"
+        court={null}
+        onDeckPosition={1}
+        totalOnDeck={1}
+      />
     );
 
     expect(screen.getByText(/coming up next/i)).toBeInTheDocument();
@@ -122,7 +134,13 @@ describe("MatchAlert — Component Smoke Tests", () => {
   // ── MA-5 ─────────────────────────────────────────────────────
   it("MA-5: pending renders Your Team and Opponents column labels", () => {
     render(
-      <MatchAlert {...baseProps} matchStatus="pending" court={null} onDeckPosition={1} totalOnDeck={1} />
+      <MatchAlert
+        {...baseProps}
+        matchStatus="pending"
+        court={null}
+        onDeckPosition={1}
+        totalOnDeck={1}
+      />
     );
 
     expect(screen.getByText("Your Team")).toBeInTheDocument();
@@ -132,7 +150,13 @@ describe("MatchAlert — Component Smoke Tests", () => {
   // ── MA-6 ─────────────────────────────────────────────────────
   it("MA-6: pending marks current player's row with 'You' label", () => {
     render(
-      <MatchAlert {...baseProps} matchStatus="pending" court={null} onDeckPosition={1} totalOnDeck={1} />
+      <MatchAlert
+        {...baseProps}
+        matchStatus="pending"
+        court={null}
+        onDeckPosition={1}
+        totalOnDeck={1}
+      />
     );
 
     // "You" label appears on the current player's row
@@ -159,9 +183,7 @@ describe("MatchAlert — Component Smoke Tests", () => {
 
   // ── MA-8 ─────────────────────────────────────────────────────
   it("MA-8: in_progress renders court name as heading", () => {
-    render(
-      <MatchAlert {...baseProps} matchStatus="in_progress" court={mockCourt} />
-    );
+    render(<MatchAlert {...baseProps} matchStatus="in_progress" court={mockCourt} />);
 
     // Court name is uppercased in the component via .toUpperCase()
     expect(screen.getByRole("heading", { name: /court 1/i })).toBeInTheDocument();
@@ -169,18 +191,14 @@ describe("MatchAlert — Component Smoke Tests", () => {
 
   // ── MA-9 ─────────────────────────────────────────────────────
   it("MA-9: in_progress shows 'Active Court' eyebrow", () => {
-    render(
-      <MatchAlert {...baseProps} matchStatus="in_progress" court={mockCourt} />
-    );
+    render(<MatchAlert {...baseProps} matchStatus="in_progress" court={mockCourt} />);
 
     expect(screen.getByText(/active court/i)).toBeInTheDocument();
   });
 
   // ── MA-10 ────────────────────────────────────────────────────
   it("MA-10: in_progress shows 'Match in Progress' status pill", () => {
-    render(
-      <MatchAlert {...baseProps} matchStatus="in_progress" court={mockCourt} />
-    );
+    render(<MatchAlert {...baseProps} matchStatus="in_progress" court={mockCourt} />);
 
     expect(screen.getByText(/match in progress/i)).toBeInTheDocument();
   });
@@ -188,12 +206,7 @@ describe("MatchAlert — Component Smoke Tests", () => {
   // ── MA-11 ────────────────────────────────────────────────────
   it("MA-11: in_progress shows Mixed Level banner when isMixedLevel=true", () => {
     render(
-      <MatchAlert
-        {...baseProps}
-        matchStatus="in_progress"
-        court={mockCourt}
-        isMixedLevel={true}
-      />
+      <MatchAlert {...baseProps} matchStatus="in_progress" court={mockCourt} isMixedLevel={true} />
     );
 
     expect(screen.getByText(/mixed level match/i)).toBeInTheDocument();
@@ -201,9 +214,7 @@ describe("MatchAlert — Component Smoke Tests", () => {
 
   // ── MA-12 ────────────────────────────────────────────────────
   it("MA-12: pending without court renders 'Heads Up' without crashing", () => {
-    render(
-      <MatchAlert {...baseProps} matchStatus="pending" court={null} />
-    );
+    render(<MatchAlert {...baseProps} matchStatus="pending" court={null} />);
 
     expect(screen.getByRole("heading", { name: /heads up/i })).toBeInTheDocument();
   });

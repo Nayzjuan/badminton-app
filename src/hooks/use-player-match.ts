@@ -41,10 +41,7 @@ interface UsePlayerMatchResult {
   refresh: () => Promise<void>;
 }
 
-export function usePlayerMatch(
-  sessionId: string,
-  playerId: string
-): UsePlayerMatchResult {
+export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMatchResult {
   const [currentMatch, setCurrentMatch] = useState<PlayerMatchInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -161,16 +158,11 @@ export function usePlayerMatch(
 
     // Fetch profiles for all players.
     const playerIds = allPlayers.map((p) => p.player_id);
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("*")
-      .in("id", playerIds);
+    const { data: profiles } = await supabase.from("profiles").select("*").in("id", playerIds);
 
     if (mySeq !== fetchMyMatchSeq.current) return;
 
-    const profileMap = new Map(
-      (profiles ?? []).map((p) => [p.id, p])
-    );
+    const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
 
     const teammates: Profile[] = [];
     const opponents: Profile[] = [];

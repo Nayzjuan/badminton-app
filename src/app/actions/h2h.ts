@@ -21,7 +21,9 @@ export async function getH2HRecord(
   const supabase = await createServerSupabaseClient();
 
   // Auth gate — match history is not public data
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return null;
 
   const { data, error } = await supabase.rpc("get_h2h_record", {

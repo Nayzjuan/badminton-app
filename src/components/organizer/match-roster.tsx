@@ -44,12 +44,12 @@ export interface RosterPlayer {
 // dot → text color only, matching the preview spec.
 // ADV/U.INT → amber, INT/L.INT → teal, L.ADV → blue, BEG → muted
 const SKILL_CONFIG_DARK: Record<SkillLevel, { color: string; abbr: string }> = {
-  beginner:           { color: "text-cc-t3",     abbr: "Beg"   },
+  beginner: { color: "text-cc-t3", abbr: "Beg" },
   lower_intermediate: { color: "text-cc-accent", abbr: "L.Int" },
-  intermediate:       { color: "text-cc-accent", abbr: "Int"   },
-  upper_intermediate: { color: "text-cc-amber",  abbr: "U.Int" },
-  lower_advanced:     { color: "text-cc-blue",   abbr: "L.Adv" },
-  advanced:           { color: "text-cc-amber",  abbr: "Adv"   },
+  intermediate: { color: "text-cc-accent", abbr: "Int" },
+  upper_intermediate: { color: "text-cc-amber", abbr: "U.Int" },
+  lower_advanced: { color: "text-cc-blue", abbr: "L.Adv" },
+  advanced: { color: "text-cc-amber", abbr: "Adv" },
 };
 
 // ── Internal: skill indicators ─────────────────────────────────
@@ -138,9 +138,7 @@ function PlayerRowLight({
       <div className="flex items-center gap-1.5 overflow-hidden">
         <span
           className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
-            isMe === false
-              ? "font-medium text-cc-t2"
-              : "font-medium text-cc-t1"
+            isMe === false ? "font-medium text-cc-t2" : "font-medium text-cc-t1"
           }`}
         >
           {player.display_name}
@@ -219,7 +217,10 @@ function PlayerRowDark({ player, isMe }: PlayerRowDarkProps) {
         </span>
         {hasTag && (
           <>
-            <span className="shrink-0 text-[11px] leading-none text-cc-t3 select-none" aria-hidden="true">
+            <span
+              className="shrink-0 text-[11px] leading-none text-cc-t3 select-none"
+              aria-hidden="true"
+            >
               |
             </span>
             <span className="shrink-0 leading-none">
@@ -318,10 +319,7 @@ export function TeamsGrid({
       {/* Row 2 — first player pair */}
       <div style={{ gridColumn: 1, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark
-            player={a0}
-            isMe={myPlayerId ? myPlayerId === a0.player_id : undefined}
-          />
+          <PlayerRowDark player={a0} isMe={myPlayerId ? myPlayerId === a0.player_id : undefined} />
         ) : (
           <PlayerRowLight
             player={a0}
@@ -334,10 +332,7 @@ export function TeamsGrid({
       </div>
       <div style={{ gridColumn: 3, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark
-            player={b0}
-            isMe={myPlayerId ? myPlayerId === b0.player_id : undefined}
-          />
+          <PlayerRowDark player={b0} isMe={myPlayerId ? myPlayerId === b0.player_id : undefined} />
         ) : (
           <PlayerRowLight
             player={b0}
@@ -352,10 +347,7 @@ export function TeamsGrid({
       {/* Row 3 — second player pair */}
       <div style={{ gridColumn: 1, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark
-            player={a1}
-            isMe={myPlayerId ? myPlayerId === a1.player_id : undefined}
-          />
+          <PlayerRowDark player={a1} isMe={myPlayerId ? myPlayerId === a1.player_id : undefined} />
         ) : (
           <PlayerRowLight
             player={a1}
@@ -368,10 +360,7 @@ export function TeamsGrid({
       </div>
       <div style={{ gridColumn: 3, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark
-            player={b1}
-            isMe={myPlayerId ? myPlayerId === b1.player_id : undefined}
-          />
+          <PlayerRowDark player={b1} isMe={myPlayerId ? myPlayerId === b1.player_id : undefined} />
         ) : (
           <PlayerRowLight
             player={b1}

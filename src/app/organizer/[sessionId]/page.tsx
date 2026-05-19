@@ -33,11 +33,7 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
   if (!user) redirect("/");
 
   // Get profile.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
   if (!profile) redirect("/");
 
@@ -62,11 +58,5 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
 
   const otherSessions = otherSessionsData ?? [];
 
-  return (
-    <OrganizerDashboard
-      profile={profile}
-      session={session}
-      otherSessions={otherSessions}
-    />
-  );
+  return <OrganizerDashboard profile={profile} session={session} otherSessions={otherSessions} />;
 }
