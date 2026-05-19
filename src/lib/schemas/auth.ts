@@ -12,6 +12,7 @@
 // ============================================================
 
 import { z } from "zod";
+import { SKILL_LEVELS, type SkillLevel } from "@/types/database";
 
 // ── Display Name ─────────────────────────────────────────────
 
@@ -39,6 +40,19 @@ export const pinSchema = z
   .string()
   .trim()
   .regex(/^\d{4}$/, { message: "PIN must be exactly 4 digits (e.g. 1234)." });
+
+// ── Skill Level ──────────────────────────────────────────────
+// Validates that a raw string is one of the known SkillLevel enum values.
+// Using SKILL_LEVELS (the canonical runtime array from database.ts) as the
+// source of truth so this schema is automatically kept in sync if new levels
+// are ever added — no duplicate hard-coded list to maintain here.
+
+export const skillLevelSchema = z
+  .string({ error: "Please select your skill level." })
+  .refine(
+    (val): val is SkillLevel => SKILL_LEVELS.some((s) => s.value === val),
+    { message: "Please select a valid skill level." }
+  );
 
 // ── Full registration input ───────────────────────────────────
 

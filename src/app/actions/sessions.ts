@@ -16,6 +16,7 @@ import { broadcastSessionClosed, broadcastAutoMatchmakingToggled } from "@/lib/b
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 import type { ScoringFormat } from "@/types/database";
+import { scoringFormatSchema } from "@/lib/schemas/sessions";
 
 // ── Passcode auto-generation ──────────────────────────────────
 
@@ -85,6 +86,15 @@ export async function createSession(opts: {
     return { success: false, message: "Passcode must be 20 characters or less." };
   }
 
+  // Validate scoring format against the canonical ScoringFormat enum at runtime.
+  // TypeScript narrows the type at compile time but `opts.scoring` arrives as an
+  // unknown value from the client; a crafted call could send any string.
+  const scoringResult = scoringFormatSchema.safeParse(opts.scoring);
+  if (!scoringResult.success) {
+    return { success: false, message: scoringResult.error.issues[0].message };
+  }
+  const scoring: ScoringFormat = scoringResult.data;
+
   const service = createServiceClient();
 
   // Determine the passcode to use
@@ -134,7 +144,7 @@ export async function createSession(opts: {
     .insert({
       name: trimmedName,
       created_by: user.id,
-      scoring: opts.scoring,
+      scoring,
       organizer_passcode: finalPasscode,
     })
     .select("id")

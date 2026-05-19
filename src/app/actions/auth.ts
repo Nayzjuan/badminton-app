@@ -11,7 +11,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
-import { displayNameSchema, pinSchema } from "@/lib/schemas/auth";
+import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 
 // Escape ILIKE special characters so a caller-supplied string is always
 // treated as a literal — never as a wildcard pattern.
@@ -23,7 +23,7 @@ function escapeLike(s: string): string {
 
 export async function signInAnonymously(formData: FormData) {
   const rawName = formData.get("display_name") as string | null;
-  const skillLevel = formData.get("skill_level") as SkillLevel;
+  const rawSkillLevel = formData.get("skill_level");
   const rawPin = formData.get("pin") as string | null;
   // Optional: if joining via QR/link, redirect straight to that session.
   const sessionId = (formData.get("session_id") as string)?.trim() || null;
@@ -36,9 +36,14 @@ export async function signInAnonymously(formData: FormData) {
   }
   const displayName = nameResult.data; // trimmed + spaces collapsed
 
-  if (!skillLevel) {
-    return { error: "Please select your skill level." };
+  // Validate skillLevel against the canonical SkillLevel enum at runtime —
+  // `as SkillLevel` is a compile-time cast only and would silently pass any
+  // arbitrary string from a crafted FormData payload.
+  const skillLevelResult = skillLevelSchema.safeParse(rawSkillLevel);
+  if (!skillLevelResult.success) {
+    return { error: skillLevelResult.error.issues[0].message };
   }
+  const skillLevel: SkillLevel = skillLevelResult.data;
 
   const pinResult = pinSchema.safeParse(rawPin ?? "");
   if (!pinResult.success) {

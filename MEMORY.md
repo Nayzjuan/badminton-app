@@ -5,7 +5,30 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-19)
+## SESSION STATE (Last Updated: 2026-05-19 — Security Audit Pass)
+
+### Security Audit + Patch (2026-05-19) — ALL COMPLETE
+
+**Goal:** Fix 3 input-validation security findings from a principal security engineer audit.
+
+**Files changed (not yet committed):**
+- `src/lib/schemas/auth.ts` — added `skillLevelSchema` (Zod v4 `.refine()` against `SKILL_LEVELS` source of truth)
+- `src/lib/schemas/sessions.ts` — **new file**: `scoringFormatSchema` validates `ScoringFormat` enum at runtime using `satisfies` const array
+- `src/app/actions/auth.ts` — replaced unsafe `as SkillLevel` cast with `skillLevelSchema.safeParse()` in `signInAnonymously`
+- `src/app/actions/sessions.ts` — added `scoringFormatSchema.safeParse()` before `createSession` DB insert; uses validated `scoring` var
+- `src/app/actions/match-lifecycle.ts` — added `scoreSchema` (Zod v4, 0–30 int range); applied in `endMatchAction` (extracts `safeA`/`safeB`) and `updateMatchDetails` (same pattern, score-edit path only)
+
+**Findings fixed:**
+- F2 (P1): No server-side score bounds → exploitable via crafted POST. Now gated by `scoreSchema`.
+- F3 (P2): `skillLevel` was an unsafe TypeScript cast, any string could persist to DB. Now Zod-validated.
+- F4 (P2): `ScoringFormat` unvalidated at runtime. Now Zod-validated before insert.
+
+**Skipped (by user request):**
+- F1 (P0): `profile.ts` PIN/skill actions only gate on `verifyAuthenticated()`, not `isSessionOrganizer()`. Intentionally deferred — current design allows easy organizer access.
+
+**Next step:** Commit the security fixes.
+
+---
 
 ### What Was Accomplished This Session — Full Architecture Audit + 6-Phase Remediation (2026-05-19)
 
