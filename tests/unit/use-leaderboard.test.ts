@@ -20,11 +20,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor, act } from "@testing-library/react";
-import {
-  useLeaderboard,
-  MIN_SESSION_GP,
-  MIN_ALLTIME_GP,
-} from "@/hooks/use-leaderboard";
+import { useLeaderboard, MIN_SESSION_GP, MIN_ALLTIME_GP } from "@/hooks/use-leaderboard";
 import type { LeaderboardRow } from "@/types/leaderboard";
 import type { LeaderboardSessionOption } from "@/hooks/use-leaderboard";
 
@@ -308,6 +304,87 @@ describe("useLeaderboard — Unit Suite", () => {
 
     expect(result.current.error).toBe("Failed to fetch leaderboard");
     expect(result.current.sessionRows).toHaveLength(0);
+  });
+
+  // ── LB-new-1 ──────────────────────────────────────────────
+  it("LB-new-1: error state set when getAllTimeLeaderboard returns an error (line 180)", async () => {
+    // Switch to alltime tab and trigger an error from getAllTimeLeaderboard.
+    mockGetAllTimeLeaderboard.mockResolvedValue({
+      success: false,
+      error: "All-time fetch failed",
+    });
+
+    const { result } = renderHook(() =>
+      useLeaderboard({
+        initialSessionId: null,
+        initialSessionName: undefined,
+        currentUserId: USER_ID,
+      })
+    );
+
+    // Switch to all-time tab to trigger the lazy fetch
+    await act(async () => {
+      result.current.setScopeTab("alltime");
+    });
+
+    await waitFor(() => expect(result.current.alltimeLoading).toBe(false));
+
+    expect(result.current.error).toBe("All-time fetch failed");
+    expect(result.current.alltimeRows).toHaveLength(0);
+  });
+
+  // ── LB-new-2 ──────────────────────────────────────────────
+  it("LB-new-2: handleRefresh on alltime scope tab calls fetchAllTime (line 276)", async () => {
+    mockGetAllTimeLeaderboard.mockResolvedValue({ success: true, rows: [otherRow] });
+
+    const { result } = renderHook(() =>
+      useLeaderboard({
+        initialSessionId: null,
+        initialSessionName: undefined,
+        currentUserId: USER_ID,
+      })
+    );
+
+    // Switch to all-time tab
+    await act(async () => {
+      result.current.setScopeTab("alltime");
+    });
+    await waitFor(() => expect(result.current.alltimeLoading).toBe(false));
+
+    const callCountBefore = mockGetAllTimeLeaderboard.mock.calls.length;
+
+    await act(async () => {
+      result.current.handleRefresh();
+    });
+
+    await waitFor(() =>
+      expect(mockGetAllTimeLeaderboard.mock.calls.length).toBeGreaterThan(callCountBefore)
+    );
+  });
+
+  // ── LB-new-3 ──────────────────────────────────────────────
+  it("LB-new-3: realtime subscription cleanup fires on unmount (lines 218-219)", async () => {
+    // subscribeToMatches returns an unsubscribe fn; realtimeCallback is captured.
+    // When the hook unmounts, the cleanup function in the useEffect should call
+    // unsubscribe (setting realtimeCallback = null) and clear any pending debounce.
+
+    const { result, unmount } = renderHook(() =>
+      useLeaderboard({
+        initialSessionId: SESSION_ID,
+        initialSessionName: SESSION_NAME,
+        currentUserId: USER_ID,
+      })
+    );
+
+    await waitFor(() => expect(result.current.sessionLoading).toBe(false));
+
+    // Subscription is active
+    expect(realtimeCallback).not.toBeNull();
+
+    // Unmount → cleanup runs → unsubscribe called → realtimeCallback = null
+    unmount();
+
+    expect(realtimeCallback).toBeNull();
   });
 
   // ── LB-bonus: minGP constants ──────────────────────────────

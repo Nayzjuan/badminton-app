@@ -32,7 +32,11 @@ const PLAYER_ID = "player-me";
 
 // ── Fixture factory ───────────────────────────────────────────
 
-function makeEntry(playerId: string, status: QueueEntry["status"] = "waiting", gamesPlayed = 0): QueueEntry {
+function makeEntry(
+  playerId: string,
+  status: QueueEntry["status"] = "waiting",
+  gamesPlayed = 0
+): QueueEntry {
   return {
     id: `qe-${playerId}`,
     session_id: SESSION_ID,
@@ -235,6 +239,34 @@ describe("useQueue — Unit Suite", () => {
 
     expect(mockCheckoutPlayer).toHaveBeenCalledWith(SESSION_ID);
     expect(leaveResult).toEqual({});
+  });
+
+  // ── Q-new-1 ────────────────────────────────────────────────
+  it("Q-new-1: fetchQueue with null data (DB error) → queue stays empty, loading false (line 51 false-branch)", async () => {
+    // When Supabase returns { data: null } (e.g. RLS block or network error),
+    // `if (data) setQueue(data)` is false → queue stays [] → loading set to false.
+    mockQueueRows = null as unknown as typeof mockQueueRows;
+
+    const { result } = renderHook(() => useQueue(SESSION_ID, PLAYER_ID));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // setQueue was never called — queue stays at the initial empty array
+    expect(result.current.queue).toEqual([]);
+    expect(result.current.myEntry).toBeNull();
+  });
+
+  // ── Q-new-2 ────────────────────────────────────────────────
+  it("Q-new-2: realtime subscription is cleaned up on unmount", async () => {
+    // Verifies the return cleanup of the useEffect wires and unwires the
+    // realtime subscription correctly — queueCallback = null after unmount.
+    mockQueueRows = [];
+
+    const { unmount } = renderHook(() => useQueue(SESSION_ID, PLAYER_ID));
+    await waitFor(() => expect(queueCallback).not.toBeNull());
+
+    unmount();
+
+    expect(queueCallback).toBeNull();
   });
 
   // ── Q-10 ───────────────────────────────────────────────────

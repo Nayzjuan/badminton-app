@@ -495,6 +495,131 @@ describe("runEngineForSession", () => {
     );
   });
 
+  it("ME-new-1: engine completes without error when runAlgorithm returns capSaturation=true (broadcast fires silently — env vars absent in tests)", async () => {
+    // Force capSaturation=true by supplying partnership counts that cap every
+    // anchor-candidate pair. The pool has anchor (p0) + 2 candidates (p1, p2),
+    // all at the same skill so every skill window would pass — but the cap filter
+    // removes p1 and p2 before the window loop runs, leaving candidates=[].
+    //
+    // capWasActive = pool.length-1(2) > candidates.length(0) = true
+    // → runAlgorithm returns { proposal: null, capSaturation: true }
+    // → broadcastCapSaturation() is called but env vars are absent in tests
+    //   so postBroadcast() logs a console.warn and returns immediately.
+    // → The .catch() handler in matchmaking.ts is NOT invoked (no rejection).
+    // → console.error is NOT called.
+
+    // Use wait_minutes=10 so maxWait(10) >= GATE_HOLD_MINUTES(8) → gateTimedOut=true
+    // → gate releases without an extra active-court query, matching the existing
+    // test pattern (4-player RPC failure test at ~line 428+).
+    const threePlayers = [
+      { id: "e-p0", session_id: SESSION_ID, player_id: "p0", joined_at: new Date(Date.now() - 10*60_000).toISOString(), games_played: 0, status: "waiting" as const, position: null, is_paused: false, created_at: new Date().toISOString(), display_name: "Player 0", skill_level: "intermediate" as const, skill_level_int: 4, wait_minutes: 10, is_bottleneck: false },
+      { id: "e-p1", session_id: SESSION_ID, player_id: "p1", joined_at: new Date(Date.now() - 9*60_000).toISOString(), games_played: 0, status: "waiting" as const, position: null, is_paused: false, created_at: new Date().toISOString(), display_name: "Player 1", skill_level: "intermediate" as const, skill_level_int: 4, wait_minutes: 9, is_bottleneck: false },
+      { id: "e-p2", session_id: SESSION_ID, player_id: "p2", joined_at: new Date(Date.now() - 8*60_000).toISOString(), games_played: 0, status: "waiting" as const, position: null, is_paused: false, created_at: new Date().toISOString(), display_name: "Player 2", skill_level: "intermediate" as const, skill_level_int: 4, wait_minutes: 8, is_bottleneck: false },
+    ];
+
+    // fetchPartnershipCounts: p0 played with p1 AND p2 twice each
+    // Matches: m1 (p0+p1 same team), m2 (p0+p2 same team) — each repeated twice
+    const matchRows = [{ id: "m1" }, { id: "m2" }, { id: "m3" }, { id: "m4" }];
+    const mpRows = [
+      // m1: p0-p1 same team → count +1
+      { match_id: "m1", player_id: "p0", team: "a" },
+      { match_id: "m1", player_id: "p1", team: "a" },
+      { match_id: "m1", player_id: "p2", team: "b" },
+      { match_id: "m1", player_id: "px", team: "b" },
+      // m2: p0-p2 same team → count +1
+      { match_id: "m2", player_id: "p0", team: "a" },
+      { match_id: "m2", player_id: "p2", team: "a" },
+      { match_id: "m2", player_id: "p1", team: "b" },
+      { match_id: "m2", player_id: "py", team: "b" },
+      // m3: p0-p1 same team again → p0-p1 count = 2 = MAX_PARTNERSHIP_REPEATS
+      { match_id: "m3", player_id: "p0", team: "a" },
+      { match_id: "m3", player_id: "p1", team: "a" },
+      { match_id: "m3", player_id: "p2", team: "b" },
+      { match_id: "m3", player_id: "px", team: "b" },
+      // m4: p0-p2 same team again → p0-p2 count = 2 = MAX_PARTNERSHIP_REPEATS
+      { match_id: "m4", player_id: "p0", team: "a" },
+      { match_id: "m4", player_id: "p2", team: "a" },
+      { match_id: "m4", player_id: "p1", team: "b" },
+      { match_id: "m4", player_id: "py", team: "b" },
+    ];
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
+      { data: [{ id: "c1" }], error: null },                  // [1] courts (1) → slotsAvailable=2
+      { count: 0, data: null, error: null },                   // [2] pending count=0
+      { data: threePlayers, error: null },                     // [3] gate: wait_minutes=10≥8 → gateTimedOut=true → releases (no extra query)
+      { data: [], error: null },                               // [4] fetchRecentRosters: matches → [] (no recent matches → no step 2)
+      { data: threePlayers, error: null },                     // [5] fetchActivePool: v_queue_with_wait_time
+      { data: [], error: null },                               // [6] fetchActivePool: paused filter
+      { data: matchRows, error: null },                        // [7] fetchPartnershipCounts step 1: match IDs
+      { data: mpRows, error: null },                           // [8] fetchPartnershipCounts step 2: match_players rows
+      // buildOverlapMap step 1: beyond array → default {data:null} → early return → empty overlapMap
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await runEngineForSession(SESSION_ID);
+
+    // capSaturation=true path: broadcastCapSaturation fires (silently, env vars absent)
+    // but console.error is NOT called
+    expect(consoleSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("no compatible match")
+    );
+
+    consoleSpy.mockRestore();
+  });
+
+  it("ME-new-2: console.error logged when runAlgorithm returns no match with capSaturation=false (skill/diversity exhaustion)", async () => {
+    // 8 players where anchor (skill=1) and all others (skill=9) are so far apart
+    // that no skill window covers them. Wait times < FALLBACK_WAIT_MINUTES (15 min)
+    // so the fallback also doesn't fire. No partnership caps active.
+    // → runAlgorithm returns { proposal: null, capSaturation: false }
+    // → the else-branch fires: console.error("...no compatible match...")
+
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // 8 players: pool=8 > GATE_POOL_THRESHOLD(4) so the soft gate doesn't hold.
+    const eightExtremes = Array.from({ length: 8 }, (_, i) => ({
+      id: `e-x${i}`, session_id: SESSION_ID,
+      player_id: i === 0 ? "pa" : `px${i}`,
+      joined_at: new Date(Date.now() - (8-i)*60_000).toISOString(),
+      games_played: 0, status: "waiting" as const, position: null, is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: i === 0 ? "Anchor" : `Player ${i}`,
+      skill_level: i === 0 ? "beginner" as const : "advanced" as const,
+      skill_level_int: i === 0 ? 1 : 9, // extreme spread: |9-1|=8 > max window of 4
+      wait_minutes: 8 - i,
+      is_bottleneck: false,
+    }));
+
+    const mock2 = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
+      { data: [{ id: "c1" }], error: null },                  // courts (1)
+      { count: 0, data: null, error: null },                   // pending count → slotsAvailable=2
+      { data: eightExtremes, error: null },                    // gate: 8 > 4 → gate not triggered; estimatedWaiting=8
+      { data: [], error: null },                               // fetchRecentRosters
+      { data: eightExtremes, error: null },                    // fetchActivePool: pool=8
+      { data: [], error: null },                               // paused filter
+      { data: [], error: null },                               // fetchPartnershipCounts step 1 → no matches → empty counts
+      // buildOverlapMap → beyond array → empty map
+      // runAlgorithm: anchor skill=1, candidates skill=9 → |9-1|=8 > max Red Zone window(4, only if Red Zone)
+      // anchor wait_minutes=8 < CRITICAL_WAIT_MINUTES=25 → not Red Zone → windows=[1,2]
+      // ±1: no candidates (|9-1|=8 > 1), ±2: no candidates → no match
+      // fallback: 8 > 15? No → no fallback
+      // → { proposal: null, capSaturation: false } → console.error logged
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock2 as never);
+
+    await runEngineForSession(SESSION_ID);
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("no compatible match")
+    );
+
+    consoleSpy.mockRestore();
+  });
+
   it("pool diversity cap limits second on-deck slot when remaining pool falls below threshold", async () => {
     // Fix 1: pool diversity cap prevents over-committing the free pool.
     // slotsAvailable = 3 (0 total pending → MAX_AUTO_DRAFTS=3 − 0 = 3, single atomic query).

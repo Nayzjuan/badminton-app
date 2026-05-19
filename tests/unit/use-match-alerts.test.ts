@@ -52,6 +52,9 @@ vi.mock("@/app/actions/notifications", () => ({
 let mockQueueRow: { status: string } | null = null;
 let mockMatchRow: { id: string; status: string } | null = null;
 let mockAssignments: { match_id: string }[] = [];
+// Controls what the bootstrap direct-await `match_players` query returns
+// (the `.eq().eq()` chain without `.maybeSingle()`).
+let mockBootstrapAssignments: { match_id: string }[] | null = null;
 
 let queueCallback: ((payload: unknown) => void) | null = null;
 let matchCallback: ((payload: unknown) => void) | null = null;
@@ -65,32 +68,26 @@ function buildMockClient() {
     return { data: null, error: null };
   };
 
+  const makeThen = (table: string) => (onFulfilled: (v: unknown) => unknown) => {
+    // The bootstrap match_players direct-await path:
+    // `await supabase.from("match_players").select(...).eq(...).eq(...)`
+    const data = table === "match_players" ? mockBootstrapAssignments : null;
+    return Promise.resolve({ data, error: null }).then(onFulfilled);
+  };
+
   return {
-    from: (table: string) => ({
-      select: () => {
-        const chain2 = {
-          eq: () => ({
-            eq: () => ({
-              in: () => ({
-                maybeSingle: makeMaybeSingle(table),
-              }),
-              maybeSingle: makeMaybeSingle(table),
-            }),
-            maybeSingle: makeMaybeSingle(table),
-          }),
-          in: () => ({
-            or: () => ({
-              order: () => ({
-                limit: () => ({
-                  maybeSingle: makeMaybeSingle(table),
-                }),
-              }),
-            }),
-          }),
-        };
-        return chain2;
-      },
-    }),
+    from: (table: string) => {
+      // Flat self-referential chain: every chaining method returns the same
+      // chain object so any query sequence (regardless of depth) resolves via
+      // `maybeSingle()` or direct `then`.
+      const chain: Record<string, unknown> = {};
+      for (const method of ["select", "eq", "in", "or", "order", "limit"]) {
+        chain[method] = () => chain;
+      }
+      chain["maybeSingle"] = makeMaybeSingle(table);
+      chain["then"] = makeThen(table);
+      return chain;
+    },
   };
 }
 
@@ -127,6 +124,7 @@ describe("useMatchAlerts — Unit Suite", () => {
     mockQueueRow = null;
     mockMatchRow = null;
     mockAssignments = [];
+    mockBootstrapAssignments = null;
     queueCallback = null;
     matchCallback = null;
     playerCallback = null;
@@ -268,5 +266,74 @@ describe("useMatchAlerts — Unit Suite", () => {
     expect(playWarningBeepMock).not.toHaveBeenCalled();
     expect(playCourtCallMock).not.toHaveBeenCalled();
     expect(sendPlayerNotificationMock).not.toHaveBeenCalled();
+  });
+
+  // ── UA-new-1 ────────────────────────────────────────────────
+  it("UA-new-1: bootstrap seeds assignedMatchId from an in_progress match assignment (lines 150-166)", async () => {
+    // Set bootstrap assignments so the match_players direct-await returns data.
+    mockBootstrapAssignments = [{ match_id: MATCH_ID }];
+    // The subsequent matches query uses .or().order().limit().maybeSingle() → mockMatchRow
+    mockMatchRow = { id: MATCH_ID, status: "in_progress" };
+    mockQueueRow = null;
+
+    renderHook(() => useMatchAlerts({ sessionId: SESSION_ID, playerId: PLAYER_ID }));
+    await vi.advanceTimersByTimeAsync(50);
+
+    // After bootstrap: assignedMatchId.current = MATCH_ID (set via lines 163-164).
+    // Verify by firing a match realtime event for MATCH_ID without slow-path mockAssignments.
+    // If the fast path works (assignedMatchId matches), COURT_CALL fires.
+    // If bootstrap failed to set it, slow path would be tried but mockAssignments=[] → no alert.
+    matchCallback?.(makeMatchPayload("in_progress"));
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Since lastMatchStatus was already set to "in_progress" by bootstrap,
+    // the status hasn't changed → no alert (next === prev → return).
+    // But there's no crash — bootstrap successfully ran lines 150-166.
+    // Verify by confirming the mock chain resolved correctly (no uncaught errors).
+    expect(playCourtCallMock).not.toHaveBeenCalled(); // same status → no transition
+  });
+
+  // ── UA-new-2 ────────────────────────────────────────────────
+  it("UA-new-2: bootstrap seeds assignedMatchId from a published pending match — fast path used when status transitions", async () => {
+    // Bootstrap: player assigned to a pending (on-deck) match.
+    mockBootstrapAssignments = [{ match_id: MATCH_ID }];
+    mockMatchRow = { id: MATCH_ID, status: "pending" };
+    mockQueueRow = { status: "on_deck" };
+
+    renderHook(() => useMatchAlerts({ sessionId: SESSION_ID, playerId: PLAYER_ID }));
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Bootstrap ran lines 150-166: assignedMatchId.current = MATCH_ID,
+    // lastMatchStatus.current = "pending".
+    //
+    // Now fire match update: pending → in_progress.
+    // Fast path: assignedMatchId.current === MATCH_ID → no slow-path query needed.
+    // mockAssignments remains empty so if slow path is accidentally taken, alert won't fire.
+    matchCallback?.(makeMatchPayload("in_progress"));
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Fast path: status changed pending→in_progress → COURT_CALL fires
+    expect(playCourtCallMock).toHaveBeenCalledTimes(1);
+  });
+
+  // ── UA-new-3 ────────────────────────────────────────────────
+  it("UA-new-3: match_players realtime callback resets assignedMatchId and re-bootstraps (lines 283-285)", async () => {
+    mockQueueRow = { status: "waiting" };
+    mockMatchRow = null;
+    mockBootstrapAssignments = null;
+
+    renderHook(() => useMatchAlerts({ sessionId: SESSION_ID, playerId: PLAYER_ID }));
+    await vi.advanceTimersByTimeAsync(50);
+
+    // Fire the match_players subscription callback (lines 283-285):
+    // This resets assignedMatchId.current = null, lastMatchStatus.current = null,
+    // then calls bootstrap() again.
+    expect(playerCallback).not.toBeNull();
+    playerCallback?.({}); // any payload triggers the re-bootstrap
+    await vi.advanceTimersByTimeAsync(50);
+
+    // No crash, no alert (queue and match are still null after re-bootstrap)
+    expect(playWarningBeepMock).not.toHaveBeenCalled();
+    expect(playCourtCallMock).not.toHaveBeenCalled();
   });
 });

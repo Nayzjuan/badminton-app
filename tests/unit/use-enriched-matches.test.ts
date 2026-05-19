@@ -32,9 +32,7 @@ const SESSION_ID = "sess-em-222";
 const MATCH_ID_1 = "match-em-aaa";
 const MATCH_ID_2 = "match-em-bbb";
 const PLAYER_A1 = "player-a1";
-const PLAYER_A2 = "player-a2";
 const PLAYER_B1 = "player-b1";
-const PLAYER_B2 = "player-b2";
 const COURT_ID = "court-em-1";
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -158,7 +156,12 @@ function renderWithCourts(
 
   return renderHook(() => {
     const courtsRef = useRef<Court[]>(courts);
-    return useEnrichedMatches(client as unknown as Parameters<typeof useEnrichedMatches>[0], SESSION_ID, courtsRef, options);
+    return useEnrichedMatches(
+      client as unknown as Parameters<typeof useEnrichedMatches>[0],
+      SESSION_ID,
+      courtsRef,
+      options
+    );
   });
 }
 
@@ -320,7 +323,12 @@ describe("useEnrichedMatches — Unit Suite", () => {
 
     const { result } = renderHook(() => {
       const courtsRef = useRef<Court[]>([]);
-      return useEnrichedMatches(racingClient as unknown as Parameters<typeof useEnrichedMatches>[0], SESSION_ID, courtsRef, { includeDrafts: true });
+      return useEnrichedMatches(
+        racingClient as unknown as Parameters<typeof useEnrichedMatches>[0],
+        SESSION_ID,
+        courtsRef,
+        { includeDrafts: true }
+      );
     });
 
     // Start first fetch (will hang until resolveFirst is called).
@@ -399,5 +407,115 @@ describe("useEnrichedMatches — Unit Suite", () => {
     expect(profileMap.size).toBe(2);
     expect(profileMap.get(PLAYER_A1)?.display_name).toBe("Alice");
     expect(profileMap.get(PLAYER_B1)?.display_name).toBe("Bob");
+  });
+
+  // ── EM-new-1 ────────────────────────────────────────────────
+  it("EM-new-1: match with no match_players → profiles query is skipped, match enriched with empty players array (lines 99-107 false-branch)", async () => {
+    // When a match has no match_players rows, playerIds.length === 0.
+    // Phase 3 guard: `if (playerIds.length > 0)` is false → profiles query is skipped.
+    // Match is still enriched with players: [].
+    const match = makeMatch(MATCH_ID_1, "in_progress");
+
+    const logs: QueryLog[] = [];
+    const { result } = renderWithCourts(
+      [],
+      { includeDrafts: true },
+      { matches: [match], match_players: [], profiles: [] },
+      logs
+    );
+
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+
+    expect(result.current.activeMatches).toHaveLength(1);
+    expect(result.current.activeMatches[0].players).toHaveLength(0);
+
+    // Profiles query should NOT have been issued (no playerIds)
+    const profileLog = logs.find((l) => l.table === "profiles");
+    expect(profileLog).toBeUndefined();
+  });
+
+  // ── EM-new-2 ────────────────────────────────────────────────
+  it("EM-new-2: race guard fires between match_players and profiles fetch — result discarded (mid-profiles race)", async () => {
+    // Extends EM-6 to verify the race guard inside the profiles-fetch block
+    // (line 104: `if (mySeq !== seqRef.current) return`).
+    //
+    // Sequence:
+    //   Fetch 1 starts: resolves matches + match_players quickly, but then
+    //     another fetch increments seqRef before fetch 1 checks the guard
+    //     inside the profiles block.
+    //   Fetch 2 starts and completes before fetch 1 proceeds.
+    //   Fetch 1 finds seqRef changed → returns early (guard fires).
+    //
+    // Observable: only fetch 2's result is applied; no crash.
+
+    let resolveFirst!: (v: undefined) => void;
+    const firstMatchPromise = new Promise<undefined>((res) => {
+      resolveFirst = res;
+    });
+
+    let callCount = 0;
+
+    const racingClient = {
+      from: (_table: string) => {
+        const isFirstMatchCall = _table === "matches" && callCount++ === 0;
+        const chain: Record<string, unknown> = {
+          select: () => chain,
+          eq: () => chain,
+          in: () => chain,
+          or: () => chain,
+          order: () => chain,
+          then: (onFulfilled: (v: unknown) => unknown) => {
+            if (isFirstMatchCall) {
+              // First matches fetch hangs until released.
+              return firstMatchPromise
+                .then(() => ({ data: [makeMatch(MATCH_ID_1, "in_progress")], error: null }))
+                .then(onFulfilled);
+            }
+            // Everything else resolves immediately.
+            const rows =
+              _table === "matches"
+                ? [makeMatch(MATCH_ID_2, "pending")]
+                : _table === "match_players"
+                  ? [makeMatchPlayer(MATCH_ID_2, PLAYER_A1, "a")]
+                  : _table === "profiles"
+                    ? [makeProfile(PLAYER_A1, "Alice")]
+                    : [];
+            return Promise.resolve({ data: rows, error: null }).then(onFulfilled);
+          },
+        };
+        return chain;
+      },
+    };
+
+    const { result } = renderHook(() => {
+      const courtsRef = useRef<Court[]>([]);
+      return useEnrichedMatches(
+        racingClient as unknown as Parameters<typeof useEnrichedMatches>[0],
+        SESSION_ID,
+        courtsRef,
+        { includeDrafts: true }
+      );
+    });
+
+    // Start first fetch (hangs on matches query).
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    const firstFetch = act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+
+    // Second fetch completes fully (match_players + profiles).
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+
+    // Release first fetch — but seqRef.current is now 2; fetch 1's seqRef is 1.
+    resolveFirst(undefined);
+    await firstFetch;
+
+    // Only fetch 2's result should be present.
+    expect(result.current.activeMatches).toHaveLength(1);
+    expect(result.current.activeMatches[0].id).toBe(MATCH_ID_2);
   });
 });

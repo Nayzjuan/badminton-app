@@ -311,6 +311,49 @@ describe("useMatchHistory", () => {
     });
   });
 
+  describe("MH-new-1: match with no players (lines 51 false-branch)", () => {
+    it("MH-new-1: match has no match_player rows → profiles query skipped, players array empty", async () => {
+      // When `playerIds.length === 0`, `if (playerIds.length > 0)` is false →
+      // the profiles fetch is skipped. Match is still enriched with players: [].
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue(
+        buildMockClient({
+          matches: [completedMatch],
+          match_players: [], // no players → playerIds = []
+          profiles: [],      // should never be queried
+        }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
+      );
+
+      const { result } = renderHook(() => useMatchHistory(SESSION_ID));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.matches).toHaveLength(1);
+      expect(result.current.matches[0].players).toHaveLength(0);
+    });
+  });
+
+  describe("MH-new-2: match with no court_id (lines 59 false-branch)", () => {
+    it("MH-new-2: match with null court_id → courts query skipped, courtName is null", async () => {
+      // When `courtIds.length === 0` (match has no court), `if (courtIds.length > 0)` is false →
+      // courts fetch is skipped. courtName is null for that match.
+      const noCourtMatch = { ...completedMatch, court_id: null };
+
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue(
+        buildMockClient({
+          matches: [noCourtMatch],
+          match_players: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }],
+          profiles: [knownProfile],
+          courts: [], // should not be queried since court_id is null
+        }) as unknown as ReturnType<typeof createBrowserSupabaseClient>
+      );
+
+      const { result } = renderHook(() => useMatchHistory(SESSION_ID));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.matches).toHaveLength(1);
+      expect(result.current.matches[0].courtName).toBeNull();
+    });
+  });
+
   describe("MH-9: Fetches completed AND cancelled", () => {
     it("includes cancelled matches in history", async () => {
       const cancelledMatch = {

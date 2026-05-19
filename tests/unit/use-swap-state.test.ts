@@ -333,4 +333,91 @@ describe("useSwapState", () => {
       );
     });
   });
+
+  // ── SS-new-1 / SS-new-2: handleUndoMatchSwap error branches ──────────────
+  // Lines 213–216 in use-swap-state.ts: the undo-match-swap error paths
+  // (MATCH_STARTED error code and generic fallback error).
+
+  describe("SS-new-1/2: handleUndoMatchSwap error toasts", () => {
+    async function triggerUndoMatchSwap(swapResult: { success: boolean; errorCode?: string }) {
+      // Set up swapMatchPlayers to succeed for the initial swap
+      const swapMatchPlayersMock = makeSwapMatchPlayers(true);
+      const { result } = setup([makeMatch(MATCH_A), makeMatch(MATCH_B)], swapMatchPlayersMock);
+
+      // Perform initial swap: Alice (matchA) ↔ Bob (matchB)
+      act(() => result.current.handlePlayerTap(makeCtx()));
+      await act(async () =>
+        result.current.handlePlayerTap(
+          makeCtx({ matchId: MATCH_B, outPlayerId: PLAYER_BOB, outPlayerName: "Bob" })
+        )
+      );
+      await waitFor(() => expect(swapMatchPlayersMock).toHaveBeenCalledTimes(1));
+
+      // Now override swapMatchPlayers for the undo call
+      swapMatchPlayersMock.mockResolvedValue(swapResult);
+
+      // Extract and fire the undo from the success toast action
+      const toastCall = vi.mocked(toast.success).mock.calls[0];
+      const toastOptions = toastCall?.[1] as { action?: { onClick: () => void } };
+      await act(async () => toastOptions?.action?.onClick());
+      await waitFor(() => expect(swapMatchPlayersMock).toHaveBeenCalledTimes(2));
+    }
+
+    it("SS-new-1: undo fires 'match has already started' toast when errorCode=MATCH_STARTED", async () => {
+      await triggerUndoMatchSwap({ success: false, errorCode: "MATCH_STARTED" });
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/match has already started/i)
+      );
+    });
+
+    it("SS-new-2: undo fires 'match may have changed' toast for generic failure (no errorCode)", async () => {
+      await triggerUndoMatchSwap({ success: false });
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/match may have changed/i)
+      );
+    });
+  });
+
+  // ── SS-new-3 / SS-new-4: handleUndoSwap error branches ───────────────────
+  // Lines 256–259 in use-swap-state.ts: the bench-swap undo error paths.
+
+  describe("SS-new-3/4: handleUndoSwap (bench swap) error toasts", () => {
+    async function triggerUndoSwap(swapResult: { success: boolean; errorCode?: string }) {
+      const swapPlayerMock = makeSwapPlayer(true);
+      const { result } = setup([makeMatch(MATCH_A)], makeSwapMatchPlayers(), swapPlayerMock);
+
+      const benchSwap = {
+        matchId: MATCH_A,
+        outPlayerId: PLAYER_ALICE,
+        outName: "Alice",
+        inPlayerId: PLAYER_BOB,
+        inName: "Bob",
+      };
+
+      // handleSwapComplete wires the undo toast for the bench swap path
+      act(() => result.current.handleSwapComplete(benchSwap));
+
+      // Override swapPlayer for the undo call
+      swapPlayerMock.mockResolvedValue(swapResult);
+
+      const toastCall = vi.mocked(toast.success).mock.calls[0];
+      const toastOptions = toastCall?.[1] as { action?: { onClick: () => void } };
+      await act(async () => toastOptions?.action?.onClick());
+      await waitFor(() => expect(swapPlayerMock).toHaveBeenCalledTimes(1));
+    }
+
+    it("SS-new-3: bench undo fires 'match has already started' toast when errorCode=MATCH_STARTED", async () => {
+      await triggerUndoSwap({ success: false, errorCode: "MATCH_STARTED" });
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/match has already started/i)
+      );
+    });
+
+    it("SS-new-4: bench undo fires 'match may have changed' toast for generic failure (no errorCode)", async () => {
+      await triggerUndoSwap({ success: false });
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/match may have changed/i)
+      );
+    });
+  });
 });

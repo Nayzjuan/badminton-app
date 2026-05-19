@@ -83,7 +83,9 @@ beforeEach(() => {
 describe("useOrganizerDashboard", () => {
   describe("OD-1: Active session initial state", () => {
     it("activeTab is 'courts' and isClosed is false when sessionIsActive=true", () => {
-      const { result } = renderHook(() => useOrganizerDashboard(makeParams({ sessionIsActive: true })));
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ sessionIsActive: true }))
+      );
 
       expect(result.current.activeTab).toBe("courts");
       expect(result.current.isClosed).toBe(false);
@@ -92,7 +94,9 @@ describe("useOrganizerDashboard", () => {
 
   describe("OD-2: Closed session initial state", () => {
     it("activeTab is 'history' and isClosed is true when sessionIsActive=false", () => {
-      const { result } = renderHook(() => useOrganizerDashboard(makeParams({ sessionIsActive: false })));
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ sessionIsActive: false }))
+      );
 
       expect(result.current.activeTab).toBe("history");
       expect(result.current.isClosed).toBe(true);
@@ -101,7 +105,9 @@ describe("useOrganizerDashboard", () => {
 
   describe("OD-3: Tabs config", () => {
     it("active session returns 5 tabs (courts, queue, monitor, history, leaderboard)", () => {
-      const { result } = renderHook(() => useOrganizerDashboard(makeParams({ sessionIsActive: true })));
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ sessionIsActive: true }))
+      );
 
       expect(result.current.tabs).toHaveLength(5);
       const keys = result.current.tabs.map((t) => t.key);
@@ -109,7 +115,9 @@ describe("useOrganizerDashboard", () => {
     });
 
     it("closed session returns 2 tabs (history + leaderboard)", () => {
-      const { result } = renderHook(() => useOrganizerDashboard(makeParams({ sessionIsActive: false })));
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ sessionIsActive: false }))
+      );
 
       expect(result.current.tabs).toHaveLength(2);
       const keys = result.current.tabs.map((t) => t.key);
@@ -178,7 +186,11 @@ describe("useOrganizerDashboard", () => {
 
   describe("OD-6: handleToggleAuto — optimistic toggle", () => {
     it("optimistically flips autoMatchmaking immediately before server responds, then confirms on success", async () => {
-      vi.mocked(toggleAutoMatchmaking).mockResolvedValue({ success: true, isOn: true, message: "" });
+      vi.mocked(toggleAutoMatchmaking).mockResolvedValue({
+        success: true,
+        isOn: true,
+        message: "",
+      });
 
       const { result } = renderHook(() =>
         useOrganizerDashboard(makeParams({ liveAutoMatchmaking: false }))
@@ -226,11 +238,15 @@ describe("useOrganizerDashboard", () => {
 
   describe("OD-7: pendingAuto yields back when liveAutoMatchmaking matches", () => {
     it("clears pendingAuto when liveAutoMatchmaking prop changes to agree with pendingAuto", async () => {
-      vi.mocked(toggleAutoMatchmaking).mockResolvedValue({ success: true, isOn: true, message: "" });
+      vi.mocked(toggleAutoMatchmaking).mockResolvedValue({
+        success: true,
+        isOn: true,
+        message: "",
+      });
 
       let liveAuto = false;
-      const { result, rerender } = renderHook(({ live }) =>
-        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: live })),
+      const { result, rerender } = renderHook(
+        ({ live }) => useOrganizerDashboard(makeParams({ liveAutoMatchmaking: live })),
         { initialProps: { live: liveAuto } }
       );
 
@@ -255,9 +271,7 @@ describe("useOrganizerDashboard", () => {
   describe("OD-8: Esc key calls handleCancelSwap", () => {
     it("fires handleCancelSwap when the Escape key is pressed", () => {
       const handleCancelSwap = vi.fn();
-      renderHook(() =>
-        useOrganizerDashboard(makeParams({ handleCancelSwap }))
-      );
+      renderHook(() => useOrganizerDashboard(makeParams({ handleCancelSwap })));
 
       act(() => {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -268,9 +282,7 @@ describe("useOrganizerDashboard", () => {
 
     it("does NOT call handleCancelSwap for non-Escape keys", () => {
       const handleCancelSwap = vi.fn();
-      renderHook(() =>
-        useOrganizerDashboard(makeParams({ handleCancelSwap }))
-      );
+      renderHook(() => useOrganizerDashboard(makeParams({ handleCancelSwap })));
 
       act(() => {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
@@ -297,16 +309,23 @@ describe("useOrganizerDashboard", () => {
     it("sets closing=true while the request is in-flight", async () => {
       let resolveClose!: (v: { success: boolean; message: string }) => void;
       vi.mocked(closeSession).mockImplementation(
-        () => new Promise((res) => { resolveClose = res; })
+        () =>
+          new Promise((res) => {
+            resolveClose = res;
+          })
       );
 
       const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
 
-      act(() => { result.current.handleCloseSession(); });
+      act(() => {
+        result.current.handleCloseSession();
+      });
 
       expect(result.current.closing).toBe(true);
 
-      await act(async () => { resolveClose({ success: true, message: "" }); });
+      await act(async () => {
+        resolveClose({ success: true, message: "" });
+      });
     });
   });
 
@@ -358,6 +377,55 @@ describe("useOrganizerDashboard", () => {
       });
 
       expect(toast.error).toHaveBeenCalledWith("Queue is full");
+    });
+  });
+
+  // ── OD-new-1 / OD-new-2: more-menu click-outside handler (lines 147–155) ──
+  //
+  // The `moreMenuRef` is exposed in the hook's return value.  We attach a DOM
+  // element to it so the `contains()` check in the effect has something real to
+  // test against.
+
+  describe("OD-new: more-menu click-outside effect", () => {
+    it("OD-new-1: mousedown outside the more-menu element closes the menu", () => {
+      const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
+
+      // Attach a detached DOM element to the ref so contains() works correctly.
+      const menuEl = document.createElement("div");
+      result.current.moreMenuRef.current = menuEl;
+
+      // Open the more-menu — this triggers the effect to register the listener.
+      act(() => result.current.setMoreMenuOpen(true));
+      expect(result.current.moreMenuOpen).toBe(true);
+
+      // Dispatch a mousedown on document itself (target = document, not inside menuEl).
+      act(() => {
+        document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      });
+
+      // menuEl.contains(document) = false → setMoreMenuOpen(false) called.
+      expect(result.current.moreMenuOpen).toBe(false);
+    });
+
+    it("OD-new-2: mousedown inside the more-menu element does NOT close the menu", () => {
+      const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
+
+      // Set up: menuEl contains a child; click will originate from the child.
+      const menuEl = document.createElement("div");
+      const childEl = document.createElement("button");
+      menuEl.appendChild(childEl);
+      result.current.moreMenuRef.current = menuEl;
+
+      act(() => result.current.setMoreMenuOpen(true));
+      expect(result.current.moreMenuOpen).toBe(true);
+
+      // Dispatch from the child (inside menuEl) — bubbles up to document.
+      // event.target = childEl; menuEl.contains(childEl) = true → menu stays open.
+      act(() => {
+        childEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      });
+
+      expect(result.current.moreMenuOpen).toBe(true);
     });
   });
 });

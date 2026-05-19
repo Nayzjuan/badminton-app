@@ -27,6 +27,7 @@ import {
   getEffectiveLookback,
   rotatedDraft,
   pairKey,
+  runAlgorithm,
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
@@ -34,6 +35,7 @@ import {
   RED_ZONE_SCORE_FLOOR,
   SKILL_VARIANCE_MAX,
   MAX_PARTNERSHIP_REPEATS,
+  FALLBACK_WAIT_MINUTES,
 } from "@/lib/constants";
 import type { ScoredPlayer } from "@/lib/matchmaking-core";
 import type { QueueWithWaitTime } from "@/types/database";
@@ -1156,5 +1158,121 @@ describe("rotatedDraft — cap enforcement", () => {
     // Should still be split 0 — split 0 pairs are uncapped
     expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// runAlgorithm — last-resort fallback and no-match paths
+// ─────────────────────────────────────────────────────────────
+// Covers the two paths that were previously untested:
+//
+//   MC-new-1  Fallback fires when anchor waited > FALLBACK_WAIT_MINUTES
+//             and all skill-window passes fail — returns isMixedLevel=true
+//   MC-new-2  Fallback fires but snakeDraft returns null (all team splits
+//             cap-blocked by non-anchor pairs) → proposal: null
+//   MC-new-3  Anchor wait exactly equals FALLBACK_WAIT_MINUTES (not
+//             exceeding it) → fallback does NOT fire → proposal: null
+//   MC-new-4  All candidates cap-blocked with the anchor → candidates=[]
+//             → capSaturation: true (cap was the blocking reason)
+
+describe("runAlgorithm — last-resort fallback and no-match paths", () => {
+  // ── MC-new-1 ─────────────────────────────────────────────────
+  it("MC-new-1: fallback fires when anchor waited > FALLBACK_WAIT_MINUTES and all skill windows fail — returns isMixedLevel=true", () => {
+    // Anchor: skill 5, wait just above threshold (not Red Zone)
+    const anchor = makePlayer("anchor", {
+      skillInt: 5,
+      waitMinutes: FALLBACK_WAIT_MINUTES + 1, // 16 min > 15 → fallback fires; < 25 → not Red Zone
+    });
+    // Three candidates at extreme skill 10 — |10-5|=5 > SKILL_VARIANCE_MAX(2)
+    // so they fail ALL skill-window passes (anchor not Red Zone → only ±1, ±2 tried)
+    const c1 = makePlayer("c1", { skillInt: 10, waitMinutes: 5 });
+    const c2 = makePlayer("c2", { skillInt: 10, waitMinutes: 4 });
+    const c3 = makePlayer("c3", { skillInt: 10, waitMinutes: 3 });
+
+    const pool = [anchor, c1, c2, c3];
+    const result = runAlgorithm(pool, new Map(), new Map(), []);
+
+    // Fallback path: no skill filtering → snakeDraft succeeds → isMixedLevel=true
+    expect(result.proposal).not.toBeNull();
+    expect(result.proposal!.isMixedLevel).toBe(true);
+    expect(result.capSaturation).toBe(false);
+    // Both teams must have exactly 2 players
+    expect(result.proposal!.teamA).toHaveLength(2);
+    expect(result.proposal!.teamB).toHaveLength(2);
+  });
+
+  // ── MC-new-2 ─────────────────────────────────────────────────
+  it("MC-new-2: fallback fires but snakeDraft returns null because all non-anchor candidate pairs are capped — proposal: null", () => {
+    const anchor = makePlayer("anchor", {
+      skillInt: 5,
+      waitMinutes: FALLBACK_WAIT_MINUTES + 1, // 16 min → fallback fires
+    });
+    // candidates skills 4,3,2: ±1 has only c1 (1 < 3), ±2 has c1+c2 (2 < 3) → all windows fail
+    const c1 = makePlayer("c1", { skillInt: 4, waitMinutes: 5 });
+    const c2 = makePlayer("c2", { skillInt: 3, waitMinutes: 4 });
+    const c3 = makePlayer("c3", { skillInt: 2, waitMinutes: 3 });
+
+    // Cap all non-anchor same-side pairs. Sorted DESC → [anchor(5),c1(4),c2(3),c3(2)]
+    // Split 0: teamA=[anchor,c3], teamB=[c1,c2] → c1-c2 capped → skip
+    // Split 1: teamA=[anchor,c2], teamB=[c1,c3] → c1-c3 capped → skip
+    // Split 2: teamA=[anchor,c1], teamB=[c2,c3] → c2-c3 capped → skip
+    const partnershipCounts = new Map([
+      [pairKey("c1", "c2"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("c1", "c3"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("c2", "c3"), MAX_PARTNERSHIP_REPEATS],
+    ]);
+
+    const pool = [anchor, c1, c2, c3];
+    const result = runAlgorithm(pool, partnershipCounts, new Map(), []);
+
+    // Fallback fires but snakeDraft exhausts all splits → no proposal
+    expect(result.proposal).toBeNull();
+    // capWasActive: anchor-candidate pairs are NOT capped → cap did not filter any
+    // candidate → capWasActive = false → capSaturation: false
+    expect(result.capSaturation).toBe(false);
+  });
+
+  // ── MC-new-3 ─────────────────────────────────────────────────
+  it("MC-new-3: anchor wait === FALLBACK_WAIT_MINUTES (not exceeding) → fallback does NOT fire → proposal: null", () => {
+    const anchor = makePlayer("anchor", {
+      skillInt: 5,
+      waitMinutes: FALLBACK_WAIT_MINUTES, // exactly 15 — condition is > 15, so this does NOT trigger
+    });
+    const c1 = makePlayer("c1", { skillInt: 10, waitMinutes: 5 });
+    const c2 = makePlayer("c2", { skillInt: 10, waitMinutes: 4 });
+    const c3 = makePlayer("c3", { skillInt: 10, waitMinutes: 3 });
+
+    const pool = [anchor, c1, c2, c3];
+    const result = runAlgorithm(pool, new Map(), new Map(), []);
+
+    // No skill-window match (|10-5|=5 > 2), fallback condition: 15 > 15 = false
+    expect(result.proposal).toBeNull();
+    expect(result.capSaturation).toBe(false); // no cap filtering happened
+  });
+
+  // ── MC-new-4 ─────────────────────────────────────────────────
+  it("MC-new-4: all anchor–candidate pairs cap-blocked → capSaturation: true", () => {
+    // Anchor far below fallback threshold so the fallback can't rescue
+    const anchor = makePlayer("anchor", {
+      skillInt: 5,
+      waitMinutes: 5, // well below FALLBACK_WAIT_MINUTES (15)
+    });
+    const c1 = makePlayer("c1", { skillInt: 5, waitMinutes: 4 });
+    const c2 = makePlayer("c2", { skillInt: 5, waitMinutes: 3 });
+    const c3 = makePlayer("c3", { skillInt: 5, waitMinutes: 2 });
+
+    // Every anchor–candidate pair is at or above MAX_PARTNERSHIP_REPEATS → all filtered out
+    const partnershipCounts = new Map([
+      [pairKey("anchor", "c1"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("anchor", "c2"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("anchor", "c3"), MAX_PARTNERSHIP_REPEATS],
+    ]);
+
+    const pool = [anchor, c1, c2, c3];
+    const result = runAlgorithm(pool, partnershipCounts, new Map(), []);
+
+    // candidates = [] (all filtered); capWasActive = pool.length-1 (3) > 0 = true
+    expect(result.proposal).toBeNull();
+    expect(result.capSaturation).toBe(true);
   });
 });

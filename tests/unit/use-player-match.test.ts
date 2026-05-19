@@ -245,6 +245,45 @@ describe("usePlayerMatch — Unit Suite", () => {
     await waitFor(() => expect(result.current.currentMatch).toBeNull());
   });
 
+  // ── U-new-1 ─────────────────────────────────────────────────
+  it("U-new-1: player assigned to a completed match → currentMatch null (no active match found, line 100 path)", async () => {
+    // Player has a match_players assignment but the match is "completed"
+    // → it doesn't pass the .or("status.eq.in_progress,...") filter
+    // → matches returns [] → setCurrentMatch(null) early return (line 100)
+    mockResponseQueue.match_players = [
+      // First query: assignments exist
+      [{ match_id: MATCH_ID, team: "a", matches: { session_id: SESSION_ID } }],
+    ];
+    // matches query returns empty (completed match not in active filter)
+    mockResponses.matches = [];
+
+    const { result } = renderHook(() => usePlayerMatch(SESSION_ID, PLAYER_ID));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.currentMatch).toBeNull();
+  });
+
+  // ── U-new-2 ─────────────────────────────────────────────────
+  it("U-new-2: match_players roster query returns null → currentMatch null without crashing (lines 154-156)", async () => {
+    // Player has an active match assignment, but the second match_players query
+    // (fetching all 4 players in the match) returns null — simulating a DB error.
+    // Guard at lines 154-156: `if (!allPlayers) { setCurrentMatch(null); setLoading(false); return; }`
+    //
+    // The mock queue accepts null entries: queue.shift() returns null →
+    // data: null → allPlayers = null → guard fires.
+    mockResponseQueue.match_players = [
+      [{ match_id: MATCH_ID, team: "a", matches: { session_id: SESSION_ID } }],
+      null as unknown as unknown[], // second call: data=null → triggers the null guard
+    ];
+    mockResponses.matches = [mockMatch];
+    mockResponses.courts = [];
+
+    const { result } = renderHook(() => usePlayerMatch(SESSION_ID, PLAYER_ID));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.currentMatch).toBeNull();
+  });
+
   // ── U-6 ────────────────────────────────────────────────────
   it("U-6: refresh() is callable and re-fetches", async () => {
     mockResponseQueue.match_players = [
