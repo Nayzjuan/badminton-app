@@ -53,6 +53,11 @@ import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import type { SkillLevel } from "@/types/database";
 import { SortableCard, OverlayCard, CapSaturationNotice } from "./sortable-card";
+import {
+  DND_ACTIVATION_DISTANCE_PX,
+  DND_TOUCH_DELAY_MS,
+  DND_TOUCH_TOLERANCE_PX,
+} from "@/lib/constants";
 
 // ── SwapContext ───────────────────────────────────────────────
 // Exported so OrganizerDashboard and SwapSheet can share the
@@ -164,8 +169,8 @@ function OnDeckPanelInner({
   const activeMatch = activeId ? (orderedMatches.find((m) => m.id === activeId) ?? null) : null;
 
   const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 3 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: DND_ACTIVATION_DISTANCE_PX } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: DND_TOUCH_DELAY_MS, tolerance: DND_TOUCH_TOLERANCE_PX } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 

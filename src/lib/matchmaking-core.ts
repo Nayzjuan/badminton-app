@@ -20,6 +20,7 @@ import {
   GAME_PENALTY_MINUTES,
   MAX_PARTNERSHIP_REPEATS,
   RED_ZONE_SCORE_FLOOR,
+  RED_ZONE_SKILL_VARIANCE_MAX,
   SKILL_VARIANCE_MAX,
   SKILL_VARIANCE_TARGET,
 } from "@/lib/constants";
@@ -420,6 +421,9 @@ export function scoreAndSortPool(rawPool: QueueWithWaitTime[]): ScoredPlayer[] {
     .map((p) => ({ ...p, priorityScore: computePriorityScore(p) }))
     .sort((a, b) => {
       const diff = b.priorityScore - a.priorityScore;
+      // wait_minutes is a float (EXTRACT(EPOCH)/60), so priorityScore can carry
+      // sub-millisecond FP noise. Treat differences < 0.001 min (~0.06 s) as
+      // equal and fall through to the joined_at tiebreaker.
       if (Math.abs(diff) > 0.001) return diff;
       // Same score bucket → earlier joiner wins (joined_at ASC tiebreaker).
       return new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime();
@@ -494,7 +498,7 @@ export function runAlgorithm(
   // Red Zone anchor: try ±1, ±2, ±3, ±4 to guarantee a match.
   // Normal anchor:   try ±1, ±2 only.
   const skillWindows = anchorIsRedZone
-    ? [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX, 3, 4]
+    ? [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX, SKILL_VARIANCE_MAX + 1, RED_ZONE_SKILL_VARIANCE_MAX]
     : [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX];
 
   // ── 3. Progressive expansion ──────────────────────────────

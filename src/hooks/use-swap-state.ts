@@ -16,7 +16,24 @@ import { toast } from "sonner";
 import type { SwapContext } from "@/components/organizer/on-deck-panel";
 import type { UndoableSwap } from "@/components/organizer/swap-sheet";
 import type { EnrichedMatch } from "@/hooks/use-enriched-matches";
+import type { SwapErrorCode, SwapMatchPlayersErrorCode } from "@/app/actions/swap-player";
 
+type MatchSwapArgs = [first: Omit<SwapContext, "mode">, second: Omit<SwapContext, "mode">];
+
+/**
+ * Two-path swap state machine for the organizer dashboard.
+ *
+ * Path 1 (direct): two-tap player selection → `handlePlayerTap` → `executeMatchSwap`
+ *   → `swapMatchPlayers` server action → undoable toast.
+ * Path 2 (bench): single tap → `handleOpenBenchSwap` opens SwapSheet → `swapPlayer`
+ *   server action → `handleSwapComplete` → undoable toast.
+ *
+ * `handlePlayerTap` is a stable `useCallback` (reads swapContext via ref) so
+ * OnDeckPanel's `memo` boundary is not broken by re-renders that update swapContext.
+ *
+ * Layer 2 guard: proactively clears picking mode when any on-deck match disappears —
+ * prevents a confusing server error if the organizer is mid-pick when a match starts.
+ */
 export function useSwapState(
   sessionId: string,
   onDeckMatches: EnrichedMatch[],
@@ -26,12 +43,12 @@ export function useSwapState(
     matchBId: string,
     playerBId: string,
     sessionId: string
-  ) => Promise<{ success: boolean; errorCode?: string; message?: string }>,
+  ) => Promise<{ success: boolean; errorCode?: SwapMatchPlayersErrorCode; message?: string }>,
   swapPlayer: (
     matchId: string,
     outPlayerId: string,
     inPlayerId: string
-  ) => Promise<{ success: boolean; errorCode?: string; error?: string }>
+  ) => Promise<{ success: boolean; errorCode?: SwapErrorCode; error?: string }>
 ) {
   // ── Tap-to-Swap state ───────────────────────────────────────
   // swapContext drives both picking-mode (direct match↔match swap)
@@ -45,14 +62,14 @@ export function useSwapState(
   // Ref mirrors swapContext so the stable useCallback can read current
   // value without being included in deps (avoids breaking OnDeckPanel memo).
   const swapContextRef = useRef<SwapContext | null>(null);
-  // eslint-disable-next-line react-hooks/refs
-  swapContextRef.current = swapContext;
+  useEffect(() => {
+    swapContextRef.current = swapContext;
+  }, [swapContext]);
 
   // Ref mirrors executeMatchSwap so the stable handlePlayerTap useCallback
   // always calls the latest version — avoids a stale closure over swapMatchPlayers
   // or onDeckMatches if they ever change identity.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const executeMatchSwapRef = useRef<(...args: any[]) => void>(() => {});
+  const executeMatchSwapRef = useRef<(...args: MatchSwapArgs) => void>(() => {});
 
   // Ref holds the last successful bench swap for the 5-second undo toast.
   // Using a ref (not state) so setting it doesn't cause a re-render.
@@ -86,6 +103,7 @@ export function useSwapState(
     // (a) Selected player's own match left on-deck
     const matchStillPending = onDeckMatches.some((m) => m.id === swapContext.matchId);
     if (!matchStillPending) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSwapContext(null);
       toast.warning("Match has started — the swap was cancelled automatically.");
       return;
@@ -93,6 +111,7 @@ export function useSwapState(
 
     // (b) Any other match left on-deck — target player pool changed
     if (onDeckMatches.length < prevLen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSwapContext(null);
       toast.warning("A match moved to a court — tap a player to try again.");
     }
@@ -126,6 +145,40 @@ export function useSwapState(
     // (which closes over current onDeckMatches for the Bug 3 pre-check).
     executeMatchSwapRef.current(current, ctx);
   }, []); // stable — reads from swapContextRef + executeMatchSwapRef
+
+  // ── handleUndoMatchSwap ─────────────────────────────────────
+  // Reverses a direct match↔match swap.
+  //
+  // After the initial swap:
+  //   first.outPlayerId  is now in  second.matchId
+  //   second.outPlayerId is now in  first.matchId
+  //
+  // So the undo must REVERSE the matchId arguments — pass each
+  // player's NEW match as the source, restoring original placement.
+  // For a same-match team swap (first.matchId == second.matchId)
+  // the argument order doesn't matter and this still works correctly.
+  //
+  // Declared before executeMatchSwap so the reference at the toast
+  // action site is not a forward reference (React Compiler analysis).
+  async function handleUndoMatchSwap(
+    first: Omit<SwapContext, "mode">,
+    second: Omit<SwapContext, "mode">
+  ) {
+    const result = await swapMatchPlayers(
+      second.matchId, // first.outPlayerId is NOW here
+      first.outPlayerId,
+      first.matchId, // second.outPlayerId is NOW here
+      second.outPlayerId,
+      first.sessionId
+    );
+    if (result.success) {
+      toast.success("Swap undone.");
+    } else if (result.errorCode === "MATCH_STARTED") {
+      toast.error("Couldn't undo — match has already started.");
+    } else {
+      toast.error("Couldn't undo — match may have changed.");
+    }
+  }
 
   // ── executeMatchSwap ────────────────────────────────────────
   // Calls the server action and shows undo-able toast on success.
@@ -183,39 +236,11 @@ export function useSwapState(
 
   // Keep the ref current so handlePlayerTap always calls the latest closure
   // (which captures the up-to-date onDeckMatches for the pre-check above).
-  // eslint-disable-next-line react-hooks/refs
-  executeMatchSwapRef.current = executeMatchSwap;
-
-  // ── handleUndoMatchSwap ─────────────────────────────────────
-  // Reverses a direct match↔match swap.
-  //
-  // After the initial swap:
-  //   first.outPlayerId  is now in  second.matchId
-  //   second.outPlayerId is now in  first.matchId
-  //
-  // So the undo must REVERSE the matchId arguments — pass each
-  // player's NEW match as the source, restoring original placement.
-  // For a same-match team swap (first.matchId == second.matchId)
-  // the argument order doesn't matter and this still works correctly.
-  async function handleUndoMatchSwap(
-    first: Omit<SwapContext, "mode">,
-    second: Omit<SwapContext, "mode">
-  ) {
-    const result = await swapMatchPlayers(
-      second.matchId, // first.outPlayerId is NOW here
-      first.outPlayerId,
-      first.matchId, // second.outPlayerId is NOW here
-      second.outPlayerId,
-      first.sessionId
-    );
-    if (result.success) {
-      toast.success("Swap undone.");
-    } else if (result.errorCode === "MATCH_STARTED") {
-      toast.error("Couldn't undo — match has already started.");
-    } else {
-      toast.error("Couldn't undo — match may have changed.");
-    }
-  }
+  // No deps array — executeMatchSwap is redeclared every render and must
+  // always reflect the latest onDeckMatches snapshot for the pre-flight check.
+  useEffect(() => {
+    executeMatchSwapRef.current = executeMatchSwap;
+  });
 
   // ── handleOpenBenchSwap ─────────────────────────────────────
   // Promotes picking mode → sheet mode (opens the bench-replacement drawer).

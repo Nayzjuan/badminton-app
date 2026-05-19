@@ -41,6 +41,7 @@ import {
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
+import { DASHBOARD_GRID_SIZE_PX } from "@/lib/constants";
 
 // ── Design token constants ───────────────────────────────────
 // Command-center surface tokens (theme-aware via cc-* tokens in globals.css).
@@ -149,7 +150,7 @@ export function OrganizerDashboard({
       style={{
         backgroundImage:
           "linear-gradient(var(--cc-grid-color) 1px, transparent 1px), linear-gradient(90deg, var(--cc-grid-color) 1px, transparent 1px)",
-        backgroundSize: "48px 48px",
+        backgroundSize: `${DASHBOARD_GRID_SIZE_PX}px ${DASHBOARD_GRID_SIZE_PX}px`,
       }}
     >
       {/* Top Header */}

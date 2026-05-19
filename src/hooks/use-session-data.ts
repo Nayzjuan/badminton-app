@@ -144,14 +144,9 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const fetchCourtsRef = useRef(fetchCourts);
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
   const fetchWaitlistRef = useRef(fetchWaitlist);
-  // Synchronous ref-update during render: intentional stable-callback pattern.
-  // The refs are only read inside effects/event handlers, never during render.
-  // eslint-disable-next-line react-hooks/refs
-  fetchCourtsRef.current = fetchCourts;
-  // eslint-disable-next-line react-hooks/refs
-  fetchActiveMatchesRef.current = fetchActiveMatches;
-  // eslint-disable-next-line react-hooks/refs
-  fetchWaitlistRef.current = fetchWaitlist;
+  useEffect(() => { fetchCourtsRef.current = fetchCourts; }, [fetchCourts]);
+  useEffect(() => { fetchActiveMatchesRef.current = fetchActiveMatches; }, [fetchActiveMatches]);
+  useEffect(() => { fetchWaitlistRef.current = fetchWaitlist; }, [fetchWaitlist]);
 
   useEffect(() => {
     // Use a unique channel prefix so these subscriptions don't collide

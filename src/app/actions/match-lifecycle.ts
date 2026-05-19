@@ -24,6 +24,15 @@ import { getAuthenticatedUser, isSessionOrganizer, type MatchActionResult } from
 // calling user is actually in the match before delegating
 // to the shared endMatchAction logic.
 // ============================================================
+
+/**
+ * Player-facing score submission. Verifies the calling user is a participant
+ * in the match before delegating to `endMatchAction`.
+ *
+ * The participant check prevents any authenticated user from ending a match
+ * they're not in. Callers should not pass matchId from untrusted input without
+ * isValidUUID pre-validation (performed here).
+ */
 export async function submitMatchScore(
   matchId: string,
   teamAScore: number,
@@ -246,6 +255,16 @@ export async function endMatchAction(
 //     with games_played decremented by 1. Use this when a player
 //     accidentally submitted the score before the game finished.
 // ============================================================
+
+/**
+ * Organizer-only score correction or match revert.
+ *
+ * Two modes controlled by `revertToActive`:
+ *   false — corrects the recorded scores on a completed match without re-opening it.
+ *   true  — resets scores to 0/0 and transitions the match back to `in_progress`,
+ *           reverting players' queue entries to "playing" with games_played decremented.
+ *           Use when a score was submitted by accident before the game finished.
+ */
 export async function updateMatchDetails(
   matchId: string,
   teamAScore: number,
@@ -381,6 +400,15 @@ export async function updateMatchDetails(
 // ============================================================
 // cancelMatchAction
 // ============================================================
+
+/**
+ * Cancels an active (in_progress or pending) match and returns all players to
+ * "waiting" status. Players are restored BEFORE the engine runs so they are
+ * immediately eligible for the next match generation cycle.
+ *
+ * Uses a CAS-style guard: reads the current status and aborts if it has already
+ * changed — prevents double-cancel under concurrent organizer actions.
+ */
 export async function cancelMatchAction(matchId: string): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
   const db = createServiceClient();
@@ -499,7 +527,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
 // disconnected browser from leaving courts permanently in_use
 // with no active match row.
 // ============================================================
-export interface CreateManualMatchResult {
+export type CreateManualMatchResult = {
   success: boolean;
   message: string;
   matchId?: string;

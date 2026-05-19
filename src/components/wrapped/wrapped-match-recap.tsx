@@ -32,9 +32,13 @@ export function WrappedMatchRecap({ matchHistory }: WrappedMatchRecapProps) {
           const isTeamA = match.team === "a";
           const myScore = isTeamA ? match.team_a_score : match.team_b_score;
           const theirScore = isTeamA ? match.team_b_score : match.team_a_score;
-          const won = myScore !== null && theirScore !== null && myScore > theirScore;
-          const draw = myScore !== null && theirScore !== null && myScore === theirScore;
-          const lost = !won && !draw;
+          // Guard: both scores must be non-null before determining outcome.
+          // Without this, a match with null scores would show as "Lost" because
+          // won=false and draw=false both hold when scores are absent.
+          const hasScores = myScore !== null && theirScore !== null;
+          const won = hasScores && myScore! > theirScore!;
+          const draw = hasScores && myScore! === theirScore!;
+          const lost = hasScores && !won && !draw;
 
           const completedDate = match.completed_at ? new Date(match.completed_at) : null;
           const timeStr = completedDate
@@ -55,7 +59,7 @@ export function WrappedMatchRecap({ matchHistory }: WrappedMatchRecapProps) {
               ? "rgba(255,255,255,0.2)"
               : "rgba(239,68,68,0.25)";
           const badgeColor = won ? "#fff" : draw ? "rgba(255,255,255,0.8)" : "#FCA5A5";
-          const badgeLabel = won ? "Won" : draw ? "Draw" : "Lost";
+          const badgeLabel = won ? "Won" : draw ? "Draw" : lost ? "Lost" : "—";
           const myScoreColor = won
             ? "#34D399"
             : draw

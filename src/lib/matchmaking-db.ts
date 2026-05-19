@@ -20,7 +20,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QueueWithWaitTime } from "@/types/database";
-import { ANTI_REPEAT_LOOKBACK } from "@/lib/constants";
+import { ANTI_REPEAT_LOOKBACK, COMMITTED_MATCH_STATUSES } from "@/lib/constants";
 import { pairKey, type MatchProposal } from "@/lib/matchmaking-core";
 
 // Convenience alias: all engine helpers run under the service-role client.
@@ -98,7 +98,7 @@ export async function fetchRecentRosters(
     .from("matches")
     .select("id")
     .eq("session_id", sessionId)
-    .in("status", ["completed", "in_progress", "pending"])
+    .in("status", COMMITTED_MATCH_STATUSES)
     .order("created_at", { ascending: false })
     .limit(ANTI_REPEAT_LOOKBACK);
 
@@ -145,7 +145,7 @@ export async function fetchPartnershipCounts(
     .from("matches")
     .select("id")
     .eq("session_id", sessionId)
-    .in("status", ["completed", "in_progress", "pending"]);
+    .in("status", COMMITTED_MATCH_STATUSES);
 
   if (matchErr || !sessionMatches || sessionMatches.length === 0) {
     if (matchErr) {
@@ -176,9 +176,9 @@ export async function fetchPartnershipCounts(
   }
 
   // Step 3: group by (match_id, team), count all same-team pairs.
+  // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
   const byMatchTeam = new Map<string, string[]>();
   for (const row of rows) {
-    if (row.team == null) continue;
     const key = `${row.match_id}:${row.team}`;
     const group = byMatchTeam.get(key) ?? [];
     group.push(row.player_id);
@@ -252,7 +252,7 @@ export async function buildOverlapMap(
     .from("matches")
     .select("id")
     .eq("session_id", sessionId)
-    .in("status", ["completed", "in_progress", "pending"])
+    .in("status", COMMITTED_MATCH_STATUSES)
     .in("id", allAnchorMatchIds)
     .order("created_at", { ascending: false })
     .limit(ANTI_REPEAT_LOOKBACK);
@@ -284,8 +284,9 @@ export async function buildOverlapMap(
 
   // Build a map of match_id → anchor's team assignment.
   const anchorTeamByMatch = new Map<string, string>();
+  // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
   for (const row of allPlayers) {
-    if (row.player_id === anchorPlayerId && row.team != null) {
+    if (row.player_id === anchorPlayerId) {
       anchorTeamByMatch.set(row.match_id, row.team);
     }
   }
@@ -295,7 +296,7 @@ export async function buildOverlapMap(
     if (row.player_id === anchorPlayerId) continue;
     const anchorTeam = anchorTeamByMatch.get(row.match_id);
     if (anchorTeam === undefined) continue;
-    if (row.team == null) continue;
+    // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
     // Teammate (same team) is weighted 2×; opponent 1×.
     const weight = row.team === anchorTeam ? 2 : 1;
     overlapMap.set(row.player_id, (overlapMap.get(row.player_id) ?? 0) + weight);

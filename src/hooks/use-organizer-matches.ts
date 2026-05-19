@@ -53,6 +53,14 @@ function useAction<TArgs extends unknown[]>(
   );
 }
 
+/**
+ * Manages active match state, subscriptions, and the full match lifecycle action set.
+ *
+ * Composes `useEnrichedMatches` for the data layer and wraps every match server
+ * action via the `useAction` factory so OrganizerDashboard stays a pure layout
+ * renderer. Separating match actions from queue/court actions keeps each sub-hook
+ * independently testable.
+ */
 export function useOrganizerMatches(
   sessionId: string,
   supabase: SupabaseClient<Database>,
@@ -103,8 +111,9 @@ export function useOrganizerMatches(
 
   // ── Stable refs for subscriptions ────────────────────────────
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
-  // eslint-disable-next-line react-hooks/refs
-  fetchActiveMatchesRef.current = fetchActiveMatches;
+  useEffect(() => {
+    fetchActiveMatchesRef.current = fetchActiveMatches;
+  }, [fetchActiveMatches]);
 
   // ── Realtime subscriptions ────────────────────────────────────
   useEffect(() => {

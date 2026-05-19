@@ -158,7 +158,78 @@ export const MAX_PARTNERSHIP_REPEATS = 2;
 // lower_advanced uses fuchsia (not amber) to avoid colliding with
 // the app's amber semantic for "pending / on-deck / warning".
 
-import type { SkillLevel } from "@/types/database";
+import type { MatchStatus, SkillLevel } from "@/types/database";
+
+/**
+ * The three match statuses that represent a committed team assignment.
+ * Used by matchmaking-db.ts to count partnership repeats and recent rosters.
+ *
+ * "pending" is included so unpublished drafts count toward the partnership
+ * cap immediately — preventing the engine from pairing the same players
+ * in a second draft before the first one is reviewed or cancelled.
+ */
+export const COMMITTED_MATCH_STATUSES: MatchStatus[] = ["completed", "in_progress", "pending"];
+
+// ── UI timing constants ───────────────────────────────────────────────────────
+
+/** ms delay between showing a success message and closing a dialog. */
+export const DIALOG_CLOSE_DELAY_MS = 800;
+
+/** ms delay before auto-focusing the first score input after a dialog opens.
+ *  Allows Radix to complete its focus-trap setup before we programmatically move focus. */
+export const DIALOG_FOCUS_DELAY_MS = 80;
+
+/** ms before a success/info toast auto-dismisses. */
+export const TOAST_DISMISS_MS = 5_000;
+
+/** ms before an error message auto-dismisses.
+ *  Longer than TOAST_DISMISS_MS — errors need more read time. */
+export const ERROR_AUTO_DISMISS_MS = 8_000;
+
+// ── Court timer constants ─────────────────────────────────────────────────────
+
+/** Minutes past the time limit that triggers the "critical" alert tier (red glow). */
+export const COURT_ALERT_CRITICAL_OFFSET_MINUTES = 10;
+
+/** ms interval for recomputing the court alert tier. Minute-level granularity is sufficient. */
+export const COURT_ALERT_RECOMPUTE_INTERVAL_MS = 30_000;
+
+// ── Score validation ──────────────────────────────────────────────────────────
+
+/** Maximum valid score in a single badminton game (standard 21-point, but we allow up to 30). */
+export const MAX_BADMINTON_SCORE = 30;
+
+/**
+ * Maximum skill variance window for Red Zone anchor candidates.
+ * Expands progressively — ±1, ±2, ±3, ±4 — until at least 3 eligible players
+ * are found. ±4 covers the full 6-level spectrum and is the last resort before
+ * the slot returns no-match.
+ */
+export const RED_ZONE_SKILL_VARIANCE_MAX = 4;
+
+// ── Drag-and-drop activation ──────────────────────────────────────────────────
+
+/** Minimum px the pointer must move before a drag starts (prevents accidental drags on tap). */
+export const DND_ACTIVATION_DISTANCE_PX = 3;
+
+/** ms a touch must be held before a drag starts. */
+export const DND_TOUCH_DELAY_MS = 150;
+
+/** px of movement tolerance during the DnD touch delay window. */
+export const DND_TOUCH_TOLERANCE_PX = 5;
+
+// ── Player queue display thresholds ──────────────────────────────────────────
+
+/** Queue position at or below which the player card shows an amber "approaching" indicator. */
+export const APPROACHING_QUEUE_THRESHOLD = 2;
+
+/** Queue position at or below which the OnDeckAlert banner is shown. */
+export const ON_DECK_ALERT_THRESHOLD = 4;
+
+// ── Organizer dashboard layout ────────────────────────────────────────────────
+
+/** px size of the background grid overlay on the organizer dashboard. */
+export const DASHBOARD_GRID_SIZE_PX = 48;
 
 export const SKILL_META: Record<SkillLevel, { label: string; abbr: string; dot: string }> = {
   beginner:           { label: "Beginner",           abbr: "Beg",   dot: "bg-emerald-500 dark:bg-emerald-400" },

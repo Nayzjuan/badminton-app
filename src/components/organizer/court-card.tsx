@@ -5,6 +5,10 @@
 // ============================================================
 
 import { useState, useEffect } from "react";
+import {
+  COURT_ALERT_CRITICAL_OFFSET_MINUTES,
+  COURT_ALERT_RECOMPUTE_INTERVAL_MS,
+} from "@/lib/constants";
 import { Plus, Trophy, XCircle, Swords, Trash2 } from "lucide-react";
 import { TeamsGrid } from "@/components/organizer/match-roster";
 import { MatchTimer } from "@/components/ui/match-timer";
@@ -61,17 +65,20 @@ export function CourtCard({
   const teamA = match?.players.filter((p) => p.team === "a") ?? [];
   const teamB = match?.players.filter((p) => p.team === "b") ?? [];
 
-  type CardState = "matchmaking" | "in_progress" | "available" | "closed";
+  // "active_match" is an internal discriminant — intentionally distinct from
+  // CourtStatus ("in_use") to avoid confusion. CardState is derived from
+  // hasActiveMatch, not from court.status directly.
+  type CardState = "matchmaking" | "active_match" | "available" | "closed";
   const cardState: CardState = isMatchmaking
     ? "matchmaking"
     : hasActiveMatch
-      ? "in_progress"
+      ? "active_match"
       : court.status === "closed"
         ? "closed"
         : "available";
 
   // When a match is live, the card flips to a dark navy surface.
-  const isActive = cardState === "in_progress";
+  const isActive = cardState === "active_match";
 
   // ── Court time alert tier ──────────────────────────────────
   // Recomputed every 30 s — only care about minute-level changes.
@@ -84,13 +91,13 @@ export function CourtCard({
     function computeTier(): AlertTier {
       if (!isActive || !timeLimitMinutes || !match?.started_at) return "normal";
       const elapsed = (Date.now() - new Date(match.started_at).getTime()) / 60_000;
-      if (elapsed >= timeLimitMinutes + 10) return "critical";
+      if (elapsed >= timeLimitMinutes + COURT_ALERT_CRITICAL_OFFSET_MINUTES) return "critical";
       if (elapsed >= timeLimitMinutes) return "warning";
       return "normal";
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAlertTier(computeTier());
-    const id = setInterval(() => setAlertTier(computeTier()), 30_000);
+    const id = setInterval(() => setAlertTier(computeTier()), COURT_ALERT_RECOMPUTE_INTERVAL_MS);
     return () => clearInterval(id);
   }, [isActive, timeLimitMinutes, match?.started_at]);
 
@@ -100,7 +107,7 @@ export function CourtCard({
       cls: "bg-cc-badge-progress-bg border-cc-amber/40 text-cc-amber",
       label: "Finding Match…",
     },
-    in_progress: {
+    active_match: {
       cls: "bg-cc-badge-progress-bg border-cc-amber/40 text-cc-amber",
       label: "In Progress",
     },
@@ -174,7 +181,7 @@ export function CourtCard({
         </div>
         {/* Right group — timer on top, status badge below (column) */}
         <div className="flex flex-col items-end gap-2 shrink-0">
-          {cardState === "in_progress" && match?.started_at && (
+          {cardState === "active_match" && match?.started_at && (
             <MatchTimer startedAt={match.started_at} variant="command" />
           )}
           <span

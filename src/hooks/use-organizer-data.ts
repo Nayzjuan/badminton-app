@@ -13,7 +13,7 @@
 //   useOrganizerMatches  — match lifecycle + draft/publish actions
 // ============================================================
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { EnrichedMatch } from "@/hooks/use-enriched-matches";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import type { CapSaturationPayload } from "@/lib/broadcast";
@@ -98,6 +98,14 @@ export interface UseOrganizerDataResult {
   dismissCapSaturation: () => void;
 }
 
+/**
+ * Thin composer that wires four focused sub-hooks into a single stable API surface.
+ *
+ * Sub-hook order matters: courts provides `courtsRef` to matches; matches needs a
+ * stable `fetchQueue` ref before the queue hook exists (circular dep workaround via
+ * `fetchQueueRef`). Re-exports `EnrichedMatch` so existing consumers don't need to
+ * update their import paths when the type was extracted.
+ */
 export function useOrganizerData(
   sessionId: string,
   initialSession: Session
@@ -155,10 +163,10 @@ export function useOrganizerData(
   // Needs courtsRef (stable) + fetchCourts + fetchQueue (passed after queue hook).
   // fetchQueue is referenced via the closure set up below — we define a stable
   // ref so the callback identity doesn't cause extra re-renders.
-  const fetchQueueRef = useMemo<{ current: () => Promise<void> }>(
-    () => ({ current: async () => {} }),
-    []
-  );
+  // Initialized to a no-op because fetchQueue doesn't exist yet (it comes from
+  // useOrganizerQueue which is called after useOrganizerMatches). The ref is
+  // wired up via useEffect once fetchQueue is available.
+  const fetchQueueRef = useRef<() => Promise<void>>(async () => {});
 
   const {
     activeMatches,
@@ -191,13 +199,10 @@ export function useOrganizerData(
 
   // ── Queue sub-hook ────────────────────────────────────────────
   // fetchActiveMatches ref so profile changes also refresh match cards.
-  const fetchActiveMatchesRef = useMemo<{ current: () => Promise<void> }>(
-    () => ({ current: fetchActiveMatches }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
-  );
-  // Keep ref current on every render.
-  fetchActiveMatchesRef.current = fetchActiveMatches;
+  const fetchActiveMatchesRef = useRef<() => Promise<void>>(fetchActiveMatches);
+  useEffect(() => {
+    fetchActiveMatchesRef.current = fetchActiveMatches;
+  }, [fetchActiveMatches]);
 
   // Stable callback — closes over the ref so it always calls the latest
   // fetchActiveMatches without a new function identity each render.
@@ -205,7 +210,7 @@ export function useOrganizerData(
   // every parent render (same pattern as handleChannelStatus pass-through).
   const onProfileChange = useCallback(
     () => fetchActiveMatchesRef.current(),
-    [fetchActiveMatchesRef] // stable: created via useMemo with empty deps
+    [] // stable: fetchActiveMatchesRef is a useRef (never changes identity)
   );
 
   const {
@@ -219,7 +224,11 @@ export function useOrganizerData(
   } = useOrganizerQueue(sessionId, supabase, handleChannelStatus, handleChannelStatus, onProfileChange);
 
   // Wire fetchQueue into the ref so useOrganizerMatches can call it.
-  fetchQueueRef.current = fetchQueue;
+  // useEffect ensures this runs after all sub-hooks have settled and
+  // before any realtime events fire (subscriptions are also in useEffect).
+  useEffect(() => {
+    fetchQueueRef.current = fetchQueue;
+  }, [fetchQueue]);
 
   const loading = courtsLoading || queueLoading || matchesLoading;
 

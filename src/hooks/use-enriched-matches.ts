@@ -49,6 +49,17 @@ export interface UseEnrichedMatchesOptions {
   onProfilesLoaded?: (profileMap: Map<string, Profile>) => void;
 }
 
+/**
+ * Fetches and subscribes to active matches (pending + in_progress), enriching
+ * each player record with their profile and court name.
+ *
+ * Designed for stability — `fetchActiveMatches` identity only changes when
+ * `sessionId` or `supabase` changes, so callers can safely include it in their
+ * own subscription `useEffect` deps without triggering restart loops.
+ *
+ * Set `includeDrafts: true` to include unpublished matches (organizer view).
+ * Omit or set `false` to mirror the player/TV view.
+ */
 export function useEnrichedMatches(
   supabase: SupabaseClient<Database>,
   sessionId: string,

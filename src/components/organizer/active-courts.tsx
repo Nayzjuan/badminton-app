@@ -21,6 +21,7 @@
 // ============================================================
 
 import { useState } from "react";
+import { TOAST_DISMISS_MS } from "@/lib/constants";
 import { Swords } from "lucide-react";
 import { ScoreModal } from "./score-modal";
 import { CourtTimePopover } from "@/components/ui/court-time-popover";
@@ -50,11 +51,11 @@ interface ActiveCourtsProps {
   onClearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
 }
 
-interface Toast {
+type Toast = {
   type: "success" | "error" | "warning";
   title: string;
   body: string;
-}
+};
 
 // ─── ActiveCourts (page-level container) ─────────────────────
 
@@ -92,7 +93,7 @@ export function ActiveCourts({
 
   function showToast(t: Toast) {
     setToast(t);
-    setTimeout(() => setToast(null), 5000);
+    setTimeout(() => setToast(null), TOAST_DISMISS_MS);
   }
 
   // ── Helpers ─────────────────────────────────────────────────

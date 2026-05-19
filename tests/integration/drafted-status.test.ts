@@ -523,7 +523,7 @@ describe("drafted queue_status", () => {
     const rpcArgs = {
       p_session_id: session.id,
       p_court_id: null,
-      p_status: "pending",
+      p_status: "pending" as const,
       p_is_mixed_level: false,
       p_started_at: null,
       p_is_on_deck: true,

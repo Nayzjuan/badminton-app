@@ -582,7 +582,7 @@ export type Database = {
         Args: {
           p_session_id: string;
           p_court_id: string | null;
-          p_status: string;
+          p_status: MatchStatus;
           p_is_mixed_level: boolean;
           p_started_at: string | null;
           p_is_on_deck: boolean;

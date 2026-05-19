@@ -11,65 +11,27 @@
 // • ThemeToggle for Vantablack Neon dark mode
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { useEffect, useState } from "react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MatchTimer } from "@/components/ui/match-timer";
 import { VipTag } from "@/components/ui/vip-tag";
-import { getTvData } from "@/app/actions/tv";
 import type { TvMatch, TvSession } from "@/app/actions/tv";
-import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { useTvBoard } from "@/hooks/use-tv-board";
 import { SKILL_META } from "@/lib/constants";
 import type { SkillLevel } from "@/types/database";
 
 // ─── Props ────────────────────────────────────────────────────
 
-interface TvBoardProps {
+type TvBoardProps = {
   sessionId: string;
   session: TvSession;
   initialMatches: TvMatch[];
-}
+};
 
 // ─── Root board ───────────────────────────────────────────────
 
 export function TvBoard({ sessionId, session, initialMatches }: TvBoardProps) {
-  const [matches, setMatches] = useState<TvMatch[]>(initialMatches);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
-
-  const refresh = useCallback(async () => {
-    const { matches: fresh } = await getTvData(sessionId);
-    setMatches(fresh);
-    setLastUpdated(new Date());
-  }, [sessionId]);
-
-  const refreshRef = useRef(refresh);
-  // eslint-disable-next-line react-hooks/refs
-  refreshRef.current = refresh;
-
-  useEffect(() => {
-    // Real-time subscriptions (fire when match state or players change)
-    const unsubMatches = subscribeToMatches(supabase, sessionId, () => refreshRef.current(), "tv");
-    const unsubPlayers = subscribeToMatchPlayers(
-      supabase,
-      sessionId,
-      () => refreshRef.current(),
-      "tv"
-    );
-
-    // Polling fallback — fires every 15 s even if anon RT events are
-    // filtered by RLS. Ensures the board never goes stale.
-    const poll = setInterval(() => refreshRef.current(), 15_000);
-
-    return () => {
-      unsubMatches();
-      unsubPlayers();
-      clearInterval(poll);
-    };
-  }, [supabase, sessionId]);
-
-  const inProgress = matches.filter((m) => m.status === "in_progress");
-  const onDeck = matches.filter((m) => m.status === "pending");
+  const { inProgress, onDeck, lastUpdated } = useTvBoard(sessionId, initialMatches);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#FAFAF7] dark:bg-background">
@@ -202,6 +164,8 @@ function TvCourtCard({ match }: { match: TvMatch }) {
 function TvOnDeckCard({ match, index }: { match: TvMatch; index: number }) {
   const teamA = match.players.filter((p) => p.team === "a");
   const teamB = match.players.filter((p) => p.team === "b");
+  // Date.now() is intentionally read during render — the TV board refreshes
+  // every 15 s via polling, so each render naturally reflects current time.
   // eslint-disable-next-line react-hooks/purity
   const minutesWaiting = Math.floor((Date.now() - new Date(match.created_at).getTime()) / 60_000);
 
@@ -249,13 +213,13 @@ function TvOnDeckCard({ match, index }: { match: TvMatch; index: number }) {
 // match-roster.tsx but scaled up for long-distance TV legibility
 // (text-xl names, h-12 VS badge, larger row padding).
 
-interface TvPlayerInfo {
+type TvPlayerInfo = {
   player_id: string;
   display_name: string;
   skill_level: SkillLevel;
   vip_tag: string | null;
   vip_theme: string | null;
-}
+};
 
 // SKILL_META from constants.ts provides dot + abbr for all 6 levels.
 

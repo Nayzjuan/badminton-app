@@ -150,6 +150,17 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
 // matches in one round trip. Called optimistically — the UI
 // has already reordered before this resolves.
 // ============================================================
+
+/**
+ * Persists the drag-and-drop sort order for on-deck matches.
+ *
+ * Called optimistically — the UI has already reordered locally. A failure here
+ * causes a soft desync that resolves on the next realtime refresh, which is
+ * acceptable since `sort_order` is a UX hint, not a functional constraint.
+ *
+ * Uses concurrent updates rather than a transaction because each row's
+ * `sort_order` is independent and partial writes are recoverable.
+ */
 export async function reorderOnDeckMatches(
   sessionId: string,
   orderedMatchIds: string[]

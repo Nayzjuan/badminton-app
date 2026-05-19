@@ -12,6 +12,7 @@ import { MatchHistory } from "./match-history";
 import type { useQueue } from "@/hooks/use-queue";
 import type { usePlayerMatch } from "@/hooks/use-player-match";
 import type { Profile, Session } from "@/types/database";
+import { APPROACHING_QUEUE_THRESHOLD, ON_DECK_ALERT_THRESHOLD } from "@/lib/constants";
 
 // ─────────────────────────────────────────────────────────────
 // MyStatusTab
@@ -202,11 +203,11 @@ function QueueSubTab({
 
   // ── Waiting in queue ────────────────────────────────────────
   if (isInQueue && myEntry?.status === "waiting") {
-    const isApproaching = myPosition !== null && myPosition <= 2;
+    const isApproaching = myPosition !== null && myPosition <= APPROACHING_QUEUE_THRESHOLD;
     return (
       <div className="flex flex-col items-center">
         {/* Approaching banner — only shows for positions 1–4 */}
-        {myPosition !== null && myPosition <= 4 && (
+        {myPosition !== null && myPosition <= ON_DECK_ALERT_THRESHOLD && (
           <div className="mb-2">
             <OnDeckAlert matchStatus={null} queueStatus="waiting" position={myPosition} />
           </div>

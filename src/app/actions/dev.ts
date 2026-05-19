@@ -96,7 +96,7 @@ function randomJoinedAt(guaranteeBottleneck: boolean): string {
 // ----------------------------------------------------------
 // Seed Test Data
 // ----------------------------------------------------------
-export interface SeedResult {
+export type SeedResult = {
   success: boolean;
   message: string;
   playerCount?: number;
@@ -111,6 +111,14 @@ export interface SeedResult {
 // actions should be disabled entirely (gated by NODE_ENV or a
 // feature flag). For now we at minimum require a valid session.
 async function requireAuth(): Promise<{ error: string } | null> {
+  // Hard-block in production — these actions use auth.admin and service-role,
+  // which can wipe live session data for any session ID a caller knows.
+  // TypeScript types are erased at runtime, so Next.js server actions receive
+  // raw JSON — a malicious authenticated player could call clearSessionData
+  // with an arbitrary session UUID without this guard.
+  if (process.env.NODE_ENV === "production") {
+    return { error: "Dev tools are disabled in production." };
+  }
   const user = await getAuthenticatedUser();
   if (!user) return { error: "Not authenticated." };
   return null;
@@ -400,7 +408,7 @@ export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
 // ----------------------------------------------------------
 // Clear Session Data
 // ----------------------------------------------------------
-export interface ClearResult {
+export type ClearResult = {
   success: boolean;
   message: string;
 }

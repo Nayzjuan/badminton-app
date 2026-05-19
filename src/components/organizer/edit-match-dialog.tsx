@@ -4,9 +4,8 @@
 // EditMatchDialog — Organizer score correction + revert to active
 // ============================================================
 
-import { useState, useTransition } from "react";
 import { Pencil, RotateCcw } from "lucide-react";
-import { updateMatchDetails } from "@/app/actions/match-lifecycle";
+import { useEditMatch } from "@/hooks/use-edit-match";
 import {
   Dialog,
   DialogContent,
@@ -15,61 +14,26 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-interface EditMatchDialogProps {
+type EditMatchDialogProps = {
   matchId: string;
   initialScoreA: number;
   initialScoreB: number;
-}
+};
 
 export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDialogProps) {
-  const [open, setOpen] = useState(false);
-  const [scoreA, setScoreA] = useState(String(initialScoreA));
-  const [scoreB, setScoreB] = useState(String(initialScoreB));
-  const [message, setMessage] = useState<string | null>(null);
-  const [isError, setIsError] = useState(false);
-  const [isPending, startTransition] = useTransition();
-
-  // Reset form whenever the dialog is opened.
-  function handleOpenChange(next: boolean) {
-    if (next) {
-      setScoreA(String(initialScoreA));
-      setScoreB(String(initialScoreB));
-      setMessage(null);
-    }
-    setOpen(next);
-  }
-
-  function handleSaveScore() {
-    const a = parseInt(scoreA, 10);
-    const b = parseInt(scoreB, 10);
-    if (isNaN(a) || isNaN(b) || a < 0 || b < 0) {
-      setMessage("Enter valid non-negative scores.");
-      setIsError(true);
-      return;
-    }
-    setMessage(null);
-    startTransition(async () => {
-      const result = await updateMatchDetails(matchId, a, b, false);
-      setMessage(result.message);
-      setIsError(!result.success);
-      if (result.success) {
-        // Real-time will update the card score; close after a short delay.
-        setTimeout(() => setOpen(false), 800);
-      }
-    });
-  }
-
-  function handleRevert() {
-    startTransition(async () => {
-      const result = await updateMatchDetails(matchId, 0, 0, true);
-      setMessage(result.message);
-      setIsError(!result.success);
-      if (result.success) {
-        // Match disappears from history list via real-time. Close dialog.
-        setTimeout(() => setOpen(false), 800);
-      }
-    });
-  }
+  const {
+    open,
+    scoreA,
+    scoreB,
+    setScoreA,
+    setScoreB,
+    message,
+    isError,
+    isPending,
+    handleOpenChange,
+    handleSaveScore,
+    handleRevert,
+  } = useEditMatch(matchId, initialScoreA, initialScoreB);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>

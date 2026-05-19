@@ -96,6 +96,14 @@ export interface UseOrganizerDashboardResult {
 
 // ── Hook ─────────────────────────────────────────────────────
 
+/**
+ * UI controller for the organizer dashboard shell.
+ *
+ * Owns tab navigation, dropdown/dialog open states, auto-matchmaking optimistic
+ * toggle, session-close flow, and click-outside handlers. Deliberately isolated
+ * from data fetching (useOrganizerData) so modal lifecycle and toggle flows can
+ * be tested without a Supabase mock.
+ */
 export function useOrganizerDashboard({
   sessionId,
   sessionIsActive,
@@ -192,7 +200,7 @@ export function useOrganizerDashboard({
       router.push("/organizer");
     } else {
       setClosing(false);
-      alert(result.message);
+      toast.error(result.message ?? "Failed to close session.");
     }
   }, [sessionId, router]);
 

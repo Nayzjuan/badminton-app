@@ -21,6 +21,7 @@
 // ============================================================
 
 import { useEffect, useRef } from "react";
+import { DIALOG_FOCUS_DELAY_MS, MAX_BADMINTON_SCORE } from "@/lib/constants";
 import {
   Dialog,
   DialogContent,
@@ -58,7 +59,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
       setTeamBScore("");
       clearError();
       // Small delay so Radix has finished its focus-trap setup.
-      const t = setTimeout(() => teamARef.current?.focus(), 80);
+      const t = setTimeout(() => teamARef.current?.focus(), DIALOG_FOCUS_DELAY_MS);
       return () => clearTimeout(t);
     }
     // setTeamAScore, setTeamBScore, clearError are stable (from useState)
@@ -83,8 +84,8 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
     !isNaN(bVal) &&
     aVal >= 0 &&
     bVal >= 0 &&
-    aVal <= 30 &&
-    bVal <= 30;
+    aVal <= MAX_BADMINTON_SCORE &&
+    bVal <= MAX_BADMINTON_SCORE;
 
   return (
     <Dialog

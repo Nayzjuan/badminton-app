@@ -26,6 +26,15 @@ import type { Session } from "@/types/database";
 // courts(1) + queue_entries(1) + matches(1) + match_players(1) + profiles(1) = 5
 const REALTIME_CHANNEL_COUNT = 5;
 
+/**
+ * Manages the live session record, realtime health tracking, and cap saturation signals.
+ *
+ * `realtimeConnected` is true only after all five table channels have confirmed
+ * SUBSCRIBED status. The dashboard shows a ReconnectModal when this is false.
+ *
+ * `handleChannelStatus` is a stable callback — safe to pass to child sub-hooks
+ * without causing subscription restarts on re-renders.
+ */
 export function useOrganizerSession(
   sessionId: string,
   initialSession: Session,

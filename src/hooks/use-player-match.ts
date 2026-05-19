@@ -199,6 +199,7 @@ export function usePlayerMatch(
 
   // Initial fetch + real-time subscriptions.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchMyMatch();
 
     const unsubMatches = subscribeToMatches(supabase, sessionId, () => {

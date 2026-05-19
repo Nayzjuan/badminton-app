@@ -8,7 +8,16 @@
 // ============================================================
 
 import { useState, useTransition } from "react";
+import { MAX_BADMINTON_SCORE } from "@/lib/constants";
 
+/**
+ * Shared score input state machine for ScoreInputCard (player) and ScoreModal (organizer).
+ *
+ * Validates that both scores are integers in [0, MAX_BADMINTON_SCORE] at submit time.
+ * Uses `useTransition` so the submit spinner does not block input re-renders during
+ * the server round-trip. Provides `clearError` so callers can reset the validation
+ * message on input change, independent of the submit cycle.
+ */
 export function useScoreForm(
   onSubmit: (teamA: number, teamB: number) => Promise<{ error?: string }>
 ) {
@@ -21,8 +30,8 @@ export function useScoreForm(
   function handleSubmit() {
     const a = parseInt(teamAScore, 10);
     const b = parseInt(teamBScore, 10);
-    if (isNaN(a) || isNaN(b) || a < 0 || b < 0 || a > 30 || b > 30) {
-      setError("Enter valid scores (0–30) for both teams.");
+    if (isNaN(a) || isNaN(b) || a < 0 || b < 0 || a > MAX_BADMINTON_SCORE || b > MAX_BADMINTON_SCORE) {
+      setError(`Enter valid scores (0–${MAX_BADMINTON_SCORE}) for both teams.`);
       return;
     }
     setError(null);

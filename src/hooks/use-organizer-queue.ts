@@ -37,6 +37,17 @@ function useAction<TArgs extends unknown[]>(
   );
 }
 
+/**
+ * Manages queue state, profile map, realtime subscriptions, and queue write actions.
+ *
+ * Uses a monotonic `fetchQueueSeq` ref to guard against stale concurrent fetches —
+ * only the most recent call commits its result to state, even if an older call
+ * resolves after a newer one.
+ *
+ * `onProfileChange` is an optional bridge callback: the composer (useOrganizerData)
+ * passes it to trigger `fetchActiveMatches` when a profile realtime event arrives,
+ * so match cards reflect updated skill levels without waiting for a match event.
+ */
 export function useOrganizerQueue(
   sessionId: string,
   supabase: SupabaseClient<Database>,
@@ -116,17 +127,20 @@ export function useOrganizerQueue(
 
   // ── Initial load ──────────────────────────────────────────────
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchQueue().then(() => setLoading(false));
   }, [fetchQueue]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchQueueProfiles();
   }, [fetchQueueProfiles]);
 
   // ── Stable refs for subscriptions ────────────────────────────
   const fetchQueueRef = useRef(fetchQueue);
-  // eslint-disable-next-line react-hooks/refs
-  fetchQueueRef.current = fetchQueue;
+  useEffect(() => {
+    fetchQueueRef.current = fetchQueue;
+  }, [fetchQueue]);
 
   // ── Realtime subscriptions ────────────────────────────────────
   useEffect(() => {

@@ -47,10 +47,10 @@ import { isRpcNotFound } from "@/lib/rpc-utils";
 // already in progress is unaffected; they're only removed from
 // the future queue so they don't get scheduled again.
 
-export interface CheckoutResult {
+export type CheckoutResult = {
   success: boolean;
   error?: string;
-}
+};
 
 // ── Soft Pause ────────────────────────────────────────────────
 // Toggles `is_paused` on the player's queue_entries row.
@@ -59,11 +59,19 @@ export interface CheckoutResult {
 // IMPORTANT: `joined_at` and `games_played` are never touched —
 // pausing does NOT forfeit queue position or game stats.
 
-export interface TogglePlayerPauseResult {
+export type TogglePlayerPauseResult = {
   success: boolean;
   error?: string;
-}
+};
 
+/**
+ * Toggles `is_paused` on a player's queue entry. Paused players remain visible
+ * in the organizer dashboard but are excluded from the matchmaking engine.
+ *
+ * Never touches `joined_at` or `games_played` — pausing does not forfeit queue
+ * position or game stats, allowing the organizer to temporarily hold a player
+ * without penalising them.
+ */
 export async function togglePlayerPause(
   sessionId: string,
   playerId: string,
@@ -108,6 +116,15 @@ export async function togglePlayerPause(
   return { success: true };
 }
 
+/**
+ * Marks the calling player as "left" in the given session, removing them from
+ * future matchmaking. Safe to call while on_deck or playing — the active match
+ * is unaffected; only future scheduling is blocked.
+ *
+ * Also cleans up any unpublished draft matches the player is assigned to via the
+ * `checkout_player_cleanup_drafts` RPC (falls back to a manual loop if the RPC
+ * is not yet deployed on this environment).
+ */
 export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult> {
   if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
   const supabase = await createServerSupabaseClient();
@@ -188,12 +205,27 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   return { success: true };
 }
 
-export interface JoinQueueResult {
+// success field is mandatory per the action contract (CLAUDE.md).
+// Callers that previously only checked `result.error` continue to work
+// since the field is additive; new callers should check `result.success`.
+export type JoinQueueResult = {
+  success: boolean;
   error?: string;
-}
+};
 
+/**
+ * Adds or re-activates the calling player in the session queue, applying
+ * Inherited Games logic to prevent late joiners from unfairly reaching position #1.
+ *
+ * Sets `games_played = MAX(player's current, session floor)` in both the first-join
+ * and re-join paths — a previous bug applied the floor only on first join, allowing
+ * returning players to line-jump with stale 0-game counts.
+ *
+ * Delegates to the `join_queue` RPC for atomicity; falls back to a manual
+ * non-atomic implementation if the RPC is not yet deployed on this environment.
+ */
 export async function joinQueueAction(sessionId: string): Promise<JoinQueueResult> {
-  if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
   const supabase = await createServerSupabaseClient();
 
   const {
@@ -202,7 +234,7 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   } = await supabase.auth.getUser();
 
   if (authError || !user) {
-    return { error: "Not authenticated. Please refresh and try again." };
+    return { success: false, error: "Not authenticated. Please refresh and try again." };
   }
 
   const svc = createServiceClient();
@@ -217,17 +249,17 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
       return await joinQueueFallback(supabase, sessionId, user.id);
     }
     console.error("[joinQueueAction] RPC error:", rpcError.message);
-    return { error: rpcError.message };
+    return { success: false, error: rpcError.message };
   }
 
   if (!result?.success) {
-    return { error: result?.error ?? "Failed to join queue." };
+    return { success: false, error: result?.error ?? "Failed to join queue." };
   }
 
   console.log(`[joinQueueAction] ${result.action} games_played=${result.games_played}`);
 
   await runEngineForSession(sessionId);
-  return {};
+  return { success: true };
 }
 
 // ============================================================
@@ -252,11 +284,23 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 // yet deployed on this environment (PGRST202).
 // ============================================================
 
-export interface RemovePlayerFromQueueResult {
+export type RemovePlayerFromQueueResult = {
   success: boolean;
   error?: string;
-}
+};
 
+/**
+ * Organizer kick with atomic match cleanup — removes a player and cancels any
+ * pending matches they're assigned to, returning the other players to "waiting".
+ *
+ * Delegates to the `remove_player_from_queue_organizer` RPC (migration 20260512200002)
+ * which locks the queue row, removes the player from rosters, cancels under-strength
+ * matches, and sets queue status = "left" in a single transaction. Falls back to a
+ * simple status update if the RPC is not yet deployed (known TOCTOU gap in fallback).
+ *
+ * On RPC success, broadcasts `match_cancelled` to the remaining players in any
+ * cancelled match so they see a toast rather than a silent UI state change.
+ */
 export async function removePlayerFromQueue(
   sessionId: string,
   playerId: string
@@ -349,7 +393,7 @@ async function joinQueueFallback(
 
   if (fetchError) {
     console.error("[joinQueueAction] fetch existing error:", fetchError.message);
-    return { error: fetchError.message };
+    return { success: false, error: fetchError.message };
   }
 
   if (
@@ -359,6 +403,7 @@ async function joinQueueFallback(
       existing.status === "playing")
   ) {
     return {
+      success: false,
       error: "You're currently in a match — wait for it to finish before rejoining the queue.",
     };
   }
@@ -391,11 +436,11 @@ async function joinQueueFallback(
 
     if (updateError) {
       console.error("[joinQueueAction] update error:", updateError.message);
-      return { error: updateError.message };
+      return { success: false, error: updateError.message };
     }
 
     await runEngineForSession(sessionId);
-    return {};
+    return { success: true };
   }
 
   const { error: insertError } = await supabase.from("queue_entries").insert({
@@ -408,9 +453,9 @@ async function joinQueueFallback(
 
   if (insertError) {
     console.error("[joinQueueAction] insert error:", insertError.message);
-    return { error: insertError.message };
+    return { success: false, error: insertError.message };
   }
 
   await runEngineForSession(sessionId);
-  return {};
+  return { success: true };
 }

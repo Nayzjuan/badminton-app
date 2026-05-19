@@ -19,7 +19,7 @@ import { H2HStrip } from "@/components/organizer/h2h-strip";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { CapSaturationPayload } from "@/lib/broadcast";
-import { MAX_PARTNERSHIP_REPEATS } from "@/lib/constants";
+import { CRITICAL_WAIT_MINUTES, MAX_PARTNERSHIP_REPEATS } from "@/lib/constants";
 import type { SwapContext } from "./on-deck-panel";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -112,7 +112,7 @@ export function CapSaturationNotice({
               ].join(" ")}
             >
               {isRedZone
-                ? `${capSaturation.anchorPlayerName} has been waiting over 25 min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
+                ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
                 : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`}
             </p>
           </div>

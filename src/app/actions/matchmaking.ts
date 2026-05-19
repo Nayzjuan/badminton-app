@@ -264,6 +264,22 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 //   3 pending → 0 slots (at cap)
 // Fills slots up to slotsAvailable, stopping when queue is exhausted.
 
+/**
+ * Core engine loop — computes how many on-deck slots are available (capped by
+ * MAX_AUTO_DRAFTS), then fills each slot by calling `runAlgorithm` against the
+ * waiting player pool.
+ *
+ * Why a loop rather than a batch: each iteration consumes players from the pool
+ * and must commit the match before the next slot can be computed accurately.
+ * Concurrency is handled by two mechanisms: (1) the process-level `engineRunningFor`
+ * Set that prevents re-entrancy within the same Node.js process, and (2) row-level
+ * locking inside the `create_match_with_players` RPC that makes each slot commit
+ * atomic against concurrent RPC calls from other processes.
+ *
+ * Soft gate: if the pool is at or below GATE_POOL_THRESHOLD AND a match is live,
+ * the gate defers scheduling so returning court players can be included in a
+ * larger, more diverse pool. Bypassed when `bypassGate` is true.
+ */
 async function runEngineInternal(
   supabase: ReturnType<typeof createServiceClient>,
   sessionId: string,

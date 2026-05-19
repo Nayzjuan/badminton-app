@@ -16,6 +16,14 @@ export type CompletedMatch = Match & {
   courtName: string | null;
 };
 
+/**
+ * Fetches and subscribes to the completed and cancelled match history for a session.
+ *
+ * Runs four sequential queries (matches → match_players → profiles → courts) and
+ * merges in-memory. The multi-query pattern avoids a Supabase JS nested-select
+ * that would require every court and profile to be re-fetched on every match change.
+ * Subscribes via `subscribeToMatches` so the panel updates automatically.
+ */
 export function useMatchHistory(sessionId: string) {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const [matches, setMatches] = useState<CompletedMatch[]>([]);
@@ -77,12 +85,14 @@ export function useMatchHistory(sessionId: string) {
   }, [supabase, sessionId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchHistory();
   }, [fetchHistory]);
 
   const fetchRef = useRef(fetchHistory);
-  // eslint-disable-next-line react-hooks/refs
-  fetchRef.current = fetchHistory;
+  useEffect(() => {
+    fetchRef.current = fetchHistory;
+  }, [fetchHistory]);
   useEffect(() => {
     const unsub = subscribeToMatches(supabase, sessionId, () => fetchRef.current(), "org-history");
     return unsub;

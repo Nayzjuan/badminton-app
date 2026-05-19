@@ -6,6 +6,7 @@
 // ============================================================
 
 import { useEffect, useState, useTransition } from "react";
+import { ERROR_AUTO_DISMISS_MS } from "@/lib/constants";
 import { useRouter } from "next/navigation";
 import { reconnectPlayer } from "@/app/actions/auth";
 import {
@@ -70,7 +71,7 @@ export function ReconnectModal({
   // Auto-dismiss local error after 8 s — matches main form behaviour.
   useEffect(() => {
     if (localError) {
-      const id = setTimeout(() => setLocalError(null), 8000);
+      const id = setTimeout(() => setLocalError(null), ERROR_AUTO_DISMISS_MS);
       return () => clearTimeout(id);
     }
   }, [localError]);

@@ -45,7 +45,7 @@ function generatePasscode(): string {
 
 // ── createSession ─────────────────────────────────────────────
 
-export interface CreateSessionResult {
+export type CreateSessionResult = {
   success: boolean;
   message: string;
   sessionId?: string;
@@ -168,7 +168,7 @@ export async function createSession(opts: {
 
 // ── joinAsCoOrganizer ─────────────────────────────────────────
 
-export interface JoinCoOrganizerResult {
+export type JoinCoOrganizerResult = {
   success: boolean;
   message: string;
   sessionId?: string;
@@ -245,7 +245,7 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
 
 // ── toggleAutoMatchmaking ─────────────────────────────────────
 
-export interface ToggleAutoMatchmakingResult {
+export type ToggleAutoMatchmakingResult = {
   success: boolean;
   isOn: boolean;
   message: string;
@@ -364,7 +364,7 @@ export async function updateSessionSettings(
 
 // ── getSessionForOrganizer ────────────────────────────────────
 
-export interface GetSessionResult {
+export type GetSessionResult = {
   success: boolean;
   session?: import("@/types/database").Session;
   error?: string;
@@ -413,7 +413,7 @@ export async function getSessionForOrganizer(sessionId: string): Promise<GetSess
   return { success: true, session: data };
 }
 
-export interface CloseSessionResult {
+export type CloseSessionResult = {
   success: boolean;
   message: string;
   /** true when compute_session_wrapped succeeded and Wrapped pages are ready. */

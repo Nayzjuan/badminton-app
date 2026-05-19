@@ -10,8 +10,20 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { subscribeToCourts } from "@/lib/realtime";
 import { updateSessionSettings } from "@/app/actions/sessions";
+import { addCourtAction, updateCourtStatusAction, removeCourtAction } from "@/app/actions/courts";
 import type { Court, Session } from "@/types/database";
 
+/**
+ * Manages court list state, realtime subscription, and court write actions.
+ *
+ * Write actions (`addCourt`, `updateCourtStatus`, `removeCourt`) delegate to server
+ * actions so the organizer-role check runs server-side and mutations stay out of the
+ * hook layer.
+ *
+ * `courtsRef` mirrors the courts array as a stable ref — pass it to
+ * `useOrganizerMatches` so match enrichment reads court names without courts
+ * appearing in the matches hook's dependency array.
+ */
 export function useOrganizerCourts(
   sessionId: string,
   supabase: SupabaseClient<Database>,
@@ -59,13 +71,15 @@ export function useOrganizerCourts(
 
   // ── Initial load ──────────────────────────────────────────────
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchCourts().then(() => setLoading(false));
   }, [fetchCourts]);
 
   // ── Stable ref for subscription ───────────────────────────────
   const fetchCourtsRef = useRef(fetchCourts);
-  // eslint-disable-next-line react-hooks/refs
-  fetchCourtsRef.current = fetchCourts;
+  useEffect(() => {
+    fetchCourtsRef.current = fetchCourts;
+  }, [fetchCourts]);
 
   // ── Realtime subscription ─────────────────────────────────────
   useEffect(() => {
@@ -83,32 +97,32 @@ export function useOrganizerCourts(
 
   const addCourt = useCallback(
     async (name: string) => {
-      const { error } = await supabase.from("courts").insert({ session_id: sessionId, name });
-      if (error) return { error: error.message };
+      const result = await addCourtAction(sessionId, name);
+      if (!result.success) return { error: result.message };
       await fetchCourts();
       return {};
     },
-    [supabase, sessionId, fetchCourts]
+    [sessionId, fetchCourts]
   );
 
   const updateCourtStatus = useCallback(
     async (courtId: string, status: Court["status"]) => {
-      const { error } = await supabase.from("courts").update({ status }).eq("id", courtId);
-      if (error) return { error: error.message };
+      const result = await updateCourtStatusAction(sessionId, courtId, status);
+      if (!result.success) return { error: result.message };
       await fetchCourts();
       return {};
     },
-    [supabase, fetchCourts]
+    [sessionId, fetchCourts]
   );
 
   const removeCourt = useCallback(
     async (courtId: string) => {
-      const { error } = await supabase.from("courts").delete().eq("id", courtId);
-      if (error) return { error: error.message };
+      const result = await removeCourtAction(sessionId, courtId);
+      if (!result.success) return { error: result.message };
       await fetchCourts();
       return {};
     },
-    [supabase, fetchCourts]
+    [sessionId, fetchCourts]
   );
 
   const updateTimeLimit = useCallback(

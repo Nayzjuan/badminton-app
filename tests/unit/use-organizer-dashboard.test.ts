@@ -356,7 +356,7 @@ describe("useOrganizerDashboard", () => {
 
   describe("joinQueue", () => {
     it("calls joinQueueAction with sessionId", async () => {
-      vi.mocked(joinQueueAction).mockResolvedValue({});
+      vi.mocked(joinQueueAction).mockResolvedValue({ success: true });
 
       const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
 
@@ -368,7 +368,7 @@ describe("useOrganizerDashboard", () => {
     });
 
     it("calls toast.error when joinQueueAction returns an error", async () => {
-      vi.mocked(joinQueueAction).mockResolvedValue({ error: "Queue is full" });
+      vi.mocked(joinQueueAction).mockResolvedValue({ success: false, error: "Queue is full" });
 
       const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
 

@@ -104,6 +104,14 @@ export interface UseLeaderboardResult {
 
 // ── Hook ─────────────────────────────────────────────────────
 
+/**
+ * Data + state hook for the leaderboard page.
+ *
+ * Owns fetch, realtime subscription, flash detection, and all derived state so
+ * LeaderboardPage stays a near-pure layout renderer. Switches between session-scoped
+ * and all-time views via `scopeTab`. When `scopeTab` is "session" and no active
+ * session is found, falls back gracefully to all-time stats.
+ */
 export function useLeaderboard({
   initialSessionId,
   initialSessionName,
