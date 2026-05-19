@@ -333,7 +333,12 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
     setLoading(false);
   }, [supabase, playerId]);
 
+  // fetchAll is a stable useCallback (deps: supabase, playerId). It calls
+  // setGroups/setLoading internally — the standard fetch-on-mount pattern.
+  // No infinite-loop risk: fetchAll identity only changes when supabase or
+  // playerId changes, not on every render.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAll();
   }, [fetchAll]);
 

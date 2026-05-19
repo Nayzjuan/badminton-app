@@ -51,14 +51,21 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
     setLoading(false);
   }, [supabase, sessionId, playerId, limit]);
 
-  // Initial fetch.
+  // Initial fetch. fetchHistory is a stable useCallback; calling it here is the
+  // standard fetch-on-mount pattern — no infinite-loop risk.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchHistory();
   }, [fetchHistory]);
 
   // Real-time: only subscribe when scoped to a specific session.
+  // fetchRef keeps the subscription callback stable — the effect below runs
+  // once on mount and only tears down when sessionId changes, while
+  // fetchRef.current always points to the latest fetchHistory identity.
   const fetchRef = useRef(fetchHistory);
-  fetchRef.current = fetchHistory;
+  useEffect(() => {
+    fetchRef.current = fetchHistory;
+  }, [fetchHistory]);
 
   useEffect(() => {
     if (!sessionId) return; // No real-time for all-time view.

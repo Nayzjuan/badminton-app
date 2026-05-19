@@ -20,29 +20,7 @@ import {
   isSessionOrganizer,
   type MatchActionResult,
 } from "@/app/actions/_shared";
-import { z } from "zod";
-
-// ── Score validation schema ───────────────────────────────────
-// Enforces server-side bounds so a crafted POST that bypasses
-// the client-side useScoreForm / EditMatchDialog checks cannot
-// persist invalid values (negatives, NaN, Infinity, 999999…)
-// into matches.team_a_score / team_b_score or corrupt the
-// refresh_alltime_leaderboard materialized view calculations.
-//
-// Max 30: standard badminton game cap. The organizer's EditMatchDialog
-// uses the same logical bound; this is the authoritative server gate.
-const scoreSchema = z.object({
-  teamAScore: z
-    .number({ error: "Score must be a number." })
-    .int({ error: "Score must be a whole number." })
-    .min(0, { error: "Score cannot be negative." })
-    .max(30, { error: "Score cannot exceed 30." }),
-  teamBScore: z
-    .number({ error: "Score must be a number." })
-    .int({ error: "Score must be a whole number." })
-    .min(0, { error: "Score cannot be negative." })
-    .max(30, { error: "Score cannot exceed 30." }),
-});
+import { scoreSchema } from "@/lib/schemas/match";
 
 // ============================================================
 // submitMatchScore — player-initiated score submission

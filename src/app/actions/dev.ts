@@ -107,17 +107,29 @@ export type SeedResult = {
 // RLS. Without an auth check, any authenticated player who knows
 // the session ID could call these actions and wipe session data.
 //
-// Guard: caller must be authenticated. In production, these
-// actions should be disabled entirely (gated by NODE_ENV or a
-// feature flag). For now we at minimum require a valid session.
+// Two-layer guard — BOTH must pass before any action is allowed:
+//
+//   Layer 1 — NODE_ENV: blocks the standard `next start` / Vercel
+//     production build. Limitation: NODE_ENV is set by the build
+//     process, not the operator. A staging environment built with
+//     NODE_ENV=production blocks correctly; one running `next dev`
+//     against a live DB would not be blocked by this layer alone.
+//
+//   Layer 2 — DEV_TOOLS_ENABLED: explicit operator opt-in. The var
+//     must be set to the string "true" in .env.local (or equivalent).
+//     Default-false posture means a missing or empty var = blocked.
+//     NEVER set this in production .env files.
+//
+// Together, the layers ensure dev tools are only accessible when an
+// engineer has explicitly unlocked them in a non-production build.
 async function requireAuth(): Promise<{ error: string } | null> {
-  // Hard-block in production — these actions use auth.admin and service-role,
-  // which can wipe live session data for any session ID a caller knows.
-  // TypeScript types are erased at runtime, so Next.js server actions receive
-  // raw JSON — a malicious authenticated player could call clearSessionData
-  // with an arbitrary session UUID without this guard.
   if (process.env.NODE_ENV === "production") {
     return { error: "Dev tools are disabled in production." };
+  }
+  if (process.env.DEV_TOOLS_ENABLED !== "true") {
+    return {
+      error: "Dev tools are disabled. Set DEV_TOOLS_ENABLED=true in .env.local to enable.",
+    };
   }
   const user = await getAuthenticatedUser();
   if (!user) return { error: "Not authenticated." };

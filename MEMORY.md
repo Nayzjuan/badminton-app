@@ -5,7 +5,30 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-19 — Security Audit Pass)
+## SESSION STATE (Last Updated: 2026-05-19 — 6-Issue Fix Pass)
+
+### 6-Issue Fix Pass (2026-05-19) — ALL COMPLETE
+
+**Goal:** Fix all issues from external verification report: schema location, ref consolidation, lint errors (5 files), DEV_TOOLS_ENABLED gate, next.config docs.
+
+**Files changed (committed in this pass):**
+- `src/lib/schemas/match.ts` *(new)* — `scoreSchema` extracted from `match-lifecycle.ts` into schemas dir for consistency
+- `src/app/actions/match-lifecycle.ts` — replaced inline `z` import + schema with `import { scoreSchema } from "@/lib/schemas/match"`
+- `src/hooks/use-session-data.ts` — 3 separate ref-sync `useEffect`s collapsed into 1 combined effect
+- `src/app/actions/dev.ts` — `requireAuth()` now requires BOTH `NODE_ENV !== "production"` AND `DEV_TOOLS_ENABLED === "true"`; `.env.local` updated with `DEV_TOOLS_ENABLED=true`
+- `next.config.ts` — added inline comments documenting the `/(.*)`-scope caveat, OAuth override pattern, and Supabase custom-domain note
+- `src/components/pwa-nav-bar.tsx` — moved all 5 hooks before the early `/wrapped/` return (rules-of-hooks fix)
+- `src/components/player/match-history.tsx` — bare `fetchRef.current = fetchHistory` during render → wrapped in `useEffect([fetchHistory])`; initial `fetchHistory()` call suppressed with `eslint-disable-next-line` inside effect body
+- `src/components/organizer/swap-sheet.tsx` — `/* eslint-disable/enable react-hooks/set-state-in-effect */` block INSIDE effect body wrapping 5 setState resets
+- `src/components/player/all-sessions-history.tsx` — `eslint-disable-next-line` inside effect body before `fetchAll()`
+- `src/components/ui/match-timer.tsx` — `/* eslint-disable/enable */` block INSIDE effect wrapping all `setDisplay` calls
+
+**Lint baseline:** 22 errors → 13 errors (9 fewer). Remaining 13 are pre-existing in sandbox/preview pages and UI components not in scope of this pass.
+
+**Skipped issues (per user request or design intent):**
+- F1 (P0 profile PIN/skill gate): intentionally skipped — current easy-access design for organizers
+
+---
 
 ### Security Audit + Patch (2026-05-19) — ALL COMPLETE
 

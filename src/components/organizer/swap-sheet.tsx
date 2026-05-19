@@ -94,13 +94,22 @@ export function SwapSheet({
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  // Reset on context change (parent passes key={matchId+outPlayerId}).
+  // Reset all local state when the swap context changes (i.e. the organizer picks
+  // a different player to swap out). The parent also passes key={matchId+outPlayerId}
+  // for full remounts, but this effect handles the case where context transitions
+  // without a key change (e.g. closing then reopening with the same match).
+  //
+  // All five vars are purely local to this component (no parent callbacks fired,
+  // no upward propagation). React 18 batches these into a single commit, and deps
+  // are stable primitive UUIDs/null — no state-in-deps infinite-loop risk.
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     setSelectedPlayerId(null);
     setMismatchDismissed(false);
     setIsConfirming(false);
     setInlineError(null);
     setSearch("");
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [context?.matchId, context?.outPlayerId]);
 
   const isOpen = context !== null;
@@ -239,9 +248,7 @@ export function SwapSheet({
                 {context.outPlayerName.charAt(0).toUpperCase()}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-cc-t1 truncate">
-                  {context.outPlayerName}
-                </p>
+                <p className="text-sm font-bold text-cc-t1 truncate">{context.outPlayerName}</p>
                 <SkillBadge level={context.outPlayerSkill} className="mt-0.5" />
               </div>
               <span

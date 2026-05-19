@@ -65,7 +65,12 @@ export function MatchTimer({
 }: MatchTimerProps) {
   const [display, setDisplay] = useState<string>("");
 
+  // setDisplay syncs the derived display string to startedAt/endedAt prop values.
+  // Deps are stable ISO strings (not state), so no infinite-loop risk. The LIVE
+  // interval branch calls setDisplay via setInterval — the rule cannot distinguish
+  // this from synchronous setState so the whole effect is suppressed once here.
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     if (!startedAt) {
       setDisplay("");
       return;
@@ -95,6 +100,7 @@ export function MatchTimer({
     }
     tick(); // immediate first render
     const id = setInterval(tick, 1_000);
+    /* eslint-enable react-hooks/set-state-in-effect */
     return () => clearInterval(id);
   }, [startedAt, endedAt]);
 

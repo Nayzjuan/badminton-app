@@ -10,12 +10,24 @@ import type { NextConfig } from "next";
 
 // ── Security headers applied to every route ───────────────────────────────
 //
+// source: "/(.*)" applies these headers to ALL routes, including
+// _next/static/, API routes, and favicon.ico. For static assets the
+// headers are harmless overhead. For API routes it is safe as long as
+// no endpoint needs to be embedded in an iframe or served cross-origin.
+//
+// ⚠️  If an OAuth callback or embeddable widget route is ever added,
+// override X-Frame-Options and frame-ancestors on that specific route
+// by adding a second entry to the headers() array with a narrower source.
+//
 // CSP uses unsafe-inline/unsafe-eval because Next.js App Router injects
 // hydration scripts inline. frame-ancestors and connect-src still provide
 // meaningful protection even with those flags set.
 //
 // X-Frame-Options is included alongside CSP frame-ancestors for older
 // browser compatibility (IE11, some crawlers).
+//
+// connect-src covers the Supabase project subdomain. If the project is
+// migrated to a custom domain, update the *.supabase.co pattern here.
 const SECURITY_HEADERS = [
   {
     key: "X-Content-Type-Options",

@@ -141,15 +141,15 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const fetchCourtsRef = useRef(fetchCourts);
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
   const fetchWaitlistRef = useRef(fetchWaitlist);
+  // Sync all three callback refs in a single effect so they're always
+  // up-to-date before the subscription effect runs, with one commit
+  // instead of three. Each callback is useCallback-memoised so identity
+  // only changes when supabase or sessionId changes.
   useEffect(() => {
     fetchCourtsRef.current = fetchCourts;
-  }, [fetchCourts]);
-  useEffect(() => {
     fetchActiveMatchesRef.current = fetchActiveMatches;
-  }, [fetchActiveMatches]);
-  useEffect(() => {
     fetchWaitlistRef.current = fetchWaitlist;
-  }, [fetchWaitlist]);
+  }, [fetchCourts, fetchActiveMatches, fetchWaitlist]);
 
   useEffect(() => {
     // Use a unique channel prefix so these subscriptions don't collide

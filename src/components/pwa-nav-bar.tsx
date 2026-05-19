@@ -22,30 +22,32 @@ export function PwaNavBar() {
   const pathname = usePathname();
   const router = useRouter();
 
-  // The Wrapped experience is a full-bleed immersive overlay —
-  // suppress the nav bar so it doesn't compete with the animation.
-  if (pathname.startsWith("/wrapped/")) return null;
-
+  // All hooks are declared unconditionally before any early return to
+  // satisfy the Rules of Hooks. Conditional rendering (Wrapped suppression)
+  // is handled after the hook block — hook call order is stable on every render.
   const [editing, setEditing] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [origin, setOrigin] = useState("");
 
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Grab origin client-side (window is unavailable on SSR).
+  // Grab origin client-side (window is unavailable on SSR). Empty dep array means
+  // this runs once on mount; setOrigin is called once and never triggers re-entry.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setOrigin(window.location.origin);
   }, []);
+
+  // The Wrapped experience is a full-bleed immersive overlay —
+  // suppress the nav bar so it doesn't compete with the animation.
+  if (pathname.startsWith("/wrapped/")) return null;
 
   // The full URL shown in the bar when not editing.
   const displayUrl = origin ? `${origin}${pathname}` : pathname;
 
   function openEditor() {
     // Pre-fill with the full URL including any query string.
-    const full =
-      typeof window !== "undefined"
-        ? window.location.href
-        : displayUrl;
+    const full = typeof window !== "undefined" ? window.location.href : displayUrl;
     setInputValue(full);
     setEditing(true);
     // Select all text after the input mounts so the user can type immediately.
@@ -137,9 +139,7 @@ export function PwaNavBar() {
                        px-2.5 text-left transition-colors"
           >
             <Globe className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-            <span className="truncate text-xs text-muted-foreground">
-              {displayUrl}
-            </span>
+            <span className="truncate text-xs text-muted-foreground">{displayUrl}</span>
           </button>
         )}
       </div>
