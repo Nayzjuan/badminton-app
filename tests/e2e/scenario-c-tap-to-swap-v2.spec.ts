@@ -92,22 +92,16 @@ test.describe("Tap-to-Swap v2 — [A] Picking mode activation", () => {
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
 
       // Bar should contain Alice's name
-      await expect(
-        page.getByTestId("swap-floating-bar").getByText("E2E_Alice")
-      ).toBeVisible();
+      await expect(page.getByTestId("swap-floating-bar").getByText("E2E_Alice")).toBeVisible();
 
       // Bar should show team label
-      await expect(
-        page.getByTestId("swap-floating-bar").getByText("Team A")
-      ).toBeVisible();
+      await expect(page.getByTestId("swap-floating-bar").getByText("Team A")).toBeVisible();
 
       // Floating bar should have "Pick from Bench" and Cancel buttons
       await expect(
         page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" })
       ).toBeVisible();
-      await expect(
-        page.getByRole("button", { name: "Cancel swap" })
-      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Cancel swap" })).toBeVisible();
 
       // Alice's pill should have aria-pressed="true" (selected state)
       await expect(alicePill).toHaveAttribute("aria-pressed", "true");
@@ -213,9 +207,7 @@ test.describe("Tap-to-Swap v2 — [D] Cancel via Esc key", () => {
 // [E] Same-match team swap
 // ─────────────────────────────────────────────────────────────
 test.describe("Tap-to-Swap v2 — [E] Same-match team swap", () => {
-  test("alice (Team A) ↔ cara (Team B) in match 1: teams swap, DB updated", async ({
-    browser,
-  }) => {
+  test("alice (Team A) ↔ cara (Team B) in match 1: teams swap, DB updated", async ({ browser }) => {
     const db = adminDb();
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
@@ -235,9 +227,9 @@ test.describe("Tap-to-Swap v2 — [E] Same-match team swap", () => {
       await expect(page.getByTestId("swap-floating-bar")).not.toBeVisible({ timeout: 8_000 });
 
       // Toast should confirm a swap
-      await expect(
-        page.locator("[data-sonner-toast]").filter({ hasText: "Swapped" })
-      ).toBeVisible({ timeout: 8_000 });
+      await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Swapped" })).toBeVisible({
+        timeout: 8_000,
+      });
 
       // ── DB assertions ──────────────────────────────────────
       const matchId = seeded.matchId!;
@@ -247,16 +239,18 @@ test.describe("Tap-to-Swap v2 — [E] Same-match team swap", () => {
         .select("player_id, team")
         .eq("match_id", matchId);
 
-      const aliceRow = (matchPlayers ?? []).find(p => p.player_id === seeded.players.alice.userId);
-      const caraRow  = (matchPlayers ?? []).find(p => p.player_id === seeded.players.cara.userId);
+      const aliceRow = (matchPlayers ?? []).find(
+        (p) => p.player_id === seeded.players.alice.userId
+      );
+      const caraRow = (matchPlayers ?? []).find((p) => p.player_id === seeded.players.cara.userId);
 
       // Alice should now be on Team B, Cara on Team A
       expect(aliceRow?.team).toBe("b");
       expect(caraRow?.team).toBe("a");
 
       // Bob and Dan remain on their original teams
-      const bobRow  = (matchPlayers ?? []).find(p => p.player_id === seeded.players.bob.userId);
-      const danRow  = (matchPlayers ?? []).find(p => p.player_id === seeded.players.dan.userId);
+      const bobRow = (matchPlayers ?? []).find((p) => p.player_id === seeded.players.bob.userId);
+      const danRow = (matchPlayers ?? []).find((p) => p.player_id === seeded.players.dan.userId);
       expect(bobRow?.team).toBe("a");
       expect(danRow?.team).toBe("b");
 
@@ -292,9 +286,9 @@ test.describe("Tap-to-Swap v2 — [F] Cross-match player swap", () => {
 
       await expect(page.getByTestId("swap-floating-bar")).not.toBeVisible({ timeout: 8_000 });
 
-      await expect(
-        page.locator("[data-sonner-toast]").filter({ hasText: "Swapped" })
-      ).toBeVisible({ timeout: 8_000 });
+      await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Swapped" })).toBeVisible({
+        timeout: 8_000,
+      });
 
       // ── DB: Match 1 now has Eve instead of Alice (Team A) ───
       const { data: m1Players } = await db
@@ -302,7 +296,7 @@ test.describe("Tap-to-Swap v2 — [F] Cross-match player swap", () => {
         .select("player_id, team")
         .eq("match_id", seeded.matchId!);
 
-      const m1Ids = (m1Players ?? []).map(p => p.player_id);
+      const m1Ids = (m1Players ?? []).map((p) => p.player_id);
       expect(m1Ids).toContain(seeded.players.eve.userId);
       expect(m1Ids).not.toContain(seeded.players.alice.userId);
       expect(m1Ids).toContain(seeded.players.bob.userId);
@@ -311,7 +305,7 @@ test.describe("Tap-to-Swap v2 — [F] Cross-match player swap", () => {
       expect(m1Players).toHaveLength(4);
 
       // Eve inherits Alice's Team A slot in match 1
-      const eveInM1 = (m1Players ?? []).find(p => p.player_id === seeded.players.eve.userId);
+      const eveInM1 = (m1Players ?? []).find((p) => p.player_id === seeded.players.eve.userId);
       expect(eveInM1?.team).toBe("a");
 
       // ── DB: Match 2 now has Alice instead of Eve (Team A) ───
@@ -320,13 +314,13 @@ test.describe("Tap-to-Swap v2 — [F] Cross-match player swap", () => {
         .select("player_id, team")
         .eq("match_id", seeded.matchId2!);
 
-      const m2Ids = (m2Players ?? []).map(p => p.player_id);
+      const m2Ids = (m2Players ?? []).map((p) => p.player_id);
       expect(m2Ids).toContain(seeded.players.alice.userId);
       expect(m2Ids).not.toContain(seeded.players.eve.userId);
       expect(m2Players).toHaveLength(4);
 
       // Alice inherits Eve's Team A slot in match 2
-      const aliceInM2 = (m2Players ?? []).find(p => p.player_id === seeded.players.alice.userId);
+      const aliceInM2 = (m2Players ?? []).find((p) => p.player_id === seeded.players.alice.userId);
       expect(aliceInM2?.team).toBe("a");
 
       // ── queue_entries: both players remain on_deck ───────────
@@ -412,9 +406,7 @@ test.describe("Tap-to-Swap v2 — [H] Pick from Bench escape", () => {
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
 
       // Click "Pick from Bench"
-      await page.getByTestId("swap-floating-bar")
-        .getByRole("button", { name: "Bench" })
-        .click();
+      await page.getByTestId("swap-floating-bar").getByRole("button", { name: "Bench" }).click();
 
       // Floating bar should disappear (mode switches to "sheet")
       await expect(page.getByTestId("swap-floating-bar")).not.toBeVisible({ timeout: 5_000 });
@@ -435,9 +427,7 @@ test.describe("Tap-to-Swap v2 — [H] Pick from Bench escape", () => {
 // [I] Undo cross-match swap
 // ─────────────────────────────────────────────────────────────
 test.describe("Tap-to-Swap v2 — [I] Undo", () => {
-  test("undo on the 5s toast reverts alice ↔ eve cross-match swap in DB", async ({
-    browser,
-  }) => {
+  test("undo on the 5s toast reverts alice ↔ eve cross-match swap in DB", async ({ browser }) => {
     const db = adminDb();
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
@@ -465,9 +455,9 @@ test.describe("Tap-to-Swap v2 — [I] Undo", () => {
       ).toBeVisible({ timeout: 10_000 });
 
       // Alice's pill should now be back in match 1's court card
-      await expect(
-        page.getByTestId(`player-pill-${seeded.players.alice.userId}`)
-      ).toBeVisible({ timeout: 5_000 });
+      await expect(page.getByTestId(`player-pill-${seeded.players.alice.userId}`)).toBeVisible({
+        timeout: 5_000,
+      });
 
       // ── DB: Alice back in match 1 ─────────────────────────
       const { data: m1Players } = await db
@@ -475,12 +465,12 @@ test.describe("Tap-to-Swap v2 — [I] Undo", () => {
         .select("player_id, team")
         .eq("match_id", seeded.matchId!);
 
-      const m1Ids = (m1Players ?? []).map(p => p.player_id);
+      const m1Ids = (m1Players ?? []).map((p) => p.player_id);
       expect(m1Ids).toContain(seeded.players.alice.userId);
       expect(m1Ids).not.toContain(seeded.players.eve.userId);
 
       // Alice back on Team A in match 1
-      const aliceRow = (m1Players ?? []).find(p => p.player_id === seeded.players.alice.userId);
+      const aliceRow = (m1Players ?? []).find((p) => p.player_id === seeded.players.alice.userId);
       expect(aliceRow?.team).toBe("a");
 
       // ── DB: Eve back in match 2 ───────────────────────────
@@ -489,7 +479,7 @@ test.describe("Tap-to-Swap v2 — [I] Undo", () => {
         .select("player_id, team")
         .eq("match_id", seeded.matchId2!);
 
-      const m2Ids = (m2Players ?? []).map(p => p.player_id);
+      const m2Ids = (m2Players ?? []).map((p) => p.player_id);
       expect(m2Ids).toContain(seeded.players.eve.userId);
       expect(m2Ids).not.toContain(seeded.players.alice.userId);
     } finally {
@@ -519,7 +509,9 @@ test.describe("Tap-to-Swap v2 — [J] Active court locked", () => {
       // Active court card should be visible
       // The court card is the ActiveCourts section (not OnDeckPanel)
       // Player pills on active courts are <div>, NOT <button> — no role="button"
-      const alicePillLocator = page.locator(`[data-testid="player-pill-${seeded.players.alice.userId}"]`);
+      const alicePillLocator = page.locator(
+        `[data-testid="player-pill-${seeded.players.alice.userId}"]`
+      );
 
       // The pill should either not exist (no data-testid on div variant) or
       // if present, should NOT be a button element
@@ -607,7 +599,7 @@ test.describe("Tap-to-Swap v2 — [K] Layer 2 pre-flight guard", () => {
         .select("player_id")
         .eq("match_id", seeded.matchId!);
 
-      const m1Ids = (m1Players ?? []).map(p => p.player_id);
+      const m1Ids = (m1Players ?? []).map((p) => p.player_id);
       expect(m1Ids).toContain(seeded.players.alice.userId);
       expect(m1Ids).toContain(seeded.players.bob.userId);
       expect(m1Ids).toContain(seeded.players.cara.userId);
