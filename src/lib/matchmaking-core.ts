@@ -77,16 +77,10 @@ export function computePriorityScore(player: QueueWithWaitTime): number {
 // Returns true iff every pairwise skill difference in the group
 // is within maxVariance. O(n²) — fine for n=4.
 
-export function isGroupValid(
-  players: ScoredPlayer[],
-  maxVariance: number
-): boolean {
+export function isGroupValid(players: ScoredPlayer[], maxVariance: number): boolean {
   for (let i = 0; i < players.length; i++) {
     for (let j = i + 1; j < players.length; j++) {
-      if (
-        Math.abs(players[i].skill_level_int - players[j].skill_level_int) >
-        maxVariance
-      ) {
+      if (Math.abs(players[i].skill_level_int - players[j].skill_level_int) > maxVariance) {
         return false;
       }
     }
@@ -117,9 +111,7 @@ export function snakeDraft(
   partnershipCounts?: Map<string, number>,
   cap?: number
 ): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
-  const sorted = [...allFour].sort(
-    (a, b) => b.skill_level_int - a.skill_level_int
-  );
+  const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
   // Without cap enforcement, always return the balanced default.
   if (!partnershipCounts || cap === undefined) {
@@ -152,10 +144,7 @@ export function snakeDraft(
 // ─────────────────────────────────────────────────────────────
 // Counts how many of playerIds appear in a single match roster.
 
-export function overlapWithRoster(
-  playerIds: string[],
-  roster: string[]
-): number {
+export function overlapWithRoster(playerIds: string[], roster: string[]): number {
   const rosterSet = new Set(roster);
   return playerIds.filter((id) => rosterSet.has(id)).length;
 }
@@ -180,8 +169,8 @@ export function overlapWithRoster(
 //   16+  → 5  (full memory — current behaviour, unchanged)
 
 export function getEffectiveLookback(eligiblePoolSize: number): number {
-  if (eligiblePoolSize <= 5)  return 2;
-  if (eligiblePoolSize <= 9)  return 3;
+  if (eligiblePoolSize <= 5) return 2;
+  if (eligiblePoolSize <= 9) return 3;
   if (eligiblePoolSize <= 15) return 4;
   return 5;
 }
@@ -192,10 +181,7 @@ export function getEffectiveLookback(eligiblePoolSize: number): number {
 // Returns true if ≥3 of the proposed 4 player IDs appeared
 // together in any single recent match roster.
 
-export function isDiversityViolation(
-  playerIds: string[],
-  recentRosters: string[][]
-): boolean {
+export function isDiversityViolation(playerIds: string[], recentRosters: string[][]): boolean {
   // Build the Set once here so each roster check is O(n) rather than O(n²)
   // from constructing a new rosterSet inside overlapWithRoster per iteration.
   const playerSet = new Set(playerIds);
@@ -327,9 +313,7 @@ export function rotatedDraft(
   partnershipCounts?: Map<string, number>,
   cap?: number
 ): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
-  const sorted = [...allFour].sort(
-    (a, b) => b.skill_level_int - a.skill_level_int
-  );
+  const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
   // Count recent rosters that contained ALL 4 of these players.
   const playerIds = allFour.map((p) => p.player_id);
@@ -498,7 +482,12 @@ export function runAlgorithm(
   // Red Zone anchor: try ±1, ±2, ±3, ±4 to guarantee a match.
   // Normal anchor:   try ±1, ±2 only.
   const skillWindows = anchorIsRedZone
-    ? [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX, SKILL_VARIANCE_MAX + 1, RED_ZONE_SKILL_VARIANCE_MAX]
+    ? [
+        SKILL_VARIANCE_TARGET,
+        SKILL_VARIANCE_MAX,
+        SKILL_VARIANCE_MAX + 1,
+        RED_ZONE_SKILL_VARIANCE_MAX,
+      ]
     : [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX];
 
   // ── 3. Progressive expansion ──────────────────────────────
@@ -722,4 +711,3 @@ export function runAlgorithm(
   // to the organizer. Broadcast itself is a side effect handled there.
   return { proposal: null, capSaturation: capWasActive };
 }
-

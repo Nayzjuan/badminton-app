@@ -15,7 +15,11 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { getAuthenticatedUser, isSessionOrganizer, type MatchActionResult } from "@/app/actions/_shared";
+import {
+  getAuthenticatedUser,
+  isSessionOrganizer,
+  type MatchActionResult,
+} from "@/app/actions/_shared";
 
 // ============================================================
 // submitMatchScore — player-initiated score submission
@@ -531,7 +535,7 @@ export type CreateManualMatchResult = {
   success: boolean;
   message: string;
   matchId?: string;
-}
+};
 
 export async function createManualMatchAction(
   sessionId: string,

@@ -30,7 +30,14 @@ export function useScoreForm(
   function handleSubmit() {
     const a = parseInt(teamAScore, 10);
     const b = parseInt(teamBScore, 10);
-    if (isNaN(a) || isNaN(b) || a < 0 || b < 0 || a > MAX_BADMINTON_SCORE || b > MAX_BADMINTON_SCORE) {
+    if (
+      isNaN(a) ||
+      isNaN(b) ||
+      a < 0 ||
+      b < 0 ||
+      a > MAX_BADMINTON_SCORE ||
+      b > MAX_BADMINTON_SCORE
+    ) {
       setError(`Enter valid scores (0–${MAX_BADMINTON_SCORE}) for both teams.`);
       return;
     }

@@ -76,12 +76,9 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   // ── Active match enrichment (shared hook) ─────────────────
   // includeDrafts: false — draft firewall: players and TV only see
   // published pending matches and in_progress matches.
-  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(
-    supabase,
-    sessionId,
-    courtsRef,
-    { includeDrafts: false }
-  );
+  const { activeMatches, fetchActiveMatches } = useEnrichedMatches(supabase, sessionId, courtsRef, {
+    includeDrafts: false,
+  });
 
   // ── Fetch courts ──────────────────────────────────────────
 
@@ -144,9 +141,15 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const fetchCourtsRef = useRef(fetchCourts);
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
   const fetchWaitlistRef = useRef(fetchWaitlist);
-  useEffect(() => { fetchCourtsRef.current = fetchCourts; }, [fetchCourts]);
-  useEffect(() => { fetchActiveMatchesRef.current = fetchActiveMatches; }, [fetchActiveMatches]);
-  useEffect(() => { fetchWaitlistRef.current = fetchWaitlist; }, [fetchWaitlist]);
+  useEffect(() => {
+    fetchCourtsRef.current = fetchCourts;
+  }, [fetchCourts]);
+  useEffect(() => {
+    fetchActiveMatchesRef.current = fetchActiveMatches;
+  }, [fetchActiveMatches]);
+  useEffect(() => {
+    fetchWaitlistRef.current = fetchWaitlist;
+  }, [fetchWaitlist]);
 
   useEffect(() => {
     // Use a unique channel prefix so these subscriptions don't collide

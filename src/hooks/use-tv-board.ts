@@ -54,12 +54,7 @@ export function useTvBoard(
   }, [refresh]);
 
   useEffect(() => {
-    const unsubMatches = subscribeToMatches(
-      supabase,
-      sessionId,
-      () => refreshRef.current(),
-      "tv"
-    );
+    const unsubMatches = subscribeToMatches(supabase, sessionId, () => refreshRef.current(), "tv");
     const unsubPlayers = subscribeToMatchPlayers(
       supabase,
       sessionId,
@@ -77,14 +72,8 @@ export function useTvBoard(
     };
   }, [supabase, sessionId]);
 
-  const inProgress = useMemo(
-    () => matches.filter((m) => m.status === IN_PROGRESS),
-    [matches]
-  );
-  const onDeck = useMemo(
-    () => matches.filter((m) => m.status === PENDING),
-    [matches]
-  );
+  const inProgress = useMemo(() => matches.filter((m) => m.status === IN_PROGRESS), [matches]);
+  const onDeck = useMemo(() => matches.filter((m) => m.status === PENDING), [matches]);
 
   return { inProgress, onDeck, lastUpdated };
 }

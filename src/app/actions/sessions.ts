@@ -50,7 +50,7 @@ export type CreateSessionResult = {
   message: string;
   sessionId?: string;
   passcode?: string;
-}
+};
 
 /**
  * Creates a new session for the authenticated user.
@@ -172,7 +172,7 @@ export type JoinCoOrganizerResult = {
   success: boolean;
   message: string;
   sessionId?: string;
-}
+};
 
 /**
  * Co-organizer join flow using ONLY the session passcode.
@@ -249,7 +249,7 @@ export type ToggleAutoMatchmakingResult = {
   success: boolean;
   isOn: boolean;
   message: string;
-}
+};
 
 /**
  * Flips the `is_auto_matchmaking_on` boolean for a session.
@@ -368,7 +368,7 @@ export type GetSessionResult = {
   success: boolean;
   session?: import("@/types/database").Session;
   error?: string;
-}
+};
 
 /**
  * Lightweight read-only fetch of a session row for the organizer dashboard
@@ -418,7 +418,7 @@ export type CloseSessionResult = {
   message: string;
   /** true when compute_session_wrapped succeeded and Wrapped pages are ready. */
   wrappedReady?: boolean;
-}
+};
 
 export async function closeSession(sessionId: string): Promise<CloseSessionResult> {
   if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };

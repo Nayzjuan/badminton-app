@@ -100,7 +100,7 @@ export type SeedResult = {
   success: boolean;
   message: string;
   playerCount?: number;
-}
+};
 
 // ── Dev-tool auth guard ───────────────────────────────────────
 // P1-5: Dev tools use the service-role client which bypasses ALL
@@ -411,7 +411,7 @@ export async function seedNamedPlayers(sessionId: string): Promise<SeedResult> {
 export type ClearResult = {
   success: boolean;
   message: string;
-}
+};
 
 export async function clearSessionData(sessionId: string): Promise<ClearResult> {
   // P1-5: Require authentication.

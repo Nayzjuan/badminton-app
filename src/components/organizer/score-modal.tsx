@@ -43,11 +43,19 @@ interface ScoreModalProps {
 }
 
 export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) {
-  const { teamAScore, setTeamAScore, teamBScore, setTeamBScore, error, isPending, handleSubmit, clearError } =
-    useScoreForm(async (a, b) => {
-      const result = await onSubmit(a, b);
-      return { error: result.error };
-    });
+  const {
+    teamAScore,
+    setTeamAScore,
+    teamBScore,
+    setTeamBScore,
+    error,
+    isPending,
+    handleSubmit,
+    clearError,
+  } = useScoreForm(async (a, b) => {
+    const result = await onSubmit(a, b);
+    return { error: result.error };
+  });
   const teamARef = useRef<HTMLInputElement>(null);
 
   // Reset form each time the dialog opens for a new match.

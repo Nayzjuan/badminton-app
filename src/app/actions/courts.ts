@@ -31,10 +31,7 @@ export type CourtActionResult = {
  * the sole write-gate, matching how other organizer-only mutations
  * (e.g. cancelMatchAction) are structured.
  */
-export async function addCourtAction(
-  sessionId: string,
-  name: string
-): Promise<CourtActionResult> {
+export async function addCourtAction(sessionId: string, name: string): Promise<CourtActionResult> {
   const user = await getAuthenticatedUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
@@ -98,11 +95,7 @@ export async function removeCourtAction(
   const svc = createServiceClient();
   // Same session-scope guard as updateCourtStatusAction — prevents cross-session
   // court deletion when the service client has bypassed RLS.
-  const { error } = await svc
-    .from("courts")
-    .delete()
-    .eq("id", courtId)
-    .eq("session_id", sessionId);
+  const { error } = await svc.from("courts").delete().eq("id", courtId).eq("session_id", sessionId);
   if (error) return { success: false, message: error.message };
   return { success: true, message: "Court removed." };
 }
