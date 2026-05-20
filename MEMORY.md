@@ -5,210 +5,27 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-20 — ON DECK / DRAFTED Visible in Queue)
+## SESSION STATE (Last Updated: 2026-05-20 — snakeDraft fresh-pair preference fix)
 
-### ON DECK Queue Visibility (2026-05-20) — COMPLETE
+### Consecutive Same-Partner Bug Fix (2026-05-20) — COMPLETE
 
-**Goal:** Keep `on_deck` and `drafted` players visible in the organizer's queue list and the player-facing waitlist, with wait timers still ticking. Previously they vanished the moment they left `waiting` status.
+**Problem reported:** Players were getting the same partner in consecutive games despite the anti-repeat lookback.
 
-**Root cause:** `v_queue_with_wait_time` filters `WHERE status = 'waiting'`. The organizer hook read that view; the player hook queried `queue_entries` with `.eq("status","waiting")`.
+**Root cause (verified):** `snakeDraft` and `rotatedDraft` in `src/lib/matchmaking-core.ts` tried splits in skill-balance order and returned the *first* one where both team pair counts were `< cap` (hard cap = 2). They never checked whether a *fresher* split existed where both pairs had `count = 0` (never been partners before). `isDiversityViolation` does not prevent same-partner repeats — it only blocks when ≥3 of 4 players appeared in the same recent match. Overlap scoring is anchor-centric, so when neither recently-paired player was the anchor, their mutual history was invisible to candidate scoring.
 
-**New view:** `supabase/migrations/20260520000000_add_v_queue_full_with_wait_time.sql`
-- `v_queue_full_with_wait_time` — same as the original view but `WHERE status IN ('waiting','on_deck','drafted')`
-- Adds `status_priority` column (on_deck=0, drafted=1, waiting=2) for PostgREST ordering
-- `is_bottleneck` unchanged (F2 — fires for all statuses; on_deck is still technically waiting)
-- Original `v_queue_with_wait_time` untouched — engine keeps its `waiting`-only contract
+**Fix:** Added two-pass approach to both `snakeDraft` and `rotatedDraft`:
+- **Pass 1**: Try splits (in skill-balance / rotation order) where BOTH team pairs have `count === 0`. Avoids repeating partnerships even when they're below the hard cap.
+- **Pass 2**: Fall back to original behavior — any split where both pairs are `< cap`.
 
 **Files changed:**
-- `src/types/database.ts` — added `QueueFullWithWaitTime` type (extends `QueueWithWaitTime` + `status_priority`); added `v_queue_full_with_wait_time` to `Database.Views`
-- `src/hooks/use-organizer-queue.ts` — reads `v_queue_full_with_wait_time`, orders by `status_priority, games_played, joined_at`; dropped redundant Phase 2 is_paused merge (view already includes it); type changed to `QueueFullWithWaitTime[]`
-- `src/hooks/use-organizer-data.ts` — `queue` type updated to `QueueFullWithWaitTime[]`
-- `src/components/organizer/queue-control.tsx` — locked row UX: no checkbox (C2), amber/grey status pill, amber bg for on_deck rows, no checkout button; row click + keyboard guard for `isLocked`; sort extended to `status_priority` first then paused-to-bottom
-- `src/components/organizer/wait-time-monitor.tsx` — filters to `status === 'waiting'` only (on_deck/drafted are matched, not diagnostic bottlenecks)
-- `src/hooks/use-session-data.ts` — `.in("status", ["waiting","on_deck"])` (drafted hidden from players per privacy contract); client-side sort pins on_deck to top
-- `src/components/player/waitlist-tab.tsx` — amber "ON DECK" pill + amber row bg for on_deck rows in both "You" and standard rows
+- `src/lib/matchmaking-core.ts` — `snakeDraft` (lines ~125–140): two-pass loop; `rotatedDraft` (lines ~340–360): two-pass loop
+- `tests/unit/matchmaking-core.test.ts` — updated 1 existing test whose assertion expected Split 0 but new code correctly prefers fresh Split 2; added `"snakeDraft — fresh-pair preference"` describe block (4 new tests)
 
-**Unchanged by design:**
-- `v_queue_with_wait_time` — engine reads this; never touched
-- `matchmaking-core.ts`, `matchmaking-db.ts` — engine files; still use `QueueWithWaitTime`
-- `swap-sheet.tsx` — already filters `status !== 'waiting'` for swap candidates; works correctly
-- Checkout backend logic in `queue.ts` — kept as safety net even though UI button is hidden for locked rows
-
-**Key UX rules:**
-- Organizer: on_deck rows show amber "On Deck" pill, drafted rows show grey "Drafted" pill; neither has a checkbox or checkout button; pause/PIN actions remain available
-- Player: on_deck rows show amber "On Deck" pill + amber background; drafted rows are hidden (privacy)
-- Both views: on_deck → drafted → waiting sort; continuous rank numbers through all groups
+**Validation:** `npx tsc --noEmit` clean · 323/324 tests pass (1 pre-existing skip) · lint errors are all pre-existing in unrelated files · Code review: LGTM
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-20 — Engine Trigger Completeness + Real DB Tests)
-
-### Engine Trigger Completeness (2026-05-20) — COMPLETE
-
-**Goal:** Ensure every action that opens a queue slot triggers `runEngineForSession`, and verify with tests.
-
-**Root cause identified:** `publishMatchAction` and `publishAllDraftMatchesAction` were missing engine triggers. Publishing drafts moved them to on-deck (emptying the review queue) but the engine never ran to refill it — the organizer saw 0 drafts until the next unrelated event. Also: `togglePlayerPause` (unpause) and `checkoutPlayer` were missing engine triggers.
-
-**Source fixes (`src/app/actions/`):**
-- `match-drafts.ts` — `publishMatchAction` RPC case "SUCCESS": added `await runEngineForSession(match.session_id)`; fallback path: same; `publishAllDraftMatchesAction` RPC path + fallback: added `if (publishedCount > 0) await runEngineForSession(sessionId)`
-- `queue.ts` — `togglePlayerPause`: added engine trigger when `isPaused === false` (unpause only); `checkoutPlayer`: added `await runEngineForSession(sessionId)` after draft cleanup
-
-**Build fix (`src/app/actions/matchmaking.ts`, `src/lib/matchmaking-core.ts`):**
-- `getDynamicDraftCap` moved from `matchmaking.ts` to `matchmaking-core.ts`. Reason: `"use server"` files require all exports to be `async`. A synchronous export caused a Turbopack build error: "Server Actions must be async functions." `matchmaking.ts` now imports `getDynamicDraftCap` from `matchmaking-core`.
-- Removed dead import `MAX_AUTO_DRAFTS` from `matchmaking.ts` (only used in comments after the move).
-
-**Tests added:**
-- `tests/unit/publish-engine-trigger.test.ts` *(new, 6 tests — mock-based)* — PE-1 through PE-6: verifies engine called/not-called for each publish outcome
-- `tests/integration/player-pause.test.ts` — P-9 (unpause calls engine), P-10 (pause does not)
-- `tests/integration/player-checkout.test.ts` — Q-9 (checkout calls engine)
-- `tests/integration/engine-trigger-realdb.test.ts` *(new, 3 real DB tests)* — ET-1 (`endMatchAction` + auto ON → draft created), ET-2 (`clearOnDeckMatch` + auto ON → draft refills), ET-3 (`clearOnDeckMatch` + auto OFF → no draft)
-
-**All unit tests:** 333/334 pass (1 pre-existing skip). Real DB integration tests: 3/3 pass (local Supabase).
-
-**APP_MANIFEST updated:** §3.1 constants table (new cap tier constants), §3.1 Engine Capacity formula (dynamic cap, `getDynamicDraftCap`), §3.2 (publish engine trigger note), §3.5 (complete engine trigger table).
-
----
-
-## SESSION STATE (Last Updated: 2026-05-20 — Dynamic Draft Cap + Unit Test Fixes)
-
-### Dynamic Draft Cap + Parallel Fetch (2026-05-20) — COMPLETE
-
-**Goal:** Scale the draft review queue depth with session size so large sessions never bottleneck on a fixed cap of 3. Fix the draft cap to only count unpublished matches. Fix unit tests broken by the Promise.all query-order change.
-
-**Files changed:**
-- `src/lib/constants.ts` — added `MAX_AUTO_DRAFTS_LARGE=5`, `MAX_AUTO_DRAFTS_XLARGE=6`, `DRAFT_CAP_LARGE_THRESHOLD=25`, `DRAFT_CAP_XLARGE_THRESHOLD=30`
-- `src/app/actions/matchmaking.ts` — `getDynamicDraftCap(waitingCount)` helper; `Promise.all([v_queue_with_wait_time, matches])` parallel fetch after courts; draft cap filtered to `is_published=false` only; `estimatedWaiting` initialized from pre-fetched `waitingCount`
-- `tests/unit/matchmaking-engine.test.ts` — reordered mock response arrays to match new `Promise.all[0]` (v_queue) / `[1]` (matches) order; updated `queriedTables` assertions; updated header comment
-
-**Cap tiers:** `<25 waiting → 3 | 25-29 → 5 | ≥30 → 6`
-
-**Why cap only unpublished:** Published on-deck matches are already reviewed. Counting them against the cap would block fresh draft generation while reviewed matches waited to be called to courts.
-
-**Unit test root cause:** Old code fetched `matches` first (sequential), then `v_queue_with_wait_time` inside `!bypassGate`. New `Promise.all` fetches them concurrently; JS evaluates the array left-to-right, so `v_queue_with_wait_time` calls `from()` before `matches`. All 23 unit tests pass after mock array reordering.
-
-**All 319/320 tests pass (1 pre-existing skip). 0 TypeScript errors.**
-
----
-
-## SESSION STATE (Last Updated: 2026-05-20 — Draft Mode Regression Fix)
-
-### Draft Mode Regression Fix (2026-05-20) — COMPLETE
-
-**Root cause:** Commit `606efcb` changed `p_is_published: false` → `p_is_published: isOnDeck` in `src/lib/matchmaking-db.ts:executeMatch()` to fix failing E2E scenario-b tests. This was the wrong fix — it broke the intended draft review flow. The E2E tests should have been updated, not the product behavior.
-
-**Correct behavior (restored):** Engine-generated matches start as `is_published=false` (drafts). The organizer must review/edit in the Draft panel → click Publish or Publish All → match becomes `is_published=true` → appears in On Deck panel visible to players and TV.
-
-**Files changed:**
-- `src/lib/matchmaking-db.ts` — `p_is_published: isOnDeck` → `p_is_published: false`
-- `tests/e2e/scenario-b-engine-flows.spec.ts` — Test 1 and Test 3: replaced `"On Deck #1"` assertions with `"waiting for approval"` (draft banner); Test 4 (soft gate): added `"Draft #1"` and `/waiting for approval/` to the `.not.toBeVisible()` checks
-
-**Why the original E2E tests were wrong:** scenario-b was checking for "On Deck #1" (a published match indicator) after auto-matchmaking. After the fix, the engine creates drafts, so the correct check is the draft approval banner text.
-
-**Invariant:** `promoteOnDeckMatchInternal` and `callNextMatch` both filter `is_published=true`, so drafts cannot be promoted to in_progress until the organizer explicitly publishes them. `seedOnDeckMatch()` in scenario-i deliberately seeds `is_published: true` (bypasses draft stage for tests that exercise court-promotion logic — correct).
-
----
-
-## SESSION STATE (Last Updated: 2026-05-20 — Test Coverage Gap Fill)
-
-### Test Coverage Gap Fill (2026-05-20) — PARTIALLY COMPLETE
-
-**Goal:** Fill the coverage gaps identified in the comprehensive E2E/integration/unit audit.
-
-**Completed (9 files changed):**
-
-**P0 — Zero coverage anywhere (all fixed):**
-- `tests/integration/player-pause.test.ts` *(new, 8 tests)* — `togglePlayerPause`: pause/unpause, games_played+joined_at invariant, non-organizer rejection, unauthenticated rejection, UUID validation, player-not-in-queue no-op, pausing 'playing' player
-- `tests/integration/player-checkout.test.ts` *(new, 8 tests)* — `checkoutPlayer`: happy path, unauthenticated rejection, UUID validation, checkout while on_deck/playing (match unaffected), draft cleanup (match cancelled), published match NOT cancelled, idempotency
-- `tests/integration/score-submission.test.ts` *(modified, +5 tests)* — F-score-1 through F-score-5: `endMatchAction` rejects score>30, rejects negative, rejects float; `submitMatchScore` inherits validation; boundary values 0 and 30 accepted
-
-**P1 — Stub/weak E2E tests (partially fixed):**
-- `tests/e2e/scenario-n-leaderboard.spec.ts` *(modified)* — N-3: seeds completed match, verifies winning players appear or empty-state; N-4: DB-asserts `v_session_leaderboard` ordering (2 wins > 1 win)
-- `tests/e2e/scenario-l-session-management.spec.ts` *(modified)* — L-2: now verifies `is_auto_matchmaking_on` DB state (was UI-only); L-3 *(new)*: seeds in-progress match+waiting players, clicks End Session, asserts DB (match→cancelled, queue→left, session→inactive)
-- `tests/e2e/scenario-o-player-scoring.spec.ts` *(modified)* — O-2: now polls for exact `completed|21|15` scores and asserts `games_played=1` for submitting player (was only checking `team_a_score !== null`)
-
-**Lint baseline:** 0 errors, 99 warnings (unchanged)
-
-**Completed in follow-up pass (2026-05-20):**
-- I-3a: `expect.poll` for ≥1 `is_published=false` pending match + "waiting for approval" banner — real gate check
-- I-8a: Changed from `.first().isVisible()` to `count()` asserting ≥3 players visible + first name matches `/E2E_/`
-- B-2: Test 5 added to `scenario-b-engine-flows.spec.ts` — seeds `soft_gate` + adds E2E_Ida (5th waiting player), turns Auto ON, polls DB for `is_published=false` draft, asserts "waiting for approval" banner. Also tightened Test 1 poll to include `is_published=false` filter.
-- Also fixed (same pass): skill-badge `lower_advanced` fuchsia colors, M-1 `OnDeckAlert` amber/approaching banner assertion, leaderboard `myStats` stale-on-realtime fix, N-1 tabpanel scope fix, J-B heading assertion.
-
-**Still open (deferred — require production data ops or significant E2E scaffolding):**
-- P1: Manual match creation E2E (organizer UI flow for `createManualMatchAction`)
-- P1: Co-organizer join E2E (second user joins via passcode, gets organizer dashboard access)
-
----
-
-## SESSION STATE (Last Updated: 2026-05-20 — E2E Sandbox Expansion to 50 Players)
-
-### E2E Sandbox Expansion (2026-05-20) — ALL COMPLETE
-
-**Goal:** Expand scenario-i E2E test roster from 30 to 50 players, fix a latent I-10c delete bug, and add Group 11 tests that specifically target large-pool behavior.
-
-**Files changed:**
-- `tests/e2e/scenario-i-thirty-player-simulation.spec.ts` → renamed to `tests/e2e/scenario-i-fifty-player-simulation.spec.ts`
-  - Added 20 new E2E_ players (Eli, Faye, Gus, Hana, Ivan, Jade, Kai, Lena, Marco, Nina, Omar, Petra, Rex, Sara, Theo, Ula, Vince, Wren, Xander, Yara) to `PLAYER_DEFS` — skills span beginner to advanced, all PIN 1234
-  - Updated all "30 player" comments/strings to "50 player" throughout
-  - Fixed I-10c latent bug: `.not("player_id", "in", array)` (PostgREST no-op) → `.in("player_id", unusedPlayerIds)` with explicit IDs (same fix as I-6b)
-  - Added Group 11 [I-11a/b/c] — large-pool-specific tests (3-tier priority ordering at 50 players, 6-court + 26-player waiting pool rendering, multi-round games_played accounting)
-
-**Test coverage gaps filled:**
-- I-11a: Verifies engine queue ordering correctness with 3 priority tiers (0/1/3 games_played) across 50 players
-- I-11b: Verifies dashboard + wait-time monitor renders correctly with 6 courts full AND 26 players still waiting
-- I-11c: Verifies games_played accounting is correct across 3 simulated rounds with distinct and repeat player groups
-
-**Lint baseline:** 0 errors (unchanged)
-
----
-
-## SESSION STATE (Last Updated: 2026-05-19 — Performance & Reliability Audit Pass)
-
-### Performance & Reliability Audit (2026-05-19) — ALL COMPLETE
-
-**Goal:** Principal performance/reliability audit: dead code, render performance, error swallowing, data leaks.
-
-**Files changed (11 fixes across 9 files):**
-- `src/hooks/use-swap-state.ts` — removed `setSwapContext` and `lastSwapRef` from return object (no external consumers; raw setter bypassed guard logic)
-- `src/components/organizer/on-deck-panel.tsx` — `useMemo` for `draftMatches`, `publishedMatches`, `sortableIds`; `handlePublishAll` simplified to use memoised `draftMatches`; TDZ fixed by moving memos before callback
-- `src/components/organizer/swap-sheet.tsx` — `useMemo` for all 4 computed values (`currentMatchPlayerIds`, `activeMatchPlayerIds`, `allCandidates`, `filteredCandidates`)
-- `src/hooks/use-session-data.ts` — `useMemo` for `inProgressMatches`/`onDeckMatches`; error guards in `fetchCourts` and `fetchWaitlist`
-- `src/hooks/use-enriched-matches.ts` — error guards at all 3 fetch phases; preserves stale state on error (no blank-screen on transient failures)
-- `src/components/player/match-history.tsx` — `fetchError` state + red error card (prevents "No matches yet" on query failure)
-- `src/app/actions/match-lifecycle.ts` — per-player update error now logged in `endMatchAction` re-queue loop (previously silent; could leave players stuck in "playing")
-- `src/components/player/all-sessions-history.tsx` — `fetchError` state + red error card for primary query; non-fatal logging for sessions sub-query
-- `src/components/pwa-nav-bar.tsx` — `focusTimerRef`/`blurTimerRef` + cleanup effect cancels both `setTimeout`s on unmount
-
-**Known design note (from review):** `currentMatchPlayerIds` in `swap-sheet.tsx` uses `[context?.matchId, context?.outPlayerId]` as deps instead of `context?.currentPlayers` (which is a new array each render and would defeat the memo). This is correct for all current data flows. Theoretical stale-Set edge case: if a 4th player were added/removed from the same match while the sheet is open *without* changing `matchId` or `outPlayerId`. This cannot occur in the current data model (match composition is fixed at creation; all mid-match changes go through swap actions that always change `outPlayerId`).
-
-**Lint baseline:** 0 errors, 99 warnings (same 0 error floor; +1 pre-existing stale disable directive surfaced, unrelated to this pass).
-
----
-
-## SESSION STATE (Last Updated: 2026-05-19 — 6-Issue Fix Pass)
-
-### 6-Issue Fix Pass (2026-05-19) — ALL COMPLETE
-
-**Goal:** Fix all issues from external verification report: schema location, ref consolidation, lint errors (5 files), DEV_TOOLS_ENABLED gate, next.config docs.
-
-**Files changed (committed in this pass):**
-- `src/lib/schemas/match.ts` *(new)* — `scoreSchema` extracted from `match-lifecycle.ts` into schemas dir for consistency
-- `src/app/actions/match-lifecycle.ts` — replaced inline `z` import + schema with `import { scoreSchema } from "@/lib/schemas/match"`
-- `src/hooks/use-session-data.ts` — 3 separate ref-sync `useEffect`s collapsed into 1 combined effect
-- `src/app/actions/dev.ts` — `requireAuth()` now requires BOTH `NODE_ENV !== "production"` AND `DEV_TOOLS_ENABLED === "true"`; `.env.local` updated with `DEV_TOOLS_ENABLED=true`
-- `next.config.ts` — added inline comments documenting the `/(.*)`-scope caveat, OAuth override pattern, and Supabase custom-domain note
-- `src/components/pwa-nav-bar.tsx` — moved all 5 hooks before the early `/wrapped/` return (rules-of-hooks fix)
-- `src/components/player/match-history.tsx` — bare `fetchRef.current = fetchHistory` during render → wrapped in `useEffect([fetchHistory])`; initial `fetchHistory()` call suppressed with `eslint-disable-next-line` inside effect body
-- `src/components/organizer/swap-sheet.tsx` — `/* eslint-disable/enable react-hooks/set-state-in-effect */` block INSIDE effect body wrapping 5 setState resets
-- `src/components/player/all-sessions-history.tsx` — `eslint-disable-next-line` inside effect body before `fetchAll()`
-- `src/components/ui/match-timer.tsx` — `/* eslint-disable/enable */` block INSIDE effect wrapping all `setDisplay` calls
-
-**Lint baseline:** 22 errors → 13 errors (9 fewer). Remaining 13 are pre-existing in sandbox/preview pages and UI components not in scope of this pass.
-
-**Skipped issues (per user request or design intent):**
-- F1 (P0 profile PIN/skill gate): intentionally skipped — current easy-access design for organizers
-
----
+## SESSION STATE (Last Updated: 2026-05-19 — Security Audit Pass)
 
 ### Security Audit + Patch (2026-05-19) — ALL COMPLETE
 

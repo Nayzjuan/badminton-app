@@ -154,6 +154,19 @@ export function snakeDraft(
     { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] },
   ];
 
+  // Pass 1: prefer splits where BOTH team pairs have never been partners (count=0).
+  // Avoids repeating recent partnerships even when they're still below the hard cap.
+  // Maintains skill-balance order within this preference tier so the most balanced
+  // fresh split is always tried before less balanced ones.
+  for (const split of splits) {
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA === 0 && countB === 0) return split;
+  }
+
+  // Pass 2: fall back to any split below the hard cap (original behavior).
   for (const split of splits) {
     const countA =
       partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
@@ -362,9 +375,19 @@ export function rotatedDraft(
     return splits[splitIndex];
   }
 
-  // With cap enforcement, try splits starting from the natural rotation index
-  // and cycling through all 3. This preserves rotation semantics (the natural
-  // split is always tried first) while falling back when it is capped.
+  // Pass 1: prefer splits (starting from natural rotation index) where BOTH
+  // team pairs have never been partners (count=0). Avoids repeat partnerships
+  // even in the forced-repeat path when a fresher rotation is available.
+  for (let i = 0; i < 3; i++) {
+    const split = splits[(splitIndex + i) % 3];
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA === 0 && countB === 0) return split;
+  }
+
+  // Pass 2: fall back to any split below the hard cap, starting from natural rotation index.
   for (let i = 0; i < 3; i++) {
     const split = splits[(splitIndex + i) % 3];
     const countA =

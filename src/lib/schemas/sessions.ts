@@ -20,11 +20,7 @@ import type { ScoringFormat } from "@/types/database";
 // runtime without duplication. The refine approach uses the real
 // union members as the source of truth.
 
-const VALID_SCORING_FORMATS = [
-  "single",
-  "best_of_3",
-  "best_of_5",
-] as const satisfies ScoringFormat[];
+const VALID_SCORING_FORMATS = ["single", "best_of_3", "best_of_5"] as const satisfies ScoringFormat[];
 
 export const scoringFormatSchema = z
   .string({ error: "Please select a scoring format." })

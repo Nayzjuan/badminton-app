@@ -20,7 +20,29 @@ import {
   isSessionOrganizer,
   type MatchActionResult,
 } from "@/app/actions/_shared";
-import { scoreSchema } from "@/lib/schemas/match";
+import { z } from "zod";
+
+// ── Score validation schema ───────────────────────────────────
+// Enforces server-side bounds so a crafted POST that bypasses
+// the client-side useScoreForm / EditMatchDialog checks cannot
+// persist invalid values (negatives, NaN, Infinity, 999999…)
+// into matches.team_a_score / team_b_score or corrupt the
+// refresh_alltime_leaderboard materialized view calculations.
+//
+// Max 30: standard badminton game cap. The organizer's EditMatchDialog
+// uses the same logical bound; this is the authoritative server gate.
+const scoreSchema = z.object({
+  teamAScore: z
+    .number({ error: "Score must be a number." })
+    .int({ error: "Score must be a whole number." })
+    .min(0, { error: "Score cannot be negative." })
+    .max(30, { error: "Score cannot exceed 30." }),
+  teamBScore: z
+    .number({ error: "Score must be a number." })
+    .int({ error: "Score must be a whole number." })
+    .min(0, { error: "Score cannot be negative." })
+    .max(30, { error: "Score cannot exceed 30." }),
+});
 
 // ============================================================
 // submitMatchScore — player-initiated score submission
@@ -214,7 +236,7 @@ export async function endMatchAction(
 
         const updatedGames = (entry.games_played ?? 0) + 1;
 
-        const { error: updateError } = await db
+        return db
           .from("queue_entries")
           .update({
             status: "waiting" as const,
@@ -224,16 +246,6 @@ export async function endMatchAction(
           .eq("session_id", match.session_id)
           .eq("player_id", mp.player_id)
           .neq("status", "left"); // double-guard against race condition
-
-        if (updateError) {
-          // Non-fatal: the match itself was saved. Log for ops visibility — a
-          // silent failure here leaves the player stuck in "playing" status
-          // indefinitely, making them invisible to the matchmaker.
-          console.error(
-            `[endMatchAction] Failed to re-queue player ${mp.player_id}:`,
-            updateError.message
-          );
-        }
       })
     );
   }

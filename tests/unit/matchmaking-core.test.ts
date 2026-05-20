@@ -1033,16 +1033,20 @@ describe("snakeDraft — cap enforcement", () => {
     expect(result).toBeNull();
   });
 
-  it("treats count < cap as allowed (cap is exclusive upper bound)", () => {
+  it("count < cap is allowed but fresh Split 2 is preferred when Split 0 pairs are stale", () => {
     const { a, b, c, d } = makeFourAlpha();
-    // count = cap - 1 → strictly below cap → Split 0 should be returned
+    // Split 0 pairs (a:d, b:c) are stale (count = cap - 1 = 1).
+    // Split 2 pairs (a:c, b:d) are absent → count = 0 → both fresh.
+    // Pass 1 skips Split 0 (not both 0), finds Split 2 (both 0) → returns Split 2.
     const counts = new Map([
       ["a:d", MAX_PARTNERSHIP_REPEATS - 1],
       ["b:c", MAX_PARTNERSHIP_REPEATS - 1],
     ]);
     const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
-    expect(result).not.toBeNull();
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result).not.toBeNull(); // count < cap is still allowed
+    // Fresh-pair preference: Split 2 wins over stale-but-below-cap Split 0
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
   });
 
   it("treats count === cap as capped (count < cap is false at equality)", () => {
@@ -1059,6 +1063,81 @@ describe("snakeDraft — cap enforcement", () => {
     expect(result).not.toBeNull();
     expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// snakeDraft — fresh-pair preference (two-pass)
+// ─────────────────────────────────────────────────────────────
+// Pass 1: try splits (most→least balanced) where BOTH team pairs
+//   have count = 0 (never been partners). Avoids consecutive same-
+//   partner games even when the pair is still below the hard cap.
+// Pass 2: fall back to any split where both pairs are < cap.
+//
+// Reference splits for [a(6), b(5), c(4), d(3)]:
+//   Split 0 (most balanced): teamA=[a,d], teamB=[b,c]
+//   Split 2 (cross):          teamA=[a,c], teamB=[b,d]
+//   Split 1 (least balanced): teamA=[a,b], teamB=[c,d]
+
+describe("snakeDraft — fresh-pair preference", () => {
+  function makeFourAlpha() {
+    const a = makePlayer("a", { skillInt: 6 });
+    const b = makePlayer("b", { skillInt: 5 });
+    const c = makePlayer("c", { skillInt: 4 });
+    const d = makePlayer("d", { skillInt: 3 });
+    return { a, b, c, d };
+  }
+
+  it("prefers Split 2 over Split 0 when both Split 0 pairs were recent partners", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // Simulate: a+d and b+c were partners last game (count=1, below cap=2)
+    // Split 2 pairs (a:c, b:d) are fresh (count=0)
+    const counts = new Map([
+      ["a:d", 1], // Split 0 teamA — stale
+      ["b:c", 1], // Split 0 teamB — stale
+    ]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Pass 1 skips Split 0 (a:d=1, not both 0) then finds fresh Split 2
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("prefers Split 2 when only Split 0's teamA pair is stale", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // a:d stale (count=1), b:c fresh (count=0)
+    // Split 2 pairs (a:c=0, b:d=0) are both fresh
+    const counts = new Map([["a:d", 1]]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Split 0 fails Pass 1 (a:d=1, not both 0) → Split 2 is fully fresh → returned
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("falls back to most-balanced (Split 0) when no fully-fresh split exists", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // Every split has at least one stale teamA pair — no fully-fresh split
+    const counts = new Map([
+      ["a:d", 1], // Split 0 teamA stale
+      ["a:c", 1], // Split 2 teamA stale
+      ["a:b", 1], // Split 1 teamA stale
+    ]);
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    // Pass 1 finds nothing → Pass 2 returns Split 0 (most balanced, below cap)
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("still returns null when all splits are at the hard cap (no bypass)", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    const counts = new Map([
+      ["a:d", MAX_PARTNERSHIP_REPEATS],
+      ["a:c", MAX_PARTNERSHIP_REPEATS],
+      ["a:b", MAX_PARTNERSHIP_REPEATS],
+    ]);
+    expect(snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
   });
 });
 
