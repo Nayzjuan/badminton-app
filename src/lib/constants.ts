@@ -68,33 +68,16 @@ export const GATE_POOL_THRESHOLD = 4;
 export const GATE_HOLD_MINUTES = 8;
 
 /**
- * Extra on-deck slots generated beyond the number of open courts.
- * capacity = courtCount + ON_DECK_LOOKAHEAD, capped at MAX_ON_DECK_MATCHES.
- *
- * With the default of 1 and a cap of 2:
- *   1 court  → 2 on-deck  (1 + 1 = 2, at cap)
- *   2 courts → 2 on-deck  (2 + 1 = 3, capped to 2)
- *   3 courts → 2 on-deck  (3 + 1 = 4, capped to 2)
- *
- * The lookahead match absorbs the gap between a court finishing and the
- * engine refilling: even if two courts end almost simultaneously, there is
- * always a queued match for the second one rather than a brief idle period.
- * The engine's fill loop already stops gracefully when the pool is exhausted,
- * so this never creates phantom matches.
+ * @deprecated Not used by the live engine. Superseded by {@link MAX_AUTO_DRAFTS}
+ * and `getDynamicDraftCap` in `matchmaking-core.ts`. No production imports remain.
+ * Safe to remove once any dev-tooling references are cleaned up.
  */
 export const ON_DECK_LOOKAHEAD = 1;
 
 /**
- * Hard ceiling on the number of on-deck (pending) matches the engine will
- * auto-generate. The uncapped formula (courtCount + ON_DECK_LOOKAHEAD) can
- * produce 3-5 on-deck matches for 2-4 courts, which makes the queue list
- * confusingly short and commits too many players to specific partners before
- * new players arrive.
- *
- * Set to 2 so the organizer always sees at least 2 matches queued but the
- * engine never speculates further than one match beyond what is immediately
- * needed. Existing on-deck matches at session runtime are not affected — the
- * cap only gates new generation.
+ * @deprecated Not used by the live engine. Superseded by {@link MAX_AUTO_DRAFTS}
+ * and `getDynamicDraftCap` in `matchmaking-core.ts`. No production imports remain.
+ * Safe to remove once any dev-tooling references are cleaned up.
  */
 export const MAX_ON_DECK_MATCHES = 2;
 

@@ -111,7 +111,6 @@ export function useSwapState(
 
     // (b) Any other match left on-deck — target player pool changed
     if (onDeckMatches.length < prevLen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSwapContext(null);
       toast.warning("A match moved to a court — tap a player to try again.");
     }

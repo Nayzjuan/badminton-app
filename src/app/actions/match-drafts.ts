@@ -353,12 +353,16 @@ async function publishMatchFallback(
   if (error) return { success: false, message: "Failed to publish match." };
 
   if (playerIds.length > 0) {
+    // Promote players to 'on_deck'. Engine-generated drafts keep players at
+    // 'waiting' (the RPC never updates status for p_is_published=false — see
+    // migration 20260507000000 comment "Draft (unpublished) → no update").
+    // Swap-drafted players land at 'drafted'. Include both so either path works.
     await svc
       .from("queue_entries")
       .update({ status: "on_deck" as const })
       .eq("session_id", sessionId)
       .in("player_id", playerIds)
-      .eq("status", "drafted");
+      .in("status", ["drafted", "waiting"]);
   }
 
   // Engine hook: publishing a draft moves it out of the review queue,
@@ -542,12 +546,14 @@ async function publishAllDraftsFallback(
     ];
 
     if (publishedPlayerIds.length > 0) {
+      // Same fix as publishMatchFallback: engine-generated drafts keep players
+      // at 'waiting'; swap-drafted players land at 'drafted'. Include both.
       await svc
         .from("queue_entries")
         .update({ status: "on_deck" as const })
         .eq("session_id", sessionId)
         .in("player_id", publishedPlayerIds)
-        .eq("status", "drafted");
+        .in("status", ["drafted", "waiting"]);
     }
   }
 

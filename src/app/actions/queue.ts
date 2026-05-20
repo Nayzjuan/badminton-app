@@ -363,6 +363,9 @@ export async function removePlayerFromQueue(
         await broadcastOrganizerIntervention(sessionId, "match_cancelled", otherPlayerIds);
       }
     }
+    // Engine hook: kicking a player may have cancelled a draft (freed other
+    // players back to 'waiting'). Refill the draft slot immediately.
+    await runEngineForSession(sessionId);
     return { success: true };
   }
 
@@ -387,6 +390,8 @@ export async function removePlayerFromQueue(
     return { success: false, error: error.message };
   }
 
+  // Engine hook: player removed — any freed draft slots should be refilled.
+  await runEngineForSession(sessionId);
   return { success: true };
 }
 

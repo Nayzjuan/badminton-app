@@ -103,13 +103,11 @@ export function SwapSheet({
   // no upward propagation). React 18 batches these into a single commit, and deps
   // are stable primitive UUIDs/null — no state-in-deps infinite-loop risk.
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect */
     setSelectedPlayerId(null);
     setMismatchDismissed(false);
     setIsConfirming(false);
     setInlineError(null);
     setSearch("");
-    /* eslint-enable react-hooks/set-state-in-effect */
   }, [context?.matchId, context?.outPlayerId]);
 
   const isOpen = context !== null;

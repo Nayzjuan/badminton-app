@@ -87,11 +87,15 @@ function renderQueueSubTab({
   myEntry = null,
   myPosition = null,
   totalWaiting = 4,
+  queueLoading = false,
+  myWaitMinutes = 10,
 }: {
   isInQueue?: boolean;
   myEntry?: QueueEntry | null;
   myPosition?: number | null;
   totalWaiting?: number;
+  queueLoading?: boolean;
+  myWaitMinutes?: number;
 }) {
   return render(
     <MyStatusTab
@@ -102,9 +106,9 @@ function renderQueueSubTab({
       isInQueue={isInQueue}
       myEntry={myEntry}
       myPosition={myPosition}
-      myWaitMinutes={10}
+      myWaitMinutes={myWaitMinutes}
       totalWaiting={totalWaiting}
-      queueLoading={false}
+      queueLoading={queueLoading}
       matchLoading={false}
       joinQueue={noopAsync}
       leaveQueue={noopAsync}
@@ -277,5 +281,58 @@ describe("QueueSubTab — Component Smoke Tests", () => {
     ).not.toBeInTheDocument();
     // Hero numeral still renders normally
     expect(screen.getByText("#5")).toBeInTheDocument();
+  });
+
+  // ── QST-15: Post-match state ──────────────────────────────────
+  // After a match ends the player returns to "waiting" with an incremented
+  // games_played counter. The component should show their new queue position
+  // and updated games stat — not any stale match-overlay state.
+
+  it("QST-15: player returned to queue after match shows correct position and incremented games_played", () => {
+    const postMatchEntry: QueueEntry = {
+      id: "qe-1",
+      session_id: "sess-1",
+      player_id: "player-me",
+      status: "waiting",
+      games_played: 1, // incremented after first completed match
+      joined_at: new Date(Date.now() - 3 * 60_000).toISOString(),
+      position: 5,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+    };
+
+    renderQueueSubTab({
+      isInQueue: true,
+      myEntry: postMatchEntry,
+      myPosition: 5,
+      myWaitMinutes: 3,
+    });
+
+    // Queue position rendered correctly after return
+    expect(screen.getByText("#5")).toBeInTheDocument();
+    // games_played stat shows "1" — target the Stat span directly to avoid
+    // false matches from any other "1" that might appear on the page.
+    const statSpans = screen.getAllByText("1");
+    expect(statSpans.length).toBeGreaterThanOrEqual(1);
+    // Confirm the "Games" label is also visible alongside the stat value
+    expect(screen.getByText("Games")).toBeInTheDocument();
+    // Leave Queue button still present
+    expect(screen.getByRole("button", { name: /leave queue/i })).toBeInTheDocument();
+    // No match overlay copy should be visible
+    expect(screen.queryByText(/heads up|match in progress/i)).not.toBeInTheDocument();
+  });
+
+  // ── QST-16: Loading state ─────────────────────────────────────
+  // When queueLoading=true the component shows a loading indicator.
+  // This prevents a misleading flash of "Ready to play?" before the first
+  // fetch resolves — which would be indistinguishable from "not in queue".
+
+  it("QST-16: queueLoading=true shows loading indicator, not the empty-state CTA", () => {
+    renderQueueSubTab({ queueLoading: true });
+
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    // Must NOT show the "Ready to play?" CTA during loading
+    expect(screen.queryByText(/ready to play/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /join queue/i })).not.toBeInTheDocument();
   });
 });

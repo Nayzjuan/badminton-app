@@ -785,53 +785,49 @@ test.describe("Group 3 — Auto-Matchmaking (50 players)", () => {
       // match-generation pipeline is exercised separately by the manual
       // call-next-match tests in Group 4 which seed an on-deck match.
       //
-      // We still attempt the engine run via the toggle and via a fallback
-      // Call Next Match click, but treat both as best-effort.  The test
-      // passes if EITHER ≥2 matches appear OR the toggle behavior was
-      // correctly persisted.
-      let totalMatches = 0;
-      const start = Date.now();
-      while (Date.now() - start < 12_000) {
-        const { data } = await db
-          .from("matches")
-          .select("id")
-          .eq("session_id", sessionId)
-          .in("status", ["pending", "in_progress"]);
-        totalMatches = data?.length ?? 0;
-        if (totalMatches >= 2) break;
-        await page.waitForTimeout(800);
-      }
+      // Assert 1: toggle committed to DB (optimistic UI is fast but the engine
+      // only runs after the DB write confirms auto=ON).
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("sessions")
+              .select("is_auto_matchmaking_on")
+              .eq("id", sessionId)
+              .single();
+            return data?.is_auto_matchmaking_on ?? false;
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
 
-      // Best-effort: trigger callNextMatch on each available court to coax
-      // the engine into running.  If matches appear, great; if not, the
-      // toggle DB state assertion above is the floor we hold.
-      if (totalMatches < 2) {
-        const callBtns = page.getByText("Call Next Match");
-        const callCount = await callBtns.count();
-        for (let i = 0; i < Math.min(callCount, 2); i++) {
-          await callBtns
-            .nth(i)
-            .click()
-            .catch(() => undefined);
-          await page.waitForTimeout(500);
-        }
-      }
+      // Assert 2: engine actually generated ≥1 draft (pending, is_published=false).
+      // 50 waiting players + auto=ON → the engine should produce at least one draft
+      // within 20s (cold Vercel start + RPC overhead). This is the primary invariant
+      // this test exists to verify — the toggle-state check above is a fallback floor.
+      // Filter is_published=false so prior published matches from other tests cannot
+      // satisfy this assertion vacuously.
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", sessionId)
+              .eq("status", "pending")
+              .eq("is_published", false);
+            return data?.length ?? 0;
+          },
+          { timeout: 20_000, intervals: [500, 1_000, 2_000, 2_000, 2_000] }
+        )
+        .toBeGreaterThanOrEqual(1);
 
-      // Reload to flush any realtime updates we may have missed.
-      await page.waitForTimeout(2_000);
+      // Reload and assert the draft approval banner is visible in the UI.
+      // 15 s gives React time to hydrate and Realtime to deliver after a full reload;
+      // 8 s was observed to be tight on cold Vercel edge deployments.
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
-
-      // Floor assertion that this test ALWAYS guarantees:
-      //   the auto-matchmaking toggle is ON in the DB after clicking it.
-      // The match-generation pipeline is best-effort given environmental
-      // limitations described above.
-      const { data: finalSession } = await db
-        .from("sessions")
-        .select("is_auto_matchmaking_on")
-        .eq("id", sessionId)
-        .single();
-      expect(finalSession?.is_auto_matchmaking_on).toBe(true);
+      await expect(page.getByText(/waiting for approval/i)).toBeVisible({ timeout: 15_000 });
     } finally {
       await ctx.close();
     }
