@@ -5,6 +5,27 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-20 — Dynamic Draft Cap + Unit Test Fixes)
+
+### Dynamic Draft Cap + Parallel Fetch (2026-05-20) — COMPLETE
+
+**Goal:** Scale the draft review queue depth with session size so large sessions never bottleneck on a fixed cap of 3. Fix the draft cap to only count unpublished matches. Fix unit tests broken by the Promise.all query-order change.
+
+**Files changed:**
+- `src/lib/constants.ts` — added `MAX_AUTO_DRAFTS_LARGE=5`, `MAX_AUTO_DRAFTS_XLARGE=6`, `DRAFT_CAP_LARGE_THRESHOLD=25`, `DRAFT_CAP_XLARGE_THRESHOLD=30`
+- `src/app/actions/matchmaking.ts` — `getDynamicDraftCap(waitingCount)` helper; `Promise.all([v_queue_with_wait_time, matches])` parallel fetch after courts; draft cap filtered to `is_published=false` only; `estimatedWaiting` initialized from pre-fetched `waitingCount`
+- `tests/unit/matchmaking-engine.test.ts` — reordered mock response arrays to match new `Promise.all[0]` (v_queue) / `[1]` (matches) order; updated `queriedTables` assertions; updated header comment
+
+**Cap tiers:** `<25 waiting → 3 | 25-29 → 5 | ≥30 → 6`
+
+**Why cap only unpublished:** Published on-deck matches are already reviewed. Counting them against the cap would block fresh draft generation while reviewed matches waited to be called to courts.
+
+**Unit test root cause:** Old code fetched `matches` first (sequential), then `v_queue_with_wait_time` inside `!bypassGate`. New `Promise.all` fetches them concurrently; JS evaluates the array left-to-right, so `v_queue_with_wait_time` calls `from()` before `matches`. All 23 unit tests pass after mock array reordering.
+
+**All 319/320 tests pass (1 pre-existing skip). 0 TypeScript errors.**
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-20 — Draft Mode Regression Fix)
 
 ### Draft Mode Regression Fix (2026-05-20) — COMPLETE
