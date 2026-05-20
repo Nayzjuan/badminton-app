@@ -19,7 +19,7 @@ import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
 import type { SwapResult, SwapMatchPlayersResult } from "@/app/actions/swap-player";
-import type { Court, Profile, QueueWithWaitTime, Session } from "@/types/database";
+import type { Court, Profile, QueueFullWithWaitTime, Session } from "@/types/database";
 import { useOrganizerSession } from "@/hooks/use-organizer-session";
 import { useOrganizerCourts } from "@/hooks/use-organizer-courts";
 import { useOrganizerQueue } from "@/hooks/use-organizer-queue";
@@ -33,7 +33,7 @@ export interface UseOrganizerDataResult {
   /** Live session record — updates in real-time when settings change. */
   session: Session;
   courts: Court[];
-  queue: QueueWithWaitTime[];
+  queue: QueueFullWithWaitTime[];
   /** All active matches (pending + in_progress). */
   activeMatches: EnrichedMatch[];
   /** Pending matches — formed but waiting for a court (on-deck). */

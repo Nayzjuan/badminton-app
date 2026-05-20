@@ -106,7 +106,7 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       .from("queue_entries")
       .select("*")
       .eq("session_id", sessionId)
-      .eq("status", "waiting")
+      .in("status", ["waiting", "on_deck"])
       .order("games_played", { ascending: true })
       .order("joined_at", { ascending: true });
 
@@ -137,10 +137,17 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
 
     const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
 
-    const enriched: QueueEntryWithProfile[] = entries.map((entry) => ({
-      ...entry,
-      profile: profileMap.get(entry.player_id) ?? createUnknownProfile(entry.player_id),
-    }));
+    const enriched: QueueEntryWithProfile[] = entries
+      .map((entry) => ({
+        ...entry,
+        profile: profileMap.get(entry.player_id) ?? createUnknownProfile(entry.player_id),
+      }))
+      // Pin on_deck rows to the top; preserve games_played/joined_at order within each tier.
+      .sort((a, b) => {
+        const aPriority = a.status === "on_deck" ? 0 : 1;
+        const bPriority = b.status === "on_deck" ? 0 : 1;
+        return aPriority - bPriority;
+      });
 
     setWaitlist(enriched);
   }, [supabase, sessionId]);

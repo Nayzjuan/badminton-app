@@ -143,6 +143,7 @@ function WaitlistRow({
   const rankStr = String(position).padStart(2, "0");
   const skill = SKILL_ABBREV[entry.profile.skill_level];
   const isTop = position <= 4;
+  const isOnDeck = entry.status === "on_deck";
 
   // ── "You" row — electric indigo canvas ───────────────────
   if (isMe) {
@@ -189,6 +190,11 @@ function WaitlistRow({
             >
               You
             </span>
+            {isOnDeck && (
+              <span className="shrink-0 rounded-full bg-amber-400/30 px-2 py-0.5 font-mono text-[9px] font-extrabold uppercase tracking-[0.18em] text-amber-200">
+                On Deck
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 mt-0.5">
             <span
@@ -234,9 +240,11 @@ function WaitlistRow({
 
   return (
     <div
-      className={`grid items-center py-3 transition-colors hover:bg-muted/25 ${
-        isLast ? "" : "border-b border-border/50"
-      }`}
+      className={`grid items-center py-3 transition-colors ${
+        isOnDeck
+          ? "bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50/80 dark:hover:bg-amber-950/30"
+          : "hover:bg-muted/25"
+      } ${isLast ? "" : "border-b border-border/50"}`}
       style={{
         gridTemplateColumns: "56px 1fr auto",
         gap: "0 10px",
@@ -265,6 +273,11 @@ function WaitlistRow({
           </span>
           {entry.profile.vip_tag && entry.profile.vip_theme && (
             <VipTag tag={entry.profile.vip_tag} theme={entry.profile.vip_theme} />
+          )}
+          {isOnDeck && (
+            <span className="shrink-0 rounded-full bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 font-mono text-[9px] font-extrabold uppercase tracking-[0.15em] text-amber-700 dark:text-amber-300">
+              On Deck
+            </span>
           )}
         </div>
         <span

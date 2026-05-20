@@ -33,9 +33,11 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
   // disabled during the async call — prevents double-tap on a destructive action.
   const [removingId, setRemovingId] = useState<string | null>(null);
 
-  // Sort by wait time descending (longest first).
+  // Only waiting players are diagnostically relevant here — on_deck/drafted
+  // have already been matched and shouldn't appear as bottlenecks.
   const sorted = useMemo(
-    () => [...queue].sort((a, b) => b.wait_minutes - a.wait_minutes),
+    () =>
+      queue.filter((q) => q.status === "waiting").sort((a, b) => b.wait_minutes - a.wait_minutes),
     [queue]
   );
 
@@ -91,8 +93,8 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                   entry.is_bottleneck
                     ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-950/20"
                     : entry.wait_minutes > BOTTLENECK_THRESHOLD_MINUTES * 0.75
-                    ? "border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-950/20"
-                    : "border-border bg-card"
+                      ? "border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-950/20"
+                      : "border-border bg-card"
                 }`}
               >
                 <div className="flex items-center gap-4">
@@ -119,7 +121,9 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                       {waitMin}m
                     </p>
                     {entry.is_bottleneck && (
-                      <p className="text-xs text-red-600 dark:text-red-400 font-medium">NEEDS ATTENTION</p>
+                      <p className="text-xs text-red-600 dark:text-red-400 font-medium">
+                        NEEDS ATTENTION
+                      </p>
                     )}
                   </div>
 
@@ -142,8 +146,8 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                       <AlertDialogHeader>
                         <AlertDialogTitle>Remove {entry.display_name}?</AlertDialogTitle>
                         <AlertDialogDescription>
-                          This will remove them from the wait-time queue. They can rejoin
-                          the session using their name and PIN.
+                          This will remove them from the wait-time queue. They can rejoin the
+                          session using their name and PIN.
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
@@ -173,8 +177,8 @@ export function WaitTimeMonitor({ queue, onRemoveFromQueue }: WaitTimeMonitorPro
                       entry.is_bottleneck
                         ? "bg-red-500"
                         : entry.wait_minutes > BOTTLENECK_THRESHOLD_MINUTES * 0.75
-                        ? "bg-amber-500"
-                        : "bg-emerald-500"
+                          ? "bg-amber-500"
+                          : "bg-emerald-500"
                     }`}
                     style={{ width: `${pct * 100}%` }}
                   />

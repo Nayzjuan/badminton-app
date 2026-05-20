@@ -12,7 +12,7 @@ import {
   togglePlayerPause,
   removePlayerFromQueue as removePlayerFromQueueAction,
 } from "@/app/actions/queue";
-import type { Profile, QueueWithWaitTime } from "@/types/database";
+import type { Profile, QueueFullWithWaitTime } from "@/types/database";
 
 /**
  * Factory for thin server-action wrappers that:
@@ -60,7 +60,7 @@ export function useOrganizerQueue(
    */
   onProfileChange?: () => void
 ): {
-  queue: QueueWithWaitTime[];
+  queue: QueueFullWithWaitTime[];
   profiles: Map<string, Profile>;
   setProfiles: React.Dispatch<React.SetStateAction<Map<string, Profile>>>;
   fetchQueue: () => Promise<void>;
@@ -68,7 +68,7 @@ export function useOrganizerQueue(
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
   pausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
 } {
-  const [queue, setQueue] = useState<QueueWithWaitTime[]>([]);
+  const [queue, setQueue] = useState<QueueFullWithWaitTime[]>([]);
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map());
   const [loading, setLoading] = useState(true);
 
@@ -80,35 +80,25 @@ export function useOrganizerQueue(
     // increment fetchQueueSeq.current, making our mySeq stale.
     const mySeq = ++fetchQueueSeq.current;
 
-    // ── Phase 1: fetch waiting players from the view ──────────────
+    // Fetch waiting + drafted + on_deck players. on_deck/drafted rows are
+    // visible but non-selectable in the organizer UI; only waiting rows feed
+    // the matchmaking engine (engine reads v_queue_with_wait_time separately).
     const { data, error } = await supabase
-      .from("v_queue_with_wait_time")
+      .from("v_queue_full_with_wait_time")
       .select("*")
       .eq("session_id", sessionId)
-      // Must match the matchmaking sort so the organizer sees the real queue order.
+      // status_priority: on_deck=0, drafted=1, waiting=2 — then matchmaking order.
+      .order("status_priority", { ascending: true })
       .order("games_played", { ascending: true })
       .order("joined_at", { ascending: true });
 
-    // Abort if a newer call started while Phase 1 was in flight.
     if (mySeq !== fetchQueueSeq.current) return;
 
     if (error) {
       console.error("[useOrganizerQueue] fetchQueue error:", error);
     }
     if (data) {
-      // ── Phase 2: merge is_paused flag ─────────────────────────────
-      // v_queue_with_wait_time doesn't expose is_paused; fetch it
-      // directly from queue_entries and merge in-memory.
-      const { data: pauseData } = await supabase
-        .from("queue_entries")
-        .select("player_id, is_paused")
-        .eq("session_id", sessionId);
-
-      // Abort if a newer call started while Phase 2 was in flight.
-      if (mySeq !== fetchQueueSeq.current) return;
-
-      const pauseMap = new Map((pauseData ?? []).map((r) => [r.player_id, r.is_paused]));
-      setQueue(data.map((row) => ({ ...row, is_paused: pauseMap.get(row.player_id) ?? false })));
+      setQueue(data);
     }
   }, [supabase, sessionId]);
 

@@ -189,6 +189,13 @@ export type QueueWithWaitTime = QueueEntry & {
   is_bottleneck: boolean;
 };
 
+/** v_queue_full_with_wait_time view — organizer/player display layer.
+ *  Includes waiting + drafted + on_deck rows (excludes playing/left).
+ *  Adds status_priority for sort: on_deck=0, drafted=1, waiting=2. */
+export type QueueFullWithWaitTime = QueueWithWaitTime & {
+  status_priority: number;
+};
+
 /** Individual game score object (inside v_match_history.game_scores) */
 export type GameScore = {
   game_number: number;
@@ -482,6 +489,10 @@ export type Database = {
     Views: {
       v_queue_with_wait_time: {
         Row: QueueWithWaitTime;
+        Relationships: [];
+      };
+      v_queue_full_with_wait_time: {
+        Row: QueueFullWithWaitTime;
         Relationships: [];
       };
       v_match_history: {
