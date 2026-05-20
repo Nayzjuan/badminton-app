@@ -5,6 +5,33 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-20 — marketing site visual enhancements)
+
+### Marketing Site — Visual Enhancements (2026-05-20) — COMPLETE
+
+**Features section ("What It Does"):**
+- Feature 01 card: emerald gradient wash background, LIVE ENGINE badge with pulsing dot, court grid overlay pattern, key phrases in Smart Matchmaking subtext bolded in `text-ink`.
+- Feature 02/03 cards: brighter number badges.
+- All cards: hover lift effects (`feature-lift-lg` / `feature-lift-sm`), staggered scroll-reveal via IntersectionObserver.
+
+**How It Works section — fully redesigned step card visuals:**
+- Step 1: inline SVG QR code with animated scan line + corner brackets.
+- Step 2: HTML organizer queue mockup (player rows + Generate Match button).
+- Step 3: live scoreboard mockup (Court 1, score 21–15, game progress bars).
+- Progressive green background tint per step (0.1 → 0.22 → 0.38 opacity).
+- All cards use the same scroll-reveal system via `data-reveal-section` attribute.
+
+**CSS additions (`marketing-site/global.css`):**
+- `.feature-card` scroll-reveal (opacity + transform with stagger via `--i`).
+- `.qr-scanline` keyframe animation.
+- Hover lift utility classes: `feature-lift-lg`, `feature-lift-sm`.
+
+**JS:** Generic IntersectionObserver script handles any section with `data-reveal-section` attribute.
+
+**Next steps:** Consider applying the same scroll-reveal + visual-preview treatment to remaining page sections (Testimonials, Pricing, FAQ, Footer CTA) for consistency.
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-20 — UI fixes, score validation, E2E teardown)
 
 ### Wait-time Monitor + Score Validation Fixes (2026-05-20) — COMPLETE

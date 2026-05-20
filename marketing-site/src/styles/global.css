@@ -120,6 +120,69 @@ h2 {
   animation: dt-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* ── Feature section scroll-reveal ── */
+@media (prefers-reduced-motion: no-preference) {
+  .feature-card {
+    opacity: 0;
+    transform: translateY(18px);
+    transition:
+      opacity 550ms cubic-bezier(0.22, 1, 0.36, 1) calc(var(--i, 0) * 90ms),
+      transform 550ms cubic-bezier(0.22, 1, 0.36, 1) calc(var(--i, 0) * 90ms),
+      border-color 200ms ease 0ms,
+      box-shadow 200ms ease 0ms;
+  }
+  .feature-card.in-view {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .feature-card.in-view.feature-lift-lg:hover {
+    transform: translateY(-4px);
+  }
+  .feature-card.in-view.feature-lift-sm:hover {
+    transform: translateY(-2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feature-card {
+    opacity: 0;
+    transition: opacity 200ms ease calc(var(--i, 0) * 50ms);
+  }
+  .feature-card.in-view {
+    opacity: 1;
+  }
+}
+
+/* ── How It Works: QR scan-line animation ── */
+@keyframes qr-scan {
+  0% {
+    top: 2px;
+    opacity: 1;
+  }
+  48% {
+    opacity: 0.9;
+  }
+  50% {
+    top: 65px;
+    opacity: 0.5;
+  }
+  52% {
+    opacity: 0.9;
+  }
+  100% {
+    top: 2px;
+    opacity: 1;
+  }
+}
+.qr-scanline {
+  animation: qr-scan 2.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .qr-scanline {
+    animation: none;
+    top: 36px;
+  }
+}
+
 /* ── Shared card shell — used by sandbox organizer components ── */
 .dt-card {
   background: var(--color-overlay);
