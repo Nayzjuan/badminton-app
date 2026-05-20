@@ -256,27 +256,38 @@ test.describe("Player Scoring — [O-2] Score submission", () => {
         .first()
         .click();
 
-      // Assert success: verify the match was scored (either via UI text or DB).
-      // The ScoreInputCard shows "Score submitted!" on success.
-      // The MatchAlert may also update to show the player returned to queue.
-      // Check the DB as the authoritative source — the match should now have scores.
+      // Assert success — DB is the authoritative source.
+      // submitMatchScore delegates to endMatchAction which must:
+      //   1. Set match.status = 'completed'
+      //   2. Write exact scores (team_a_score=21, team_b_score=15)
+      //   3. Increment games_played for all 4 players
       const db = adminDb();
+
+      // 1. Match must reach 'completed' with correct scores
       await expect
         .poll(
           async () => {
             const { data } = await db
               .from("matches")
-              .select("team_a_score, team_b_score, status")
+              .select("status, team_a_score, team_b_score")
               .eq("session_id", SESSION_ID)
-              .in("status", ["completed", "in_progress"])
-              .limit(1)
-              .single();
-            // Score submission either completes the match or records pending scores.
-            return (data?.team_a_score ?? null) !== null;
+              .eq("status", "completed")
+              .maybeSingle();
+            return data ? `${data.status}|${data.team_a_score}|${data.team_b_score}` : "pending";
           },
-          { timeout: 15_000, intervals: [500, 1000, 2000] }
+          { timeout: 15_000, intervals: [500, 1_000, 2_000] }
         )
-        .toBe(true);
+        .toBe("completed|21|15");
+
+      // 2. The organizer bot's games_played must be incremented to 1
+      const { data: qEntry } = await db
+        .from("queue_entries")
+        .select("games_played, status")
+        .eq("session_id", SESSION_ID)
+        .eq("player_id", organizerUserId)
+        .single();
+      expect(qEntry?.games_played).toBe(1);
+      expect(qEntry?.status).toBe("waiting");
     } finally {
       await context.close();
     }

@@ -5,6 +5,75 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-20 — Draft Mode Regression Fix)
+
+### Draft Mode Regression Fix (2026-05-20) — COMPLETE
+
+**Root cause:** Commit `606efcb` changed `p_is_published: false` → `p_is_published: isOnDeck` in `src/lib/matchmaking-db.ts:executeMatch()` to fix failing E2E scenario-b tests. This was the wrong fix — it broke the intended draft review flow. The E2E tests should have been updated, not the product behavior.
+
+**Correct behavior (restored):** Engine-generated matches start as `is_published=false` (drafts). The organizer must review/edit in the Draft panel → click Publish or Publish All → match becomes `is_published=true` → appears in On Deck panel visible to players and TV.
+
+**Files changed:**
+- `src/lib/matchmaking-db.ts` — `p_is_published: isOnDeck` → `p_is_published: false`
+- `tests/e2e/scenario-b-engine-flows.spec.ts` — Test 1 and Test 3: replaced `"On Deck #1"` assertions with `"waiting for approval"` (draft banner); Test 4 (soft gate): added `"Draft #1"` and `/waiting for approval/` to the `.not.toBeVisible()` checks
+
+**Why the original E2E tests were wrong:** scenario-b was checking for "On Deck #1" (a published match indicator) after auto-matchmaking. After the fix, the engine creates drafts, so the correct check is the draft approval banner text.
+
+**Invariant:** `promoteOnDeckMatchInternal` and `callNextMatch` both filter `is_published=true`, so drafts cannot be promoted to in_progress until the organizer explicitly publishes them. `seedOnDeckMatch()` in scenario-i deliberately seeds `is_published: true` (bypasses draft stage for tests that exercise court-promotion logic — correct).
+
+---
+
+## SESSION STATE (Last Updated: 2026-05-20 — Test Coverage Gap Fill)
+
+### Test Coverage Gap Fill (2026-05-20) — PARTIALLY COMPLETE
+
+**Goal:** Fill the coverage gaps identified in the comprehensive E2E/integration/unit audit.
+
+**Completed (9 files changed):**
+
+**P0 — Zero coverage anywhere (all fixed):**
+- `tests/integration/player-pause.test.ts` *(new, 8 tests)* — `togglePlayerPause`: pause/unpause, games_played+joined_at invariant, non-organizer rejection, unauthenticated rejection, UUID validation, player-not-in-queue no-op, pausing 'playing' player
+- `tests/integration/player-checkout.test.ts` *(new, 8 tests)* — `checkoutPlayer`: happy path, unauthenticated rejection, UUID validation, checkout while on_deck/playing (match unaffected), draft cleanup (match cancelled), published match NOT cancelled, idempotency
+- `tests/integration/score-submission.test.ts` *(modified, +5 tests)* — F-score-1 through F-score-5: `endMatchAction` rejects score>30, rejects negative, rejects float; `submitMatchScore` inherits validation; boundary values 0 and 30 accepted
+
+**P1 — Stub/weak E2E tests (partially fixed):**
+- `tests/e2e/scenario-n-leaderboard.spec.ts` *(modified)* — N-3: seeds completed match, verifies winning players appear or empty-state; N-4: DB-asserts `v_session_leaderboard` ordering (2 wins > 1 win)
+- `tests/e2e/scenario-l-session-management.spec.ts` *(modified)* — L-2: now verifies `is_auto_matchmaking_on` DB state (was UI-only); L-3 *(new)*: seeds in-progress match+waiting players, clicks End Session, asserts DB (match→cancelled, queue→left, session→inactive)
+- `tests/e2e/scenario-o-player-scoring.spec.ts` *(modified)* — O-2: now polls for exact `completed|21|15` scores and asserts `games_played=1` for submitting player (was only checking `team_a_score !== null`)
+
+**Lint baseline:** 0 errors, 99 warnings (unchanged)
+
+**Still open (not done in this session):**
+- P1: Manual match creation E2E (organizer UI flow for `createManualMatchAction`)
+- P1: Co-organizer join E2E (second user joins via passcode, gets organizer dashboard access)
+- P1: Auto-matchmaking engine output E2E (I-3a explicitly admits it may not verify engine generates matches)
+- P2: I-8a monitor count/ordering (only checks ≥1 player visible, not count or ordering)
+- P2: B-2 soft gate exact boundary (4 players gates, 5 would not — boundary not probed)
+
+---
+
+## SESSION STATE (Last Updated: 2026-05-20 — E2E Sandbox Expansion to 50 Players)
+
+### E2E Sandbox Expansion (2026-05-20) — ALL COMPLETE
+
+**Goal:** Expand scenario-i E2E test roster from 30 to 50 players, fix a latent I-10c delete bug, and add Group 11 tests that specifically target large-pool behavior.
+
+**Files changed:**
+- `tests/e2e/scenario-i-thirty-player-simulation.spec.ts` → renamed to `tests/e2e/scenario-i-fifty-player-simulation.spec.ts`
+  - Added 20 new E2E_ players (Eli, Faye, Gus, Hana, Ivan, Jade, Kai, Lena, Marco, Nina, Omar, Petra, Rex, Sara, Theo, Ula, Vince, Wren, Xander, Yara) to `PLAYER_DEFS` — skills span beginner to advanced, all PIN 1234
+  - Updated all "30 player" comments/strings to "50 player" throughout
+  - Fixed I-10c latent bug: `.not("player_id", "in", array)` (PostgREST no-op) → `.in("player_id", unusedPlayerIds)` with explicit IDs (same fix as I-6b)
+  - Added Group 11 [I-11a/b/c] — large-pool-specific tests (3-tier priority ordering at 50 players, 6-court + 26-player waiting pool rendering, multi-round games_played accounting)
+
+**Test coverage gaps filled:**
+- I-11a: Verifies engine queue ordering correctness with 3 priority tiers (0/1/3 games_played) across 50 players
+- I-11b: Verifies dashboard + wait-time monitor renders correctly with 6 courts full AND 26 players still waiting
+- I-11c: Verifies games_played accounting is correct across 3 simulated rounds with distinct and repeat player groups
+
+**Lint baseline:** 0 errors (unchanged)
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-19 — Performance & Reliability Audit Pass)
 
 ### Performance & Reliability Audit (2026-05-19) — ALL COMPLETE

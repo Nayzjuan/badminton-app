@@ -1,18 +1,18 @@
 // ============================================================
-// Scenario I — 30-Player Live Session Simulation
+// Scenario I — 50-Player Live Session Simulation
 // ============================================================
-// Simulates a realistic session with 30 players to exhaustively
+// Simulates a realistic session with 50 players to exhaustively
 // cover organizer workflows and negative edge-cases before a
 // live session.
 //
 // Architecture
 // ────────────
-// • beforeAll  — creates 30 bot user accounts ONCE (slow, ~4s).
+// • beforeAll  — creates 50 bot user accounts ONCE (slow, ~6s).
 //                All tests in this file share these accounts.
 //                Also ensures the organizer bot is signed in.
 // • beforeEach — softResetSandboxSession() (clears courts/
 //                matches/queue without deleting users) then
-//                re-inserts 6 courts + 30 queue entries.
+//                re-inserts 6 courts + 50 queue entries.
 //                Fast: ~1s.
 // • afterAll   — full resetSandboxSession() including user
 //                deletion.  Leaves the sandbox pristine.
@@ -21,13 +21,15 @@
 // ───────────
 // Group 1  [I-1]  Player registration (happy path + negatives)
 // Group 2  [I-2]  PIN reconnect (happy path + negatives)
-// Group 3  [I-3]  Auto-matchmaking with 30 players
+// Group 3  [I-3]  Auto-matchmaking with 50 players
 // Group 4  [I-4]  Manual match lifecycle (call / score / cancel / clear)
 // Group 5  [I-5]  Court management (add / close / reopen / remove)
 // Group 6  [I-6]  Negative: insufficient players for matchmaking
 // Group 7  [I-7]  Score input validation
 // Group 8  [I-8]  Organizer UI: wait-time monitor & queue priority
 // Group 9  [I-9]  Match history
+// Group 10 [I-10] Stress / concurrency edge-cases
+// Group 11 [I-11] Large-pool (50-player) specific scenarios
 //
 // Timing assumptions
 // ──────────────────
@@ -52,7 +54,7 @@ import {
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
 
-// ── 30-player roster ─────────────────────────────────────────
+// ── 50-player roster ─────────────────────────────────────────
 // Skills span the full range so matchmaking exercises all code
 // paths.  PIN 5678 marks reconnect-test candidates (frank-jake).
 // All other players use PIN 1234.
@@ -90,6 +92,27 @@ const PLAYER_DEFS = [
   { name: "E2E_Ben", skill: "lower_advanced", pin: "1234" },
   { name: "E2E_Celia", skill: "lower_advanced", pin: "1234" },
   { name: "E2E_Diego", skill: "advanced", pin: "1234" },
+  // Extended pool (players 31-50) — covers full skill spread, PIN 1234
+  { name: "E2E_Eli", skill: "beginner", pin: "1234" },
+  { name: "E2E_Faye", skill: "lower_intermediate", pin: "1234" },
+  { name: "E2E_Gus", skill: "lower_intermediate", pin: "1234" },
+  { name: "E2E_Hana", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Ivan", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Jade", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Kai", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Lena", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Marco", skill: "upper_intermediate", pin: "1234" },
+  { name: "E2E_Nina", skill: "upper_intermediate", pin: "1234" },
+  { name: "E2E_Omar", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Petra", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Rex", skill: "lower_advanced", pin: "1234" },
+  { name: "E2E_Sara", skill: "lower_advanced", pin: "1234" },
+  { name: "E2E_Theo", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Ula", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Vince", skill: "advanced", pin: "1234" },
+  { name: "E2E_Wren", skill: "lower_intermediate", pin: "1234" },
+  { name: "E2E_Xander", skill: "intermediate", pin: "1234" },
+  { name: "E2E_Yara", skill: "beginner", pin: "1234" },
 ] as const;
 
 // ── Per-suite shared state ────────────────────────────────────
@@ -206,7 +229,7 @@ test.beforeAll(async ({ browser }) => {
   // 1. Ensure the organizer bot account exists
   await ensureOrganizerAccount();
 
-  // 2. Create all 30 bot player accounts ONCE
+  // 2. Create all 50 bot player accounts ONCE
   //    Sequential creation is intentional — the admin API does not
   //    support batch user creation and parallel calls risk rate-limiting.
   const db = adminDb();
@@ -310,14 +333,14 @@ test.beforeEach(async () => {
     throw new Error(`[I-beforeEach] Failed to insert courts: ${courtErr?.message}`);
   currentCourtIds = courts.map((c) => c.id);
 
-  // Insert 30 queue entries (all waiting, games_played=0)
+  // Insert 50 queue entries (all waiting, games_played=0)
   const queueInserts = allPlayers.map((p, i) => ({
     session_id: sessionId,
     player_id: p.userId,
     status: "waiting" as const,
     games_played: 0,
     position: i + 1,
-    joined_at: new Date(Date.now() - (30 - i) * 1000).toISOString(), // stagger join times
+    joined_at: new Date(Date.now() - (50 - i) * 1000).toISOString(), // stagger join times
   }));
 
   const { error: queueErr } = await db.from("queue_entries").insert(queueInserts);
@@ -711,12 +734,12 @@ test.describe("Group 2 — PIN Reconnect", () => {
 });
 
 // ═════════════════════════════════════════════════════════════
-// Group 3 — Auto-Matchmaking with 30 Players
+// Group 3 — Auto-Matchmaking with 50 Players
 // ═════════════════════════════════════════════════════════════
 
-test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
-  // [I-3a] Auto ON with 30 players → ≥2 on-deck matches generated
-  test("[I-3a] Auto ON generates multiple on-deck matches with 30 players", async ({ browser }) => {
+test.describe("Group 3 — Auto-Matchmaking (50 players)", () => {
+  // [I-3a] Auto ON with 50 players → ≥2 on-deck matches generated
+  test("[I-3a] Auto ON generates multiple on-deck matches with 50 players", async ({ browser }) => {
     const db = adminDb();
     const ctx = await browser.newContext({
       storageState: ORGANIZER_STORAGE_STATE,
@@ -814,8 +837,8 @@ test.describe("Group 3 — Auto-Matchmaking (30 players)", () => {
     }
   });
 
-  // [I-3b] Auto OFF — queue stays dormant even with 30 players
-  test("[I-3b] Auto OFF: 30 players waiting produces no on-deck matches", async ({ browser }) => {
+  // [I-3b] Auto OFF — queue stays dormant even with 50 players
+  test("[I-3b] Auto OFF: 50 players waiting produces no on-deck matches", async ({ browser }) => {
     const ctx = await browser.newContext({
       storageState: ORGANIZER_STORAGE_STATE,
       extraHTTPHeaders: BYPASS_HEADERS,
@@ -1468,7 +1491,7 @@ test.describe("Group 6 — Negative: Insufficient Players", () => {
     // with a JS array — in this PostgREST client the `in` value MUST be a
     // SQL-formatted parenthesized list, e.g. `("id1","id2")`.  Passing an
     // array silently no-ops the predicate and deletes nothing, which left
-    // all 30 players in the queue and made the engine create matches that
+    // all 50 players in the queue and made the engine create matches that
     // this test specifically asserts must NOT be created.  We delete the
     // unwanted IDs explicitly with `.in(...)` instead — same semantics,
     // unambiguous syntax.
@@ -1692,20 +1715,20 @@ test.describe("Group 8 — Wait-Time Monitor & Queue Priority", () => {
       await page.getByRole("tab", { name: /wait time monitor/i }).click();
       await page.waitForSelector('[id="tabpanel-monitor"]', { timeout: 5_000 });
 
-      // With 30 players waiting there should be data visible
+      // With 50 players waiting there should be data visible
       // The monitor shows player names and wait times
       const monitorContent = page.locator('[id="tabpanel-monitor"]');
       await expect(monitorContent).toBeVisible({ timeout: 5_000 });
 
       // At least one of our players should appear in the monitor
-      // (look for any E2E_ name since we have 30 of them)
+      // (look for any E2E_ name since we have 50 of them)
       const hasPlayerData = await monitorContent
         .getByText(/E2E_/)
         .first()
         .isVisible()
         .catch(() => false);
 
-      // With 30 players seeded in beforeEach, at least one E2E_ name must be visible
+      // With 50 players seeded in beforeEach, at least one E2E_ name must be visible
       expect(hasPlayerData).toBe(true);
     } finally {
       await ctx.close();
@@ -2013,7 +2036,7 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
   test("[I-10c] all 6 courts can hold simultaneous in-progress matches", async ({ browser }) => {
     const db = adminDb();
 
-    // Seed 6 in-progress matches — one per court — using 24 players
+    // Seed 6 in-progress matches — one per court — using 24 of the 50 players
     for (let i = 0; i < 6; i++) {
       const startIdx = i * 4;
       const playerIds = allPlayers.slice(startIdx, startIdx + 4).map((p) => p.userId);
@@ -2047,16 +2070,19 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
         .in("player_id", playerIds);
     }
 
-    // 24 of 30 players are now "playing".  The remaining 6 are still "waiting"
+    // 24 of 50 players are now "playing".  The remaining 26 are still "waiting"
     // which could trigger auto-matchmaking phantom matches if the toggle were on.
-    // Delete them so this test only measures 6 full courts, not a 7th match race.
-    const usedPlayerIds = allPlayers.slice(0, 24).map((p) => p.userId);
-    await db
-      .from("queue_entries")
-      .delete()
-      .eq("session_id", sessionId)
-      .eq("status", "waiting")
-      .not("player_id", "in", usedPlayerIds);
+    // Delete them so this test only measures 6 full courts, not additional match races.
+    // Use .in() with the IDs to remove — .not("col", "in", array) is a PostgREST
+    // footgun that silently no-ops when passed a JS array (see [I-6b] fix comment).
+    const unusedPlayerIds = allPlayers.slice(24).map((p) => p.userId);
+    if (unusedPlayerIds.length > 0) {
+      await db
+        .from("queue_entries")
+        .delete()
+        .eq("session_id", sessionId)
+        .in("player_id", unusedPlayerIds);
+    }
 
     // DB: all 6 courts should be in_use
     const { data: usedCourts } = await db
@@ -2096,5 +2122,301 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
     } finally {
       await ctx.close();
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// Group 11 — Large-Pool (50-Player) Specific Scenarios
+// ═════════════════════════════════════════════════════════════
+// These tests are only meaningful at ≥50 players.  They verify
+// priority ordering, dashboard rendering, and games_played
+// accounting under realistic high-load conditions that smaller
+// player pools cannot exercise.
+
+test.describe("Group 11 — Large-Pool (50-Player) Scenarios", () => {
+  // [I-11a] 3-tier games_played ordering: 0-game players precede
+  // 1-game players, which precede 3-game players, in the DB queue
+  // ordering used by the matchmaking engine.
+  test("[I-11a] 50-player 3-tier priority: queue ordering is correct at scale", async () => {
+    const db = adminDb();
+
+    // Tier A: players 0-9 → games_played=3 (should appear LAST)
+    const tierA = allPlayers.slice(0, 10).map((p) => p.userId);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 3 })
+      .eq("session_id", sessionId)
+      .in("player_id", tierA);
+
+    // Tier B: players 10-29 → games_played=1 (middle priority)
+    const tierB = allPlayers.slice(10, 30).map((p) => p.userId);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 1 })
+      .eq("session_id", sessionId)
+      .in("player_id", tierB);
+
+    // Tier C: players 30-49 → games_played=0 (should appear FIRST)
+    // These were seeded at 0 in beforeEach — no update needed, but
+    // explicit for clarity.
+    const tierC = allPlayers.slice(30, 50).map((p) => p.userId);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 0 })
+      .eq("session_id", sessionId)
+      .in("player_id", tierC);
+
+    // Fetch queue ordered the same way the engine orders it:
+    // games_played ASC, joined_at ASC
+    const { data: rows, error } = await db
+      .from("queue_entries")
+      .select("player_id, games_played")
+      .eq("session_id", sessionId)
+      .eq("status", "waiting")
+      .order("games_played", { ascending: true })
+      .order("joined_at", { ascending: true });
+
+    expect(error).toBeNull();
+    expect(rows).not.toBeNull();
+
+    const ordered = rows ?? [];
+
+    // All 50 waiting players must appear in the result
+    expect(ordered.length).toBe(50);
+
+    // Find boundary indices
+    const firstTierBIdx = ordered.findIndex((r) => tierB.includes(r.player_id));
+    const firstTierAIdx = ordered.findIndex((r) => tierA.includes(r.player_id));
+    const lastTierCIdx =
+      ordered.length - 1 - [...ordered].reverse().findIndex((r) => tierC.includes(r.player_id));
+
+    // Tier C (0 games) must all appear before Tier B (1 game)
+    expect(lastTierCIdx).toBeLessThan(firstTierBIdx);
+
+    // Tier B (1 game) must all appear before Tier A (3 games)
+    const lastTierBIdx =
+      ordered.length - 1 - [...ordered].reverse().findIndex((r) => tierB.includes(r.player_id));
+    expect(lastTierBIdx).toBeLessThan(firstTierAIdx);
+
+    // Spot-check: every Tier C player has games_played=0
+    const tierCRows = ordered.filter((r) => tierC.includes(r.player_id));
+    expect(tierCRows.every((r) => r.games_played === 0)).toBe(true);
+
+    // Spot-check: every Tier A player has games_played=3
+    const tierARows = ordered.filter((r) => tierA.includes(r.player_id));
+    expect(tierARows.every((r) => r.games_played === 3)).toBe(true);
+  });
+
+  // [I-11b] With 6 full courts (24 players playing) and 26 players
+  // still waiting, the dashboard renders all "In Progress" badges
+  // and the wait-time monitor shows the waiting pool.
+  test("[I-11b] 6 full courts + 26-player waiting pool renders correctly", async ({ browser }) => {
+    const db = adminDb();
+
+    // Seed 6 in-progress matches (players 0-23) — same pattern as I-10c
+    for (let i = 0; i < 6; i++) {
+      const startIdx = i * 4;
+      const playerIds = allPlayers.slice(startIdx, startIdx + 4).map((p) => p.userId);
+
+      const { data: match } = await db
+        .from("matches")
+        .insert({
+          session_id: sessionId,
+          court_id: currentCourtIds[i],
+          status: "in_progress",
+          is_mixed_level: false,
+          sort_order: i + 1,
+        })
+        .select("id")
+        .single();
+
+      if (!match) throw new Error(`[I-11b] Failed to seed match for court ${i + 1}`);
+
+      await db.from("match_players").insert([
+        { match_id: match.id, player_id: playerIds[0], team: "a" as const },
+        { match_id: match.id, player_id: playerIds[1], team: "a" as const },
+        { match_id: match.id, player_id: playerIds[2], team: "b" as const },
+        { match_id: match.id, player_id: playerIds[3], team: "b" as const },
+      ]);
+
+      await db.from("courts").update({ status: "in_use" }).eq("id", currentCourtIds[i]);
+      await db
+        .from("queue_entries")
+        .update({ status: "playing" })
+        .eq("session_id", sessionId)
+        .in("player_id", playerIds);
+    }
+
+    // DB: 26 players should remain "waiting"
+    const { data: waitingRows } = await db
+      .from("queue_entries")
+      .select("player_id")
+      .eq("session_id", sessionId)
+      .eq("status", "waiting");
+    expect(waitingRows?.length).toBe(26);
+
+    const ctx = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+      extraHTTPHeaders: BYPASS_HEADERS,
+    });
+    const page = await ctx.newPage();
+
+    try {
+      await goToDashboard(page);
+      await page.waitForTimeout(2_000);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+
+      // UI: all 6 courts show "In Progress" — no court is stuck blank
+      const inProgressBadges = page.getByText("In Progress");
+      const badgeCount = await inProgressBadges.count();
+      expect(badgeCount).toBe(6);
+
+      // UI: wait-time monitor must render without error and show waiting players
+      await page.getByRole("tab", { name: /wait time monitor/i }).click();
+      await page.waitForSelector('[id="tabpanel-monitor"]', { timeout: 5_000 });
+
+      const monitorContent = page.locator('[id="tabpanel-monitor"]');
+      await expect(monitorContent).toBeVisible({ timeout: 5_000 });
+
+      // At least one waiting E2E_ player must appear in the monitor
+      const hasWaiting = await monitorContent
+        .getByText(/E2E_/)
+        .first()
+        .isVisible()
+        .catch(() => false);
+      expect(hasWaiting).toBe(true);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  // [I-11c] After 3 completed match rounds (12 distinct players used),
+  // each player's games_played count in the queue reflects the correct
+  // number of rounds they participated in.
+  test("[I-11c] games_played accounting is correct across 3 simulated rounds", async () => {
+    const db = adminDb();
+
+    // Round 1: players 0-3 complete a match
+    const round1Ids = allPlayers.slice(0, 4).map((p) => p.userId);
+    const { data: m1 } = await db
+      .from("matches")
+      .insert({
+        session_id: sessionId,
+        court_id: currentCourtIds[0],
+        status: "completed",
+        is_mixed_level: false,
+        sort_order: 1,
+        team_a_score: 21,
+        team_b_score: 15,
+        started_at: new Date(Date.now() - 30 * 60_000).toISOString(),
+        completed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+      })
+      .select("id")
+      .single();
+    if (!m1) throw new Error("[I-11c] Failed to seed round-1 match");
+    await db.from("match_players").insert([
+      { match_id: m1.id, player_id: round1Ids[0], team: "a" as const },
+      { match_id: m1.id, player_id: round1Ids[1], team: "a" as const },
+      { match_id: m1.id, player_id: round1Ids[2], team: "b" as const },
+      { match_id: m1.id, player_id: round1Ids[3], team: "b" as const },
+    ]);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 1, status: "waiting" })
+      .eq("session_id", sessionId)
+      .in("player_id", round1Ids);
+
+    // Round 2: players 4-7 complete a match
+    const round2Ids = allPlayers.slice(4, 8).map((p) => p.userId);
+    const { data: m2 } = await db
+      .from("matches")
+      .insert({
+        session_id: sessionId,
+        court_id: currentCourtIds[1],
+        status: "completed",
+        is_mixed_level: false,
+        sort_order: 2,
+        team_a_score: 21,
+        team_b_score: 18,
+        started_at: new Date(Date.now() - 18 * 60_000).toISOString(),
+        completed_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      })
+      .select("id")
+      .single();
+    if (!m2) throw new Error("[I-11c] Failed to seed round-2 match");
+    await db.from("match_players").insert([
+      { match_id: m2.id, player_id: round2Ids[0], team: "a" as const },
+      { match_id: m2.id, player_id: round2Ids[1], team: "a" as const },
+      { match_id: m2.id, player_id: round2Ids[2], team: "b" as const },
+      { match_id: m2.id, player_id: round2Ids[3], team: "b" as const },
+    ]);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 1, status: "waiting" })
+      .eq("session_id", sessionId)
+      .in("player_id", round2Ids);
+
+    // Round 3: players 0-3 play again (they now have games_played=2)
+    const round3Ids = round1Ids;
+    const { data: m3 } = await db
+      .from("matches")
+      .insert({
+        session_id: sessionId,
+        court_id: currentCourtIds[0],
+        status: "completed",
+        is_mixed_level: false,
+        sort_order: 3,
+        team_a_score: 21,
+        team_b_score: 19,
+        started_at: new Date(Date.now() - 8 * 60_000).toISOString(),
+        completed_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+      })
+      .select("id")
+      .single();
+    if (!m3) throw new Error("[I-11c] Failed to seed round-3 match");
+    await db.from("match_players").insert([
+      { match_id: m3.id, player_id: round3Ids[0], team: "a" as const },
+      { match_id: m3.id, player_id: round3Ids[1], team: "a" as const },
+      { match_id: m3.id, player_id: round3Ids[2], team: "b" as const },
+      { match_id: m3.id, player_id: round3Ids[3], team: "b" as const },
+    ]);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 2 })
+      .eq("session_id", sessionId)
+      .in("player_id", round3Ids);
+
+    // Assert games_played for all 3 groups
+    const { data: queueRows } = await db
+      .from("queue_entries")
+      .select("player_id, games_played")
+      .eq("session_id", sessionId)
+      .in("player_id", [...round1Ids, ...round2Ids]);
+
+    expect(queueRows).not.toBeNull();
+    const byId = Object.fromEntries((queueRows ?? []).map((r) => [r.player_id, r.games_played]));
+
+    // Players 0-3 played rounds 1 and 3 → games_played=2
+    for (const id of round1Ids) {
+      expect(byId[id]).toBe(2);
+    }
+
+    // Players 4-7 played round 2 only → games_played=1
+    for (const id of round2Ids) {
+      expect(byId[id]).toBe(1);
+    }
+
+    // Players 8-49 played zero rounds → games_played=0
+    const { data: freshRows } = await db
+      .from("queue_entries")
+      .select("player_id, games_played")
+      .eq("session_id", sessionId)
+      .in(
+        "player_id",
+        allPlayers.slice(8).map((p) => p.userId)
+      );
+
+    expect(freshRows?.every((r) => r.games_played === 0)).toBe(true);
   });
 });

@@ -5,10 +5,12 @@
 // covered by unit tests alone: they require real DB state,
 // real server actions, and real Realtime propagation.
 //
-// ── Test 1: Auto ON triggers on-deck generation ──────────────
+// ── Test 1: Auto ON triggers draft generation ────────────────
 //   Seed: 5 players waiting, 2 courts, auto OFF (all_waiting).
 //   Action: click Auto toggle → turns ON.
-//   Assert: at least one "On Deck #1" match appears within 10s.
+//   Assert: draft approval banner "N on-deck matches waiting for
+//           approval" appears — engine creates drafts, not
+//           published on-deck matches. Organizer must publish.
 //
 // ── Test 2: Auto OFF keeps queue dormant ─────────────────────
 //   Seed: 5 players waiting, 2 courts, auto OFF (all_waiting).
@@ -94,9 +96,7 @@ test.describe("Engine Flow: Auto ON", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
 
       // Wait for the courts tab panel to finish loading
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
@@ -122,33 +122,37 @@ test.describe("Engine Flow: Auto ON", () => {
       // server action can leave the optimistic UI green while the engine
       // never actually ran.
       const db = adminDb();
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("sessions")
-            .select("is_auto_matchmaking_on")
-            .eq("id", seeded.sessionId)
-            .single();
-          return data?.is_auto_matchmaking_on ?? false;
-        },
-        { timeout: 10_000 }
-      ).toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("sessions")
+              .select("is_auto_matchmaking_on")
+              .eq("id", seeded.sessionId)
+              .single();
+            return data?.is_auto_matchmaking_on ?? false;
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
 
       // ── 3. Wait for the engine to generate an on-deck match ─
       // The engine runs synchronously inside toggleAutoMatchmaking but the
       // serverless cold start + read-replica lag can stretch the round trip
       // past the previous 10 s window.  20 s gives enough headroom.
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", seeded.sessionId)
-            .eq("status", "pending");
-          return data?.length ?? 0;
-        },
-        { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", seeded.sessionId)
+              .eq("status", "pending");
+            return data?.length ?? 0;
+          },
+          { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
+        )
+        .toBeGreaterThan(0);
 
       // Give read replicas time to sync with the primary write.
       await page.waitForTimeout(2_000);
@@ -156,12 +160,13 @@ test.describe("Engine Flow: Auto ON", () => {
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
-      await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
+      // Engine-generated matches start as drafts (is_published=false).
+      // The "Drafts — hidden from players" section appears and the approval
+      // banner reads "N on-deck matches waiting for approval".
+      await expect(page.getByText(/waiting for approval/)).toBeVisible({ timeout: 10_000 });
 
-      // The "matches ready" badge count should be at least 1
-      await expect(
-        page.getByText(/\d+ match(es)? ready/)
-      ).toBeVisible({ timeout: 3_000 });
+      // The "Drafts" section label must also be visible
+      await expect(page.getByText("Drafts")).toBeVisible({ timeout: 3_000 });
     } finally {
       await context.close();
     }
@@ -173,18 +178,14 @@ test.describe("Engine Flow: Auto ON", () => {
 // ─────────────────────────────────────────────────────────────
 
 test.describe("Engine Flow: Auto OFF", () => {
-  test("with Auto OFF, players in queue never generate on-deck matches", async ({
-    browser,
-  }) => {
+  test("with Auto OFF, players in queue never generate on-deck matches", async ({ browser }) => {
     const context = await browser.newContext({
       storageState: ORGANIZER_STORAGE_STATE,
     });
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
 
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -239,9 +240,7 @@ test.describe("Engine Flow: Red Zone escalation", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
 
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -256,17 +255,19 @@ test.describe("Engine Flow: Red Zone escalation", () => {
       // produce a state where the optimistic UI says ON but the engine
       // never ran — the test then times out checking for matches the
       // engine had no chance to create.
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("sessions")
-            .select("is_auto_matchmaking_on")
-            .eq("id", seeded.sessionId)
-            .single();
-          return data?.is_auto_matchmaking_on ?? false;
-        },
-        { timeout: 10_000 }
-      ).toBe(true);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("sessions")
+              .select("is_auto_matchmaking_on")
+              .eq("id", seeded.sessionId)
+              .single();
+            return data?.is_auto_matchmaking_on ?? false;
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
 
       // Wait for the engine to write a pending Mixed Level match.
       // The engine has to: read the queue + paused, score candidates,
@@ -274,28 +275,30 @@ test.describe("Engine Flow: Red Zone escalation", () => {
       // fallback that builds the Mixed Level group, and INSERT via
       // create_match_with_players RPC.  On a cold-started Vercel
       // function this can take 8–12 s end-to-end.
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", seeded.sessionId)
-            .eq("status", "pending");
-          return data?.length ?? 0;
-        },
-        { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", seeded.sessionId)
+              .eq("status", "pending");
+            return data?.length ?? 0;
+          },
+          { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
+        )
+        .toBeGreaterThan(0);
 
-      // ── Wait for an on-deck match to appear ──────────────────
-      // Realtime delivery is unreliable on Vercel infra; reload to
-      // force a fresh fetch that reads the engine-created match from DB.
+      // ── Wait for the draft match to appear ───────────────────
+      // Engine-generated matches start as drafts (is_published=false).
+      // The draft approval banner and section label are the authoritative
+      // UI indicators — reload to flush any Realtime lag.
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
-      await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(/waiting for approval/)).toBeVisible({ timeout: 10_000 });
 
-      // ── UI: "Mixed Level" badge should be visible on the card ─
-      // The on-deck card renders a "Mixed Level" badge when is_mixed_level=true.
+      // ── UI: "Mixed Level" badge should be visible on the draft card ─
       await expect(page.getByText("Mixed Level")).toBeVisible({ timeout: 5_000 });
 
       // ── DB: verify is_mixed_level=true on the created match ──
@@ -349,9 +352,7 @@ test.describe("Engine Flow: Soft Gate", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
-      );
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
 
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -370,13 +371,16 @@ test.describe("Engine Flow: Soft Gate", () => {
       // on-deck match would appear here within ~1.5s.
       await page.waitForTimeout(4_000);
 
-      // ── Assert: gate held — still no on-deck match ───────────
+      // ── Assert: gate held — no match of any kind created ────────
+      // Engine now creates drafts (is_published=false), so we check
+      // for BOTH "On Deck #1" (published) and "Draft #1" (unpublished).
+      // Neither should appear when the soft gate correctly deferred.
       await expect(page.getByText("No matches on deck")).toBeVisible({
         timeout: 3_000,
       });
-
-      // The "matches ready" badge must show 0 (or be absent entirely)
       await expect(page.getByText("On Deck #1")).not.toBeVisible();
+      await expect(page.getByText("Draft #1")).not.toBeVisible();
+      await expect(page.getByText(/waiting for approval/)).not.toBeVisible();
     } finally {
       await context.close();
     }

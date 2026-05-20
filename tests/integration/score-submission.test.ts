@@ -414,4 +414,120 @@ describe("Score Submission Cascade — Suite F", () => {
       expect(e.status).toBe("waiting");
     }
   });
+
+  // ============================================================
+  // Score schema server-side validation (P0 coverage gap)
+  // ============================================================
+  // scoreSchema (src/lib/schemas/match.ts) gates endMatchAction and
+  // submitMatchScore before any DB write.  These tests verify the
+  // server action rejects out-of-range scores even when called
+  // directly (bypassing any UI form validation).
+
+  it("F-score-1: endMatchAction rejects teamAScore > 30 (server-side schema)", async () => {
+    const { organizer, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    let result: Awaited<ReturnType<typeof endMatchAction>>;
+    try {
+      result = await endMatchAction(match.id, 999, 15);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(false);
+    expect(result!.message).toMatch(/exceed|30|score/i);
+
+    // DB must be untouched — match still in_progress
+    const { data: m } = await serviceClient()
+      .from("matches")
+      .select("status, team_a_score")
+      .eq("id", match.id)
+      .single();
+    expect(m?.status).toBe("in_progress");
+    expect(m?.team_a_score).toBeNull();
+  });
+
+  it("F-score-2: endMatchAction rejects teamBScore < 0 (server-side schema)", async () => {
+    const { organizer, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    let result: Awaited<ReturnType<typeof endMatchAction>>;
+    try {
+      result = await endMatchAction(match.id, 21, -1);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(false);
+    expect(result!.message).toMatch(/negative|score/i);
+
+    const { data: m } = await serviceClient()
+      .from("matches")
+      .select("status")
+      .eq("id", match.id)
+      .single();
+    expect(m?.status).toBe("in_progress");
+  });
+
+  it("F-score-3: endMatchAction rejects non-integer score (float bypass attempt)", async () => {
+    const { organizer, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    let result: Awaited<ReturnType<typeof endMatchAction>>;
+    try {
+      // 21.5 is a float — scoreSchema requires .int()
+      result = await endMatchAction(match.id, 21.5, 15);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(false);
+    expect(result!.message).toMatch(/whole number|integer|score/i);
+  });
+
+  it("F-score-4: submitMatchScore also inherits server-side score validation", async () => {
+    const { players, match } = await inProgressMatchSetup();
+
+    // Player submitting their own score — still subject to scoreSchema
+    const restore = mockAuthAs(players[0].id);
+    let result: Awaited<ReturnType<typeof submitMatchScore>>;
+    try {
+      result = await submitMatchScore(match.id, 999, 15);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(false);
+    expect(result!.message).toMatch(/exceed|30|score/i);
+
+    const { data: m } = await serviceClient()
+      .from("matches")
+      .select("status")
+      .eq("id", match.id)
+      .single();
+    expect(m?.status).toBe("in_progress");
+  });
+
+  it("F-score-5: exact boundary values 0 and 30 are accepted", async () => {
+    const { organizer, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    let result: Awaited<ReturnType<typeof endMatchAction>>;
+    try {
+      result = await endMatchAction(match.id, 30, 0);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(true);
+
+    const { data: m } = await serviceClient()
+      .from("matches")
+      .select("status, team_a_score, team_b_score")
+      .eq("id", match.id)
+      .single();
+    expect(m?.status).toBe("completed");
+    expect(m?.team_a_score).toBe(30);
+    expect(m?.team_b_score).toBe(0);
+  });
 });

@@ -339,10 +339,12 @@ export async function executeMatch(
     p_team_a_ids: teamA.map((p) => p.player_id),
     p_team_b_ids: teamB.map((p) => p.player_id),
     p_origin: "auto" as const,
-    // Auto-created on-deck matches are published immediately — they come
-    // from the engine's algorithm, not the organizer's draft review flow.
-    // Manually-created draft matches (organizer UI) use p_is_published: false.
-    p_is_published: isOnDeck,
+    // Engine-generated matches always start as drafts (is_published=false).
+    // The organizer must review — and optionally edit rosters — before
+    // publishing. "Publish All" or per-match Publish promotes them to On Deck
+    // where players and the TV board can see them.
+    // Manually-created matches (organizer UI) also start as is_published=false.
+    p_is_published: false,
   });
 
   if (rpcError) {

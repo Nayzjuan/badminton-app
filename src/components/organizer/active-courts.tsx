@@ -202,6 +202,24 @@ export function ActiveCourts({
     });
   }
 
+  async function handleUpdateCourtStatus(courtId: string, status: Court["status"]) {
+    setCourtError(courtId, null);
+    const result = await onUpdateCourtStatus(courtId, status);
+    if (result.error) {
+      setCourtError(courtId, result.error);
+      showToast({ type: "error", title: "Court Update Failed", body: result.error });
+    }
+  }
+
+  async function handleRemoveCourt(courtId: string) {
+    setCourtError(courtId, null);
+    const result = await onRemoveCourt(courtId);
+    if (result.error) {
+      setCourtError(courtId, result.error);
+      showToast({ type: "error", title: "Remove Court Failed", body: result.error });
+    }
+  }
+
   // ── Render ───────────────────────────────────────────────────
   return (
     <div className="space-y-6">
@@ -348,8 +366,8 @@ export function ActiveCourts({
                 onClearOnDeckMatch={() => {
                   if (match) handleClearOnDeckMatch(court.id, match.id);
                 }}
-                onUpdateStatus={(s) => onUpdateCourtStatus(court.id, s)}
-                onRemove={() => onRemoveCourt(court.id)}
+                onUpdateStatus={(s) => handleUpdateCourtStatus(court.id, s)}
+                onRemove={() => handleRemoveCourt(court.id)}
               />
             );
           })}
