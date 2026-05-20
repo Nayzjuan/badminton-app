@@ -248,6 +248,9 @@ export async function publishMatchAction(
 
   switch (result) {
     case "SUCCESS":
+      // Engine hook: publishing moves this draft out of the review queue,
+      // opening a slot. Refill immediately so the organizer has fresh drafts.
+      await runEngineForSession(match.session_id);
       return { success: true, message: "Match published." };
     case "NOT_ORGANIZER":
       return { success: false, message: "Forbidden" };
@@ -256,6 +259,7 @@ export async function publishMatchAction(
     case "NOT_PENDING":
       return { success: false, message: "Only pending (on-deck) matches can be published." };
     case "ALREADY_PUBLISHED":
+      // Already on-deck — no slot was newly vacated, no engine trigger needed.
       return { success: true, message: "Already published." };
     case "HAS_LEFT_PLAYERS":
       return {
@@ -357,6 +361,11 @@ async function publishMatchFallback(
       .eq("status", "drafted");
   }
 
+  // Engine hook: publishing a draft moves it out of the review queue,
+  // opening a slot for a new draft. Refill immediately so the organizer
+  // always has a fresh set of drafts ready to review.
+  await runEngineForSession(sessionId);
+
   return { success: true, message: "Match published." };
 }
 
@@ -403,6 +412,12 @@ export async function publishAllDraftMatchesAction(
     skippedCount > 0
       ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
       : "";
+
+  // Engine hook: all drafts were just moved to on-deck, emptying the review
+  // queue. Refill immediately so new drafts are ready for the next review cycle.
+  if (publishedCount > 0) {
+    await runEngineForSession(sessionId);
+  }
 
   return {
     success: true,
@@ -540,6 +555,11 @@ async function publishAllDraftsFallback(
     skippedCount > 0
       ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
       : "";
+
+  // Engine hook: refill the review queue after publishing.
+  if (publishedCount > 0) {
+    await runEngineForSession(sessionId);
+  }
 
   return {
     success: true,
