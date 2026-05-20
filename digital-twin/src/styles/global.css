@@ -50,6 +50,24 @@
   --color-warn-wash: oklch(13% 0.04 70);
   --color-err-wash: oklch(12% 0.05 22);
   --color-note-wash: oklch(13% 0.03 245);
+
+  /* ── Command-center design tokens (cc-*) — light mode ──────────────────
+     Mirrors main app globals.css. Used by PlayerPhone LiveCourtsTab
+     court-card roster grid (clip-cut-tr player rows, VS badge, labels).
+     Dark-mode values live in .dark {} below (outside @theme). */
+  --color-cc-bg: oklch(0.94 0.01 235);
+  --color-cc-bg-2: oklch(0.99 0.005 235);
+  --color-cc-bg-3: oklch(0.91 0.014 235);
+  --color-cc-border: oklch(0.8 0.022 235);
+  --color-cc-border-hi: oklch(0.65 0.03 235);
+  --color-cc-accent: oklch(0.5 0.18 188);
+  --color-cc-accent-dim: oklch(0.5 0.18 188 / 0.1);
+  --color-cc-amber: oklch(0.58 0.18 62);
+  --color-cc-blue: oklch(0.48 0.2 255);
+  --color-cc-red: oklch(0.52 0.22 25);
+  --color-cc-t1: oklch(0.18 0.02 238);
+  --color-cc-t2: oklch(0.4 0.018 238);
+  --color-cc-t3: oklch(0.58 0.016 238);
 }
 
 /* ── Base ── */
@@ -210,34 +228,10 @@ kbd {
   }
 }
 
-/* ── Player phone alert slide-up animation ── */
-@keyframes pp-slide-up {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-
-@keyframes pp-slide-down {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(100%);
-  }
-}
-
-.pp-alert-visible {
-  animation: pp-slide-up 450ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  z-index: 20;
-}
-
-.pp-alert-hidden {
-  animation: pp-slide-down 380ms cubic-bezier(0.4, 0, 1, 1) forwards;
-  z-index: 20;
-  pointer-events: none;
+/* ── clip-cut-tr — single top-right chamfer used by court card player rows ──
+   Mirrors main app globals.css clip-cut-tr. 8px chamfer per preview spec. */
+.clip-cut-tr {
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
 }
 
 /* ── Responsive: mobile nav ── */

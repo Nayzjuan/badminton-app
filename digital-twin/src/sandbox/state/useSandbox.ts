@@ -11,8 +11,8 @@ import { initialState } from "./seed";
 export function useSandbox() {
   const [state, dispatch] = useReducer(reducer, undefined, () => initialState());
 
-  // Memo so referential equality holds across renders — important once we
-  // pass these into <button onClick> in Phase 2 to avoid spurious re-renders.
+  // Memo so referential equality holds across renders — prevents spurious
+  // re-renders when actions are passed as props to child components.
   const actions = useMemo(
     () => ({
       reset: () => dispatch({ type: "RESET" }),
