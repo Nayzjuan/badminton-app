@@ -204,7 +204,39 @@ export function useLeaderboard({
     }
   }, [scopeTab, alltimeFetched, alltimeLoading, fetchAllTime]);
 
-  // ── Realtime: refetch session board on match changes ──────
+  // ── Fetch hero card stats ─────────────────────────────────
+  // Extracted as a stable callback so the realtime subscription can
+  // also trigger it. Without this, a match completing while the player
+  // is on the leaderboard tab would update the session rows (fetchSession)
+  // but leave myStats stale until the user navigates away and back.
+  const fetchMyStats = useCallback(async () => {
+    if (!currentUserId) return;
+    if (scopeTab === "session" && !activeSessionId) {
+      setMyStats(null);
+      return;
+    }
+    setMyStatsLoading(true);
+    const result = await getPlayerStats(
+      currentUserId,
+      scopeTab === "session" ? activeSessionId! : null
+    );
+    setMyStatsLoading(false);
+    if (result.success) setMyStats(result.row);
+  }, [currentUserId, scopeTab, activeSessionId]);
+
+  // Initial load + reload on scope/session change.
+  useEffect(() => {
+    if (!currentUserId) return;
+    if (scopeTab === "session" && !activeSessionId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMyStats(null);
+      return;
+    }
+    setMyStats(null); // clear stale immediately while loading
+    fetchMyStats();
+  }, [currentUserId, scopeTab, activeSessionId, fetchMyStats]);
+
+  // ── Realtime: refetch session board + hero stats on match changes ──
   // Ref-based callback (CLAUDE.md mandate) keeps the subscription
   // stable across re-renders. Re-subscribes only when scopeTab or
   // activeSessionId actually changes.
@@ -218,13 +250,21 @@ export function useLeaderboard({
     fetchSessionRef.current = fetchSession;
   }, [fetchSession]);
 
+  const fetchMyStatsRef = useRef(fetchMyStats);
+  useEffect(() => {
+    fetchMyStatsRef.current = fetchMyStats;
+  }, [fetchMyStats]);
+
   useEffect(() => {
     if (scopeTab !== "session" || !activeSessionId) return;
     const supabase = createBrowserSupabaseClient();
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const refetch = () => {
       if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => fetchSessionRef.current(), 500);
+      debounce = setTimeout(() => {
+        fetchSessionRef.current();
+        fetchMyStatsRef.current(); // keep hero card in sync with updated stats
+      }, 500);
     };
     const unsubscribe = subscribeToMatches(supabase, activeSessionId, refetch, "leaderboard");
     return () => {
@@ -232,37 +272,6 @@ export function useLeaderboard({
       unsubscribe();
     };
   }, [scopeTab, activeSessionId]);
-
-  // ── Fetch hero card stats ─────────────────────────────────
-  // Runs whenever scope or session changes. Returns raw stats without
-  // the MIN_GP filter so the hero card shows below-threshold state.
-  // Uses a cancelled flag (not a seq ref) because getPlayerStats is
-  // not expected to be called in rapid succession.
-  useEffect(() => {
-    if (!currentUserId) return;
-    if (scopeTab === "session" && !activeSessionId) {
-      // Picker mode — clear stale data and bail.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMyStats(null);
-      return;
-    }
-
-    let cancelled = false;
-    setMyStats(null); // clear stale immediately while loading
-    setMyStatsLoading(true);
-
-    getPlayerStats(currentUserId, scopeTab === "session" ? activeSessionId! : null).then(
-      (result) => {
-        if (cancelled) return;
-        setMyStatsLoading(false);
-        if (result.success) setMyStats(result.row);
-      }
-    );
-
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserId, scopeTab, activeSessionId]);
 
   // ── Handlers ──────────────────────────────────────────────
 

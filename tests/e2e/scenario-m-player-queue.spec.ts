@@ -97,9 +97,14 @@ test.describe("Player Queue — [M-1] Position number visible", () => {
       await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
 
       // The QueueStatus component renders the position as a hero numeral "#1".
-      // It also renders the "in line" context below the numeral.
-      // Allow generous timeout for the player dashboard to fully hydrate.
       await expect(page.getByText("#1")).toBeVisible({ timeout: 15_000 });
+
+      // Position #1 is ≤ APPROACHING_QUEUE_THRESHOLD (2), so OnDeckAlert renders
+      // "You're Next!" with role="status". Assert the amber urgency banner is visible
+      // so a color/threshold regression is caught — not just the numeral.
+      await expect(page.getByRole("status", { name: /position 1/i })).toBeVisible({
+        timeout: 5_000,
+      });
     } finally {
       await context.close();
     }

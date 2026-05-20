@@ -35,6 +35,13 @@
 //   → gate holds → no on-deck match.
 //   Assert: "No matches on deck" is still visible after 4s.
 //
+// ── Test 5: Soft gate releases when pool = 5 (> threshold) ───
+//   Seed: soft_gate then add E2E_Ida as 5th waiting player.
+//   Action: click Auto toggle → turns ON.
+//   Engine condition: poolSize(5) > GATE_POOL_THRESHOLD(4)
+//   → gate condition is false → engine fires → draft created.
+//   Assert: "waiting for approval" draft banner appears.
+//
 // Timing safety:
 //   Server action + Realtime roundtrip ≈ 1.5s under normal load.
 //   All "match appears" waits use 10s timeout (test:e2e timeout=60s).
@@ -140,6 +147,7 @@ test.describe("Engine Flow: Auto ON", () => {
       // The engine runs synchronously inside toggleAutoMatchmaking but the
       // serverless cold start + read-replica lag can stretch the round trip
       // past the previous 10 s window.  20 s gives enough headroom.
+      // Filter is_published=false: engine-generated matches are always drafts.
       await expect
         .poll(
           async () => {
@@ -147,7 +155,8 @@ test.describe("Engine Flow: Auto ON", () => {
               .from("matches")
               .select("id")
               .eq("session_id", seeded.sessionId)
-              .eq("status", "pending");
+              .eq("status", "pending")
+              .eq("is_published", false);
             return data?.length ?? 0;
           },
           { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
@@ -381,6 +390,126 @@ test.describe("Engine Flow: Soft Gate", () => {
       await expect(page.getByText("On Deck #1")).not.toBeVisible();
       await expect(page.getByText("Draft #1")).not.toBeVisible();
       await expect(page.getByText(/waiting for approval/)).not.toBeVisible();
+    } finally {
+      await context.close();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Test 5 — Soft gate RELEASED: pool=5 > threshold → draft created
+// ─────────────────────────────────────────────────────────────
+
+test.describe("Engine Flow: Soft Gate released at pool=5", () => {
+  test("engine creates a draft when pool=5 exceeds GATE_POOL_THRESHOLD (boundary companion to Test 4)", async ({
+    browser,
+  }) => {
+    // Re-seed with soft_gate preset (4 waiting + 1 active match),
+    // then manually add a 5th waiting player "E2E_Ida".
+    //   pool(5) > GATE_POOL_THRESHOLD(4) → gate condition is false
+    //   → engine fires → draft match created.
+    await resetSandboxSession();
+    seeded = await seedSession("soft_gate");
+
+    const db = adminDb();
+
+    // ── Create E2E_Ida as the 5th waiting player ──────────────
+    const { data: idaData, error: idaErr } = await db.auth.admin.createUser({
+      email: "e2e_ida@playwright.local",
+      email_confirm: true,
+      user_metadata: { display_name: "E2E_Ida" },
+    });
+
+    if (idaErr || !idaData.user) {
+      throw new Error(`[seed:B-2] Failed to create E2E_Ida: ${idaErr?.message}`);
+    }
+
+    const idaId = idaData.user.id;
+
+    const { error: profileErr } = await db
+      .from("profiles")
+      .upsert(
+        { id: idaId, display_name: "E2E_Ida", skill_level: "intermediate", pin: "1234" },
+        { onConflict: "id" }
+      );
+
+    if (profileErr) {
+      throw new Error(`[seed:B-2] Failed to upsert E2E_Ida profile: ${profileErr.message}`);
+    }
+
+    // Position 9: alice/bob/cara/dan (1-4, playing) + eve/frank/grace/henry (5-8, waiting)
+    const { error: queueErr } = await db.from("queue_entries").insert({
+      session_id: seeded.sessionId,
+      player_id: idaId,
+      status: "waiting",
+      games_played: 0,
+      position: 9,
+    });
+
+    if (queueErr) {
+      throw new Error(`[seed:B-2] Failed to insert E2E_Ida queue entry: ${queueErr.message}`);
+    }
+
+    const context = await browser.newContext({
+      storageState: ORGANIZER_STORAGE_STATE,
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+
+      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+
+      // Confirm initial state: no on-deck, toggle off
+      await expect(page.getByText("No matches on deck")).toBeVisible({ timeout: 5_000 });
+
+      // ── Turn Auto ON ─────────────────────────────────────────
+      const toggleBtn = page.getByTestId("toggle-auto-matchmaking");
+      await toggleBtn.click();
+
+      await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
+
+      // Confirm the DB toggle committed before polling for engine output.
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("sessions")
+              .select("is_auto_matchmaking_on")
+              .eq("id", seeded.sessionId)
+              .single();
+            return data?.is_auto_matchmaking_on ?? false;
+          },
+          { timeout: 10_000 }
+        )
+        .toBe(true);
+
+      // ── Wait for the engine to create a draft ────────────────
+      // 5 waiting players > GATE_POOL_THRESHOLD(4) → gate opens.
+      // Engine picks the best 4 from the waiting pool, creates a
+      // pending draft (is_published=false). 1 player stays waiting.
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", seeded.sessionId)
+              .eq("status", "pending")
+              .eq("is_published", false);
+            return data?.length ?? 0;
+          },
+          { timeout: 20_000, intervals: [500, 1_000, 1_000, 2_000, 2_000] }
+        )
+        .toBeGreaterThan(0);
+
+      // Reload to flush Realtime lag; confirm the draft approval banner.
+      await page.waitForTimeout(2_000);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+
+      await expect(page.getByText(/waiting for approval/)).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText("Drafts")).toBeVisible({ timeout: 3_000 });
     } finally {
       await context.close();
     }

@@ -5,6 +5,42 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-20 — ON DECK / DRAFTED Visible in Queue)
+
+### ON DECK Queue Visibility (2026-05-20) — COMPLETE
+
+**Goal:** Keep `on_deck` and `drafted` players visible in the organizer's queue list and the player-facing waitlist, with wait timers still ticking. Previously they vanished the moment they left `waiting` status.
+
+**Root cause:** `v_queue_with_wait_time` filters `WHERE status = 'waiting'`. The organizer hook read that view; the player hook queried `queue_entries` with `.eq("status","waiting")`.
+
+**New view:** `supabase/migrations/20260520000000_add_v_queue_full_with_wait_time.sql`
+- `v_queue_full_with_wait_time` — same as the original view but `WHERE status IN ('waiting','on_deck','drafted')`
+- Adds `status_priority` column (on_deck=0, drafted=1, waiting=2) for PostgREST ordering
+- `is_bottleneck` unchanged (F2 — fires for all statuses; on_deck is still technically waiting)
+- Original `v_queue_with_wait_time` untouched — engine keeps its `waiting`-only contract
+
+**Files changed:**
+- `src/types/database.ts` — added `QueueFullWithWaitTime` type (extends `QueueWithWaitTime` + `status_priority`); added `v_queue_full_with_wait_time` to `Database.Views`
+- `src/hooks/use-organizer-queue.ts` — reads `v_queue_full_with_wait_time`, orders by `status_priority, games_played, joined_at`; dropped redundant Phase 2 is_paused merge (view already includes it); type changed to `QueueFullWithWaitTime[]`
+- `src/hooks/use-organizer-data.ts` — `queue` type updated to `QueueFullWithWaitTime[]`
+- `src/components/organizer/queue-control.tsx` — locked row UX: no checkbox (C2), amber/grey status pill, amber bg for on_deck rows, no checkout button; row click + keyboard guard for `isLocked`; sort extended to `status_priority` first then paused-to-bottom
+- `src/components/organizer/wait-time-monitor.tsx` — filters to `status === 'waiting'` only (on_deck/drafted are matched, not diagnostic bottlenecks)
+- `src/hooks/use-session-data.ts` — `.in("status", ["waiting","on_deck"])` (drafted hidden from players per privacy contract); client-side sort pins on_deck to top
+- `src/components/player/waitlist-tab.tsx` — amber "ON DECK" pill + amber row bg for on_deck rows in both "You" and standard rows
+
+**Unchanged by design:**
+- `v_queue_with_wait_time` — engine reads this; never touched
+- `matchmaking-core.ts`, `matchmaking-db.ts` — engine files; still use `QueueWithWaitTime`
+- `swap-sheet.tsx` — already filters `status !== 'waiting'` for swap candidates; works correctly
+- Checkout backend logic in `queue.ts` — kept as safety net even though UI button is hidden for locked rows
+
+**Key UX rules:**
+- Organizer: on_deck rows show amber "On Deck" pill, drafted rows show grey "Drafted" pill; neither has a checkbox or checkout button; pause/PIN actions remain available
+- Player: on_deck rows show amber "On Deck" pill + amber background; drafted rows are hidden (privacy)
+- Both views: on_deck → drafted → waiting sort; continuous rank numbers through all groups
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-20 — Engine Trigger Completeness + Real DB Tests)
 
 ### Engine Trigger Completeness (2026-05-20) — COMPLETE
@@ -92,12 +128,15 @@
 
 **Lint baseline:** 0 errors, 99 warnings (unchanged)
 
-**Still open (not done in this session):**
+**Completed in follow-up pass (2026-05-20):**
+- I-3a: `expect.poll` for ≥1 `is_published=false` pending match + "waiting for approval" banner — real gate check
+- I-8a: Changed from `.first().isVisible()` to `count()` asserting ≥3 players visible + first name matches `/E2E_/`
+- B-2: Test 5 added to `scenario-b-engine-flows.spec.ts` — seeds `soft_gate` + adds E2E_Ida (5th waiting player), turns Auto ON, polls DB for `is_published=false` draft, asserts "waiting for approval" banner. Also tightened Test 1 poll to include `is_published=false` filter.
+- Also fixed (same pass): skill-badge `lower_advanced` fuchsia colors, M-1 `OnDeckAlert` amber/approaching banner assertion, leaderboard `myStats` stale-on-realtime fix, N-1 tabpanel scope fix, J-B heading assertion.
+
+**Still open (deferred — require production data ops or significant E2E scaffolding):**
 - P1: Manual match creation E2E (organizer UI flow for `createManualMatchAction`)
 - P1: Co-organizer join E2E (second user joins via passcode, gets organizer dashboard access)
-- P1: Auto-matchmaking engine output E2E (I-3a explicitly admits it may not verify engine generates matches)
-- P2: I-8a monitor count/ordering (only checks ≥1 player visible, not count or ordering)
-- P2: B-2 soft gate exact boundary (4 players gates, 5 would not — boundary not probed)
 
 ---
 

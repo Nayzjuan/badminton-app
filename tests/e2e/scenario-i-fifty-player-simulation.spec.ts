@@ -1716,16 +1716,19 @@ test.describe("Group 8 — Wait-Time Monitor & Queue Priority", () => {
       const monitorContent = page.locator('[id="tabpanel-monitor"]');
       await expect(monitorContent).toBeVisible({ timeout: 5_000 });
 
-      // At least one of our players should appear in the monitor
-      // (look for any E2E_ name since we have 50 of them)
-      const hasPlayerData = await monitorContent
-        .getByText(/E2E_/)
-        .first()
-        .isVisible()
-        .catch(() => false);
+      // With 50 E2E_ players waiting, multiple rows should be visible.
+      // Assert count ≥ 3 (not just "at least one") so we verify the monitor
+      // is actually rendering the list, not just a header or empty state.
+      const playerRows = monitorContent.getByText(/E2E_/);
+      const rowCount = await playerRows.count();
+      expect(rowCount).toBeGreaterThanOrEqual(3);
 
-      // With 50 players seeded in beforeEach, at least one E2E_ name must be visible
-      expect(hasPlayerData).toBe(true);
+      // The monitor orders by wait time (longest first — bottleneck detection).
+      // alice was aged to 26 min in I-3a; all others are ≈0 min from beforeEach.
+      // After reseed in beforeEach each group gets ≈equal joined_at, so we
+      // can only verify the first visible player IS an E2E_ bot (not a stale row).
+      const firstName = await playerRows.first().textContent();
+      expect(firstName).toMatch(/E2E_/);
     } finally {
       await ctx.close();
     }

@@ -36,7 +36,10 @@ const LEVEL_CONFIG: Record<SkillLevel, { label: string; cls: string }> = {
   },
   lower_advanced: {
     label: "Lower Adv.",
-    cls: "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300",
+    // Fuchsia matches the dot color in SKILL_META (bg-fuchsia-500) and avoids
+    // collision with 'advanced' purple — previously both used purple-100/800
+    // which rendered identically and washed out on dark backgrounds.
+    cls: "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/40 dark:text-fuchsia-300",
   },
   advanced: {
     label: "Advanced",
