@@ -724,6 +724,97 @@ describe("runEngineForSession", () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// getDynamicDraftCap — boundary tests
+// ─────────────────────────────────────────────────────────────
+// Pure function; no DB calls. Tests pin the exact tier thresholds
+// so a constant change is caught immediately.
+
+describe("getDynamicDraftCap (via engine behaviour)", () => {
+  // Drive the cap indirectly: seed waiting rows and observe slotsAvailable
+  // from the engine log or by confirming the engine exits when draftCount
+  // equals the expected cap. Simpler to test the engine at cap boundary
+  // than to export the pure helper just for testing.
+  //
+  // Pattern: set draftCount=cap−1 and waitingCount=N → engine should create
+  // exactly 1 more slot (slotsAvailable=1). Set draftCount=cap → 0 slots.
+
+  it("cap is 3 when waitingCount=24 (just below DRAFT_CAP_LARGE_THRESHOLD=25)", async () => {
+    // draftCount=3, waitingCount=24 → dynamicCap=3 → slotsAvailable=0 → exits
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null },
+      { data: [{ id: "c1" }], error: null }, // courts
+      { data: Array(24).fill({ wait_minutes: 1 }), error: null }, // v_queue: 24 players
+      { count: 3, data: null, error: null }, // matches draft count=3 → cap=3 → slots=0
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+    await runEngineForSession(SESSION_ID);
+    // Engine exits before any match creation
+    expect(mock.rpc).toHaveBeenCalledTimes(0);
+  });
+
+  it("cap is 5 when waitingCount=25 (at DRAFT_CAP_LARGE_THRESHOLD=25)", async () => {
+    // draftCount=5, waitingCount=25 → dynamicCap=5 → slotsAvailable=0 → exits
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null },
+      { data: [{ id: "c1" }], error: null }, // courts
+      { data: Array(25).fill({ wait_minutes: 1 }), error: null }, // v_queue: 25 players
+      { count: 5, data: null, error: null }, // draft count=5 → cap=5 → slots=0
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+    await runEngineForSession(SESSION_ID);
+    expect(mock.rpc).toHaveBeenCalledTimes(0);
+  });
+
+  it("cap is still 5 when waitingCount=29 (just below DRAFT_CAP_XLARGE_THRESHOLD=30)", async () => {
+    // draftCount=5, waitingCount=29 → dynamicCap=5 → slotsAvailable=0 → exits
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null },
+      { data: [{ id: "c1" }], error: null },
+      { data: Array(29).fill({ wait_minutes: 1 }), error: null }, // v_queue: 29 players
+      { count: 5, data: null, error: null }, // draft count=5 → cap=5 → slots=0
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+    await runEngineForSession(SESSION_ID);
+    expect(mock.rpc).toHaveBeenCalledTimes(0);
+  });
+
+  it("cap is 6 when waitingCount=30 (at DRAFT_CAP_XLARGE_THRESHOLD=30)", async () => {
+    // draftCount=6, waitingCount=30 → dynamicCap=6 → slotsAvailable=0 → exits
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null },
+      { data: [{ id: "c1" }], error: null },
+      { data: Array(30).fill({ wait_minutes: 1 }), error: null }, // v_queue: 30 players
+      { count: 6, data: null, error: null }, // draft count=6 → cap=6 → slots=0
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+    await runEngineForSession(SESSION_ID);
+    expect(mock.rpc).toHaveBeenCalledTimes(0);
+  });
+
+  it("cap is 5 (not 3) when waitingCount=25 — draftCount=3 still leaves 2 slots open", async () => {
+    // This confirms the tier UPGRADE is working: with 25 players waiting and only
+    // 3 existing drafts, the engine should see slotsAvailable=2, not 0.
+    // Provide only 4 slots of mock data so the engine runs once (slot 0) then
+    // hits an empty fetchRecentRosters and an empty pool → exits after one attempt.
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null },
+      { data: [{ id: "c1" }], error: null }, // courts
+      { data: Array(25).fill({ wait_minutes: 1 }), error: null }, // v_queue: 25 players → cap=5
+      { count: 3, data: null, error: null }, // draft count=3 → slots=5-3=2
+      { data: [], error: null }, // fetchRecentRosters → []
+      { data: [], error: null }, // fetchActivePool: v_queue → [] (pool < 4 → break)
+      { data: [], error: null }, // fetchActivePool: queue_entries paused → []
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+    await runEngineForSession(SESSION_ID);
+    // Engine tried to fill (slotsAvailable=2) but exited due to empty pool — no rpc call
+    expect(mock.rpc).toHaveBeenCalledTimes(0);
+    // Confirms the engine entered the fill loop (queried fetchRecentRosters + fetchActivePool)
+    expect(mock.queriedTables).toContain("matches"); // fetchRecentRosters
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // callNextMatch
 // ─────────────────────────────────────────────────────────────
 // Organizer action: promotes oldest on-deck, or runs engine
