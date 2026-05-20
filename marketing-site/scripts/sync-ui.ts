@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// sync-ui.ts — strict whitelist CSS-token sync.
+// sync-ui.ts — OKLCH design-token sync (theme only).
 //
 // WHAT THIS DOES:
 //   Extracts the `@theme {}` block from digital-twin/src/styles/global.css
@@ -7,10 +7,16 @@
 //   marketing-site/src/styles/global.css, replacing any previous version.
 //
 // WHAT THIS DOES NOT DO:
-//   - It does NOT copy any page components, layouts, or Astro files.
+//   - It does NOT copy sandbox component files. Those are no longer duplicated
+//     here; marketing-site/astro.config.mjs aliases @bbmt/digital-twin directly
+//     to digital-twin/src/sandbox/SandboxRoot.tsx at build time.
 //   - It does NOT copy TypeScript logic, server actions, or DB schemas.
-//   - It does NOT touch the main Next.js app's HSL-based shadcn tokens
-//     (those are a different colour system and incompatible with OKLCH @theme).
+//   - It does NOT touch the main Next.js app's HSL-based shadcn tokens.
+//
+// WHY @theme STILL NEEDS SYNCING:
+//   Tailwind v4 reads @theme {} at build time from the CSS entry point — it
+//   cannot pull design tokens from node_modules or a Vite alias. The @theme
+//   block must be physically present in marketing-site/src/styles/global.css.
 //
 // WHY digital-twin AND NOT the main Next.js app:
 //   The main Next.js app (src/app/globals.css) uses HSL CSS variables via
@@ -21,11 +27,9 @@
 // STRICT WHITELIST:
 //   Only the `@theme {}` block is copied — colours, fonts, spacing.
 //   No utility classes, no component rules, no animation keyframes.
-//   If someone accidentally adds non-token content to @theme {}, this script
-//   still only copies that block verbatim (no leakage of other CSS rules).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -33,27 +37,6 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 
 const SOURCE_CSS = resolve(__dir, "../../digital-twin/src/styles/global.css");
 const TARGET_CSS = resolve(__dir, "../src/styles/global.css");
-
-// ── Sandbox files: copied verbatim from DT (single source of truth) ──────────
-const SANDBOX_FILES_TO_SYNC = [
-  "player/PlayerPhone.tsx",
-  "player/useAutoPlay.ts",
-  "player/audio.ts",
-  "state/reducer.ts",
-  "state/seed.ts",
-  "state/types.ts",
-  "state/useSandbox.ts",
-  "engine/mockMatchmaking.ts",
-  "components/ActionLogger.tsx",
-  "components/MatchBoard.tsx",
-  "components/MatchCard.tsx",
-  "components/QueuePanel.tsx",
-  "components/QueueRow.tsx",
-  "components/SimulationFrame.tsx",
-  "SandboxRoot.tsx",
-];
-const DT_SANDBOX = resolve(__dir, "../../digital-twin/src/sandbox");
-const MS_SANDBOX = resolve(__dir, "../src/sandbox");
 
 // ── Helper: extract the first balanced @theme { … } block ────────────────────
 function extractThemeBlock(css: string): string | null {
@@ -168,23 +151,6 @@ function run(): void {
 
   writeFileSync(TARGET_CSS, updatedCss, "utf-8");
   console.log("[sync-ui] ✓ OKLCH tokens written to marketing-site/src/styles/global.css");
-
-  // ── Sync sandbox files from DT → marketing-site ─────────────────────────────
-  console.log("[sync-ui] Syncing sandbox files from digital-twin…");
-  let synced = 0;
-  let skipped = 0;
-  for (const file of SANDBOX_FILES_TO_SYNC) {
-    const src = resolve(DT_SANDBOX, file);
-    const dst = resolve(MS_SANDBOX, file);
-    if (!existsSync(src)) {
-      console.warn(`[sync-ui] WARN: source not found — ${file}`);
-      skipped++;
-      continue;
-    }
-    copyFileSync(src, dst);
-    synced++;
-  }
-  console.log(`[sync-ui] ✓ Sandbox files synced: ${synced} copied, ${skipped} skipped`);
 }
 
 run();

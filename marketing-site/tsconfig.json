@@ -5,7 +5,10 @@
     "paths": {
       "@components/*": ["src/components/*"],
       "@layouts/*": ["src/layouts/*"],
-      "@data/*": ["src/data/*"]
+      "@data/*": ["src/data/*"],
+      // Points TypeScript at the digital-twin source so `astro check` resolves
+      // the SandboxRoot import without requiring file copies in src/sandbox/.
+      "@bbmt/digital-twin": ["../digital-twin/src/sandbox/SandboxRoot.tsx"]
     },
     // React 17+ automatic JSX runtime so .tsx files don't need `import React`.
     // Astro's base config sets jsx: "preserve" (TS leaves JSX alone for the
