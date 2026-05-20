@@ -67,7 +67,7 @@ import { isValidUUID } from "@/lib/validate";
  *  25–29        → 5  (medium session)
  *  ≥ 30         → 6  (large session)
  */
-function getDynamicDraftCap(waitingCount: number): number {
+export function getDynamicDraftCap(waitingCount: number): number {
   if (waitingCount >= DRAFT_CAP_XLARGE_THRESHOLD) return MAX_AUTO_DRAFTS_XLARGE;
   if (waitingCount >= DRAFT_CAP_LARGE_THRESHOLD) return MAX_AUTO_DRAFTS_LARGE;
   return MAX_AUTO_DRAFTS;
