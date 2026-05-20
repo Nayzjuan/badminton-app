@@ -1,0 +1,33 @@
+{
+  // Minimal self-contained tsconfig for the sandbox/ subtree.
+  //
+  // WHY THIS EXISTS:
+  //   marketing-site imports SandboxRoot directly from this directory via a
+  //   Vite alias (@bbmt/digital-twin). When Vite/esbuild processes these files
+  //   it walks up from sandbox/ looking for the nearest tsconfig.json.
+  //
+  //   Without this file, esbuild would find digital-twin/tsconfig.json, which
+  //   extends "astro/tsconfigs/strict". That requires astro in
+  //   digital-twin/node_modules/ — but when marketing-site builds on Vercel,
+  //   only marketing-site/node_modules/ is installed, causing:
+  //     "failed to resolve extends:astro/tsconfigs/strict"
+  //
+  //   This file intercepts that lookup. Being closer to the source files,
+  //   esbuild uses it instead and never needs to resolve astro externally.
+  //   It is intentionally self-contained (no "extends") for this reason.
+  //
+  // EFFECT ON DIGITAL-TWIN:
+  //   Astro's own build pipeline uses the project-root tsconfig.json for
+  //   type-checking — it does not recursively discover subdirectory tsconfigs.
+  //   This file does not affect `astro check` or `astro build` in digital-twin.
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}
