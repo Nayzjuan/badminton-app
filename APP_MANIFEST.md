@@ -432,9 +432,9 @@ The old approach counted only **published** matches, so unpublished drafts were 
 **File:** `src/components/organizer/on-deck-panel.tsx`
 
 - Displays `status = "pending"` matches (no `court_id`).
-- Engine auto-generates up to `MAX_ON_DECK_MATCHES` (2) at a time, capped by `courtCount + ON_DECK_LOOKAHEAD`.
+- Engine auto-generates up to `MAX_AUTO_DRAFTS` (3) total pending matches. Formula: `slotsAvailable = max(0, 3 − totalPending)` where `totalPending` counts ALL pending rows (published + unpublished) atomically.
 - Each card shows team A vs team B with skill badges, `is_mixed_level` indicator, and H2H strip.
-- **Draft Mode**: On-deck matches with `is_published = false` are shown only to the organizer (not to players or TV view). The organizer must explicitly publish (single: `publishMatchAction`) or publish-all (`publishAllDraftMatchesAction`) before players see them.
+- **Draft Mode**: All engine-generated matches start as `is_published = false` (drafts, hidden from players and TV). The organizer must explicitly publish (single: `publishMatchAction`) or publish-all (`publishAllDraftMatchesAction`) before players see them. The draft approval banner shows `"N on-deck matches waiting for approval"` and the section label reads `"Drafts — hidden from players"`.
 - **Swap flow**: Long-press / click a player pill → opens `SwapSheet` → pick a bench player → calls `swapPlayerInMatch` server action.
 - **Cross-match swap (Tap-to-Swap v2)**: Click a player in match A, then a player in match B → calls `swapMatchPlayers` RPC (atomic two-match swap). This replaces the original bench-only swap with direct match-player swapping.
 - **Clear**: Organizer can discard a single on-deck match via `clearOnDeckMatch`; players return to `waiting`. Broadcast fires so affected players see a toast.
@@ -453,7 +453,7 @@ The old approach counted only **published** matches, so unpublished drafts were 
 - **"Call Next Match"**: Promotes the oldest published on-deck match to the court. If no published on-deck match exists and auto-matchmaking is ON, runs the engine inline and retries once. Returns `hasDraftsBlocking = true` when only unpublished drafts exist. **Fixed (20260507):** After the inline engine retry, if `promoteOnDeckMatchInternal` returns `hasDraftsBlocking = true`, that signal is now propagated to the caller instead of returning the generic "not enough players" message — the organizer sees the amber "review drafts" warning.
 - **Cancel (two-step)**: Inline confirmation prevents accidental abort. Cancel does NOT increment `games_played`. Auto-promotes from on-deck; runs engine to refill.
 - **End Match + Score**: Opens `ScoreModal` → submits scores → increments `games_played` for all 4 players → auto-promotes on-deck → refills engine.
-- **Court management**: Add, rename, toggle status (`available` / `closed`), remove (confirmation dialog).
+- **Court management**: Add, rename, toggle status (`available` / `closed`), remove (confirmation dialog). Errors from Close, Reopen, and Remove are surfaced via inline card error and toast banner — they no longer fail silently. Handlers: `handleUpdateCourtStatus`, `handleRemoveCourt` in `active-courts.tsx`.
 
 ---
 
@@ -487,8 +487,8 @@ Draft Mode is a **publish gate** for auto-generated on-deck matches.
 | Draft (auto-engine)                        | `false`        | ❌                       | ✅ (review mode card styling) |
 | Published (manual or explicitly published) | `true`         | ✅                       | ✅                            |
 
-- **Auto-engine matches** are inserted with `is_published = false`. Organizer reviews the proposed pairing, optionally swaps players, then publishes.
-- **Manual matches** bypass draft and insert with `is_published = true`.
+- **All engine-generated matches** are inserted with `is_published = false`. Organizer reviews the proposed pairing, optionally swaps players via Tap-to-Swap, then publishes.
+- **Manual matches** (organizer UI) also start as `is_published = false` — they go through the same review gate before becoming visible to players.
 - **Publish All**: batch-publishes every draft in the on-deck panel.
 - `callNextMatch` will not promote an unpublished draft to a court — it returns `hasDraftsBlocking: true` to alert the organizer.
 
@@ -1063,24 +1063,59 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 - **Sandbox safety (teardown.ts):** Two hard guards before any DELETE: `TEST_SESSION_ID` env var must be defined AND `sessions.name` must start with `"🤖 E2E SANDBOX"`.
 - **Locator best practice:** Scope to dialog/container — `page.getByRole("dialog").getByText("E2E_Alice")` not `page.getByText("E2E_Alice")` (names can appear in Sonner toasts).
 
-| Scenario             | File                                          | Covers                                                      |
-| -------------------- | --------------------------------------------- | ----------------------------------------------------------- |
-| A — Swap             | `scenario-a-swap.spec.ts`                     | Bench→on-deck swap, undo, player unavailable error          |
-| B — Engine flows     | `scenario-b-engine-flows.spec.ts`             | Auto-matchmaking on/off, on-deck cap, gate logic            |
-| C — Tap-to-Swap v2   | `scenario-c-tap-to-swap-v2.spec.ts`           | Cross-match direct player swap, 11 test cases               |
-| D — Wrapped dismiss  | `scenario-d-session-wrapped-dismiss.spec.ts`  | Intro overlay dismiss, `intro_dismissed_at` persisted       |
-| E — Match alert UI   | `scenario-e-match-alert-ui.spec.ts`           | Player match alert card rendering with VIP tags             |
-| F — Court time alert | `scenario-f-court-time-alert.spec.ts`         | Timer warning when court exceeds `court_time_limit_minutes` |
-| G — H2H records      | `scenario-g-h2h-records.spec.ts`              | H2H strip appears after first meeting, counts correctly     |
-| H — Diversity        | `scenario-h-diversity.spec.ts`                | Anti-repeat enforcement, rotated draft cycling              |
-| I — 30-player sim    | `scenario-i-thirty-player-simulation.spec.ts` | Full session simulation, engine under load                  |
+| Scenario               | File                                           | Covers                                                                                                         |
+| ---------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| A — Swap               | `scenario-a-swap.spec.ts`                      | Bench→on-deck swap, undo, player unavailable error                                                             |
+| B — Engine flows       | `scenario-b-engine-flows.spec.ts`              | Auto-matchmaking ON→draft approval banner; draft NOT appearing for soft gate; Red Zone mixed-level draft       |
+| C — Tap-to-Swap v2     | `scenario-c-tap-to-swap-v2.spec.ts`            | Cross-match direct player swap, 11 test cases                                                                  |
+| D — Wrapped dismiss    | `scenario-d-session-wrapped-dismiss.spec.ts`   | Intro overlay dismiss, `intro_dismissed_at` persisted                                                          |
+| E — Match alert UI     | `scenario-e-match-alert-ui.spec.ts`            | Player match alert card rendering with VIP tags                                                                |
+| F — Court time alert   | `scenario-f-court-time-alert.spec.ts`          | Timer warning when court exceeds `court_time_limit_minutes`                                                    |
+| G — H2H records        | `scenario-g-h2h-records.spec.ts`               | H2H strip appears after first meeting, counts correctly                                                        |
+| H — Diversity          | `scenario-h-diversity.spec.ts`                 | Anti-repeat enforcement, rotated draft cycling                                                                 |
+| I — 50-player sim      | `scenario-i-fifty-player-simulation.spec.ts`   | Full session sim with 50 E2E_ bots, Groups 1-11; large-pool queue priority, concurrent courts, games_played    |
+| J — Drafted status     | `scenario-j-drafted-status.spec.ts`            | "Match Forming" card, drafted→on_deck Realtime transition                                                      |
+| K — Auth/login         | `scenario-k-auth-login.spec.ts`                | Anonymous page access, organizer login, reconnect modal                                                        |
+| L — Session mgmt       | `scenario-l-session-management.spec.ts`        | Add court; auto toggle + DB state verified; close session cascades (matches cancelled, queue drained)          |
+| M — Player queue       | `scenario-m-player-queue.spec.ts`              | Queue position number, "in line" status UI                                                                     |
+| N — Leaderboard        | `scenario-n-leaderboard.spec.ts`               | Tab accessible; data after completed match; DB ordering (2 wins > 1 win via `v_session_leaderboard`)           |
+| O — Player scoring     | `scenario-o-player-scoring.spec.ts`            | Score form visible; submit asserts exact scores `completed\|21\|15` and `games_played=1`                       |
 
-### Test Helpers
+### Integration Tests (Vitest — live Supabase)
 
-- `tests/helpers/teardown.ts` — `resetSandboxSession()`, `seedSession()` — sandbox cleanup and seeding
-- `tests/helpers/init-sandbox.ts` — One-time sandbox session setup
-- `tests/helpers/admin-db.ts` — Direct DB access for test assertions
-- `tests/fixtures/auth.ts` — Player auth fixture (anonymous sign-in + queue join)
+- **Location:** `tests/integration/`
+- **Run:** `npm run test:integration`
+- **Scope:** Real DB + real server actions via `createServiceClient()`. Auth mocked via `mockAuthAs(userId)` in `tests/integration/helpers/mock-auth.ts`. Each test file uses `afterEach(() => truncateTracked())` for isolation.
+
+| File                       | Suite | Covers                                                                                                                          |
+| -------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `auth.real.test.ts`        | —     | Supabase auth API integration                                                                                                   |
+| `close-session.test.ts`    | B     | `closeSession`: co-org access, idempotency, match cancellation, queue drain, wrapped stats computation                          |
+| `concurrency.test.ts`      | D     | 5 concurrent publish calls; 5 concurrent engine runs; concurrent `callNextMatch` — each produces exactly one match              |
+| `drafted-status.test.ts`   | —     | Drafted queue status transitions                                                                                                 |
+| `manual-and-swap.test.ts`  | M     | `createManualMatchAction` origin/auth/rejection; swap origin sticky rules (`auto→modified→manual`)                              |
+| `match-update.test.ts`     | —     | Score edit and match revert flows                                                                                                |
+| `matchmaking.test.ts`      | —     | Engine integration against real DB                                                                                               |
+| `performance.test.ts`      | —     | Engine timing benchmarks                                                                                                        |
+| `player-checkout.test.ts`  | Q     | `checkoutPlayer`: happy path, unauthenticated rejection, UUID validation, checkout while on_deck/playing, draft cleanup, idempotency |
+| `player-pause.test.ts`     | P     | `togglePlayerPause`: pause/unpause, `games_played`+`joined_at` invariant, non-organizer rejection, UUID validation              |
+| `publish-match.test.ts`    | —     | `publishMatchAction` BUG-001 (ON_DECK_WARNING timing) and BUG-002 (stale-player guard)                                          |
+| `queue-join.test.ts`       | —     | `joinQueueAction` inherited-games floor, re-join paths                                                                          |
+| `rls-edge-cases.test.ts`   | E     | Cross-session auth isolation, unauthenticated access blocks                                                                     |
+| `rpc-behaviors.test.ts`    | —     | `create_match_with_players` TOCTOU guards, NULL return contract                                                                 |
+| `schema-parity.test.ts`    | —     | DB schema matches `src/types/database.ts` type definitions                                                                      |
+| `score-submission.test.ts` | F     | `endMatchAction` cascade (scores, re-queue, court freed); `cancelMatchAction` (no games_played increment); **server-side score range validation (0–30 int, rejects float/negative/over-30)** |
+| `session-lifecycle.test.ts`| K     | `createSession` validation; `joinAsCoOrganizer` passcode auth and idempotency                                                   |
+
+### Test Helpers & Fixtures
+
+- `tests/helpers/teardown.ts` — `resetSandboxSession()`, `softResetSandboxSession()`, `seedSession()` — sandbox lifecycle
+- `tests/helpers/admin-db.ts` — Service-role client for test assertions
+- `tests/fixtures/auth.ts` — Organizer bot sign-in via cookie injection, `ORGANIZER_STORAGE_STATE` path
+- `tests/fixtures/seed-sandbox.ts` — **Run with `npx tsx`** — idempotently seeds all 50 E2E_ bot players + 6 courts into the live sandbox session (`TEST_SESSION_ID`). Reads `.env.test` + `.env.local`. Safe to re-run.
+- `tests/integration/factories/index.ts` — `makeProfile`, `makeSession`, `makeQueueEntry`, `makeCourt`, `makeMatch` — composable DB factories for integration tests
+- `tests/integration/helpers/mock-auth.ts` — `mockAuthAs(userId)` / `clearMockAuth()` — per-test auth identity control
+- `tests/integration/helpers/truncate.ts` — `truncateTracked()` — deletes all rows and auth users created during a test
 
 ---
 
