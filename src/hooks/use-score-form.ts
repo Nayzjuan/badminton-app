@@ -4,7 +4,7 @@
 // useScoreForm — shared score input state machine
 // ============================================================
 // Drives both the player ScoreInputCard and the organizer ScoreModal.
-// Validates 0–30 range at submit time, clears errors on input change.
+// Validates 0–31 range at submit time, clears errors on input change.
 // ============================================================
 
 import { useState, useTransition } from "react";

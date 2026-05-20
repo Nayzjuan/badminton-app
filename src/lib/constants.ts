@@ -196,8 +196,8 @@ export const COURT_ALERT_RECOMPUTE_INTERVAL_MS = 30_000;
 
 // ── Score validation ──────────────────────────────────────────────────────────
 
-/** Maximum valid score in a single badminton game (standard 21-point, but we allow up to 30). */
-export const MAX_BADMINTON_SCORE = 30;
+/** Maximum valid score in a single badminton game (standard 21-point, but we allow up to 31 for deuce scenarios). */
+export const MAX_BADMINTON_SCORE = 31;
 
 /**
  * Maximum skill variance window for Red Zone anchor candidates.

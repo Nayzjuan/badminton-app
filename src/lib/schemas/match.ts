@@ -8,6 +8,7 @@
 // ============================================================
 
 import { z } from "zod";
+import { MAX_BADMINTON_SCORE } from "@/lib/constants";
 
 // ── Score Schema ──────────────────────────────────────────────
 // Enforces server-side bounds so a crafted POST that bypasses
@@ -16,18 +17,17 @@ import { z } from "zod";
 // into matches.team_a_score / team_b_score or corrupt the
 // refresh_alltime_leaderboard materialized view calculations.
 //
-// Max 30: standard badminton game cap. The client's useScoreForm
-// uses the same logical bound via MAX_BADMINTON_SCORE; this is
-// the authoritative server gate that cannot be bypassed.
+// Max bound comes from MAX_BADMINTON_SCORE in @/lib/constants —
+// the single source of truth shared with client-side validation.
 export const scoreSchema = z.object({
   teamAScore: z
     .number({ error: "Score must be a number." })
     .int({ error: "Score must be a whole number." })
     .min(0, { error: "Score cannot be negative." })
-    .max(30, { error: "Score cannot exceed 30." }),
+    .max(MAX_BADMINTON_SCORE, { error: `Score cannot exceed ${MAX_BADMINTON_SCORE}.` }),
   teamBScore: z
     .number({ error: "Score must be a number." })
     .int({ error: "Score must be a whole number." })
     .min(0, { error: "Score cannot be negative." })
-    .max(30, { error: "Score cannot exceed 30." }),
+    .max(MAX_BADMINTON_SCORE, { error: `Score cannot exceed ${MAX_BADMINTON_SCORE}.` }),
 });

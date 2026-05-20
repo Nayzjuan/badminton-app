@@ -11,7 +11,7 @@
  *     to lower a score from e.g. "30" to "29" because the cursor-based
  *     intermediate values silently re-clamp back to "30".
  *
- *   • Range validation (0–30) happens ONLY at submit time in
+ *   • Range validation (0–31) happens ONLY at submit time in
  *     ScoreInputCard.handleSubmit, where the user sees a clear error
  *     and can correct freely.
  */

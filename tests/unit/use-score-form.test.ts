@@ -3,12 +3,12 @@
 // Unit Tests — useScoreForm Hook
 // ============================================================
 // Pins the score validation boundaries and state machine that
-// existed as a bug (the organiser had no 0–30 upper limit).
+// existed as a bug (the organiser had no 0–31 upper limit).
 //
 //   SF-1  NaN input rejected
 //   SF-2  Negative scores rejected
-//   SF-3  Score > 30 rejected (the previously missing check)
-//   SF-4  Boundary values accepted: 0 and 30 both valid
+//   SF-3  Score > 31 rejected (the previously missing check)
+//   SF-4  Boundary values accepted: 0, 30, and 31 all valid
 //   SF-5  Server error propagates to error state
 //   SF-6  Server success sets submitted = true
 //   SF-7  clearError() resets error to null
@@ -85,10 +85,10 @@ describe("useScoreForm", () => {
     });
   });
 
-  describe("SF-3: Score > 30 rejected (regression pin)", () => {
-    it("rejects teamA score of 31", async () => {
+  describe("SF-3: Score > 31 rejected (regression pin)", () => {
+    it("rejects teamA score of 32", async () => {
       const { result, submitter } = setup();
-      fillScores(result, "31", "15");
+      fillScores(result, "32", "15");
       act(() => result.current.handleSubmit());
       expect(result.current.error).toMatch(/valid scores/i);
       expect(submitter).not.toHaveBeenCalled();
@@ -136,6 +136,15 @@ describe("useScoreForm", () => {
       fillScores(result, "0", "30");
       await act(async () => result.current.handleSubmit());
       expect(submitter).toHaveBeenCalledWith(0, 30);
+    });
+
+    it("accepts 31 – 29 (new upper boundary)", async () => {
+      const submitter = makeSubmitter();
+      const { result } = setup(submitter);
+      fillScores(result, "31", "29");
+      await act(async () => result.current.handleSubmit());
+      expect(submitter).toHaveBeenCalledWith(31, 29);
+      expect(result.current.error).toBeNull();
     });
   });
 
