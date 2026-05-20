@@ -360,32 +360,47 @@ Sort all 4 players DESC by skill, then:
 | `ON_DECK_LOOKAHEAD`            | 1     | _Deprecated from engine capacity_ — still in `constants.ts`, referenced only by `simulate-engine.ts`. The live engine uses `MAX_AUTO_DRAFTS` instead.                                                                                                                                                                                              |
 | `MAX_ON_DECK_MATCHES`          | 2     | _Deprecated from engine capacity_ — still in `constants.ts`, no longer imported by `matchmaking.ts`. Superseded by `MAX_AUTO_DRAFTS`.                                                                                                                                                                                                              |
 | `MIN_FREE_POOL_FOR_ON_DECK`    | 4     | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards)                                                                                                                                                                                                                                      |
-| `MAX_AUTO_DRAFTS`              | 3     | **Unified draft cap** (added 20260507). Engine generates at most this many total `pending` matches (published + unpublished combined). Formula: `slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)`. Fixes the 7+ draft accumulation bug where unpublished drafts were invisible to the old `courtCount + ON_DECK_LOOKAHEAD` capacity check. |
-| `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                                                                                                                                                             |
+| `MAX_AUTO_DRAFTS`              | 3     | **Tiered draft cap — small session** (< 25 waiting players). Counts only `is_published=false` drafts. Published on-deck matches do NOT count — they are already reviewed and should not block fresh draft generation. |
+| `MAX_AUTO_DRAFTS_LARGE`        | 5     | Tiered draft cap — medium session (25–29 waiting players).                                                                                                                                                          |
+| `MAX_AUTO_DRAFTS_XLARGE`       | 6     | Tiered draft cap — large session (≥ 30 waiting players).                                                                                                                                                           |
+| `DRAFT_CAP_LARGE_THRESHOLD`    | 25    | Waiting player count at which the cap upgrades from 3 → 5.                                                                                                                                                         |
+| `DRAFT_CAP_XLARGE_THRESHOLD`   | 30    | Waiting player count at which the cap upgrades from 5 → 6.                                                                                                                                                         |
+| `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                              |
 
-#### Engine Capacity (`runEngineInternal`) — Updated Formula
+#### Engine Capacity (`runEngineInternal`) — Dynamic Draft Cap
 
-**Replaces the old `courtCount + ON_DECK_LOOKAHEAD` logic (migration 20260507):**
+**`getDynamicDraftCap(waitingCount)` — exported from `src/lib/matchmaking-core.ts`** (pure function; lives in `matchmaking-core.ts` rather than `matchmaking.ts` because `"use server"` files require all exports to be `async`).
 
 ```
-totalPending   = COUNT(*) WHERE status = 'pending'   ← single atomic query (published + unpublished)
-slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)
+waitingCount   = len(v_queue_with_wait_time WHERE status='waiting')  ← fetched in same Promise.all as draftCount
+dynamicCap     = getDynamicDraftCap(waitingCount)   → 3 | 5 | 6
+draftCount     = COUNT(*) WHERE status='pending' AND is_published=false   ← unpublished drafts ONLY
+slotsAvailable = max(0, dynamicCap − draftCount)
 ```
 
-The old approach counted only **published** matches, so unpublished drafts were invisible — each court-finish trigger saw `0 published → slots free` and generated up to 2 more drafts, accumulating 7+ before the organizer could review any. The single-query cap eliminates that race window.
+Cap tiers:
 
-| State      | slotsAvailable                          |
-| ---------- | --------------------------------------- |
-| 0 pending  | up to 3 (pool diversity cap may reduce) |
-| 1 pending  | up to 2                                 |
-| 2 pending  | 1                                       |
-| 3+ pending | 0 — engine skips                        |
+| Waiting players | Cap (`dynamicCap`) |
+| --------------- | ------------------ |
+| < 25            | 3                  |
+| 25 – 29         | 5                  |
+| ≥ 30            | 6                  |
+
+Published on-deck matches do **not** count against the cap — they are already reviewed and calling them to courts should not prevent fresh draft generation.
+
+| Drafts (unpublished) | slotsAvailable (small session, cap=3) |
+| -------------------- | ------------------------------------- |
+| 0                    | up to 3 (pool diversity cap may reduce) |
+| 1                    | up to 2                               |
+| 2                    | 1                                     |
+| 3+                   | 0 — engine skips                      |
 
 #### Engine Flow
 
 ```
-1. Count totalPending (single atomic query — all 'pending' matches, published + unpublished)
-2. slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)  [skip if ≤ 0]
+1. Promise.all: fetch v_queue_with_wait_time (waitingCount) + COUNT unpublished drafts (draftCount)
+2. dynamicCap = getDynamicDraftCap(waitingCount)  [3 | 5 | 6]
+   slotsAvailable = max(0, dynamicCap − draftCount)  [skip if ≤ 0]
 3. Soft gate check (skipped when bypassGate=true):
      if pool ≤ GATE_POOL_THRESHOLD AND activeCourts > 0
         AND maxWait < GATE_HOLD_MINUTES AND no Red Zone player → defer (return early)
@@ -435,6 +450,7 @@ The old approach counted only **published** matches, so unpublished drafts were 
 - Engine auto-generates up to `MAX_AUTO_DRAFTS` (3) total pending matches. Formula: `slotsAvailable = max(0, 3 − totalPending)` where `totalPending` counts ALL pending rows (published + unpublished) atomically.
 - Each card shows team A vs team B with skill badges, `is_mixed_level` indicator, and H2H strip.
 - **Draft Mode**: All engine-generated matches start as `is_published = false` (drafts, hidden from players and TV). The organizer must explicitly publish (single: `publishMatchAction`) or publish-all (`publishAllDraftMatchesAction`) before players see them. The draft approval banner shows `"N on-deck matches waiting for approval"` and the section label reads `"Drafts — hidden from players"`.
+- **Engine trigger on publish**: `publishMatchAction` (both RPC and fallback paths) and `publishAllDraftMatchesAction` (both RPC and fallback) call `runEngineForSession` after a successful publish, immediately refilling the draft review queue. This prevents the organizer from seeing 0 drafts after publishing all — the engine proactively generates the next batch.
 - **Swap flow**: Long-press / click a player pill → opens `SwapSheet` → pick a bench player → calls `swapPlayerInMatch` server action.
 - **Cross-match swap (Tap-to-Swap v2)**: Click a player in match A, then a player in match B → calls `swapMatchPlayers` RPC (atomic two-match swap). This replaces the original bench-only swap with direct match-player swapping.
 - **Clear**: Organizer can discard a single on-deck match via `clearOnDeckMatch`; players return to `waiting`. Broadcast fires so affected players see a toast.
@@ -491,6 +507,23 @@ Draft Mode is a **publish gate** for auto-generated on-deck matches.
 - **Manual matches** (organizer UI) also start as `is_published = false` — they go through the same review gate before becoming visible to players.
 - **Publish All**: batch-publishes every draft in the on-deck panel.
 - `callNextMatch` will not promote an unpublished draft to a court — it returns `hasDraftsBlocking: true` to alert the organizer.
+
+**Engine trigger completeness** — every action that opens a queue slot calls `runEngineForSession`:
+
+| Action | Trigger? | Note |
+| --- | --- | --- |
+| `joinQueueAction` | ✅ | All 3 branches (RPC / update / insert paths) |
+| `togglePlayerPause` (unpause, `isPaused=false`) | ✅ | Unpaused player re-enters pool immediately |
+| `togglePlayerPause` (pause, `isPaused=true`) | — | Engine already excludes paused players; no slot opened |
+| `checkoutPlayer` | ✅ | Departure may cancel a draft, freeing drafted players |
+| `endMatchAction` | ✅ | Court freed — engine refills on-deck |
+| `cancelMatchAction` | ✅ | Same court-freed path |
+| `clearOnDeckMatch` | ✅ | Draft slot opened — engine refills |
+| `publishMatchAction` (RPC `"SUCCESS"` + fallback) | ✅ | Draft moved to on-deck; review slot freed |
+| `publishMatchAction` (`"ALREADY_PUBLISHED"`) | — | No slot opened; no trigger |
+| `publishAllDraftMatchesAction` (when `publishedCount > 0`) | ✅ | Same rationale as single publish |
+| `publishAllDraftMatchesAction` (when `publishedCount === 0`) | — | Nothing published; no trigger |
+| `callNextMatch` (after promotion) | ✅ | Calls `runEngineInternal` directly (bypasses toggle check) |
 
 **`publishMatchAction` — two enforced behaviors (BUG-001 & BUG-002 fixes):**
 

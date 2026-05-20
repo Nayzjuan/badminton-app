@@ -5,6 +5,34 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-20 — Engine Trigger Completeness + Real DB Tests)
+
+### Engine Trigger Completeness (2026-05-20) — COMPLETE
+
+**Goal:** Ensure every action that opens a queue slot triggers `runEngineForSession`, and verify with tests.
+
+**Root cause identified:** `publishMatchAction` and `publishAllDraftMatchesAction` were missing engine triggers. Publishing drafts moved them to on-deck (emptying the review queue) but the engine never ran to refill it — the organizer saw 0 drafts until the next unrelated event. Also: `togglePlayerPause` (unpause) and `checkoutPlayer` were missing engine triggers.
+
+**Source fixes (`src/app/actions/`):**
+- `match-drafts.ts` — `publishMatchAction` RPC case "SUCCESS": added `await runEngineForSession(match.session_id)`; fallback path: same; `publishAllDraftMatchesAction` RPC path + fallback: added `if (publishedCount > 0) await runEngineForSession(sessionId)`
+- `queue.ts` — `togglePlayerPause`: added engine trigger when `isPaused === false` (unpause only); `checkoutPlayer`: added `await runEngineForSession(sessionId)` after draft cleanup
+
+**Build fix (`src/app/actions/matchmaking.ts`, `src/lib/matchmaking-core.ts`):**
+- `getDynamicDraftCap` moved from `matchmaking.ts` to `matchmaking-core.ts`. Reason: `"use server"` files require all exports to be `async`. A synchronous export caused a Turbopack build error: "Server Actions must be async functions." `matchmaking.ts` now imports `getDynamicDraftCap` from `matchmaking-core`.
+- Removed dead import `MAX_AUTO_DRAFTS` from `matchmaking.ts` (only used in comments after the move).
+
+**Tests added:**
+- `tests/unit/publish-engine-trigger.test.ts` *(new, 6 tests — mock-based)* — PE-1 through PE-6: verifies engine called/not-called for each publish outcome
+- `tests/integration/player-pause.test.ts` — P-9 (unpause calls engine), P-10 (pause does not)
+- `tests/integration/player-checkout.test.ts` — Q-9 (checkout calls engine)
+- `tests/integration/engine-trigger-realdb.test.ts` *(new, 3 real DB tests)* — ET-1 (`endMatchAction` + auto ON → draft created), ET-2 (`clearOnDeckMatch` + auto ON → draft refills), ET-3 (`clearOnDeckMatch` + auto OFF → no draft)
+
+**All unit tests:** 333/334 pass (1 pre-existing skip). Real DB integration tests: 3/3 pass (local Supabase).
+
+**APP_MANIFEST updated:** §3.1 constants table (new cap tier constants), §3.1 Engine Capacity formula (dynamic cap, `getDynamicDraftCap`), §3.2 (publish engine trigger note), §3.5 (complete engine trigger table).
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-20 — Dynamic Draft Cap + Unit Test Fixes)
 
 ### Dynamic Draft Cap + Parallel Fetch (2026-05-20) — COMPLETE
