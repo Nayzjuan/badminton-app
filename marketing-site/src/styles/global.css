@@ -7,6 +7,11 @@
    - JetBrains Mono    → --font-mono     (stats, GP numbers) */
 @import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,700;0,800;0,900;1,700;1,800;1,900&family=Barlow+Semi+Condensed:wght@600;700&family=Chakra+Petch:wght@400;500;600;700&family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;600&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
+/* Scan digital-twin sandbox source so Tailwind v4 generates CSS for all
+   utility classes used in SandboxRoot and its child components. Without this,
+   classes like lg:grid-cols-[minmax(0,1fr)_auto_minmax(240px,300px)] are
+   never emitted and the 3-panel layout silently falls back to single-column. */
+@source "../../../digital-twin/src/sandbox";
 
 /* ── AUTO-SYNCED from digital-twin/src/styles/global.css ──────────────────
    Run `npm run sync` to refresh. Do not edit this block manually.
