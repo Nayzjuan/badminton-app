@@ -113,6 +113,15 @@ export async function togglePlayerPause(
     return { success: false, error: error.message };
   }
 
+  // Engine hook: unpausing re-adds this player to the matching pool.
+  // Run the engine so they can be drafted immediately rather than
+  // waiting for the next unrelated trigger (join, end-match, etc.).
+  // Pausing does not need a trigger — the engine excludes paused players
+  // anyway, so no new slots open when a player pauses.
+  if (!isPaused) {
+    await runEngineForSession(sessionId);
+  }
+
   return { success: true };
 }
 
@@ -201,6 +210,11 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
       // Non-fatal: checkout itself succeeded.
     }
   }
+
+  // Engine hook: the player left, which may have cancelled one or more
+  // draft matches (freeing other players back to 'waiting'). Run the
+  // engine so those freed slots are immediately refilled.
+  await runEngineForSession(sessionId);
 
   return { success: true };
 }

@@ -18,12 +18,18 @@
 // Isolation: Layer B — truncateTracked() in afterEach.
 // ============================================================
 
-import { describe, it, expect, afterEach } from "vitest";
+import { vi, describe, it, expect, afterEach, beforeEach } from "vitest";
+
+vi.mock("@/app/actions/matchmaking", () => ({
+  runEngineForSession: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { Faker, en } from "@faker-js/faker";
 import { makeProfile, makeSession, makeQueueEntry, makeCourt, makeMatch } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { checkoutPlayer } from "@/app/actions/queue";
+import { runEngineForSession } from "@/app/actions/matchmaking";
 
 const faker = new Faker({ locale: [en] });
 faker.seed(9101);
@@ -46,6 +52,10 @@ async function checkoutSetup() {
 // ─────────────────────────────────────────────────────────────
 
 describe("checkoutPlayer — Suite Q", () => {
+  beforeEach(() => {
+    vi.mocked(runEngineForSession).mockClear();
+  });
+
   // ── Q-1: Happy path ──────────────────────────────────────────
 
   it("Q-1: player can check out of queue (status → 'left')", async () => {
@@ -324,5 +334,23 @@ describe("checkoutPlayer — Suite Q", () => {
       .eq("player_id", player.id)
       .single();
     expect(entry?.status).toBe("left");
+  });
+
+  // ── Q-9: Engine trigger after checkout ───────────────────────
+
+  it("Q-9: checkoutPlayer calls runEngineForSession after cleanup", async () => {
+    const { session, player } = await checkoutSetup();
+
+    const restore = mockAuthAs(player.id);
+    let result: Awaited<ReturnType<typeof checkoutPlayer>>;
+    try {
+      result = await checkoutPlayer(session.id);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(true);
+    expect(runEngineForSession).toHaveBeenCalledOnce();
+    expect(runEngineForSession).toHaveBeenCalledWith(session.id);
   });
 });

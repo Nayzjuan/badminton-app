@@ -19,12 +19,18 @@
 // Isolation: Layer B — truncateTracked() in afterEach.
 // ============================================================
 
-import { describe, it, expect, afterEach } from "vitest";
+import { vi, describe, it, expect, afterEach, beforeEach } from "vitest";
+
+vi.mock("@/app/actions/matchmaking", () => ({
+  runEngineForSession: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { Faker, en } from "@faker-js/faker";
 import { makeProfile, makeSession, makeQueueEntry } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { togglePlayerPause } from "@/app/actions/queue";
+import { runEngineForSession } from "@/app/actions/matchmaking";
 
 const faker = new Faker({ locale: [en] });
 faker.seed(9001);
@@ -232,6 +238,12 @@ describe("togglePlayerPause — Suite P", () => {
     expect(result!.success).toBe(true);
   });
 
+  // ── P-9/P-10: Engine trigger ──────────────────────────────────
+
+  beforeEach(() => {
+    vi.mocked(runEngineForSession).mockClear();
+  });
+
   // ── P-8: Pausing a 'playing' player ──────────────────────────
 
   it("P-8: organizer can pause a player whose queue status is 'playing' (status unaffected)", async () => {
@@ -264,5 +276,47 @@ describe("togglePlayerPause — Suite P", () => {
     expect(entry?.is_paused).toBe(true);
     // Status must remain 'playing' — togglePlayerPause only touches is_paused
     expect(entry?.status).toBe("playing");
+  });
+
+  // ── P-9: Unpause triggers engine ─────────────────────────────
+
+  it("P-9: unpausing a player (isPaused=false) calls runEngineForSession once", async () => {
+    const { organizer, session, player } = await pauseTestSetup();
+
+    // First pause the player directly via service client (setup)
+    await serviceClient()
+      .from("queue_entries")
+      .update({ is_paused: true })
+      .eq("session_id", session.id)
+      .eq("player_id", player.id);
+
+    const restore = mockAuthAs(organizer.id);
+    let result: Awaited<ReturnType<typeof togglePlayerPause>>;
+    try {
+      result = await togglePlayerPause(session.id, player.id, false);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(true);
+    expect(runEngineForSession).toHaveBeenCalledOnce();
+    expect(runEngineForSession).toHaveBeenCalledWith(session.id);
+  });
+
+  // ── P-10: Pause does NOT trigger engine ──────────────────────
+
+  it("P-10: pausing a player (isPaused=true) does NOT call runEngineForSession", async () => {
+    const { organizer, session, player } = await pauseTestSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    let result: Awaited<ReturnType<typeof togglePlayerPause>>;
+    try {
+      result = await togglePlayerPause(session.id, player.id, true);
+    } finally {
+      restore();
+    }
+
+    expect(result!.success).toBe(true);
+    expect(runEngineForSession).not.toHaveBeenCalled();
   });
 });
