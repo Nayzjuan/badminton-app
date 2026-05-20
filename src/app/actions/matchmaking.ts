@@ -252,16 +252,17 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
-// Dynamic draft filler. Generates on-deck matches until the combined
-// total of pending matches (published + unpublished) reaches MAX_AUTO_DRAFTS.
+// Draft review queue filler. Generates unpublished drafts until the
+// count of UNPUBLISHED pending matches reaches MAX_AUTO_DRAFTS.
 //
-// slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)
-//   totalPending is fetched in a single atomic query (no race between
-//   published and draft sub-counts).
-//   0 pending → up to 3 slots (pool diversity cap applies)
-//   1 pending → up to 2 slots
-//   2 pending → 1 slot
-//   3 pending → 0 slots (at cap)
+// slotsAvailable = max(0, MAX_AUTO_DRAFTS − draftCount)
+//   draftCount = status='pending' AND is_published=false only.
+//   Published on-deck matches do NOT count against the cap — they have
+//   already been reviewed and are not blocking the review queue.
+//   0 drafts → up to 3 slots (pool diversity cap applies)
+//   1 draft  → up to 2 slots
+//   2 drafts → 1 slot
+//   3 drafts → 0 slots (review queue full)
 // Fills slots up to slotsAvailable, stopping when queue is exhausted.
 
 /**
@@ -302,32 +303,42 @@ async function runEngineInternal(
     return;
   }
 
-  // Count all pending matches (published + unpublished) in one atomic query.
-  // Using a single query rather than two sequential published/draft sub-counts
-  // eliminates a narrow race window: if a draft were published between the two
-  // queries, totalPending could be underestimated by 1, allowing a spurious
-  // extra draft. The single query reads a consistent snapshot.
-  const { count: totalPendingRaw, error: totalErr } = await supabase
+  // Count only UNPUBLISHED drafts (is_published=false, status=pending).
+  //
+  // Why not count published on-deck matches too:
+  //   Published on-deck matches have already been reviewed by the organizer and
+  //   are visible to players. Counting them against the cap would prevent the
+  //   engine from generating new drafts for review while those matches are waiting
+  //   to be called to courts — the organizer would see an empty Draft panel even
+  //   though all pending matches are already "done". The cap is a REVIEW QUEUE cap,
+  //   not a total on-deck cap.
+  //
+  // Single-query atomicity: filtering by is_published=false in one query is still
+  // a consistent snapshot — the original multi-query race concern (a draft published
+  // between two queries) no longer applies since we're only reading the unpublished
+  // count in one atomic read.
+  const { count: draftCountRaw, error: totalErr } = await supabase
     .from("matches")
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .eq("is_published", false);
 
   if (totalErr) {
-    console.error(`[engine] runEngineInternal: pending count failed — ${totalErr.message}`);
+    console.error(`[engine] runEngineInternal: draft count failed — ${totalErr.message}`);
     return;
   }
 
-  const totalPending = totalPendingRaw ?? 0;
-  const slotsAvailable = Math.max(0, MAX_AUTO_DRAFTS - totalPending);
+  const draftCount = draftCountRaw ?? 0;
+  const slotsAvailable = Math.max(0, MAX_AUTO_DRAFTS - draftCount);
 
   console.log(
     `[engine] runEngineInternal: courts=${courtCount} ` +
-      `total=${totalPending} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
+      `drafts=${draftCount} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
   );
   if (slotsAvailable <= 0) {
     console.log(
-      `[engine] runEngineInternal: draft cap reached (${totalPending}/${MAX_AUTO_DRAFTS}) — skipping`
+      `[engine] runEngineInternal: draft cap reached (${draftCount}/${MAX_AUTO_DRAFTS}) — skipping`
     );
     return;
   }
