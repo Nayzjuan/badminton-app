@@ -99,21 +99,25 @@ export const ON_DECK_LOOKAHEAD = 1;
 export const MAX_ON_DECK_MATCHES = 2;
 
 /**
- * Hard cap on the combined total of published + unpublished pending matches
- * the engine will auto-generate across successive runs.
+ * Maximum number of UNPUBLISHED draft matches the engine will hold in the
+ * review queue at any one time.
  *
- * Previously the engine counted only published matches toward capacity, so
- * unpublished drafts were invisible — each court-finish trigger generated up
- * to 2 more drafts regardless of how many already existed, reaching 7+ drafts
- * before the organizer could review any of them.
+ * The cap counts only is_published=false matches (status='pending'). Published
+ * on-deck matches that have already been reviewed do NOT count — they are "done"
+ * from the review perspective and should not block new draft generation.
  *
- * Formula: slotsAvailable = max(0, MAX_AUTO_DRAFTS − published − drafts)
+ * Formula: slotsAvailable = max(0, MAX_AUTO_DRAFTS − draftCount)
+ *   where draftCount = status='pending' AND is_published=false
  *
  * Dynamic behaviour:
- *   0 approved + 0 drafts → up to 3 new drafts (pool diversity cap applies)
- *   2 approved + 0 drafts → 1 new draft  (prevents on-deck crowding)
- *   2 approved + 1 draft  → 0            (at cap)
- *   0 approved + 3 drafts → 0            (at cap)
+ *   0 drafts → up to 3 new drafts generated (pool diversity cap applies)
+ *   1 draft  → up to 2 new drafts
+ *   2 drafts → 1 new draft
+ *   3 drafts → 0 (review queue full — publish some first)
+ *
+ * Published on-deck matches do not reduce slotsAvailable. The organizer can
+ * publish all 3 drafts and the engine will immediately generate 3 more for
+ * review on the next run.
  */
 export const MAX_AUTO_DRAFTS = 3;
 
