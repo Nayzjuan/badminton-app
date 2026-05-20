@@ -42,7 +42,6 @@ import {
   CRITICAL_WAIT_MINUTES,
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
-  MAX_AUTO_DRAFTS,
   MIN_FREE_POOL_FOR_ON_DECK,
 } from "@/lib/constants";
 import { getDynamicDraftCap, runAlgorithm, scoreAndSortPool } from "@/lib/matchmaking-core";
