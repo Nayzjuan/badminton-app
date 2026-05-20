@@ -34,6 +34,18 @@ export default defineConfig({
       alias: {
         '@bbmt/digital-twin': path.resolve(__dirname, '../digital-twin/src/sandbox/SandboxRoot.tsx'),
       },
+      // Force Vite to resolve these from marketing-site/node_modules even when
+      // the importing file lives under digital-twin/. Without dedupe, Vite walks
+      // up from digital-twin/ and fails on Vercel where only marketing-site deps
+      // are installed.
+      dedupe: [
+        'react',
+        'react-dom',
+        '@dnd-kit/core',
+        '@dnd-kit/sortable',
+        '@dnd-kit/modifiers',
+        '@dnd-kit/utilities',
+      ],
     },
     server: {
       fs: {
