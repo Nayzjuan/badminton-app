@@ -2,17 +2,17 @@
 // ============================================================
 // Unit Tests — useScoreForm Hook
 // ============================================================
-// Pins the score validation boundaries and state machine that
-// existed as a bug (the organiser had no 0–31 upper limit).
+// Pins the score validation boundaries and state machine.
 //
 //   SF-1  NaN input rejected
 //   SF-2  Negative scores rejected
-//   SF-3  Score > 31 rejected (the previously missing check)
-//   SF-4  Boundary values accepted: 0, 30, and 31 all valid
+//   SF-3  Score > 31 rejected (MAX_BADMINTON_SCORE = 31 cap)
+//   SF-4  Boundary values accepted: 0–30 valid non-equal pairs
 //   SF-5  Server error propagates to error state
 //   SF-6  Server success sets submitted = true
 //   SF-7  clearError() resets error to null
-//   SF-8  isPending is true during async submit (skipped — useTransition is
+//   SF-8  Draw rejected (equal scores must not be submitted)
+//   SF-9  isPending is true during async submit (skipped — useTransition is
 //          not observable in happy-dom; React batches transitions differently
 //          in test vs. production rendering)
 // ============================================================
@@ -85,8 +85,8 @@ describe("useScoreForm", () => {
     });
   });
 
-  describe("SF-3: Score > 31 rejected (regression pin)", () => {
-    it("rejects teamA score of 32", async () => {
+  describe("SF-3: Score > 31 rejected (MAX_BADMINTON_SCORE cap)", () => {
+    it("rejects teamA score of 32", () => {
       const { result, submitter } = setup();
       fillScores(result, "32", "15");
       act(() => result.current.handleSubmit());
@@ -112,15 +112,6 @@ describe("useScoreForm", () => {
   });
 
   describe("SF-4: Boundary values accepted", () => {
-    it("accepts 0 – 0", async () => {
-      const submitter = makeSubmitter();
-      const { result } = setup(submitter);
-      fillScores(result, "0", "0");
-      await act(async () => result.current.handleSubmit());
-      expect(submitter).toHaveBeenCalledWith(0, 0);
-      expect(result.current.error).toBeNull();
-    });
-
     it("accepts 30 – 28", async () => {
       const submitter = makeSubmitter();
       const { result } = setup(submitter);
@@ -136,15 +127,50 @@ describe("useScoreForm", () => {
       fillScores(result, "0", "30");
       await act(async () => result.current.handleSubmit());
       expect(submitter).toHaveBeenCalledWith(0, 30);
+      expect(result.current.error).toBeNull();
     });
 
-    it("accepts 31 – 29 (new upper boundary)", async () => {
+    it("accepts 1 – 0 (minimum winning margin)", async () => {
       const submitter = makeSubmitter();
       const { result } = setup(submitter);
-      fillScores(result, "31", "29");
+      fillScores(result, "1", "0");
       await act(async () => result.current.handleSubmit());
-      expect(submitter).toHaveBeenCalledWith(31, 29);
+      expect(submitter).toHaveBeenCalledWith(1, 0);
       expect(result.current.error).toBeNull();
+    });
+
+    it("rejects 32 – 28 (exceeds MAX_BADMINTON_SCORE of 31)", () => {
+      const { result, submitter } = setup();
+      fillScores(result, "32", "28");
+      act(() => result.current.handleSubmit());
+      expect(result.current.error).toMatch(/valid scores/i);
+      expect(submitter).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("SF-8: Draw rejected", () => {
+    it("rejects 0 – 0", async () => {
+      const { result, submitter } = setup();
+      fillScores(result, "0", "0");
+      act(() => result.current.handleSubmit());
+      expect(result.current.error).toMatch(/equal|winning team/i);
+      expect(submitter).not.toHaveBeenCalled();
+    });
+
+    it("rejects 21 – 21", async () => {
+      const { result, submitter } = setup();
+      fillScores(result, "21", "21");
+      act(() => result.current.handleSubmit());
+      expect(result.current.error).toMatch(/equal|winning team/i);
+      expect(submitter).not.toHaveBeenCalled();
+    });
+
+    it("rejects 15 – 15", async () => {
+      const { result, submitter } = setup();
+      fillScores(result, "15", "15");
+      act(() => result.current.handleSubmit());
+      expect(result.current.error).toMatch(/equal|winning team/i);
+      expect(submitter).not.toHaveBeenCalled();
     });
   });
 
@@ -201,12 +227,12 @@ describe("useScoreForm", () => {
     });
   });
 
-  // SF-8 — isPending during async submit
+  // SF-9 — isPending during async submit
   // Skipped: useTransition's isPending flag is not reliably observable in
   // happy-dom because React batches transitions differently in test vs.
   // production rendering. The flag is structural (from useTransition) rather
   // than custom logic, so there is no application-level regression risk.
-  it.skip("SF-8: isPending is true during async submit", () => {
+  it.skip("SF-9: isPending is true during async submit", () => {
     // Would need React's act() to flush concurrent-mode transitions correctly.
     // Use a real browser or React 18 test utilities with concurrentMode enabled.
   });

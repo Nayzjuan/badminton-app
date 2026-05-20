@@ -4,7 +4,8 @@
 // useScoreForm — shared score input state machine
 // ============================================================
 // Drives both the player ScoreInputCard and the organizer ScoreModal.
-// Validates 0–31 range at submit time, clears errors on input change.
+// Validates 0–MAX_BADMINTON_SCORE range at submit time, rejects draws,
+// and clears errors on input change.
 // ============================================================
 
 import { useState, useTransition } from "react";
@@ -39,6 +40,10 @@ export function useScoreForm(
       b > MAX_BADMINTON_SCORE
     ) {
       setError(`Enter valid scores (0–${MAX_BADMINTON_SCORE}) for both teams.`);
+      return;
+    }
+    if (a === b) {
+      setError("Scores cannot be equal — there must be a winning team.");
       return;
     }
     setError(null);

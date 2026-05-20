@@ -93,7 +93,8 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
     aVal >= 0 &&
     bVal >= 0 &&
     aVal <= MAX_BADMINTON_SCORE &&
-    bVal <= MAX_BADMINTON_SCORE;
+    bVal <= MAX_BADMINTON_SCORE &&
+    aVal !== bVal;
 
   return (
     <Dialog
@@ -186,14 +187,10 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
             />
           </div>
 
-          {/* Live winner preview */}
+          {/* Live winner preview — only shown when canSubmit (which requires aVal !== bVal) */}
           {canSubmit && (
             <p className="text-center text-xs text-muted-foreground pt-1">
-              {aVal > bVal
-                ? `Team A wins · ${aVal} – ${bVal}`
-                : bVal > aVal
-                  ? `Team B wins · ${aVal} – ${bVal}`
-                  : `Draw · ${aVal} – ${bVal}`}
+              {aVal > bVal ? `Team A wins · ${aVal} – ${bVal}` : `Team B wins · ${aVal} – ${bVal}`}
             </p>
           )}
 

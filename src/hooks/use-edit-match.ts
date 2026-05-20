@@ -67,6 +67,11 @@ export function useEditMatch(
       setIsError(true);
       return;
     }
+    if (a === b) {
+      setMessage("Scores cannot be equal — there must be a winning team.");
+      setIsError(true);
+      return;
+    }
     setMessage(null);
     startTransition(async () => {
       const result = await updateMatchDetails(matchId, a, b, false);

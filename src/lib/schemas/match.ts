@@ -19,15 +19,19 @@ import { MAX_BADMINTON_SCORE } from "@/lib/constants";
 //
 // Max bound comes from MAX_BADMINTON_SCORE in @/lib/constants —
 // the single source of truth shared with client-side validation.
-export const scoreSchema = z.object({
-  teamAScore: z
-    .number({ error: "Score must be a number." })
-    .int({ error: "Score must be a whole number." })
-    .min(0, { error: "Score cannot be negative." })
-    .max(MAX_BADMINTON_SCORE, { error: `Score cannot exceed ${MAX_BADMINTON_SCORE}.` }),
-  teamBScore: z
-    .number({ error: "Score must be a number." })
-    .int({ error: "Score must be a whole number." })
-    .min(0, { error: "Score cannot be negative." })
-    .max(MAX_BADMINTON_SCORE, { error: `Score cannot exceed ${MAX_BADMINTON_SCORE}.` }),
-});
+export const scoreSchema = z
+  .object({
+    teamAScore: z
+      .number({ error: "Score must be a number." })
+      .int({ error: "Score must be a whole number." })
+      .min(0, { error: "Score cannot be negative." })
+      .max(MAX_BADMINTON_SCORE, { error: `Score cannot exceed ${MAX_BADMINTON_SCORE}.` }),
+    teamBScore: z
+      .number({ error: "Score must be a number." })
+      .int({ error: "Score must be a whole number." })
+      .min(0, { error: "Score cannot be negative." })
+      .max(MAX_BADMINTON_SCORE, { error: `Score cannot exceed ${MAX_BADMINTON_SCORE}.` }),
+  })
+  .refine((data) => data.teamAScore !== data.teamBScore, {
+    message: "Scores cannot be equal — there must be a winning team.",
+  });
