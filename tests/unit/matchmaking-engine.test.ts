@@ -26,10 +26,13 @@
 //   queriedTables tracks the DB table-access order for assertions.
 //
 // Per-slot query order inside runEngineInternal:
-//   fetchActivePool:        v_queue_with_wait_time, queue_entries
-//   fetchPartnershipCounts: matches (+ match_players if non-empty)
-//   buildOverlapMap:        match_players, matches, match_players (if non-empty)
-//   executeMatch:           rpc("create_match_with_players")
+//   Promise.all (after courts): v_queue_with_wait_time [0], matches draft count [1]
+//   soft gate (if triggered):   matches in_progress count
+//   fetchRecentRosters (once):  matches (+ match_players if non-empty)
+//   fetchActivePool:            v_queue_with_wait_time, queue_entries
+//   fetchPartnershipCounts:     matches (+ match_players if non-empty)
+//   buildOverlapMap:            match_players, matches, match_players (if non-empty)
+//   executeMatch:               rpc("create_match_with_players")
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -400,18 +403,20 @@ describe("runEngineForSession", () => {
   });
 
   it("stops filling when on-deck is already at capacity", async () => {
-    // 3 total pending (atomic query) → MAX_AUTO_DRAFTS(3) − 3 = 0 → skipping
+    // Promise.all([v_queue_with_wait_time, matches]) runs after courts.
+    // waitingCount=0 → dynamicCap=3. draftCount=3 → slotsAvailable=0 → skipping.
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
       { data: [{ id: "c1" }, { id: "c2" }], error: null }, // courts (2)
-      { count: 3, data: null, error: null }, // total pending = 3 → slotsAvailable=0
+      { data: [], error: null }, // v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 3, data: null, error: null }, // matches draft count=3 → slotsAvailable=0 (Promise.all[1])
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
-    // Engine exits after the single pending count: no queue/algorithm queries fired
-    expect(mock.queriedTables).toEqual(["sessions", "courts", "matches"]);
+    // Engine exits after parallel waiting+draft fetch: no queue/algorithm queries fired
+    expect(mock.queriedTables).toEqual(["sessions", "courts", "v_queue_with_wait_time", "matches"]);
   });
 
   it("returns gracefully when the session DB read fails", async () => {
@@ -434,9 +439,10 @@ describe("runEngineForSession", () => {
     // Query sequence (bypassGate=false):
     //   [0] sessions(ON)
     //   [1] courts(2)
-    //   [2] matches: total pending count=0 (single atomic query) → slotsAvailable=3
-    //   [3] v_queue_with_wait_time: soft gate — 4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
-    //        → gateTimedOut=true → gate releases; estimatedWaiting=4
+    //   Promise.all:
+    //   [2] v_queue_with_wait_time: 4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
+    //        → gateTimedOut=true → gate releases; estimatedWaiting=4 (Promise.all[0])
+    //   [3] matches: draft count=0 → slotsAvailable=3 (Promise.all[1])
     //   [4] matches: fetchRecentRosters → [] (empty; no match_players query follows)
     //   slot 0 (i=0 exempt from pool-diversity cap):
     //   [5] v_queue_with_wait_time: fetchActivePool → 4 players
@@ -468,8 +474,8 @@ describe("runEngineForSession", () => {
       [
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
-        { count: 0, data: null, error: null }, // [2] total pending → 0 (atomic) → slotsAvailable=3
-        { data: fourPlayers, error: null }, // [3] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4)
+        { data: fourPlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4) (Promise.all[0])
+        { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
         { data: [], error: null }, // [4] fetchRecentRosters: recent matches → []
         // (match_players not queried since recentMatchIds is empty)
         { data: fourPlayers, error: null }, // [5] runAlgorithm: v_queue_with_wait_time → 4 players
@@ -592,9 +598,9 @@ describe("runEngineForSession", () => {
 
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
-      { data: [{ id: "c1" }], error: null }, // [1] courts (1) → slotsAvailable=2
-      { count: 0, data: null, error: null }, // [2] pending count=0
-      { data: threePlayers, error: null }, // [3] gate: wait_minutes=10≥8 → gateTimedOut=true → releases (no extra query)
+      { data: [{ id: "c1" }], error: null }, // [1] courts (1)
+      { data: threePlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10≥8 → gateTimedOut=true → releases (estimatedWaiting=3) (Promise.all[0])
+      { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=2 (Promise.all[1])
       { data: [], error: null }, // [4] fetchRecentRosters: matches → [] (no recent matches → no step 2)
       { data: threePlayers, error: null }, // [5] fetchActivePool: v_queue_with_wait_time
       { data: [], error: null }, // [6] fetchActivePool: paused filter
@@ -643,8 +649,8 @@ describe("runEngineForSession", () => {
     const mock2 = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
       { data: [{ id: "c1" }], error: null }, // courts (1)
-      { count: 0, data: null, error: null }, // pending count → slotsAvailable=2
-      { data: eightExtremes, error: null }, // gate: 8 > 4 → gate not triggered; estimatedWaiting=8
+      { data: eightExtremes, error: null }, // v_queue_with_wait_time: 8 players (8 > GATE_POOL_THRESHOLD=4 → gate not triggered; estimatedWaiting=8) (Promise.all[0])
+      { count: 0, data: null, error: null }, // matches draft count=0 → slotsAvailable=2 (Promise.all[1])
       { data: [], error: null }, // fetchRecentRosters
       { data: eightExtremes, error: null }, // fetchActivePool: pool=8
       { data: [], error: null }, // paused filter
@@ -696,8 +702,8 @@ describe("runEngineForSession", () => {
       [
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
-        { count: 0, data: null, error: null }, // [2] total pending → 0 (atomic) → slotsAvailable=3
-        { data: eightPlayers, error: null }, // [3] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered)
+        { data: eightPlayers, error: null }, // [2] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered) (Promise.all[0])
+        { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
         { data: [], error: null }, // [4] fetchRecentRosters: recent matches → []
         { data: eightPlayers, error: null }, // [5] fetchActivePool: v_queue_with_wait_time → 8 players
         { data: [], error: null }, // [6] fetchActivePool: queue_entries paused → []
@@ -744,7 +750,8 @@ describe("callNextMatch", () => {
   //   [6+]  runEngineInternal calls
 
   it("returns success when an on-deck match is promoted successfully", async () => {
-    // totalPending=3 → slotsAvailable=0 → engine exits immediately after courts query.
+    // After promotion, runEngineInternal runs: courts → Promise.all([v_queue, matches]).
+    // waitingCount=0 → dynamicCap=3. draftCount=3 → slotsAvailable=0 → engine exits.
     // match_players=[] → no queue_entries update → profiles called with empty ids → [].
     const mock = makeMockClient([
       // user client only used for toggle-check sessions; promotion succeeds → never reached
@@ -757,7 +764,8 @@ describe("callNextMatch", () => {
       { data: [], error: null }, // [4] match_players → empty
       { data: [], error: null }, // [5] profiles → empty (no player ids)
       { data: [{ id: "c1" }], error: null }, // [6] runEngineInternal: courts
-      { count: 3, data: null, error: null }, // [7] runEngineInternal: pending count → slotsAvailable=0
+      { data: [], error: null }, // [7] runEngineInternal: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 3, data: null, error: null }, // [8] runEngineInternal: matches draft count=3 → slotsAvailable=0 (Promise.all[1])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -772,7 +780,7 @@ describe("callNextMatch", () => {
     // If callNextMatch called runEngineForSession it would query "sessions" (toggle check).
     // If it calls runEngineInternal directly (toggle bypass), the first post-promotion
     // table in serviceMock is "courts" — not "sessions".
-    // totalPending=3 → slotsAvailable=0 → engine exits after courts + pending count.
+    // After courts, Promise.all([v_queue, matches]): waitingCount=0, draftCount=3 → slotsAvailable=0.
     const mock = makeMockClient([
       // user client → no from() calls when promotion succeeds
     ]);
@@ -784,7 +792,8 @@ describe("callNextMatch", () => {
       { data: [], error: null }, // [4] match_players → empty
       { data: [], error: null }, // [5] profiles → empty
       { data: [{ id: "c1" }], error: null }, // [6] ← first post-promotion = courts (not sessions)
-      { count: 3, data: null, error: null }, // [7] pending count → slotsAvailable=0
+      { data: [], error: null }, // [7] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 3, data: null, error: null }, // [8] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -794,9 +803,9 @@ describe("callNextMatch", () => {
     // serviceMock.queriedTables[6] must be "courts", NOT "sessions".
     // "sessions" at this position would indicate runEngineForSession (toggle path) was taken.
     expect(serviceMock.queriedTables[6]).toBe("courts");
-    // Post-promotion (after auth gate [0] + 5 promotion calls [1-5]): courts + matches count only.
+    // Post-promotion (after auth gate [0] + 5 promotion calls [1-5]): courts + v_queue + matches only.
     const postPromotionTables = serviceMock.queriedTables.slice(6);
-    expect(postPromotionTables).toEqual(["courts", "matches"]);
+    expect(postPromotionTables).toEqual(["courts", "v_queue_with_wait_time", "matches"]);
     expect(postPromotionTables).not.toContain("sessions");
   });
 
@@ -835,12 +844,13 @@ describe("callNextMatch", () => {
       { count: 2, data: null, error: null }, // [2] promote 1: 2 drafts → hasDraftsBlocking
       { data: { is_auto_matchmaking_on: true }, error: null }, // [3] toggle check → ON
       { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
-      { count: 2, data: null, error: null }, // [5] runEngine: total pending → slotsAvailable=1
-      { data: [], error: null }, // [6] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [7] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
-      { data: [], error: null }, // [8] fetchActivePool: queue_entries paused → []
-      { data: [], error: null }, // [9] promote 2: no published pending
-      { count: 2, data: null, error: null }, // [10] promote 2: 2 drafts → hasDraftsBlocking
+      { data: [], error: null }, // [5] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 2, data: null, error: null }, // [6] runEngine: matches draft count=2 → slotsAvailable=1 (Promise.all[1])
+      { data: [], error: null }, // [7] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [8] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
+      { data: [], error: null }, // [9] fetchActivePool: queue_entries paused → []
+      { data: [], error: null }, // [10] promote 2: no published pending
+      { count: 2, data: null, error: null }, // [11] promote 2: 2 drafts → hasDraftsBlocking
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -867,12 +877,13 @@ describe("callNextMatch", () => {
       { count: 0, data: null, error: null }, // [2] promote 1: 0 drafts
       { data: { is_auto_matchmaking_on: true }, error: null }, // [3] toggle check → ON
       { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
-      { count: 0, data: null, error: null }, // [5] runEngine: total pending → slotsAvailable=3
-      { data: [], error: null }, // [6] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [7] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
-      { data: [], error: null }, // [8] fetchActivePool: queue_entries paused → []
-      { data: [], error: null }, // [9] promote 2: still no pending
-      { count: 0, data: null, error: null }, // [10] promote 2: 0 drafts
+      { data: [], error: null }, // [5] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 0, data: null, error: null }, // [6] runEngine: matches draft count=0 → slotsAvailable=3 (Promise.all[1])
+      { data: [], error: null }, // [7] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [8] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
+      { data: [], error: null }, // [9] fetchActivePool: queue_entries paused → []
+      { data: [], error: null }, // [10] promote 2: still no pending
+      { count: 0, data: null, error: null }, // [11] promote 2: 0 drafts
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);

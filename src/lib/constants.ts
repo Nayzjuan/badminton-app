@@ -99,27 +99,25 @@ export const ON_DECK_LOOKAHEAD = 1;
 export const MAX_ON_DECK_MATCHES = 2;
 
 /**
- * Maximum number of UNPUBLISHED draft matches the engine will hold in the
- * review queue at any one time.
+ * Dynamic draft cap tiers — scales the review queue depth with the number of
+ * waiting players so larger sessions always have enough pending matches ready.
  *
- * The cap counts only is_published=false matches (status='pending'). Published
+ * The cap counts ONLY is_published=false matches (status='pending'). Published
  * on-deck matches that have already been reviewed do NOT count — they are "done"
  * from the review perspective and should not block new draft generation.
  *
- * Formula: slotsAvailable = max(0, MAX_AUTO_DRAFTS − draftCount)
- *   where draftCount = status='pending' AND is_published=false
+ * Formula: slotsAvailable = max(0, getDynamicDraftCap(waitingCount) − draftCount)
  *
- * Dynamic behaviour:
- *   0 drafts → up to 3 new drafts generated (pool diversity cap applies)
- *   1 draft  → up to 2 new drafts
- *   2 drafts → 1 new draft
- *   3 drafts → 0 (review queue full — publish some first)
- *
- * Published on-deck matches do not reduce slotsAvailable. The organizer can
- * publish all 3 drafts and the engine will immediately generate 3 more for
- * review on the next run.
+ * Tier table:
+ *   waiting < 25   → cap 3  (small session — few matches needed)
+ *   waiting 25–29  → cap 5  (medium session)
+ *   waiting ≥ 30   → cap 6  (large session — keep review queue full)
  */
-export const MAX_AUTO_DRAFTS = 3;
+export const MAX_AUTO_DRAFTS = 3; // < 25 waiting players
+export const MAX_AUTO_DRAFTS_LARGE = 5; // 25–29 waiting players
+export const MAX_AUTO_DRAFTS_XLARGE = 6; // ≥ 30 waiting players
+export const DRAFT_CAP_LARGE_THRESHOLD = 25; // player count that bumps cap to 5
+export const DRAFT_CAP_XLARGE_THRESHOLD = 30; // player count that bumps cap to 6
 
 /**
  * Minimum number of waiting players that must remain in the free pool
