@@ -20,7 +20,10 @@
 //
 // Internal only:
 //   runEngineInternal(supabase, sessionId) — capacity-limited
-//     on-deck filler; orchestrates data-fetch + pure algorithm + commit.
+//     draft filler; orchestrates data-fetch + pure algorithm + commit.
+//     Draft cap: MAX_AUTO_DRAFTS (tiered by waiting player count via
+//     getDynamicDraftCap). Counts only is_published=false pending
+//     matches — published on-deck matches do NOT block new draft gen.
 //   promoteOnDeckMatchInternal — CAS promote, player status updates.
 //
 // Module boundaries:
@@ -46,6 +49,16 @@ import {
   DRAFT_CAP_XLARGE_THRESHOLD,
   MIN_FREE_POOL_FOR_ON_DECK,
 } from "@/lib/constants";
+import { runAlgorithm, scoreAndSortPool } from "@/lib/matchmaking-core";
+import {
+  fetchActivePool,
+  fetchRecentRosters,
+  fetchPartnershipCounts,
+  buildOverlapMap,
+  executeMatch,
+} from "@/lib/matchmaking-db";
+import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isValidUUID } from "@/lib/validate";
 
 /**
  * Returns the draft review queue cap based on the number of waiting players.
@@ -59,16 +72,6 @@ function getDynamicDraftCap(waitingCount: number): number {
   if (waitingCount >= DRAFT_CAP_LARGE_THRESHOLD) return MAX_AUTO_DRAFTS_LARGE;
   return MAX_AUTO_DRAFTS;
 }
-import { runAlgorithm, scoreAndSortPool } from "@/lib/matchmaking-core";
-import {
-  fetchActivePool,
-  fetchRecentRosters,
-  fetchPartnershipCounts,
-  buildOverlapMap,
-  executeMatch,
-} from "@/lib/matchmaking-db";
-import { isSessionOrganizer } from "@/app/actions/_shared";
-import { isValidUUID } from "@/lib/validate";
 
 // ── Process-level concurrency guard ──────────────────────────
 // Tracks session IDs for which the engine is currently running
