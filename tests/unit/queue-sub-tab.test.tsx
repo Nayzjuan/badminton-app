@@ -227,4 +227,55 @@ describe("QueueSubTab — Component Smoke Tests", () => {
 
     expect(screen.getByText(SESSION_NAME)).toBeInTheDocument();
   });
+
+  // ── QST-12: Approaching — urgent (position ≤ 2) ───────────────
+  // OnDeckAlert renders above QueueStatus when position ≤ ON_DECK_ALERT_THRESHOLD (4).
+  // Position 1 is "urgent" (amber). The banner has role="status".
+
+  it("QST-12: waiting at position 1 shows 'You're Next!' approaching banner", () => {
+    renderQueueSubTab({
+      isInQueue: true,
+      myEntry: makeEntry("waiting"),
+      myPosition: 1,
+    });
+
+    // OnDeckAlert banner text is the key player-visible signal for urgency
+    expect(screen.getByText("You're Next!")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    // Hero numeral still visible alongside the banner
+    expect(screen.getByText("#1")).toBeInTheDocument();
+  });
+
+  // ── QST-13: Approaching — non-urgent (position 3) ────────────
+  // Position 3 is within the threshold but not "urgent" — uses sky/blue styling.
+
+  it("QST-13: waiting at position 3 shows 'Get ready!' approaching banner", () => {
+    renderQueueSubTab({
+      isInQueue: true,
+      myEntry: makeEntry("waiting"),
+      myPosition: 3,
+    });
+
+    expect(screen.getByText("Get ready!")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByText("#3")).toBeInTheDocument();
+  });
+
+  // ── QST-14: No banner above threshold (position 5) ───────────
+  // ON_DECK_ALERT_THRESHOLD = 4; position 5 should show no OnDeckAlert.
+
+  it("QST-14: waiting at position 5 shows no approaching banner", () => {
+    renderQueueSubTab({
+      isInQueue: true,
+      myEntry: makeEntry("waiting"),
+      myPosition: 5,
+    });
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/you're next|almost there|get ready|coming up/i)
+    ).not.toBeInTheDocument();
+    // Hero numeral still renders normally
+    expect(screen.getByText("#5")).toBeInTheDocument();
+  });
 });

@@ -247,9 +247,13 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       timeout: 8000,
     });
 
-    // On-deck alert or "You're up" copy should appear
-    // (OnDeckAlert renders with "You're Up Next" or similar)
+    // MatchAlert renders with role="alert" AND a specific heading — assert both
+    // so the test fails if the overlay mounts empty rather than passing silently.
     await expect(page.getByRole("alert")).toBeVisible({ timeout: 20_000 });
+    // "Heads Up" is the heading for a pending (on-deck) match in MatchAlert
+    await expect(page.getByRole("heading", { name: /heads up/i })).toBeVisible({
+      timeout: 5_000,
+    });
   } finally {
     await context.close();
   }

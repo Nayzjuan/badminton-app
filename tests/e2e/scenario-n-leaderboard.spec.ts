@@ -88,13 +88,16 @@ test.describe("Leaderboard — [N-1] Player dashboard leaderboard tab", () => {
       await leaderboardTab.click();
 
       // After clicking, the leaderboard panel should mount.
-      // With no completed matches the panel shows an empty state or
-      // a "No ranked players yet" / minimum games message.
-      // We assert something leaderboard-related is visible — either a
-      // table header "Rank" or an empty-state message.
-      await expect(
-        page.getByText(/rank|no ranked players|minimum|leaderboard/i).first()
-      ).toBeVisible({ timeout: 12_000 });
+      // Scope the assertion to the active tabpanel so the "Leaderboard" tab
+      // label (which is always visible) cannot satisfy it — only tabpanel
+      // content counts. With no completed matches the panel shows an empty
+      // state ("No ranked players yet" / minimum games message) or a "Rank"
+      // table header if matches exist.
+      const tabPanel = page.locator('[role="tabpanel"]');
+      await expect(tabPanel).toBeVisible({ timeout: 10_000 });
+      await expect(tabPanel.getByText(/rank|no ranked players|minimum games/i).first()).toBeVisible(
+        { timeout: 12_000 }
+      );
     } finally {
       await context.close();
     }
