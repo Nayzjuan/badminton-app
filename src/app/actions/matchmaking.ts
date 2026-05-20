@@ -40,8 +40,25 @@ import {
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
   MAX_AUTO_DRAFTS,
+  MAX_AUTO_DRAFTS_LARGE,
+  MAX_AUTO_DRAFTS_XLARGE,
+  DRAFT_CAP_LARGE_THRESHOLD,
+  DRAFT_CAP_XLARGE_THRESHOLD,
   MIN_FREE_POOL_FOR_ON_DECK,
 } from "@/lib/constants";
+
+/**
+ * Returns the draft review queue cap based on the number of waiting players.
+ *
+ *  < 25 waiting → 3  (small session)
+ *  25–29        → 5  (medium session)
+ *  ≥ 30         → 6  (large session)
+ */
+function getDynamicDraftCap(waitingCount: number): number {
+  if (waitingCount >= DRAFT_CAP_XLARGE_THRESHOLD) return MAX_AUTO_DRAFTS_XLARGE;
+  if (waitingCount >= DRAFT_CAP_LARGE_THRESHOLD) return MAX_AUTO_DRAFTS_LARGE;
+  return MAX_AUTO_DRAFTS;
+}
 import { runAlgorithm, scoreAndSortPool } from "@/lib/matchmaking-core";
 import {
   fetchActivePool,
@@ -303,52 +320,64 @@ async function runEngineInternal(
     return;
   }
 
-  // Count only UNPUBLISHED drafts (is_published=false, status=pending).
+  // ── Fetch waiting players + draft count in parallel ───────────
   //
-  // Why not count published on-deck matches too:
-  //   Published on-deck matches have already been reviewed by the organizer and
-  //   are visible to players. Counting them against the cap would prevent the
-  //   engine from generating new drafts for review while those matches are waiting
-  //   to be called to courts — the organizer would see an empty Draft panel even
-  //   though all pending matches are already "done". The cap is a REVIEW QUEUE cap,
-  //   not a total on-deck cap.
+  // waitingRows is hoisted here (outside !bypassGate) for two reasons:
+  //   1. The waiting count drives getDynamicDraftCap — we need it before
+  //      computing slotsAvailable, regardless of bypassGate.
+  //   2. The same rows are reused for the soft gate and estimatedWaiting,
+  //      so we avoid a second round-trip later.
   //
-  // Single-query atomicity: filtering by is_published=false in one query is still
-  // a consistent snapshot — the original multi-query race concern (a draft published
-  // between two queries) no longer applies since we're only reading the unpublished
-  // count in one atomic read.
-  const { count: draftCountRaw, error: totalErr } = await supabase
-    .from("matches")
-    .select("id", { count: "exact", head: true })
-    .eq("session_id", sessionId)
-    .eq("status", "pending")
-    .eq("is_published", false);
+  // Draft count cap (is_published=false only):
+  //   Published on-deck matches are already reviewed. Counting them against
+  //   the cap would block fresh draft generation while reviewed matches wait
+  //   to be called to courts. The cap is a REVIEW QUEUE cap, not a total
+  //   on-deck cap.
+  const [{ data: waitingRows, error: waitErr }, { count: draftCountRaw, error: draftErr }] =
+    await Promise.all([
+      supabase
+        .from("v_queue_with_wait_time")
+        .select("wait_minutes")
+        .eq("session_id", sessionId)
+        .eq("status", "waiting"),
+      supabase
+        .from("matches")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", sessionId)
+        .eq("status", "pending")
+        .eq("is_published", false),
+    ]);
 
-  if (totalErr) {
-    console.error(`[engine] runEngineInternal: draft count failed — ${totalErr.message}`);
+  if (draftErr) {
+    console.error(`[engine] runEngineInternal: draft count failed — ${draftErr.message}`);
     return;
   }
+  // waitErr is non-fatal — fall back to default cap if the view is unavailable.
+  if (waitErr) {
+    console.warn(`[engine] runEngineInternal: waiting-rows fetch failed — ${waitErr.message}`);
+  }
 
+  const waitingCount = waitingRows?.length ?? 0;
+  const dynamicCap = getDynamicDraftCap(waitingCount);
   const draftCount = draftCountRaw ?? 0;
-  const slotsAvailable = Math.max(0, MAX_AUTO_DRAFTS - draftCount);
+  const slotsAvailable = Math.max(0, dynamicCap - draftCount);
 
   console.log(
-    `[engine] runEngineInternal: courts=${courtCount} ` +
-      `drafts=${draftCount} cap=${MAX_AUTO_DRAFTS} slots=${slotsAvailable}`
+    `[engine] runEngineInternal: courts=${courtCount} waiting=${waitingCount} ` +
+      `drafts=${draftCount} cap=${dynamicCap} slots=${slotsAvailable}`
   );
   if (slotsAvailable <= 0) {
     console.log(
-      `[engine] runEngineInternal: draft cap reached (${draftCount}/${MAX_AUTO_DRAFTS}) — skipping`
+      `[engine] runEngineInternal: draft cap reached (${draftCount}/${dynamicCap}) — skipping`
     );
     return;
   }
 
   // ── Soft gate + pool diversity cap ───────────────────────────
   //
-  // Both checks share the same `v_queue_with_wait_time` query, so
-  // it is fetched once inside the `!bypassGate` block and used for
-  // both purposes. When bypassGate = true (organizer explicitly
-  // clicked "Call Next Match"), both checks are skipped entirely.
+  // waitingRows was already fetched above and reused here.
+  // When bypassGate = true (organizer explicitly clicked "Call Next Match"),
+  // both checks are skipped entirely.
   //
   // Soft gate: defer on-deck when pool is too small for cross-court mixing.
   //   Releases when: any player waits ≥ GATE_HOLD_MINUTES, any Red Zone,
@@ -358,39 +387,28 @@ async function runEngineInternal(
   //   waiting before committing another 4. Slot 0 is always exempt.
   //   After each successful generation, estimatedWaiting decrements by 4.
 
-  let estimatedWaiting = 0; // populated below if !bypassGate
+  let estimatedWaiting = waitingCount; // already fetched above
 
   if (!bypassGate) {
-    const { data: waitingRows, error: waitErr } = await supabase
-      .from("v_queue_with_wait_time")
-      .select("wait_minutes")
-      .eq("session_id", sessionId)
-      .eq("status", "waiting");
+    if (waitingRows && waitingCount > 0 && waitingCount <= GATE_POOL_THRESHOLD) {
+      const maxWait = Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0));
+      const hasRedZone = maxWait >= CRITICAL_WAIT_MINUTES;
+      const gateTimedOut = maxWait >= GATE_HOLD_MINUTES;
 
-    if (!waitErr && waitingRows) {
-      estimatedWaiting = waitingRows.length;
-      const waitingCount = estimatedWaiting;
+      if (!hasRedZone && !gateTimedOut) {
+        const { count: activeCount, error: activeErr } = await supabase
+          .from("matches")
+          .select("id", { count: "exact", head: true })
+          .eq("session_id", sessionId)
+          .eq("status", "in_progress");
 
-      if (waitingCount > 0 && waitingCount <= GATE_POOL_THRESHOLD) {
-        const maxWait = Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0));
-        const hasRedZone = maxWait >= CRITICAL_WAIT_MINUTES;
-        const gateTimedOut = maxWait >= GATE_HOLD_MINUTES;
-
-        if (!hasRedZone && !gateTimedOut) {
-          const { count: activeCount, error: activeErr } = await supabase
-            .from("matches")
-            .select("id", { count: "exact", head: true })
-            .eq("session_id", sessionId)
-            .eq("status", "in_progress");
-
-          if (!activeErr && (activeCount ?? 0) > 0) {
-            console.log(
-              `[engine] Soft gate active: pool=${waitingCount} ≤ ${GATE_POOL_THRESHOLD}, ` +
-                `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
-                `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
-            );
-            return;
-          }
+        if (!activeErr && (activeCount ?? 0) > 0) {
+          console.log(
+            `[engine] Soft gate active: pool=${waitingCount} ≤ ${GATE_POOL_THRESHOLD}, ` +
+              `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
+              `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
+          );
+          return;
         }
       }
     }
