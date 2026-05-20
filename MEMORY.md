@@ -5,6 +5,26 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-20 — snakeDraft fresh-pair preference fix)
+
+### Consecutive Same-Partner Bug Fix (2026-05-20) — COMPLETE
+
+**Problem reported:** Players were getting the same partner in consecutive games despite the anti-repeat lookback.
+
+**Root cause (verified):** `snakeDraft` and `rotatedDraft` in `src/lib/matchmaking-core.ts` tried splits in skill-balance order and returned the *first* one where both team pair counts were `< cap` (hard cap = 2). They never checked whether a *fresher* split existed where both pairs had `count = 0` (never been partners before). `isDiversityViolation` does not prevent same-partner repeats — it only blocks when ≥3 of 4 players appeared in the same recent match. Overlap scoring is anchor-centric, so when neither recently-paired player was the anchor, their mutual history was invisible to candidate scoring.
+
+**Fix:** Added two-pass approach to both `snakeDraft` and `rotatedDraft`:
+- **Pass 1**: Try splits (in skill-balance / rotation order) where BOTH team pairs have `count === 0`. Avoids repeating partnerships even when they're below the hard cap.
+- **Pass 2**: Fall back to original behavior — any split where both pairs are `< cap`.
+
+**Files changed:**
+- `src/lib/matchmaking-core.ts` — `snakeDraft` (lines ~125–140): two-pass loop; `rotatedDraft` (lines ~340–360): two-pass loop
+- `tests/unit/matchmaking-core.test.ts` — updated 1 existing test whose assertion expected Split 0 but new code correctly prefers fresh Split 2; added `"snakeDraft — fresh-pair preference"` describe block (4 new tests)
+
+**Validation:** `npx tsc --noEmit` clean · 323/324 tests pass (1 pre-existing skip) · lint errors are all pre-existing in unrelated files · Code review: LGTM
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-19 — Security Audit Pass)
 
 ### Security Audit + Patch (2026-05-19) — ALL COMPLETE
