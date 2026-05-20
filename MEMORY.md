@@ -5,7 +5,50 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-05-20 — snakeDraft fresh-pair preference fix)
+## SESSION STATE (Last Updated: 2026-05-20 — UI fixes, score validation, E2E teardown)
+
+### Wait-time Monitor + Score Validation Fixes (2026-05-20) — COMPLETE
+
+**Wait-time monitor (`src/components/organizer/wait-time-monitor.tsx`):**
+- `on_deck` players now appear in the monitor alongside `waiting` players. Previously they vanished the moment an organizer assigned them to a manual match, making it impossible to confirm a long-waiting player was finally served.
+- `on_deck` rows render with teal styling + "On Deck" badge + "ASSIGNED" sub-label. Bottleneck count + red alert only count `waiting` players. Remove button hidden for `on_deck` rows.
+- Summary line: "X waiting, Y on deck" split.
+
+**Score validation (no-draw rule + schema consolidation):**
+- `src/lib/schemas/match.ts` (`scoreSchema`): Added `.refine(data => data.teamAScore !== data.teamBScore)` — server-side draw block on all submission paths.
+- `src/app/actions/match-lifecycle.ts`: Replaced hardcoded duplicate inline schema (`.max(30)`) with import of canonical `scoreSchema` from `match.ts`. The hardcoded 30 was wrong — `MAX_BADMINTON_SCORE = 31` in constants.ts.
+- `src/hooks/use-score-form.ts`: Added `a === b` draw check (client-side, player + organizer modal).
+- `src/hooks/use-edit-match.ts`: Added `a === b` draw check (organizer score-edit path).
+- `src/components/organizer/score-modal.tsx`: Added `aVal !== bVal` to `canSubmit`; removed dead Draw branch from live-winner preview.
+- `tests/unit/use-score-form.test.ts`: Fixed stale boundary tests (31→32 for "exceeds max"); added SF-8 draw-rejection suite (3 tests); relabelled skipped test to SF-9.
+
+**Validation:** `npx tsc --noEmit` clean · 355/356 tests pass (1 pre-existing skip) · Code review: Minor issues (all fixed inline — dead branch removed, duplicate SF-8 label fixed, edit-match draw guard added).
+
+---
+
+### E2E Teardown — repairSandboxState (2026-05-20) — COMPLETE
+
+**Root cause:** If a Playwright test crashes mid-run, `softResetSandboxSession`/`afterAll` never fires, leaving the sandbox with stuck `playing`/`drafted`/`on_deck` players and orphaned `in_progress`/`pending` matches.
+
+**Fix (`tests/helpers/teardown.ts`):**
+- Added exported `repairSandboxState()` — cancels stuck `in_progress`/`pending` matches, returns stuck `playing`/`drafted`/`on_deck` queue entries to `waiting`, frees `in_use` courts. Status-updates only, never deletes — permanent sandbox players survive intact.
+- Wired as **Step 0** of `softResetSandboxSession()` so every test `beforeEach` self-heals from any prior crash state.
+
+**Commit:** `bf0fab1`
+
+---
+
+### Production DB — v_queue_full_with_wait_time Applied (2026-05-20) — COMPLETE
+
+Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the repo but was never applied to production. The live `use-organizer-queue.ts` was already reading from it (post ON DECK visibility feature on main), causing the organizer queue panel to show empty for ALL sessions. Applied via Supabase MCP. Also repaired 2 stuck sandbox matches and 6 stuck players at the same time.
+
+---
+
+### Migration Duplicate Fix (2026-05-20) — COMPLETE (PR #9)
+
+**Root cause:** `20260509000000_swap_player_draft_aware.sql` and `20260509000000_wrapped_awards_threshold_tweaks.sql` shared the same version timestamp. Supabase integration test startup failed with `duplicate key value violates unique constraint "schema_migrations_pkey"`. The wrapped_awards content was already correctly renamed to `20260509000001` — deleted the stale `20260509000000_wrapped_awards_threshold_tweaks.sql` duplicate. **Commit:** `de41adb`
+
+---
 
 ### Consecutive Same-Partner Bug Fix (2026-05-20) — COMPLETE
 
@@ -46,7 +89,7 @@
 **Skipped (by user request):**
 - F1 (P0): `profile.ts` PIN/skill actions only gate on `verifyAuthenticated()`, not `isSessionOrganizer()`. Intentionally deferred — current design allows easy organizer access.
 
-**Next step:** Commit the security fixes.
+**Status:** All committed and merged to main.
 
 ---
 

@@ -247,7 +247,7 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `skill_level`    | `beginner` → `lower_intermediate` → `intermediate` → `upper_intermediate` → `lower_advanced` → `advanced` (mapped to ints 1–6) |
 | `court_status`   | `available` \| `in_use` \| `closed`                                                                                            |
-| `queue_status`   | `waiting` \| `on_deck` \| `playing` \| `left`                                                                                  |
+| `queue_status`   | `waiting` \| `drafted` \| `on_deck` \| `playing` \| `left`  (`drafted` = in an unpublished engine draft, still visible to organizer; excluded from matchmaking engine pool) |
 | `match_status`   | `pending` (on-deck) \| `in_progress` (active court) \| `completed` \| `cancelled`                                              |
 | `match_origin`   | `auto` \| `manual` \| `modified`                                                                                               |
 | `scoring_format` | `single` \| `best_of_3` \| `best_of_5`                                                                                         |
@@ -256,13 +256,14 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 
 ### Views
 
-| View                        | Purpose                                                                                                                                                                                                             |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `v_queue_with_wait_time`    | Queue entries joined with profiles; computes `wait_minutes`, `is_bottleneck`, `skill_level_int`                                                                                                                     |
-| `v_match_history`           | Matches + players + scores with team arrays and `game_scores` JSON                                                                                                                                                  |
-| `v_recent_pairings`         | Recent co-player pairs per player; **no longer used by `buildOverlapMap`** (replaced by 3-step manual join with team-aware weighting in `matchmaking.ts`; view still exists in DB but is not queried by the engine) |
-| `v_session_leaderboard`     | Per-session GP, W, L, Win%, PF, PA, +/-                                                                                                                                                                             |
-| `v_alltime_leaderboard_mat` | Materialized all-time leaderboard (same columns, no session filter)                                                                                                                                                 |
+| View                           | Purpose                                                                                                                                                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `v_queue_with_wait_time`       | Queue entries joined with profiles; computes `wait_minutes`, `is_bottleneck`, `skill_level_int`. **Filters to `status = 'waiting'` only** — this is the engine's input view and must never include non-waiting rows. |
+| `v_queue_full_with_wait_time`  | Same as above but includes `status IN ('waiting', 'drafted', 'on_deck')`. Used by the **organizer queue panel** and **player waitlist** (drafted excluded on player side). Adds `status_priority` column (on_deck=0, drafted=1, waiting=2) for PostgREST ordering. Migration: `20260520000000`. |
+| `v_match_history`              | Matches + players + scores with team arrays and `game_scores` JSON                                                                                                                                                  |
+| `v_recent_pairings`            | Recent co-player pairs per player; **no longer used by `buildOverlapMap`** (replaced by 3-step manual join with team-aware weighting in `matchmaking.ts`; view still exists in DB but is not queried by the engine) |
+| `v_session_leaderboard`        | Per-session GP, W, L, Win%, PF, PA, +/-                                                                                                                                                                             |
+| `v_alltime_leaderboard_mat`    | Materialized all-time leaderboard (same columns, no session filter)                                                                                                                                                 |
 
 ---
 
@@ -327,10 +328,15 @@ Replaced the former greedy algorithm. Iterates all C(n,3) triples of scored cand
 
 #### Team Draft (`snakeDraft` / `rotatedDraft`)
 
-Sort all 4 players DESC by skill, then:
+Sort all 4 players DESC by skill, then apply a **two-pass approach** for partner freshness:
 
-- **snakeDraft** (normal): tries splits in skill-balance order → `[0,3] vs [1,2]` → `[0,2] vs [1,3]` → `[0,1] vs [2,3]`. Returns **`null`** if every split would put either team pair at or above `MAX_PARTNERSHIP_REPEATS` — callers must null-guard.
-- **rotatedDraft** (forced repeat): cycles through 3 split configurations based on `repeatCount % 3` to vary team composition across forced repeats. Also returns **`null`** when cap enforcement prevents every split.
+- **Pass 1 (prefer fresh)**: Try splits in skill-balance order where **both team pairs have `count = 0`** (never been partners). This prevents back-to-back same-partner games even when the pair is still below the hard cap.
+- **Pass 2 (fallback)**: Try splits in skill-balance order where both pairs are `< MAX_PARTNERSHIP_REPEATS`. Original behaviour; reached only when no fully-fresh split exists.
+
+Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3]` → `[0,1] vs [2,3]`.
+
+- **snakeDraft** (normal): two-pass as above. Returns **`null`** if every split would put either team pair at or above `MAX_PARTNERSHIP_REPEATS` — callers must null-guard.
+- **rotatedDraft** (forced repeat): cycles through 3 split configs based on `repeatCount % 3` starting from the natural rotation index; same two-pass freshness preference within each rotation attempt. Also returns **`null`** when cap enforcement prevents every split.
 
 #### Anti-Repeat / Diversity Logic
 
@@ -366,6 +372,7 @@ Sort all 4 players DESC by skill, then:
 | `DRAFT_CAP_LARGE_THRESHOLD`    | 25    | Waiting player count at which the cap upgrades from 3 → 5.                                                                                                                                                         |
 | `DRAFT_CAP_XLARGE_THRESHOLD`   | 30    | Waiting player count at which the cap upgrades from 5 → 6.                                                                                                                                                         |
 | `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                              |
+| `MAX_BADMINTON_SCORE`          | 31    | Maximum valid score per game. Enforced server-side via `scoreSchema` in `src/lib/schemas/match.ts` (canonical) and client-side in `use-score-form.ts` + `use-edit-match.ts`. **Draws (equal scores) rejected at both layers** via `.refine()` on the schema and explicit `a === b` guard in hooks. |
 
 #### Engine Capacity (`runEngineInternal`) — Dynamic Draft Cap
 
@@ -807,16 +814,21 @@ Two paths to exit a session:
 
 **File:** `src/components/organizer/wait-time-monitor.tsx`
 
-A real-time list of all players whose `wait_minutes ≥ BOTTLENECK_THRESHOLD_MINUTES` (20 min). Displayed in the **Monitor** tab of the organizer dashboard.
+Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting` AND `on_deck` players sorted by accumulated wait time.
 
-**Purpose:** Surfaces players who have been waiting too long — typically because their skill tier has no eligible partners, the pool is small, or auto-matchmaking is off.
+**Purpose:** Surfaces players who have been waiting too long AND confirms long-waiting players are being served after manual assignment.
 
-**Data source:** `v_queue_with_wait_time` view — the same view the engine reads for priority scoring. The `is_bottleneck` flag is computed in the view (`wait_minutes >= 20`).
+**Data source:** The organizer queue data (from `v_queue_full_with_wait_time`), filtered in-component to `status === 'waiting' || status === 'on_deck'`.
 
-**Organizer actions from the monitor panel:**
+**Visual treatment:**
+- `waiting` players with `is_bottleneck = true` (wait ≥ 20 min): red border, "NEEDS ATTENTION" label.
+- `waiting` players approaching threshold (75% of 20 min): amber border.
+- `on_deck` players: teal border + "On Deck" badge + "ASSIGNED" label — **never flagged as bottlenecks** (they're already assigned to a match). Remove button is hidden.
+- Summary line: "X waiting, Y on deck".
 
-- **Remove from queue**: Checkout the bottlenecked player (AlertDialog-confirmed). Calls `checkoutPlayer`.
-- The monitor is a visibility and emergency-intervention tool — the engine's Red Zone logic (`CRITICAL_WAIT_MINUTES = 25`) already handles long waits automatically by elevating those players' priority above all normal candidates.
+**Organizer actions:** Remove from queue (AlertDialog-confirmed, `waiting` players only). Calls `checkoutPlayer`.
+
+⚠️ `joined_at` is **not reset** when a player moves to `on_deck` — their accumulated wait time continues ticking and is preserved if the match is cancelled and they return to `waiting`.
 
 ---
 
@@ -1137,12 +1149,12 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `rls-edge-cases.test.ts`   | E     | Cross-session auth isolation, unauthenticated access blocks                                                                     |
 | `rpc-behaviors.test.ts`    | —     | `create_match_with_players` TOCTOU guards, NULL return contract                                                                 |
 | `schema-parity.test.ts`    | —     | DB schema matches `src/types/database.ts` type definitions                                                                      |
-| `score-submission.test.ts` | F     | `endMatchAction` cascade (scores, re-queue, court freed); `cancelMatchAction` (no games_played increment); **server-side score range validation (0–30 int, rejects float/negative/over-30)** |
+| `score-submission.test.ts` | F     | `endMatchAction` cascade (scores, re-queue, court freed); `cancelMatchAction` (no games_played increment); **server-side score range validation (0–31 int, rejects float/negative/over-31, rejects draws)** |
 | `session-lifecycle.test.ts`| K     | `createSession` validation; `joinAsCoOrganizer` passcode auth and idempotency                                                   |
 
 ### Test Helpers & Fixtures
 
-- `tests/helpers/teardown.ts` — `resetSandboxSession()`, `softResetSandboxSession()`, `seedSession()` — sandbox lifecycle
+- `tests/helpers/teardown.ts` — `resetSandboxSession()`, `softResetSandboxSession()`, `seedSession()`, `repairSandboxState()` — sandbox lifecycle. `repairSandboxState()` is called automatically at the start of `softResetSandboxSession` (Step 0) to heal any stuck state left by a previous crashed test run — cancels orphaned matches, returns stuck players to `waiting`, frees stuck courts.
 - `tests/helpers/admin-db.ts` — Service-role client for test assertions
 - `tests/fixtures/auth.ts` — Organizer bot sign-in via cookie injection, `ORGANIZER_STORAGE_STATE` path
 - `tests/fixtures/seed-sandbox.ts` — **Run with `npx tsx`** — idempotently seeds all 50 E2E_ bot players + 6 courts into the live sandbox session (`TEST_SESSION_ID`). Reads `.env.test` + `.env.local`. Safe to re-run.
