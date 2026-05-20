@@ -192,6 +192,56 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
   return result;
 }
 
+// ── repairSandboxState ────────────────────────────────────────
+// Heals corrupt state left by a test run that crashed mid-execution
+// before teardown could fire. Safe to call at any time — it only
+// updates statuses and never deletes rows, so permanent sandbox
+// players survive unaffected.
+//
+// Repairs:
+//   in_progress / pending matches           → cancelled
+//   playing / drafted / on_deck players     → waiting
+//   in_use courts                           → available
+//
+// Called automatically at the start of softResetSandboxSession so
+// every test run self-heals regardless of how the previous one ended.
+
+export async function repairSandboxState(): Promise<void> {
+  const db = getAdminClient();
+  const sessionId = getSessionId();
+
+  const { data: session } = await db
+    .from("sessions")
+    .select("id, name")
+    .eq("id", sessionId)
+    .single();
+
+  if (!session?.name.startsWith("🤖 E2E SANDBOX")) {
+    throw new Error(`[repair] Session "${session?.name}" is not a sandbox. Refusing.`);
+  }
+
+  // Cancel any match that didn't reach a terminal state.
+  await db
+    .from("matches")
+    .update({ status: "cancelled" as const })
+    .eq("session_id", sessionId)
+    .in("status", ["in_progress", "pending"]);
+
+  // Return any player stuck in a non-waiting non-terminal status.
+  await db
+    .from("queue_entries")
+    .update({ status: "waiting" as const })
+    .eq("session_id", sessionId)
+    .in("status", ["playing", "drafted", "on_deck"]);
+
+  // Free any court that never got released.
+  await db
+    .from("courts")
+    .update({ status: "available" as const })
+    .eq("session_id", sessionId)
+    .eq("status", "in_use");
+}
+
 // ── Seed helpers ──────────────────────────────────────────────
 // Creates courts + bot players + queue entries in a single call.
 // Returns a typed handle so specs can reference IDs without magic strings.
@@ -257,6 +307,12 @@ export async function softResetSandboxSession(): Promise<void> {
   if (!session.name.startsWith("🤖 E2E SANDBOX")) {
     throw new Error(`[soft-teardown] Session "${session.name}" is not a sandbox. Refusing.`);
   }
+
+  // Step 0: Repair any stuck state from a previously crashed test run.
+  // Cancels orphaned matches and returns stuck players/courts to their
+  // idle states before the delete sweep below. This is a no-op when the
+  // session is already clean.
+  await repairSandboxState();
 
   // Step 1: Collect match IDs
   const { data: matches } = await db.from("matches").select("id").eq("session_id", sessionId);
