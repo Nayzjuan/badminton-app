@@ -43,13 +43,9 @@ import {
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
   MAX_AUTO_DRAFTS,
-  MAX_AUTO_DRAFTS_LARGE,
-  MAX_AUTO_DRAFTS_XLARGE,
-  DRAFT_CAP_LARGE_THRESHOLD,
-  DRAFT_CAP_XLARGE_THRESHOLD,
   MIN_FREE_POOL_FOR_ON_DECK,
 } from "@/lib/constants";
-import { runAlgorithm, scoreAndSortPool } from "@/lib/matchmaking-core";
+import { getDynamicDraftCap, runAlgorithm, scoreAndSortPool } from "@/lib/matchmaking-core";
 import {
   fetchActivePool,
   fetchRecentRosters,
@@ -59,19 +55,6 @@ import {
 } from "@/lib/matchmaking-db";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
-
-/**
- * Returns the draft review queue cap based on the number of waiting players.
- *
- *  < 25 waiting → 3  (small session)
- *  25–29        → 5  (medium session)
- *  ≥ 30         → 6  (large session)
- */
-export function getDynamicDraftCap(waitingCount: number): number {
-  if (waitingCount >= DRAFT_CAP_XLARGE_THRESHOLD) return MAX_AUTO_DRAFTS_XLARGE;
-  if (waitingCount >= DRAFT_CAP_LARGE_THRESHOLD) return MAX_AUTO_DRAFTS_LARGE;
-  return MAX_AUTO_DRAFTS;
-}
 
 // ── Process-level concurrency guard ──────────────────────────
 // Tracks session IDs for which the engine is currently running

@@ -52,8 +52,8 @@ import {
   promoteOnDeckMatchInternal,
   runEngineForSession,
   callNextMatch,
-  getDynamicDraftCap,
 } from "@/app/actions/matchmaking";
+import { getDynamicDraftCap } from "@/lib/matchmaking-core";
 
 // ─────────────────────────────────────────────────────────────
 // Mock infrastructure

@@ -16,8 +16,13 @@
 
 import {
   CRITICAL_WAIT_MINUTES,
+  DRAFT_CAP_LARGE_THRESHOLD,
+  DRAFT_CAP_XLARGE_THRESHOLD,
   FALLBACK_WAIT_MINUTES,
   GAME_PENALTY_MINUTES,
+  MAX_AUTO_DRAFTS,
+  MAX_AUTO_DRAFTS_LARGE,
+  MAX_AUTO_DRAFTS_XLARGE,
   MAX_PARTNERSHIP_REPEATS,
   RED_ZONE_SCORE_FLOOR,
   RED_ZONE_SKILL_VARIANCE_MAX,
@@ -25,6 +30,27 @@ import {
   SKILL_VARIANCE_TARGET,
 } from "@/lib/constants";
 import type { QueueWithWaitTime } from "@/types/database";
+
+// ─────────────────────────────────────────────────────────────
+// Draft cap helper
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Returns the draft review queue cap based on the number of waiting players.
+ *
+ *  < 25 waiting → 3  (small session)
+ *  25–29        → 5  (medium session)
+ *  ≥ 30         → 6  (large session)
+ *
+ * Lives here (not in matchmaking.ts) because `"use server"` files require every
+ * exported function to be async — a synchronous export causes a Turbopack build
+ * error. As a pure, side-effect-free utility it belongs in matchmaking-core.ts.
+ */
+export function getDynamicDraftCap(waitingCount: number): number {
+  if (waitingCount >= DRAFT_CAP_XLARGE_THRESHOLD) return MAX_AUTO_DRAFTS_XLARGE;
+  if (waitingCount >= DRAFT_CAP_LARGE_THRESHOLD) return MAX_AUTO_DRAFTS_LARGE;
+  return MAX_AUTO_DRAFTS;
+}
 
 // ── Enriched player type ──────────────────────────────────────
 // QueueWithWaitTime enriched with the computed priority score.
