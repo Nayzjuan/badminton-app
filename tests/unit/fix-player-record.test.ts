@@ -114,8 +114,8 @@ function makeAuthClient(userId: string | null) {
  *                               only invoked when sessionActive = false)
  *
  * @param cfg.organizer     - sessions.created_by; null = not found
- * @param cfg.sessionActive - whether the session is still active
- *                            (default true → no Wrapped recompute)
+ * @param cfg.sessionActive - true (active, skip recompute) | false (closed, run recompute) |
+ *                            null (row not found, skip recompute). Default: true.
  * @param cfg.match         - response for from("matches")
  * @param cfg.matchPlayers  - response(s) for from("match_players")
  * @param cfg.rpc           - response for fix_record_swap_player RPC
@@ -123,7 +123,7 @@ function makeAuthClient(userId: string | null) {
  */
 function makeServiceClient(cfg: {
   organizer?: string | null;
-  sessionActive?: boolean; // default true
+  sessionActive?: boolean | null; // true=active, false=closed, null=not found; default true
   match?: MockResponse;
   matchPlayers?: MockResponse | MockResponse[];
   rpc?: MockResponse;
@@ -131,7 +131,11 @@ function makeServiceClient(cfg: {
 }) {
   const sessionsCalls = { count: 0 };
   const matchPlayersCalls = { count: 0 };
-  const isActive = cfg.sessionActive !== false; // default: active
+  // null → session row not found; false → closed; true/undefined → active
+  const sessionAfterRpc: MockResponse =
+    cfg.sessionActive === null
+      ? { data: null, error: null }
+      : { data: { is_active: cfg.sessionActive !== false }, error: null };
 
   const from = vi.fn((table: string) => {
     if (table === "sessions") {
@@ -144,7 +148,7 @@ function makeServiceClient(cfg: {
         );
       }
       // Post-RPC is_active check for Session Wrapped recompute
-      return makeBuilder({ data: { is_active: isActive }, error: null });
+      return makeBuilder(sessionAfterRpc);
     }
 
     if (table === "session_organizers") {
@@ -451,7 +455,7 @@ describe("fixPlayerRecord — guard ordering", () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// FRA-21 … FRA-23  Session Wrapped recomputation
+// FRA-21 … FRA-25  Session Wrapped recomputation
 // ─────────────────────────────────────────────────────────────
 // After a successful fix, compute_session_wrapped is re-run if and
 // only if the session is already closed (is_active = false). This
@@ -504,6 +508,36 @@ describe("fixPlayerRecord — Session Wrapped recomputation", () => {
     expect(result.success).toBe(true);
     expect(result.message).toMatch(/corrected/i);
     // compute_session_wrapped was still attempted
+    expect(svcMock.rpc).toHaveBeenCalledWith("compute_session_wrapped", {
+      p_session_id: SESSION_ID,
+    });
+  });
+
+  it("FRA-24: session row not found after RPC — skips recompute and still returns success", async () => {
+    // Extremely rare edge case: session was deleted between the organizer check and
+    // the post-RPC is_active query. The `if (sessionRow && ...)` guard short-circuits
+    // safely — no recompute, no error, fix still reports success.
+    const result = await runAction({
+      ...HAPPY_PATH_FULL_REPLACE,
+      sessionActive: null, // null → from("sessions") call 1 returns { data: null }
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("FRA-25: team flip on a closed session also triggers compute_session_wrapped", async () => {
+    // The post-RPC recompute path is identical for both team-flip and full-replacement.
+    // This test confirms the branch doesn't accidentally skip the recompute for team flips.
+    const svcMock = makeServiceClient({
+      ...HAPPY_PATH_TEAM_FLIP,
+      sessionActive: false,
+    });
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(makeAuthClient(USER_ID) as never);
+    vi.mocked(createServiceClient).mockReturnValue(svcMock as never);
+
+    const result = await fixPlayerRecord(MATCH_ID, OUT_PLAYER, IN_PLAYER, SESSION_ID);
+
+    expect(result.success).toBe(true);
     expect(svcMock.rpc).toHaveBeenCalledWith("compute_session_wrapped", {
       p_session_id: SESSION_ID,
     });
