@@ -101,32 +101,50 @@ function makeAuthClient(userId: string | null) {
 
 /**
  * Service client factory used by both isSessionOrganizer and the
- * action's internal `db`. Routes from() calls by table name, with
- * sequential tracking for match_players (called 0–2 times).
+ * action's internal `db`. Routes from() calls by table name with
+ * sequential tracking for tables that are called multiple times.
  *
- * @param cfg.organizer  - sessions.created_by for the organizer check.
- *                         Use USER_ID for "is organizer" fast path;
- *                         use "other-user" to force the slow path;
- *                         use null for "not organizer" result.
- * @param cfg.match      - response for from("matches")
- * @param cfg.matchPlayers - response(s) for from("match_players").
- *                          Pass an array for successive calls.
- * @param cfg.rpc        - response for db.rpc("fix_record_swap_player")
+ * from("sessions") is called TWICE in the happy path:
+ *   call 0 — isSessionOrganizer fast-path (reads created_by)
+ *   call 1 — post-RPC is_active check for Session Wrapped recompute
+ *
+ * rpc() is called by name:
+ *   "fix_record_swap_player"  — cfg.rpc (defaults to success)
+ *   "compute_session_wrapped" — cfg.rpcWrapped (defaults to success,
+ *                               only invoked when sessionActive = false)
+ *
+ * @param cfg.organizer     - sessions.created_by; null = not found
+ * @param cfg.sessionActive - whether the session is still active
+ *                            (default true → no Wrapped recompute)
+ * @param cfg.match         - response for from("matches")
+ * @param cfg.matchPlayers  - response(s) for from("match_players")
+ * @param cfg.rpc           - response for fix_record_swap_player RPC
+ * @param cfg.rpcWrapped    - response for compute_session_wrapped RPC
  */
 function makeServiceClient(cfg: {
-  organizer?: string | null; // created_by value; null = not found
+  organizer?: string | null;
+  sessionActive?: boolean; // default true
   match?: MockResponse;
-  matchPlayers?: MockResponse | [MockResponse, MockResponse];
+  matchPlayers?: MockResponse | MockResponse[];
   rpc?: MockResponse;
+  rpcWrapped?: MockResponse;
 }) {
+  const sessionsCalls = { count: 0 };
   const matchPlayersCalls = { count: 0 };
+  const isActive = cfg.sessionActive !== false; // default: active
 
   const from = vi.fn((table: string) => {
     if (table === "sessions") {
-      const createdBy = cfg.organizer === undefined ? USER_ID : cfg.organizer;
-      return makeBuilder(
-        createdBy ? { data: { created_by: createdBy }, error: null } : { data: null, error: null }
-      );
+      const idx = sessionsCalls.count++;
+      if (idx === 0) {
+        // isSessionOrganizer fast-path — reads created_by
+        const createdBy = cfg.organizer === undefined ? USER_ID : cfg.organizer;
+        return makeBuilder(
+          createdBy ? { data: { created_by: createdBy }, error: null } : { data: null, error: null }
+        );
+      }
+      // Post-RPC is_active check for Session Wrapped recompute
+      return makeBuilder({ data: { is_active: isActive }, error: null });
     }
 
     if (table === "session_organizers") {
@@ -149,9 +167,13 @@ function makeServiceClient(cfg: {
     return makeBuilder({ data: null, error: null });
   });
 
-  const rpc = vi.fn((_name: string, _args: unknown) =>
-    Promise.resolve(cfg.rpc ?? { data: null, error: null })
-  );
+  const rpc = vi.fn((name: string, _args: unknown) => {
+    if (name === "compute_session_wrapped") {
+      return Promise.resolve(cfg.rpcWrapped ?? { data: null, error: null });
+    }
+    // fix_record_swap_player (and any other RPC)
+    return Promise.resolve(cfg.rpc ?? { data: null, error: null });
+  });
 
   return { from, rpc };
 }
@@ -425,5 +447,65 @@ describe("fixPlayerRecord — guard ordering", () => {
     expect(matchPlayersCalls).toHaveLength(0);
     // RPC must not have been called either
     expect(svcMock.rpc).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// FRA-21 … FRA-23  Session Wrapped recomputation
+// ─────────────────────────────────────────────────────────────
+// After a successful fix, compute_session_wrapped is re-run if and
+// only if the session is already closed (is_active = false). This
+// keeps Session Wrapped stats + awards accurate after data corrections.
+
+describe("fixPlayerRecord — Session Wrapped recomputation", () => {
+  it("FRA-21: calls compute_session_wrapped when the session is already closed", async () => {
+    const svcMock = makeServiceClient({
+      ...HAPPY_PATH_FULL_REPLACE,
+      sessionActive: false, // session is closed → Wrapped must be recomputed
+    });
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(makeAuthClient(USER_ID) as never);
+    vi.mocked(createServiceClient).mockReturnValue(svcMock as never);
+
+    const result = await fixPlayerRecord(MATCH_ID, OUT_PLAYER, IN_PLAYER, SESSION_ID);
+
+    expect(result.success).toBe(true);
+    expect(svcMock.rpc).toHaveBeenCalledWith("compute_session_wrapped", {
+      p_session_id: SESSION_ID,
+    });
+  });
+
+  it("FRA-22: does NOT call compute_session_wrapped when the session is still active", async () => {
+    const svcMock = makeServiceClient({
+      ...HAPPY_PATH_FULL_REPLACE,
+      sessionActive: true, // session is active → Wrapped not yet distributed, no recompute
+    });
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(makeAuthClient(USER_ID) as never);
+    vi.mocked(createServiceClient).mockReturnValue(svcMock as never);
+
+    const result = await fixPlayerRecord(MATCH_ID, OUT_PLAYER, IN_PLAYER, SESSION_ID);
+
+    expect(result.success).toBe(true);
+    const wrappedCalls = svcMock.rpc.mock.calls.filter(([n]) => n === "compute_session_wrapped");
+    expect(wrappedCalls).toHaveLength(0);
+  });
+
+  it("FRA-23: Wrapped recompute failure is non-fatal — fix still returns success", async () => {
+    const svcMock = makeServiceClient({
+      ...HAPPY_PATH_FULL_REPLACE,
+      sessionActive: false,
+      rpcWrapped: { data: null, error: { message: "compute_session_wrapped timed out" } },
+    });
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(makeAuthClient(USER_ID) as never);
+    vi.mocked(createServiceClient).mockReturnValue(svcMock as never);
+
+    const result = await fixPlayerRecord(MATCH_ID, OUT_PLAYER, IN_PLAYER, SESSION_ID);
+
+    // The roster correction succeeded — the Wrapped failure is just logged
+    expect(result.success).toBe(true);
+    expect(result.message).toMatch(/corrected/i);
+    // compute_session_wrapped was still attempted
+    expect(svcMock.rpc).toHaveBeenCalledWith("compute_session_wrapped", {
+      p_session_id: SESSION_ID,
+    });
   });
 });

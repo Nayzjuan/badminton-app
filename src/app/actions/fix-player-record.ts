@@ -20,6 +20,11 @@
 // v_session_leaderboard and session-scoped partnership caps auto-update
 // because they are live views / runtime queries from match_players.
 //
+// Post-correction: if the session is already closed (is_active = false),
+// compute_session_wrapped is re-run so Session Wrapped stats + awards
+// reflect the corrected roster. Non-fatal — a warning is logged on failure
+// but the correction itself is still considered successful.
+//
 // Safety guards (four pre-write checks):
 //   1. Input validation (UUID format)
 //   2. Auth — authenticated user required
@@ -171,6 +176,35 @@ export async function fixPlayerRecord(
       };
     }
     return { success: false, message: `Failed to correct record: ${msg}` };
+  }
+
+  // ── Post-correction: recompute Session Wrapped if session is closed ──
+  // If the session has already been closed and Wrapped distributed,
+  // the stats + awards need to reflect the corrected roster. We re-run
+  // compute_session_wrapped unconditionally on closed sessions — it is
+  // idempotent (upserts session_wrapped_stats) and picks up the updated
+  // match_players + player_partnerships written by the RPC above.
+  //
+  // Active sessions: skip — Wrapped hasn't been distributed yet, so
+  // there is nothing stale to fix. Stats will be correct at close time.
+  const { data: sessionRow } = await db
+    .from("sessions")
+    .select("is_active")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (sessionRow && !sessionRow.is_active) {
+    const { error: wrappedErr } = await db.rpc("compute_session_wrapped", {
+      p_session_id: sessionId,
+    });
+    if (wrappedErr) {
+      // Non-fatal — the roster correction succeeded; Wrapped will be
+      // slightly stale until manually recomputed.
+      console.warn(
+        "[fixPlayerRecord] compute_session_wrapped failed after fix (non-fatal):",
+        wrappedErr.message
+      );
+    }
   }
 
   return { success: true, message: "Player record corrected." };
