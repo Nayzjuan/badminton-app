@@ -37,6 +37,18 @@ export type SessionCompletedPlayer = {
  * Returns:
  *   players — sorted by display_name ascending
  *   loading  — true while the first fetch is in flight
+ *
+ * Query strategy — 3 sequential DB round-trips + in-memory aggregation:
+ *   1. matches        — get completed match IDs for the session (with early-exit
+ *                       if none exist, avoiding steps 2–3 entirely)
+ *   2. match_players  — get player+team rows with !inner join to scores
+ *   3. profiles       — resolve display_name + skill_level for distinct IDs
+ *   4. (in-memory)    — compute per-player GP/W/L from the already-fetched rows
+ *
+ * A single SQL query with window functions would also work, but would
+ * require a raw RPC and always run to completion. The 3-query approach
+ * bails early when the session has no other completed matches, and the
+ * dataset is bounded (one session's players — typically < 30 rows).
  */
 export function useSessionCompletedPlayers(
   sessionId: string,
