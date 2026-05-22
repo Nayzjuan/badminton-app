@@ -46,6 +46,9 @@ export default defineConfig({
         "src/hooks/use-swap-state.ts",
         "src/hooks/use-match-alerts.ts",
         "src/hooks/use-match-history.ts",
+        // Fix Player Record feature
+        "src/app/actions/fix-player-record.ts",
+        "src/hooks/use-fix-record.ts",
         // Utilities with unit tests
         "src/lib/matchmaking-core.ts",
         "src/lib/score-input.ts",

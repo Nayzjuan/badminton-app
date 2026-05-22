@@ -5,6 +5,39 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-22 — Fix Player Record feature)
+
+### Fix Player Record — Historical Match Roster Correction (2026-05-22) — COMPLETE
+
+Allows the organizer to correct a completed match's player roster (wrong player recorded, or injury substitution). Two modes: **Team Flip** (both players already in the match — swap teams) and **Full Replacement** (in_player from another session match takes out_player's slot).
+
+**New files created:**
+
+- `supabase/migrations/20260522000000_fix_record_swap_player.sql`
+  - Helper `_fix_record_partnership_delta()` — upserts both A→B + B→A directions on increment; `GREATEST(0,…)` floor on decrement. Does not touch `sessions_together` on decrement.
+  - Main `fix_record_swap_player()` RPC — `SECURITY DEFINER`, `FOR UPDATE` locks on `matches` + `match_players` rows for concurrency safety. Team-flip path swaps `team` columns and re-applies partnership deltas. Full-replacement path DELETEs out_player, INSERTs in_player, adjusts `queue_entries.games_played` ±1. Both paths: recompute `is_mixed_level`, mark `origin = 'modified'` if was `'auto'`, call `refresh_alltime_leaderboard()`. GRANTs to service_role.
+- `src/app/actions/fix-player-record.ts` — server action with 5-layer guard (UUID validation → auth → organizer check → match status → in_player eligibility). Eligibility: is team flip (already in match) OR has ≥1 completed match in same session. Maps RPC exception strings to typed `FixRecordErrorCode`.
+- `src/hooks/use-session-completed-players.ts` — fetches distinct players with ≥1 completed match in session, excluding the target match's players. Returns per-player session stats (GP, W, L) for the picker UI.
+- `src/hooks/use-fix-record.ts` — state machine (`selecting_out → selecting_in → confirming → submitting`). `useTransition` for server action. `isTeamFlip` derived from `match.players`. Error stays in `confirming` state so user can re-read + retry. `goBack()` resets both `outPlayer` and `inPlayer` back to `selecting_out`.
+- `src/components/organizer/fix-record-sheet.tsx` — self-contained Sheet with amber trigger button (ArrowLeftRight icon + "Fix" label). Step 1: 4 players grouped by team. Step 2: Section A "SWITCH WITHIN THIS MATCH" (3 same-match candidates) + Section B "FROM OTHER SESSION MATCHES" (session players with `3G · 2W 1L` stats). Confirmation strip slides up on selection, stays mounted during `submitting` step (spinner visible). "Select player" breadcrumb is tappable back button while in Step 2 (disabled during submit). Amber `var(--cc-amber)` accent throughout.
+
+**Modified files:**
+
+- `src/components/organizer/match-history-panel.tsx` — added `import { FixRecordSheet }` + `<FixRecordSheet match={match} sessionId={sessionId} onCorrected={() => {}} />` alongside existing `<EditMatchDialog>`. `onCorrected` is a no-op because `useMatchHistory` realtime subscription auto-refetches when the RPC updates `matches.is_mixed_level` or `matches.origin`.
+- `src/types/database.ts` — added `fix_record_swap_player` to `Functions` section.
+- `src/hooks/use-session-completed-players.ts` — `as unknown as` cast for `!inner` join inference workaround (pre-existing Supabase SDK pattern for un-typed FK relationships).
+
+**Bugs caught during code review (fixed before final verdict):**
+1. `goBack()` was setting `selecting_in` instead of `selecting_out` — fixed.
+2. `isConfirming` excluded `"submitting"` — sheet went blank during server action — fixed by including `"submitting"` in both `isStep2` and `isConfirming`.
+3. `goBack` was exported but never wired — fixed by making the Step 1 breadcrumb crumb a `<button>` that calls `goBack`.
+
+**Validation:** `npx tsc --noEmit` clean · `npm run lint` clean (changed files only) · `npm run build` clean (all 19 pages) · Code review: LGTM.
+
+**⚠️ Migration not yet applied to Supabase production.** Run `fix_record_swap_player` migration before using the feature in a live session.
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-20 — marketing site visual enhancements)
 
 ### Marketing Site — Visual Enhancements (2026-05-20) — COMPLETE
@@ -739,6 +772,7 @@ v_alltime_leaderboard_mat   — materialized all-time stats (same columns, no se
 | `skill_level_to_int(lvl)`                               | Enum → numeric 1–6                                                                                                                                                                   |
 | `refresh_alltime_leaderboard()`                         | Refreshes materialized view                                                                                                                                                          |
 | `get_player_streaks(p_session_id?)`                     | Win-streak per player                                                                                                                                                                |
+| `fix_record_swap_player(p_match_id, p_out_player_id, p_in_player_id, p_session_id)` | Historical roster correction — team flip (swap team columns) or full replacement (DELETE+INSERT). Adjusts `queue_entries.games_played`, `player_partnerships`, `is_mixed_level`, `origin`. ⚠️ Migration 20260522 not yet applied to production. |
 
 ---
 
@@ -1038,7 +1072,8 @@ src/
       score-modal.tsx          # Score entry dialog (single / best-of-3 / best-of-5)
       queue-control.tsx        # Player queue table, manual match, pause, dnd-kit
       wait-time-monitor.tsx    # Bottleneck monitor
-      match-history-panel.tsx  # Completed match history with edit/undo score
+      match-history-panel.tsx  # Completed match history with edit/undo score + FixRecordSheet trigger
+      fix-record-sheet.tsx     # Historical roster correction Sheet (amber accent, 2-step picker)
       h2h-strip.tsx            # H2H record strip for on-deck cards
       swap-sheet.tsx           # Radix Sheet — bench player selection
       swap-floating-bar.tsx    # Floating cross-match swap picker (Tap-to-Swap v2)
@@ -1067,10 +1102,12 @@ src/
       court-time-popover.tsx   # Organizer time limit setter
 
   hooks/
-    use-organizer-data.ts      # All organizer Realtime state (ref pattern, monotonic seq, 7 channels)
-    use-session-data.ts        # Player-side read-only session state
-    use-organizer-broadcast.ts # Server broadcast listener
-    use-visibility-refresh.ts  # Re-fetch on tab focus (mobile app-switch guard)
+    use-organizer-data.ts          # All organizer Realtime state (ref pattern, monotonic seq, 7 channels)
+    use-session-data.ts            # Player-side read-only session state
+    use-organizer-broadcast.ts     # Server broadcast listener
+    use-visibility-refresh.ts      # Re-fetch on tab focus (mobile app-switch guard)
+    use-fix-record.ts              # State machine for FixRecordSheet (selecting_out→selecting_in→confirming→submitting)
+    use-session-completed-players.ts  # Fetch players eligible for Fix-Record replacement (≥1 completed match in session)
 
   lib/
     matchmaking-core.ts        # Pure: computePriorityScore, scoreCandidates, buildCombinationGroup,

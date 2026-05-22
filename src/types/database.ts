@@ -684,6 +684,16 @@ export type Database = {
         Args: { p_session_id: string; p_player_id: string };
         Returns: string[];
       };
+      // ── Historical match roster correction (migration 20260522000000) ──
+      fix_record_swap_player: {
+        Args: {
+          p_match_id: string;
+          p_out_player_id: string;
+          p_in_player_id: string;
+          p_session_id: string;
+        };
+        Returns: void;
+      };
     };
     Enums: {
       skill_level: SkillLevel;

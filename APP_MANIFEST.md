@@ -832,6 +832,46 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 
 ---
 
+### 3.21 Fix Player Record (Historical Roster Correction)
+
+**Files:** `src/components/organizer/fix-record-sheet.tsx`, `src/app/actions/fix-player-record.ts`, `src/hooks/use-fix-record.ts`, `src/hooks/use-session-completed-players.ts`, migration `20260522000000_fix_record_swap_player.sql`
+
+**Entry point:** Amber "Fix" button (ArrowLeftRight icon) in the header of each completed match card in `match-history-panel.tsx`, alongside the existing `EditMatchDialog`.
+
+**Use cases:** Wrong player recorded (organiser error) or injury substitution (player who finished the game should be credited).
+
+**Two modes (detected automatically by the RPC):**
+- **Team Flip:** `in_player` is already in the match — only their `team` columns swap. `queue_entries.games_played` unchanged.
+- **Full Replacement:** `in_player` from another completed session match — DELETE out_player, INSERT in_player in the same team slot. `queue_entries.games_played` ±1.
+
+**Eligibility rule for `in_player`:** Must either (a) already be in the target match (team flip) OR (b) have ≥1 completed match in the same session (full replacement). Enforced by both the server action and the RPC.
+
+**State machine (`use-fix-record.ts`):** `selecting_out → selecting_in → confirming → submitting`. `goBack` resets to `selecting_out`. Error stays in `confirming` so user can re-read + retry. `isTeamFlip` is derived client-side from `match.players`.
+
+**Step 2 picker (two sections):**
+- `SWITCH WITHIN THIS MATCH` — the other 3 same-match players (team flip candidates)
+- `FROM OTHER SESSION MATCHES` — all distinct players with ≥1 completed match in session excluding this match, with `3G · 2W 1L` stats
+
+**What the RPC updates explicitly:**
+- `match_players` (team swap or delete+insert)
+- `queue_entries.games_played` ±1 (full replacement only)
+- `player_partnerships` (delta in both directions, both paths)
+- `matches.is_mixed_level` (recomputed from profiles)
+- `matches.origin` (`'auto'` → `'modified'` only — sticky rule, never demotes `'manual'`)
+- Calls `refresh_alltime_leaderboard()` (materialized view refresh)
+
+**What auto-corrects without explicit update:**
+- `v_session_leaderboard` — live view from `match_players`, auto-correct
+- Session partnership cap (`fetchPartnershipCounts`) — reads `match_players` directly, auto-correct
+
+**Realtime auto-refresh:** The RPC always updates `matches.is_mixed_level` or `matches.origin`, which fires the `subscribeToMatches` realtime subscription in `useMatchHistory` and triggers a full re-fetch of the match card including updated player names. `onCorrected` callback in the panel is a no-op.
+
+**Amber accent:** Visual signal this is a data-correction operation (vs teal for live swaps). Uses `var(--cc-amber)` and `var(--cc-amber-dim)` from the command-center palette.
+
+⚠️ **Migration `20260522000000_fix_record_swap_player.sql` must be applied to Supabase production** before this feature is usable in live sessions.
+
+---
+
 ## 4. UI/UX Conventions (Impeccable Standards)
 
 ### 4.1 Design System — "Court Nights" Theme
@@ -1234,7 +1274,8 @@ src/
       score-modal.tsx            # Score entry dialog (single / best-of-3 / best-of-5)
       queue-control.tsx          # Player queue table, manual match creation, pause, dnd-kit
       wait-time-monitor.tsx      # Bottleneck monitor (wait ≥ BOTTLENECK_THRESHOLD_MINUTES)
-      match-history-panel.tsx    # Completed match history with edit/undo score
+      match-history-panel.tsx    # Completed match history with edit/undo score + Fix Player Record trigger
+      fix-record-sheet.tsx       # Historical roster correction Sheet — amber accent, 2-step flow (pick out → pick in)
       h2h-strip.tsx              # Compact head-to-head record strip for on-deck cards
       swap-sheet.tsx             # Radix Sheet — bench player selection for bench→deck swap
       swap-floating-bar.tsx      # Floating cross-match swap picker bar (Tap-to-Swap v2)

@@ -16,6 +16,7 @@ import { SkillBadge } from "@/components/ui/skill-badge";
 import { MatchTimer } from "@/components/ui/match-timer";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import { EditMatchDialog } from "./edit-match-dialog";
+import { FixRecordSheet } from "./fix-record-sheet";
 import { useMatchHistory } from "@/hooks/use-match-history";
 
 interface MatchHistoryPanelProps {
@@ -244,6 +245,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                     initialScoreA={match.team_a_score ?? 0}
                     initialScoreB={match.team_b_score ?? 0}
                   />
+                  <FixRecordSheet match={match} sessionId={sessionId} onCorrected={() => {}} />
                 </div>
               </div>
 
