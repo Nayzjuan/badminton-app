@@ -30,6 +30,8 @@ export interface CourtCardProps {
   isConfirmingCancel: boolean;
   isCancelling: boolean;
   isClearing: boolean;
+  isUpdatingStatus: boolean;
+  isRemoving: boolean;
   error: string | undefined;
   onCallNextMatch: () => void;
   onInputScore: () => void;
@@ -51,6 +53,8 @@ export function CourtCard({
   isConfirmingCancel,
   isCancelling,
   isClearing,
+  isUpdatingStatus,
+  isRemoving,
   error,
   onCallNextMatch,
   onInputScore,
@@ -375,12 +379,14 @@ export function CourtCard({
               </button>
               <button
                 onClick={() => onUpdateStatus("closed")}
+                disabled={isUpdatingStatus}
                 className="clip-cut-sm border border-cc-border px-3 py-2.5
                          font-command text-[9px] uppercase tracking-[0.10em]
                          text-cc-t3 hover:bg-cc-bg-3
+                         disabled:opacity-50 disabled:cursor-not-allowed
                          transition-colors"
               >
-                Close
+                {isUpdatingStatus ? "Closing…" : "Close"}
               </button>
             </div>
           )}
@@ -390,21 +396,25 @@ export function CourtCard({
             <div className="flex items-center justify-between gap-2">
               <button
                 onClick={() => onUpdateStatus("available")}
+                disabled={isUpdatingStatus || isRemoving}
                 className="flex-1 clip-cut-sm bg-cc-accent-dim border border-cc-accent/45
                          px-4 py-2.5 font-command text-[9px] uppercase tracking-[0.12em]
                          text-cc-accent hover:bg-cc-accent/28
+                         disabled:opacity-50 disabled:cursor-not-allowed
                          transition-colors"
               >
-                Reopen Court
+                {isUpdatingStatus ? "Reopening…" : "Reopen Court"}
               </button>
               <button
                 onClick={onRemove}
+                disabled={isRemoving || isUpdatingStatus}
                 className="clip-cut-sm border border-cc-red/35 px-3 py-2.5
                          font-command text-[9px] uppercase tracking-[0.10em]
                          text-cc-red hover:bg-cc-red-dim
+                         disabled:opacity-50 disabled:cursor-not-allowed
                          transition-colors"
               >
-                Remove
+                {isRemoving ? "Removing…" : "Remove"}
               </button>
             </div>
           )}

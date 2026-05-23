@@ -81,6 +81,8 @@ export function ActiveCourts({
   const [confirmingCancel, setConfirmingCancel] = useState<Set<string>>(new Set());
   const [cancellingCourt, setCancellingCourt] = useState<Set<string>>(new Set());
   const [clearingMatch, setClearingMatch] = useState<Set<string>>(new Set());
+  const [updatingStatusCourt, setUpdatingStatusCourt] = useState<Set<string>>(new Set());
+  const [removingCourt, setRemovingCourt] = useState<Set<string>>(new Set());
   const [courtErrors, setCourtErrors] = useState<Record<string, string>>({});
 
   // ── Score modal state ───────────────────────────────────────
@@ -203,8 +205,14 @@ export function ActiveCourts({
   }
 
   async function handleUpdateCourtStatus(courtId: string, status: Court["status"]) {
+    setUpdatingStatusCourt((prev) => new Set(prev).add(courtId));
     setCourtError(courtId, null);
     const result = await onUpdateCourtStatus(courtId, status);
+    setUpdatingStatusCourt((prev) => {
+      const next = new Set(prev);
+      next.delete(courtId);
+      return next;
+    });
     if (result.error) {
       setCourtError(courtId, result.error);
       showToast({ type: "error", title: "Court Update Failed", body: result.error });
@@ -212,8 +220,14 @@ export function ActiveCourts({
   }
 
   async function handleRemoveCourt(courtId: string) {
+    setRemovingCourt((prev) => new Set(prev).add(courtId));
     setCourtError(courtId, null);
     const result = await onRemoveCourt(courtId);
+    setRemovingCourt((prev) => {
+      const next = new Set(prev);
+      next.delete(courtId);
+      return next;
+    });
     if (result.error) {
       setCourtError(courtId, result.error);
       showToast({ type: "error", title: "Remove Court Failed", body: result.error });
@@ -353,6 +367,8 @@ export function ActiveCourts({
                 isConfirmingCancel={confirmingCancel.has(court.id)}
                 isCancelling={cancellingCourt.has(court.id)}
                 isClearing={match ? clearingMatch.has(match.id) : false}
+                isUpdatingStatus={updatingStatusCourt.has(court.id)}
+                isRemoving={removingCourt.has(court.id)}
                 error={courtErrors[court.id]}
                 onCallNextMatch={() => handleCallNextMatch(court.id)}
                 onInputScore={() => {

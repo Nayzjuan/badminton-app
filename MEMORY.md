@@ -5,6 +5,41 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-23 — Organizer button UX fixes)
+
+### Organizer Button Loading/Disabled States (2026-05-23) — COMPLETE
+
+Fixed 3 organizer-dashboard buttons that were missing in-flight guards, silently dropping errors, or allowing double-submission.
+
+**Files changed:**
+- `src/components/organizer/queue-control.tsx`
+  - Added `import { toast } from "sonner"` (was missing — errors from `onPausePlayer` / `onRemoveFromQueue` silently vanished)
+  - Added `pausingPlayers: Set<string>` state — tracks which player IDs have a pause/resume in flight; supports concurrent per-player operations
+  - Added `removingPlayer: string | null` state — tracks which player has a checkout in flight (single-at-a-time via AlertDialog flow)
+  - `handlePausePlayer()` — async wrapper with set/clear bookends + `toast.error` on failure
+  - `handleRemoveFromQueue()` — async wrapper with set/clear bookends + `toast.error` on failure
+  - Pause/Resume button: wired `disabled={pausingPlayers.has(entry.player_id)}` + `disabled:opacity-50 disabled:cursor-not-allowed`
+  - Checkout `AlertDialogAction`: wired `disabled={removingPlayer === entry.player_id}`, loading text "Removing…" / "Checkout"
+- `src/components/organizer/active-courts.tsx`
+  - Added `updatingStatusCourt: Set<string>` state — tracks courts with an in-flight Close/Reopen
+  - Added `removingCourt: Set<string>` state — tracks courts with an in-flight Remove
+  - `handleUpdateCourtStatus`: now wraps the async call with set/clear bookends (error path unchanged)
+  - `handleRemoveCourt`: same pattern
+  - Passes `isUpdatingStatus={updatingStatusCourt.has(court.id)}` and `isRemoving={removingCourt.has(court.id)}` to `<CourtCard>`
+- `src/components/organizer/court-card.tsx`
+  - Added `isUpdatingStatus: boolean` and `isRemoving: boolean` to `CourtCardProps` interface + destructure
+  - Close button: `disabled={isUpdatingStatus}`, loading text "Closing…" / "Close"
+  - Reopen button: `disabled={isUpdatingStatus || isRemoving}`, loading text "Reopening…" / "Reopen Court"
+  - Remove button: `disabled={isRemoving || isUpdatingStatus}`, loading text "Removing…" / "Remove"
+
+**What was NOT broken (audit correction):**
+- "Call Next Match" was falsely flagged by the audit as missing a `disabled` prop. It's handled correctly: when `isMatchmaking` is true, the entire available-actions footer section is hidden by the render condition `{!hasActiveMatch && !isMatchmaking && cardState === "available" && ...}`. The button can't be double-clicked because it doesn't exist in the DOM during matchmaking.
+
+**Validation:** `npm run build` clean (all 19 routes). Code review: LGTM.
+**Commit:** `71cec4a`
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-22 — Fix Player Record feature)
 
 ### Fix Player Record — Historical Match Roster Correction (2026-05-22) — COMPLETE

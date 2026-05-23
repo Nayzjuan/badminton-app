@@ -10,6 +10,7 @@
 // ============================================================
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { VipTag } from "@/components/ui/vip-tag";
@@ -61,6 +62,8 @@ export function QueueControl({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [joiningQueue, setJoiningQueue] = useState(false);
+  const [pausingPlayers, setPausingPlayers] = useState<Set<string>>(new Set());
+  const [removingPlayer, setRemovingPlayer] = useState<string | null>(null);
 
   function togglePlayer(playerId: string) {
     setSelected((prev) => {
@@ -140,6 +143,24 @@ export function QueueControl({
     setJoiningQueue(true);
     await onJoinQueue();
     setJoiningQueue(false);
+  }
+
+  async function handlePausePlayer(playerId: string, isPaused: boolean) {
+    setPausingPlayers((prev) => new Set(prev).add(playerId));
+    const result = await onPausePlayer(playerId, isPaused);
+    setPausingPlayers((prev) => {
+      const next = new Set(prev);
+      next.delete(playerId);
+      return next;
+    });
+    if (result?.error) toast.error(result.error);
+  }
+
+  async function handleRemoveFromQueue(playerId: string) {
+    setRemovingPlayer(playerId);
+    const result = await onRemoveFromQueue(playerId);
+    setRemovingPlayer(null);
+    if (result?.error) toast.error(result.error);
   }
 
   // Is the organizer already in the queue (any status)?
@@ -538,11 +559,13 @@ export function QueueControl({
                             never touched — queue position is fully preserved.
                             No confirmation dialog needed — it's instantly reversible. */}
                           <button
-                            onClick={() => onPausePlayer(entry.player_id, !isPaused)}
+                            onClick={() => handlePausePlayer(entry.player_id, !isPaused)}
+                            disabled={pausingPlayers.has(entry.player_id)}
                             className="min-w-[44px] min-h-[44px] flex items-center justify-center
                                      transition-colors rounded
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
-                                     text-muted-foreground hover:text-amber-500"
+                                     text-muted-foreground hover:text-amber-500
+                                     disabled:opacity-50 disabled:cursor-not-allowed"
                             title={
                               isPaused
                                 ? `Resume ${entry.display_name}`
@@ -590,10 +613,12 @@ export function QueueControl({
                                 <AlertDialogFooter>
                                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                                   <AlertDialogAction
-                                    onClick={() => onRemoveFromQueue(entry.player_id)}
-                                    className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                                    onClick={() => handleRemoveFromQueue(entry.player_id)}
+                                    disabled={removingPlayer === entry.player_id}
+                                    className="bg-red-600 hover:bg-red-700 focus:ring-red-600
+                                               disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
-                                    Checkout
+                                    {removingPlayer === entry.player_id ? "Removing…" : "Checkout"}
                                   </AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>
