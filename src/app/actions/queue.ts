@@ -32,6 +32,7 @@
 // • Player already on_deck/playing → allowed by DB; UI prevents
 // ============================================================
 
+import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
@@ -272,7 +273,9 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   console.log(`[joinQueueAction] ${result.action} games_played=${result.games_played}`);
 
-  await runEngineForSession(sessionId);
+  // Fire-and-forget: schedule the engine after the response is sent so the
+  // client gets confirmation immediately rather than waiting for matchmaking.
+  after(() => runEngineForSession(sessionId));
   return { success: true };
 }
 
@@ -458,7 +461,7 @@ async function joinQueueFallback(
       return { success: false, error: updateError.message };
     }
 
-    await runEngineForSession(sessionId);
+    after(() => runEngineForSession(sessionId));
     return { success: true };
   }
 
@@ -475,6 +478,6 @@ async function joinQueueFallback(
     return { success: false, error: insertError.message };
   }
 
-  await runEngineForSession(sessionId);
+  after(() => runEngineForSession(sessionId));
   return { success: true };
 }

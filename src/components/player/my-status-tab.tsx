@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { PauseCircle } from "lucide-react";
+import { toast } from "sonner";
 import { QueueStatus } from "./queue-status";
 import { OnDeckAlert } from "./on-deck-alert";
 import { MatchHistory } from "./match-history";
@@ -143,6 +144,16 @@ function QueueSubTab({
   skillLevel,
   sessionName,
 }: QueueSubTabProps) {
+  const [joining, setJoining] = useState(false);
+
+  async function handleJoin() {
+    setJoining(true);
+    const result = await joinQueue();
+    if (result?.error) {
+      toast.error(result.error);
+    }
+    setJoining(false);
+  }
   // ── Paused by organizer ─────────────────────────────────────
   if (isInQueue && myEntry?.is_paused) {
     return (
@@ -251,11 +262,12 @@ function QueueSubTab({
           : "Be the first to join!"}
       </p>
       <button
-        onClick={() => joinQueue()}
+        onClick={handleJoin}
+        disabled={joining}
         className="mt-10 rounded-2xl bg-primary px-12 py-4 text-base font-extrabold text-primary-foreground
-                   transition-all hover:brightness-110 active:scale-[0.98]"
+                   transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
       >
-        Join Queue
+        {joining ? "Joining…" : "Join Queue"}
       </button>
       <p className="mt-4 text-[11px] text-muted-foreground/70">No commitment — leave anytime</p>
     </div>
