@@ -35,6 +35,55 @@ Allows the organizer to correct a completed match's player roster (wrong player 
 **Validation:** `npx tsc --noEmit` clean · `npm run lint` clean (changed files only) · `npm run build` clean (all 19 pages) · Code review: LGTM.
 
 **⚠️ Migration not yet applied to Supabase production.** Run `fix_record_swap_player` migration before using the feature in a live session.
+## SESSION STATE (Last Updated: 2026-05-23 — join queue perf + Jake L merge + DB backup)
+
+### Join Queue Performance (2026-05-23) — COMPLETE
+
+**Problem:** Join Queue button felt slow/unresponsive — users had to wait for the full matchmaking engine to complete before the server action returned.
+
+**Fix 1 — Fire-and-forget engine (`src/app/actions/queue.ts`):**
+- Replaced `await runEngineForSession(sessionId)` with `after(() => runEngineForSession(sessionId))` (Next.js 16 `after()` API) in `joinQueueAction` and both branches of `joinQueueFallback`.
+- Response returns immediately after the DB insert; engine runs in background with guaranteed completion.
+
+**Fix 2 — Optimistic UI (`src/hooks/use-queue.ts`):**
+- `joinQueue` callback now immediately inserts a `waiting` entry into local state using `setQueue(prev => ...)` functional updater, capturing the snapshot for rollback.
+- UI transitions from "not in queue" → "waiting in queue" synchronously on click.
+- On server error: rolls back to snapshot + returns `{ error }`.
+- On success: realtime event arrives and replaces optimistic entry with real DB row (no double-entry risk — full re-fetch overwrites).
+
+**Fix 3 — Button UX (`src/components/player/my-status-tab.tsx`):**
+- Added `joining` state to `QueueSubTab`; button disabled + shows "Joining…" while in flight.
+- `toast.error()` shown on failure.
+
+**Known minor issues (non-blocking):**
+- Optimistic `games_played` uses previous value (not server-computed floor), causing brief position flicker when realtime corrects it — cosmetic only.
+- `joining` state not guarded against component unmount — React 18 handles silently, no leak.
+
+**Commit:** `4c4afe7`
+
+---
+
+### Jake L Duplicate Profile Merge (2026-05-22) — COMPLETE
+
+Identity chain forked on 2026-05-09 when two devices PIN-reconnected from ancestor `a3f26e57` simultaneously. By 2026-05-22, two live profiles both had PIN `0356`:
+- Branch 1 `8d63e740`: 29 match_players, 5 queue_entries, 4 session_organizers
+- Branch 2 `d766f00a`: 6 match_players, 6 queue_entries, 6 sessions.created_by (this was the active organizer)
+
+`migrate_player_identity` RPC could not be used (FK constraint on sessions.created_by). Manual SQL transaction merged Branch 1 into Branch 2, then migrated forward to `a3ffbfa6` (current Jake L profile, created 2026-05-22, PIN `0356`).
+
+Result: Jake L has 35 match_players, single PIN, correct session ownership.
+
+---
+
+### Match Team Swap — Thursday 05/21 Match 1 (2026-05-22) — COMPLETE
+
+Swapped Glenn (team b → a) and JV Cutiepatootie (team a → b) in completed match `a3a4ffb7`. Recomputed `session_wrapped_stats` via `compute_session_wrapped` RPC and re-broadcast `session_closed` via `realtime.send()`.
+
+---
+
+### Database Backup (2026-05-22) — COMPLETE
+
+Full backup at `/home/user/badminton-app/backup-2026-05-22.json` (1.15 MB, 2,851 rows across 12 tables).
 
 ---
 
