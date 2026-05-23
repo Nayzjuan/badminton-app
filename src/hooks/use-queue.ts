@@ -100,14 +100,40 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
     return () => clearInterval(interval);
   }, [myEntry]);
 
-  // Join queue.
-  // Calls the server action instead of the RPC so the Inherited Games
-  // logic is applied: first-time joiners receive the session's current
-  // minimum games_played rather than 0, preventing them from jumping
-  // to position #1 ahead of players who have been waiting.
+  // Join queue with optimistic update.
+  // Immediately inserts a 'waiting' entry into local state so the UI
+  // transitions instantly, then confirms (or rolls back) via the server action.
   const joinQueue = useCallback(async () => {
-    return await joinQueueAction(sessionId);
-  }, [sessionId]);
+    // Capture previous state + apply optimistic entry in a single setState call
+    // so the snapshot is always consistent with what was replaced.
+    let snapshot: QueueEntry[] = [];
+    setQueue((prev) => {
+      snapshot = prev;
+      const existing = prev.find((q) => q.player_id === playerId);
+      const now = new Date().toISOString();
+      const optimistic: QueueEntry = {
+        id: existing?.id ?? `optimistic-${playerId}`,
+        session_id: sessionId,
+        player_id: playerId,
+        joined_at: now,
+        games_played: existing?.games_played ?? 0,
+        status: "waiting",
+        position: null,
+        is_paused: false,
+        created_at: existing?.created_at ?? now,
+      };
+      return [...prev.filter((q) => q.player_id !== playerId), optimistic];
+    });
+
+    const result = await joinQueueAction(sessionId);
+
+    if (result.error) {
+      setQueue(snapshot); // Rollback on failure
+      return { error: result.error };
+    }
+
+    return {};
+  }, [sessionId, playerId]);
 
   // Leave queue.
   // Delegates to checkoutPlayer (server action) so the atomic
