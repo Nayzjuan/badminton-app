@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-05-18T05:15:26.131Z",
+  "_lastExtracted": "2026-05-26T07:48:25.668Z",
   "tables": [
     {
       "name": "profiles",
@@ -823,6 +823,19 @@
       ]
     },
     {
+      "name": "v_queue_full_with_wait_time",
+      "typeName": "QueueFullWithWaitTime",
+      "desc": "v_queue_full_with_wait_time view — organizer/player display layer. Includes waiting + drafted + on_deck rows (excludes playing/left). Adds status_priority for sort: on_deck=0, drafted=1, waiting=2.",
+      "columns": [
+        {
+          "name": "status_priority",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
       "name": "v_match_history",
       "typeName": "MatchHistory",
       "desc": "v_match_history view",
@@ -1095,27 +1108,50 @@
     {
       "name": "court_status",
       "typeName": "CourtStatus",
-      "values": ["available", "in_use", "closed"]
+      "values": [
+        "available",
+        "in_use",
+        "closed"
+      ]
     },
     {
       "name": "queue_status",
       "typeName": "QueueStatus",
-      "values": ["waiting", "on_deck", "playing", "left", "drafted"]
+      "values": [
+        "waiting",
+        "on_deck",
+        "playing",
+        "left",
+        "drafted"
+      ]
     },
     {
       "name": "match_status",
       "typeName": "MatchStatus",
-      "values": ["pending", "in_progress", "completed", "cancelled"]
+      "values": [
+        "pending",
+        "in_progress",
+        "completed",
+        "cancelled"
+      ]
     },
     {
       "name": "scoring_format",
       "typeName": "ScoringFormat",
-      "values": ["single", "best_of_3", "best_of_5"]
+      "values": [
+        "single",
+        "best_of_3",
+        "best_of_5"
+      ]
     },
     {
       "name": "match_origin",
       "typeName": "MatchOrigin",
-      "values": ["auto", "manual", "modified"]
+      "values": [
+        "auto",
+        "manual",
+        "modified"
+      ]
     }
   ],
   "rpcs": [
@@ -1276,7 +1312,7 @@
         },
         {
           "name": "p_status",
-          "type": "string",
+          "type": "MatchStatus",
           "optional": false
         },
         {
@@ -1527,6 +1563,33 @@
         }
       ],
       "note": ""
+    },
+    {
+      "name": "fix_record_swap_player",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_out_player_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_in_player_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
     }
   ],
   "constants": [
@@ -1588,17 +1651,37 @@
     {
       "name": "ON_DECK_LOOKAHEAD",
       "value": 1,
-      "desc": "Extra on-deck slots generated beyond the number of open courts. capacity = courtCount + ON_DECK_LOOKAHEAD, capped at MAX_ON_DECK_MATCHES. With the default of 1 and a cap of 2: 1 court  → 2 on-deck  (1 + 1 = 2, at cap) 2 courts → 2 on-deck  (2 + 1 = 3, capped to 2) 3 courts → 2 on-deck  (3 + 1 = 4, capped to 2) The lookahead match absorbs the gap between a court finishing and the engine refilling: even if two courts end almost simultaneously, there is always a queued match for the second one rather than a brief idle period. The engine's fill loop already stops gracefully when the pool is exhausted, so this never creates phantom matches."
+      "desc": "@deprecated Not used by the live engine. Superseded by {@link MAX_AUTO_DRAFTS} and `getDynamicDraftCap` in `matchmaking-core.ts`. No production imports remain. Safe to remove once any dev-tooling references are cleaned up."
     },
     {
       "name": "MAX_ON_DECK_MATCHES",
       "value": 2,
-      "desc": "Hard ceiling on the number of on-deck (pending) matches the engine will auto-generate. The uncapped formula (courtCount + ON_DECK_LOOKAHEAD) can produce 3-5 on-deck matches for 2-4 courts, which makes the queue list confusingly short and commits too many players to specific partners before new players arrive. Set to 2 so the organizer always sees at least 2 matches queued but the engine never speculates further than one match beyond what is immediately needed. Existing on-deck matches at session runtime are not affected — the cap only gates new generation."
+      "desc": "@deprecated Not used by the live engine. Superseded by {@link MAX_AUTO_DRAFTS} and `getDynamicDraftCap` in `matchmaking-core.ts`. No production imports remain. Safe to remove once any dev-tooling references are cleaned up."
     },
     {
       "name": "MAX_AUTO_DRAFTS",
       "value": 3,
-      "desc": "Hard cap on the combined total of published + unpublished pending matches the engine will auto-generate across successive runs. Previously the engine counted only published matches toward capacity, so unpublished drafts were invisible — each court-finish trigger generated up to 2 more drafts regardless of how many already existed, reaching 7+ drafts before the organizer could review any of them. Formula: slotsAvailable = max(0, MAX_AUTO_DRAFTS − published − drafts) Dynamic behaviour: 0 approved + 0 drafts → up to 3 new drafts (pool diversity cap applies) 2 approved + 0 drafts → 1 new draft  (prevents on-deck crowding) 2 approved + 1 draft  → 0            (at cap) 0 approved + 3 drafts → 0            (at cap)"
+      "desc": "Dynamic draft cap tiers — scales the review queue depth with the number of waiting players so larger sessions always have enough pending matches ready. The cap counts ONLY is_published=false matches (status='pending'). Published on-deck matches that have already been reviewed do NOT count — they are \"done\" from the review perspective and should not block new draft generation. Formula: slotsAvailable = max(0, getDynamicDraftCap(waitingCount) − draftCount) Tier table: waiting < 25   → cap 3  (small session — few matches needed) waiting 25–29  → cap 5  (medium session) waiting ≥ 30   → cap 6  (large session — keep review queue full)"
+    },
+    {
+      "name": "MAX_AUTO_DRAFTS_LARGE",
+      "value": 5,
+      "desc": ""
+    },
+    {
+      "name": "MAX_AUTO_DRAFTS_XLARGE",
+      "value": 6,
+      "desc": ""
+    },
+    {
+      "name": "DRAFT_CAP_LARGE_THRESHOLD",
+      "value": 25,
+      "desc": ""
+    },
+    {
+      "name": "DRAFT_CAP_XLARGE_THRESHOLD",
+      "value": 30,
+      "desc": ""
     },
     {
       "name": "MIN_FREE_POOL_FOR_ON_DECK",
@@ -1609,12 +1692,70 @@
       "name": "MAX_PARTNERSHIP_REPEATS",
       "value": 2,
       "desc": "Hard cap on the number of times two players may appear on the same team within a single session. Once a pair reaches this count they are excluded from every team-assignment path (snakeDraft / rotatedDraft). No waivers — Red Zone urgency, last-resort fallback, and tier isolation do NOT bypass this cap. If no valid team split exists, the slot returns no-match and a saturation signal fires so the organizer can intervene. Manual organizer assignment is the only bypass."
+    },
+    {
+      "name": "DIALOG_CLOSE_DELAY_MS",
+      "value": 800,
+      "desc": "The three match statuses that represent a committed team assignment. Used by matchmaking-db.ts to count partnership repeats and recent rosters. \"pending\" is included so unpublished drafts count toward the partnership cap immediately — preventing the engine from pairing the same players in a second draft before the first one is reviewed or cancelled. / export const COMMITTED_MATCH_STATUSES: MatchStatus[] = [\"completed\", \"in_progress\", \"pending\"]; // ── UI timing constants ─────────────────────────────────────────────────────── /** ms delay between showing a success message and closing a dialog."
+    },
+    {
+      "name": "DIALOG_FOCUS_DELAY_MS",
+      "value": 80,
+      "desc": "ms delay before auto-focusing the first score input after a dialog opens. Allows Radix to complete its focus-trap setup before we programmatically move focus."
+    },
+    {
+      "name": "COURT_ALERT_CRITICAL_OFFSET_MINUTES",
+      "value": 10,
+      "desc": "ms before a success/info toast auto-dismisses. */ export const TOAST_DISMISS_MS = 5_000; /** ms before an error message auto-dismisses. Longer than TOAST_DISMISS_MS — errors need more read time. */ export const ERROR_AUTO_DISMISS_MS = 8_000; // ── Court timer constants ───────────────────────────────────────────────────── /** Minutes past the time limit that triggers the \"critical\" alert tier (red glow)."
+    },
+    {
+      "name": "MAX_BADMINTON_SCORE",
+      "value": 31,
+      "desc": "ms interval for recomputing the court alert tier. Minute-level granularity is sufficient. */ export const COURT_ALERT_RECOMPUTE_INTERVAL_MS = 30_000; // ── Score validation ────────────────────────────────────────────────────────── /** Maximum valid score in a single badminton game (standard 21-point, but we allow up to 31 for deuce scenarios)."
+    },
+    {
+      "name": "RED_ZONE_SKILL_VARIANCE_MAX",
+      "value": 4,
+      "desc": "Maximum skill variance window for Red Zone anchor candidates. Expands progressively — ±1, ±2, ±3, ±4 — until at least 3 eligible players are found. ±4 covers the full 6-level spectrum and is the last resort before the slot returns no-match."
+    },
+    {
+      "name": "DND_ACTIVATION_DISTANCE_PX",
+      "value": 3,
+      "desc": "Minimum px the pointer must move before a drag starts (prevents accidental drags on tap)."
+    },
+    {
+      "name": "DND_TOUCH_DELAY_MS",
+      "value": 150,
+      "desc": "ms a touch must be held before a drag starts."
+    },
+    {
+      "name": "DND_TOUCH_TOLERANCE_PX",
+      "value": 5,
+      "desc": "px of movement tolerance during the DnD touch delay window."
+    },
+    {
+      "name": "APPROACHING_QUEUE_THRESHOLD",
+      "value": 2,
+      "desc": "Queue position at or below which the player card shows an amber \"approaching\" indicator."
+    },
+    {
+      "name": "ON_DECK_ALERT_THRESHOLD",
+      "value": 4,
+      "desc": "Queue position at or below which the OnDeckAlert banner is shown."
+    },
+    {
+      "name": "DASHBOARD_GRID_SIZE_PX",
+      "value": 48,
+      "desc": "px size of the background grid overlay on the organizer dashboard."
     }
   ],
   "actions": [
     {
       "file": "_shared.ts",
-      "functions": ["getAuthenticatedUser", "isSessionOrganizer"]
+      "functions": [
+        "getAuthenticatedUser",
+        "isSessionOrganizer"
+      ]
     },
     {
       "file": "auth.ts",
@@ -1627,16 +1768,40 @@
       ]
     },
     {
+      "file": "courts.ts",
+      "functions": [
+        "addCourtAction",
+        "updateCourtStatusAction",
+        "removeCourtAction"
+      ]
+    },
+    {
       "file": "dev.ts",
-      "functions": ["seedTestData", "seedNamedPlayers", "clearSessionData"]
+      "functions": [
+        "seedTestData",
+        "seedNamedPlayers",
+        "clearSessionData"
+      ]
+    },
+    {
+      "file": "fix-player-record.ts",
+      "functions": [
+        "fixPlayerRecord"
+      ]
     },
     {
       "file": "h2h.ts",
-      "functions": ["getH2HRecord"]
+      "functions": [
+        "getH2HRecord"
+      ]
     },
     {
       "file": "leaderboard.ts",
-      "functions": ["getSessionLeaderboard", "getAllTimeLeaderboard", "getPlayerStats"]
+      "functions": [
+        "getSessionLeaderboard",
+        "getAllTimeLeaderboard",
+        "getPlayerStats"
+      ]
     },
     {
       "file": "match-drafts.ts",
@@ -1659,15 +1824,26 @@
     },
     {
       "file": "matchmaking.ts",
-      "functions": ["callNextMatch", "runEngineForSession", "promoteOnDeckMatchInternal"]
+      "functions": [
+        "callNextMatch",
+        "runEngineForSession",
+        "promoteOnDeckMatchInternal"
+      ]
     },
     {
       "file": "notifications.ts",
-      "functions": ["sendPlayerNotification"]
+      "functions": [
+        "sendPlayerNotification"
+      ]
     },
     {
       "file": "profile.ts",
-      "functions": ["updatePlayerSkill", "getPlayerPin", "resetPlayerPin", "updatePlayerPin"]
+      "functions": [
+        "updatePlayerSkill",
+        "getPlayerPin",
+        "resetPlayerPin",
+        "updatePlayerPin"
+      ]
     },
     {
       "file": "queue.ts",
@@ -1691,15 +1867,22 @@
     },
     {
       "file": "swap-player.ts",
-      "functions": ["swapPlayerInMatch", "swapMatchPlayers"]
+      "functions": [
+        "swapPlayerInMatch",
+        "swapMatchPlayers"
+      ]
     },
     {
       "file": "tv.ts",
-      "functions": ["getTvData"]
+      "functions": [
+        "getTvData"
+      ]
     },
     {
       "file": "wrapped.ts",
-      "functions": ["dismissWrappedIntro"]
+      "functions": [
+        "dismissWrappedIntro"
+      ]
     }
   ],
   "channels": [],
