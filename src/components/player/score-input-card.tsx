@@ -130,8 +130,8 @@ export function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
         <button
           onClick={handleSubmit}
           disabled={isPending || !teamAScore || !teamBScore}
-          className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold
-                     text-white hover:bg-slate-800 transition-colors
+          className="w-full rounded-xl bg-foreground px-4 py-3 text-sm font-bold
+                     text-background hover:bg-foreground/90 transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed
                      flex items-center justify-center gap-2"
         >

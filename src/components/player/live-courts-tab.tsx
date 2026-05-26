@@ -149,15 +149,20 @@ function CourtMatchCard({
       className={
         isOnDeck
           ? "rounded-2xl overflow-hidden shadow-sm border border-amber-100 dark:border-amber-500/20 bg-card"
-          : "rounded-2xl overflow-hidden shadow-sm border"
+          : // bg-card: oklch(1 0 0) light / oklch(0.11 0.016 238) dark — matches original
+            // dark value (0.11 ≈ old hardcoded 0.10) while being white in light mode.
+            // borderColor: transparent (in style) lets the emerald ring-shadow be the
+            // sole border, avoiding a double-border with Tailwind's `border` class.
+            "rounded-2xl overflow-hidden shadow-sm border bg-card"
       }
       style={
         isOnDeck
           ? undefined
           : {
-              background: "oklch(0.10 0.014 245)",
+              // Emerald glow ring traces the card edge in both modes.
+              // 0.20 opacity is visible on dark card (0.11L) and subtly tints white card.
               boxShadow:
-                "0 0 0 1px oklch(0.76 0.17 155 / 0.35), 0 0 24px oklch(0.76 0.17 155 / 0.10)",
+                "0 0 0 1px oklch(0.76 0.17 155 / 0.20), 0 0 16px oklch(0.76 0.17 155 / 0.07)",
               borderColor: "transparent",
             }
       }
@@ -167,13 +172,13 @@ function CourtMatchCard({
         className={`flex items-center justify-between px-4 py-2.5 ${
           isOnDeck
             ? "bg-amber-50 dark:bg-amber-500/10 border-b border-amber-100 dark:border-amber-500/20"
-            : "border-b border-white/10"
+            : "border-b border-cc-border"
         }`}
       >
         <div className="flex items-center gap-2">
           <span
             className={`text-[11px] font-bold uppercase tracking-[0.08em] ${
-              isOnDeck ? "text-amber-900 dark:text-amber-300" : "text-white/60"
+              isOnDeck ? "text-amber-900 dark:text-amber-300" : "text-cc-t3"
             }`}
           >
             {isOnDeck ? "On Deck" : (match.court?.name ?? "Court")}
@@ -183,7 +188,7 @@ function CourtMatchCard({
               className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${
                 isOnDeck
                   ? "bg-amber-100 dark:bg-amber-500/15 border-amber-300 dark:border-amber-500/30 text-amber-800 dark:text-amber-300"
-                  : "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                  : "bg-amber-500/20 border-amber-500/40 text-amber-700 dark:text-amber-300"
               }`}
             >
               Mixed Level
@@ -194,7 +199,7 @@ function CourtMatchCard({
           className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.06em] ${
             isOnDeck
               ? "bg-amber-200/60 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300"
-              : "bg-emerald-500/15 text-emerald-400"
+              : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
           }`}
         >
           {isOnDeck ? "Waiting for court" : "In Progress"}
@@ -203,7 +208,7 @@ function CourtMatchCard({
 
       {/* Roster grid */}
       <TeamsGrid
-        dark={!isOnDeck}
+        dark={false}
         teamA={teamA}
         teamB={teamB}
         labelA="Team A"
