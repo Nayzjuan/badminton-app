@@ -5,6 +5,30 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-26 — Login page redesign)
+
+### Login Page — NEW PLAYER / RETURNING Toggle (2026-05-26) — COMPLETE
+
+Replaced the buried "Already have a PIN? Reconnect" underline link with a **segmented toggle at the top of the login form**, giving equal visual hierarchy to both entry paths.
+
+**Files changed:**
+- `src/components/login-form.tsx` — full rewrite of component:
+  - `mode: "new" | "returning"` state drives which panel renders
+  - NEW PLAYER tab: existing form (name + skill level + PIN → `signInAnonymously`)
+  - RETURNING tab: inline reconnect form (name + PIN → `reconnectPlayer`) — replaces the old `ReconnectModal`
+  - `handleTabKeyDown` — ARIA APG roving tabindex pattern: `ArrowLeft/Right` moves focus + switches mode
+  - Tabs have `tabIndex={mode === X ? 0 : -1}` — correct roving focus behaviour
+  - Both error states (`newError`, `reconnectError`) have independent 8 s auto-dismiss and are cleared on tab switch
+  - `maxLength={30}` on both name inputs (matches Zod schema)
+  - `ErrorBanner` extracted as shared component (used by both panels)
+  - `Spinner` still imported from `./reconnect-modal` (that file unchanged)
+  - `ReconnectModal` no longer rendered from `LoginForm` (it still exists in the file, may be pruned separately)
+- `src/app/page.tsx` — no changes (form is self-contained)
+
+**Validation:** `tsc --noEmit` clean, ESLint 0 warnings. Code review: passed (Minor issues addressed before commit).
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-23 — Organizer button UX fixes)
 
 ### Organizer Button Loading/Disabled States (2026-05-23) — COMPLETE
