@@ -37,6 +37,7 @@ function getTeams(match: EnrichedMatch): {
         skill_level: p.profile.skill_level,
         vip_tag: p.profile.vip_tag,
         vip_theme: p.profile.vip_theme,
+        win_streak: p.win_streak ?? 0,
       })),
     teamB: match.players
       .filter((p) => p.team === "b")
@@ -46,6 +47,7 @@ function getTeams(match: EnrichedMatch): {
         skill_level: p.profile.skill_level,
         vip_tag: p.profile.vip_tag,
         vip_theme: p.profile.vip_theme,
+        win_streak: p.win_streak ?? 0,
       })),
   };
 }

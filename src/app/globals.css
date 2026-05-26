@@ -537,6 +537,159 @@
      stays readable rather than rendering as black/white.
      All other browsers (which support oklch) will ignore this block
      entirely — zero runtime cost for modern clients. */
+  /* ── Win Streak Indicator ─────────────────────────────────────────────────
+   Animated treatment for players on 3+ consecutive win streaks.
+   Applied to PlayerRowDark in match-roster.tsx.
+   Uses filter:drop-shadow on a wrapper so glow traces clip-path polygon.
+   ─────────────────────────────────────────────────────────────────────── */
+
+  @property --streak-glow {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 0.5;
+  }
+
+  @keyframes streak-ignite {
+    0% {
+      transform: scale(1);
+      filter: brightness(1);
+    }
+    30% {
+      transform: scale(1.025);
+      filter: brightness(1.4);
+    }
+    100% {
+      transform: scale(1);
+      filter: brightness(1);
+    }
+  }
+
+  @keyframes streak-outer-glow {
+    0%,
+    100% {
+      filter: drop-shadow(0 0 3px oklch(0.72 0.22 38 / 0.4))
+        drop-shadow(0 0 6px oklch(0.72 0.22 38 / 0.15));
+    }
+    50% {
+      filter: drop-shadow(0 0 14px oklch(0.72 0.22 38 / 0.85))
+        drop-shadow(0 0 32px oklch(0.72 0.22 38 / 0.35));
+    }
+  }
+
+  @keyframes streak-border-pulse {
+    0%,
+    100% {
+      --streak-glow: 0.5;
+    }
+    50% {
+      --streak-glow: 1;
+    }
+  }
+
+  @keyframes flame-beat {
+    0% {
+      transform: scale(1) rotate(0deg);
+      filter: brightness(1);
+    }
+    25% {
+      transform: scale(1.2) rotate(-4deg);
+      filter: brightness(1.6);
+    }
+    50% {
+      transform: scale(1.1) rotate(3deg);
+      filter: brightness(1.3);
+    }
+    75% {
+      transform: scale(1.18) rotate(-3deg);
+      filter: brightness(1.5);
+    }
+    100% {
+      transform: scale(1) rotate(0deg);
+      filter: brightness(1);
+    }
+  }
+
+  /* Combined — ignite (one-shot) + border-pulse (continuous) on same element.
+     Must be one rule: two classes with `animation` on the same element would
+     cascade and the last rule's shorthand would silently overwrite the first. */
+  .streak-hot-border {
+    border: 1px solid oklch(0.72 0.22 38 / var(--streak-glow));
+    animation:
+      streak-border-pulse 1.8s ease-in-out infinite,
+      streak-ignite 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .streak-glow-wrapper {
+    animation: streak-outer-glow 1.8s ease-in-out infinite;
+  }
+
+  .flame-icon {
+    animation: flame-beat 1.5s ease-in-out infinite;
+    display: inline-flex;
+    transform-origin: bottom center;
+    color: oklch(0.88 0.2 38);
+    filter: drop-shadow(0 0 5px oklch(0.72 0.22 38 / 0.95));
+  }
+
+  /* Text: dark in light mode (contrast on pale orange), bright in dark mode */
+  .streak-label {
+    color: oklch(0.18 0.06 38);
+    font-weight: 800;
+  }
+  .dark .streak-label {
+    color: oklch(0.92 0.18 38);
+    text-shadow: 0 0 8px oklch(0.72 0.22 38 / 0.7);
+  }
+
+  .streak-count {
+    color: oklch(0.18 0.06 38);
+    font-weight: 800;
+  }
+  .dark .streak-count {
+    color: oklch(0.95 0.16 38);
+    text-shadow: 0 0 10px oklch(0.72 0.22 38 / 0.8);
+  }
+
+  /* Container query — fires on actual column width, not viewport.
+   Below 255px: hide "Win Streak" label, keep 🔥 ×N.
+   Below 180px: shrink flame icon. */
+  .streak-row {
+    container-type: inline-size;
+  }
+
+  @container (max-width: 255px) {
+    .streak-label {
+      display: none;
+    }
+    .streak-count {
+      font-size: 11px;
+    }
+  }
+
+  @container (max-width: 180px) {
+    .flame-icon {
+      width: 14px;
+      height: 14px;
+    }
+    .streak-count {
+      font-size: 10px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* .streak-ignite is NOT a standalone class — the ignite animation is
+       combined inside .streak-hot-border to avoid cascade clobbering.
+       Killing .streak-hot-border's animation kills both border-pulse AND ignite. */
+    .streak-glow-wrapper,
+    .flame-icon {
+      animation: none;
+    }
+    .streak-hot-border {
+      border: 1px solid oklch(0.72 0.22 38 / 0.65);
+      animation: none;
+    }
+  }
+
   @supports not (color: oklch(0 0 0)) {
     :root {
       --background: #f1f3f8;
