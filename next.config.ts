@@ -28,7 +28,19 @@ import type { NextConfig } from "next";
 //
 // connect-src covers the Supabase project subdomain. If the project is
 // migrated to a custom domain, update the *.supabase.co pattern here.
+//
+// Strict-Transport-Security: 1-year max-age + includeSubDomains, NO preload.
+// Vercel injects its own HSTS header on production, but declaring it here
+// documents the policy in code and survives a platform move. Preload is
+// intentionally omitted — submitting to the preload list locks every
+// subdomain (including the Astro marketing site) into HTTPS-forever with
+// a months-long removal path. Revisit once every subdomain is confirmed
+// HTTPS-only.
 const SECURITY_HEADERS = [
+  {
+    key: "Strict-Transport-Security",
+    value: "max-age=31536000; includeSubDomains",
+  },
   {
     key: "X-Content-Type-Options",
     value: "nosniff",

@@ -29,7 +29,7 @@ import { createUnknownProfile } from "@/lib/utils";
  */
 export type EnrichedMatch = Match & {
   court: Court | null;
-  players: (MatchPlayer & { profile: Profile })[];
+  players: (MatchPlayer & { profile: Profile; win_streak: number })[];
 };
 
 export interface UseEnrichedMatchesOptions {
@@ -142,6 +142,17 @@ export function useEnrichedMatches(
     // (organizer hook uses this to keep the queue panel profile data fresh).
     onProfilesLoaded?.(profileMap);
 
+    // ── Phase 3b: fetch player streaks (non-fatal) ─────────────
+    // win_streak = 0 for any player not in the result (no active streak).
+    let streakMap = new Map<string, number>();
+    if (playerIds.length > 0) {
+      const { data: streakData } = await supabase.rpc("get_player_streaks", {
+        p_session_id: sessionId,
+      });
+      if (mySeq !== seqRef.current) return;
+      streakMap = new Map((streakData ?? []).map((s) => [s.player_id, s.win_streak]));
+    }
+
     // ── Phase 4: enrich ────────────────────────────────────────
     const enriched: EnrichedMatch[] = matches.map((match) => ({
       ...match,
@@ -151,6 +162,7 @@ export function useEnrichedMatches(
         .map((mp) => ({
           ...mp,
           profile: profileMap.get(mp.player_id) ?? createUnknownProfile(mp.player_id),
+          win_streak: streakMap.get(mp.player_id) ?? 0,
         })),
     }));
 

@@ -21,7 +21,7 @@
 //   RosterPlayer    — shared player data shape
 // ============================================================
 
-import { ArrowLeftRight } from "lucide-react";
+import { ArrowLeftRight, Flame } from "lucide-react";
 import { VipTag } from "@/components/ui/vip-tag";
 import { SKILL_META } from "@/lib/constants";
 import type { SkillLevel } from "@/types/database";
@@ -36,6 +36,8 @@ export interface RosterPlayer {
   vip_tag?: string | null;
   /** VIP theme key (e.g. "cyber-neon"). Must pair with vip_tag. */
   vip_theme?: string | null;
+  /** Current session win streak. 0 = no streak. Used for streak indicator (≥3). */
+  win_streak?: number;
 }
 
 // ── Skill config (dark only) ────────────────────────────────────
@@ -121,43 +123,70 @@ function PlayerRowLight({
   onSwapClick,
 }: PlayerRowLightProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
+  const winStreak = player.win_streak ?? 0;
+  // isSelected (swap picking) takes priority — don't overlay streak while user
+  // is actively choosing a swap target. Streak resumes when selection clears.
+  const showStreak = winStreak >= 3 && !isSelected;
 
   const classes = [
-    "group w-full clip-cut-tr px-3 py-2 text-left transition-colors",
+    "streak-row group w-full clip-cut-tr px-3 py-2 text-left transition-colors relative overflow-hidden",
     isSelected
       ? "bg-cc-accent-dim outline outline-1 outline-cc-accent/55"
       : isSwapTarget || onSwapClick
-        ? "bg-cc-bg-3 hover:bg-cc-accent-dim cursor-pointer"
-        : "bg-cc-bg-3",
+        ? `${showStreak ? "streak-hot-border" : "bg-cc-bg-3"} hover:bg-cc-accent-dim cursor-pointer`
+        : showStreak
+          ? "streak-hot-border"
+          : "bg-cc-bg-3",
   ].join(" ");
+
+  const streakStyle = showStreak ? { background: "oklch(0.72 0.22 38 / 0.22)" } : undefined;
 
   const inner = (
     <>
-      {/* Line 1 — "Name | TAG" */}
-      <div className="flex items-center gap-1.5 overflow-hidden">
-        <span
-          className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
-            isMe === false ? "font-medium text-cc-t2" : "font-medium text-cc-t1"
-          }`}
-        >
-          {player.display_name}
-        </span>
-        {hasTag && (
-          <>
+      {/* Line 1 — name + VIP + streak indicator */}
+      <div className="relative z-[1] flex items-center justify-between gap-2 overflow-hidden">
+        <div className="flex items-center gap-1.5 overflow-hidden">
+          <span
+            className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
+              isMe === false ? "font-medium text-cc-t2" : "font-medium text-cc-t1"
+            }`}
+          >
+            {player.display_name}
+          </span>
+          {hasTag && (
+            <>
+              <span
+                className="shrink-0 text-[11px] leading-none text-cc-t3 select-none"
+                aria-hidden="true"
+              >
+                |
+              </span>
+              <span className="shrink-0 leading-none">
+                <VipTag tag={player.vip_tag!} theme={player.vip_theme!} />
+              </span>
+            </>
+          )}
+        </div>
+        {showStreak && (
+          <span
+            className="shrink-0 flex items-center gap-1.5"
+            aria-label={`Win streak: ${winStreak}`}
+          >
+            <span className="flame-icon inline-flex items-center">
+              <Flame className="h-4 w-4" />
+            </span>
             <span
-              className="shrink-0 text-[11px] leading-none text-cc-t3 select-none"
-              aria-hidden="true"
+              className="streak-label font-command text-[9px] uppercase"
+              style={{ letterSpacing: "0.18em" }}
             >
-              |
+              Win Streak
             </span>
-            <span className="shrink-0 leading-none">
-              <VipTag tag={player.vip_tag!} theme={player.vip_theme!} />
-            </span>
-          </>
+            <span className="streak-count font-command text-[13px]">×{winStreak}</span>
+          </span>
         )}
       </div>
-      {/* Line 2 — skill level (colored text, no dot) + swap icon */}
-      <div className="mt-1 flex items-center gap-1.5">
+      {/* Line 2 — skill level + swap icon */}
+      <div className="relative z-[1] mt-1 flex items-center gap-1.5">
         <SkillLevelDark level={player.skill_level} />
         {onSwapClick && (
           <ArrowLeftRight
@@ -169,28 +198,28 @@ function PlayerRowLight({
     </>
   );
 
-  if (onSwapClick) {
-    return (
-      <button
-        type="button"
-        className={classes}
-        onClick={onSwapClick}
-        aria-label={`Swap ${player.display_name}`}
-        aria-pressed={isSelected ?? false}
-        // Prevent dnd-kit from treating a tap-to-swap click as a drag start
-        data-no-dnd="true"
-        data-testid={`player-pill-${player.player_id}`}
-      >
-        {inner}
-      </button>
-    );
-  }
-
-  return (
-    <div className={classes} data-testid={`player-pill-${player.player_id}`}>
+  // Wrap in glow div only when streak is active — glow traces clip-path polygon.
+  // button vs div determined by whether onSwapClick is provided.
+  const element = onSwapClick ? (
+    <button
+      type="button"
+      className={classes}
+      style={streakStyle}
+      onClick={onSwapClick}
+      aria-label={`Swap ${player.display_name}`}
+      aria-pressed={isSelected ?? false}
+      data-no-dnd="true"
+      data-testid={`player-pill-${player.player_id}`}
+    >
+      {inner}
+    </button>
+  ) : (
+    <div className={classes} style={streakStyle} data-testid={`player-pill-${player.player_id}`}>
       {inner}
     </div>
   );
+
+  return showStreak ? <div className="streak-glow-wrapper">{element}</div> : element;
 }
 
 // ── Internal: player row — dark / active court ─────────────────
@@ -203,34 +232,64 @@ interface PlayerRowDarkProps {
 
 function PlayerRowDark({ player, isMe }: PlayerRowDarkProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
+  const winStreak = player.win_streak ?? 0;
+  const hasStreak = winStreak >= 3;
+
   return (
-    <div className="w-full clip-cut-tr bg-cc-bg-3 px-3 py-2 transition-colors hover:bg-cc-border">
-      {/* Line 1 — name + optional VIP tag */}
-      <div className="flex items-center gap-1.5 overflow-hidden">
-        <span
-          className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
-            isMe ? "font-bold text-cc-t1" : "font-medium text-cc-t1"
-          }`}
-        >
-          {player.display_name}
-        </span>
-        {hasTag && (
-          <>
+    <div className={hasStreak ? "streak-glow-wrapper" : undefined}>
+      <div
+        className={[
+          "streak-row w-full clip-cut-tr relative overflow-hidden transition-colors",
+          hasStreak ? "streak-hot-border" : "bg-cc-bg-3 hover:bg-cc-border",
+        ].join(" ")}
+        style={hasStreak ? { background: "oklch(0.72 0.22 38 / 0.22)" } : undefined}
+      >
+        {/* Line 1 — name + VIP tag + streak indicator */}
+        <div className="relative z-[1] flex items-center justify-between gap-2 px-3 pt-2 pb-1 overflow-hidden">
+          <div className="flex items-center gap-1.5 overflow-hidden">
             <span
-              className="shrink-0 text-[11px] leading-none text-cc-t3 select-none"
-              aria-hidden="true"
+              className={`shrink min-w-0 truncate font-command text-[12px] leading-none ${
+                isMe ? "font-bold text-cc-t1" : "font-medium text-cc-t1"
+              }`}
             >
-              |
+              {player.display_name}
             </span>
-            <span className="shrink-0 leading-none">
-              <VipTag tag={player.vip_tag!} theme={player.vip_theme!} />
+            {hasTag && (
+              <>
+                <span
+                  className="shrink-0 text-[11px] leading-none text-cc-t3 select-none"
+                  aria-hidden="true"
+                >
+                  |
+                </span>
+                <span className="shrink-0 leading-none">
+                  <VipTag tag={player.vip_tag!} theme={player.vip_theme!} />
+                </span>
+              </>
+            )}
+          </div>
+          {hasStreak && (
+            <span
+              className="shrink-0 flex items-center gap-1.5"
+              aria-label={`Win streak: ${winStreak}`}
+            >
+              <span className="flame-icon inline-flex items-center">
+                <Flame className="h-4 w-4" />
+              </span>
+              <span
+                className="streak-label font-command text-[9px] uppercase"
+                style={{ letterSpacing: "0.18em" }}
+              >
+                Win Streak
+              </span>
+              <span className="streak-count font-command text-[13px]">×{winStreak}</span>
             </span>
-          </>
-        )}
-      </div>
-      {/* Line 2 — skill level (colored text, no dot) */}
-      <div className="mt-1">
-        <SkillLevelDark level={player.skill_level} />
+          )}
+        </div>
+        {/* Line 2 — skill level */}
+        <div className="relative z-[1] px-3 pb-2 mt-1">
+          <SkillLevelDark level={player.skill_level} />
+        </div>
       </div>
     </div>
   );

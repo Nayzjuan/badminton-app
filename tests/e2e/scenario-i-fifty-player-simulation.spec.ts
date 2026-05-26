@@ -20,7 +20,7 @@
 // Test groups
 // ───────────
 // Group 1  [I-1]  Player registration (happy path + negatives)
-// Group 2  [I-2]  PIN reconnect (happy path + negatives)
+// Group 2  [I-2]  PIN reconnect via RETURNING tab (happy path + negatives)
 // Group 3  [I-3]  Auto-matchmaking with 50 players
 // Group 4  [I-4]  Manual match lifecycle (call / score / cancel / clear)
 // Group 5  [I-5]  Court management (add / close / reopen / remove)
@@ -612,38 +612,27 @@ test.describe("Group 2 — PIN Reconnect", () => {
     try {
       await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
 
-      // Open the reconnect modal
-      const reconnectTrigger = page.getByRole("button", {
-        name: /reconnect|already have a pin/i,
-      });
-      await expect(reconnectTrigger).toBeVisible({ timeout: 5_000 });
-      await reconnectTrigger.click();
+      // Switch to the RETURNING tab — the inline reconnect form mounts in place.
+      const returningTab = page.getByRole("tab", { name: /returning/i });
+      await expect(returningTab).toBeVisible({ timeout: 5_000 });
+      await returningTab.click();
 
       // Fill reconnect form with the no-underscore tester name
       await page.locator("#reconnect_name").fill(reconName);
       const pinInput = page.locator("#reconnect_pin");
       await pinInput.fill(reconPin);
 
-      // Submit the reconnect form
-      const reconnectSubmit = page.getByRole("button", { name: /reconnect|confirm/i }).last();
+      // Submit the inline reconnect form
+      const reconnectSubmit = page.getByRole("button", { name: /^reconnect$/i });
       await reconnectSubmit.click();
 
       // The reconnect flow is complex (signOut → signInAnonymously →
       // migrate_player_identity RPC → deleteUser → router.push), and in the
-      // deployed test env the post-reconnect navigation can land at /play,
-      // /play/{sessionId}, or briefly oscillate through redirects.
-      // Rather than asserting an exact URL — which is environment-dependent
-      // — we wait for ANY indication the reconnect succeeded:
-      //   • the modal closes (success calls onClose), OR
-      //   • the URL leaves the home/join page (any /play* path), OR
-      //   • a Supabase auth cookie was written to the context.
-      // Any one of these is a strong signal that the action did its work.
-      await page.waitForFunction(
-        () => {
-          const dialogOpen = !!document.querySelector('[role="dialog"]');
-          const onPlay = window.location.pathname.startsWith("/play");
-          return !dialogOpen || onPlay;
-        },
+      // deployed test env the post-reconnect navigation can land at /play
+      // or /play/{sessionId}.  Wait for the URL to leave the join page —
+      // any /play/* path that is not the join entry point signals success.
+      await page.waitForURL(
+        (url) => url.pathname.startsWith("/play") && !url.pathname.includes("join"),
         { timeout: 20_000 }
       );
 
@@ -678,18 +667,17 @@ test.describe("Group 2 — PIN Reconnect", () => {
     try {
       await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
 
-      const reconnectTrigger = page.getByRole("button", {
-        name: /reconnect|already have a pin/i,
-      });
-      await expect(reconnectTrigger).toBeVisible({ timeout: 5_000 });
-      await reconnectTrigger.click();
+      // Switch to the RETURNING tab — inline reconnect form mounts.
+      const returningTab = page.getByRole("tab", { name: /returning/i });
+      await expect(returningTab).toBeVisible({ timeout: 5_000 });
+      await returningTab.click();
 
       await page.locator("#reconnect_name").fill("E2E_Frank");
       // The reconnect PIN input has id="reconnect_pin" and type="tel"
       const pinInput = page.locator("#reconnect_pin");
       await pinInput.fill("0000"); // incorrect PIN
 
-      const reconnectSubmit = page.getByRole("button", { name: /reconnect|confirm/i }).last();
+      const reconnectSubmit = page.getByRole("button", { name: /^reconnect$/i });
       await reconnectSubmit.click();
 
       // Error must appear — stay on the page and show failure
@@ -710,18 +698,17 @@ test.describe("Group 2 — PIN Reconnect", () => {
     try {
       await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
 
-      const reconnectTrigger = page.getByRole("button", {
-        name: /reconnect|already have a pin/i,
-      });
-      await expect(reconnectTrigger).toBeVisible({ timeout: 5_000 });
-      await reconnectTrigger.click();
+      // Switch to the RETURNING tab — inline reconnect form mounts.
+      const returningTab = page.getByRole("tab", { name: /returning/i });
+      await expect(returningTab).toBeVisible({ timeout: 5_000 });
+      await returningTab.click();
 
       await page.locator("#reconnect_name").fill("E2E_DoesNotExist_ZZZZ");
       // The reconnect PIN input has id="reconnect_pin" and type="tel"
       const pinInput = page.locator("#reconnect_pin");
       await pinInput.fill("1234");
 
-      const reconnectSubmit = page.getByRole("button", { name: /reconnect|confirm/i }).last();
+      const reconnectSubmit = page.getByRole("button", { name: /^reconnect$/i });
       await reconnectSubmit.click();
 
       // Should not navigate away

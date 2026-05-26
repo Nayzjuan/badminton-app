@@ -5,6 +5,68 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-26 — Win streak indicator + HSTS)
+
+### Win Streak Indicator on Courts + On-Deck (2026-05-26) — COMPLETE ✅
+
+Animated win streak indicator on `PlayerRowDark` (active courts) and `PlayerRowLight` (on-deck panel) for players with 3+ consecutive wins in the current session.
+
+**Data pipeline:**
+- `useEnrichedMatches` — Phase 3b fetches `get_player_streaks` RPC after profiles; non-fatal (streakMap defaults to empty on failure)
+- `EnrichedMatch.players[].win_streak: number` — added to type; defaults to 0
+- `sortable-card.tsx` + `court-card.tsx` — pass `win_streak: p.win_streak ?? 0` through `splitPlayers`
+- `RosterPlayer.win_streak?: number` — optional field, defaulted to 0 at row level
+
+**Visual treatment:**
+- Hot orange `oklch(0.72 0.22 38)` — distinct from system amber (avoids warning/timer semantic conflict)
+- `streak-glow-wrapper` wrapper div → `filter:drop-shadow` traces clip-cut polygon shape
+- `streak-hot-border` combines `streak-border-pulse` (infinite) + `streak-ignite` (one-shot) in one `animation` shorthand to avoid CSS cascade clobbering
+- `@property --streak-glow` animates border opacity (normally un-animatable)
+- `flame-beat` animation: scale 1→1.2, ±4° rotation, brightness flicker
+- `🔥 WIN STREAK ×N` inline; container query hides "Win Streak" label on columns ≤255px
+- `isSelected` (swap-picking) suppresses streak — selection takes visual priority
+- Dark mode: `.dark .streak-label` / `.dark .streak-count` with text-shadow glow
+- `prefers-reduced-motion`: static amber border only
+
+**Files changed:**
+- `src/app/globals.css` — all keyframes + CSS classes
+- `src/hooks/use-enriched-matches.ts` — Phase 3b + `win_streak` on EnrichedMatch
+- `src/components/organizer/match-roster.tsx` — both `PlayerRowDark` and `PlayerRowLight`
+- `src/components/organizer/sortable-card.tsx` — win_streak passthrough
+- `src/components/organizer/court-card.tsx` — win_streak passthrough
+- `next.config.ts` — HSTS header (`max-age=31536000; includeSubDomains`, no preload)
+- `src/app/sandbox/streak-preview/` — design exploration sandbox (not production)
+
+**Known gotcha:** `streak-ignite` no longer exists as a standalone CSS class — it is combined inside `streak-hot-border`'s animation shorthand. Do not re-add `.streak-ignite` as a standalone class; it would cascade-clobber the border-pulse.
+
+**Commit:** `45560ac`
+
+---
+
+## SESSION STATE (Last Updated: 2026-05-26 — Login page redesign)
+
+### Login Page — NEW PLAYER / RETURNING Toggle (2026-05-26) — COMPLETE
+
+Replaced the buried "Already have a PIN? Reconnect" underline link with a **segmented toggle at the top of the login form**, giving equal visual hierarchy to both entry paths.
+
+**Files changed:**
+- `src/components/login-form.tsx` — full rewrite of component:
+  - `mode: "new" | "returning"` state drives which panel renders
+  - NEW PLAYER tab: existing form (name + skill level + PIN → `signInAnonymously`)
+  - RETURNING tab: inline reconnect form (name + PIN → `reconnectPlayer`) — replaces the old `ReconnectModal`
+  - `handleTabKeyDown` — ARIA APG roving tabindex pattern: `ArrowLeft/Right` moves focus + switches mode
+  - Tabs have `tabIndex={mode === X ? 0 : -1}` — correct roving focus behaviour
+  - Both error states (`newError`, `reconnectError`) have independent 8 s auto-dismiss and are cleared on tab switch
+  - `maxLength={30}` on both name inputs (matches Zod schema)
+  - `ErrorBanner` extracted as shared component (used by both panels)
+  - `Spinner` still imported from `./reconnect-modal` (that file unchanged)
+  - `ReconnectModal` no longer rendered from `LoginForm` (it still exists in the file, may be pruned separately)
+- `src/app/page.tsx` — no changes (form is self-contained)
+
+**Validation:** `tsc --noEmit` clean, ESLint 0 warnings. Code review: passed (Minor issues addressed before commit).
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-23 — Organizer button UX fixes)
 
 ### Organizer Button Loading/Disabled States (2026-05-23) — COMPLETE

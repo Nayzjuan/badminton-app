@@ -9,8 +9,8 @@
 //   [K-2] Organizer bot can sign in and land on the organizer
 //         dashboard for the sandbox session.
 //
-//   [K-3] The "Reconnect" link on the login page opens the
-//         Reconnect modal which contains a PIN input field.
+//   [K-3] The RETURNING tab on the login page reveals an inline
+//         reconnect form (name + PIN) — no modal is opened.
 //
 // Notes:
 //   - Tests that need an authenticated browser context use the
@@ -115,31 +115,43 @@ test.describe("Auth — [K-2] Organizer bot dashboard access", () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// [K-3] Player reconnect modal appears on login page
+// [K-3] RETURNING tab reveals inline reconnect form (no modal)
 // ─────────────────────────────────────────────────────────────
-test.describe("Auth — [K-3] Reconnect modal has PIN input", () => {
-  test("player reconnect modal appears on login page", async ({ browser }) => {
-    // Unauthenticated context — the login form and Reconnect link are present.
+// The old UX buried reconnect as a muted underline link below the
+// full new-player form. The new UX surfaces a NEW PLAYER / RETURNING
+// segmented toggle at the very top — equal visual hierarchy, zero
+// scrolling required for returning players.
+// ─────────────────────────────────────────────────────────────
+test.describe("Auth — [K-3] Returning player inline reconnect form", () => {
+  test("RETURNING tab reveals inline reconnect form with PIN input — no modal", async ({
+    browser,
+  }) => {
+    // Unauthenticated context — login form with both tabs present.
     const context = await browser.newContext();
     const page = await context.newPage();
 
     try {
       await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
 
-      // The "Already have a PIN? Reconnect" button must be visible.
-      const reconnectBtn = page.getByRole("button", { name: /reconnect/i });
-      await expect(reconnectBtn).toBeVisible({ timeout: 15_000 });
+      // The RETURNING tab must be visible at the top of the form
+      // without any scrolling — this is the core UX fix.
+      const returningTab = page.getByRole("tab", { name: /returning/i });
+      await expect(returningTab).toBeVisible({ timeout: 15_000 });
 
-      // Click it to open the modal.
-      await reconnectBtn.click();
+      // Click the tab — the inline reconnect form replaces the new-player form.
+      await returningTab.click();
 
-      // The Reconnect modal is a Radix Dialog — it renders a dialog role element.
-      const modal = page.getByRole("dialog");
-      await expect(modal).toBeVisible({ timeout: 8_000 });
+      // No Radix Dialog / modal should open — the form is rendered inline.
+      await expect(page.getByRole("dialog")).not.toBeAttached();
 
-      // The modal must contain a PIN input field.
-      // ReconnectModal renders a PIN label / input so players can re-identify.
-      await expect(modal.getByLabel(/pin/i)).toBeVisible({ timeout: 5_000 });
+      // The inline form must expose name + PIN inputs directly in the page.
+      await expect(page.locator("#reconnect_name")).toBeVisible({ timeout: 5_000 });
+      await expect(page.locator("#reconnect_pin")).toBeVisible({ timeout: 5_000 });
+
+      // The RECONNECT submit button must be visible (not hidden inside a modal).
+      await expect(page.getByRole("button", { name: /^reconnect$/i })).toBeVisible({
+        timeout: 5_000,
+      });
     } finally {
       await context.close();
     }

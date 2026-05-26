@@ -15,6 +15,13 @@
         "cd /Users/miggy-onb/Downloads/badminton-app/marketing-site && npx astro dev --port 4322"
       ],
       "port": 4322
+    },
+    {
+      "name": "nextjs-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3001,
+      "autoPort": true
     }
   ]
 }
