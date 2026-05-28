@@ -5,6 +5,22 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-05-28 — Dark mode default)
+
+### Dark Mode Default (2026-05-28) — COMPLETE ✅
+
+Changed `defaultTheme` from `"light"` to `"dark"` in `src/app/layout.tsx` (`ThemeProvider`).
+
+- Affects first-time visitors only (no `localStorage` preference yet)
+- Existing users retain their saved preference
+- `enableSystem={false}` and `suppressHydrationWarning` were already in place — no flash issue
+- Theme toggle remains available in player + organizer dashboards
+- Login page dark styles were already implemented via `dark:` Tailwind classes
+
+**File changed:** `src/app/layout.tsx:81`
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-26 — Win streak indicator + HSTS)
 
 ### Win Streak Indicator on Courts + On-Deck (2026-05-26) — COMPLETE ✅
