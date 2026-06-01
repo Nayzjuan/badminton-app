@@ -139,8 +139,10 @@ export async function callNextMatch(
   // 1. Try to promote an existing on-deck match.
   let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
   if (promoted.success) {
-    // Refill the on-deck slot we just consumed.
-    await runEngineInternal(service, sessionId);
+    // Refill the on-deck slot we just consumed — only if toggle is ON.
+    // runEngineForSession checks is_auto_matchmaking_on before running,
+    // preventing draft generation when the organizer has paused auto-matchmaking.
+    await runEngineForSession(sessionId);
     return promoted;
   }
 

@@ -5,6 +5,20 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-01 — Toggle bypass bug fix)
+
+### Auto-matchmaking toggle bypass in callNextMatch (2026-06-01) — COMPLETE ✅
+
+**Bug:** `callNextMatch` called `runEngineInternal(service, sessionId)` directly at line 143 after a successful on-deck promotion, bypassing the `is_auto_matchmaking_on` toggle. Result: when organizer had toggle OFF but still had on-deck drafts to call, each "Call Next Match" click silently generated a new draft.
+
+**Fix:** Replaced `runEngineInternal(service, sessionId)` with `runEngineForSession(sessionId)` at line 143. `runEngineForSession` checks the toggle, has the in-flight concurrency guard (prevents double-run races), and satisfies auth requirements since `callNextMatch` already gates the organizer.
+
+**Not changed:** Step 3 of `callNextMatch` still calls `runEngineInternal(service, sessionId, true)` with `bypassGate=true` — that path is intentional (organizer demand, toggle confirmed ON at that point).
+
+**File changed:** `src/app/actions/matchmaking.ts:143`
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-28 — Dark mode default)
 
 ### Dark Mode Default (2026-05-28) — COMPLETE ✅
