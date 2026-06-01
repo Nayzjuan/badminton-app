@@ -5,6 +5,22 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-01 — Draft cap notice + cap saturation audit)
+
+### Draft Cap Blocked Notice (2026-06-01) — COMPLETE ✅
+
+Added `DraftCapNotice` to `on-deck-panel.tsx`: an amber alert that appears when auto-matchmaking is ON, ≥4 players are waiting, and all draft slots are full (draftCount ≥ dynamicCap). Explains to the organizer why the engine stopped generating — previously a silent failure.
+
+**Cap saturation UI** was already fully wired end-to-end (broadcast → realtime → hook → `CapSaturationNotice`). No fix needed there.
+
+**Files changed:**
+- `src/components/organizer/on-deck-panel.tsx` — `DraftCapNotice` component, `isAutoMatchmakingOn` + `waitingCount` props, `isDraftCapBlocked` derived state, renders before `CapSaturationNotice`
+- `src/components/organizer/organizer-dashboard.tsx` — passes `isAutoMatchmakingOn` and `waitingCount` to `OnDeckPanel`
+
+**Known edge case (minor, benign):** With exactly 4 waiting players + full draft cap, the notice shows even if the engine's soft gate (pool diversity, not draft cap) is the actual blocker. The advice ("review drafts") is still correct. `GATE_POOL_THRESHOLD = 4` means this only occurs at the boundary.
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-01 — Toggle bypass bug fix)
 
 ### Auto-matchmaking toggle bypass in callNextMatch (2026-06-01) — COMPLETE ✅

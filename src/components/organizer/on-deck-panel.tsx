@@ -48,7 +48,7 @@ import {
   rectSortingStrategy,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
-import { Clock, EyeOff } from "lucide-react";
+import { AlertCircle, Clock, EyeOff } from "lucide-react";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import type { SkillLevel } from "@/types/database";
@@ -57,7 +57,42 @@ import {
   DND_ACTIVATION_DISTANCE_PX,
   DND_TOUCH_DELAY_MS,
   DND_TOUCH_TOLERANCE_PX,
+  MAX_AUTO_DRAFTS,
+  MAX_AUTO_DRAFTS_LARGE,
+  MAX_AUTO_DRAFTS_XLARGE,
+  DRAFT_CAP_LARGE_THRESHOLD,
+  DRAFT_CAP_XLARGE_THRESHOLD,
+  PLAYERS_PER_MATCH,
 } from "@/lib/constants";
+
+// ── DraftCapNotice ────────────────────────────────────────────
+// Shown when auto-matchmaking is ON, there are enough waiting players,
+// and all draft slots are filled with unreviewed matches. Explains to
+// the organizer WHY the engine has stopped generating new drafts.
+// Returns null when the cap hasn't been reached — callers need no guard.
+
+function DraftCapNotice({ draftCount, cap }: { draftCount: number; cap: number }) {
+  if (draftCount < cap) return null;
+  return (
+    <div
+      role="alert"
+      aria-label="Draft cap reached — auto-generation paused"
+      className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 animate-in slide-in-from-top-1 fade-in duration-200"
+    >
+      <div className="flex items-start gap-2.5 px-4 py-3">
+        <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500 dark:text-amber-400" />
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+            Auto-generation paused
+          </p>
+          <p className="text-xs mt-0.5 leading-relaxed text-amber-700 dark:text-amber-400">
+            {draftCount}/{cap} draft slots filled — review the drafts above to unblock the queue.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── SwapContext ───────────────────────────────────────────────
 // Exported so OrganizerDashboard and SwapSheet can share the
@@ -109,6 +144,16 @@ interface OnDeckPanelProps {
   capSaturation?: CapSaturationPayload | null;
   /** Dismiss handler — clears the capSaturation notice from the hook state. */
   onDismissCapSaturation?: () => void;
+  /**
+   * Whether auto-matchmaking is currently ON. Used to show the draft-cap-blocked
+   * notice only when the organizer expects automatic generation.
+   */
+  isAutoMatchmakingOn?: boolean;
+  /**
+   * Number of players currently in waiting status. Used to compute the dynamic
+   * draft cap threshold so the notice appears at the right fill level.
+   */
+  waitingCount?: number;
 }
 
 // ── Main panel ────────────────────────────────────────────────
@@ -123,6 +168,8 @@ function OnDeckPanelInner({
   onPublishAllDrafts,
   capSaturation = null,
   onDismissCapSaturation,
+  isAutoMatchmakingOn,
+  waitingCount,
 }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
@@ -275,6 +322,19 @@ function OnDeckPanelInner({
   );
   const draftCount = draftMatches.length;
 
+  // Draft cap notice: visible when all draft slots are full, auto-matchmaking
+  // is ON, and there are enough players waiting — explains to the organizer
+  // why the engine has stopped generating new matches.
+  const waiting = waitingCount ?? 0;
+  const dynamicCap =
+    waiting >= DRAFT_CAP_XLARGE_THRESHOLD
+      ? MAX_AUTO_DRAFTS_XLARGE
+      : waiting >= DRAFT_CAP_LARGE_THRESHOLD
+        ? MAX_AUTO_DRAFTS_LARGE
+        : MAX_AUTO_DRAFTS;
+  const isDraftCapBlocked =
+    isAutoMatchmakingOn === true && waiting >= PLAYERS_PER_MATCH && draftCount >= dynamicCap;
+
   // Stable identity for SortableContext — recreated only when the match
   // set changes, not on every loading-state update inside the component.
   const sortableIds = useMemo(() => orderedMatches.map((m) => m.id), [orderedMatches]);
@@ -339,6 +399,8 @@ function OnDeckPanelInner({
 
   return (
     <div className="space-y-4">
+      {/* ── Draft cap notice ── shown when all draft slots are full and auto-gen is ON ── */}
+      {isDraftCapBlocked && <DraftCapNotice draftCount={draftCount} cap={dynamicCap} />}
       {/* ── Cap saturation notice ── shown when pair cap blocked a match ── */}
       <CapSaturationNotice capSaturation={capSaturation} onDismiss={onDismissCapSaturation} />
 

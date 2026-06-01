@@ -573,6 +573,8 @@ export function OrganizerDashboard({
                 onPublishAllDrafts={publishAllDrafts}
                 capSaturation={capSaturation}
                 onDismissCapSaturation={dismissCapSaturation}
+                isAutoMatchmakingOn={liveSession.is_auto_matchmaking_on}
+                waitingCount={queue.filter((q) => q.status === "waiting").length}
               />
 
               <ActiveCourts
