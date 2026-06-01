@@ -141,6 +141,9 @@ function buildMockClient(responses: TableResponses, queryLogs: QueryLog[]) {
       };
       return chain;
     },
+    // useEnrichedMatches calls supabase.rpc("get_player_streaks") for win-streak
+    // data. Return an empty array so all tests pass without streak data.
+    rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
   };
 }
 
@@ -458,6 +461,7 @@ describe("useEnrichedMatches — Unit Suite", () => {
     let callCount = 0;
 
     const racingClient = {
+      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
       from: (_table: string) => {
         const isFirstMatchCall = _table === "matches" && callCount++ === 0;
         const chain: Record<string, unknown> = {

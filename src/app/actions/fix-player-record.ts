@@ -34,6 +34,7 @@
 //      (OR already be a player in the target match for a team flip)
 // ============================================================
 
+import { after } from "next/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
@@ -194,17 +195,21 @@ export async function fixPlayerRecord(
     .maybeSingle();
 
   if (sessionRow && !sessionRow.is_active) {
-    const { error: wrappedErr } = await db.rpc("compute_session_wrapped", {
-      p_session_id: sessionId,
-    });
-    if (wrappedErr) {
-      // Non-fatal — the roster correction succeeded; Wrapped will be
-      // slightly stale until manually recomputed.
-      console.warn(
-        "[fixPlayerRecord] compute_session_wrapped failed after fix (non-fatal):",
-        wrappedErr.message
-      );
-    }
+    // Fire-and-forget via after() so the Fix Record action returns immediately
+    // rather than blocking on the Wrapped recompute. The RPC is idempotent —
+    // if it fails, Wrapped will be slightly stale until manually recomputed.
+    after(() =>
+      Promise.resolve(db.rpc("compute_session_wrapped", { p_session_id: sessionId }))
+        .then(({ error: wrappedErr }) => {
+          if (wrappedErr) {
+            console.warn(
+              "[fixPlayerRecord] compute_session_wrapped failed (non-fatal):",
+              wrappedErr.message
+            );
+          }
+        })
+        .catch((err) => console.error("[fixPlayerRecord] compute_session_wrapped threw:", err))
+    );
   }
 
   return { success: true, message: "Player record corrected." };

@@ -798,11 +798,17 @@ describe("callNextMatch", () => {
     expect(result.matchId).toBe("match-1");
   });
 
-  it("toggle bypass: after successful promotion, engine runs WITHOUT checking the toggle", async () => {
-    // If callNextMatch called runEngineForSession it would query "sessions" (toggle check).
-    // If it calls runEngineInternal directly (toggle bypass), the first post-promotion
-    // table in serviceMock is "courts" — not "sessions".
-    // After courts, Promise.all([v_queue, matches]): waitingCount=0, draftCount=3 → slotsAvailable=0.
+  it("toggle respected: after successful promotion, engine refills via runEngineForSession (checks toggle)", async () => {
+    // Fix ded7697: callNextMatch previously called runEngineInternal directly after promotion,
+    // bypassing the is_auto_matchmaking_on toggle. It now calls runEngineForSession, which
+    // checks the toggle first. The first post-promotion service query is therefore "sessions"
+    // (toggle read), NOT "courts" as it was before the fix.
+    //
+    // Query order after promotion ([0]-[5]):
+    //   [6] sessions → runEngineForSession toggle check → ON
+    //   [7] courts   → runEngineInternal proceeds
+    //   [8] v_queue  → waitingCount (Promise.all[0])
+    //   [9] matches  → draftCount=3 → slotsAvailable=0 (Promise.all[1])
     const mock = makeMockClient([
       // user client → no from() calls when promotion succeeds
     ]);
@@ -813,22 +819,26 @@ describe("callNextMatch", () => {
       { data: null, error: null }, // [3] courts update
       { data: [], error: null }, // [4] match_players → empty
       { data: [], error: null }, // [5] profiles → empty
-      { data: [{ id: "c1" }], error: null }, // [6] ← first post-promotion = courts (not sessions)
-      { data: [], error: null }, // [7] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 3, data: null, error: null }, // [8] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [6] sessions → toggle ON
+      { data: [{ id: "c1" }], error: null }, // [7] courts → engine proceeds
+      { data: [], error: null }, // [8] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 3, data: null, error: null }, // [9] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     await callNextMatch(SESSION_ID, COURT_ID);
 
-    // serviceMock.queriedTables[6] must be "courts", NOT "sessions".
-    // "sessions" at this position would indicate runEngineForSession (toggle path) was taken.
-    expect(serviceMock.queriedTables[6]).toBe("courts");
-    // Post-promotion (after auth gate [0] + 5 promotion calls [1-5]): courts + v_queue + matches only.
+    // [6] must be "sessions" — confirms runEngineForSession (not runEngineInternal) was called.
+    expect(serviceMock.queriedTables[6]).toBe("sessions");
+    // Post-promotion sequence: sessions (toggle) → courts → v_queue → matches.
     const postPromotionTables = serviceMock.queriedTables.slice(6);
-    expect(postPromotionTables).toEqual(["courts", "v_queue_with_wait_time", "matches"]);
-    expect(postPromotionTables).not.toContain("sessions");
+    expect(postPromotionTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+    ]);
   });
 
   it("returns 'paused' message when no on-deck match exists and toggle is OFF", async () => {

@@ -5,6 +5,26 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-01 — Code review findings A–K fixed)
+
+### Code review findings fixed (2026-06-01) — COMPLETE ✅
+
+**A — `vi.mock("next/server")` in queue-actions.test.ts:** after() pass-through. 5 → 11 passing.
+**B — `.rpc` mock in use-enriched-matches.test.ts:** Added to buildMockClient() + racingClient. 5 → 10 passing.
+**D — hasNewDraft timer overlap:** newDraftTimerRef stores active timer; cleared before each new one; cleanup function added to useEffect.
+**F — after() swallows errors in queue.ts:** All 3 sites now `.catch(err => console.error(...))`.
+**H — fixPlayerRecord blocks on compute_session_wrapped:** Moved to `after()` + `Promise.resolve()` to get Promise from PromiseLike.
+**J — Hardcoded oklch in match-roster.tsx:** Tokenised as `--cc-streak` / `--cc-streak-dim` (light: 0.64, dark: 0.72). Light theme was using dark value — also a correctness fix.
+**K — animate-ping no reduced-motion guard:** Added `motion-reduce:hidden` to both ping spans.
+**Matchmaking engine test:** "toggle bypass" test rewritten to assert correct post-fix behaviour (sessions queried at [6]).
+
+**Skipped (per plan):**
+- G (win_streak unconditional) — defer, no perf complaint
+- I (@property Firefox) — acceptable progressive enhancement
+- L (DOM queries in login) — low-risk, future cleanup pass
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-01 — Toggle feedback + generation notification)
 
 ### Toggle feedback + match generation notification (2026-06-01) — COMPLETE ✅

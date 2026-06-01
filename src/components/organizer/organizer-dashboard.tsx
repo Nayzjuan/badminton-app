@@ -146,6 +146,9 @@ export function OrganizerDashboard({
   // never triggers a spurious notification.
   const prevDraftCountRef = useRef(draftMatches.length);
   const [hasNewDraft, setHasNewDraft] = useState(false);
+  // Holds the active badge-reset timer so rapid 0→1→0→1 transitions
+  // always cancel the previous timer before starting a new one.
+  const newDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const current = draftMatches.length;
@@ -153,14 +156,27 @@ export function OrganizerDashboard({
     prevDraftCountRef.current = current;
 
     if (prev === 0 && current > 0) {
+      // Cancel any in-flight reset timer before starting a fresh one.
+      if (newDraftTimerRef.current !== null) {
+        clearTimeout(newDraftTimerRef.current);
+      }
       setHasNewDraft(true);
       toast("Draft ready", {
         description: `${current} new match draft${current !== 1 ? "s" : ""} — review and publish to put on deck.`,
         duration: 4000,
       });
-      const timer = setTimeout(() => setHasNewDraft(false), 3000);
-      return () => clearTimeout(timer);
+      newDraftTimerRef.current = setTimeout(() => {
+        setHasNewDraft(false);
+        newDraftTimerRef.current = null;
+      }, 3000);
     }
+
+    // Always clean up the timer on unmount or before the next effect run.
+    return () => {
+      if (newDraftTimerRef.current !== null) {
+        clearTimeout(newDraftTimerRef.current);
+      }
+    };
   }, [draftMatches.length]);
 
   if (loading) {
@@ -231,7 +247,7 @@ export function OrganizerDashboard({
                   ) : (
                     <span className="relative flex h-1.5 w-1.5 shrink-0">
                       {autoMatchmaking && (
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
+                        <span className="animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
                       )}
                       <span
                         className={`relative inline-flex h-1.5 w-1.5 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
@@ -470,7 +486,7 @@ export function OrganizerDashboard({
                   ) : (
                     <span className="relative flex h-2 w-2 shrink-0">
                       {autoMatchmaking && (
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
+                        <span className="animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
                       )}
                       <span
                         className={`relative inline-flex h-2 w-2 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}

@@ -275,7 +275,11 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   // Fire-and-forget: schedule the engine after the response is sent so the
   // client gets confirmation immediately rather than waiting for matchmaking.
-  after(() => runEngineForSession(sessionId));
+  after(() =>
+    runEngineForSession(sessionId).catch((err) =>
+      console.error("[engine] after() unhandled failure:", err)
+    )
+  );
   return { success: true };
 }
 
@@ -461,7 +465,11 @@ async function joinQueueFallback(
       return { success: false, error: updateError.message };
     }
 
-    after(() => runEngineForSession(sessionId));
+    after(() =>
+      runEngineForSession(sessionId).catch((err) =>
+        console.error("[engine] after() unhandled failure:", err)
+      )
+    );
     return { success: true };
   }
 
@@ -478,6 +486,10 @@ async function joinQueueFallback(
     return { success: false, error: insertError.message };
   }
 
-  after(() => runEngineForSession(sessionId));
+  after(() =>
+    runEngineForSession(sessionId).catch((err) =>
+      console.error("[engine] after() unhandled failure:", err)
+    )
+  );
   return { success: true };
 }

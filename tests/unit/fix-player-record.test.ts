@@ -33,6 +33,10 @@ vi.mock("@/utils/supabase/server", () => ({
 vi.mock("@/utils/supabase/service", () => ({
   createServiceClient: vi.fn(),
 }));
+// compute_session_wrapped is now scheduled via after() — pass-through in tests.
+vi.mock("next/server", () => ({
+  after: vi.fn((cb: () => unknown) => cb()),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
