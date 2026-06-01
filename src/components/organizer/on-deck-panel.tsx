@@ -179,6 +179,12 @@ interface OnDeckPanelProps {
    * draft cap threshold so the notice appears at the right fill level.
    */
   waitingCount?: number;
+  /**
+   * True for ~3 s after unpublished drafts first appear from zero. Drives a
+   * transient "NEW" badge on the Publish All banner so the organizer knows a
+   * fresh draft was just generated.
+   */
+  hasNewDraft?: boolean;
 }
 
 // ── Main panel ────────────────────────────────────────────────
@@ -195,6 +201,7 @@ function OnDeckPanelInner({
   onDismissCapSaturation,
   isAutoMatchmakingOn,
   waitingCount,
+  hasNewDraft,
 }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
@@ -453,6 +460,17 @@ function OnDeckPanelInner({
                 <span className="font-bold">{draftCount}</span> on-deck match
                 {draftCount !== 1 ? "es" : ""} waiting for approval
               </span>
+              {hasNewDraft && (
+                <span
+                  aria-label="New draft just generated"
+                  className="inline-flex items-center gap-1 font-command text-[8.5px] uppercase tracking-[0.1em]
+                             text-cc-accent border border-cc-accent/40 bg-cc-accent-dim px-1.5 py-0.5
+                             animate-in fade-in slide-in-from-left-1 duration-200"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-cc-accent animate-ping inline-block" />
+                  New
+                </span>
+              )}
             </div>
             <button
               onClick={handlePublishAll}

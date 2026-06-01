@@ -5,6 +5,33 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-01 — Toggle feedback + generation notification)
+
+### Toggle feedback + match generation notification (2026-06-01) — COMPLETE ✅
+
+**Toggle loading state (`organizer-dashboard.tsx`):**
+- While `togglingAuto`: static dot → rotating arc SVG spinner (`animate-spin`), label → "Saving…"/"…"
+- When auto is ON (not saving): dot gains `animate-ping` pulse wrapper (live engine signal)
+- Applied to both desktop `clip-cut-sm` toggle and mobile `rounded-full` pill
+
+**Toggle success toast (`use-organizer-dashboard.ts`):**
+- `toast.success("Engine running", { description: "...", duration: 4000 })` when toggled ON
+- `toast("Engine paused", { description: "...", duration: 4000 })` when toggled OFF
+- Error toast already existed — unchanged
+
+**New draft notification (`organizer-dashboard.tsx` + `on-deck-panel.tsx`):**
+- `prevDraftCountRef` initialized with `draftMatches.length` at mount (no spurious page-load toast)
+- `useEffect` on `draftMatches.length` fires toast + sets `hasNewDraft=true` only on 0→≥1 transition
+- `hasNewDraft` resets after 3s via `setTimeout`
+- Passed to `OnDeckPanel` → pulsing "● NEW" badge on Publish All banner (fade-in entrance, abrupt exit at 3s — cosmetic only)
+- Toast fires exactly once even if engine generates 3 drafts sequentially (spam-proof)
+
+**Known minor cosmetic issues (non-blocking):**
+- Toast description says "1 new draft" even if engine generates 2-3 in sequence (live banner count is accurate)
+- "NEW" badge disappears abruptly at 3s (no exit animation — would need framer-motion)
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-01 — Notice design system fixes)
 
 ### DraftCapNotice + CapSaturationNotice design system alignment (2026-06-01) — COMPLETE ✅

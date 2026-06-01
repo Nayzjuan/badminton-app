@@ -213,6 +213,18 @@ export function useOrganizerDashboard({
       // updates liveAutoMatchmaking. This prevents the toggle from flickering
       // while waiting for the realtime broadcast to arrive.
       setPendingAuto(result.isOn);
+      // Confirm the new state to the organizer — they need to know the server agreed.
+      if (result.isOn) {
+        toast.success("Engine running", {
+          description: "Auto-matchmaking is ON — drafts will appear as courts open.",
+          duration: 4000,
+        });
+      } else {
+        toast("Engine paused", {
+          description: "Auto-matchmaking is OFF — create matches manually.",
+          duration: 4000,
+        });
+      }
     } else {
       // Revert to liveAutoMatchmaking value on failure.
       setPendingAuto(null);

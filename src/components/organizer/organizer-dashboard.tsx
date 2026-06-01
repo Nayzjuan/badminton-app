@@ -4,7 +4,9 @@
 // Organizer Dashboard — Main shell with tab navigation
 // ============================================================
 
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { useOrganizerData } from "@/hooks/use-organizer-data";
 import { useSwapState } from "@/hooks/use-swap-state";
 import { useOrganizerDashboard } from "@/hooks/use-organizer-dashboard";
@@ -136,6 +138,31 @@ export function OrganizerDashboard({
     handleCancelSwap,
   });
 
+  // ── New-draft notification ────────────────────────────────
+  // Show a toast + transient badge the first time unpublished drafts
+  // appear after the queue was empty. Fires only on 0 → ≥1 transitions
+  // so the organizer isn't spammed when the engine generates multiple slots.
+  // Initialised with the current count so a page-load with existing drafts
+  // never triggers a spurious notification.
+  const prevDraftCountRef = useRef(draftMatches.length);
+  const [hasNewDraft, setHasNewDraft] = useState(false);
+
+  useEffect(() => {
+    const current = draftMatches.length;
+    const prev = prevDraftCountRef.current;
+    prevDraftCountRef.current = current;
+
+    if (prev === 0 && current > 0) {
+      setHasNewDraft(true);
+      toast("Draft ready", {
+        description: `${current} new match draft${current !== 1 ? "s" : ""} — review and publish to put on deck.`,
+        duration: 4000,
+      });
+      const timer = setTimeout(() => setHasNewDraft(false), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [draftMatches.length]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -186,11 +213,32 @@ export function OrganizerDashboard({
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full shrink-0
-                                    ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
-                  />
-                  {autoMatchmaking ? "Auto" : "Off"}
+                  {togglingAuto ? (
+                    <span className="h-2 w-2 shrink-0 animate-spin">
+                      <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                        <circle
+                          cx="5"
+                          cy="5"
+                          r="3.5"
+                          stroke="currentColor"
+                          strokeWidth="1.4"
+                          strokeDasharray="14 8"
+                          strokeLinecap="round"
+                          opacity=".9"
+                        />
+                      </svg>
+                    </span>
+                  ) : (
+                    <span className="relative flex h-1.5 w-1.5 shrink-0">
+                      {autoMatchmaking && (
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
+                      )}
+                      <span
+                        className={`relative inline-flex h-1.5 w-1.5 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
+                      />
+                    </span>
+                  )}
+                  {togglingAuto ? "…" : autoMatchmaking ? "Auto" : "Off"}
                 </button>
 
                 {/* More-options dropdown */}
@@ -403,10 +451,33 @@ export function OrganizerDashboard({
                               disabled:opacity-50 disabled:cursor-not-allowed`}
                   title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
                 >
-                  <span
-                    className={`h-2 w-2 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
-                  />
-                  {autoMatchmaking ? "Auto On" : "Auto Off"}
+                  {/* Dot: spins as arc while saving, pings when ON, static when OFF */}
+                  {togglingAuto ? (
+                    <span className="h-2.5 w-2.5 shrink-0 animate-spin">
+                      <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                        <circle
+                          cx="5"
+                          cy="5"
+                          r="3.5"
+                          stroke="currentColor"
+                          strokeWidth="1.2"
+                          strokeDasharray="14 8"
+                          strokeLinecap="round"
+                          opacity=".9"
+                        />
+                      </svg>
+                    </span>
+                  ) : (
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      {autoMatchmaking && (
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
+                      )}
+                      <span
+                        className={`relative inline-flex h-2 w-2 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
+                      />
+                    </span>
+                  )}
+                  {togglingAuto ? "Saving…" : autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
 
                 <ThemeToggle className="text-cc-t2 hover:text-cc-t1 hover:bg-cc-bg-3" />
@@ -575,6 +646,7 @@ export function OrganizerDashboard({
                 onDismissCapSaturation={dismissCapSaturation}
                 isAutoMatchmakingOn={liveSession.is_auto_matchmaking_on}
                 waitingCount={queue.filter((q) => q.status === "waiting").length}
+                hasNewDraft={hasNewDraft}
               />
 
               <ActiveCourts
