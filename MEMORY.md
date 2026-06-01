@@ -5,6 +5,32 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-01 — Notice design system fixes)
+
+### DraftCapNotice + CapSaturationNotice design system alignment (2026-06-01) — COMPLETE ✅
+
+Both notice components in the on-deck panel were rebuilt to match the organizer command-center design system.
+
+**DraftCapNotice (`on-deck-panel.tsx`):**
+- `cc-amber`/`cc-amber-dim` tokens (was raw `amber-*` Tailwind classes)
+- `clip-cut-sm` polygon geometry (was `rounded-xl`)
+- `font-command text-[9.5px] uppercase tracking-[0.13em]` heading (was `text-sm font-semibold`)
+- Copy fixed: "drafts below" not "above" (spatially correct)
+- Inline "Publish All" button (`onPublishAll` + `isPublishing` props → `handlePublishAll`)
+- Standalone Publish All banner suppressed when `isDraftCapBlocked` (no double button)
+- Render order: CapSaturationNotice (error, urgent) first → DraftCapNotice (status, informational) second
+- `AlertCircle` → `PauseCircle` icon
+
+**CapSaturationNotice (`sortable-card.tsx`):**
+- `cc-red`/`cc-red-dim` (redZone) and `cc-amber`/`cc-amber-dim` (general) tokens
+- `clip-cut-sm` polygon geometry (was `rounded-xl`)
+- `font-command text-[9.5px] uppercase tracking-[0.13em]` heading
+- Dismiss button: `text-cc-t3 hover:text-cc-t2` (removed raw red/orange hover backgrounds)
+
+**Files changed:** `on-deck-panel.tsx`, `sortable-card.tsx`
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-01 — Draft cap notice + cap saturation audit)
 
 ### Draft Cap Blocked Notice (2026-06-01) — COMPLETE ✅

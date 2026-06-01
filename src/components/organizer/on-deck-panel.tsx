@@ -48,7 +48,7 @@ import {
   rectSortingStrategy,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
-import { AlertCircle, Clock, EyeOff } from "lucide-react";
+import { Clock, EyeOff, PauseCircle } from "lucide-react";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import type { SkillLevel } from "@/types/database";
@@ -71,24 +71,49 @@ import {
 // the organizer WHY the engine has stopped generating new drafts.
 // Returns null when the cap hasn't been reached — callers need no guard.
 
-function DraftCapNotice({ draftCount, cap }: { draftCount: number; cap: number }) {
+function DraftCapNotice({
+  draftCount,
+  cap,
+  onPublishAll,
+  isPublishing,
+}: {
+  draftCount: number;
+  cap: number;
+  /** Called when the inline Publish All button is clicked. */
+  onPublishAll?: () => void;
+  isPublishing?: boolean;
+}) {
   if (draftCount < cap) return null;
   return (
     <div
       role="alert"
       aria-label="Draft cap reached — auto-generation paused"
-      className="rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 animate-in slide-in-from-top-1 fade-in duration-200"
+      className="clip-cut-sm border border-cc-amber/35 bg-cc-amber-dim animate-in slide-in-from-top-1 fade-in duration-200"
     >
-      <div className="flex items-start gap-2.5 px-4 py-3">
-        <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500 dark:text-amber-400" />
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-amber-900 dark:text-amber-300">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <PauseCircle className="h-4 w-4 shrink-0 text-cc-amber" />
+        <div className="min-w-0 flex-1">
+          <p className="font-command text-[9.5px] uppercase tracking-[0.13em] text-cc-amber">
             Auto-generation paused
           </p>
-          <p className="text-xs mt-0.5 leading-relaxed text-amber-700 dark:text-amber-400">
-            {draftCount}/{cap} draft slots filled — review the drafts above to unblock the queue.
+          <p className="text-[11.5px] mt-0.5 leading-relaxed text-cc-t2">
+            {draftCount}/{cap} draft slots filled — publish the drafts below to resume.
           </p>
         </div>
+        {onPublishAll && (
+          <button
+            onClick={onPublishAll}
+            disabled={isPublishing}
+            aria-label="Publish all draft matches"
+            className="shrink-0 flex items-center gap-1.5 clip-cut-sm
+                       bg-cc-amber hover:bg-cc-amber/90
+                       border border-cc-amber/50
+                       transition-colors px-3 min-h-[44px] font-command text-[9px] uppercase tracking-[0.12em] text-cc-btn-on-accent
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isPublishing ? "Publishing…" : "Publish All"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -399,13 +424,21 @@ function OnDeckPanelInner({
 
   return (
     <div className="space-y-4">
-      {/* ── Draft cap notice ── shown when all draft slots are full and auto-gen is ON ── */}
-      {isDraftCapBlocked && <DraftCapNotice draftCount={draftCount} cap={dynamicCap} />}
-      {/* ── Cap saturation notice ── shown when pair cap blocked a match ── */}
+      {/* ── Cap saturation notice ── error (highest urgency) — shown first ── */}
       <CapSaturationNotice capSaturation={capSaturation} onDismiss={onDismissCapSaturation} />
+      {/* ── Draft cap notice ── engine status (informational) — shown second ── */}
+      {isDraftCapBlocked && (
+        <DraftCapNotice
+          draftCount={draftCount}
+          cap={dynamicCap}
+          onPublishAll={handlePublishAll}
+          isPublishing={isPublishingAll}
+        />
+      )}
 
       {/* ── Publish All banner ── shown when there are drafts ── */}
-      {draftCount > 0 && (
+      {/* Publish All banner suppressed when DraftCapNotice is shown — it already has an inline button. */}
+      {draftCount > 0 && !isDraftCapBlocked && (
         <div
           role="status"
           aria-label={`${draftCount} on-deck match${draftCount !== 1 ? "es" : ""} waiting for approval`}

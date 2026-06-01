@@ -77,10 +77,8 @@ export function CapSaturationNotice({
       role="alert"
       aria-label="Partner-pair cap notice"
       className={[
-        "rounded-xl border animate-in slide-in-from-top-1 fade-in duration-200",
-        isRedZone
-          ? "border-red-300 dark:border-red-700/60 bg-red-50 dark:bg-red-950/40"
-          : "border-orange-200 dark:border-orange-500/30 bg-orange-50/80 dark:bg-orange-500/10",
+        "clip-cut-sm border animate-in slide-in-from-top-1 fade-in duration-200",
+        isRedZone ? "border-cc-red/40 bg-cc-red-dim" : "border-cc-amber/35 bg-cc-amber-dim",
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3 px-4 py-3">
@@ -88,31 +86,20 @@ export function CapSaturationNotice({
           <AlertTriangle
             className={[
               "h-4 w-4 mt-0.5 shrink-0",
-              isRedZone ? "text-red-600 dark:text-red-400" : "text-orange-500 dark:text-orange-400",
+              isRedZone ? "text-cc-red" : "text-cc-amber",
             ].join(" ")}
           />
           <div className="min-w-0">
             <p
               className={[
-                "text-sm font-semibold",
-                isRedZone
-                  ? "text-red-900 dark:text-red-300"
-                  : "text-orange-900 dark:text-orange-300",
+                "font-command text-[9.5px] uppercase tracking-[0.13em]",
+                isRedZone ? "text-cc-red" : "text-cc-amber",
               ].join(" ")}
             >
               Partner-pair cap reached
-              {isRedZone && (
-                <span className="ml-1.5 text-xs font-bold uppercase tracking-wider">— urgent</span>
-              )}
+              {isRedZone && <span className="ml-1.5">— Urgent</span>}
             </p>
-            <p
-              className={[
-                "text-xs mt-0.5 leading-relaxed",
-                isRedZone
-                  ? "text-red-700 dark:text-red-400"
-                  : "text-orange-700 dark:text-orange-400",
-              ].join(" ")}
-            >
+            <p className="text-[11.5px] mt-0.5 leading-relaxed text-cc-t2">
               {isRedZone
                 ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
                 : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`}
@@ -123,12 +110,7 @@ export function CapSaturationNotice({
           <button
             onClick={onDismiss}
             aria-label="Dismiss partner-pair cap notice"
-            className={[
-              "shrink-0 rounded-md p-1 transition-colors",
-              isRedZone
-                ? "text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50"
-                : "text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30",
-            ].join(" ")}
+            className="shrink-0 p-1 transition-colors text-cc-t3 hover:text-cc-t2"
           >
             <X className="h-3.5 w-3.5" />
           </button>
