@@ -64,6 +64,34 @@ describe("Schema Parity — Suite G", () => {
     expect(await functionExists("swap_player_in_match")).toBe(true);
   });
 
+  it("fix_record_swap_player exists in public schema", async () => {
+    expect(await functionExists("fix_record_swap_player")).toBe(true);
+  });
+
+  // ── Live match player swap RPCs (migration 20260601000000) ──
+
+  it("swap_player_in_active_match exists in public schema", async () => {
+    expect(await functionExists("swap_player_in_active_match")).toBe(true);
+  });
+
+  it("swap_teams_in_active_match exists in public schema", async () => {
+    expect(await functionExists("swap_teams_in_active_match")).toBe(true);
+  });
+
+  it("swap_active_from_ondeck exists in public schema", async () => {
+    expect(await functionExists("swap_active_from_ondeck")).toBe(true);
+  });
+
+  it("undo_swap_active_from_ondeck exists in public schema", async () => {
+    expect(await functionExists("undo_swap_active_from_ondeck")).toBe(true);
+  });
+
+  // ── Draft cap override RPC (migration 20260602000000) ──────
+
+  it("clear_all_unpublished_drafts exists in public schema", async () => {
+    expect(await functionExists("clear_all_unpublished_drafts")).toBe(true);
+  });
+
   it("migrate_player_identity exists in public schema", async () => {
     expect(await functionExists("migrate_player_identity")).toBe(true);
   });
@@ -117,6 +145,41 @@ describe("Schema Parity — Suite G", () => {
           WHERE table_schema = 'public'
             AND table_name   = 'session_wrapped_stats'
             AND column_name  = 'carry_forward'
+        ) AS exists`
+      );
+      found = rows[0]?.exists ?? false;
+    });
+    expect(found).toBe(true);
+  });
+
+  it("sessions table has max_auto_drafts_override column", async () => {
+    let found = false;
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ exists: boolean }>(
+        `SELECT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name   = 'sessions'
+            AND column_name  = 'max_auto_drafts_override'
+        ) AS exists`
+      );
+      found = rows[0]?.exists ?? false;
+    });
+    expect(found).toBe(true);
+  });
+
+  it("sessions.max_auto_drafts_override has CHECK constraint (1–5)", async () => {
+    let found = false;
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ exists: boolean }>(
+        `SELECT EXISTS (
+          SELECT 1 FROM information_schema.table_constraints tc
+          JOIN information_schema.constraint_column_usage ccu
+            ON ccu.constraint_name = tc.constraint_name
+          WHERE tc.table_schema  = 'public'
+            AND tc.table_name    = 'sessions'
+            AND tc.constraint_type = 'CHECK'
+            AND ccu.column_name  = 'max_auto_drafts_override'
         ) AS exists`
       );
       found = rows[0]?.exists ?? false;
