@@ -28,6 +28,7 @@ import {
   rotatedDraft,
   pairKey,
   runAlgorithm,
+  getDynamicDraftCap,
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
@@ -1466,5 +1467,96 @@ describe("runAlgorithm — last-resort fallback and no-match paths", () => {
     // candidates = [] (all filtered); capWasActive = pool.length-1 (3) > 0 = true
     expect(result.proposal).toBeNull();
     expect(result.capSaturation).toBe(true);
+  });
+});
+
+// ============================================================
+// getDynamicDraftCap — Draft cap scaling (added for cap-override feature)
+// ============================================================
+//
+// DC-1  Small session (< 25 waiting) → cap = 3
+// DC-2  Large session (25–29 waiting) → cap = 5
+// DC-3  XLarge session (≥ 30 waiting) → cap = 6
+// DC-4  Boundary: exactly 24 → cap = 3
+// DC-5  Boundary: exactly 25 → cap = 5
+// DC-6  Boundary: exactly 29 → cap = 5
+// DC-7  Boundary: exactly 30 → cap = 6
+// DC-8  Override null → dynamic cap passes through unchanged
+// DC-9  Override < dynamicCap → override wins (ceiling applied)
+// DC-10 Override > dynamicCap → dynamic cap wins (override ignored)
+// DC-11 Override = dynamicCap → value unchanged
+// DC-12 Override = 1 (minimum) → 1 regardless of dynamic cap
+// DC-13 Override = 5 (maximum) → still bounded by dynamic cap when dynamic < 5
+
+import {
+  MAX_AUTO_DRAFTS,
+  MAX_AUTO_DRAFTS_LARGE,
+  MAX_AUTO_DRAFTS_XLARGE,
+  DRAFT_CAP_LARGE_THRESHOLD,
+  DRAFT_CAP_XLARGE_THRESHOLD,
+} from "@/lib/constants";
+
+/** The effective cap logic that runEngineInternal will apply. Pure function. */
+function getEffectiveCap(waitingCount: number, override: number | null): number {
+  const dynamic = getDynamicDraftCap(waitingCount);
+  return override != null ? Math.min(override, dynamic) : dynamic;
+}
+
+describe("getDynamicDraftCap — tiered auto-scaling", () => {
+  it("DC-1: small session (0 waiting) → cap 3", () => {
+    expect(getDynamicDraftCap(0)).toBe(MAX_AUTO_DRAFTS);
+  });
+
+  it("DC-2: large session (27 waiting) → cap 5", () => {
+    expect(getDynamicDraftCap(27)).toBe(MAX_AUTO_DRAFTS_LARGE);
+  });
+
+  it("DC-3: xlarge session (35 waiting) → cap 6", () => {
+    expect(getDynamicDraftCap(35)).toBe(MAX_AUTO_DRAFTS_XLARGE);
+  });
+
+  it("DC-4: boundary — 24 waiting → cap 3 (just below large threshold)", () => {
+    expect(getDynamicDraftCap(DRAFT_CAP_LARGE_THRESHOLD - 1)).toBe(MAX_AUTO_DRAFTS);
+  });
+
+  it("DC-5: boundary — 25 waiting → cap 5 (exactly at large threshold)", () => {
+    expect(getDynamicDraftCap(DRAFT_CAP_LARGE_THRESHOLD)).toBe(MAX_AUTO_DRAFTS_LARGE);
+  });
+
+  it("DC-6: boundary — 29 waiting → cap 5 (just below xlarge threshold)", () => {
+    expect(getDynamicDraftCap(DRAFT_CAP_XLARGE_THRESHOLD - 1)).toBe(MAX_AUTO_DRAFTS_LARGE);
+  });
+
+  it("DC-7: boundary — 30 waiting → cap 6 (exactly at xlarge threshold)", () => {
+    expect(getDynamicDraftCap(DRAFT_CAP_XLARGE_THRESHOLD)).toBe(MAX_AUTO_DRAFTS_XLARGE);
+  });
+});
+
+describe("getEffectiveCap — override ceiling logic", () => {
+  it("DC-8: null override → dynamic cap used unchanged", () => {
+    expect(getEffectiveCap(10, null)).toBe(MAX_AUTO_DRAFTS); // dynamic=3
+    expect(getEffectiveCap(27, null)).toBe(MAX_AUTO_DRAFTS_LARGE); // dynamic=5
+  });
+
+  it("DC-9: override 2 with dynamic 5 → effective cap is 2 (organizer restricts)", () => {
+    expect(getEffectiveCap(27, 2)).toBe(2);
+  });
+
+  it("DC-10: override 5 with dynamic 3 → effective cap is 3 (dynamic wins, prevents pool starvation)", () => {
+    // Small session: organizer wants 5 but pool only supports 3
+    expect(getEffectiveCap(10, 5)).toBe(3);
+  });
+
+  it("DC-11: override equals dynamic cap → value unchanged", () => {
+    expect(getEffectiveCap(10, 3)).toBe(3); // dynamic=3, override=3
+  });
+
+  it("DC-12: override 1 → maximum restriction regardless of pool size", () => {
+    expect(getEffectiveCap(0, 1)).toBe(1);
+    expect(getEffectiveCap(30, 1)).toBe(1); // dynamic=6 but capped to 1
+  });
+
+  it("DC-13: override 5 in xlarge session (dynamic=6) → capped at 5", () => {
+    expect(getEffectiveCap(35, 5)).toBe(5); // 5 < 6, override wins
   });
 });
