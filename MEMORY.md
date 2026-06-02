@@ -5,6 +5,125 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-01 — Code review findings A–K fixed)
+
+### Code review findings fixed (2026-06-01) — COMPLETE ✅
+
+**A — `vi.mock("next/server")` in queue-actions.test.ts:** after() pass-through. 5 → 11 passing.
+**B — `.rpc` mock in use-enriched-matches.test.ts:** Added to buildMockClient() + racingClient. 5 → 10 passing.
+**D — hasNewDraft timer overlap:** newDraftTimerRef stores active timer; cleared before each new one; cleanup function added to useEffect.
+**F — after() swallows errors in queue.ts:** All 3 sites now `.catch(err => console.error(...))`.
+**H — fixPlayerRecord blocks on compute_session_wrapped:** Moved to `after()` + `Promise.resolve()` to get Promise from PromiseLike.
+**J — Hardcoded oklch in match-roster.tsx:** Tokenised as `--cc-streak` / `--cc-streak-dim` (light: 0.64, dark: 0.72). Light theme was using dark value — also a correctness fix.
+**K — animate-ping no reduced-motion guard:** Added `motion-reduce:hidden` to both ping spans.
+**Matchmaking engine test:** "toggle bypass" test rewritten to assert correct post-fix behaviour (sessions queried at [6]).
+
+**Skipped (per plan):**
+- G (win_streak unconditional) — defer, no perf complaint
+- I (@property Firefox) — acceptable progressive enhancement
+- L (DOM queries in login) — low-risk, future cleanup pass
+
+---
+
+## SESSION STATE (Last Updated: 2026-06-01 — Toggle feedback + generation notification)
+
+### Toggle feedback + match generation notification (2026-06-01) — COMPLETE ✅
+
+**Toggle loading state (`organizer-dashboard.tsx`):**
+- While `togglingAuto`: static dot → rotating arc SVG spinner (`animate-spin`), label → "Saving…"/"…"
+- When auto is ON (not saving): dot gains `animate-ping` pulse wrapper (live engine signal)
+- Applied to both desktop `clip-cut-sm` toggle and mobile `rounded-full` pill
+
+**Toggle success toast (`use-organizer-dashboard.ts`):**
+- `toast.success("Engine running", { description: "...", duration: 4000 })` when toggled ON
+- `toast("Engine paused", { description: "...", duration: 4000 })` when toggled OFF
+- Error toast already existed — unchanged
+
+**New draft notification (`organizer-dashboard.tsx` + `on-deck-panel.tsx`):**
+- `prevDraftCountRef` initialized with `draftMatches.length` at mount (no spurious page-load toast)
+- `useEffect` on `draftMatches.length` fires toast + sets `hasNewDraft=true` only on 0→≥1 transition
+- `hasNewDraft` resets after 3s via `setTimeout`
+- Passed to `OnDeckPanel` → pulsing "● NEW" badge on Publish All banner (fade-in entrance, abrupt exit at 3s — cosmetic only)
+- Toast fires exactly once even if engine generates 3 drafts sequentially (spam-proof)
+
+**Known minor cosmetic issues (non-blocking):**
+- Toast description says "1 new draft" even if engine generates 2-3 in sequence (live banner count is accurate)
+- "NEW" badge disappears abruptly at 3s (no exit animation — would need framer-motion)
+
+---
+
+## SESSION STATE (Last Updated: 2026-06-01 — Notice design system fixes)
+
+### DraftCapNotice + CapSaturationNotice design system alignment (2026-06-01) — COMPLETE ✅
+
+Both notice components in the on-deck panel were rebuilt to match the organizer command-center design system.
+
+**DraftCapNotice (`on-deck-panel.tsx`):**
+- `cc-amber`/`cc-amber-dim` tokens (was raw `amber-*` Tailwind classes)
+- `clip-cut-sm` polygon geometry (was `rounded-xl`)
+- `font-command text-[9.5px] uppercase tracking-[0.13em]` heading (was `text-sm font-semibold`)
+- Copy fixed: "drafts below" not "above" (spatially correct)
+- Inline "Publish All" button (`onPublishAll` + `isPublishing` props → `handlePublishAll`)
+- Standalone Publish All banner suppressed when `isDraftCapBlocked` (no double button)
+- Render order: CapSaturationNotice (error, urgent) first → DraftCapNotice (status, informational) second
+- `AlertCircle` → `PauseCircle` icon
+
+**CapSaturationNotice (`sortable-card.tsx`):**
+- `cc-red`/`cc-red-dim` (redZone) and `cc-amber`/`cc-amber-dim` (general) tokens
+- `clip-cut-sm` polygon geometry (was `rounded-xl`)
+- `font-command text-[9.5px] uppercase tracking-[0.13em]` heading
+- Dismiss button: `text-cc-t3 hover:text-cc-t2` (removed raw red/orange hover backgrounds)
+
+**Files changed:** `on-deck-panel.tsx`, `sortable-card.tsx`
+
+---
+
+## SESSION STATE (Last Updated: 2026-06-01 — Draft cap notice + cap saturation audit)
+
+### Draft Cap Blocked Notice (2026-06-01) — COMPLETE ✅
+
+Added `DraftCapNotice` to `on-deck-panel.tsx`: an amber alert that appears when auto-matchmaking is ON, ≥4 players are waiting, and all draft slots are full (draftCount ≥ dynamicCap). Explains to the organizer why the engine stopped generating — previously a silent failure.
+
+**Cap saturation UI** was already fully wired end-to-end (broadcast → realtime → hook → `CapSaturationNotice`). No fix needed there.
+
+**Files changed:**
+- `src/components/organizer/on-deck-panel.tsx` — `DraftCapNotice` component, `isAutoMatchmakingOn` + `waitingCount` props, `isDraftCapBlocked` derived state, renders before `CapSaturationNotice`
+- `src/components/organizer/organizer-dashboard.tsx` — passes `isAutoMatchmakingOn` and `waitingCount` to `OnDeckPanel`
+
+**Known edge case (minor, benign):** With exactly 4 waiting players + full draft cap, the notice shows even if the engine's soft gate (pool diversity, not draft cap) is the actual blocker. The advice ("review drafts") is still correct. `GATE_POOL_THRESHOLD = 4` means this only occurs at the boundary.
+
+---
+
+## SESSION STATE (Last Updated: 2026-06-01 — Toggle bypass bug fix)
+
+### Auto-matchmaking toggle bypass in callNextMatch (2026-06-01) — COMPLETE ✅
+
+**Bug:** `callNextMatch` called `runEngineInternal(service, sessionId)` directly at line 143 after a successful on-deck promotion, bypassing the `is_auto_matchmaking_on` toggle. Result: when organizer had toggle OFF but still had on-deck drafts to call, each "Call Next Match" click silently generated a new draft.
+
+**Fix:** Replaced `runEngineInternal(service, sessionId)` with `runEngineForSession(sessionId)` at line 143. `runEngineForSession` checks the toggle, has the in-flight concurrency guard (prevents double-run races), and satisfies auth requirements since `callNextMatch` already gates the organizer.
+
+**Not changed:** Step 3 of `callNextMatch` still calls `runEngineInternal(service, sessionId, true)` with `bypassGate=true` — that path is intentional (organizer demand, toggle confirmed ON at that point).
+
+**File changed:** `src/app/actions/matchmaking.ts:143`
+
+---
+
+## SESSION STATE (Last Updated: 2026-05-28 — Dark mode default)
+
+### Dark Mode Default (2026-05-28) — COMPLETE ✅
+
+Changed `defaultTheme` from `"light"` to `"dark"` in `src/app/layout.tsx` (`ThemeProvider`).
+
+- Affects first-time visitors only (no `localStorage` preference yet)
+- Existing users retain their saved preference
+- `enableSystem={false}` and `suppressHydrationWarning` were already in place — no flash issue
+- Theme toggle remains available in player + organizer dashboards
+- Login page dark styles were already implemented via `dark:` Tailwind classes
+
+**File changed:** `src/app/layout.tsx:81`
+
+---
+
 ## SESSION STATE (Last Updated: 2026-05-26 — Win streak indicator + HSTS)
 
 ### Win Streak Indicator on Courts + On-Deck (2026-05-26) — COMPLETE ✅

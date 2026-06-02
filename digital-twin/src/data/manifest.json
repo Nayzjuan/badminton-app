@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-05-26T07:48:25.668Z",
+  "_lastExtracted": "2026-05-26T05:57:10.421Z",
   "tables": [
     {
       "name": "profiles",
@@ -1108,27 +1108,50 @@
     {
       "name": "court_status",
       "typeName": "CourtStatus",
-      "values": ["available", "in_use", "closed"]
+      "values": [
+        "available",
+        "in_use",
+        "closed"
+      ]
     },
     {
       "name": "queue_status",
       "typeName": "QueueStatus",
-      "values": ["waiting", "on_deck", "playing", "left", "drafted"]
+      "values": [
+        "waiting",
+        "on_deck",
+        "playing",
+        "left",
+        "drafted"
+      ]
     },
     {
       "name": "match_status",
       "typeName": "MatchStatus",
-      "values": ["pending", "in_progress", "completed", "cancelled"]
+      "values": [
+        "pending",
+        "in_progress",
+        "completed",
+        "cancelled"
+      ]
     },
     {
       "name": "scoring_format",
       "typeName": "ScoringFormat",
-      "values": ["single", "best_of_3", "best_of_5"]
+      "values": [
+        "single",
+        "best_of_3",
+        "best_of_5"
+      ]
     },
     {
       "name": "match_origin",
       "typeName": "MatchOrigin",
-      "values": ["auto", "manual", "modified"]
+      "values": [
+        "auto",
+        "manual",
+        "modified"
+      ]
     }
   ],
   "rpcs": [
@@ -1729,7 +1752,10 @@
   "actions": [
     {
       "file": "_shared.ts",
-      "functions": ["getAuthenticatedUser", "isSessionOrganizer"]
+      "functions": [
+        "getAuthenticatedUser",
+        "isSessionOrganizer"
+      ]
     },
     {
       "file": "auth.ts",
@@ -1743,23 +1769,39 @@
     },
     {
       "file": "courts.ts",
-      "functions": ["addCourtAction", "updateCourtStatusAction", "removeCourtAction"]
+      "functions": [
+        "addCourtAction",
+        "updateCourtStatusAction",
+        "removeCourtAction"
+      ]
     },
     {
       "file": "dev.ts",
-      "functions": ["seedTestData", "seedNamedPlayers", "clearSessionData"]
+      "functions": [
+        "seedTestData",
+        "seedNamedPlayers",
+        "clearSessionData"
+      ]
     },
     {
       "file": "fix-player-record.ts",
-      "functions": ["fixPlayerRecord"]
+      "functions": [
+        "fixPlayerRecord"
+      ]
     },
     {
       "file": "h2h.ts",
-      "functions": ["getH2HRecord"]
+      "functions": [
+        "getH2HRecord"
+      ]
     },
     {
       "file": "leaderboard.ts",
-      "functions": ["getSessionLeaderboard", "getAllTimeLeaderboard", "getPlayerStats"]
+      "functions": [
+        "getSessionLeaderboard",
+        "getAllTimeLeaderboard",
+        "getPlayerStats"
+      ]
     },
     {
       "file": "match-drafts.ts",
@@ -1782,15 +1824,26 @@
     },
     {
       "file": "matchmaking.ts",
-      "functions": ["callNextMatch", "runEngineForSession", "promoteOnDeckMatchInternal"]
+      "functions": [
+        "callNextMatch",
+        "runEngineForSession",
+        "promoteOnDeckMatchInternal"
+      ]
     },
     {
       "file": "notifications.ts",
-      "functions": ["sendPlayerNotification"]
+      "functions": [
+        "sendPlayerNotification"
+      ]
     },
     {
       "file": "profile.ts",
-      "functions": ["updatePlayerSkill", "getPlayerPin", "resetPlayerPin", "updatePlayerPin"]
+      "functions": [
+        "updatePlayerSkill",
+        "getPlayerPin",
+        "resetPlayerPin",
+        "updatePlayerPin"
+      ]
     },
     {
       "file": "queue.ts",
@@ -1814,15 +1867,22 @@
     },
     {
       "file": "swap-player.ts",
-      "functions": ["swapPlayerInMatch", "swapMatchPlayers"]
+      "functions": [
+        "swapPlayerInMatch",
+        "swapMatchPlayers"
+      ]
     },
     {
       "file": "tv.ts",
-      "functions": ["getTvData"]
+      "functions": [
+        "getTvData"
+      ]
     },
     {
       "file": "wrapped.ts",
-      "functions": ["dismissWrappedIntro"]
+      "functions": [
+        "dismissWrappedIntro"
+      ]
     }
   ],
   "channels": [],

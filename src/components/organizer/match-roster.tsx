@@ -139,7 +139,7 @@ function PlayerRowLight({
           : "bg-cc-bg-3",
   ].join(" ");
 
-  const streakStyle = showStreak ? { background: "oklch(0.72 0.22 38 / 0.22)" } : undefined;
+  const streakStyle = showStreak ? { background: "var(--cc-streak-dim)" } : undefined;
 
   const inner = (
     <>
@@ -242,7 +242,7 @@ function PlayerRowDark({ player, isMe }: PlayerRowDarkProps) {
           "streak-row w-full clip-cut-tr relative overflow-hidden transition-colors",
           hasStreak ? "streak-hot-border" : "bg-cc-bg-3 hover:bg-cc-border",
         ].join(" ")}
-        style={hasStreak ? { background: "oklch(0.72 0.22 38 / 0.22)" } : undefined}
+        style={hasStreak ? { background: "var(--cc-streak-dim)" } : undefined}
       >
         {/* Line 1 — name + VIP tag + streak indicator */}
         <div className="relative z-[1] flex items-center justify-between gap-2 px-3 pt-2 pb-1 overflow-hidden">

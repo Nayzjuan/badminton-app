@@ -48,7 +48,7 @@ import {
   rectSortingStrategy,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
-import { Clock, EyeOff } from "lucide-react";
+import { Clock, EyeOff, PauseCircle } from "lucide-react";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import type { SkillLevel } from "@/types/database";
@@ -57,7 +57,67 @@ import {
   DND_ACTIVATION_DISTANCE_PX,
   DND_TOUCH_DELAY_MS,
   DND_TOUCH_TOLERANCE_PX,
+  MAX_AUTO_DRAFTS,
+  MAX_AUTO_DRAFTS_LARGE,
+  MAX_AUTO_DRAFTS_XLARGE,
+  DRAFT_CAP_LARGE_THRESHOLD,
+  DRAFT_CAP_XLARGE_THRESHOLD,
+  PLAYERS_PER_MATCH,
 } from "@/lib/constants";
+
+// ── DraftCapNotice ────────────────────────────────────────────
+// Shown when auto-matchmaking is ON, there are enough waiting players,
+// and all draft slots are filled with unreviewed matches. Explains to
+// the organizer WHY the engine has stopped generating new drafts.
+// Returns null when the cap hasn't been reached — callers need no guard.
+
+function DraftCapNotice({
+  draftCount,
+  cap,
+  onPublishAll,
+  isPublishing,
+}: {
+  draftCount: number;
+  cap: number;
+  /** Called when the inline Publish All button is clicked. */
+  onPublishAll?: () => void;
+  isPublishing?: boolean;
+}) {
+  if (draftCount < cap) return null;
+  return (
+    <div
+      role="alert"
+      aria-label="Draft cap reached — auto-generation paused"
+      className="clip-cut-sm border border-cc-amber/35 bg-cc-amber-dim animate-in slide-in-from-top-1 fade-in duration-200"
+    >
+      <div className="flex items-center gap-3 px-4 py-3">
+        <PauseCircle className="h-4 w-4 shrink-0 text-cc-amber" />
+        <div className="min-w-0 flex-1">
+          <p className="font-command text-[9.5px] uppercase tracking-[0.13em] text-cc-amber">
+            Auto-generation paused
+          </p>
+          <p className="text-[11.5px] mt-0.5 leading-relaxed text-cc-t2">
+            {draftCount}/{cap} draft slots filled — publish the drafts below to resume.
+          </p>
+        </div>
+        {onPublishAll && (
+          <button
+            onClick={onPublishAll}
+            disabled={isPublishing}
+            aria-label="Publish all draft matches"
+            className="shrink-0 flex items-center gap-1.5 clip-cut-sm
+                       bg-cc-amber hover:bg-cc-amber/90
+                       border border-cc-amber/50
+                       transition-colors px-3 min-h-[44px] font-command text-[9px] uppercase tracking-[0.12em] text-cc-btn-on-accent
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isPublishing ? "Publishing…" : "Publish All"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── SwapContext ───────────────────────────────────────────────
 // Exported so OrganizerDashboard and SwapSheet can share the
@@ -109,6 +169,22 @@ interface OnDeckPanelProps {
   capSaturation?: CapSaturationPayload | null;
   /** Dismiss handler — clears the capSaturation notice from the hook state. */
   onDismissCapSaturation?: () => void;
+  /**
+   * Whether auto-matchmaking is currently ON. Used to show the draft-cap-blocked
+   * notice only when the organizer expects automatic generation.
+   */
+  isAutoMatchmakingOn?: boolean;
+  /**
+   * Number of players currently in waiting status. Used to compute the dynamic
+   * draft cap threshold so the notice appears at the right fill level.
+   */
+  waitingCount?: number;
+  /**
+   * True for ~3 s after unpublished drafts first appear from zero. Drives a
+   * transient "NEW" badge on the Publish All banner so the organizer knows a
+   * fresh draft was just generated.
+   */
+  hasNewDraft?: boolean;
 }
 
 // ── Main panel ────────────────────────────────────────────────
@@ -123,6 +199,9 @@ function OnDeckPanelInner({
   onPublishAllDrafts,
   capSaturation = null,
   onDismissCapSaturation,
+  isAutoMatchmakingOn,
+  waitingCount,
+  hasNewDraft,
 }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
@@ -275,6 +354,19 @@ function OnDeckPanelInner({
   );
   const draftCount = draftMatches.length;
 
+  // Draft cap notice: visible when all draft slots are full, auto-matchmaking
+  // is ON, and there are enough players waiting — explains to the organizer
+  // why the engine has stopped generating new matches.
+  const waiting = waitingCount ?? 0;
+  const dynamicCap =
+    waiting >= DRAFT_CAP_XLARGE_THRESHOLD
+      ? MAX_AUTO_DRAFTS_XLARGE
+      : waiting >= DRAFT_CAP_LARGE_THRESHOLD
+        ? MAX_AUTO_DRAFTS_LARGE
+        : MAX_AUTO_DRAFTS;
+  const isDraftCapBlocked =
+    isAutoMatchmakingOn === true && waiting >= PLAYERS_PER_MATCH && draftCount >= dynamicCap;
+
   // Stable identity for SortableContext — recreated only when the match
   // set changes, not on every loading-state update inside the component.
   const sortableIds = useMemo(() => orderedMatches.map((m) => m.id), [orderedMatches]);
@@ -339,11 +431,21 @@ function OnDeckPanelInner({
 
   return (
     <div className="space-y-4">
-      {/* ── Cap saturation notice ── shown when pair cap blocked a match ── */}
+      {/* ── Cap saturation notice ── error (highest urgency) — shown first ── */}
       <CapSaturationNotice capSaturation={capSaturation} onDismiss={onDismissCapSaturation} />
+      {/* ── Draft cap notice ── engine status (informational) — shown second ── */}
+      {isDraftCapBlocked && (
+        <DraftCapNotice
+          draftCount={draftCount}
+          cap={dynamicCap}
+          onPublishAll={handlePublishAll}
+          isPublishing={isPublishingAll}
+        />
+      )}
 
       {/* ── Publish All banner ── shown when there are drafts ── */}
-      {draftCount > 0 && (
+      {/* Publish All banner suppressed when DraftCapNotice is shown — it already has an inline button. */}
+      {draftCount > 0 && !isDraftCapBlocked && (
         <div
           role="status"
           aria-label={`${draftCount} on-deck match${draftCount !== 1 ? "es" : ""} waiting for approval`}
@@ -358,6 +460,17 @@ function OnDeckPanelInner({
                 <span className="font-bold">{draftCount}</span> on-deck match
                 {draftCount !== 1 ? "es" : ""} waiting for approval
               </span>
+              {hasNewDraft && (
+                <span
+                  aria-label="New draft just generated"
+                  className="inline-flex items-center gap-1 font-command text-[8.5px] uppercase tracking-[0.1em]
+                             text-cc-accent border border-cc-accent/40 bg-cc-accent-dim px-1.5 py-0.5
+                             animate-in fade-in slide-in-from-left-1 duration-200"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-cc-accent animate-ping inline-block" />
+                  New
+                </span>
+              )}
             </div>
             <button
               onClick={handlePublishAll}

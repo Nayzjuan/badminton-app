@@ -59,6 +59,8 @@
   --color-cc-blue-dim: var(--cc-blue-dim);
   --color-cc-red: var(--cc-red);
   --color-cc-red-dim: var(--cc-red-dim);
+  --color-cc-streak: var(--cc-streak);
+  --color-cc-streak-dim: var(--cc-streak-dim);
 
   --color-cc-t1: var(--cc-t1);
   --color-cc-t2: var(--cc-t2);
@@ -121,6 +123,8 @@
     --cc-blue-dim: oklch(0.48 0.2 255 / 0.12);
     --cc-red: oklch(0.52 0.22 25);
     --cc-red-dim: oklch(0.52 0.22 25 / 0.1);
+    --cc-streak: oklch(0.64 0.22 38);
+    --cc-streak-dim: oklch(0.64 0.22 38 / 0.22);
 
     --cc-t1: oklch(0.18 0.02 238);
     --cc-t2: oklch(0.4 0.018 238);
@@ -183,6 +187,8 @@
     --cc-blue-dim: oklch(0.65 0.19 255 / 0.14);
     --cc-red: oklch(0.65 0.21 25);
     --cc-red-dim: oklch(0.65 0.21 25 / 0.1);
+    --cc-streak: oklch(0.72 0.22 38);
+    --cc-streak-dim: oklch(0.72 0.22 38 / 0.22);
 
     --cc-t1: oklch(0.94 0.008 238);
     --cc-t2: oklch(0.68 0.014 238);

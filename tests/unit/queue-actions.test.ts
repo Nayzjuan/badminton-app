@@ -35,6 +35,13 @@ vi.mock("@/app/actions/matchmaking", () => ({
   runEngineForSession: vi.fn().mockResolvedValue(undefined),
 }));
 
+// after() from next/server throws "called outside a request scope" in unit
+// tests. Replace it with a synchronous pass-through so tests can exercise
+// code paths that call after(() => runEngineForSession(...)).
+vi.mock("next/server", () => ({
+  after: vi.fn((cb: () => unknown) => cb()),
+}));
+
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { joinQueueAction } from "@/app/actions/queue";
