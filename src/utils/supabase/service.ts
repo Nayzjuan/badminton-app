@@ -1,3 +1,8 @@
+// Build-time enforcement: importing this module in a Client Component
+// causes a hard build error. Catches accidental client-side imports before
+// they ever reach production. Remove only if migrating off Next.js.
+import "server-only";
+
 // ============================================================
 // Supabase Service-Role Client  (SERVER ONLY — never import
 // this in client components or expose to the browser)

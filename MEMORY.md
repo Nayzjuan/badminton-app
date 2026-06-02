@@ -5,6 +5,55 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-02 — Medium/Low Audit Fixes)
+
+### Medium/Low Audit Fixes (2026-06-02) — COMPLETE ✅
+
+**M-001 — Direct DB queries in components (FIXED):**
+Created `src/app/actions/history.ts` with `getMatchHistory(playerId, sessionId?, limit?)` and `getAllSessionsHistory(playerId)`. Both `all-sessions-history.tsx` and `match-history.tsx` now call server actions for data fetching. Browser client remains in `match-history.tsx` exclusively for the Supabase Realtime subscription.
+
+**M-003 — console.log spam in production (FIXED):**
+Stripped all debug `console.log` from hot realtime paths in `realtime.ts` (11 calls removed). Only `console.error` for CHANNEL_ERROR/TIMED_OUT remains. File header comment updated to reflect new behavior.
+
+**M-004 — Missing useMemo (FIXED):**
+Added `useMemo` for `bottleneckCount` and `waitingCount` in `organizer-dashboard.tsx` (declared before the hook that consumes `bottleneckCount`). Added `useMemo` for `wins/draws/losses` stats in `match-history.tsx`.
+
+**M-005 — Inconsistent action return shapes (FIXED):**
+Added `success: false` to all bare `{ error }` returns in `auth.ts` (10 sites) and `sessions.ts` (5 sites, return type widened to `{ success?: boolean; error?: string }`).
+
+**M-007 — setTimeout without cleanup (FIXED):**
+- `share-session-dialog.tsx`: `copiedTimerRef` + `scheduleCopiedReset()` + `useEffect` cleanup
+- `dev-tools.tsx`: `toastTimerRef` + `nukeTimerRef` + `useEffect` cleanup; hardcoded 4000ms → `TOAST_DISMISS_MS`
+- `use-leaderboard.ts`: `flashTimerRef` + `useEffect` cleanup
+
+**M-008 — FALSE POSITIVE:** All three intervals (`use-queue.ts`, `use-tv-board.ts`, `use-organizer-session.ts`) already had `clearInterval` cleanup in their `useEffect` return functions.
+
+**M-009 — No browser guard on createServiceClient (FIXED):**
+Added `import "server-only"` as the first line of `service.ts`. Next.js now raises a build error if this module is accidentally imported in a Client Component.
+
+**M-010 — Type assertions in realtime.ts (FIXED):**
+Extracted inline `as RealtimePostgresChangesPayload<T>` casts into a `castPayload<T>()` helper with a documented rationale. Both unfiltered subscription sites (`match_players`, `profiles`) now use the helper.
+
+**L-002 — Hardcoded toast durations (FIXED):**
+4000ms literal in `dev-tools.tsx` replaced with `TOAST_DISMISS_MS`. (Note: `TOAST_DISMISS_MS` = 5000ms, a 1-second behavior change — intentional alignment with the constant.)
+
+**L-003 — toLocaleDateString in render (FIXED):**
+`sessionLabel()` call in `SessionSection` memoized via `useMemo` — date parsing no longer runs on every render.
+
+**L-004 — Inconsistent void prefix (FIXED):**
+Added `void` to bare `.rpc().then()` in `auth.ts:367`.
+
+**Files created:** `src/app/actions/history.ts`
+
+**Files changed:** `auth.ts`, `sessions.ts`, `all-sessions-history.tsx`, `match-history.tsx`, `organizer-dashboard.tsx`, `share-session-dialog.tsx`, `dev-tools.tsx`, `use-leaderboard.ts`, `realtime.ts`, `service.ts`
+
+**Known minor issues (non-blocking):**
+- `updateSessionSettings` returns `{}` on success — pre-existing, `success` is optional in its return type.
+- M-006 (circular ref in `useOrganizerData`) reviewed and confirmed safe by design: `setProfiles` is a stable React dispatcher captured in closure; it's never called synchronously during the first render.
+- M-008 confirmed FALSE POSITIVE — all polling intervals already have `clearInterval` cleanup.
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-02 — Security & Quality Audit Fixes)
 
 ### Audit Fixes (2026-06-02) — COMPLETE ✅

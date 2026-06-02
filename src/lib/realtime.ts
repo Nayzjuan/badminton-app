@@ -5,11 +5,11 @@
 // table changes scoped to a session. Each returns an
 // unsubscribe function for cleanup in useEffect.
 //
-// Debugging: open your browser DevTools console and look for
-// [realtime] log lines. A successful subscription prints:
-//   [realtime] courts:abc123 → SUBSCRIBED
+// Debugging: only errors (CHANNEL_ERROR, TIMED_OUT) are logged to the
+// console to avoid noise in production. Successful subscriptions are
+// tracked via the onStatus callback (called with `true` on SUBSCRIBED).
 // A failure (e.g. due to missing RLS SELECT policy) prints:
-//   [realtime] courts:abc123 → CHANNEL_ERROR ...
+//   [realtime] courts:abc123 → CHANNEL_ERROR
 // ============================================================
 
 import type { SupabaseClient, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
@@ -26,6 +26,22 @@ type ChangeHandler<T extends Record<string, unknown>> = (
   payload: RealtimePostgresChangesPayload<T>
 ) => void;
 type StatusHandler = (channelId: string, connected: boolean) => void;
+
+/**
+ * Narrows an untyped Realtime payload to a typed one.
+ *
+ * Supabase does not provide generic typing for unfiltered table subscriptions
+ * (those without a `filter` clause) because the SDK can't guarantee the row
+ * shape at compile time. The cast here is safe: the Realtime server always
+ * sends the full row as `new` / `old` for the exact table schema registered
+ * in the publication. Any divergence would be a Supabase server-side change,
+ * not a client-side type error.
+ */
+function castPayload<T extends Record<string, unknown>>(
+  payload: RealtimePostgresChangesPayload<Record<string, unknown>>
+): RealtimePostgresChangesPayload<T> {
+  return payload as RealtimePostgresChangesPayload<T>;
+}
 
 /**
  * Returns a reusable Supabase channel `.subscribe()` callback that logs
@@ -46,15 +62,13 @@ function createStatusHandler(
       console.error(`[realtime] ${channelName} subscription error:`, err);
       onStatus?.(channelName, false);
     } else {
-      console.log(`[realtime] ${channelName} →`, status);
-      // Expected statuses:
-      //   SUBSCRIBED      — channel is live and receiving events ✓
-      //   CHANNEL_ERROR   — something went wrong (check err above)
-      //   TIMED_OUT       — no response from server within timeout
-      //   CLOSED          — channel removed (cleanup called)
+      // Only log non-nominal statuses — SUBSCRIBED is expected and logged
+      // at the onStatus level; CLOSED is expected on cleanup. Logging every
+      // status transition creates 10+ log lines per session load in prod.
       if (status === "SUBSCRIBED") {
         onStatus?.(channelName, true);
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        console.error(`[realtime] ${channelName} → ${status}`);
         onStatus?.(channelName, false);
       }
     }
@@ -96,7 +110,6 @@ function subscribeToTable<T extends Record<string, unknown>>(
         filter: `session_id=eq.${sessionId}`,
       },
       (payload) => {
-        console.log(`[realtime] ${channelName} event:`, payload.eventType);
         onChange(payload);
       }
     )
@@ -155,12 +168,7 @@ export function subscribeToMatchPlayers(
   const channel = supabase
     .channel(channelName)
     .on("postgres_changes", { event: "*", schema: "public", table: "match_players" }, (payload) => {
-      console.log(`[realtime] ${channelName} event:`, payload.eventType);
-      onChange(
-        payload as RealtimePostgresChangesPayload<
-          Database["public"]["Tables"]["match_players"]["Row"]
-        >
-      );
+      onChange(castPayload<Database["public"]["Tables"]["match_players"]["Row"]>(payload));
     })
     .subscribe(createStatusHandler(channelName, onStatus));
 
@@ -208,31 +216,25 @@ export function subscribeToOrganizerBroadcast(
       "broadcast",
       { event: "organizer_intervention" },
       (msg: { payload: OrganizerInterventionPayload }) => {
-        console.log(`[realtime] ${channelName} broadcast:`, msg.payload);
         onIntervention(msg.payload);
       }
     )
     .on("broadcast", { event: "session_closed" }, (msg: { payload: SessionClosedPayload }) => {
-      console.log(`[realtime] ${channelName} session_closed:`, msg.payload);
       onSessionClosed?.(msg.payload);
     })
     .on(
       "broadcast",
       { event: "auto_matchmaking_toggled" },
       (msg: { payload: AutoMatchmakingToggledPayload }) => {
-        console.log(`[realtime] ${channelName} auto_matchmaking_toggled:`, msg.payload);
         onAutoMatchmakingToggled?.(msg.payload);
       }
     )
     .on("broadcast", { event: "cap_saturation" }, (msg: { payload: CapSaturationPayload }) => {
-      console.log(`[realtime] ${channelName} cap_saturation:`, msg.payload);
       onCapSaturation?.(msg.payload);
     })
     .subscribe((status, err) => {
       if (err) {
         console.error(`[realtime] ${channelName} broadcast subscription error:`, err);
-      } else {
-        console.log(`[realtime] ${channelName} broadcast →`, status);
       }
     });
 
@@ -260,10 +262,7 @@ export function subscribeToProfiles(
   const channel = supabase
     .channel(channelName)
     .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (payload) => {
-      console.log(`[realtime] ${channelName} event:`, payload.eventType);
-      onChange(
-        payload as RealtimePostgresChangesPayload<Database["public"]["Tables"]["profiles"]["Row"]>
-      );
+      onChange(castPayload<Database["public"]["Tables"]["profiles"]["Row"]>(payload));
     })
     .subscribe(createStatusHandler(channelName, onStatus));
 

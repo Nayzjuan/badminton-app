@@ -4,7 +4,7 @@
 // Organizer Dashboard — Main shell with tab navigation
 // ============================================================
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useOrganizerData } from "@/hooks/use-organizer-data";
@@ -105,6 +105,11 @@ export function OrganizerDashboard({
     showFloatingBar,
   } = useSwapState(session.id, onDeckMatches, swapMatchPlayers, swapPlayer);
 
+  // ── Memoized queue derivations ────────────────────────────
+  // Declared before useOrganizerDashboard since bottleneckCount is passed as a prop.
+  const bottleneckCount = useMemo(() => queue.filter((q) => q.is_bottleneck).length, [queue]);
+  const waitingCount = useMemo(() => queue.filter((q) => q.status === "waiting").length, [queue]);
+
   const {
     activeTab,
     setActiveTab,
@@ -130,7 +135,7 @@ export function OrganizerDashboard({
     sessionId: session.id,
     sessionIsActive: session.is_active,
     liveAutoMatchmaking: liveSession.is_auto_matchmaking_on,
-    bottleneckCount: queue.filter((q) => q.is_bottleneck).length,
+    bottleneckCount,
     // Draft Mode badge: amber on Courts tab when drafts need approval.
     // Suppress badge when organizer is already on Courts tab — the
     // Publish All banner handles the prompt there.
@@ -661,7 +666,7 @@ export function OrganizerDashboard({
                 capSaturation={capSaturation}
                 onDismissCapSaturation={dismissCapSaturation}
                 isAutoMatchmakingOn={liveSession.is_auto_matchmaking_on}
-                waitingCount={queue.filter((q) => q.status === "waiting").length}
+                waitingCount={waitingCount}
                 hasNewDraft={hasNewDraft}
               />
 

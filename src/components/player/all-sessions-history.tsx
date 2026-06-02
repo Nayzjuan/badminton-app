@@ -15,17 +15,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { History } from "lucide-react";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { getAllSessionsHistory } from "@/app/actions/history";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
+import type { SessionMeta } from "@/app/actions/history";
 
 // ── Types ──────────────────────────────────────────────────────
-
-interface SessionMeta {
-  id: string;
-  name: string | null;
-  created_at: string;
-  ended_at: string | null;
-}
+// SessionMeta is imported from @/app/actions/history.
 
 interface SessionGroup {
   session: SessionMeta;
@@ -199,6 +194,9 @@ function MatchCard({
 
 function SessionSection({ group }: { group: SessionGroup }) {
   const [open, setOpen] = useState(true);
+  // Memoize the label — toLocaleDateString parses a Date on every call, which
+  // is cheap but wasteful since the session object never changes once loaded.
+  const label = useMemo(() => sessionLabel(group.session), [group.session]);
   const winPct =
     group.matches.length > 0 ? Math.round((group.wins / group.matches.length) * 100) : 0;
 
@@ -217,9 +215,7 @@ function SessionSection({ group }: { group: SessionGroup }) {
           >
             ▶
           </span>
-          <span className="text-sm font-bold text-foreground truncate">
-            {sessionLabel(group.session)}
-          </span>
+          <span className="text-sm font-bold text-foreground truncate">{label}</span>
         </div>
 
         {/* Session W/L pill */}
@@ -264,29 +260,25 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const fetchAll = useCallback(async () => {
     setFetchError(null);
-    // 1. All completed matches for this player, newest first.
-    const { data: matches, error: matchError } = await supabase
-      .from("v_match_history")
-      .select("*")
-      .eq("player_id", playerId)
-      .order("completed_at", { ascending: false });
+    const result = await getAllSessionsHistory(playerId);
 
-    if (matchError) {
+    if (!result.success) {
       setFetchError("Failed to load match history. Please refresh.");
       setLoading(false);
       return;
     }
 
-    if (!matches || matches.length === 0) {
+    const { matches, sessions } = result;
+
+    if (matches.length === 0) {
       setLoading(false);
       return;
     }
 
-    // 2. Unique session IDs, preserving newest-session-first order.
+    // Unique session IDs, preserving newest-session-first order.
     const sessionIdOrder: string[] = [];
     const seen = new Set<string>();
     for (const m of matches) {
@@ -296,23 +288,9 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
       }
     }
 
-    // 3. Fetch session metadata.
-    const { data: sessions, error: sessionError } = await supabase
-      .from("sessions")
-      .select("id, name, created_at, ended_at")
-      .in("id", sessionIdOrder);
+    const sessionMap = new Map<string, SessionMeta>(sessions.map((s) => [s.id, s]));
 
-    if (sessionError) {
-      // Non-fatal — proceed with fallback session labels (date derived from match timestamps).
-      console.error("[AllSessionsHistory] sessions fetch error:", sessionError.message);
-    }
-
-    const sessionMap = new Map<string, SessionMeta>(
-      (sessions ?? []).map((s) => [s.id, s as SessionMeta])
-    );
-
-    // 4. Group matches by session (preserve newest-session-first order,
-    //    but within each session show oldest match first → Match 1, 2, 3).
+    // Group matches by session (newest-session-first, oldest match first within each session).
     const matchesBySession = new Map<string, MatchHistoryType[]>();
     for (const m of matches) {
       const arr = matchesBySession.get(m.session_id) ?? [];
@@ -320,8 +298,7 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
       matchesBySession.set(m.session_id, arr);
     }
 
-    const result: SessionGroup[] = sessionIdOrder.map((sid) => {
-      // Reverse so oldest match in this session is Match 1.
+    const grouped: SessionGroup[] = sessionIdOrder.map((sid) => {
       const sessionMatches = (matchesBySession.get(sid) ?? []).slice().reverse();
       const wins = sessionMatches.filter((m) => outcomeOf(m) === "won").length;
       const draws = sessionMatches.filter((m) => outcomeOf(m) === "draw").length;
@@ -342,14 +319,13 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
       };
     });
 
-    setGroups(result);
+    setGroups(grouped);
     setLoading(false);
-  }, [supabase, playerId]);
+  }, [playerId]);
 
-  // fetchAll is a stable useCallback (deps: supabase, playerId). It calls
-  // setGroups/setLoading internally — the standard fetch-on-mount pattern.
-  // No infinite-loop risk: fetchAll identity only changes when supabase or
-  // playerId changes, not on every render.
+  // fetchAll is a stable useCallback (deps: playerId). It calls the
+  // getAllSessionsHistory server action — no browser client needed.
+  // No infinite-loop risk: fetchAll identity only changes when playerId changes.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAll();

@@ -144,6 +144,13 @@ export function useLeaderboard({
   const prevIdsRef = useRef<Set<string>>(new Set());
 
   // ── Flash helper ──────────────────────────────────────────
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, []);
+
   const flashNewEntrants = useCallback((rows: LeaderboardRow[]) => {
     const toFlash = new Set<string>();
     rows.forEach((r) => {
@@ -152,7 +159,8 @@ export function useLeaderboard({
     prevIdsRef.current = new Set(rows.map((r) => r.player_id));
     if (toFlash.size === 0) return;
     setFlashedIds(toFlash);
-    setTimeout(() => setFlashedIds(new Set()), 1200);
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = setTimeout(() => setFlashedIds(new Set()), 1200);
   }, []);
 
   // ── Fetch: session leaderboard ────────────────────────────

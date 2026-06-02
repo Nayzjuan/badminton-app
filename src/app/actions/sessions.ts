@@ -333,19 +333,19 @@ export async function toggleAutoMatchmaking(
 export async function updateSessionSettings(
   sessionId: string,
   updates: { court_time_limit_minutes?: number | null }
-): Promise<{ error?: string }> {
-  if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
+): Promise<{ success?: boolean; error?: string }> {
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
 
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated." };
+  if (!user) return { success: false, error: "Not authenticated." };
 
   const svc = createServiceClient();
 
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
-  if (!isOrganizer) return { error: "Not an organizer of this session." };
+  if (!isOrganizer) return { success: false, error: "Not an organizer of this session." };
 
   // Explicitly allowlist updatable fields — prevents a crafted call from
   // updating sensitive columns (is_active, organizer_passcode, created_by, etc.)
@@ -357,7 +357,7 @@ export async function updateSessionSettings(
   if (updates.court_time_limit_minutes !== null) {
     const mins = updates.court_time_limit_minutes;
     if (!Number.isInteger(mins) || mins < 5 || mins > 180) {
-      return { error: "Court time limit must be between 5 and 180 minutes." };
+      return { success: false, error: "Court time limit must be between 5 and 180 minutes." };
     }
   }
 
@@ -368,7 +368,7 @@ export async function updateSessionSettings(
     .update({ court_time_limit_minutes: updates.court_time_limit_minutes })
     .eq("id", sessionId);
 
-  if (error) return { error: "Failed to update session settings." };
+  if (error) return { success: false, error: "Failed to update session settings." };
   return {};
 }
 
