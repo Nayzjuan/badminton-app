@@ -144,6 +144,36 @@ export async function broadcastCapSaturation(
   await postBroadcast(`realtime:session-events:${sessionId}`, "cap_saturation", payload);
 }
 
+// ── draft_cap_phase ───────────────────────────────────────
+
+export type DraftCapPhase = "clearing" | "generating" | "done";
+
+export interface DraftCapPhasePayload {
+  phase: DraftCapPhase;
+  /** The override cap being applied. null = Dynamic. */
+  override: number | null;
+}
+
+/**
+ * Broadcast the current phase of a draft-cap reset operation to all
+ * co-organizers so they can display the lockout overlay in sync.
+ *
+ * Three phases emitted sequentially by the hook:
+ *   'clearing'   — phase 1 started (all organizers lock)
+ *   'generating' — phase 2 started (engine running)
+ *   'done'       — operation complete (all organizers unlock)
+ *
+ * 'done' is also emitted on failure so screens never stay locked.
+ */
+export async function broadcastDraftCapPhase(
+  sessionId: string,
+  phase: DraftCapPhase,
+  override: number | null
+): Promise<void> {
+  const payload: DraftCapPhasePayload = { phase, override };
+  await postBroadcast(`realtime:session-events:${sessionId}`, "draft_cap_phase", payload);
+}
+
 /**
  * Notify all players in a session that the organizer has
  * intervened (cleared an On Deck match or cancelled an

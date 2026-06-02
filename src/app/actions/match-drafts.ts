@@ -3,7 +3,8 @@
 // ============================================================
 // match-drafts.ts — On-deck management + draft publishing
 // ============================================================
-// clearOnDeckMatch            — remove an on-deck match
+// clearOnDeckMatch            — remove a single on-deck match
+// clearAllUnpublishedDrafts   — batch-clear all unpublished drafts
 // reorderOnDeckMatches        — drag-reorder sort_order
 // publishMatchAction          — publish a single draft
 // publishAllDraftMatchesAction — publish all drafts at once
@@ -145,6 +146,90 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   await runEngineForSession(match.session_id);
 
   return { success: true, message: "On-deck match cleared. Players returned to queue." };
+}
+
+// ============================================================
+// clearAllUnpublishedDrafts — batch clear for cap-change reset
+// ============================================================
+// Atomically clears ALL is_published=false pending matches for
+// a session via a single Postgres RPC. Returns all affected
+// players to 'waiting' status. Published on-deck matches are
+// untouched.
+//
+// Does NOT trigger the engine — the caller (setCapAndClearDrafts)
+// is responsible for running the engine after this resolves.
+// ============================================================
+
+export type ClearAllDraftsResult = {
+  success: boolean;
+  message: string;
+  clearedCount: number;
+  affectedPlayerIds: string[];
+};
+
+/**
+ * Batch-clear all unpublished draft matches for a session.
+ * Called as phase 1 of the cap-change reset flow.
+ */
+export async function clearAllUnpublishedDrafts(sessionId: string): Promise<ClearAllDraftsResult> {
+  if (!isValidUUID(sessionId)) {
+    return {
+      success: false,
+      message: "Invalid session ID.",
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return {
+      success: false,
+      message: "Not authenticated.",
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) {
+    return {
+      success: false,
+      message: "Organizer access required.",
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const db = createServiceClient();
+
+  // Single atomic RPC — clears all drafts and returns player IDs in one transaction.
+  const { data: playerIds, error } = await db.rpc("clear_all_unpublished_drafts", {
+    p_session_id: sessionId,
+  });
+
+  if (error) {
+    return {
+      success: false,
+      message: `Failed to clear drafts: ${error.message}`,
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const ids = (playerIds as string[]) ?? [];
+
+  // Broadcast so affected players see the "you've been removed" notification.
+  if (ids.length > 0) {
+    void broadcastOrganizerIntervention(sessionId, "on_deck_cleared", ids);
+  }
+
+  return {
+    success: true,
+    message: `Cleared all unpublished drafts. ${ids.length} player(s) returned to queue.`,
+    clearedCount: ids.length,
+    affectedPlayerIds: ids,
+  };
 }
 
 // ============================================================

@@ -92,6 +92,8 @@ export type Session = {
   is_active: boolean;
   is_auto_matchmaking_on: boolean; // organizer toggle — auto-fill courts on match completion
   court_time_limit_minutes: number | null; // per-session court time cap; null = no limit
+  /** Organizer cap on auto-draft generation. null = dynamic (3/5/6 by pool size). 1–5 = ceiling. */
+  max_auto_drafts_override: number | null;
   created_at: string;
   ended_at: string | null;
 };
@@ -255,6 +257,7 @@ export type SessionUpdate = Partial<
     | "is_active"
     | "is_auto_matchmaking_on"
     | "court_time_limit_minutes"
+    | "max_auto_drafts_override"
     | "ended_at"
     | "created_by"
   >
@@ -736,6 +739,11 @@ export type Database = {
           p_ondeck_team: string;
         };
         Returns: void;
+      };
+      // ── Draft cap override (migration 20260602000000) ──
+      clear_all_unpublished_drafts: {
+        Args: { p_session_id: string };
+        Returns: string[]; // array of player UUIDs returned to 'waiting'
       };
     };
     Enums: {

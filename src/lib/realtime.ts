@@ -19,6 +19,7 @@ import type {
   SessionClosedPayload,
   AutoMatchmakingToggledPayload,
   CapSaturationPayload,
+  DraftCapPhasePayload,
 } from "@/lib/broadcast";
 
 type TypedClient = SupabaseClient<Database>;
@@ -191,6 +192,11 @@ export type OrganizerBroadcastHandlers = {
   onAutoMatchmakingToggled?: (payload: AutoMatchmakingToggledPayload) => void;
   /** Fired when the partner-pair cap blocks match formation for a waiting player. */
   onCapSaturation?: (payload: CapSaturationPayload) => void;
+  /**
+   * Fired during a draft-cap reset: 'clearing' → 'generating' → 'done'.
+   * All co-organizers use this to display the lockout overlay in sync.
+   */
+  onDraftCapPhaseChanged?: (payload: DraftCapPhasePayload) => void;
 };
 
 /**
@@ -207,7 +213,13 @@ export function subscribeToOrganizerBroadcast(
   sessionId: string,
   handlers: OrganizerBroadcastHandlers
 ): () => void {
-  const { onIntervention, onSessionClosed, onAutoMatchmakingToggled, onCapSaturation } = handlers;
+  const {
+    onIntervention,
+    onSessionClosed,
+    onAutoMatchmakingToggled,
+    onCapSaturation,
+    onDraftCapPhaseChanged,
+  } = handlers;
   const channelName = `session-events:${sessionId}`;
 
   const channel = supabase
@@ -231,6 +243,9 @@ export function subscribeToOrganizerBroadcast(
     )
     .on("broadcast", { event: "cap_saturation" }, (msg: { payload: CapSaturationPayload }) => {
       onCapSaturation?.(msg.payload);
+    })
+    .on("broadcast", { event: "draft_cap_phase" }, (msg: { payload: DraftCapPhasePayload }) => {
+      onDraftCapPhaseChanged?.(msg.payload);
     })
     .subscribe((status, err) => {
       if (err) {

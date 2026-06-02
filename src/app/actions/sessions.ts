@@ -12,7 +12,12 @@
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { broadcastSessionClosed, broadcastAutoMatchmakingToggled } from "@/lib/broadcast";
+import {
+  broadcastSessionClosed,
+  broadcastAutoMatchmakingToggled,
+  broadcastDraftCapPhase,
+} from "@/lib/broadcast";
+import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 import type { ScoringFormat } from "@/types/database";
@@ -370,6 +375,87 @@ export async function updateSessionSettings(
 
   if (error) return { success: false, error: "Failed to update session settings." };
   return {};
+}
+
+// ── setCapAndClearDrafts ──────────────────────────────────────
+
+export type SetCapResult = {
+  success: boolean;
+  message?: string;
+  error?: string;
+  autoIsOn?: boolean;
+  clearedCount?: number;
+};
+
+/**
+ * Save the organizer's max-draft override and — when Auto is ON —
+ * atomically clear all unpublished drafts so the engine can
+ * regenerate fresh ones against the new cap.
+ *
+ * Called as Phase 1 of the cap-change reset flow. The hook
+ * calls runEngineForSession separately as Phase 2.
+ * Does NOT trigger the engine itself.
+ */
+export async function setCapAndClearDrafts(
+  sessionId: string,
+  cap: number | null
+): Promise<SetCapResult> {
+  if (!isValidUUID(sessionId)) {
+    return { success: false, error: "Invalid session ID." };
+  }
+  // Validate cap: null = dynamic, 1–5 = override ceiling.
+  if (cap !== null && (!Number.isInteger(cap) || cap < 1 || cap > 5)) {
+    return { success: false, error: "Cap must be null or an integer between 1 and 5." };
+  }
+
+  const db = createServiceClient();
+  const supabase = await createServerSupabaseClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Not authenticated." };
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) return { success: false, error: "Organizer access required." };
+
+  // Fetch current auto state alongside saving the override.
+  const { data: sessionRow } = await db
+    .from("sessions")
+    .select("is_auto_matchmaking_on")
+    .eq("id", sessionId)
+    .single();
+
+  // Persist the override.
+  const { error: updateErr } = await db
+    .from("sessions")
+    .update({ max_auto_drafts_override: cap })
+    .eq("id", sessionId);
+
+  if (updateErr) {
+    return { success: false, error: `Failed to save cap: ${updateErr.message}` };
+  }
+
+  const autoIsOn = sessionRow?.is_auto_matchmaking_on ?? false;
+
+  if (!autoIsOn) {
+    // Auto is OFF — just saved the preference, nothing to clear.
+    return { success: true, autoIsOn: false, clearedCount: 0 };
+  }
+
+  const clearResult = await clearAllUnpublishedDrafts(sessionId);
+
+  if (!clearResult.success) {
+    // Clearing failed — broadcast 'done' so all organizer screens unlock.
+    void broadcastDraftCapPhase(sessionId, "done", cap);
+    return { success: false, error: clearResult.message };
+  }
+
+  return {
+    success: true,
+    autoIsOn: true,
+    clearedCount: clearResult.clearedCount,
+  };
 }
 
 // ── getSessionForOrganizer ────────────────────────────────────

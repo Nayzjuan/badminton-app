@@ -19,7 +19,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
 import { getSessionForOrganizer } from "@/app/actions/sessions";
-import type { AutoMatchmakingToggledPayload, CapSaturationPayload } from "@/lib/broadcast";
+import type {
+  AutoMatchmakingToggledPayload,
+  CapSaturationPayload,
+  DraftCapPhasePayload,
+} from "@/lib/broadcast";
 import type { Session } from "@/types/database";
 
 // Total number of table channels tracked for the realtimeConnected indicator.
@@ -35,6 +39,9 @@ const REALTIME_CHANNEL_COUNT = 5;
  * `handleChannelStatus` is a stable callback — safe to pass to child sub-hooks
  * without causing subscription restarts on re-renders.
  */
+/** Phase exposed to the UI. 'done' is broadcast-only and maps to null here. */
+export type CapPhase = "clearing" | "generating" | null;
+
 export function useOrganizerSession(
   sessionId: string,
   initialSession: Session,
@@ -46,10 +53,13 @@ export function useOrganizerSession(
   capSaturation: CapSaturationPayload | null;
   dismissCapSaturation: () => void;
   handleChannelStatus: (channelId: string, connected: boolean) => void;
+  /** Phase of a draft-cap reset driven by a co-organizer or self. */
+  externalCapPhase: CapPhase;
 } {
   const [liveSession, setSession] = useState<Session>(initialSession);
   const [realtimeConnected, setRealtimeConnected] = useState(true);
   const [capSaturation, setCapSaturation] = useState<CapSaturationPayload | null>(null);
+  const [externalCapPhase, setExternalCapPhase] = useState<CapPhase>(null);
 
   // Tracks which channel IDs have confirmed SUBSCRIBED — Set prevents double-counting.
   const connectedChannelIds = useRef(new Set<string>());
@@ -137,6 +147,15 @@ export function useOrganizerSession(
       onCapSaturation: (payload: CapSaturationPayload) => {
         setCapSaturation(payload);
       },
+      onDraftCapPhaseChanged: (payload: DraftCapPhasePayload) => {
+        // Sync co-organizer lockout overlay with whoever triggered the cap reset.
+        setExternalCapPhase(payload.phase === "done" ? null : payload.phase);
+        // When 'done', also sync the cap value from the session refresh.
+        if (payload.phase === "done") {
+          ++fetchSessionSeq.current;
+          fetchSessionRef.current();
+        }
+      },
     });
 
     return () => {
@@ -186,5 +205,6 @@ export function useOrganizerSession(
     capSaturation,
     dismissCapSaturation,
     handleChannelStatus,
+    externalCapPhase,
   };
 }

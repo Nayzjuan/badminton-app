@@ -31,8 +31,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
+import { closeSession, toggleAutoMatchmaking, setCapAndClearDrafts } from "@/app/actions/sessions";
+import { runEngineForSession } from "@/app/actions/matchmaking";
+import { broadcastDraftCapPhase } from "@/lib/broadcast";
 import { joinQueueAction } from "@/app/actions/queue";
+import type { CapPhase } from "@/hooks/use-organizer-session";
 import { TOAST_DISMISS_MS } from "@/lib/constants";
 
 // ── Types ────────────────────────────────────────────────────
@@ -57,6 +60,8 @@ export interface UseOrganizerDashboardParams {
   draftCount: number;
   /** from useSwapState — wired to the Esc key */
   handleCancelSwap: () => void;
+  /** Phase received from a co-organizer's cap-change broadcast. */
+  externalCapPhase?: CapPhase;
 }
 
 export interface UseOrganizerDashboardResult {
@@ -88,6 +93,11 @@ export interface UseOrganizerDashboardResult {
   togglingAuto: boolean;
   handleToggleAuto: () => Promise<void>;
 
+  // Draft cap override
+  capPhase: CapPhase;
+  isDashboardLocked: boolean;
+  handleCapChange: (cap: number | null) => Promise<void>;
+
   // Organizer self-join
   joinQueue: () => Promise<void>;
 
@@ -112,6 +122,7 @@ export function useOrganizerDashboard({
   bottleneckCount,
   draftCount,
   handleCancelSwap,
+  externalCapPhase = null,
 }: UseOrganizerDashboardParams): UseOrganizerDashboardResult {
   const router = useRouter();
   const isClosed = !sessionIsActive;
@@ -243,6 +254,53 @@ export function useOrganizerDashboard({
     }
   }, [sessionId]);
 
+  // ── Draft cap override ────────────────────────────────────
+  // Local capPhase tracks the phase when THIS organizer triggers the change.
+  // externalCapPhase tracks the phase when a CO-ORGANIZER triggers it.
+  // The effective phase shown in the UI is whichever is non-null.
+  const [localCapPhase, setLocalCapPhase] = useState<CapPhase>(null);
+  const capPhase: CapPhase = localCapPhase ?? externalCapPhase;
+  const isDashboardLocked = capPhase !== null;
+
+  const handleCapChange = useCallback(
+    async (cap: number | null) => {
+      // Phase 1: clear drafts + save cap.
+      setLocalCapPhase("clearing");
+      void broadcastDraftCapPhase(sessionId, "clearing", cap);
+
+      const clearResult = await setCapAndClearDrafts(sessionId, cap);
+
+      if (!clearResult.success) {
+        toast.error(clearResult.error ?? "Failed to reset drafts. Please try again.");
+        setLocalCapPhase(null);
+        void broadcastDraftCapPhase(sessionId, "done", cap);
+        return;
+      }
+
+      // Auto OFF — just saved the preference, no engine run needed.
+      if (!clearResult.autoIsOn) {
+        setLocalCapPhase(null);
+        void broadcastDraftCapPhase(sessionId, "done", cap);
+        return;
+      }
+
+      // Phase 2: regenerate drafts with the new effective cap.
+      setLocalCapPhase("generating");
+      void broadcastDraftCapPhase(sessionId, "generating", cap);
+
+      try {
+        await runEngineForSession(sessionId);
+      } catch (err) {
+        console.error("[handleCapChange] engine threw unexpectedly:", err);
+      } finally {
+        // Always unlock — whether engine succeeded, returned an error, or threw.
+        setLocalCapPhase(null);
+        void broadcastDraftCapPhase(sessionId, "done", cap);
+      }
+    },
+    [sessionId]
+  );
+
   // ── Derived values ────────────────────────────────────────
 
   // Show the optimistic value during the server round-trip, then
@@ -290,6 +348,9 @@ export function useOrganizerDashboard({
     autoMatchmaking,
     togglingAuto,
     handleToggleAuto,
+    capPhase,
+    isDashboardLocked,
+    handleCapChange,
     joinQueue,
     isClosed,
   };

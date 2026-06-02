@@ -15,7 +15,12 @@ import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { VipTag } from "@/components/ui/vip-tag";
 import { SKILL_LEVELS } from "@/types/database";
-import { updatePlayerSkill, getPlayerPin, resetPlayerPin } from "@/app/actions/profile";
+import {
+  updatePlayerSkill,
+  getPlayerPin,
+  resetPlayerPin,
+  updatePlayerPin,
+} from "@/app/actions/profile";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -87,6 +92,10 @@ export function QueueControl({
   // PIN management state.
   const [visiblePins, setVisiblePins] = useState<Map<string, string>>(new Map());
   const [loadingPin, setLoadingPin] = useState<string | null>(null);
+  // Edit PIN inline state: tracks which player is being edited + their draft + any error.
+  const [editingPinFor, setEditingPinFor] = useState<string | null>(null);
+  const [editPinDraft, setEditPinDraft] = useState("");
+  const [editPinError, setEditPinError] = useState<string | null>(null);
 
   async function handleSkillChange(playerId: string, newSkill: SkillLevel) {
     setUpdatingSkill(playerId);
@@ -118,6 +127,41 @@ export function QueueControl({
     setLoadingPin(null);
     if (result.success && result.pin) {
       setVisiblePins((prev) => new Map(prev).set(playerId, result.pin!));
+    }
+  }
+
+  function handleEditPin(playerId: string) {
+    setEditingPinFor(playerId);
+    setEditPinDraft(visiblePins.get(playerId) ?? "");
+    setEditPinError(null);
+  }
+
+  function handleEditPinCancel() {
+    setEditingPinFor(null);
+    setEditPinDraft("");
+    setEditPinError(null);
+  }
+
+  async function handleEditPinSubmit(playerId: string) {
+    // Client-side validation: must be exactly 4 digits, not "0000".
+    if (!/^\d{4}$/.test(editPinDraft)) {
+      setEditPinError("PIN must be exactly 4 digits.");
+      return;
+    }
+    if (editPinDraft === "0000") {
+      setEditPinError("PIN cannot be 0000.");
+      return;
+    }
+    setLoadingPin(playerId);
+    const result = await updatePlayerPin(sessionId, playerId, editPinDraft);
+    setLoadingPin(null);
+    if (result.success && result.pin) {
+      setVisiblePins((prev) => new Map(prev).set(playerId, result.pin!));
+      setEditingPinFor(null);
+      setEditPinDraft("");
+      setEditPinError(null);
+    } else {
+      setEditPinError(result.message ?? "Failed to update PIN.");
     }
   }
 
@@ -472,6 +516,51 @@ export function QueueControl({
                         <div className="flex items-center justify-center gap-1">
                           {loadingPin === entry.player_id ? (
                             <span className="text-xs text-muted-foreground animate-pulse">...</span>
+                          ) : editingPinFor === entry.player_id ? (
+                            /* ── Inline PIN edit input ─────────────────── */
+                            <div className="flex flex-col items-center gap-1">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  aria-label="New PIN"
+                                  type="text"
+                                  inputMode="numeric"
+                                  maxLength={4}
+                                  value={editPinDraft}
+                                  onChange={(e) => {
+                                    setEditPinDraft(e.target.value);
+                                    setEditPinError(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter")
+                                      void handleEditPinSubmit(entry.player_id);
+                                    if (e.key === "Escape") handleEditPinCancel();
+                                  }}
+                                  autoFocus
+                                  className="w-14 text-center font-mono text-xs border border-border
+                                             rounded px-1 py-0.5 bg-background focus:outline-none
+                                             focus:ring-1 focus:ring-ring"
+                                />
+                                <button
+                                  onClick={() => void handleEditPinSubmit(entry.player_id)}
+                                  aria-label="Save PIN"
+                                  className="min-w-[32px] min-h-[32px] flex items-center justify-center
+                                             text-emerald-600 hover:text-emerald-700 transition-colors rounded"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={handleEditPinCancel}
+                                  aria-label="Cancel PIN edit"
+                                  className="min-w-[32px] min-h-[32px] flex items-center justify-center
+                                             text-muted-foreground hover:text-foreground transition-colors rounded"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              {editPinError && (
+                                <p className="text-[10px] text-destructive">{editPinError}</p>
+                              )}
+                            </div>
                           ) : visiblePins.has(entry.player_id) ? (
                             <>
                               <span className="font-mono text-xs font-medium">
@@ -518,6 +607,29 @@ export function QueueControl({
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                                  />
+                                </svg>
+                              </button>
+                              {/* Edit PIN — opens inline input */}
+                              <button
+                                onClick={() => handleEditPin(entry.player_id)}
+                                className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                         text-muted-foreground hover:text-blue-600 transition-colors
+                                         rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                title="Edit PIN"
+                                aria-label="Edit PIN"
+                              >
+                                <svg
+                                  className="h-3.5 w-3.5"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                  strokeWidth={2}
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
                                   />
                                 </svg>
                               </button>

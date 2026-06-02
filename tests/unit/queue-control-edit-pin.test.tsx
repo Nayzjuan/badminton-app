@@ -192,19 +192,24 @@ describe("EP-6: 3-digit PIN is rejected", () => {
   });
 });
 
-describe("EP-7: 5-digit PIN is rejected", () => {
-  it("submitting '12345' shows a validation error", async () => {
+describe("EP-7: 5-digit PIN is prevented by input maxLength", () => {
+  it("input has maxLength=4 so a 5th digit is silently dropped — only 4 chars can be entered", async () => {
+    // The input enforces maxLength={4} at the HTML level.
+    // '12345' typed into it yields '1234' — the 5th char is never captured.
+    // Submitting '1234' is then valid, so updatePlayerPin IS called.
+    // The browser-level guard is the correct enforcement mechanism here.
+    vi.mocked(updatePlayerPin).mockResolvedValue({ success: true, message: "ok", pin: "1234" });
+
     renderQueueControl();
-    await revealPin("1234");
+    await revealPin("9999");
 
     await userEvent.click(screen.getByLabelText("Edit PIN"));
-    const input = screen.getByLabelText("New PIN");
+    const input = screen.getByLabelText("New PIN") as HTMLInputElement;
     await userEvent.clear(input);
-    await userEvent.type(input, "12345");
-    await userEvent.click(screen.getByLabelText("Save PIN"));
+    await userEvent.type(input, "12345"); // 5th char silently dropped by maxLength
 
-    expect(screen.getByText(/4 digits/i)).toBeDefined();
-    expect(updatePlayerPin).not.toHaveBeenCalled();
+    expect(input.value).toBe("1234"); // only 4 chars accepted
+    expect(input.maxLength).toBe(4);
   });
 });
 

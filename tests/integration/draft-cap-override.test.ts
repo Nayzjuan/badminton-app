@@ -47,18 +47,32 @@ beforeAll(() => {
 // ── Helpers ───────────────────────────────────────────────────
 
 async function createTestSession(overrides: Record<string, unknown> = {}) {
-  const { data, error } = await db
-    .from("sessions")
+  const { name, scoring, is_auto_matchmaking_on, ...rest } = overrides as {
+    name?: string;
+    scoring?: string;
+    is_auto_matchmaking_on?: boolean;
+    [k: string]: unknown;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db.from("sessions") as any)
     .insert({
-      name: "Test Session",
-      scoring: "single",
-      is_active: true,
-      is_auto_matchmaking_on: true,
-      ...overrides,
+      name: name ?? "Test Session",
+      scoring: scoring ?? "single",
+      is_auto_matchmaking_on: is_auto_matchmaking_on ?? true,
     })
     .select("id")
     .single();
   if (error || !data) throw new Error(`Failed to create test session: ${error?.message}`);
+
+  // Apply any remaining overrides (e.g. max_auto_drafts_override) via update.
+  if (Object.keys(rest).length > 0) {
+    await db
+      .from("sessions")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update(rest as any)
+      .eq("id", data.id as string);
+  }
+
   return data.id as string;
 }
 
