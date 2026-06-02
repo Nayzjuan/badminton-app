@@ -57,13 +57,9 @@ import {
   DND_ACTIVATION_DISTANCE_PX,
   DND_TOUCH_DELAY_MS,
   DND_TOUCH_TOLERANCE_PX,
-  MAX_AUTO_DRAFTS,
-  MAX_AUTO_DRAFTS_LARGE,
-  MAX_AUTO_DRAFTS_XLARGE,
-  DRAFT_CAP_LARGE_THRESHOLD,
-  DRAFT_CAP_XLARGE_THRESHOLD,
   PLAYERS_PER_MATCH,
 } from "@/lib/constants";
+import { getDynamicDraftCap } from "@/lib/matchmaking-core";
 
 // ── DraftCapNotice ────────────────────────────────────────────
 // Shown when auto-matchmaking is ON, there are enough waiting players,
@@ -358,12 +354,7 @@ function OnDeckPanelInner({
   // is ON, and there are enough players waiting — explains to the organizer
   // why the engine has stopped generating new matches.
   const waiting = waitingCount ?? 0;
-  const dynamicCap =
-    waiting >= DRAFT_CAP_XLARGE_THRESHOLD
-      ? MAX_AUTO_DRAFTS_XLARGE
-      : waiting >= DRAFT_CAP_LARGE_THRESHOLD
-        ? MAX_AUTO_DRAFTS_LARGE
-        : MAX_AUTO_DRAFTS;
+  const dynamicCap = getDynamicDraftCap(waiting);
   const isDraftCapBlocked =
     isAutoMatchmakingOn === true && waiting >= PLAYERS_PER_MATCH && draftCount >= dynamicCap;
 
