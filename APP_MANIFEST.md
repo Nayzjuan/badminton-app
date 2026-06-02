@@ -713,6 +713,8 @@ Shows: `A {n} — B {n} all-time · A {n} — B {n} tonight`
 
 Backed by `get_h2h_record(p_team_a, p_team_b, p_session_id)` RPC with security and degenerate guards.
 
+**Auth model:** `getH2HRecord` verifies the caller is either an organizer OR has a `queue_entries` row for the requested session. Unauthenticated and non-member requests return `null` silently.
+
 ---
 
 ### 3.12 TV Scoreboard
@@ -762,11 +764,15 @@ Any player assigned to an `in_progress` match can submit the final score from th
 
 ### 3.16 My Session History
 
-**Files:** `src/components/player/all-sessions-history.tsx`, player dashboard bottom sheet
+**Files:** `src/components/player/all-sessions-history.tsx`, `src/components/player/match-history.tsx`, `src/app/actions/history.ts`, player dashboard bottom sheet
 
 Persistent stats chip visible on the player lobby showing the player's lifetime totals (GP, W, L, Win%). Tapping opens a bottom sheet with full cross-session match history grouped by session, including a last-match peek for the most recent game.
 
-No real-time subscription — lobby view is a read-only recap fetched once on open.
+**Data layer:** `src/app/actions/history.ts` exposes two server actions:
+- `getMatchHistory(playerId, sessionId?, limit?)` — reads `v_match_history`, auth-gated, optionally scoped to a session
+- `getAllSessionsHistory(playerId)` — reads `v_match_history` + `sessions` in two queries, returns both for client grouping
+
+Both components call server actions for data. `match-history.tsx` retains the browser Supabase client **only** for its Realtime subscription (session-scoped match change events); all data fetching goes through the server action.
 
 ---
 
@@ -912,6 +918,36 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 **`PlayerRowDark` changes:** `onLongPress` prop adds pointer-event handlers + keyboard fallback (Enter/Space fires immediately). `lp-hold` CSS class applied during the hold for visual feedback. Non-interactive rows restore `hover:bg-cc-border`.
 
 **Migration `20260601000000_live_match_player_swap.sql` applied to Supabase production ✅ (2026-06-01).**
+
+---
+
+### 3.23 Security Hardening & Quality Improvements (2026-06-02)
+
+A systematic audit was applied and all confirmed findings were resolved. Key architectural changes that affect future development:
+
+**Profile actions require organizer gate (`src/app/actions/profile.ts`):**
+All four profile mutation actions (`updatePlayerSkill`, `getPlayerPin`, `resetPlayerPin`, `updatePlayerPin`) now require both `getAuthenticatedUser()` AND `isSessionOrganizer(userId, sessionId)` as their first two guards. The `sessionId` parameter is the first argument on all four. Callers must pass the active session ID — `QueueControl` receives it via a `sessionId` prop from `OrganizerDashboard`.
+
+**`createServiceClient` is server-only (`src/utils/supabase/service.ts`):**
+`import "server-only"` is the first line. Accidentally importing this module into a Client Component now causes a hard **build error**. The `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY` fallback has also been removed — only `SUPABASE_SERVICE_ROLE_KEY` (no `NEXT_PUBLIC_` prefix) is accepted.
+
+**Global App Router error boundaries (`src/app/error.tsx`, `src/app/not-found.tsx`):**
+`error.tsx` catches unhandled errors in any route segment with a "Try again" reset button. `not-found.tsx` renders a 404 page with a home link. Both use the existing design system tokens.
+
+**PIN security (`src/app/actions/profile.ts`):**
+`resetPlayerPin` uses `crypto.getRandomValues()` instead of `Math.random()`. `updatePlayerPin` rejects `"0000"` explicitly.
+
+**`getH2HRecord` is session-gated (`src/app/actions/h2h.ts`):**
+See §3.11 for the updated auth model.
+
+**`src/lib/realtime.ts` — debug logs stripped:**
+All `console.log` calls removed from hot subscription paths. Only `console.error` remains (CHANNEL_ERROR / TIMED_OUT). `castPayload<T>()` helper centralises the unavoidable Supabase SDK type assertion for unfiltered subscriptions. File header updated to reflect new debug behavior.
+
+**History data via server actions (`src/app/actions/history.ts`):**
+See §3.16 for the updated data layer.
+
+**Action return shape consistency:**
+All `{ error }` bare returns in `auth.ts` and `sessions.ts` now include `success: false`. The canonical shape `{ success: boolean, message?: string, error?: string }` from CLAUDE.md is now enforced across all action files.
 
 ---
 
