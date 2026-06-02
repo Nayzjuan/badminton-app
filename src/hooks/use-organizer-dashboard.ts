@@ -214,7 +214,8 @@ export function useOrganizerDashboard({
       } else {
         toast.error(result.message ?? "Failed to close session.");
       }
-    } catch {
+    } catch (err) {
+      console.error("[handleCloseSession] unexpected throw:", err);
       toast.error("Failed to close session. Please try again.");
     } finally {
       setClosing(false);
@@ -246,7 +247,8 @@ export function useOrganizerDashboard({
         setPendingAuto(null);
         toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
       }
-    } catch {
+    } catch (err) {
+      console.error("[handleToggleAuto] unexpected throw:", err);
       setPendingAuto(null);
       toast.error("Failed to toggle auto-matchmaking. Please try again.");
     } finally {
@@ -260,7 +262,8 @@ export function useOrganizerDashboard({
       if (result.error) {
         toast.error(result.error);
       }
-    } catch {
+    } catch (err) {
+      console.error("[joinQueue] unexpected throw:", err);
       toast.error("Failed to join queue. Please try again.");
     }
   }, [sessionId]);
