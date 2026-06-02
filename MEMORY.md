@@ -5,6 +5,87 @@
 
 ---
 
+## SESSION STATE (Last Updated: 2026-06-02 — Security & Quality Audit Fixes)
+
+### Audit Fixes (2026-06-02) — COMPLETE ✅
+
+Applied all confirmed findings from an automated security/quality audit. Fixes in priority order:
+
+**C-001 — Profile IDOR (FIXED):**
+`updatePlayerSkill`, `getPlayerPin`, `resetPlayerPin`, `updatePlayerPin` in `profile.ts` now require both `getAuthenticatedUser()` AND `isSessionOrganizer(userId, sessionId)` before executing any service-role write. Added `sessionId: string` as the first parameter to all four functions. `QueueControlProps` gained `sessionId` prop; `organizer-dashboard.tsx` passes `session.id`. Previously, any authenticated player could modify any other player's PIN or skill level.
+
+**C-002 — Service key NEXT_PUBLIC fallback (FIXED):**
+`service.ts` and `broadcast.ts` no longer accept `NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY`. Both now use `SUPABASE_SERVICE_ROLE_KEY` exclusively. Your `.env.local` already uses the correct key name — no env change needed.
+
+**H-003 — Math.random() PINs (FIXED):**
+`resetPlayerPin` now uses `crypto.getRandomValues(new Uint32Array(1))` instead of `Math.random()`.
+
+**H-005 — Missing error boundaries (FIXED):**
+Added `src/app/error.tsx` (global client error boundary with "Try again" reset button) and `src/app/not-found.tsx` (404 page with home link). Both use the existing design system tokens.
+
+**L-005 — getH2HRecord open to any user (FIXED):**
+`h2h.ts` now verifies the caller is either an `isSessionOrganizer` OR has a `queue_entries` row for the requested session before executing the H2H RPC.
+
+**L-001 — Deprecated constants deleted (FIXED):**
+`ON_DECK_LOOKAHEAD` and `MAX_ON_DECK_MATCHES` removed from `constants.ts`. Zero importers existed in `src/`.
+
+**L-006 — court-card.tsx always-on interval (FIXED):**
+`alertTier` `useEffect` now early-returns (without creating `setInterval`) when `!isActive || !timeLimitMinutes || !match?.started_at`. Previously the 30-second interval fired even on available/closed courts.
+
+**L-007 — PIN "0000" accepted (FIXED, bundled with C-001):**
+`updatePlayerPin` now rejects `"0000"` explicitly.
+
+**Remaining known issues (not fixed, logged):**
+- H-001: `subscribeToMatchPlayers` has no session filter (by design — acknowledged in code comment)
+- H-002: No rate limiting on server actions
+- H-004: FALSE POSITIVE — broadcast helper is private, always called post-auth
+- C-003: FALSE POSITIVE — dev.ts two-layer guard is correct
+- M-002–M-010: Medium findings — backlog sprint items
+- `updatePlayerPin` has zero callers currently (exported but no UI uses it yet)
+
+**Files changed:** `src/app/actions/profile.ts`, `src/app/actions/h2h.ts`, `src/components/organizer/queue-control.tsx`, `src/components/organizer/organizer-dashboard.tsx`, `src/utils/supabase/service.ts`, `src/lib/broadcast.ts`, `src/lib/constants.ts`, `src/components/organizer/court-card.tsx`, `src/app/error.tsx` (new), `src/app/not-found.tsx` (new)
+
+---
+
+## SESSION STATE (Last Updated: 2026-06-01 — Live Match Player Swap)
+
+### Live Match Player Swap (2026-06-01) — COMPLETE ✅
+
+Organizer can long-press (500ms) any player name on an active court card to open a replacement picker sheet. Three swap modes supported:
+
+**Mode 1 — Switch Teams (same-match):** Picks one of the 2 opposite-team players. Mutual team swap; no queue changes. Self-undoable by calling the same RPC again.
+
+**Mode 2 — Queue Replacement:** Picks a waiting queue player. Out-player goes to queue; in-player gets `playing` status. Undo reverses the two players.
+
+**Mode 3 — On-deck Pull (3-way):** Picks an on-deck player. Organizer is forced to also fill the vacated on-deck slot from queue before Confirm unlocks. Atomic 3-way RPC. Undo uses `undo_swap_active_from_ondeck` with original team data stored in `undoContext`.
+
+**3-second undo toast** via Sonner with action button for all three modes.
+
+**New files:**
+- `supabase/migrations/20260601000000_live_match_player_swap.sql` — 4 RPCs: `swap_player_in_active_match`, `swap_teams_in_active_match`, `swap_active_from_ondeck`, `undo_swap_active_from_ondeck`
+- `src/app/actions/live-match-swap.ts` — 4 server actions
+- `src/hooks/use-live-match-swap.ts` — state machine (idle → open → fill_required → submitting)
+- `src/components/organizer/live-swap-sheet.tsx` — Sheet UI with 3 sections + inline on-deck fill expansion
+
+**Modified files:**
+- `src/components/organizer/match-roster.tsx` — `PlayerRowDark` gains `onLongPress` prop with 500ms hold detection (pointer events), `lp-hold` CSS animation class, keyboard fallback (Enter/Space fires immediately)
+- `src/components/organizer/court-card.tsx` — `onLongPressPlayer` prop passthrough to `TeamsGrid`
+- `src/components/organizer/active-courts.tsx` — `onDeckMatches`, `queuePlayers`, `sessionId` props; `useLiveMatchSwap` hook; `LiveSwapSheet` mounted at grid level (same pattern as `ScoreModal`); local toast renamed `banner` to avoid conflict with Sonner `toast` import
+- `src/components/organizer/organizer-dashboard.tsx` — passes `onDeckMatches`, `queuePlayers={queue}`, `sessionId` to `ActiveCourts`
+- `src/app/globals.css` — `--cc-live` / `--cc-live-dim` tokens (orange, H=48, between amber H=62 and streak H=38); `lp-hold` keyframe animation; reduced-motion fallback
+- `src/types/database.ts` — 4 new RPC type registrations; `swap_active_from_ondeck` Returns is `[]` array (PostgREST wraps OUT-param functions in arrays)
+
+**Design language:** Orange `--cc-live` accent (distinct from amber correction / teal queue swap).
+
+**Known minor issues (non-blocking):**
+- `swap_active_from_ondeck` TOCTOU: `outRow.team` read outside the RPC transaction — if `swap_teams_in_active_match` fires between pre-read and RPC (~ms window), team assignment could be wrong. Low risk; RPC's `PLAYER_NOT_IN_MATCH` guard partially mitigates.
+- `useLiveMatchSwap.confirm()` has no try/catch for network-level throws — if the server action throws instead of returning `{ success: false }`, `isSubmitting` stays `true` and the sheet is stuck. Future: wrap `startTransition` body in try/catch.
+- `undo_swap_active_from_ondeck` raises `MATCH_NOT_ACTIVE` instead of `ONDECK_MATCH_STARTED` for a missing ondeck row (NULL ≠ 'pending'). Low impact — undo silently returns without error per the `RETURN` statement.
+
+**Migration `20260601000000_live_match_player_swap.sql` applied to Supabase production ✅ (2026-06-01).**
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-01 — Code review findings A–K fixed)
 
 ### Code review findings fixed (2026-06-01) — COMPLETE ✅

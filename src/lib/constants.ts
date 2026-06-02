@@ -68,20 +68,6 @@ export const GATE_POOL_THRESHOLD = 4;
 export const GATE_HOLD_MINUTES = 8;
 
 /**
- * @deprecated Not used by the live engine. Superseded by {@link MAX_AUTO_DRAFTS}
- * and `getDynamicDraftCap` in `matchmaking-core.ts`. No production imports remain.
- * Safe to remove once any dev-tooling references are cleaned up.
- */
-export const ON_DECK_LOOKAHEAD = 1;
-
-/**
- * @deprecated Not used by the live engine. Superseded by {@link MAX_AUTO_DRAFTS}
- * and `getDynamicDraftCap` in `matchmaking-core.ts`. No production imports remain.
- * Safe to remove once any dev-tooling references are cleaned up.
- */
-export const MAX_ON_DECK_MATCHES = 2;
-
-/**
  * Dynamic draft cap tiers — scales the review queue depth with the number of
  * waiting players so larger sessions always have enough pending matches ready.
  *

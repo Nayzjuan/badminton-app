@@ -36,9 +36,7 @@ export interface OrganizerInterventionPayload {
  */
 async function postBroadcast(topic: string, event: string, payload: object): Promise<void> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !key) {
     console.warn("[broadcast] Missing SUPABASE_URL or service role key — skipping broadcast.");
@@ -85,11 +83,7 @@ export interface SessionClosedPayload {
  */
 export async function broadcastSessionClosed(sessionId: string): Promise<void> {
   const payload: SessionClosedPayload = { sessionId };
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "session_closed",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "session_closed", payload);
 }
 
 // ── auto_matchmaking_toggled ──────────────────────────────
@@ -116,11 +110,7 @@ export async function broadcastAutoMatchmakingToggled(
   isOn: boolean
 ): Promise<void> {
   const payload: AutoMatchmakingToggledPayload = { isOn };
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "auto_matchmaking_toggled",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "auto_matchmaking_toggled", payload);
 }
 
 // ── cap_saturation ────────────────────────────────────────
@@ -151,11 +141,7 @@ export async function broadcastCapSaturation(
   sessionId: string,
   payload: CapSaturationPayload
 ): Promise<void> {
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "cap_saturation",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "cap_saturation", payload);
 }
 
 /**
@@ -172,9 +158,5 @@ export async function broadcastOrganizerIntervention(
 
   const payload: OrganizerInterventionPayload = { type, affectedPlayerIds };
 
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "organizer_intervention",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "organizer_intervention", payload);
 }

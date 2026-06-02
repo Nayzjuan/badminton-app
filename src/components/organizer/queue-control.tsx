@@ -33,6 +33,8 @@ import type { QueueFullWithWaitTime, SkillLevel, Profile } from "@/types/databas
 const REQUIRED_PLAYERS = PLAYERS_PER_MATCH; // 4
 
 interface QueueControlProps {
+  /** Session ID used to verify organizer status before profile mutations. */
+  sessionId: string;
   queue: QueueFullWithWaitTime[];
   /** Full profiles map (from useOrganizerData) for VIP tag lookup. */
   profiles?: Map<string, Profile>;
@@ -50,6 +52,7 @@ interface QueueControlProps {
 }
 
 export function QueueControl({
+  sessionId,
   queue,
   profiles,
   onCreateManualMatch,
@@ -87,7 +90,7 @@ export function QueueControl({
 
   async function handleSkillChange(playerId: string, newSkill: SkillLevel) {
     setUpdatingSkill(playerId);
-    await updatePlayerSkill(playerId, newSkill);
+    await updatePlayerSkill(sessionId, playerId, newSkill);
     setUpdatingSkill(null);
   }
 
@@ -102,7 +105,7 @@ export function QueueControl({
       return;
     }
     setLoadingPin(playerId);
-    const result = await getPlayerPin(playerId);
+    const result = await getPlayerPin(sessionId, playerId);
     setLoadingPin(null);
     if (result.success && result.pin) {
       setVisiblePins((prev) => new Map(prev).set(playerId, result.pin!));
@@ -111,7 +114,7 @@ export function QueueControl({
 
   async function handleResetPin(playerId: string) {
     setLoadingPin(playerId);
-    const result = await resetPlayerPin(playerId);
+    const result = await resetPlayerPin(sessionId, playerId);
     setLoadingPin(null);
     if (result.success && result.pin) {
       setVisiblePins((prev) => new Map(prev).set(playerId, result.pin!));
