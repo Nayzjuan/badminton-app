@@ -20,14 +20,18 @@
 //   TeamsGrid roster (from match-roster.tsx).
 // ============================================================
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { TOAST_DISMISS_MS } from "@/lib/constants";
 import { Swords } from "lucide-react";
+import { toast } from "sonner";
 import { ScoreModal } from "./score-modal";
+import { LiveSwapSheet } from "./live-swap-sheet";
 import { CourtTimePopover } from "@/components/ui/court-time-popover";
-import type { Court } from "@/types/database";
+import { useLiveMatchSwap } from "@/hooks/use-live-match-swap";
+import type { Court, QueueFullWithWaitTime } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
+import type { RosterPlayer } from "@/components/organizer/match-roster";
 import { CourtCard } from "./court-card";
 
 // ─── Prop types ───────────────────────────────────────────────
@@ -35,6 +39,12 @@ import { CourtCard } from "./court-card";
 interface ActiveCourtsProps {
   courts: Court[];
   activeMatches: EnrichedMatch[];
+  /** Published on-deck (pending) matches — used as swap candidate source. */
+  onDeckMatches: EnrichedMatch[];
+  /** Full session queue — filtered internally to waiting players. */
+  queuePlayers: QueueFullWithWaitTime[];
+  /** Current session ID — required for live swap server actions. */
+  sessionId: string;
   /** Per-session court time limit in minutes; null = no limit. */
   timeLimitMinutes: number | null;
   onUpdateTimeLimit: (minutes: number | null) => Promise<{ error?: string }>;
@@ -62,6 +72,9 @@ type Toast = {
 export function ActiveCourts({
   courts,
   activeMatches,
+  onDeckMatches,
+  queuePlayers,
+  sessionId,
   timeLimitMinutes,
   onUpdateTimeLimit,
   onAddCourt,
@@ -90,12 +103,50 @@ export function ActiveCourts({
   const scoringMatch =
     scoringMatchId !== null ? (activeMatches.find((m) => m.id === scoringMatchId) ?? null) : null;
 
-  // ── Toast ───────────────────────────────────────────────────
-  const [toast, setToast] = useState<Toast | null>(null);
+  // ── Live swap state ─────────────────────────────────────────
+  // Set of all player IDs currently in ANY in_progress match —
+  // used to exclude them from swap candidate lists.
+  const activePlayerIds = useMemo<Set<string>>(() => {
+    const ids = new Set<string>();
+    for (const m of activeMatches) {
+      if (m.status === "in_progress") {
+        for (const p of m.players) ids.add(p.player_id);
+      }
+    }
+    return ids;
+  }, [activeMatches]);
+
+  const liveSwap = useLiveMatchSwap({
+    sessionId,
+    onSuccess: (undoCtx) => {
+      const description =
+        undoCtx.type === "team_swap"
+          ? `${undoCtx.playerAName} ↔ ${undoCtx.playerBName} switched teams`
+          : undoCtx.type === "queue_replacement"
+            ? `${undoCtx.outPlayerName} → queue · ${undoCtx.inPlayerName} → court`
+            : `${undoCtx.outPlayerName} → queue · ${undoCtx.onDeckPlayerName} → court`;
+
+      toast.success("Swap complete", {
+        description,
+        duration: 3000,
+        action: {
+          label: "Undo",
+          onClick: () => liveSwap.undo(undoCtx),
+        },
+      });
+    },
+  });
+
+  function handleLongPressPlayer(courtMatch: EnrichedMatch, player: RosterPlayer, team: "a" | "b") {
+    liveSwap.open(player, team, courtMatch);
+  }
+
+  // ── Local banner toast (distinct from Sonner's `toast` import) ──
+  const [banner, setBanner] = useState<Toast | null>(null);
 
   function showToast(t: Toast) {
-    setToast(t);
-    setTimeout(() => setToast(null), TOAST_DISMISS_MS);
+    setBanner(t);
+    setTimeout(() => setBanner(null), TOAST_DISMISS_MS);
   }
 
   // ── Helpers ─────────────────────────────────────────────────
@@ -237,51 +288,51 @@ export function ActiveCourts({
   // ── Render ───────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      {/* ── Toast ─────────────────────────────────────────────── */}
-      {toast && (
+      {/* ── Banner toast (local inline — distinct from Sonner toasts) ── */}
+      {banner && (
         <div
           className={`fixed right-4 top-4 z-[150] max-w-sm rounded-xl border-2 p-4
                       shadow-xl animate-in slide-in-from-top-2 fade-in duration-300
                       ${
-                        toast.type === "success"
+                        banner.type === "success"
                           ? "border-emerald-400 bg-emerald-50 dark:border-emerald-500/60 dark:bg-emerald-950/40"
-                          : toast.type === "warning"
+                          : banner.type === "warning"
                             ? "border-amber-400 bg-amber-50 dark:border-amber-500/60 dark:bg-amber-950/40"
                             : "border-red-400 bg-red-50 dark:border-red-500/60 dark:bg-red-950/40"
                       }`}
         >
           <div className="flex items-start gap-3">
             <span className="mt-0.5 text-xl">
-              {toast.type === "success" ? "✅" : toast.type === "warning" ? "🟡" : "⚠️"}
+              {banner.type === "success" ? "✅" : banner.type === "warning" ? "🟡" : "⚠️"}
             </span>
             <div className="flex-1 min-w-0">
               <p
                 className={`text-sm font-semibold
                     ${
-                      toast.type === "success"
+                      banner.type === "success"
                         ? "text-emerald-900 dark:text-emerald-300"
-                        : toast.type === "warning"
+                        : banner.type === "warning"
                           ? "text-amber-900 dark:text-amber-300"
                           : "text-red-900 dark:text-red-300"
                     }`}
               >
-                {toast.title}
+                {banner.title}
               </p>
               <p
                 className={`mt-0.5 text-xs
                     ${
-                      toast.type === "success"
+                      banner.type === "success"
                         ? "text-emerald-700 dark:text-emerald-400"
-                        : toast.type === "warning"
+                        : banner.type === "warning"
                           ? "text-amber-700 dark:text-amber-400"
                           : "text-red-700 dark:text-red-400"
                     }`}
               >
-                {toast.body}
+                {banner.body}
               </p>
             </div>
             <button
-              onClick={() => setToast(null)}
+              onClick={() => setBanner(null)}
               aria-label="Dismiss"
               className="text-xl leading-none text-muted-foreground hover:text-foreground"
             >
@@ -384,6 +435,9 @@ export function ActiveCourts({
                 }}
                 onUpdateStatus={(s) => handleUpdateCourtStatus(court.id, s)}
                 onRemove={() => handleRemoveCourt(court.id)}
+                onLongPressPlayer={
+                  match ? (player, team) => handleLongPressPlayer(match, player, team) : undefined
+                }
               />
             );
           })}
@@ -411,6 +465,24 @@ export function ActiveCourts({
           }
           return result;
         }}
+      />
+
+      {/* ── Live Swap Sheet ─────────────────────────────────────
+          Rendered at this level (outside the grid) so the Sheet
+          portal never interacts with card-level overflow/clip-path.
+          The sheet is driven by liveSwap state from the hook.
+      ─────────────────────────────────────────────────────── */}
+      <LiveSwapSheet
+        state={liveSwap.state}
+        onDeckMatches={onDeckMatches}
+        queuePlayers={queuePlayers}
+        activePlayerIds={activePlayerIds}
+        isSubmitting={liveSwap.isSubmitting}
+        canConfirm={liveSwap.canConfirm}
+        onSelectReplacement={liveSwap.selectReplacement}
+        onSelectFill={liveSwap.selectFill}
+        onConfirm={liveSwap.confirm}
+        onClose={liveSwap.close}
       />
     </div>
   );

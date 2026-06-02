@@ -694,6 +694,49 @@ export type Database = {
         };
         Returns: void;
       };
+      // ── Live match player swap (migration 20260601000000) ──
+      swap_player_in_active_match: {
+        Args: {
+          p_match_id: string;
+          p_out_player_id: string;
+          p_in_player_id: string;
+          p_session_id: string;
+          p_team: string;
+        };
+        Returns: void;
+      };
+      swap_teams_in_active_match: {
+        Args: {
+          p_match_id: string;
+          p_player_a_id: string;
+          p_player_b_id: string;
+        };
+        Returns: void;
+      };
+      swap_active_from_ondeck: {
+        Args: {
+          p_active_match_id: string;
+          p_out_player_id: string;
+          p_ondeck_player_id: string;
+          p_ondeck_match_id: string;
+          p_fill_player_id: string;
+          p_session_id: string;
+        };
+        Returns: { o_out_team: string; o_ondeck_team: string }[];
+      };
+      undo_swap_active_from_ondeck: {
+        Args: {
+          p_active_match_id: string;
+          p_out_player_id: string;
+          p_ondeck_player_id: string;
+          p_ondeck_match_id: string;
+          p_fill_player_id: string;
+          p_session_id: string;
+          p_out_team: string;
+          p_ondeck_team: string;
+        };
+        Returns: void;
+      };
     };
     Enums: {
       skill_level: SkillLevel;

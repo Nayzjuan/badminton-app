@@ -668,6 +668,9 @@ export function OrganizerDashboard({
               <ActiveCourts
                 courts={courts}
                 activeMatches={activeMatches}
+                onDeckMatches={onDeckMatches}
+                queuePlayers={queue}
+                sessionId={session.id}
                 timeLimitMinutes={liveSession.court_time_limit_minutes}
                 onAddCourt={addCourt}
                 onUpdateCourtStatus={updateCourtStatus}
@@ -683,6 +686,7 @@ export function OrganizerDashboard({
 
           {activeTab === "queue" && (
             <QueueControl
+              sessionId={session.id}
               queue={queue}
               profiles={profiles}
               onCreateManualMatch={createManualMatch}

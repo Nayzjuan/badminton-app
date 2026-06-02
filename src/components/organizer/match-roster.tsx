@@ -21,6 +21,7 @@
 //   RosterPlayer    — shared player data shape
 // ============================================================
 
+import { useRef, useState } from "react";
 import { ArrowLeftRight, Flame } from "lucide-react";
 import { VipTag } from "@/components/ui/vip-tag";
 import { SKILL_META } from "@/lib/constants";
@@ -228,21 +229,75 @@ interface PlayerRowDarkProps {
   player: RosterPlayer;
   /** When set, this player's name renders bold white ("you are here"). */
   isMe?: boolean;
+  /** Called after a 500ms long-press to initiate a live roster swap. */
+  onLongPress?: () => void;
 }
 
-function PlayerRowDark({ player, isMe }: PlayerRowDarkProps) {
+function PlayerRowDark({ player, isMe, onLongPress }: PlayerRowDarkProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
   const winStreak = player.win_streak ?? 0;
   const hasStreak = winStreak >= 3;
 
+  // ── Long-press detection ──────────────────────────────────────
+  // 500ms hold → fire onLongPress. Visual: .lp-hold class animates
+  // an orange fill over the hold duration (defined in globals.css).
+  // useRef avoids re-renders during the press; state drives the CSS class.
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isHolding, setIsHolding] = useState(false);
+
+  function startPress() {
+    if (!onLongPress) return;
+    setIsHolding(true);
+    timerRef.current = setTimeout(() => {
+      setIsHolding(false);
+      onLongPress();
+    }, 500);
+  }
+
+  function cancelPress() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setIsHolding(false);
+  }
+
+  const pressHandlers = onLongPress
+    ? {
+        onPointerDown: startPress,
+        onPointerUp: cancelPress,
+        onPointerLeave: cancelPress,
+        onPointerCancel: cancelPress,
+        // Prevent browser context menu on long-press (mobile)
+        onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+        // Keyboard accessibility: Enter/Space immediately fires the swap
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onLongPress();
+          }
+        },
+      }
+    : {};
+
   return (
     <div className={hasStreak ? "streak-glow-wrapper" : undefined}>
       <div
+        {...pressHandlers}
         className={[
-          "streak-row w-full clip-cut-tr relative overflow-hidden transition-colors",
-          hasStreak ? "streak-hot-border" : "bg-cc-bg-3 hover:bg-cc-border",
+          "streak-row w-full clip-cut-tr relative overflow-hidden transition-colors select-none",
+          hasStreak
+            ? "streak-hot-border"
+            : onLongPress
+              ? "bg-cc-bg-3"
+              : "bg-cc-bg-3 hover:bg-cc-border",
+          onLongPress ? "cursor-pointer touch-none" : "",
+          isHolding ? "lp-hold" : "",
         ].join(" ")}
         style={hasStreak ? { background: "var(--cc-streak-dim)" } : undefined}
+        role={onLongPress ? "button" : undefined}
+        aria-label={onLongPress ? `Long-press to swap ${player.display_name}` : undefined}
+        tabIndex={onLongPress ? 0 : undefined}
       >
         {/* Line 1 — name + VIP tag + streak indicator */}
         <div className="relative z-[1] flex items-center justify-between gap-2 px-3 pt-2 pb-1 overflow-hidden">
@@ -319,6 +374,9 @@ export interface TeamsGridProps {
   selectedPlayerId?: string;
   /** True while any picking-mode swap is in progress. */
   isSwapModeActive?: boolean;
+  // ── Live swap — active court (dark) mode only ─────────────────
+  /** Called after a 500ms long-press on a player name to open the live swap sheet. */
+  onLongPress?: (player: RosterPlayer, team: "a" | "b") => void;
 }
 
 export function TeamsGrid({
@@ -331,6 +389,7 @@ export function TeamsGrid({
   onPlayerTap,
   selectedPlayerId,
   isSwapModeActive,
+  onLongPress,
 }: TeamsGridProps) {
   const a0 = teamA[0];
   const a1 = teamA[1];
@@ -377,7 +436,11 @@ export function TeamsGrid({
       {/* Row 2 — first player pair */}
       <div style={{ gridColumn: 1, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark player={a0} isMe={myPlayerId ? myPlayerId === a0.player_id : undefined} />
+          <PlayerRowDark
+            player={a0}
+            isMe={myPlayerId ? myPlayerId === a0.player_id : undefined}
+            onLongPress={onLongPress ? () => onLongPress(a0, "a") : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={a0}
@@ -390,7 +453,11 @@ export function TeamsGrid({
       </div>
       <div style={{ gridColumn: 3, gridRow: 2 }}>
         {dark ? (
-          <PlayerRowDark player={b0} isMe={myPlayerId ? myPlayerId === b0.player_id : undefined} />
+          <PlayerRowDark
+            player={b0}
+            isMe={myPlayerId ? myPlayerId === b0.player_id : undefined}
+            onLongPress={onLongPress ? () => onLongPress(b0, "b") : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={b0}
@@ -405,7 +472,11 @@ export function TeamsGrid({
       {/* Row 3 — second player pair */}
       <div style={{ gridColumn: 1, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark player={a1} isMe={myPlayerId ? myPlayerId === a1.player_id : undefined} />
+          <PlayerRowDark
+            player={a1}
+            isMe={myPlayerId ? myPlayerId === a1.player_id : undefined}
+            onLongPress={onLongPress ? () => onLongPress(a1, "a") : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={a1}
@@ -418,7 +489,11 @@ export function TeamsGrid({
       </div>
       <div style={{ gridColumn: 3, gridRow: 3 }}>
         {dark ? (
-          <PlayerRowDark player={b1} isMe={myPlayerId ? myPlayerId === b1.player_id : undefined} />
+          <PlayerRowDark
+            player={b1}
+            isMe={myPlayerId ? myPlayerId === b1.player_id : undefined}
+            onLongPress={onLongPress ? () => onLongPress(b1, "b") : undefined}
+          />
         ) : (
           <PlayerRowLight
             player={b1}

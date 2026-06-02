@@ -61,6 +61,8 @@
   --color-cc-red-dim: var(--cc-red-dim);
   --color-cc-streak: var(--cc-streak);
   --color-cc-streak-dim: var(--cc-streak-dim);
+  --color-cc-live: var(--cc-live);
+  --color-cc-live-dim: var(--cc-live-dim);
 
   --color-cc-t1: var(--cc-t1);
   --color-cc-t2: var(--cc-t2);
@@ -125,6 +127,8 @@
     --cc-red-dim: oklch(0.52 0.22 25 / 0.1);
     --cc-streak: oklch(0.64 0.22 38);
     --cc-streak-dim: oklch(0.64 0.22 38 / 0.22);
+    --cc-live: oklch(0.62 0.2 48);
+    --cc-live-dim: oklch(0.62 0.2 48 / 0.14);
 
     --cc-t1: oklch(0.18 0.02 238);
     --cc-t2: oklch(0.4 0.018 238);
@@ -189,6 +193,8 @@
     --cc-red-dim: oklch(0.65 0.21 25 / 0.1);
     --cc-streak: oklch(0.72 0.22 38);
     --cc-streak-dim: oklch(0.72 0.22 38 / 0.22);
+    --cc-live: oklch(0.76 0.2 48);
+    --cc-live-dim: oklch(0.76 0.2 48 / 0.14);
 
     --cc-t1: oklch(0.94 0.008 238);
     --cc-t2: oklch(0.68 0.014 238);
@@ -682,6 +688,27 @@
     }
   }
 
+  /* ── Long-press visual feedback (live match swap) ───────────── */
+  /* Fills an orange tint over the 500ms hold so the organizer
+     sees the gesture is registering before the sheet opens.     */
+  @keyframes lp-fill {
+    from {
+      background-color: transparent;
+      outline-color: transparent;
+    }
+    to {
+      background-color: var(--cc-live-dim);
+      outline-color: oklch(0.72 0.2 48 / 0.5);
+    }
+  }
+
+  .lp-hold {
+    animation: lp-fill 500ms linear forwards;
+    outline: 1px solid transparent;
+    outline-offset: -1px;
+    border-radius: 2px;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     /* .streak-ignite is NOT a standalone class — the ignite animation is
        combined inside .streak-hot-border to avoid cascade clobbering.
@@ -692,6 +719,10 @@
     }
     .streak-hot-border {
       border: 1px solid oklch(0.72 0.22 38 / 0.65);
+      animation: none;
+    }
+    .lp-hold {
+      background-color: var(--cc-live-dim);
       animation: none;
     }
   }
