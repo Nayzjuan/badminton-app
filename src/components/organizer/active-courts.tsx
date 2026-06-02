@@ -20,7 +20,7 @@
 //   TeamsGrid roster (from match-roster.tsx).
 // ============================================================
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useEffect, useState } from "react";
 import { TOAST_DISMISS_MS } from "@/lib/constants";
 import { Swords } from "lucide-react";
 import { toast } from "sonner";
@@ -143,10 +143,17 @@ export function ActiveCourts({
 
   // ── Local banner toast (distinct from Sonner's `toast` import) ──
   const [banner, setBanner] = useState<Toast | null>(null);
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, []);
 
   function showToast(t: Toast) {
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
     setBanner(t);
-    setTimeout(() => setBanner(null), TOAST_DISMISS_MS);
+    bannerTimerRef.current = setTimeout(() => setBanner(null), TOAST_DISMISS_MS);
   }
 
   // ── Helpers ─────────────────────────────────────────────────

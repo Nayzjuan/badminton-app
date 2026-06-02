@@ -17,7 +17,11 @@
 
 // ── Payload types ─────────────────────────────────────────────
 
-export type OrganizerInterventionType = "on_deck_cleared" | "match_cancelled";
+export type OrganizerInterventionType =
+  | "on_deck_cleared"
+  | "match_cancelled"
+  /** Fired when a player is swapped into or out of an in-progress match. */
+  | "active_roster_changed";
 
 export interface OrganizerInterventionPayload {
   type: OrganizerInterventionType;

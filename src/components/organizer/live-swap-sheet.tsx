@@ -357,9 +357,7 @@ export function LiveSwapSheet({
                   <SectionHeader label="Waiting Queue" count={queueCandidates.length} />
                   <div className="bg-cc-bg-2 divide-y divide-cc-border">
                     {queueCandidates.map((c) => {
-                      const mins = Math.round(
-                        (c as typeof c & { waitMinutes?: number }).waitMinutes ?? 0
-                      );
+                      const mins = Math.round(c.waitMinutes ?? 0);
                       return (
                         <CandidateRow
                           key={c.player_id}

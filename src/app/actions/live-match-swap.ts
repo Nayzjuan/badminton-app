@@ -149,7 +149,10 @@ export async function swapPlayerInActiveMatch(
     return { success: false, message: `Swap failed: ${msg}` };
   }
 
-  await broadcastOrganizerIntervention(sessionId, "on_deck_cleared", [outPlayerId, inPlayerId]);
+  await broadcastOrganizerIntervention(sessionId, "active_roster_changed", [
+    outPlayerId,
+    inPlayerId,
+  ]);
 
   return {
     success: true,
@@ -213,7 +216,7 @@ export async function swapTeamsInActiveMatch(
     return { success: false, message: `Swap failed: ${msg}` };
   }
 
-  await broadcastOrganizerIntervention(sessionId, "on_deck_cleared", [playerAId, playerBId]);
+  await broadcastOrganizerIntervention(sessionId, "active_roster_changed", [playerAId, playerBId]);
 
   return {
     success: true,
@@ -310,7 +313,7 @@ export async function swapActiveFromOnDeck(
   const outTeam = row?.o_out_team ?? "a";
   const onDeckTeam = row?.o_ondeck_team ?? "a";
 
-  await broadcastOrganizerIntervention(sessionId, "on_deck_cleared", [
+  await broadcastOrganizerIntervention(sessionId, "active_roster_changed", [
     outPlayerId,
     onDeckPlayerId,
     fillPlayerId,
@@ -362,7 +365,7 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
       p_player_b_id: ctx.playerBId,
     });
     if (!error) {
-      await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", [
+      await broadcastOrganizerIntervention(match.session_id, "active_roster_changed", [
         ctx.playerAId,
         ctx.playerBId,
       ]);
@@ -382,7 +385,7 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
       p_team: ctx.team,
     });
     if (!error) {
-      await broadcastOrganizerIntervention(ctx.sessionId, "on_deck_cleared", [
+      await broadcastOrganizerIntervention(ctx.sessionId, "active_roster_changed", [
         ctx.outPlayerId,
         ctx.inPlayerId,
       ]);
@@ -404,7 +407,7 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
       p_ondeck_team: ctx.onDeckTeam,
     });
     if (!error) {
-      await broadcastOrganizerIntervention(ctx.sessionId, "on_deck_cleared", [
+      await broadcastOrganizerIntervention(ctx.sessionId, "active_roster_changed", [
         ctx.outPlayerId,
         ctx.onDeckPlayerId,
         ctx.fillPlayerId,

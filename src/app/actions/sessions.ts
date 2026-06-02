@@ -419,24 +419,21 @@ export async function setCapAndClearDrafts(
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, error: "Organizer access required." };
 
-  // Fetch current auto state alongside saving the override.
-  const { data: sessionRow } = await db
-    .from("sessions")
-    .select("is_auto_matchmaking_on")
-    .eq("id", sessionId)
-    .single();
-
-  // Persist the override.
-  const { error: updateErr } = await db
+  // Persist the override and read is_auto_matchmaking_on atomically in one
+  // UPDATE...RETURNING statement. This eliminates the race window where a
+  // co-organizer toggle between a separate read and write would produce a stale value.
+  const { data: updatedSession, error: updateErr } = await db
     .from("sessions")
     .update({ max_auto_drafts_override: cap })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    .select("is_auto_matchmaking_on")
+    .single();
 
   if (updateErr) {
     return { success: false, error: `Failed to save cap: ${updateErr.message}` };
   }
 
-  const autoIsOn = sessionRow?.is_auto_matchmaking_on ?? false;
+  const autoIsOn = updatedSession?.is_auto_matchmaking_on ?? false;
 
   if (!autoIsOn) {
     // Auto is OFF — just saved the preference, nothing to clear.

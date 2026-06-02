@@ -29,6 +29,7 @@ const TOAST_MESSAGES: Record<OrganizerInterventionPayload["type"], string> = {
   on_deck_cleared:
     "The organizer adjusted the queue. Your match has been rescheduled — you're back in line.",
   match_cancelled: "The organizer cancelled your match. You've been returned to the queue.",
+  active_roster_changed: "The organizer updated your court's lineup. Your match continues.",
 };
 
 export function useOrganizerBroadcast(sessionId: string, playerId: string): void {

@@ -43,6 +43,8 @@ export type ReplacementCandidate = {
   onDeckMatchId?: string;
   /** Court name / label to show for on-deck grouping. */
   onDeckLabel?: string;
+  /** Minutes the player has been waiting. Only set when source === "queue". */
+  waitMinutes?: number;
 };
 
 export type FillCandidate = {

@@ -207,50 +207,61 @@ export function useOrganizerDashboard({
 
   const handleCloseSession = useCallback(async () => {
     setClosing(true);
-    const result = await closeSession(sessionId);
-    if (result.success) {
-      router.push("/organizer");
-    } else {
+    try {
+      const result = await closeSession(sessionId);
+      if (result.success) {
+        router.push("/organizer");
+      } else {
+        toast.error(result.message ?? "Failed to close session.");
+      }
+    } catch {
+      toast.error("Failed to close session. Please try again.");
+    } finally {
       setClosing(false);
-      toast.error(result.message ?? "Failed to close session.");
     }
   }, [sessionId, router]);
 
   const handleToggleAuto = useCallback(async () => {
     setTogglingAuto(true);
     setPendingAuto(!liveAutoMatchmaking); // optimistic
-    const result = await toggleAutoMatchmaking(sessionId);
-    if (result.success) {
-      // Hold the server-confirmed value as authoritative until the broadcast
-      // updates liveAutoMatchmaking. This prevents the toggle from flickering
-      // while waiting for the realtime broadcast to arrive.
-      setPendingAuto(result.isOn);
-      // Confirm the new state to the organizer — they need to know the server agreed.
-      if (result.isOn) {
-        toast.success("Engine running", {
-          description: "Auto-matchmaking is ON — drafts will appear as courts open.",
-          duration: TOAST_DISMISS_MS,
-        });
+    try {
+      const result = await toggleAutoMatchmaking(sessionId);
+      if (result.success) {
+        // Hold the server-confirmed value as authoritative until the broadcast
+        // updates liveAutoMatchmaking. This prevents the toggle from flickering
+        // while waiting for the realtime broadcast to arrive.
+        setPendingAuto(result.isOn);
+        if (result.isOn) {
+          toast.success("Engine running", {
+            description: "Auto-matchmaking is ON — drafts will appear as courts open.",
+            duration: TOAST_DISMISS_MS,
+          });
+        } else {
+          toast("Engine paused", {
+            description: "Auto-matchmaking is OFF — create matches manually.",
+            duration: TOAST_DISMISS_MS,
+          });
+        }
       } else {
-        toast("Engine paused", {
-          description: "Auto-matchmaking is OFF — create matches manually.",
-          duration: TOAST_DISMISS_MS,
-        });
+        setPendingAuto(null);
+        toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
       }
-    } else {
-      // Revert to liveAutoMatchmaking value on failure.
+    } catch {
       setPendingAuto(null);
-    }
-    setTogglingAuto(false);
-    if (!result.success) {
-      toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
+      toast.error("Failed to toggle auto-matchmaking. Please try again.");
+    } finally {
+      setTogglingAuto(false);
     }
   }, [sessionId, liveAutoMatchmaking]);
 
   const joinQueue = useCallback(async () => {
-    const result = await joinQueueAction(sessionId);
-    if (result.error) {
-      toast.error(result.error);
+    try {
+      const result = await joinQueueAction(sessionId);
+      if (result.error) {
+        toast.error(result.error);
+      }
+    } catch {
+      toast.error("Failed to join queue. Please try again.");
     }
   }, [sessionId]);
 
