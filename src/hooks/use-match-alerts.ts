@@ -87,8 +87,6 @@ export function useMatchAlerts({
   // ── Fire alert ───────────────────────────────────────────────
   const fireAlert = useCallback(
     async (type: AlertType) => {
-      console.log(`[useMatchAlerts] 🔔 firing ${type}`);
-
       // Audio fires immediately regardless of visibility.
       // play* functions are async and await ctx.resume() internally
       // so they work correctly on Android Chrome.
@@ -180,8 +178,6 @@ export function useMatchAlerts({
 
       lastQueueStatus.current = next as QueueStatus;
 
-      console.log(`[useMatchAlerts] queue transition: ${prev} → ${next}`);
-
       // ── Drafted: single short haptic, no audio ────────────────
       // Signals "something is happening" without creating urgency —
       // the draft may still be cancelled or reshuffled before publish.
@@ -248,8 +244,6 @@ export function useMatchAlerts({
       const prev = lastMatchStatus.current;
       if (next === prev) return;
       lastMatchStatus.current = next as MatchStatus;
-
-      console.log(`[useMatchAlerts] match transition: ${prev} → ${next} (match ${matchId})`);
 
       // ── FIX 1 (same pattern): fire on entering in_progress ─────
       // Old: if (prev === "pending" && next === "in_progress")

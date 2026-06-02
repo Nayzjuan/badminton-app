@@ -33,6 +33,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
 import { joinQueueAction } from "@/app/actions/queue";
+import { TOAST_DISMISS_MS } from "@/lib/constants";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -217,12 +218,12 @@ export function useOrganizerDashboard({
       if (result.isOn) {
         toast.success("Engine running", {
           description: "Auto-matchmaking is ON — drafts will appear as courts open.",
-          duration: 4000,
+          duration: TOAST_DISMISS_MS,
         });
       } else {
         toast("Engine paused", {
           description: "Auto-matchmaking is OFF — create matches manually.",
-          duration: 4000,
+          duration: TOAST_DISMISS_MS,
         });
       }
     } else {

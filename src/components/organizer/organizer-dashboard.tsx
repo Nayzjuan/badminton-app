@@ -43,7 +43,7 @@ import {
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
-import { DASHBOARD_GRID_SIZE_PX } from "@/lib/constants";
+import { DASHBOARD_GRID_SIZE_PX, TOAST_DISMISS_MS } from "@/lib/constants";
 
 // ── Design token constants ───────────────────────────────────
 // Command-center surface tokens (theme-aware via cc-* tokens in globals.css).
@@ -168,7 +168,7 @@ export function OrganizerDashboard({
       setHasNewDraft(true);
       toast("Draft ready", {
         description: `${current} new match draft${current !== 1 ? "s" : ""} — review and publish to put on deck.`,
-        duration: 4000,
+        duration: TOAST_DISMISS_MS,
       });
       newDraftTimerRef.current = setTimeout(() => {
         setHasNewDraft(false);
