@@ -412,13 +412,18 @@ export async function seedSession(
   for (const def of playerDefs) {
     const uid = bots[def.key].userId;
     if (!existingIds.has(uid)) {
-      // Profile missing — force-insert it.
-      await db.from("profiles").insert({
-        id: uid,
-        display_name: def.name,
-        skill_level: def.skill,
-        pin: "1234",
-      });
+      // Profile missing — upsert it. Using onConflict:"id" handles the race
+      // where the auth trigger fires between our SELECT and this write, creating
+      // the profile in the interim. Insert would PK-collide; upsert handles it.
+      const { error: upsertErr } = await db
+        .from("profiles")
+        .upsert(
+          { id: uid, display_name: def.name, skill_level: def.skill, pin: "1234" },
+          { onConflict: "id" }
+        );
+      if (upsertErr) {
+        throw new Error(`[seed] Force-upsert profile failed for ${def.name}: ${upsertErr.message}`);
+      }
     }
   }
 

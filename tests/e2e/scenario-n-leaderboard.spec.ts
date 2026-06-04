@@ -271,13 +271,17 @@ test.describe("Leaderboard — [N-4] DB ordering correctness", () => {
 
     await softResetSandboxSession();
 
+    // Timestamp suffix ensures uniqueness across runs (same fix as N-3).
+    const runId = Date.now();
     const makeBot = async (name: string) => {
-      const { data: u } = await db.auth.admin.createUser({
-        email: `${name.toLowerCase().replace(/ /g, "-")}-n4@playwright.local`,
+      const slug = name.toLowerCase().replace(/\s+/g, "-");
+      const { data: u, error: createErr } = await db.auth.admin.createUser({
+        email: `${slug}-${runId}@playwright.local`,
         email_confirm: true,
         user_metadata: { display_name: name },
       });
-      if (!u?.user) throw new Error(`[N-4] Could not create ${name}`);
+      if (!u?.user)
+        throw new Error(`[N-4] Could not create ${name}: ${createErr?.message ?? "null user"}`);
       await db
         .from("profiles")
         .upsert(

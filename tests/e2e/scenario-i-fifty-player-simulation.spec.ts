@@ -727,6 +727,9 @@ test.describe("Group 2 — PIN Reconnect", () => {
 test.describe("Group 3 — Auto-Matchmaking (50 players)", () => {
   // [I-3a] Auto ON with 50 players → ≥2 on-deck matches generated
   test("[I-3a] Auto ON generates multiple on-deck matches with 50 players", async ({ browser }) => {
+    // Budget: DB poll(≤20s) + settle(2s) + reload+hydrate(≤15s) + UI poll(≤40s) = ~77s worst-case.
+    // Override the 60s global so a slow local dev run doesn't produce a false timeout failure.
+    test.setTimeout(120_000);
     const db = adminDb();
     const ctx = await browser.newContext({
       storageState: ORGANIZER_STORAGE_STATE,
