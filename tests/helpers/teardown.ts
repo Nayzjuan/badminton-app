@@ -400,6 +400,28 @@ export async function seedSession(
     };
   }
 
+  // ── Verify all profiles exist before inserting queue entries ─
+  // When deleteUser fails in a previous teardown, the old email stays taken.
+  // createUser then returns a NEW UUID, but the profile upsert may silently
+  // no-op if a constraint collision exists, leaving the new UUID without a
+  // profile row — causing a FK violation on queue_entries.player_id.
+  // We verify each profile exists and retry the upsert once if needed.
+  const allUserIds = playerDefs.map((d) => bots[d.key].userId);
+  const { data: existingProfiles } = await db.from("profiles").select("id").in("id", allUserIds);
+  const existingIds = new Set((existingProfiles ?? []).map((p) => p.id));
+  for (const def of playerDefs) {
+    const uid = bots[def.key].userId;
+    if (!existingIds.has(uid)) {
+      // Profile missing — force-insert it.
+      await db.from("profiles").insert({
+        id: uid,
+        display_name: def.name,
+        skill_level: def.skill,
+        pin: "1234",
+      });
+    }
+  }
+
   // ── Create courts ─────────────────────────────────────────
   const courtInserts = [
     { session_id: sessionId, name: "Court 1", status: "available" as const },

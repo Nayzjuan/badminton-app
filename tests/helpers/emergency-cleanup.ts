@@ -130,7 +130,8 @@ async function run() {
     console.log(bold(`Matches (${matches!.length}):`));
     const playersByMatch = new Map<string, { team: string; name: string }[]>();
     for (const mp of matchPlayers ?? []) {
-      const name = (mp.profiles as { display_name: string } | null)?.display_name ?? mp.player_id;
+      const name =
+        (mp.profiles as unknown as { display_name: string } | null)?.display_name ?? mp.player_id;
       const arr = playersByMatch.get(mp.match_id) ?? [];
       arr.push({ team: mp.team, name });
       playersByMatch.set(mp.match_id, arr);
@@ -163,7 +164,8 @@ async function run() {
     console.log(bold(`Queue entries (${queueEntries!.length}):`));
     const byStatus = new Map<string, string[]>();
     for (const q of queueEntries!) {
-      const name = (q.profiles as { display_name: string } | null)?.display_name ?? q.player_id;
+      const name =
+        (q.profiles as unknown as { display_name: string } | null)?.display_name ?? q.player_id;
       const label = `${name} (${q.games_played}gp)`;
       const arr = byStatus.get(q.status) ?? [];
       arr.push(label);

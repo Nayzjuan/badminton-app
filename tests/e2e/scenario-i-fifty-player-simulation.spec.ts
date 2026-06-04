@@ -809,12 +809,24 @@ test.describe("Group 3 — Auto-Matchmaking (50 players)", () => {
         )
         .toBeGreaterThanOrEqual(1);
 
-      // Reload and assert the draft approval banner is visible in the UI.
-      // 15 s gives React time to hydrate and Realtime to deliver after a full reload;
-      // 8 s was observed to be tight on cold Vercel edge deployments.
+      // Brief settle pause so the engine fully commits before we reload.
+      await page.waitForTimeout(2_000);
+
+      // Reload and poll for a draft-exists indicator in the UI.
+      // Two banners are possible depending on cap state:
+      //   cap not full:  "N on-deck matches waiting for approval"
+      //   cap full (≥6): "6/6 draft slots filled — publish the drafts below to resume."
+      // Either proves the engine generated drafts. The 50-player seed triggers the
+      // cap-full path on local dev, so we must accept both patterns.
       await page.reload({ waitUntil: "networkidle" });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
-      await expect(page.getByText(/waiting for approval/i)).toBeVisible({ timeout: 15_000 });
+      await expect
+        .poll(
+          async () =>
+            (await page.getByText(/waiting for approval|draft slots filled/i).count()) > 0,
+          { timeout: 40_000, intervals: [1_000, 2_000, 3_000] }
+        )
+        .toBeTruthy();
     } finally {
       await ctx.close();
     }

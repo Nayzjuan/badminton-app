@@ -279,15 +279,23 @@ test.describe("Player Scoring — [O-2] Score submission", () => {
         )
         .toBe("completed|21|15");
 
-      // 2. The organizer bot's games_played must be incremented to 1
-      const { data: qEntry } = await db
-        .from("queue_entries")
-        .select("games_played, status")
-        .eq("session_id", SESSION_ID)
-        .eq("player_id", organizerUserId)
-        .single();
-      expect(qEntry?.games_played).toBe(1);
-      expect(qEntry?.status).toBe("waiting");
+      // 2. The organizer bot's games_played must be incremented to 1.
+      // Poll rather than single-read: the endMatch server action commits async
+      // and the DB may not reflect the increment immediately after the UI update.
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("queue_entries")
+              .select("games_played, status")
+              .eq("session_id", SESSION_ID)
+              .eq("player_id", organizerUserId)
+              .single();
+            return data;
+          },
+          { timeout: 8_000, intervals: [500, 1_000, 2_000] }
+        )
+        .toMatchObject({ games_played: 1, status: "waiting" });
     } finally {
       await context.close();
     }

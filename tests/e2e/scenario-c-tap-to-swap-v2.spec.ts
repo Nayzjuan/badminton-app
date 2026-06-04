@@ -365,14 +365,16 @@ test.describe("Tap-to-Swap v2 — [G] VIP tag preserved", () => {
       // VipTag renders two spans (one light-mode, one dark-mode) — use .first()
       // so the strict-mode check doesn't fail on the hidden counterpart.
       const alicePill = page.getByTestId(`player-pill-${seeded.players.alice.userId}`);
-      await expect(alicePill.getByText("VIP").last()).toBeVisible({ timeout: 8_000 });
+      await expect(alicePill.getByText("VIP").filter({ visible: true })).toBeVisible({
+        timeout: 8_000,
+      });
 
       // Enter picking mode (tap Alice)
       await alicePill.click();
       await expect(page.getByTestId("swap-floating-bar")).toBeVisible({ timeout: 5_000 });
 
       // VIP tag still visible on selected pill while in picking mode
-      await expect(alicePill.getByText("VIP").last()).toBeVisible();
+      await expect(alicePill.getByText("VIP").filter({ visible: true })).toBeVisible();
 
       // Execute swap with Eve (cross-match)
       await page.getByTestId(`player-pill-${seeded.players.eve.userId}`).click();
@@ -380,7 +382,9 @@ test.describe("Tap-to-Swap v2 — [G] VIP tag preserved", () => {
 
       // Alice is now in match 2 — her pill should still show the VIP tag
       const alicePillM2 = page.getByTestId(`player-pill-${seeded.players.alice.userId}`);
-      await expect(alicePillM2.getByText("VIP").last()).toBeVisible({ timeout: 5_000 });
+      await expect(alicePillM2.getByText("VIP").filter({ visible: true })).toBeVisible({
+        timeout: 5_000,
+      });
     } finally {
       await context.close();
     }

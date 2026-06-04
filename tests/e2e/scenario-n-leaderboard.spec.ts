@@ -151,13 +151,19 @@ test.describe("Leaderboard — [N-3] Data after completed match", () => {
 
     // Create 4 bot profiles directly in DB
     let botPosition = 1;
+    // Timestamp suffix ensures emails are unique across runs — previous teardowns
+    // may fail to delete auth users, leaving stale emails that block re-creation.
+    const runId = Date.now();
     const makeBot = async (name: string) => {
-      const { data: u } = await db.auth.admin.createUser({
-        email: `${name.toLowerCase()}-n3@playwright.local`,
+      // Spaces in display name → replace with hyphens for a valid email local part.
+      const slug = name.toLowerCase().replace(/\s+/g, "-");
+      const { data: u, error: createErr } = await db.auth.admin.createUser({
+        email: `${slug}-${runId}@playwright.local`,
         email_confirm: true,
         user_metadata: { display_name: name },
       });
-      if (!u?.user) throw new Error(`[N-3] Could not create ${name}`);
+      if (!u?.user)
+        throw new Error(`[N-3] Could not create ${name}: ${createErr?.message ?? "null user"}`);
       await db
         .from("profiles")
         .upsert(
