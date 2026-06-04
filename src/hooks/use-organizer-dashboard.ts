@@ -235,12 +235,16 @@ export function useOrganizerDashboard({
         if (result.isOn) {
           toast.success("Engine running", {
             description: "Auto-matchmaking is ON — drafts will appear as courts open.",
-            duration: TOAST_DISMISS_MS,
+            // Position bottom-right so the toast never overlaps the header
+            // toggle button (which sits at top-center behind the default toaster).
+            position: "bottom-right",
+            duration: 3_000,
           });
         } else {
           toast("Engine paused", {
             description: "Auto-matchmaking is OFF — create matches manually.",
-            duration: TOAST_DISMISS_MS,
+            position: "bottom-right",
+            duration: 3_000,
           });
         }
       } else {

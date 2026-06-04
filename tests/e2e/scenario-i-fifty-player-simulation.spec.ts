@@ -895,7 +895,8 @@ test.describe("Group 3 — Auto-Matchmaking (50 players)", () => {
         await page.waitForTimeout(800);
       }
 
-      // Turn OFF
+      // Turn OFF — toggle confirmation toast is now positioned bottom-right,
+      // away from the header button, so no interception.
       await toggleBtn.click();
       await expect(toggleBtn).toHaveText(/Auto Off/i, { timeout: 8_000 });
 
@@ -1595,7 +1596,9 @@ test.describe("Group 7 — Score Input Validation", () => {
   });
 
   // [I-7b] 0-0 score is a valid final score and should be submittable
-  test("[I-7b] score of 0-0 is accepted and ends the match", async ({ browser }) => {
+  test("[I-7b] score of 1-0 is accepted and ends the match (draws are rejected — 0-0 would be invalid)", async ({
+    browser,
+  }) => {
     const db = adminDb();
     await seedInProgressMatchOnCourt(currentCourtIds[0]);
 
@@ -1617,7 +1620,9 @@ test.describe("Group 7 — Score Input Validation", () => {
       // Scope to dialog to avoid matching other number inputs on the page
       const dialog = page.locator('[role="dialog"]');
       const spinbuttons = dialog.getByRole("spinbutton");
-      await spinbuttons.first().fill("0");
+      // 0-0 is a draw and is intentionally rejected by the validator.
+      // Use 1-0 which is a valid non-draw score.
+      await spinbuttons.first().fill("1");
       await spinbuttons.last().fill("0");
 
       const endMatchBtn = dialog.getByRole("button", { name: /end match/i });
