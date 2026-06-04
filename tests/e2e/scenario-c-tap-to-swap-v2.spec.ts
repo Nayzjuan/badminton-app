@@ -275,7 +275,15 @@ test.describe("Tap-to-Swap v2 — [F] Cross-match player swap", () => {
 
     try {
       await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
-      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+      // Reload once if the courts tab doesn't appear — by test [F] (6th beforeEach cycle)
+      // the dev server can be slow to hydrate on the first navigation attempt.
+      const tabReady = await page
+        .waitForSelector('[id="tabpanel-courts"]', { timeout: 10_000 })
+        .catch(() => null);
+      if (!tabReady) {
+        await page.reload({ waitUntil: "networkidle" });
+        await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+      }
 
       // Tap Alice (match 1, Team A) — enters picking mode
       await page.getByTestId(`player-pill-${seeded.players.alice.userId}`).click();
