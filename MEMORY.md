@@ -5,7 +5,25 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-06-05 — Digital Twin Overhaul)
+## SESSION STATE (Last Updated: 2026-06-05 — Low/Info Finding Fixes)
+
+### Validated + fixed 5 LOW + 2 INFO findings — COMPLETE ✅
+
+All 8 reviewed findings were real (no false positives). Fixed 7; INFO-1 deliberately left (pruning subscriptions on transient non-410/404 errors would be a bug).
+
+- **LOW-1** `install-prompt.tsx`: retyped the timer ref to `ReturnType<typeof setTimeout>` and dropped the `as unknown as …` cast (setTimeout/setInterval share a handle type; clearInterval clears both).
+- **LOW-2** `push-server.ts`: bounded the web-push fan-out to `PUSH_CONCURRENCY=20` (chunked loop, dependency-free) — same counting/pruning, no skips.
+- **LOW-3** `digital-twin/scripts/extract.ts` `sliceFunctionBody`: char-scanner now skips braces inside comments + '…'/"…"/`…` strings (regex literals still a known residual gap — acceptable for a docs extractor).
+- **LOW-4** `public/sw.js`: `client.navigate()` wrapped in `Promise.resolve(...).catch(() => clients.openWindow(...))` (graceful fallback).
+- **LOW-5** `tests/helpers/emergency-cleanup.ts`: `!process.stdin.isTTY` guard before `setRawMode` (CI/pipes use `--yes`, unaffected).
+- **INFO-2** `state-machines.astro`: caption noting the table is the no-JS Mermaid fallback.
+- **INFO-3** `extract.ts computeDrift` + `schema-drift.astro`: added column NULL-ability drift. Real mismatches counted; the one benign case (`session_wrapped_stats.point_diff`, a GENERATED column) is allowlisted as expected → drift stays "clean". New "Column nullability" + "Expected (known-benign)" sections on the page.
+
+**Validation:** main-app `tsc` + `next build` clean; digital-twin `tsc` + build clean (16 pages); 466 unit tests pass; touched files lint-clean. Independent review: **LGTM**. (Root-level `npm run lint` shows pre-existing noise in worktrees/dist — none in touched files.) Not committed yet.
+
+---
+
+## SESSION STATE (Earlier: 2026-06-05 — Digital Twin Overhaul)
 
 ### Digital Twin: content-drift fixes + 6 new feature pages — COMPLETE ✅
 

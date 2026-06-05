@@ -134,34 +134,39 @@ export async function pushToPlayers(
   let errors = 0;
   const staleEndpoints: string[] = [];
 
-  await Promise.all(
-    subscriptions.map(async (sub) => {
-      try {
-        await webpush.sendNotification(
-          {
-            endpoint: sub.endpoint,
-            keys: { p256dh: sub.p256dh, auth: sub.auth_key },
-          },
-          payload,
-          SEND_OPTIONS[type]
-        );
-        sent++;
-      } catch (err: unknown) {
-        // HTTP 410 Gone / 404 = subscription expired or unregistered.
-        if (
-          err &&
-          typeof err === "object" &&
-          "statusCode" in err &&
-          (err.statusCode === 410 || err.statusCode === 404)
-        ) {
-          staleEndpoints.push(sub.endpoint);
-        } else {
-          console.error("[pushToPlayers] push error:", err);
-          errors++;
-        }
+  const sendOne = async (sub: (typeof subscriptions)[number]) => {
+    try {
+      await webpush.sendNotification(
+        {
+          endpoint: sub.endpoint,
+          keys: { p256dh: sub.p256dh, auth: sub.auth_key },
+        },
+        payload,
+        SEND_OPTIONS[type]
+      );
+      sent++;
+    } catch (err: unknown) {
+      // HTTP 410 Gone / 404 = subscription expired or unregistered.
+      if (
+        err &&
+        typeof err === "object" &&
+        "statusCode" in err &&
+        (err.statusCode === 410 || err.statusCode === 404)
+      ) {
+        staleEndpoints.push(sub.endpoint);
+      } else {
+        console.error("[pushToPlayers] push error:", err);
+        errors++;
       }
-    })
-  );
+    }
+  };
+
+  // Cap concurrency so a large fan-out (e.g. publish-all pinging every player's
+  // devices) doesn't open hundreds of simultaneous web-push HTTPS sockets.
+  const PUSH_CONCURRENCY = 20;
+  for (let i = 0; i < subscriptions.length; i += PUSH_CONCURRENCY) {
+    await Promise.all(subscriptions.slice(i, i + PUSH_CONCURRENCY).map(sendOne));
+  }
 
   // Prune stale subscriptions (endpoints are globally unique).
   if (staleEndpoints.length > 0) {

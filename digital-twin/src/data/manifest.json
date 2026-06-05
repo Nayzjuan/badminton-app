@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-06-05T14:14:11.973Z",
+  "_lastExtracted": "2026-06-05T14:54:34.910Z",
   "tables": [
     {
       "name": "profiles",
@@ -3747,6 +3747,16 @@
     "capturedAt": "2026-06-05",
     "ok": true,
     "tableColumnDrift": [],
+    "columnNullabilityDrift": [],
+    "columnNullabilityExpected": [
+      {
+        "table": "session_wrapped_stats",
+        "column": "point_diff",
+        "db": "NULL",
+        "code": "non-null",
+        "reason": "GENERATED column (points_for − points_against). Postgres marks generated columns nullable, but it is never null in practice, so the TS type is `number`."
+      }
+    ],
     "functions": {
       "dbOnly": [],
       "dbOnlyExpected": [

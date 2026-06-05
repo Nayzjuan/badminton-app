@@ -55,7 +55,9 @@ export function InstallPrompt() {
   const deferredPrompt = useRef<BeforeInstallPromptEvent | null>(null);
   // Tracks the iOS reveal timeout OR the Android "wait for ping choice" poll,
   // so we can always clear it on unmount (no late setState after teardown).
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // setTimeout / setInterval share one handle type, and clearInterval() clears
+  // either — so a single ref + clear path is correct and cast-free.
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isStandalone() || isDismissed()) return;
@@ -69,9 +71,7 @@ export function InstallPrompt() {
 
     // ── iOS: no install event exists — show the manual A2HS hint. ──
     if (isIOS()) {
-      timerRef.current = setTimeout(() => setView("ios"), 3_000) as unknown as ReturnType<
-        typeof setInterval
-      >;
+      timerRef.current = setTimeout(() => setView("ios"), 3_000);
       return clearTimer;
     }
 

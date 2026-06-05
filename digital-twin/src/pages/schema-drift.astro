@@ -9,10 +9,20 @@ interface TableColumnDrift {
   codeOnly: string[];
 }
 
+interface NullDrift {
+  table: string;
+  column: string;
+  db: string;
+  code: string;
+  reason?: string;
+}
+
 interface SchemaDrift {
   capturedAt: string;
   ok: boolean;
   tableColumnDrift: TableColumnDrift[];
+  columnNullabilityDrift: NullDrift[];
+  columnNullabilityExpected: NullDrift[];
   functions: { dbOnly: string[]; dbOnlyExpected: string[]; codeOnly: string[] };
   views: { dbOnly: string[]; codeOnly: string[] };
   tables: { dbOnly: string[]; codeOnly: string[] };
@@ -56,16 +66,20 @@ const fnCodeOnly     = drift?.functions.codeOnly ?? [];
 const fnDbExpected   = drift?.functions.dbOnlyExpected ?? [];
 const viewsDbOnly    = drift?.views.dbOnly ?? [];
 const viewsCodeOnly  = drift?.views.codeOnly ?? [];
+const nullDrift      = drift?.columnNullabilityDrift ?? [];
+const nullExpected   = drift?.columnNullabilityExpected ?? [];
 
 const hasTableDrift  = tablesCodeOnly.length > 0 || tablesDbOnly.length > 0;
 const hasColumnDrift = columnDrift.length > 0;
+const hasNullDrift   = nullDrift.length > 0;
 const hasFnDrift     = fnDbOnly.length > 0 || fnCodeOnly.length > 0;
 const hasViewDrift   = viewsDbOnly.length > 0 || viewsCodeOnly.length > 0;
 
-// Total count of REAL drift findings (expected DB-only is excluded by design).
+// Total count of REAL drift findings (expected DB-only / nullability excluded by design).
 const realDriftCount =
   tablesCodeOnly.length + tablesDbOnly.length +
   columnDrift.reduce((n, c) => n + c.dbOnly.length + c.codeOnly.length, 0) +
+  nullDrift.length +
   fnDbOnly.length + fnCodeOnly.length +
   viewsDbOnly.length + viewsCodeOnly.length;
 ---
@@ -259,6 +273,55 @@ const realDriftCount =
             <span class="font-mono text-xs" style={`color:${tone.green.text}`}>✓ in sync</span>
             <span class="text-xs text-ink-4">— every typed column matches the DB.</span>
           </div>
+        )}
+      </section>
+
+      <!-- ── Column nullability ────────────────────────────────────────── -->
+      <section>
+        <h2 class="text-lg font-semibold text-ink font-heading tracking-tight mb-3">Column nullability</h2>
+        {hasNullDrift ? (
+          <div class="space-y-2">
+            {nullDrift.map(c => (
+              <div class="bg-surface border border-edge-dim rounded-xl p-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="font-mono text-sm text-accent">{c.table}.{c.column}</span>
+                <span
+                  class="font-mono text-xs px-2 py-0.5 rounded"
+                  style={`color:${tone.red.text};background:${tone.red.bg};border:1px solid ${tone.red.border}`}
+                >DB: {c.db}</span>
+                <span class="text-ink-4 text-xs">vs</span>
+                <span
+                  class="font-mono text-xs px-2 py-0.5 rounded"
+                  style={`color:${tone.red.text};background:${tone.red.bg};border:1px solid ${tone.red.border}`}
+                >types: {c.code}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="bg-surface border border-edge-dim rounded-xl p-5 flex items-center gap-2">
+            <span class="font-mono text-xs" style={`color:${tone.green.text}`}>✓ in sync</span>
+            <span class="text-xs text-ink-4">— every shared column agrees on NULL-ability. (Raw Postgres↔TS type names aren't compared — the vocabularies differ.)</span>
+          </div>
+        )}
+
+        {nullExpected.length > 0 && (
+          <details class="mt-3 bg-base border border-edge-dim rounded-xl p-5 group">
+            <summary class="cursor-pointer list-none flex items-center gap-2 select-none">
+              <span class="text-ink-4 text-xs transition-transform group-open:rotate-90">▶</span>
+              <span class="text-sm font-medium text-ink-3 font-heading">
+                Expected (known-benign)
+                <span class="text-ink-4 font-normal font-mono text-xs ml-1">· {nullExpected.length}</span>
+              </span>
+            </summary>
+            <ul class="space-y-3 mt-3">
+              {nullExpected.map(c => (
+                <li class="text-xs leading-relaxed">
+                  <span class="font-mono text-ink-3">{c.table}.{c.column}</span>
+                  <span class="text-ink-4 font-mono ml-2">DB: {c.db} · types: {c.code}</span>
+                  <p class="text-ink-4 mt-0.5 max-w-3xl">{c.reason}</p>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
       </section>
 

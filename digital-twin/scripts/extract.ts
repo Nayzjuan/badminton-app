@@ -977,6 +977,18 @@ interface SchemaDrift {
   capturedAt: string;
   ok: boolean;
   tableColumnDrift: { table: string; dbOnly: string[]; codeOnly: string[] }[];
+  /** Columns present on both sides whose NULL-ability disagrees (high-signal,
+   *  vocabulary-independent — unlike raw Postgres↔TS type-name comparison). */
+  columnNullabilityDrift: { table: string; column: string; db: string; code: string }[];
+  /** Known-benign nullability differences (e.g. GENERATED columns) — surfaced
+   *  but not counted as drift. */
+  columnNullabilityExpected: {
+    table: string;
+    column: string;
+    db: string;
+    code: string;
+    reason: string;
+  }[];
   /** dbOnly = real drift; dbOnlyExpected = triggers / SECURITY DEFINER helpers
    *  that are intentionally NOT exposed as PostgREST RPCs. */
   functions: { dbOnly: string[]; dbOnlyExpected: string[]; codeOnly: string[] };
@@ -995,6 +1007,14 @@ const EXPECTED_DB_ONLY_FNS = new Set([
   "is_any_session_organizer",
 ]);
 
+/** Known-benign column nullability differences, keyed `table.column`. */
+const EXPECTED_NULLABILITY = new Map<string, string>([
+  [
+    "session_wrapped_stats.point_diff",
+    "GENERATED column (points_for − points_against). Postgres marks generated columns nullable, but it is never null in practice, so the TS type is `number`.",
+  ],
+]);
+
 /** Strip Supabase RPC arg conventions so we compare on the bare function name. */
 function computeDrift(
   snap: LiveSnapshot,
@@ -1002,15 +1022,35 @@ function computeDrift(
   views: ViewEntry[],
   rpcs: RPCEntry[]
 ): SchemaDrift {
-  const codeTableMap = new Map(tables.map((t) => [t.name, t.columns.map((c) => c.name)]));
+  const codeTableMap = new Map(tables.map((t) => [t.name, t.columns]));
   const tableColumnDrift: SchemaDrift["tableColumnDrift"] = [];
+  const columnNullabilityDrift: SchemaDrift["columnNullabilityDrift"] = [];
+  const columnNullabilityExpected: SchemaDrift["columnNullabilityExpected"] = [];
   for (const [tbl, cols] of Object.entries(snap.tables)) {
     const codeCols = codeTableMap.get(tbl);
     if (!codeCols) continue; // table-level drift handled below
+    const codeNames = codeCols.map((c) => c.name);
     const dbNames = cols.map((c) => c[0]);
-    const dbOnly = dbNames.filter((c) => !codeCols.includes(c));
-    const codeOnly = codeCols.filter((c) => !dbNames.includes(c));
+    const dbOnly = dbNames.filter((c) => !codeNames.includes(c));
+    const codeOnly = codeNames.filter((c) => !dbNames.includes(c));
     if (dbOnly.length || codeOnly.length) tableColumnDrift.push({ table: tbl, dbOnly, codeOnly });
+
+    // Nullability parity for columns present on BOTH sides.
+    const codeByName = new Map(codeCols.map((c) => [c.name, c]));
+    for (const [colName, , dbNullable] of cols) {
+      const cc = codeByName.get(colName);
+      if (cc && cc.nullable !== dbNullable) {
+        const reason = EXPECTED_NULLABILITY.get(`${tbl}.${colName}`);
+        const entry = {
+          table: tbl,
+          column: colName,
+          db: dbNullable ? "NULL" : "NOT NULL",
+          code: cc.nullable ? "| null" : "non-null",
+        };
+        if (reason) columnNullabilityExpected.push({ ...entry, reason });
+        else columnNullabilityDrift.push(entry);
+      }
+    }
   }
 
   const dbFns = new Set(snap.functions);
@@ -1038,6 +1078,7 @@ function computeDrift(
 
   const ok =
     tableColumnDrift.length === 0 &&
+    columnNullabilityDrift.length === 0 &&
     fnDbOnly.length === 0 &&
     fnCodeOnly.length === 0 &&
     viewDbOnly.length === 0 &&
@@ -1049,6 +1090,8 @@ function computeDrift(
     capturedAt: snap.capturedAt,
     ok,
     tableColumnDrift,
+    columnNullabilityDrift,
+    columnNullabilityExpected,
     functions: { dbOnly: fnDbOnly, dbOnlyExpected: fnDbOnlyExpected, codeOnly: fnCodeOnly },
     views: { dbOnly: viewDbOnly, codeOnly: viewCodeOnly },
     tables: { dbOnly: tblDbOnly, codeOnly: tblCodeOnly },
@@ -1154,16 +1197,42 @@ interface ActionDetail {
 }
 
 function sliceFunctionBody(content: string, startIdx: number): string {
-  // From the first '{' after startIdx, return the brace-balanced body.
+  // From the first '{' after startIdx, return the brace-balanced body — but
+  // skip braces inside line/block comments, '…'/"…" strings, and `…` template
+  // literals so a lone '}' in a comment or string can't unbalance the count.
   const open = content.indexOf("{", startIdx);
   if (open === -1) return "";
   let depth = 0;
-  for (let i = open; i < content.length; i++) {
-    if (content[i] === "{") depth++;
-    else if (content[i] === "}") {
+  const n = content.length;
+  let i = open;
+  while (i < n) {
+    const ch = content[i];
+    const next = content[i + 1];
+    if (ch === "/" && next === "/") {
+      const nl = content.indexOf("\n", i + 2);
+      i = nl === -1 ? n : nl;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      const end = content.indexOf("*/", i + 2);
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      i++;
+      while (i < n && content[i] !== ch) {
+        if (content[i] === "\\") i++; // skip escaped char
+        i++;
+      }
+      i++; // closing quote/backtick
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
       depth--;
       if (depth === 0) return content.slice(open, i + 1);
     }
+    i++;
   }
   return content.slice(open);
 }

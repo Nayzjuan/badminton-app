@@ -279,8 +279,11 @@ self.addEventListener("notificationclick", (event) => {
         for (const client of windowClients) {
           if (client.url.includes(self.location.origin)) {
             client.focus();
-            client.navigate(targetUrl);
-            return;
+            // navigate() can reject (e.g. client not controlled / cross-origin).
+            // Fall back to opening a fresh window so the tap never dead-ends.
+            return Promise.resolve(client.navigate(targetUrl)).catch(() =>
+              clients.openWindow(targetUrl)
+            );
           }
         }
         return clients.openWindow(targetUrl);

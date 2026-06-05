@@ -91,6 +91,10 @@ const machines = stateMachines.map((sm) => ({
         <div class="bg-surface border border-edge-dim rounded-xl p-5 overflow-x-auto">
           <pre class="mermaid">{sm.diagramSource}</pre>
         </div>
+        <p class="text-[11px] text-ink-4 -mt-2">
+          The diagram is rendered client-side by Mermaid; the transition table below
+          carries the same edges and renders without JavaScript.
+        </p>
 
         <!-- ── Edge / transition table ────────────────────────────────── -->
         <div class="bg-surface border border-edge-dim rounded-xl overflow-hidden">

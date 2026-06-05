@@ -197,6 +197,14 @@ async function run() {
       return;
     }
 
+    // setRawMode throws on a non-TTY stdin (CI, pipes). Require --yes there.
+    if (!process.stdin.isTTY) {
+      console.log(
+        amber(`\nNon-interactive stdin — re-run with --yes to confirm deleting ${totalRows} rows.`)
+      );
+      return;
+    }
+
     process.stdout.write(amber(`Delete ${totalRows} rows from "${session.name}"? [y/N] `));
     const answer = await new Promise<string>((resolve) => {
       process.stdin.setRawMode(true);
