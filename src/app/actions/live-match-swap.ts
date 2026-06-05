@@ -20,8 +20,10 @@
 //   6. Broadcast organizer intervention to affected players
 // ============================================================
 
+import { after } from "next/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
 
@@ -153,6 +155,10 @@ export async function swapPlayerInActiveMatch(
     outPlayerId,
     inPlayerId,
   ]);
+
+  // Court call: the incoming queue player was just dropped into a live match
+  // (waiting → playing). Ping them to head to the court now.
+  after(() => pushToPlayers([inPlayerId], "COURT_CALL"));
 
   return {
     success: true,
@@ -318,6 +324,13 @@ export async function swapActiveFromOnDeck(
     onDeckPlayerId,
     fillPlayerId,
   ]);
+
+  // Two pings: the on-deck player was promoted into the live match
+  // (on_deck → playing = court call), and the fill player took the vacated
+  // on-deck slot (waiting → on_deck = get ready). The displaced outPlayer
+  // returns to 'waiting' and is intentionally not pinged.
+  after(() => pushToPlayers([onDeckPlayerId], "COURT_CALL"));
+  after(() => pushToPlayers([fillPlayerId], "ON_DECK_WARNING"));
 
   return {
     success: true,

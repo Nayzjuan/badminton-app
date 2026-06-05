@@ -73,6 +73,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // `server-only` is a Next build-time guard with no Vitest resolution.
+      // Map it to a no-op so server modules that import it stay importable
+      // in tests. Does not affect `next build`.
+      "server-only": path.resolve(__dirname, "./tests/setup/server-only-stub.ts"),
     },
   },
 });

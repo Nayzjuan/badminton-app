@@ -10,10 +10,12 @@
 // createManualMatchAction — organizer creates a manual match
 // ============================================================
 
+import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import {
   getAuthenticatedUser,
@@ -650,6 +652,11 @@ export async function createManualMatchAction(
         "Could not create match — one or more players are unavailable or already assigned to an active match.",
     };
   }
+
+  // On-deck ping: a manual on-deck match (p_is_published=true) moves all four
+  // players waiting → on_deck. Notify them (OS-level push for backgrounded
+  // phones), fired after the response flushes.
+  after(() => pushToPlayers(allPlayerIds, "ON_DECK_WARNING"));
 
   return { success: true, message: "Match added to On Deck.", matchId };
 }

@@ -33,9 +33,11 @@
 //     fetchPartnershipCounts, fetchRecentRosters, executeMatch).
 // ============================================================
 
+import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastCapSaturation } from "@/lib/broadcast";
+import { pushToPlayers } from "@/lib/notifications/push-server";
 import {
   PLAYERS_PER_MATCH,
   RED_ZONE_SCORE_FLOOR,
@@ -614,6 +616,12 @@ export async function promoteOnDeckMatchInternal(
   }
 
   const playerIds = (matchPlayers ?? []).map((mp) => mp.player_id);
+
+  // Court call: ping every player on this match (OS-level notification for
+  // backgrounded/locked phones). Fired after the response flushes so it
+  // never delays or fails the promotion. pushToPlayers no-ops on empty.
+  after(() => pushToPlayers(playerIds, "COURT_CALL"));
+
   const { data: profiles } = await supabase
     .from("profiles")
     .select("id, display_name")

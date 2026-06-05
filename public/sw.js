@@ -12,7 +12,10 @@
 //   WebSockets (wss://) are never intercepted by fetch handlers.
 // ============================================================
 
-const CACHE_VERSION = "v1";
+// Bumped v1 → v2 to force clients onto the new push handler
+// (renotify for repeat court calls). skipWaiting + clients.claim
+// (below) make the new SW activate immediately.
+const CACHE_VERSION = "v2";
 
 const CACHE_NAMES = {
   static:   `bq-static-${CACHE_VERSION}`,     // /_next/static/* and icons
@@ -230,11 +233,16 @@ self.addEventListener("push", (event) => {
   const icon = "/icons/icon-192.png";
   let tag = "pocket-ping";
   let requireInteraction = false;
+  // renotify: when a notification with the same tag arrives, re-alert
+  // (vibrate + sound) instead of silently replacing the existing one.
+  // A repeat court call MUST buzz again — the player needs to know.
+  let renotify = false;
 
   if (type === "COURT_CALL") {
     vibrate = [300, 100, 300, 100, 300];
     tag = "court-call";
     requireInteraction = true;
+    renotify = true;
   } else if (type === "ON_DECK_WARNING") {
     vibrate = [200, 150, 200];
     tag = "on-deck-warning";
@@ -247,6 +255,7 @@ self.addEventListener("push", (event) => {
       badge,
       vibrate,
       tag,
+      renotify,
       requireInteraction,
       data: { url: data?.url ?? "/play", type, ...data },
       actions: [

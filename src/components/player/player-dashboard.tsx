@@ -31,6 +31,7 @@ import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
 import { useOrganizerBroadcast } from "@/hooks/use-organizer-broadcast";
 import { useMatchAlerts } from "@/hooks/use-match-alerts";
 import { NotificationEnrollment } from "@/components/notifications/notification-enrollment";
+import { InstallPrompt } from "@/components/notifications/install-prompt";
 import { MatchAlert } from "./match-alert";
 import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
@@ -336,8 +337,14 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
         </header>
 
         {/* ── Pocket Ping enrollment prompt ───────────────────── */}
-        {/* Shown once, 2.5 s after mount, if Notification.permission === 'default'. */}
+        {/* Shown once, 2.5 s after mount, if Notification.permission === 'default'.
+            Self-suppresses on iOS Safari tabs (push needs an installed PWA). */}
         <NotificationEnrollment userId={profile.id} />
+
+        {/* ── Add-to-Home-Screen nudge ────────────────────────── */}
+        {/* iOS-not-installed (required for push) + Android one-tap install.
+            Coordinates with enrollment so only one card shows at a time. */}
+        <InstallPrompt />
 
         {/* ── Content ─────────────────────────────────────────── */}
         <main className="relative flex-1 overflow-hidden">

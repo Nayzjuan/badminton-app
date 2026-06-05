@@ -5,7 +5,33 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-06-02 — Medium/Low Audit Fixes)
+## SESSION STATE (Last Updated: 2026-06-05 — Background Push A+B+C)
+
+### True Background Push (server-triggered) — COMPLETE ✅
+
+**Problem:** Push only fired when the app was OPEN — it was triggered from the CLIENT hook (`use-match-alerts.ts`) on a Realtime event, which never arrives on a locked/backgrounded phone (websocket suspended).
+
+**A — Server-side trigger (the fix):**
+- NEW `src/lib/notifications/push-server.ts` → `pushToPlayers(userIds, type)` (dedupe, empty no-op, 410/404 prune, never throws). `import "server-only"`.
+- `notifications.ts` reduced to a thin wrapper delegating to `pushToPlayers`.
+- Removed the client push call from `use-match-alerts.ts` `fireAlert` (audio-only now; server owns push → no double-notify).
+- Wired `after(() => pushToPlayers(...))` at 7 trigger points: `promoteOnDeckMatchInternal` (COURT_CALL), `swapPlayerInActiveMatch` (COURT_CALL), `swapActiveFromOnDeck` (COURT_CALL + ON_DECK), `publishMatchAction`/`publishAllDraftMatchesAction`/`createManualMatchAction` (ON_DECK), `swapPlayerInMatch` (ON_DECK, only if `is_published`). See APP_MANIFEST §3.13 table.
+
+**B — Delivery hardening:** per-type web-push `{ urgency, TTL, topic }`; `sw.js` `renotify:true` for COURT_CALL; `CACHE_VERSION` v1→v2.
+
+**C — Install prompts:** NEW `src/lib/pwa/install-detection.ts` + `src/components/notifications/install-prompt.tsx` (iOS A2HS hint + Android `beforeinstallprompt`). `notification-enrollment.tsx` gated: iOS-not-installed suppresses "Enable Pings" (push can't work in an iOS Safari tab). Android install card uses a bounded poll on `hasUserMadeChoice()` so it never stacks on the ping card.
+
+**Tests:** NEW `push-server.test.ts` (PS-1..6), `install-detection.test.ts` (ID-1..6). `use-match-alerts.test.ts` flipped to a regression guard (client must NOT call `sendPlayerNotification`). Added `vi.mock("next/server", { after: passthrough })` + `vi.mock("@/lib/notifications/push-server")` to the 3 action suites that load `after()`. NEW vitest alias `server-only` → `tests/setup/server-only-stub.ts` (build-neutral).
+
+**Validation:** `tsc --noEmit` clean · 466 unit tests pass · `npm run build` OK · my files lint-clean. Independent review: **LGTM** (after fixing the install-prompt timer leak + card-stacking race it first flagged as Minor).
+
+**Verify on real devices (the real test):** install PWA on iPhone + Android, enroll, LOCK the phone, publish a draft then call to court — confirm the locked phone buzzes + banners for both on-deck and court-call. (Web push plays OS sound + vibration, not the custom in-app beep — that needs a native wrapper, deferred.)
+
+**Not committed yet** — awaiting user direction.
+
+---
+
+## SESSION STATE (Earlier: 2026-06-02 — Medium/Low Audit Fixes)
 
 ### Medium/Low Audit Fixes (2026-06-02) — COMPLETE ✅
 

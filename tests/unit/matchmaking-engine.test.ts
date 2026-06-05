@@ -45,6 +45,14 @@ vi.mock("@/utils/supabase/server", () => ({
 vi.mock("@/utils/supabase/service", () => ({
   createServiceClient: vi.fn(),
 }));
+// after() (used for fire-and-forget push) runs synchronously in tests.
+vi.mock("next/server", () => ({
+  after: (cb: () => unknown) => cb(),
+}));
+// Push delivery is out of scope here — stub it so the after() callback no-ops.
+vi.mock("@/lib/notifications/push-server", () => ({
+  pushToPlayers: vi.fn().mockResolvedValue({ sent: 0, errors: 0 }),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";

@@ -1,16 +1,22 @@
 "use client";
 
 // ============================================================
-// useMatchAlerts — Real-time match status → audio + push
+// useMatchAlerts — Real-time match status → IN-APP AUDIO
 // ============================================================
 // Watches the player's queue entry and match assignment for
-// state transitions and fires the appropriate alert exactly
-// once per transition.
+// state transitions and plays the appropriate in-app beep exactly
+// once per transition, while the app is OPEN.
 //
 // Alerts fired:
 //   → on_deck      playWarningBeep()   (match forming, get ready)
 //   → playing      playCourtCall()     (court assigned, go now)
 //   → in_progress  playCourtCall()     (match started on court)
+//
+// NOTE ON PUSH: Web Push (OS-level sound + vibration + banner for a
+// backgrounded/locked phone) is NOT fired here. It is fired
+// SERVER-SIDE the moment the status changes (pushToPlayers wired into
+// the status-transition actions), so it reaches devices even when
+// this hook isn't running. This hook is purely the in-app audio layer.
 //
 // Android-specific fixes applied here:
 //
@@ -21,12 +27,6 @@
 //   any entry INTO the target state fires the alert, regardless of
 //   what state we thought we were in before.
 //
-//   FIX 2 — Push notification always sent (visibility gate removed).
-//   Old code skipped push when visibilityState === "visible".
-//   On Android, if AudioContext also silently fails (Bug in audio.ts),
-//   the user got ZERO feedback.  Now push always fires as a reliable
-//   backup channel independent of AudioContext state.
-//
 //   FIX 3 — AudioContext async issue is fixed in audio.ts; play
 //   functions are now async and await ctx.resume() before scheduling
 //   tones.
@@ -36,7 +36,6 @@ import { useCallback, useEffect, useRef, useMemo } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue, subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
 import { playWarningBeep, playCourtCall, unlockAudio } from "@/lib/notifications/audio";
-import { sendPlayerNotification } from "@/app/actions/notifications";
 import type { QueueStatus, MatchStatus, QueueEntry, Match } from "@/types/database";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 
@@ -84,10 +83,17 @@ export function useMatchAlerts({
     };
   }, []);
 
-  // ── Fire alert ───────────────────────────────────────────────
+  // ── Fire alert (IN-APP AUDIO ONLY) ───────────────────────────
+  // This hook owns the low-latency in-app beep that plays while the
+  // app is OPEN. The Web Push notification (OS-level sound + vibration
+  // + banner for backgrounded/locked phones) is fired SERVER-SIDE at
+  // the moment the status changes — see pushToPlayers() wired into the
+  // status-transition actions (promoteOnDeckMatchInternal, publish*,
+  // live swaps). Keeping push server-side is what makes it fire when
+  // this hook isn't even running (app closed / websocket suspended),
+  // and removing the client push here prevents a double notification.
   const fireAlert = useCallback(
     async (type: AlertType) => {
-      // Audio fires immediately regardless of visibility.
       // play* functions are async and await ctx.resume() internally
       // so they work correctly on Android Chrome.
       if (audioEnabled) {
@@ -97,23 +103,8 @@ export function useMatchAlerts({
           await playCourtCall();
         }
       }
-
-      // Push notification fires ALWAYS (not just when backgrounded).
-      //
-      // WHY: On Android the AudioContext can fail silently even after a
-      // user gesture (e.g. permission dialog closed the gesture context).
-      // Push is a completely independent delivery channel — OS-level
-      // vibration + sound + banner — that does not depend on the
-      // AudioContext being in a "running" state.  It is the reliable
-      // fallback for mobile.
-      try {
-        await sendPlayerNotification(playerId, type);
-      } catch (err) {
-        // Non-critical — audio already fired; just log.
-        console.warn("[useMatchAlerts] push notification failed:", err);
-      }
     },
-    [playerId, audioEnabled]
+    [audioEnabled]
   );
 
   // ── Initial state bootstrap ──────────────────────────────────
