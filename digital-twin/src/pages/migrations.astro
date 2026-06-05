@@ -1,0 +1,196 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+
+interface Migration {
+  file: string;
+  date: string;
+  ts: string;
+  title: string;
+  kinds: string[];
+  tables: string[];
+  functions: string[];
+  policies: string[];
+  lines: number;
+}
+
+const migrations = manifest.migrations as Migration[];
+
+// ── Kind → distinct oklch color (per spec) ─────────────────────────────
+const kindOrder = ['table', 'rpc', 'policy', 'trigger', 'column', 'index', 'view', 'type', 'rls'] as const;
+type Kind = (typeof kindOrder)[number];
+
+const kindMeta: Record<string, { label: string; bg: string; text: string; border: string }> = {
+  table:   { label: 'table',   bg: 'oklch(17% 0.030 245)', text: 'oklch(72% 0.13 245)', border: 'oklch(40% 0.10 245 / 0.45)' },
+  rpc:     { label: 'rpc',     bg: 'oklch(17% 0.030 155)', text: 'oklch(74% 0.14 155)', border: 'oklch(42% 0.12 155 / 0.45)' },
+  policy:  { label: 'policy',  bg: 'oklch(18% 0.035 300)', text: 'oklch(74% 0.15 300)', border: 'oklch(44% 0.13 300 / 0.45)' },
+  trigger: { label: 'trigger', bg: 'oklch(20% 0.032 70)',  text: 'oklch(80% 0.15 70)',  border: 'oklch(50% 0.13 70 / 0.45)' },
+  column:  { label: 'column',  bg: 'oklch(17% 0.030 195)', text: 'oklch(74% 0.12 195)', border: 'oklch(42% 0.10 195 / 0.45)' },
+  index:   { label: 'index',   bg: 'oklch(20% 0.012 255)', text: 'oklch(70% 0.025 255)', border: 'oklch(40% 0.02 255 / 0.5)' },
+  view:    { label: 'view',    bg: 'oklch(17% 0.032 220)', text: 'oklch(74% 0.13 220)', border: 'oklch(42% 0.11 220 / 0.45)' },
+  type:    { label: 'type',    bg: 'oklch(18% 0.035 350)', text: 'oklch(76% 0.15 350)', border: 'oklch(46% 0.13 350 / 0.45)' },
+  rls:     { label: 'rls',     bg: 'oklch(18% 0.030 22)',  text: 'oklch(72% 0.18 22)',  border: 'oklch(44% 0.16 22 / 0.45)' },
+};
+
+function metaFor(kind: string) {
+  return kindMeta[kind] ?? { label: kind, bg: 'oklch(20% 0.012 255)', text: 'oklch(70% 0.02 255)', border: 'oklch(40% 0.02 255 / 0.5)' };
+}
+
+// ── Aggregate kind counts across all migrations ────────────────────────
+const kindCounts: Record<string, number> = {};
+for (const m of migrations) {
+  for (const k of m.kinds) {
+    kindCounts[k] = (kindCounts[k] ?? 0) + 1;
+  }
+}
+// Ordered list of kinds that actually appear, following kindOrder, then any extras
+const presentKinds: string[] = [
+  ...kindOrder.filter(k => kindCounts[k]),
+  ...Object.keys(kindCounts).filter(k => !(kindOrder as readonly string[]).includes(k)).sort(),
+];
+
+// ── Date range (skip the 0000-00-00 placeholder for the initial schema) ─
+const realDates = migrations.map(m => m.date).filter(d => d && d !== '0000-00-00').sort();
+const firstDate = realDates.length ? realDates[0] : null;
+const lastDate = realDates.length ? realDates[realDates.length - 1] : null;
+const dateRange = firstDate && lastDate ? `${firstDate} → ${lastDate}` : 'unknown range';
+
+// ── Newest-first for the timeline ──────────────────────────────────────
+const timeline = [...migrations].reverse();
+
+function displayDate(d: string) {
+  return d && d !== '0000-00-00' ? d : 'genesis';
+}
+---
+
+<BaseLayout
+  title="Migration Timeline"
+  description={`All ${migrations.length} SQL migrations applied to the database — sourced from supabase/migrations, parsed for the tables, RPCs, policies, and triggers each one touched.`}
+>
+  <PageHeader
+    title="Migration Timeline"
+    subtitle={`${migrations.length} SQL migrations parsed from supabase/migrations. Newest first. Each card shows the schema kinds it changed, the tables it touched, plus any functions and RLS policies it defined.`}
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-8 space-y-8" data-pagefind-body>
+
+    <!-- ── Summary row ──────────────────────────────────────────────── -->
+    <section class="bg-surface border border-edge-dim rounded-xl p-5">
+      <div class="flex flex-wrap items-center gap-x-8 gap-y-4">
+        <!-- Total -->
+        <div>
+          <div class="text-2xl font-bold text-ink font-heading tracking-tight tabular-nums">{migrations.length}</div>
+          <div class="text-[10px] uppercase tracking-wider text-ink-4 font-mono mt-0.5">migrations</div>
+        </div>
+
+        <!-- Date range -->
+        <div>
+          <div class="text-sm font-mono text-ink-2">{dateRange}</div>
+          <div class="text-[10px] uppercase tracking-wider text-ink-4 font-mono mt-0.5">date range</div>
+        </div>
+
+        <!-- Kind count chips -->
+        <div class="flex flex-wrap gap-2 ml-auto">
+          {presentKinds.map(k => {
+            const m = metaFor(k);
+            return (
+              <span
+                class="inline-flex items-center gap-1.5 text-[10px] font-mono font-bold px-2 py-0.5 rounded border"
+                style={`background:${m.bg};color:${m.text};border-color:${m.border}`}
+              >
+                {m.label}
+                <span class="text-ink-3 font-normal tabular-nums">{kindCounts[k]}</span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Vertical timeline (newest first) ─────────────────────────── -->
+    <section>
+      <h2 class="text-lg font-semibold text-ink font-heading tracking-tight mb-5">Timeline</h2>
+
+      <ol class="relative space-y-4">
+        <!-- Connecting vertical line down the left -->
+        <span class="absolute left-[7px] top-2 bottom-2 w-px bg-edge-dim" aria-hidden="true"></span>
+
+        {timeline.map(m => (
+          <li class="relative pl-8">
+            <!-- Node dot on the line -->
+            <span
+              class="absolute left-0 top-[7px] w-[15px] h-[15px] rounded-full border-2 border-edge bg-base"
+              aria-hidden="true"
+            ></span>
+
+            <div class="bg-surface border border-edge-dim rounded-xl p-5">
+              <!-- Date + title -->
+              <div class="flex items-baseline gap-3 flex-wrap mb-3">
+                <span class="text-xs font-mono text-accent-hi tabular-nums shrink-0">{displayDate(m.date)}</span>
+                <span class="text-base font-semibold text-ink font-heading tracking-tight leading-snug">{m.title}</span>
+              </div>
+
+              <!-- Kind badges -->
+              {m.kinds.length > 0 && (
+                <div class="flex flex-wrap gap-1.5 mb-3">
+                  {m.kinds.map(k => {
+                    const km = metaFor(k);
+                    return (
+                      <span
+                        class="text-[10px] font-mono font-bold px-2 py-0.5 rounded border"
+                        style={`background:${km.bg};color:${km.text};border-color:${km.border}`}
+                      >{km.label}</span>
+                    );
+                  })}
+                </div>
+              )}
+
+              <!-- Affected tables -->
+              {m.tables.length > 0 && (
+                <div class="flex flex-wrap items-center gap-1.5 mb-2">
+                  <span class="text-[10px] uppercase tracking-wider text-ink-4 font-mono mr-1 shrink-0">tables</span>
+                  {m.tables.map(t => (
+                    <span class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">{t}</span>
+                  ))}
+                </div>
+              )}
+
+              <!-- Functions -->
+              {m.functions.length > 0 && (
+                <div class="flex flex-wrap items-center gap-1.5 mb-2">
+                  <span class="text-[10px] uppercase tracking-wider text-ink-4 font-mono mr-1 shrink-0">functions</span>
+                  {m.functions.map(fn => (
+                    <span class="font-mono text-xs text-ink-2 bg-base px-1.5 py-0.5 rounded border border-edge-dim">{fn}()</span>
+                  ))}
+                </div>
+              )}
+
+              <!-- Policies -->
+              {m.policies.length > 0 && (
+                <div class="flex flex-wrap items-center gap-1.5 mb-2">
+                  <span class="text-[10px] uppercase tracking-wider text-ink-4 font-mono mr-1 shrink-0">policies</span>
+                  {m.policies.map(p => (
+                    <span
+                      class="font-mono text-xs px-1.5 py-0.5 rounded border"
+                      style={`background:${kindMeta.policy.bg};color:${kindMeta.policy.text};border-color:${kindMeta.policy.border}`}
+                    >{p}</span>
+                  ))}
+                </div>
+              )}
+
+              <!-- Footer: line count + filename -->
+              <div class="flex items-center gap-2 mt-3 pt-3 border-t border-edge-dim">
+                <span class="text-[10px] font-mono text-ink-4 tabular-nums">{m.lines} lines</span>
+                <span class="text-ink-4 text-[10px]">·</span>
+                <span class="text-[10px] font-mono text-ink-4 truncate">{m.file}</span>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+
+  </div>
+</BaseLayout>

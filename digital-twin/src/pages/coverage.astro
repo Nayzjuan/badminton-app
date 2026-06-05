@@ -1,0 +1,214 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+
+interface CovTotals {
+  lines: number;
+  hit: number;
+  pct: number;
+  files: number;
+}
+interface CovDir {
+  dir: string;
+  lines: number;
+  hit: number;
+  pct: number;
+  files: number;
+}
+interface CovFile {
+  file: string;
+  lines: number;
+  hit: number;
+  pct: number;
+  fnPct: number;
+}
+interface Coverage {
+  totals: CovTotals;
+  dirs: CovDir[];
+  files: CovFile[];
+}
+
+const coverage = manifest.coverage as Coverage | null;
+
+// Threshold → bar color (oklch hue): >=80 green(155), 50–79 amber(70), <50 red(22).
+function barColor(pct: number): { fill: string; text: string } {
+  if (pct >= 80) return { fill: 'oklch(62% 0.17 155)', text: 'oklch(74% 0.18 155)' };
+  if (pct >= 50) return { fill: 'oklch(66% 0.15 70)',  text: 'oklch(80% 0.16 70)' };
+  return { fill: 'oklch(58% 0.20 22)',  text: 'oklch(72% 0.21 22)' };
+}
+
+// Build-time data shaping (only when coverage exists).
+const dirs = coverage ? [...coverage.dirs].sort((a, b) => a.pct - b.pct) : [];
+// Worst-first so gaps are obvious.
+const files = coverage ? [...coverage.files].sort((a, b) => a.pct - b.pct) : [];
+
+const overallColor = coverage ? barColor(coverage.totals.pct) : null;
+const pctLabel = (n: number) => `${n.toFixed(1)}%`;
+---
+
+<BaseLayout
+  title="Test Coverage"
+  description="Vitest line + function coverage for the unit-tested hooks and core actions, sourced live from manifest.coverage."
+>
+  <PageHeader
+    title="Test Coverage"
+    subtitle="Vitest line & function coverage, sourced live from manifest.coverage. Scope is limited to the vitest config's include[] set — the unit-tested hooks and core actions — not the whole app."
+    phaseStatus="live"
+  />
+
+  {coverage === null ? (
+    <!-- ── Empty state ──────────────────────────────────────────────── -->
+    <div class="px-8 py-20 flex items-center justify-center">
+      <div class="bg-surface border border-edge-dim rounded-xl p-10 max-w-md text-center">
+        <div class="text-2xl mb-3" aria-hidden="true">📊</div>
+        <h2 class="text-lg font-semibold text-ink font-heading tracking-tight mb-2">
+          No coverage data
+        </h2>
+        <p class="text-sm text-ink-3 leading-relaxed mb-4">
+          No coverage report has been captured into the manifest yet. Generate one, then re-extract.
+        </p>
+        <code class="font-mono text-xs text-ink-2 bg-base px-3 py-2 rounded border border-edge-dim inline-block">
+          npm run test -- --coverage
+        </code>
+      </div>
+    </div>
+  ) : (
+    <div class="px-8 py-8 space-y-8" data-pagefind-body>
+
+      <!-- ── Hero stat ───────────────────────────────────────────────── -->
+      <section>
+        <div class="bg-surface border border-edge-dim rounded-xl p-5">
+          <div class="flex flex-col sm:flex-row sm:items-end gap-6 sm:gap-10">
+            <!-- Big % -->
+            <div class="shrink-0">
+              <div
+                class="text-6xl font-bold font-heading tracking-tight leading-none tabular-nums"
+                style={`color:${overallColor!.text}`}
+              >
+                {pctLabel(coverage.totals.pct)}
+              </div>
+              <div class="text-xs text-ink-4 font-mono mt-2 uppercase tracking-wider">
+                Overall line coverage
+              </div>
+            </div>
+
+            <!-- Totals -->
+            <div class="flex-1 grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div class="bg-base border border-edge-dim rounded-lg px-4 py-3">
+                <div class="text-xl font-semibold text-ink font-mono tabular-nums">
+                  {coverage.totals.hit.toLocaleString()}<span class="text-ink-4 text-sm"> / {coverage.totals.lines.toLocaleString()}</span>
+                </div>
+                <div class="text-[10px] text-ink-4 font-mono mt-1 uppercase tracking-wider">Lines hit / total</div>
+              </div>
+              <div class="bg-base border border-edge-dim rounded-lg px-4 py-3">
+                <div class="text-xl font-semibold text-ink font-mono tabular-nums">
+                  {coverage.totals.files}
+                </div>
+                <div class="text-[10px] text-ink-4 font-mono mt-1 uppercase tracking-wider">Files measured</div>
+              </div>
+              <div class="bg-base border border-edge-dim rounded-lg px-4 py-3 col-span-2 sm:col-span-1">
+                <div class="text-xl font-semibold text-ink font-mono tabular-nums">
+                  {coverage.dirs.length}
+                </div>
+                <div class="text-[10px] text-ink-4 font-mono mt-1 uppercase tracking-wider">Directories</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Overall bar -->
+          <div class="mt-5 h-2.5 w-full rounded-full bg-base border border-edge-dim overflow-hidden">
+            <div
+              class="h-full rounded-full"
+              style={`width:${coverage.totals.pct}%;background:${overallColor!.fill}`}
+            ></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Per-directory ───────────────────────────────────────────── -->
+      <section>
+        <h2 class="text-lg font-semibold text-ink font-heading tracking-tight mb-1">By directory</h2>
+        <p class="text-sm text-ink-3 mb-4">Sorted worst-first. Bar color: green ≥ 80%, amber 50–79%, red &lt; 50%.</p>
+        <div class="bg-surface border border-edge-dim rounded-xl p-5 space-y-4">
+          {dirs.map(d => {
+            const c = barColor(d.pct);
+            return (
+              <div>
+                <div class="flex items-center justify-between gap-3 mb-1.5 flex-wrap">
+                  <code class="font-mono text-xs text-ink-2">{d.dir}</code>
+                  <div class="flex items-center gap-3 shrink-0">
+                    <span class="text-[10px] font-mono text-ink-4">
+                      {d.hit}/{d.lines} lines · {d.files} {d.files === 1 ? 'file' : 'files'}
+                    </span>
+                    <span
+                      class="text-xs font-mono font-bold tabular-nums w-14 text-right"
+                      style={`color:${c.text}`}
+                    >{pctLabel(d.pct)}</span>
+                  </div>
+                </div>
+                <div class="h-2 w-full rounded-full bg-base border border-edge-dim overflow-hidden">
+                  <div
+                    class="h-full rounded-full"
+                    style={`width:${d.pct}%;background:${c.fill}`}
+                  ></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <!-- ── Per-file table ──────────────────────────────────────────── -->
+      <section>
+        <h2 class="text-lg font-semibold text-ink font-heading tracking-tight mb-1">By file</h2>
+        <p class="text-sm text-ink-3 mb-4">Sorted by line coverage ascending — the gaps to close are at the top.</p>
+        <div class="dt-card">
+          <table class="dt-table">
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Coverage</th>
+                <th class="text-right">Lines</th>
+                <th class="text-right">Func %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map(f => {
+                const c = barColor(f.pct);
+                const fc = barColor(f.fnPct);
+                return (
+                  <tr>
+                    <td><code class="font-mono text-accent text-xs">{f.file}</code></td>
+                    <td class="w-44">
+                      <div class="flex items-center gap-2.5">
+                        <div class="h-1.5 flex-1 min-w-20 rounded-full bg-base border border-edge-dim overflow-hidden">
+                          <div
+                            class="h-full rounded-full"
+                            style={`width:${f.pct}%;background:${c.fill}`}
+                          ></div>
+                        </div>
+                        <span
+                          class="text-xs font-mono font-bold tabular-nums w-12 text-right shrink-0"
+                          style={`color:${c.text}`}
+                        >{pctLabel(f.pct)}</span>
+                      </div>
+                    </td>
+                    <td class="text-xs text-ink-3 font-mono text-right tabular-nums whitespace-nowrap">
+                      {f.hit}/{f.lines}
+                    </td>
+                    <td
+                      class="text-xs font-mono font-bold text-right tabular-nums"
+                      style={`color:${fc.text}`}
+                    >{pctLabel(f.fnPct)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+  )}
+</BaseLayout>

@@ -337,12 +337,20 @@ interface Manifest {
   constants: ConstEntry[];
   actions: ActionEntry[];
   channels: unknown[];
-  broadcasts: unknown[];
+  broadcasts: BroadcastEntry[];
   gotchas: unknown[];
   components: unknown[];
   scenarios: unknown[];
   /** Extracted from globals.css + layout.tsx — consumed by sync-design-tokens.ts */
   designTokens: DesignTokens;
+  // ── Feature pages (added 2026-06) ──
+  migrations: MigrationEntry[];
+  rlsPolicies: SnapshotPolicy[];
+  rlsCapturedAt: string;
+  coverage: CoverageData | null;
+  schemaDrift: SchemaDrift | null;
+  actionDetails: ActionDetail[];
+  stateMachines: StateMachine[];
 }
 
 // ── TypeScript AST helpers ─────────────────────────────────────────────────────
@@ -851,6 +859,454 @@ function extractDesignTokens(globalsPath: string, layoutPath: string): DesignTok
   };
 }
 
+// ── Migrations (Migration Timeline) ─────────────────────────────────────────────
+
+interface MigrationEntry {
+  file: string;
+  date: string; // YYYY-MM-DD from the leading digits
+  ts: string; // full numeric prefix
+  title: string; // first meaningful comment line
+  kinds: string[]; // table | rpc | policy | trigger | column | index | view | type | rls
+  tables: string[];
+  functions: string[];
+  policies: string[];
+  lines: number;
+}
+
+function extractMigrations(dir: string): MigrationEntry[] {
+  let files: string[];
+  try {
+    files = readdirSync(dir)
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
+  } catch {
+    return [];
+  }
+
+  return files.map((file) => {
+    const sql = readFileSync(join(dir, file), "utf8");
+    const pm = file.match(/^(\d{8})(\d*)_?(.*)\.sql$/);
+    const datePart = pm?.[1] ?? "";
+    const date = datePart
+      ? `${datePart.slice(0, 4)}-${datePart.slice(4, 6)}-${datePart.slice(6, 8)}`
+      : "";
+
+    // Title = first comment line with letters that isn't a `====` banner.
+    let title = (pm?.[3] ?? file).replace(/_/g, " ").trim();
+    for (const line of sql.split("\n").slice(0, 14)) {
+      const c = line.replace(/^--\s?/, "").trim();
+      if (c && !/^[=\-]+$/.test(c) && /[a-zA-Z]/.test(c)) {
+        title = c;
+        break;
+      }
+    }
+
+    const kinds = new Set<string>();
+    const tables = new Set<string>();
+    const functions = new Set<string>();
+    const policies = new Set<string>();
+    let m: RegExpExecArray | null;
+
+    const reTable = /create table (?:if not exists )?(?:public\.)?["']?(\w+)/gi;
+    while ((m = reTable.exec(sql))) {
+      kinds.add("table");
+      tables.add(m[1]);
+    }
+    const reFn = /create (?:or replace )?function (?:public\.)?["']?(\w+)/gi;
+    while ((m = reFn.exec(sql))) {
+      kinds.add("rpc");
+      functions.add(m[1]);
+    }
+    const rePol = /create policy ["']?(.+?)["']?\s+on (?:public\.)?["']?(\w+)/gi;
+    while ((m = rePol.exec(sql))) {
+      kinds.add("policy");
+      policies.add(m[1].trim());
+      tables.add(m[2]);
+    }
+    const reAlter = /alter table (?:if exists )?(?:only )?(?:public\.)?["']?(\w+)/gi;
+    while ((m = reAlter.exec(sql))) tables.add(m[1]);
+
+    if (/create (?:or replace )?trigger/i.test(sql)) kinds.add("trigger");
+    if (/\badd column\b/i.test(sql)) kinds.add("column");
+    if (/create (?:unique )?index/i.test(sql)) kinds.add("index");
+    if (/create (?:or replace )?(?:materialized )?view/i.test(sql)) kinds.add("view");
+    if (/create type/i.test(sql)) kinds.add("type");
+    if (/enable row level security|create policy/i.test(sql)) kinds.add("rls");
+
+    return {
+      file,
+      date,
+      ts: `${datePart}${pm?.[2] ?? ""}`,
+      title,
+      kinds: [...kinds].sort(),
+      tables: [...tables].sort(),
+      functions: [...functions].sort(),
+      policies: [...policies],
+      lines: sql.split("\n").length,
+    };
+  });
+}
+
+// ── Live-schema snapshot, RLS policies, drift ───────────────────────────────────
+
+interface SnapshotPolicy {
+  table: string;
+  name: string;
+  cmd: string;
+  roles: string;
+  using: string | null;
+  withCheck: string | null;
+}
+interface LiveSnapshot {
+  capturedAt: string;
+  tables: Record<string, [string, string, boolean][]>; // [col, type, nullable]
+  views: string[];
+  functions: string[];
+  policies: SnapshotPolicy[];
+}
+
+function readSnapshot(path: string): LiveSnapshot | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as LiveSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+interface SchemaDrift {
+  capturedAt: string;
+  ok: boolean;
+  tableColumnDrift: { table: string; dbOnly: string[]; codeOnly: string[] }[];
+  /** dbOnly = real drift; dbOnlyExpected = triggers / SECURITY DEFINER helpers
+   *  that are intentionally NOT exposed as PostgREST RPCs. */
+  functions: { dbOnly: string[]; dbOnlyExpected: string[]; codeOnly: string[] };
+  views: { dbOnly: string[]; codeOnly: string[] };
+  tables: { dbOnly: string[]; codeOnly: string[] };
+}
+
+/** DB functions intentionally absent from the TS RPC type: trigger functions,
+ *  SECURITY DEFINER RLS helpers, and `_`-prefixed internal helpers. Not drift. */
+const EXPECTED_DB_ONLY_FNS = new Set([
+  "handle_new_session",
+  "handle_new_user",
+  "set_updated_at",
+  "touch_push_subscription_updated_at",
+  "is_session_organizer",
+  "is_any_session_organizer",
+]);
+
+/** Strip Supabase RPC arg conventions so we compare on the bare function name. */
+function computeDrift(
+  snap: LiveSnapshot,
+  tables: TableEntry[],
+  views: ViewEntry[],
+  rpcs: RPCEntry[]
+): SchemaDrift {
+  const codeTableMap = new Map(tables.map((t) => [t.name, t.columns.map((c) => c.name)]));
+  const tableColumnDrift: SchemaDrift["tableColumnDrift"] = [];
+  for (const [tbl, cols] of Object.entries(snap.tables)) {
+    const codeCols = codeTableMap.get(tbl);
+    if (!codeCols) continue; // table-level drift handled below
+    const dbNames = cols.map((c) => c[0]);
+    const dbOnly = dbNames.filter((c) => !codeCols.includes(c));
+    const codeOnly = codeCols.filter((c) => !dbNames.includes(c));
+    if (dbOnly.length || codeOnly.length) tableColumnDrift.push({ table: tbl, dbOnly, codeOnly });
+  }
+
+  const dbFns = new Set(snap.functions);
+  const codeFns = new Set(rpcs.map((r) => r.name));
+  const fnDbOnlyAll = [...dbFns].filter((f) => !codeFns.has(f));
+  // Triggers / internal helpers (`_`-prefixed) / known SECURITY DEFINER helpers
+  // are expected to be DB-only — not real drift.
+  const fnDbOnlyExpected = fnDbOnlyAll
+    .filter((f) => f.startsWith("_") || EXPECTED_DB_ONLY_FNS.has(f))
+    .sort();
+  const fnDbOnly = fnDbOnlyAll
+    .filter((f) => !(f.startsWith("_") || EXPECTED_DB_ONLY_FNS.has(f)))
+    .sort();
+  const fnCodeOnly = [...codeFns].filter((f) => !dbFns.has(f)).sort();
+
+  const dbViews = new Set(snap.views);
+  const codeViews = new Set(views.map((v) => v.name));
+  const viewDbOnly = [...dbViews].filter((v) => !codeViews.has(v)).sort();
+  const viewCodeOnly = [...codeViews].filter((v) => !dbViews.has(v)).sort();
+
+  const dbTables = new Set(Object.keys(snap.tables));
+  const codeTables = new Set(tables.map((t) => t.name));
+  const tblDbOnly = [...dbTables].filter((t) => !codeTables.has(t)).sort();
+  const tblCodeOnly = [...codeTables].filter((t) => !dbTables.has(t)).sort();
+
+  const ok =
+    tableColumnDrift.length === 0 &&
+    fnDbOnly.length === 0 &&
+    fnCodeOnly.length === 0 &&
+    viewDbOnly.length === 0 &&
+    viewCodeOnly.length === 0 &&
+    tblDbOnly.length === 0 &&
+    tblCodeOnly.length === 0;
+
+  return {
+    capturedAt: snap.capturedAt,
+    ok,
+    tableColumnDrift,
+    functions: { dbOnly: fnDbOnly, dbOnlyExpected: fnDbOnlyExpected, codeOnly: fnCodeOnly },
+    views: { dbOnly: viewDbOnly, codeOnly: viewCodeOnly },
+    tables: { dbOnly: tblDbOnly, codeOnly: tblCodeOnly },
+  };
+}
+
+// ── Coverage (Test Coverage Dashboard) ──────────────────────────────────────────
+
+interface CoverageFile {
+  file: string;
+  lines: number;
+  hit: number;
+  pct: number;
+  fnPct: number;
+}
+interface CoverageDir {
+  dir: string;
+  lines: number;
+  hit: number;
+  pct: number;
+  files: number;
+}
+interface CoverageData {
+  totals: { lines: number; hit: number; pct: number; files: number };
+  dirs: CoverageDir[];
+  files: CoverageFile[];
+}
+
+function extractCoverage(lcovPath: string): CoverageData | null {
+  let raw: string;
+  try {
+    raw = readFileSync(lcovPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const files: CoverageFile[] = [];
+  for (const rec of raw.split("end_of_record")) {
+    const sf = rec.match(/SF:(.+)/)?.[1]?.trim();
+    if (!sf) continue;
+    const lf = Number(rec.match(/LF:(\d+)/)?.[1] ?? 0);
+    const lh = Number(rec.match(/LH:(\d+)/)?.[1] ?? 0);
+    const fnf = Number(rec.match(/FNF:(\d+)/)?.[1] ?? 0);
+    const fnh = Number(rec.match(/FNH:(\d+)/)?.[1] ?? 0);
+    // Normalise to a repo-relative path under src/.
+    const rel = sf.replace(/^.*?\/(src\/)/, "$1").replace(/^.*?badminton-app\//, "");
+    files.push({
+      file: rel,
+      lines: lf,
+      hit: lh,
+      pct: lf ? Number(((100 * lh) / lf).toFixed(1)) : 0,
+      fnPct: fnf ? Number(((100 * fnh) / fnf).toFixed(1)) : 0,
+    });
+  }
+  if (files.length === 0) return null;
+
+  // Roll up by directory (everything up to the filename).
+  const dirMap = new Map<string, { lines: number; hit: number; files: number }>();
+  for (const f of files) {
+    const dir = f.file.includes("/") ? f.file.slice(0, f.file.lastIndexOf("/")) : ".";
+    const agg = dirMap.get(dir) ?? { lines: 0, hit: 0, files: 0 };
+    agg.lines += f.lines;
+    agg.hit += f.hit;
+    agg.files += 1;
+    dirMap.set(dir, agg);
+  }
+  const dirs: CoverageDir[] = [...dirMap.entries()]
+    .map(([dir, a]) => ({
+      dir,
+      lines: a.lines,
+      hit: a.hit,
+      files: a.files,
+      pct: a.lines ? Number(((100 * a.hit) / a.lines).toFixed(1)) : 0,
+    }))
+    .sort((a, b) => a.dir.localeCompare(b.dir));
+
+  const totalLines = files.reduce((s, f) => s + f.lines, 0);
+  const totalHit = files.reduce((s, f) => s + f.hit, 0);
+
+  return {
+    totals: {
+      lines: totalLines,
+      hit: totalHit,
+      pct: totalLines ? Number(((100 * totalHit) / totalLines).toFixed(1)) : 0,
+      files: files.length,
+    },
+    dirs,
+    files: files.sort((a, b) => a.file.localeCompare(b.file)),
+  };
+}
+
+// ── Action signature detail (Action Signature Reference) ─────────────────────────
+
+interface ActionDetail {
+  file: string;
+  name: string;
+  signature: string; // params + return, trimmed to one line
+  auth: string[]; // detected auth gates within the function body
+  tables: string[]; // .from("x")
+  rpcs: string[]; // .rpc("y")
+  broadcasts: string[]; // broadcast*/postBroadcast targets
+  pushes: boolean; // schedules a Web Push via pushToPlayers
+}
+
+function sliceFunctionBody(content: string, startIdx: number): string {
+  // From the first '{' after startIdx, return the brace-balanced body.
+  const open = content.indexOf("{", startIdx);
+  if (open === -1) return "";
+  let depth = 0;
+  for (let i = open; i < content.length; i++) {
+    if (content[i] === "{") depth++;
+    else if (content[i] === "}") {
+      depth--;
+      if (depth === 0) return content.slice(open, i + 1);
+    }
+  }
+  return content.slice(open);
+}
+
+function extractActionDetails(actionsDir: string): ActionDetail[] {
+  let files: string[];
+  try {
+    files = readdirSync(actionsDir)
+      .filter((f) => f.endsWith(".ts"))
+      .sort();
+  } catch {
+    return [];
+  }
+
+  const out: ActionDetail[] = [];
+  for (const file of files) {
+    const content = readFileSync(join(actionsDir, file), "utf8");
+    const fnRe = /^export\s+(?:async\s+)?function\s+(\w+)\s*\(/gm;
+    let m: RegExpExecArray | null;
+    while ((m = fnRe.exec(content)) !== null) {
+      const name = m[1];
+      // Signature: from the function name to the first '{' of the body.
+      const sigStart = m.index;
+      const bodyOpen = content.indexOf("{", sigStart);
+      const signature = content
+        .slice(content.indexOf(name, sigStart), bodyOpen === -1 ? undefined : bodyOpen)
+        .replace(/\s+/g, " ")
+        .trim();
+      const body = sliceFunctionBody(content, sigStart);
+
+      const tables = new Set<string>();
+      let mm: RegExpExecArray | null;
+      const reFrom = /\.from\(\s*["'`](\w+)["'`]/g;
+      while ((mm = reFrom.exec(body))) tables.add(mm[1]);
+      const rpcs = new Set<string>();
+      const reRpc = /\.rpc\(\s*["'`](\w+)["'`]/g;
+      while ((mm = reRpc.exec(body))) rpcs.add(mm[1]);
+      const broadcasts = new Set<string>();
+      const reBc = /\b(broadcast\w+)\s*\(/g;
+      while ((mm = reBc.exec(body))) broadcasts.add(mm[1]);
+
+      const auth: string[] = [];
+      if (/getAuthenticatedUser\s*\(/.test(body)) auth.push("getAuthenticatedUser");
+      if (/isSessionOrganizer\s*\(/.test(body)) auth.push("isSessionOrganizer");
+      if (/createServiceClient\s*\(/.test(body)) auth.push("createServiceClient");
+
+      out.push({
+        file,
+        name,
+        signature,
+        auth,
+        tables: [...tables].sort(),
+        rpcs: [...rpcs].sort(),
+        broadcasts: [...broadcasts].sort(),
+        pushes: /pushToPlayers\s*\(/.test(body),
+      });
+    }
+  }
+  return out;
+}
+
+// ── Broadcast event catalog (extracted from broadcast.ts) ───────────────────────
+
+interface BroadcastEntry {
+  event: string; // realtime event name
+  payloadType: string; // TS payload interface name
+  types?: string[]; // union members for organizer_intervention
+}
+
+function extractBroadcasts(path: string): BroadcastEntry[] {
+  let src: string;
+  try {
+    src = readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
+  const out: BroadcastEntry[] = [];
+  // event names come from postBroadcast(`...`, "event_name", payload)
+  const re = /postBroadcast\([^,]+,\s*["'`](\w+)["'`]/g;
+  let m: RegExpExecArray | null;
+  const seen = new Set<string>();
+  while ((m = re.exec(src))) {
+    const event = m[1];
+    if (seen.has(event)) continue;
+    seen.add(event);
+    out.push({ event, payloadType: "" });
+  }
+  // organizer_intervention union members
+  const unionMatch = src.match(/OrganizerInterventionType\s*=\s*([\s\S]*?);/);
+  if (unionMatch) {
+    const members = [...unionMatch[1].matchAll(/["'`](\w+)["'`]/g)].map((x) => x[1]);
+    const oi = out.find((b) => b.event === "organizer_intervention");
+    if (oi) oi.types = members;
+  }
+  return out;
+}
+
+// ── State machines (queue_status + match_status) — curated ───────────────────────
+
+interface StateEdge {
+  from: string;
+  to: string;
+  label: string;
+}
+interface StateMachine {
+  name: string;
+  field: string;
+  states: string[];
+  edges: StateEdge[];
+}
+
+const STATE_MACHINES: StateMachine[] = [
+  {
+    name: "Queue lifecycle",
+    field: "queue_entries.status",
+    states: ["waiting", "drafted", "on_deck", "playing", "left"],
+    edges: [
+      { from: "waiting", to: "drafted", label: "engine drafts player into an unpublished match" },
+      { from: "drafted", to: "on_deck", label: "organizer publishes the draft" },
+      { from: "waiting", to: "on_deck", label: "manual on-deck create / publish" },
+      { from: "on_deck", to: "playing", label: "match called to a court (promoteOnDeckMatch)" },
+      { from: "waiting", to: "playing", label: "swapped into a live match" },
+      { from: "playing", to: "waiting", label: "match ends / score submitted" },
+      { from: "drafted", to: "waiting", label: "draft cleared / cap change" },
+      { from: "on_deck", to: "waiting", label: "on-deck match cleared" },
+      { from: "waiting", to: "left", label: "player checks out / removed" },
+      { from: "playing", to: "left", label: "organizer removes mid-match" },
+    ],
+  },
+  {
+    name: "Match lifecycle",
+    field: "matches.status",
+    states: ["pending", "in_progress", "completed", "cancelled"],
+    edges: [
+      { from: "pending", to: "in_progress", label: "called to court (court assigned)" },
+      { from: "in_progress", to: "completed", label: "score submitted" },
+      { from: "pending", to: "cancelled", label: "draft/on-deck cleared" },
+      { from: "in_progress", to: "cancelled", label: "match cancelled" },
+      { from: "completed", to: "in_progress", label: "score reverted (revert_match_to_active)" },
+    ],
+  },
+];
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 function run(): void {
@@ -867,6 +1323,14 @@ function run(): void {
     resolve(HOST_ROOT, "src/app/layout.tsx")
   );
 
+  // ── Feature-page data ──
+  const migrations = extractMigrations(resolve(HOST_ROOT, "supabase/migrations"));
+  const broadcasts = extractBroadcasts(resolve(HOST_ROOT, "src/lib/broadcast.ts"));
+  const actionDetails = extractActionDetails(resolve(HOST_ROOT, "src/app/actions"));
+  const coverage = extractCoverage(resolve(HOST_ROOT, "coverage/lcov.info"));
+  const snapshot = readSnapshot(resolve(__dirname, "../src/data/live-schema-snapshot.json"));
+  const schemaDrift = snapshot ? computeDrift(snapshot, tables, views, rpcs) : null;
+
   const manifest: Manifest = {
     _version: 2,
     _lastExtracted: new Date().toISOString(),
@@ -877,11 +1341,18 @@ function run(): void {
     constants,
     actions,
     channels: [],
-    broadcasts: [],
+    broadcasts,
     gotchas: CURATED_GOTCHAS,
     components: [],
     scenarios: [],
     designTokens,
+    migrations,
+    rlsPolicies: snapshot?.policies ?? [],
+    rlsCapturedAt: snapshot?.capturedAt ?? "",
+    coverage,
+    schemaDrift,
+    actionDetails,
+    stateMachines: STATE_MACHINES,
   };
 
   writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + "\n");
@@ -893,10 +1364,12 @@ function run(): void {
   console.log(`  enums:        ${enums.length}`);
   console.log(`  rpcs:         ${rpcs.length}`);
   console.log(`  constants:    ${constants.length}`);
-  console.log(`  actions:      ${actions.length} files`);
-  console.log(
-    `  designTokens: ${Object.keys(designTokens.lightTokens).length} light / ${Object.keys(designTokens.darkTokens).length} dark tokens, ${designTokens.fonts.length} fonts`
-  );
+  console.log(`  actions:      ${actions.length} files (${actionDetails.length} fns)`);
+  console.log(`  migrations:   ${migrations.length}`);
+  console.log(`  broadcasts:   ${broadcasts.length}`);
+  console.log(`  rlsPolicies:  ${manifest.rlsPolicies.length}`);
+  console.log(`  coverage:     ${coverage ? coverage.totals.pct + "% lines" : "n/a"}`);
+  console.log(`  schemaDrift:  ${schemaDrift ? (schemaDrift.ok ? "clean" : "DRIFT") : "n/a"}`);
   console.log(`  → ${OUT_PATH}`);
 }
 

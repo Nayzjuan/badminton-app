@@ -18,6 +18,17 @@ const sections = [
     ]
   },
   {
+    heading: 'Schema & Quality',
+    items: [
+      { href: '/migrations',       label: 'Migration Timeline', live: true },
+      { href: '/schema-drift',     label: 'Schema Drift',       live: true },
+      { href: '/rls',              label: 'RLS Policies',       live: true },
+      { href: '/state-machines',   label: 'State Machines',     live: true },
+      { href: '/action-reference', label: 'Action Reference',   live: true },
+      { href: '/coverage',         label: 'Test Coverage',      live: true },
+    ]
+  },
+  {
     heading: 'Reference',
     items: [
       { href: '/flows',       label: 'Flows & Traces',     live: true  },
@@ -116,11 +127,25 @@ function isActive(href: string) {
 <!-- Mobile top bar -->
 <div class="mobile-top-bar fixed top-0 left-0 right-0 h-12 bg-surface border-b border-edge-dim z-50 items-center justify-between px-4">
   <a href="/" class="text-sm font-semibold text-ink font-heading tracking-tight">Badminton · Digital Twin</a>
-  <button
-    id="mobile-nav-toggle"
-    class="text-ink-3 hover:text-ink-2 p-1 transition-colors"
-    onclick="document.getElementById('side-nav').classList.toggle('mobile-open');"
-  >
-    ☰
-  </button>
+  <div class="flex items-center gap-1">
+    <!-- Search — always reachable on mobile (opens the same ⌘K palette) -->
+    <button
+      data-search-trigger
+      class="text-ink-3 hover:text-ink-2 p-1.5 transition-colors"
+      aria-label="Open search"
+    >
+      <svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <button
+      id="mobile-nav-toggle"
+      class="text-ink-3 hover:text-ink-2 p-1 transition-colors"
+      onclick="document.getElementById('side-nav').classList.toggle('mobile-open');"
+      aria-label="Toggle navigation"
+    >
+      ☰
+    </button>
+  </div>
 </div>

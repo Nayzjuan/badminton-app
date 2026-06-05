@@ -63,10 +63,30 @@ const annotations: Record<string, {
     note:     'buildOverlapMap is async/DB — it lives here, not in matchmaking-core.ts (pure logic only). recentRosters is hoisted once per engine run; overlapMap is computed per-anchor.',
     severity: 'info',
   },
+  'courts.ts': {
+    desc:     'Court CRUD within a session: add, rename, open/close, delete.',
+    tags:     ['Court', 'Organizer'],
+  },
+  'fix-player-record.ts': {
+    desc:     'Historical roster correction: swap a player in an already-completed match (fixes mis-recorded results).',
+    tags:     ['Match', 'Fix', 'History'],
+    note:     'Routes through the fix_record_swap_player RPC and recomputes partnership/rivalry deltas. Distinct from live swaps — operates on completed matches.',
+    severity: 'info',
+  },
+  'history.ts': {
+    desc:     'Read-only match history for a player (per-session and all-sessions).',
+    tags:     ['Stats', 'History'],
+  },
+  'live-match-swap.ts': {
+    desc:     'Fix rosters on an IN-PROGRESS match: swap with a queue player, swap teams, pull from on-deck (force-fill), and undo within 3 s.',
+    tags:     ['Swap', 'Live', 'On-Deck'],
+    note:     'All four ops are atomic RPCs (migration 20260601000000). Score is preserved; the displaced player returns to the queue. Broadcasts active_roster_changed and fires server-side push to affected players.',
+    severity: 'info',
+  },
   'notifications.ts': {
-    desc:     'Web Push / VAPID notification dispatch to player devices.',
+    desc:     'Thin wrapper over the shared push core (lib/notifications/push-server.ts).',
     tags:     ['Push', 'VAPID'],
-    note:     'All 3 subscription fields required: endpoint · p256dh · auth_key. Missing any one = silent failure.',
+    note:     'Push is now fired SERVER-SIDE via after(() => pushToPlayers(...)) from the status-transition actions (promote-to-court, publish, live swaps) — not from this action. The client hook (use-match-alerts) only plays in-app audio. See the Realtime page + Action Reference.',
     severity: 'warn',
   },
   'profile.ts': {

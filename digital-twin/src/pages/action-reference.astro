@@ -1,0 +1,151 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+
+interface ActionDetail {
+  file: string;
+  name: string;
+  signature: string;
+  auth: string[];
+  tables: string[];
+  rpcs: string[];
+  broadcasts: string[];
+  pushes: boolean;
+}
+
+const actions = manifest.actionDetails as ActionDetail[];
+
+// ── Summary stats ──────────────────────────────────────────────────
+const totalFns      = actions.length;
+const totalFiles    = new Set(actions.map(a => a.file)).size;
+const touchesDb     = actions.filter(a => a.tables.length > 0).length;
+const emitsCast     = actions.filter(a => a.broadcasts.length > 0).length;
+const schedulesPush = actions.filter(a => a.pushes).length;
+
+// ── Group by file (alpha) ──────────────────────────────────────────
+const grouped = [...new Set(actions.map(a => a.file))]
+  .sort((a, b) => a.localeCompare(b))
+  .map(file => ({
+    file,
+    fns: actions.filter(a => a.file === file),
+  }));
+
+// ── Chip-group color tokens (oklch, mirroring glossary severityMeta) ──
+interface ChipTone { bg: string; text: string; border: string }
+const tone: Record<string, ChipTone> = {
+  auth:       { bg: 'oklch(20% 0.030 70)',  text: 'oklch(78% 0.16 70)',  border: 'oklch(50% 0.14 70 / 0.4)'  }, // amber
+  tables:     { bg: 'oklch(17% 0.030 245)', text: 'oklch(70% 0.12 245)', border: 'oklch(40% 0.10 245 / 0.45)' }, // blue
+  rpcs:       { bg: 'oklch(18% 0.030 155)', text: 'oklch(74% 0.15 155)', border: 'oklch(44% 0.14 155 / 0.4)' }, // green
+  broadcasts: { bg: 'oklch(19% 0.035 300)', text: 'oklch(76% 0.15 300)', border: 'oklch(48% 0.14 300 / 0.4)' }, // violet
+  push:       { bg: 'oklch(20% 0.040 350)', text: 'oklch(78% 0.16 350)', border: 'oklch(50% 0.15 350 / 0.42)' }, // pink
+};
+
+const chipGroups: { key: keyof ActionDetail; label: string; toneKey: keyof typeof tone }[] = [
+  { key: 'auth',       label: 'AUTH',       toneKey: 'auth' },
+  { key: 'tables',     label: 'TABLES',     toneKey: 'tables' },
+  { key: 'rpcs',       label: 'RPCs',       toneKey: 'rpcs' },
+  { key: 'broadcasts', label: 'BROADCASTS', toneKey: 'broadcasts' },
+];
+
+const summaryStats = [
+  { label: 'Functions',      value: totalFns,      toneKey: 'rpcs'       as const },
+  { label: 'Files',          value: totalFiles,    toneKey: 'tables'     as const },
+  { label: 'Touch DB',       value: touchesDb,     toneKey: 'tables'     as const },
+  { label: 'Emit broadcast', value: emitsCast,     toneKey: 'broadcasts' as const },
+  { label: 'Schedule push',  value: schedulesPush, toneKey: 'push'       as const },
+];
+---
+
+<BaseLayout
+  title="Action Reference"
+  description="Every server action across the codebase — signatures, auth guards, tables touched, RPCs called, realtime broadcasts, and push triggers."
+>
+  <PageHeader
+    title="Action Reference"
+    subtitle={`All ${totalFns} server actions across ${totalFiles} files, sourced from manifest.actionDetails. Each card shows the signature plus the auth guards, tables, RPCs, broadcasts, and push triggers it touches.`}
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-8 space-y-8" data-pagefind-body>
+
+    <!-- ── Summary strip ──────────────────────────────────────────── -->
+    <section>
+      <h2 class="text-lg font-semibold text-ink font-heading tracking-tight mb-4">Surface area</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {summaryStats.map(s => {
+          const t = tone[s.toneKey];
+          return (
+            <div class="bg-surface border border-edge-dim rounded-xl p-5">
+              <div
+                class="font-mono text-2xl font-bold tabular-nums"
+                style={`color:${t.text}`}
+              >{s.value}</div>
+              <div class="text-[11px] font-mono uppercase tracking-wide text-ink-4 mt-1">{s.label}</div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+
+    <!-- ── Functions grouped by file ──────────────────────────────── -->
+    {grouped.map(group => (
+      <section class="space-y-4">
+        <div class="flex items-center gap-3 border-b border-edge-dim pb-2">
+          <h2 class="font-mono text-sm text-ink-2">{group.file}</h2>
+          <span class="text-[10px] font-mono text-ink-4 bg-base border border-edge-dim rounded px-1.5 py-0.5">
+            {group.fns.length} {group.fns.length === 1 ? 'fn' : 'fns'}
+          </span>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {group.fns.map(fn => (
+            <div class="bg-surface border border-edge-dim rounded-xl p-5 space-y-3">
+              <!-- Name + PUSH badge -->
+              <div class="flex items-start justify-between gap-3">
+                <h3 class="font-heading font-semibold text-ink text-sm leading-tight break-words min-w-0">{fn.name}</h3>
+                {fn.pushes && (
+                  <span
+                    class="shrink-0 text-[10px] font-mono font-bold px-2 py-0.5 rounded"
+                    style={`background:${tone.push.bg};color:${tone.push.text};border:1px solid ${tone.push.border}`}
+                  >PUSH</span>
+                )}
+              </div>
+
+              <!-- Signature -->
+              <pre class="font-mono text-xs text-ink-3 bg-base border border-edge-dim rounded-lg px-3 py-2 overflow-x-auto"><code>{fn.signature}</code></pre>
+
+              <!-- Chip groups -->
+              {(fn.auth.length > 0 || fn.tables.length > 0 || fn.rpcs.length > 0 || fn.broadcasts.length > 0) && (
+                <div class="space-y-2 pt-1">
+                  {chipGroups.map(grp => {
+                    const items = fn[grp.key] as string[];
+                    if (items.length === 0) return null;
+                    const t = tone[grp.toneKey];
+                    return (
+                      <div class="flex items-baseline gap-2">
+                        <span
+                          class="shrink-0 text-[9px] font-mono font-bold uppercase tracking-wider w-[68px] text-right"
+                          style={`color:${t.text}`}
+                        >{grp.label}</span>
+                        <div class="flex flex-wrap gap-1.5 min-w-0">
+                          {items.map(item => (
+                            <span
+                              class="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                              style={`background:${t.bg};color:${t.text};border:1px solid ${t.border}`}
+                            >{item}</span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+    ))}
+
+  </div>
+</BaseLayout>

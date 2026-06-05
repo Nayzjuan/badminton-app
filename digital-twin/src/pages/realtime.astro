@@ -70,14 +70,15 @@ const channels = [
   },
 ];
 
-// ── Broadcast event catalog (4 events) ───────────────────────────────────────
+// ── Broadcast event catalog ──────────────────────────────────────────────────
+// Source of truth: src/lib/broadcast.ts (mirrored in manifest.broadcasts).
 const broadcasts = [
   {
     event:   'organizer_intervention',
-    payload: '{ type: "on_deck_cleared" | "match_cancelled", affectedPlayerIds }',
-    emitter: 'clearOnDeckMatch, cancelMatchAction',
+    payload: '{ type: "on_deck_cleared" | "match_cancelled" | "active_roster_changed", affectedPlayerIds }',
+    emitter: 'clearOnDeckMatch, cancelMatchAction, live-match-swap (swapPlayerInActiveMatch / swapActiveFromOnDeck)',
     listener:'useOrganizerBroadcast → player toast',
-    why:     'Players need to know their on-deck slot was cleared so they stop waiting at the wrong court.',
+    why:     'Players need to know their on-deck slot was cleared OR their live-match roster changed, so they react at the right court.',
     severity: 'info',
   },
   {
@@ -103,6 +104,14 @@ const broadcasts = [
     listener:'useOrganizerBroadcast → CapSaturationNotice banner',
     why:     'Organizer needs to know the engine is blocked so they can intervene manually.',
     severity: 'info',
+  },
+  {
+    event:   'draft_cap_phase',
+    payload: '{ phase: "clearing" | "generating" | "done", override }',
+    emitter: 'setCapAndClearDrafts (Draft Cap Override)',
+    listener:'useOrganizerSession → two-phase loading lockout + co-organizer cascade',
+    why:     'Changing the max-auto-drafts cap clears all drafts and regenerates them; every organizer view must lock in lock-step through the clearing→generating→done phases.',
+    severity: 'warn',
   },
 ];
 

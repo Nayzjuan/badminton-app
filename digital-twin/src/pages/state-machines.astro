@@ -1,0 +1,133 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+
+interface Edge {
+  from: string;
+  to: string;
+  label: string;
+}
+
+interface StateMachine {
+  name: string;
+  field: string;
+  states: string[];
+  edges: Edge[];
+}
+
+const stateMachines = manifest.stateMachines as StateMachine[];
+
+// Sanitize an edge label so it cannot break Mermaid's transition syntax.
+// Mermaid treats ':' as the from→to/label separator, and parens can confuse
+// the parser — replace them all with spaces and collapse whitespace.
+function sanitizeLabel(label: string): string {
+  return label
+    .replace(/[:()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Build one `stateDiagram-v2` source string per machine, entirely at build time.
+// The first declared state is the entry node: "[*] --> <first state>".
+function buildDiagram(sm: StateMachine): string {
+  const lines = ['stateDiagram-v2'];
+  if (sm.states.length > 0) {
+    lines.push(`  [*] --> ${sm.states[0]}`);
+  }
+  for (const edge of sm.edges) {
+    lines.push(`  ${edge.from} --> ${edge.to}: ${sanitizeLabel(edge.label)}`);
+  }
+  return lines.join('\n');
+}
+
+const machines = stateMachines.map((sm) => ({
+  ...sm,
+  diagramSource: buildDiagram(sm),
+}));
+---
+
+<BaseLayout
+  title="State Machines"
+  description="The two finite-state machines that govern this app — queue entry lifecycle and match lifecycle — rendered as state diagrams with full transition tables."
+>
+  <PageHeader
+    title="State Machines"
+    subtitle="The two finite-state machines that drive the app, sourced from APP_MANIFEST.md. Each diagram maps the DB status column to its legal transitions; the table below lists every edge and the trigger that fires it."
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-8 space-y-12" data-pagefind-body>
+    {machines.map((sm) => (
+      <section class="space-y-5">
+        <!-- ── Heading + field + state chips ──────────────────────────── -->
+        <div class="space-y-3">
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <h2 class="text-lg font-semibold text-ink font-heading tracking-tight">
+              {sm.name}
+            </h2>
+            <code class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">
+              {sm.field}
+            </code>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            {sm.states.map((state, i) => (
+              <span
+                class="text-[11px] font-mono px-2.5 py-1 rounded-lg border"
+                style={
+                  i === 0
+                    ? 'background:oklch(18% 0.04 155);color:oklch(72% 0.16 155);border-color:oklch(42% 0.14 155 / 0.45)'
+                    : 'background:oklch(17% 0.02 245);color:oklch(68% 0.06 245);border-color:oklch(36% 0.04 245 / 0.5)'
+                }
+              >
+                {state}
+                {i === 0 && <span class="ml-1.5 text-ink-4">· entry</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <!-- ── Mermaid state diagram ──────────────────────────────────── -->
+        <div class="bg-surface border border-edge-dim rounded-xl p-5 overflow-x-auto">
+          <pre class="mermaid">{sm.diagramSource}</pre>
+        </div>
+
+        <!-- ── Edge / transition table ────────────────────────────────── -->
+        <div class="bg-surface border border-edge-dim rounded-xl overflow-hidden">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-edge-dim">
+                <th class="text-[11px] font-mono font-semibold text-ink-3 uppercase tracking-wide px-4 py-3">From</th>
+                <th class="text-[11px] font-mono font-semibold text-ink-3 uppercase tracking-wide px-4 py-3">To</th>
+                <th class="text-[11px] font-mono font-semibold text-ink-3 uppercase tracking-wide px-4 py-3">Trigger</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sm.edges.map((edge, i) => (
+                <tr class={i < sm.edges.length - 1 ? 'border-b border-edge-dim' : ''}>
+                  <td class="px-4 py-2.5 align-top whitespace-nowrap">
+                    <code class="font-mono text-xs text-accent bg-base px-1.5 py-0.5 rounded border border-edge-dim">
+                      {edge.from}
+                    </code>
+                  </td>
+                  <td class="px-4 py-2.5 align-top whitespace-nowrap">
+                    <code class="font-mono text-xs text-accent-hi bg-base px-1.5 py-0.5 rounded border border-edge-dim">
+                      {edge.to}
+                    </code>
+                  </td>
+                  <td class="px-4 py-2.5 align-top text-sm text-ink-2 leading-relaxed">
+                    {edge.label}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    ))}
+
+    {machines.length === 0 && (
+      <p class="text-sm text-ink-4 font-mono">No state machines defined in the manifest.</p>
+    )}
+  </div>
+</BaseLayout>

@@ -5,13 +5,30 @@
 
 ---
 
-## SESSION STATE (Last Updated: 2026-06-05 — Background Push A+B+C)
+## SESSION STATE (Last Updated: 2026-06-05 — Digital Twin Overhaul)
+
+### Digital Twin: content-drift fixes + 6 new feature pages — COMPLETE ✅
+
+Scope: validated the `digital-twin/` docs site's drift, then fixed all valid findings + built the 6 recommended feature pages. (Skipped the 2 false positives: "manifest hurts load time" — it's build-time only; "add a search icon" — one already existed, so instead surfaced search in the mobile top bar.)
+
+**Foundation — `digital-twin/scripts/extract.ts`** (regenerates `src/data/manifest.json`): added extractors for `migrations` (46, from supabase/migrations), `broadcasts` (from broadcast.ts — fixes the empty `[]`), `actionDetails` (57 fns: signature/auth/tables/rpcs/broadcasts/push), `coverage` (from coverage/lcov.info), `schemaDrift` (TS types vs a live Supabase snapshot in `src/data/live-schema-snapshot.json`; 7 trigger/SECURITY-DEFINER fns categorized as expected → reads "clean"), and curated `stateMachines`. Re-ran extract (`_lastExtracted` now current) → picked up `live-match-swap.ts` + the June-5 push refactor.
+
+**6 new pages** (live in Nav under "Schema & Quality"): `/migrations` (timeline), `/schema-drift`, `/rls` (49 policies, incl. the matches draft-firewall), `/state-machines` (Mermaid: queue + match), `/action-reference`, `/coverage` (88.2% lines). All `data-pagefind-body` (searchable) + build clean.
+
+**Drift fixes:** `realtime.astro` (added `active_roster_changed` + `draft_cap_phase`); `database.astro` (softened the never-delivered "Phase 2 ER diagram" promise, dynamic counts, links to /rls + /schema-drift); `BaseLayout` footer shows `_lastExtracted`; `Nav` (+6 links, +mobile search); `actions.astro` (annotated courts/fix-player-record/history/live-match-swap, rewrote stale notifications.ts); new `digital-twin/README.md`.
+
+**Validation:** `npm run build` (digital-twin) = 16 pages, 13 Pagefind-indexed, clean. Independent review: **LGTM** (2 trivial nits fixed). Not committed yet.
+
+---
+
+## SESSION STATE (Earlier: 2026-06-05 — Background Push A+B+C)
 
 ### True Background Push (server-triggered) — COMPLETE ✅
 
 **Problem:** Push only fired when the app was OPEN — it was triggered from the CLIENT hook (`use-match-alerts.ts`) on a Realtime event, which never arrives on a locked/backgrounded phone (websocket suspended).
 
 **A — Server-side trigger (the fix):**
+
 - NEW `src/lib/notifications/push-server.ts` → `pushToPlayers(userIds, type)` (dedupe, empty no-op, 410/404 prune, never throws). `import "server-only"`.
 - `notifications.ts` reduced to a thin wrapper delegating to `pushToPlayers`.
 - Removed the client push call from `use-match-alerts.ts` `fireAlert` (audio-only now; server owns push → no double-notify).
@@ -48,6 +65,7 @@ Added `useMemo` for `bottleneckCount` and `waitingCount` in `organizer-dashboard
 Added `success: false` to all bare `{ error }` returns in `auth.ts` (10 sites) and `sessions.ts` (5 sites, return type widened to `{ success?: boolean; error?: string }`).
 
 **M-007 — setTimeout without cleanup (FIXED):**
+
 - `share-session-dialog.tsx`: `copiedTimerRef` + `scheduleCopiedReset()` + `useEffect` cleanup
 - `dev-tools.tsx`: `toastTimerRef` + `nukeTimerRef` + `useEffect` cleanup; hardcoded 4000ms → `TOAST_DISMISS_MS`
 - `use-leaderboard.ts`: `flashTimerRef` + `useEffect` cleanup
@@ -74,6 +92,7 @@ Added `void` to bare `.rpc().then()` in `auth.ts:367`.
 **Files changed:** `auth.ts`, `sessions.ts`, `all-sessions-history.tsx`, `match-history.tsx`, `organizer-dashboard.tsx`, `share-session-dialog.tsx`, `dev-tools.tsx`, `use-leaderboard.ts`, `realtime.ts`, `service.ts`
 
 **Known minor issues (non-blocking):**
+
 - `updateSessionSettings` returns `{}` on success — pre-existing, `success` is optional in its return type.
 - M-006 (circular ref in `useOrganizerData`) reviewed and confirmed safe by design: `setProfiles` is a stable React dispatcher captured in closure; it's never called synchronously during the first render.
 - M-008 confirmed FALSE POSITIVE — all polling intervals already have `clearInterval` cleanup.
@@ -111,6 +130,7 @@ Added `src/app/error.tsx` (global client error boundary with "Try again" reset b
 `updatePlayerPin` now rejects `"0000"` explicitly.
 
 **Remaining known issues (not fixed, logged):**
+
 - H-001: `subscribeToMatchPlayers` has no session filter (by design — acknowledged in code comment)
 - H-002: No rate limiting on server actions
 - H-004: FALSE POSITIVE — broadcast helper is private, always called post-auth
@@ -137,12 +157,14 @@ Organizer can long-press (500ms) any player name on an active court card to open
 **3-second undo toast** via Sonner with action button for all three modes.
 
 **New files:**
+
 - `supabase/migrations/20260601000000_live_match_player_swap.sql` — 4 RPCs: `swap_player_in_active_match`, `swap_teams_in_active_match`, `swap_active_from_ondeck`, `undo_swap_active_from_ondeck`
 - `src/app/actions/live-match-swap.ts` — 4 server actions
 - `src/hooks/use-live-match-swap.ts` — state machine (idle → open → fill_required → submitting)
 - `src/components/organizer/live-swap-sheet.tsx` — Sheet UI with 3 sections + inline on-deck fill expansion
 
 **Modified files:**
+
 - `src/components/organizer/match-roster.tsx` — `PlayerRowDark` gains `onLongPress` prop with 500ms hold detection (pointer events), `lp-hold` CSS animation class, keyboard fallback (Enter/Space fires immediately)
 - `src/components/organizer/court-card.tsx` — `onLongPressPlayer` prop passthrough to `TeamsGrid`
 - `src/components/organizer/active-courts.tsx` — `onDeckMatches`, `queuePlayers`, `sessionId` props; `useLiveMatchSwap` hook; `LiveSwapSheet` mounted at grid level (same pattern as `ScoreModal`); local toast renamed `banner` to avoid conflict with Sonner `toast` import
@@ -153,6 +175,7 @@ Organizer can long-press (500ms) any player name on an active court card to open
 **Design language:** Orange `--cc-live` accent (distinct from amber correction / teal queue swap).
 
 **Known minor issues (non-blocking):**
+
 - `swap_active_from_ondeck` TOCTOU: `outRow.team` read outside the RPC transaction — if `swap_teams_in_active_match` fires between pre-read and RPC (~ms window), team assignment could be wrong. Low risk; RPC's `PLAYER_NOT_IN_MATCH` guard partially mitigates.
 - `useLiveMatchSwap.confirm()` has no try/catch for network-level throws — if the server action throws instead of returning `{ success: false }`, `isSubmitting` stays `true` and the sheet is stuck. Future: wrap `startTransition` body in try/catch.
 - `undo_swap_active_from_ondeck` raises `MATCH_NOT_ACTIVE` instead of `ONDECK_MATCH_STARTED` for a missing ondeck row (NULL ≠ 'pending'). Low impact — undo silently returns without error per the `RETURN` statement.
@@ -175,6 +198,7 @@ Organizer can long-press (500ms) any player name on an active court card to open
 **Matchmaking engine test:** "toggle bypass" test rewritten to assert correct post-fix behaviour (sessions queried at [6]).
 
 **Skipped (per plan):**
+
 - G (win_streak unconditional) — defer, no perf complaint
 - I (@property Firefox) — acceptable progressive enhancement
 - L (DOM queries in login) — low-risk, future cleanup pass
@@ -186,16 +210,19 @@ Organizer can long-press (500ms) any player name on an active court card to open
 ### Toggle feedback + match generation notification (2026-06-01) — COMPLETE ✅
 
 **Toggle loading state (`organizer-dashboard.tsx`):**
+
 - While `togglingAuto`: static dot → rotating arc SVG spinner (`animate-spin`), label → "Saving…"/"…"
 - When auto is ON (not saving): dot gains `animate-ping` pulse wrapper (live engine signal)
 - Applied to both desktop `clip-cut-sm` toggle and mobile `rounded-full` pill
 
 **Toggle success toast (`use-organizer-dashboard.ts`):**
+
 - `toast.success("Engine running", { description: "...", duration: 4000 })` when toggled ON
 - `toast("Engine paused", { description: "...", duration: 4000 })` when toggled OFF
 - Error toast already existed — unchanged
 
 **New draft notification (`organizer-dashboard.tsx` + `on-deck-panel.tsx`):**
+
 - `prevDraftCountRef` initialized with `draftMatches.length` at mount (no spurious page-load toast)
 - `useEffect` on `draftMatches.length` fires toast + sets `hasNewDraft=true` only on 0→≥1 transition
 - `hasNewDraft` resets after 3s via `setTimeout`
@@ -203,6 +230,7 @@ Organizer can long-press (500ms) any player name on an active court card to open
 - Toast fires exactly once even if engine generates 3 drafts sequentially (spam-proof)
 
 **Known minor cosmetic issues (non-blocking):**
+
 - Toast description says "1 new draft" even if engine generates 2-3 in sequence (live banner count is accurate)
 - "NEW" badge disappears abruptly at 3s (no exit animation — would need framer-motion)
 
@@ -215,6 +243,7 @@ Organizer can long-press (500ms) any player name on an active court card to open
 Both notice components in the on-deck panel were rebuilt to match the organizer command-center design system.
 
 **DraftCapNotice (`on-deck-panel.tsx`):**
+
 - `cc-amber`/`cc-amber-dim` tokens (was raw `amber-*` Tailwind classes)
 - `clip-cut-sm` polygon geometry (was `rounded-xl`)
 - `font-command text-[9.5px] uppercase tracking-[0.13em]` heading (was `text-sm font-semibold`)
@@ -225,6 +254,7 @@ Both notice components in the on-deck panel were rebuilt to match the organizer 
 - `AlertCircle` → `PauseCircle` icon
 
 **CapSaturationNotice (`sortable-card.tsx`):**
+
 - `cc-red`/`cc-red-dim` (redZone) and `cc-amber`/`cc-amber-dim` (general) tokens
 - `clip-cut-sm` polygon geometry (was `rounded-xl`)
 - `font-command text-[9.5px] uppercase tracking-[0.13em]` heading
@@ -243,6 +273,7 @@ Added `DraftCapNotice` to `on-deck-panel.tsx`: an amber alert that appears when 
 **Cap saturation UI** was already fully wired end-to-end (broadcast → realtime → hook → `CapSaturationNotice`). No fix needed there.
 
 **Files changed:**
+
 - `src/components/organizer/on-deck-panel.tsx` — `DraftCapNotice` component, `isAutoMatchmakingOn` + `waitingCount` props, `isDraftCapBlocked` derived state, renders before `CapSaturationNotice`
 - `src/components/organizer/organizer-dashboard.tsx` — passes `isAutoMatchmakingOn` and `waitingCount` to `OnDeckPanel`
 
@@ -287,12 +318,14 @@ Changed `defaultTheme` from `"light"` to `"dark"` in `src/app/layout.tsx` (`Them
 Animated win streak indicator on `PlayerRowDark` (active courts) and `PlayerRowLight` (on-deck panel) for players with 3+ consecutive wins in the current session.
 
 **Data pipeline:**
+
 - `useEnrichedMatches` — Phase 3b fetches `get_player_streaks` RPC after profiles; non-fatal (streakMap defaults to empty on failure)
 - `EnrichedMatch.players[].win_streak: number` — added to type; defaults to 0
 - `sortable-card.tsx` + `court-card.tsx` — pass `win_streak: p.win_streak ?? 0` through `splitPlayers`
 - `RosterPlayer.win_streak?: number` — optional field, defaulted to 0 at row level
 
 **Visual treatment:**
+
 - Hot orange `oklch(0.72 0.22 38)` — distinct from system amber (avoids warning/timer semantic conflict)
 - `streak-glow-wrapper` wrapper div → `filter:drop-shadow` traces clip-cut polygon shape
 - `streak-hot-border` combines `streak-border-pulse` (infinite) + `streak-ignite` (one-shot) in one `animation` shorthand to avoid CSS cascade clobbering
@@ -304,6 +337,7 @@ Animated win streak indicator on `PlayerRowDark` (active courts) and `PlayerRowL
 - `prefers-reduced-motion`: static amber border only
 
 **Files changed:**
+
 - `src/app/globals.css` — all keyframes + CSS classes
 - `src/hooks/use-enriched-matches.ts` — Phase 3b + `win_streak` on EnrichedMatch
 - `src/components/organizer/match-roster.tsx` — both `PlayerRowDark` and `PlayerRowLight`
@@ -325,6 +359,7 @@ Animated win streak indicator on `PlayerRowDark` (active courts) and `PlayerRowL
 Replaced the buried "Already have a PIN? Reconnect" underline link with a **segmented toggle at the top of the login form**, giving equal visual hierarchy to both entry paths.
 
 **Files changed:**
+
 - `src/components/login-form.tsx` — full rewrite of component:
   - `mode: "new" | "returning"` state drives which panel renders
   - NEW PLAYER tab: existing form (name + skill level + PIN → `signInAnonymously`)
@@ -349,6 +384,7 @@ Replaced the buried "Already have a PIN? Reconnect" underline link with a **segm
 Fixed 3 organizer-dashboard buttons that were missing in-flight guards, silently dropping errors, or allowing double-submission.
 
 **Files changed:**
+
 - `src/components/organizer/queue-control.tsx`
   - Added `import { toast } from "sonner"` (was missing — errors from `onPausePlayer` / `onRemoveFromQueue` silently vanished)
   - Added `pausingPlayers: Set<string>` state — tracks which player IDs have a pause/resume in flight; supports concurrent per-player operations
@@ -370,6 +406,7 @@ Fixed 3 organizer-dashboard buttons that were missing in-flight guards, silently
   - Remove button: `disabled={isRemoving || isUpdatingStatus}`, loading text "Removing…" / "Remove"
 
 **What was NOT broken (audit correction):**
+
 - "Call Next Match" was falsely flagged by the audit as missing a `disabled` prop. It's handled correctly: when `isMatchmaking` is true, the entire available-actions footer section is hidden by the render condition `{!hasActiveMatch && !isMatchmaking && cardState === "available" && ...}`. The button can't be double-clicked because it doesn't exist in the DOM during matchmaking.
 
 **Validation:** `npm run build` clean (all 19 routes). Code review: LGTM.
@@ -400,6 +437,7 @@ Allows the organizer to correct a completed match's player roster (wrong player 
 - `src/hooks/use-session-completed-players.ts` — `as unknown as` cast for `!inner` join inference workaround (pre-existing Supabase SDK pattern for un-typed FK relationships).
 
 **Bugs caught during code review (fixed before final verdict):**
+
 1. `goBack()` was setting `selecting_in` instead of `selecting_out` — fixed.
 2. `isConfirming` excluded `"submitting"` — sheet went blank during server action — fixed by including `"submitting"` in both `isStep2` and `isConfirming`.
 3. `goBack` was exported but never wired — fixed by making the Step 1 breadcrumb crumb a `<button>` that calls `goBack`.
@@ -407,6 +445,7 @@ Allows the organizer to correct a completed match's player roster (wrong player 
 **Validation:** `npx tsc --noEmit` clean · `npm run lint` clean (changed files only) · `npm run build` clean (all 19 pages) · Code review: LGTM.
 
 **⚠️ Migration not yet applied to Supabase production.** Run `fix_record_swap_player` migration before using the feature in a live session.
+
 ## SESSION STATE (Last Updated: 2026-05-23 — join queue perf + Jake L merge + DB backup)
 
 ### Join Queue Performance (2026-05-23) — COMPLETE
@@ -414,20 +453,24 @@ Allows the organizer to correct a completed match's player roster (wrong player 
 **Problem:** Join Queue button felt slow/unresponsive — users had to wait for the full matchmaking engine to complete before the server action returned.
 
 **Fix 1 — Fire-and-forget engine (`src/app/actions/queue.ts`):**
+
 - Replaced `await runEngineForSession(sessionId)` with `after(() => runEngineForSession(sessionId))` (Next.js 16 `after()` API) in `joinQueueAction` and both branches of `joinQueueFallback`.
 - Response returns immediately after the DB insert; engine runs in background with guaranteed completion.
 
 **Fix 2 — Optimistic UI (`src/hooks/use-queue.ts`):**
+
 - `joinQueue` callback now immediately inserts a `waiting` entry into local state using `setQueue(prev => ...)` functional updater, capturing the snapshot for rollback.
 - UI transitions from "not in queue" → "waiting in queue" synchronously on click.
 - On server error: rolls back to snapshot + returns `{ error }`.
 - On success: realtime event arrives and replaces optimistic entry with real DB row (no double-entry risk — full re-fetch overwrites).
 
 **Fix 3 — Button UX (`src/components/player/my-status-tab.tsx`):**
+
 - Added `joining` state to `QueueSubTab`; button disabled + shows "Joining…" while in flight.
 - `toast.error()` shown on failure.
 
 **Known minor issues (non-blocking):**
+
 - Optimistic `games_played` uses previous value (not server-computed floor), causing brief position flicker when realtime corrects it — cosmetic only.
 - `joining` state not guarded against component unmount — React 18 handles silently, no leak.
 
@@ -438,6 +481,7 @@ Allows the organizer to correct a completed match's player roster (wrong player 
 ### Jake L Duplicate Profile Merge (2026-05-22) — COMPLETE
 
 Identity chain forked on 2026-05-09 when two devices PIN-reconnected from ancestor `a3f26e57` simultaneously. By 2026-05-22, two live profiles both had PIN `0356`:
+
 - Branch 1 `8d63e740`: 29 match_players, 5 queue_entries, 4 session_organizers
 - Branch 2 `d766f00a`: 6 match_players, 6 queue_entries, 6 sessions.created_by (this was the active organizer)
 
@@ -464,11 +508,13 @@ Full backup at `/home/user/badminton-app/backup-2026-05-22.json` (1.15 MB, 2,851
 ### Marketing Site — Visual Enhancements (2026-05-20) — COMPLETE
 
 **Features section ("What It Does"):**
+
 - Feature 01 card: emerald gradient wash background, LIVE ENGINE badge with pulsing dot, court grid overlay pattern, key phrases in Smart Matchmaking subtext bolded in `text-ink`.
 - Feature 02/03 cards: brighter number badges.
 - All cards: hover lift effects (`feature-lift-lg` / `feature-lift-sm`), staggered scroll-reveal via IntersectionObserver.
 
 **How It Works section — fully redesigned step card visuals:**
+
 - Step 1: inline SVG QR code with animated scan line + corner brackets.
 - Step 2: HTML organizer queue mockup (player rows + Generate Match button).
 - Step 3: live scoreboard mockup (Court 1, score 21–15, game progress bars).
@@ -476,6 +522,7 @@ Full backup at `/home/user/badminton-app/backup-2026-05-22.json` (1.15 MB, 2,851
 - All cards use the same scroll-reveal system via `data-reveal-section` attribute.
 
 **CSS additions (`marketing-site/global.css`):**
+
 - `.feature-card` scroll-reveal (opacity + transform with stagger via `--i`).
 - `.qr-scanline` keyframe animation.
 - Hover lift utility classes: `feature-lift-lg`, `feature-lift-sm`.
@@ -491,11 +538,13 @@ Full backup at `/home/user/badminton-app/backup-2026-05-22.json` (1.15 MB, 2,851
 ### Wait-time Monitor + Score Validation Fixes (2026-05-20) — COMPLETE
 
 **Wait-time monitor (`src/components/organizer/wait-time-monitor.tsx`):**
+
 - `on_deck` players now appear in the monitor alongside `waiting` players. Previously they vanished the moment an organizer assigned them to a manual match, making it impossible to confirm a long-waiting player was finally served.
 - `on_deck` rows render with teal styling + "On Deck" badge + "ASSIGNED" sub-label. Bottleneck count + red alert only count `waiting` players. Remove button hidden for `on_deck` rows.
 - Summary line: "X waiting, Y on deck" split.
 
 **Score validation (no-draw rule + schema consolidation):**
+
 - `src/lib/schemas/match.ts` (`scoreSchema`): Added `.refine(data => data.teamAScore !== data.teamBScore)` — server-side draw block on all submission paths.
 - `src/app/actions/match-lifecycle.ts`: Replaced hardcoded duplicate inline schema (`.max(30)`) with import of canonical `scoreSchema` from `match.ts`. The hardcoded 30 was wrong — `MAX_BADMINTON_SCORE = 31` in constants.ts.
 - `src/hooks/use-score-form.ts`: Added `a === b` draw check (client-side, player + organizer modal).
@@ -512,6 +561,7 @@ Full backup at `/home/user/badminton-app/backup-2026-05-22.json` (1.15 MB, 2,851
 **Root cause:** If a Playwright test crashes mid-run, `softResetSandboxSession`/`afterAll` never fires, leaving the sandbox with stuck `playing`/`drafted`/`on_deck` players and orphaned `in_progress`/`pending` matches.
 
 **Fix (`tests/helpers/teardown.ts`):**
+
 - Added exported `repairSandboxState()` — cancels stuck `in_progress`/`pending` matches, returns stuck `playing`/`drafted`/`on_deck` queue entries to `waiting`, frees `in_use` courts. Status-updates only, never deletes — permanent sandbox players survive intact.
 - Wired as **Step 0** of `softResetSandboxSession()` so every test `beforeEach` self-heals from any prior crash state.
 
@@ -535,13 +585,15 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 
 **Problem reported:** Players were getting the same partner in consecutive games despite the anti-repeat lookback.
 
-**Root cause (verified):** `snakeDraft` and `rotatedDraft` in `src/lib/matchmaking-core.ts` tried splits in skill-balance order and returned the *first* one where both team pair counts were `< cap` (hard cap = 2). They never checked whether a *fresher* split existed where both pairs had `count = 0` (never been partners before). `isDiversityViolation` does not prevent same-partner repeats — it only blocks when ≥3 of 4 players appeared in the same recent match. Overlap scoring is anchor-centric, so when neither recently-paired player was the anchor, their mutual history was invisible to candidate scoring.
+**Root cause (verified):** `snakeDraft` and `rotatedDraft` in `src/lib/matchmaking-core.ts` tried splits in skill-balance order and returned the _first_ one where both team pair counts were `< cap` (hard cap = 2). They never checked whether a _fresher_ split existed where both pairs had `count = 0` (never been partners before). `isDiversityViolation` does not prevent same-partner repeats — it only blocks when ≥3 of 4 players appeared in the same recent match. Overlap scoring is anchor-centric, so when neither recently-paired player was the anchor, their mutual history was invisible to candidate scoring.
 
 **Fix:** Added two-pass approach to both `snakeDraft` and `rotatedDraft`:
+
 - **Pass 1**: Try splits (in skill-balance / rotation order) where BOTH team pairs have `count === 0`. Avoids repeating partnerships even when they're below the hard cap.
 - **Pass 2**: Fall back to original behavior — any split where both pairs are `< cap`.
 
 **Files changed:**
+
 - `src/lib/matchmaking-core.ts` — `snakeDraft` (lines ~125–140): two-pass loop; `rotatedDraft` (lines ~340–360): two-pass loop
 - `tests/unit/matchmaking-core.test.ts` — updated 1 existing test whose assertion expected Split 0 but new code correctly prefers fresh Split 2; added `"snakeDraft — fresh-pair preference"` describe block (4 new tests)
 
@@ -556,6 +608,7 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 **Goal:** Fix 3 input-validation security findings from a principal security engineer audit.
 
 **Files changed (not yet committed):**
+
 - `src/lib/schemas/auth.ts` — added `skillLevelSchema` (Zod v4 `.refine()` against `SKILL_LEVELS` source of truth)
 - `src/lib/schemas/sessions.ts` — **new file**: `scoringFormatSchema` validates `ScoringFormat` enum at runtime using `satisfies` const array
 - `src/app/actions/auth.ts` — replaced unsafe `as SkillLevel` cast with `skillLevelSchema.safeParse()` in `signInAnonymously`
@@ -563,11 +616,13 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 - `src/app/actions/match-lifecycle.ts` — added `scoreSchema` (Zod v4, 0–30 int range); applied in `endMatchAction` (extracts `safeA`/`safeB`) and `updateMatchDetails` (same pattern, score-edit path only)
 
 **Findings fixed:**
+
 - F2 (P1): No server-side score bounds → exploitable via crafted POST. Now gated by `scoreSchema`.
 - F3 (P2): `skillLevel` was an unsafe TypeScript cast, any string could persist to DB. Now Zod-validated.
 - F4 (P2): `ScoringFormat` unvalidated at runtime. Now Zod-validated before insert.
 
 **Skipped (by user request):**
+
 - F1 (P0): `profile.ts` PIN/skill actions only gate on `verifyAuthenticated()`, not `isSessionOrganizer()`. Intentionally deferred — current design allows easy organizer access.
 
 **Status:** All committed and merged to main.
@@ -580,17 +635,18 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 
 **Verdict per issue:**
 
-| # | Issue | Status |
-|---|-------|--------|
-| 1 | Missing CSP (HIGH) | Fixed — added to `next.config.ts` |
-| 2 | Missing X-Frame-Options (MEDIUM) | Fixed — added to `next.config.ts` |
-| 3 | Missing X-Content-Type-Options (MEDIUM) | Fixed — added to `next.config.ts` |
-| 4 | Missing Referrer-Policy (MEDIUM) | Fixed — added to `next.config.ts` |
-| 5 | Missing Permissions-Policy (LOW) | Fixed — added to `next.config.ts` |
-| 6 | Password Autocomplete (LOW) | **False positive** — all PIN inputs already have `autoComplete="off"` (login-form.tsx:208, organizer-entry.tsx:479,531) |
-| 7 | No Rate Limiting (MEDIUM) | **Accepted risk** — Vercel edge protects DDoS; PIN reconnect brute-force has minimal blast radius (queue slot only, not account access) |
+| #   | Issue                                   | Status                                                                                                                                  |
+| --- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Missing CSP (HIGH)                      | Fixed — added to `next.config.ts`                                                                                                       |
+| 2   | Missing X-Frame-Options (MEDIUM)        | Fixed — added to `next.config.ts`                                                                                                       |
+| 3   | Missing X-Content-Type-Options (MEDIUM) | Fixed — added to `next.config.ts`                                                                                                       |
+| 4   | Missing Referrer-Policy (MEDIUM)        | Fixed — added to `next.config.ts`                                                                                                       |
+| 5   | Missing Permissions-Policy (LOW)        | Fixed — added to `next.config.ts`                                                                                                       |
+| 6   | Password Autocomplete (LOW)             | **False positive** — all PIN inputs already have `autoComplete="off"` (login-form.tsx:208, organizer-entry.tsx:479,531)                 |
+| 7   | No Rate Limiting (MEDIUM)               | **Accepted risk** — Vercel edge protects DDoS; PIN reconnect brute-force has minimal blast radius (queue slot only, not account access) |
 
 **CSP notes:**
+
 - `script-src` and `style-src` use `unsafe-inline` (required by Next.js App Router hydration — no way around this without nonce middleware)
 - `connect-src` allows `*.supabase.co` + `wss://*.supabase.co` for Realtime
 - `frame-ancestors 'none'` (modern) + `X-Frame-Options: DENY` (legacy compat) for clickjacking
@@ -624,6 +680,7 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 **Audit scope:** 108-file merge from main. Spawned 4 parallel audit agents covering hooks, server actions, organizer/player components, and lib/wrapped/TV layer.
 
 **Phase 1 — P0 Blockers (all fixed):**
+
 - `dev.ts`: Added `NODE_ENV === "production"` hard-block to `requireAuth()` — any authenticated player could previously call `clearSessionData` and wipe live match history
 - `use-organizer-courts.ts`: Replaced raw `.insert/.update/.delete` mutations with server actions (`addCourtAction`, `updateCourtStatusAction`, `removeCourtAction`) — also added `.eq("session_id", sessionId)` scope guard to prevent cross-session authorization bypass
 - `court-card.tsx`: Renamed `CardState "in_progress"` → `"active_match"` to avoid confusion with `CourtStatus "in_use"` (the DB value)
@@ -631,12 +688,14 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 - `score-input-card.tsx` + new `use-score-input.ts`: Same extraction pattern
 
 **Phase 2 — P1 Hooks (all fixed):**
+
 - 5 bare ref assignments (`fetchRef.current = fn` outside `useEffect`) → wrapped in `useEffect([dep])` in `use-match-history`, `use-organizer-courts`, `use-organizer-matches`, `use-organizer-queue`, `use-swap-state`
 - `use-swap-state`: Two bare assignments → `useEffect`; `any[]` on `executeMatchSwapRef` → typed `MatchSwapArgs`; magic `"MATCH_STARTED"/"PLAYER_NOT_IN_MATCH"` → typed `SwapErrorCode`/`SwapMatchPlayersErrorCode`; moved `handleUndoMatchSwap` before `executeMatchSwap` to eliminate forward reference flagged by React Compiler
 - `use-organizer-dashboard.ts`: `alert(result.message)` → `toast.error(...)`
 - `use-organizer-data.ts`: `useMemo`-as-ref antipattern → `useRef`; added `useEffect`/`useRef` imports
 
 **Phase 3 — P1 Actions + Lib (all fixed):**
+
 - `queue.ts`: `JoinQueueResult` was missing `success: boolean` (broke action contract); all 4 result types `interface` → `type`; all return sites updated
 - `sessions.ts`: 5 `interface` → `type`; `match-lifecycle.ts`: 1; `dev.ts`: 2
 - `utils.ts`: Added `: string` return type to `cn()`
@@ -646,32 +705,38 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 - `wrapped-match-recap.tsx`: Fixed bug — `lost = !won && !draw` when scores are null showed "Lost" badge for unscored matches; now `lost = hasScores && !won && !draw`
 
 **Phase 4 — P1 Components: tv-board (all fixed):**
+
 - Created `src/hooks/use-tv-board.ts`: extracted Supabase client, subscriptions, 15s polling, and status filtering from `TvBoard`
 - `tv-board.tsx`: Now pure layout renderer using `useTvBoard`; `TvBoardProps` + `TvPlayerInfo` `interface` → `type`; removed bogus `react-hooks/purity` eslint-disable comment
 - Bonus: `use-session-data.ts` 3 bare ref assignments → `useEffect`
 
 **Phase 5 — P2 Constants extraction (all fixed):**
+
 - Added 15 new constants to `constants.ts`: `DIALOG_CLOSE_DELAY_MS`, `DIALOG_FOCUS_DELAY_MS`, `TOAST_DISMISS_MS`, `ERROR_AUTO_DISMISS_MS`, `COURT_ALERT_CRITICAL_OFFSET_MINUTES`, `COURT_ALERT_RECOMPUTE_INTERVAL_MS`, `MAX_BADMINTON_SCORE`, `RED_ZONE_SKILL_VARIANCE_MAX`, `DND_ACTIVATION_DISTANCE_PX`, `DND_TOUCH_DELAY_MS`, `DND_TOUCH_TOLERANCE_PX`, `APPROACHING_QUEUE_THRESHOLD`, `ON_DECK_ALERT_THRESHOLD`, `DASHBOARD_GRID_SIZE_PX`
 - All magic numbers/strings replaced in: `court-card`, `score-modal`, `active-courts`, `reconnect-modal`, `on-deck-panel`, `my-status-tab`, `organizer-dashboard`, `sortable-card`, `matchmaking-core`, `use-score-form`, `use-edit-match`
 - `matchmaking-core.ts:423`: `Math.abs(diff) > 0.001` preserved (wait_minutes is float — epsilon intentional; corrected misleading comment)
 - `active-courts.tsx`: `interface Toast` → `type Toast`
 
 **Phase 6 — P2 JSDoc (all fixed):**
+
 - Added `/** */` JSDoc on all 11 exported hooks: `useEnrichedMatches`, `useLeaderboard`, `useMatchHistory`, `useOrganizerCourts`, `useOrganizerMatches`, `useOrganizerQueue`, `useOrganizerSession`, `useOrganizerDashboard`, `useScoreForm`, `useSwapState`, `useOrganizerData`
 - Added `/** */` JSDoc on 9 server actions: `togglePlayerPause`, `checkoutPlayer`, `joinQueueAction`, `removePlayerFromQueue`, `submitMatchScore`, `updateMatchDetails`, `cancelMatchAction`, `reorderOnDeckMatches`, `runEngineInternal`
 - Each JSDoc explains WHY (behavioral contracts, edge cases, design rationale) not WHAT
 
 **New files created:**
+
 - `src/app/actions/courts.ts` — server actions for court CRUD with auth + session-scope guards
 - `src/hooks/use-edit-match.ts` — state machine for EditMatchDialog
 - `src/hooks/use-score-input.ts` — wraps useScoreForm + submitMatchScore
 - `src/hooks/use-tv-board.ts` — data layer extracted from TvBoard
 
 **Validation (final):**
+
 - `npx tsc --noEmit` → clean (0 errors)
 - `npm run lint` → 22 errors (1 fewer than pre-audit baseline of 23; all remaining errors are pre-existing in untouched files)
 
 **Known notes for next session:**
+
 - `react-hooks/set-state-in-effect` suppress comments were added to 6 hook files where React Compiler false-positively flags async function calls in `useEffect`. These are intentional patterns (initial fetch on mount); the pattern is valid and equivalent to the original bare-assignment code.
 - `use-session-data.ts` `PlayerMatchInfo` and `UsePlayerMatchResult` still use `interface` — these are component prop shapes, not DB row types, so this is acceptable.
 
@@ -683,20 +748,21 @@ Migration `20260520000000_add_v_queue_full_with_wait_time.sql` existed in the re
 
 **Commits landed (all on top of Chunk A — e789b21):**
 
-| SHA | Commit | What changed |
-|-----|--------|-------------|
+| SHA     | Commit                                           | What changed                                                                                                                                                                                                                                                            |
+| ------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 73d8f87 | B-1: getAuthenticatedUser + createUnknownProfile | Added `getAuthenticatedUser()` to `_shared.ts`; added `createUnknownProfile(id)` to `lib/utils.ts`; replaced inline auth patterns in `match.ts`, `swap-player.ts`, `dev.ts`; replaced inline unknown-profile objects in `use-organizer-data.ts` + `use-session-data.ts` |
-| 6b7c0d3 | B-2: static import + getServiceClient removal | `use-match-alerts.ts`: dynamic import → static `import { sendPlayerNotification }`; `match.ts`: removed `getServiceClient()` wrapper, replaced 5 call sites with `createServiceClient()` directly |
-| 74fd2a2 | B-3: leaveQueue → checkoutPlayer | `use-queue.ts`: `leaveQueue` delegates to `checkoutPlayer(sessionId)` server action; previously bypassed draft-cleanup RPC (`checkout_player_cleanup_drafts`) |
-| d186c87 | B-4: isSessionOrganizer consolidation | `sessions.ts` (4 functions) + `matchmaking.ts` (`callNextMatch`): replaced inline 2-path organizer checks (fetch session → check `created_by` → fallback to `session_organizers` query) with single `isSessionOrganizer(user.id, sessionId)` call |
-| 81988fe | B-5: useEnrichedMatches extraction | New `src/hooks/use-enriched-matches.ts` shared hook; `use-organizer-data.ts` + `use-session-data.ts` remove duplicated 4-query enrichment logic; `includeDrafts: boolean` controls draft firewall; `onProfilesLoaded` callback keeps organizer profiles Map in sync |
-| e79a772 | B-6: useAction factory + useMemo derived state | `use-organizer-data.ts`: `useAction` factory at module scope replaces 4 identical action wrappers (`cancelMatch`, `clearOnDeckMatch`, `removeFromQueue`, `pausePlayer`); 4 derived-state slices memoized with `useMemo` |
+| 6b7c0d3 | B-2: static import + getServiceClient removal    | `use-match-alerts.ts`: dynamic import → static `import { sendPlayerNotification }`; `match.ts`: removed `getServiceClient()` wrapper, replaced 5 call sites with `createServiceClient()` directly                                                                       |
+| 74fd2a2 | B-3: leaveQueue → checkoutPlayer                 | `use-queue.ts`: `leaveQueue` delegates to `checkoutPlayer(sessionId)` server action; previously bypassed draft-cleanup RPC (`checkout_player_cleanup_drafts`)                                                                                                           |
+| d186c87 | B-4: isSessionOrganizer consolidation            | `sessions.ts` (4 functions) + `matchmaking.ts` (`callNextMatch`): replaced inline 2-path organizer checks (fetch session → check `created_by` → fallback to `session_organizers` query) with single `isSessionOrganizer(user.id, sessionId)` call                       |
+| 81988fe | B-5: useEnrichedMatches extraction               | New `src/hooks/use-enriched-matches.ts` shared hook; `use-organizer-data.ts` + `use-session-data.ts` remove duplicated 4-query enrichment logic; `includeDrafts: boolean` controls draft firewall; `onProfilesLoaded` callback keeps organizer profiles Map in sync     |
+| e79a772 | B-6: useAction factory + useMemo derived state   | `use-organizer-data.ts`: `useAction` factory at module scope replaces 4 identical action wrappers (`cancelMatch`, `clearOnDeckMatch`, `removeFromQueue`, `pausePlayer`); 4 derived-state slices memoized with `useMemo`                                                 |
 
 **Validation:** `npx tsc --noEmit` exit 0 · `npx vitest run` 174/174 (all passes).
 
 **Independent code review verdict: Minor issues (acceptable pass per CLAUDE.md).**
 
 Minor issues to log (non-blocking, no fixes required now):
+
 1. **Redundant session fetch in `toggleAutoMatchmaking` + `getSessionForOrganizer` (sessions.ts):** Both functions still fetch `sessions.select("created_by")` to guard "Session not found", then call `isSessionOrganizer()` which does the exact same query internally as its fast path — a double round-trip. The "Session not found" vs "Not authorized" error-message distinction is the only functional difference. Pre-existing to B-4 but made visible by the consolidation. Low priority cleanup.
 2. **Two `createServerSupabaseClient()` instances in `callNextMatch` (matchmaking.ts):** `userClient` for auth, then separate `supabase` for the `is_auto_matchmaking_on` read. Pre-existing before Chunk B; not a regression. Low priority.
 3. **`useAction` factory: `action` + `refreshers` closure not in dep list — footgun for future maintainers.** In practice safe because all current usages list the captured values in the explicit `deps` param. The `eslint-disable` comment acknowledges this. Document the "you must mirror closured values in deps" contract when adding new useAction calls.
@@ -704,6 +770,7 @@ Minor issues to log (non-blocking, no fixes required now):
 5. **JSDoc for `isSessionOrganizer` misplaced in `_shared.ts`** — the comment block ends just before `getAuthenticatedUser()` instead of before `isSessionOrganizer()`. Cosmetic.
 
 **Files modified:**
+
 - `src/app/actions/_shared.ts` — `getAuthenticatedUser()`
 - `src/lib/utils.ts` — `createUnknownProfile()`
 - `src/app/actions/match.ts` — auth refactor, `getServiceClient()` removal
@@ -1179,21 +1246,21 @@ v_alltime_leaderboard_mat   — materialized all-time stats (same columns, no se
 
 ### Postgres RPCs
 
-| Function                                                | Notes                                                                                                                                                                                |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create_match_with_players(...)`                        | `RETURNS uuid`. Returns **NULL** (not error) on TOCTOU conflict. Three DB-level guards (migration 20260507000000). ⚠️ Do NOT change to `RETURNS SETOF uuid` — breaks NULL detection. |
-| `swap_player_in_match(...)`                             | Bench→deck swap — atomic DELETE+INSERT+UPDATE×2+recompute                                                                                                                            |
-| `swap_match_players(...)`                               | Cross-match direct swap (Tap-to-Swap v2)                                                                                                                                             |
-| `elevate_to_organizer(p_session_id, p_passcode)`        | Passcode-gated organizer promotion                                                                                                                                                   |
-| `rejoin_queue(p_session_id)`                            | Reset queue status to "waiting", preserve games_played                                                                                                                               |
-| `migrate_player_identity(p_old_user_id, p_new_user_id)` | PIN reconnect identity migration                                                                                                                                                     |
-| `compute_session_wrapped(p_session_id)`                 | Computes+upserts session_wrapped_stats for all players                                                                                                                               |
-| `get_h2h_record(p_team_a, p_team_b, p_session_id)`      | H2H wins for exact 2v2 pairing                                                                                                                                                       |
-| `toggle_auto_matchmaking(p_session_id)`                 | Atomic toggle, returns new bool value                                                                                                                                                |
-| `lookup_active_session(p_session_id)`                   | Safe public lookup for QR-code join — no RLS exposure                                                                                                                                |
-| `skill_level_to_int(lvl)`                               | Enum → numeric 1–6                                                                                                                                                                   |
-| `refresh_alltime_leaderboard()`                         | Refreshes materialized view                                                                                                                                                          |
-| `get_player_streaks(p_session_id?)`                     | Win-streak per player                                                                                                                                                                |
+| Function                                                                            | Notes                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_match_with_players(...)`                                                    | `RETURNS uuid`. Returns **NULL** (not error) on TOCTOU conflict. Three DB-level guards (migration 20260507000000). ⚠️ Do NOT change to `RETURNS SETOF uuid` — breaks NULL detection.                                                            |
+| `swap_player_in_match(...)`                                                         | Bench→deck swap — atomic DELETE+INSERT+UPDATE×2+recompute                                                                                                                                                                                       |
+| `swap_match_players(...)`                                                           | Cross-match direct swap (Tap-to-Swap v2)                                                                                                                                                                                                        |
+| `elevate_to_organizer(p_session_id, p_passcode)`                                    | Passcode-gated organizer promotion                                                                                                                                                                                                              |
+| `rejoin_queue(p_session_id)`                                                        | Reset queue status to "waiting", preserve games_played                                                                                                                                                                                          |
+| `migrate_player_identity(p_old_user_id, p_new_user_id)`                             | PIN reconnect identity migration                                                                                                                                                                                                                |
+| `compute_session_wrapped(p_session_id)`                                             | Computes+upserts session_wrapped_stats for all players                                                                                                                                                                                          |
+| `get_h2h_record(p_team_a, p_team_b, p_session_id)`                                  | H2H wins for exact 2v2 pairing                                                                                                                                                                                                                  |
+| `toggle_auto_matchmaking(p_session_id)`                                             | Atomic toggle, returns new bool value                                                                                                                                                                                                           |
+| `lookup_active_session(p_session_id)`                                               | Safe public lookup for QR-code join — no RLS exposure                                                                                                                                                                                           |
+| `skill_level_to_int(lvl)`                                                           | Enum → numeric 1–6                                                                                                                                                                                                                              |
+| `refresh_alltime_leaderboard()`                                                     | Refreshes materialized view                                                                                                                                                                                                                     |
+| `get_player_streaks(p_session_id?)`                                                 | Win-streak per player                                                                                                                                                                                                                           |
 | `fix_record_swap_player(p_match_id, p_out_player_id, p_in_player_id, p_session_id)` | Historical roster correction — team flip (swap team columns) or full replacement (DELETE+INSERT). Adjusts `queue_entries.games_played`, `player_partnerships`, `is_mixed_level`, `origin`. ⚠️ Migration 20260522 not yet applied to production. |
 
 ---
