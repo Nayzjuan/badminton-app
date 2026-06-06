@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-06-05T14:54:34.910Z",
+  "_lastExtracted": "2026-06-06T13:52:15.597Z",
   "tables": [
     {
       "name": "profiles",
@@ -1114,50 +1114,27 @@
     {
       "name": "court_status",
       "typeName": "CourtStatus",
-      "values": [
-        "available",
-        "in_use",
-        "closed"
-      ]
+      "values": ["available", "in_use", "closed"]
     },
     {
       "name": "queue_status",
       "typeName": "QueueStatus",
-      "values": [
-        "waiting",
-        "on_deck",
-        "playing",
-        "left",
-        "drafted"
-      ]
+      "values": ["waiting", "on_deck", "playing", "left", "drafted"]
     },
     {
       "name": "match_status",
       "typeName": "MatchStatus",
-      "values": [
-        "pending",
-        "in_progress",
-        "completed",
-        "cancelled"
-      ]
+      "values": ["pending", "in_progress", "completed", "cancelled"]
     },
     {
       "name": "scoring_format",
       "typeName": "ScoringFormat",
-      "values": [
-        "single",
-        "best_of_3",
-        "best_of_5"
-      ]
+      "values": ["single", "best_of_3", "best_of_5"]
     },
     {
       "name": "match_origin",
       "typeName": "MatchOrigin",
-      "values": [
-        "auto",
-        "manual",
-        "modified"
-      ]
+      "values": ["auto", "manual", "modified"]
     }
   ],
   "rpcs": [
@@ -1898,10 +1875,7 @@
   "actions": [
     {
       "file": "_shared.ts",
-      "functions": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer"
-      ]
+      "functions": ["getAuthenticatedUser", "isSessionOrganizer"]
     },
     {
       "file": "auth.ts",
@@ -1915,46 +1889,27 @@
     },
     {
       "file": "courts.ts",
-      "functions": [
-        "addCourtAction",
-        "updateCourtStatusAction",
-        "removeCourtAction"
-      ]
+      "functions": ["addCourtAction", "updateCourtStatusAction", "removeCourtAction"]
     },
     {
       "file": "dev.ts",
-      "functions": [
-        "seedTestData",
-        "seedNamedPlayers",
-        "clearSessionData"
-      ]
+      "functions": ["seedTestData", "seedNamedPlayers", "clearSessionData"]
     },
     {
       "file": "fix-player-record.ts",
-      "functions": [
-        "fixPlayerRecord"
-      ]
+      "functions": ["fixPlayerRecord"]
     },
     {
       "file": "h2h.ts",
-      "functions": [
-        "getH2HRecord"
-      ]
+      "functions": ["getH2HRecord"]
     },
     {
       "file": "history.ts",
-      "functions": [
-        "getMatchHistory",
-        "getAllSessionsHistory"
-      ]
+      "functions": ["getMatchHistory", "getAllSessionsHistory"]
     },
     {
       "file": "leaderboard.ts",
-      "functions": [
-        "getSessionLeaderboard",
-        "getAllTimeLeaderboard",
-        "getPlayerStats"
-      ]
+      "functions": ["getSessionLeaderboard", "getAllTimeLeaderboard", "getPlayerStats"]
     },
     {
       "file": "live-match-swap.ts",
@@ -1987,26 +1942,15 @@
     },
     {
       "file": "matchmaking.ts",
-      "functions": [
-        "callNextMatch",
-        "runEngineForSession",
-        "promoteOnDeckMatchInternal"
-      ]
+      "functions": ["callNextMatch", "runEngineForSession", "promoteOnDeckMatchInternal"]
     },
     {
       "file": "notifications.ts",
-      "functions": [
-        "sendPlayerNotification"
-      ]
+      "functions": ["sendPlayerNotification"]
     },
     {
       "file": "profile.ts",
-      "functions": [
-        "updatePlayerSkill",
-        "getPlayerPin",
-        "resetPlayerPin",
-        "updatePlayerPin"
-      ]
+      "functions": ["updatePlayerSkill", "getPlayerPin", "resetPlayerPin", "updatePlayerPin"]
     },
     {
       "file": "queue.ts",
@@ -2031,22 +1975,15 @@
     },
     {
       "file": "swap-player.ts",
-      "functions": [
-        "swapPlayerInMatch",
-        "swapMatchPlayers"
-      ]
+      "functions": ["swapPlayerInMatch", "swapMatchPlayers"]
     },
     {
       "file": "tv.ts",
-      "functions": [
-        "getTvData"
-      ]
+      "functions": ["getTvData"]
     },
     {
       "file": "wrapped.ts",
-      "functions": [
-        "dismissWrappedIntro"
-      ]
+      "functions": ["dismissWrappedIntro"]
     }
   ],
   "channels": [],
@@ -2070,11 +2007,7 @@
     {
       "event": "organizer_intervention",
       "payloadType": "",
-      "types": [
-        "on_deck_cleared",
-        "match_cancelled",
-        "active_roster_changed"
-      ]
+      "types": ["on_deck_cleared", "match_cancelled", "active_roster_changed"]
     }
   ],
   "gotchas": [
@@ -2440,15 +2373,7 @@
       "date": "0000-00-00",
       "ts": "00000000000000",
       "title": "Migration: initial_schema",
-      "kinds": [
-        "column",
-        "index",
-        "rpc",
-        "table",
-        "trigger",
-        "type",
-        "view"
-      ],
+      "kinds": ["column", "index", "rpc", "table", "trigger", "type", "view"],
       "tables": [
         "IF",
         "courts",
@@ -2474,16 +2399,9 @@
       "date": "2026-04-17",
       "ts": "20260417000000",
       "title": "Migration: leaderboard_views",
-      "kinds": [
-        "index",
-        "rpc",
-        "view"
-      ],
+      "kinds": ["index", "rpc", "view"],
       "tables": [],
-      "functions": [
-        "get_player_streaks",
-        "refresh_alltime_leaderboard"
-      ],
+      "functions": ["get_player_streaks", "refresh_alltime_leaderboard"],
       "policies": [],
       "lines": 162
     },
@@ -2492,20 +2410,9 @@
       "date": "2026-04-19",
       "ts": "20260419000000",
       "title": "push_subscriptions table",
-      "kinds": [
-        "index",
-        "policy",
-        "rls",
-        "rpc",
-        "table",
-        "trigger"
-      ],
-      "tables": [
-        "push_subscriptions"
-      ],
-      "functions": [
-        "touch_push_subscription_updated_at"
-      ],
+      "kinds": ["index", "policy", "rls", "rpc", "table", "trigger"],
+      "tables": ["push_subscriptions"],
+      "functions": ["touch_push_subscription_updated_at"],
       "policies": [
         "push_subscriptions_insert_own",
         "push_subscriptions_select_own",
@@ -2519,13 +2426,9 @@
       "date": "2026-04-20",
       "ts": "20260420000000",
       "title": "Migration: swap_player_in_match RPC",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "swap_player_in_match"
-      ],
+      "functions": ["swap_player_in_match"],
       "policies": [],
       "lines": 75
     },
@@ -2534,13 +2437,9 @@
       "date": "2026-04-21",
       "ts": "20260421000000",
       "title": "Migration: create_match_with_players RPC",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "create_match_with_players"
-      ],
+      "functions": ["create_match_with_players"],
       "policies": [],
       "lines": 81
     },
@@ -2549,13 +2448,9 @@
       "date": "2026-04-21",
       "ts": "20260421100000",
       "title": "Migration: fix is_session_organizer() — include sessions.created_by",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "is_session_organizer"
-      ],
+      "functions": ["is_session_organizer"],
       "policies": [],
       "lines": 52
     },
@@ -2564,13 +2459,9 @@
       "date": "2026-04-21",
       "ts": "20260421200000",
       "title": "Migration: fix create_match_with_players — explicit enum cast",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "create_match_with_players"
-      ],
+      "functions": ["create_match_with_players"],
       "policies": [],
       "lines": 73
     },
@@ -2579,15 +2470,8 @@
       "date": "2026-04-23",
       "ts": "20260423000000",
       "title": "Migration: session_wrapped_stats table",
-      "kinds": [
-        "index",
-        "policy",
-        "rls",
-        "table"
-      ],
-      "tables": [
-        "session_wrapped_stats"
-      ],
+      "kinds": ["index", "policy", "rls", "table"],
+      "tables": ["session_wrapped_stats"],
       "functions": [],
       "policies": [
         "Players can read own wrapped stats",
@@ -2602,13 +2486,9 @@
       "date": "2026-04-23",
       "ts": "20260423100000",
       "title": "Migration: compute_session_wrapped() RPC",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "compute_session_wrapped"
-      ],
+      "functions": ["compute_session_wrapped"],
       "policies": [],
       "lines": 614
     },
@@ -2617,17 +2497,9 @@
       "date": "2026-04-24",
       "ts": "20260424000000",
       "title": "Migration: remove_upper_beginner",
-      "kinds": [
-        "rpc",
-        "type",
-        "view"
-      ],
-      "tables": [
-        "profiles"
-      ],
-      "functions": [
-        "skill_level_to_int"
-      ],
+      "kinds": ["rpc", "type", "view"],
+      "tables": ["profiles"],
+      "functions": ["skill_level_to_int"],
       "policies": [],
       "lines": 118
     },
@@ -2636,12 +2508,8 @@
       "date": "2026-04-24",
       "ts": "20260424100000",
       "title": "VIP Player Tags",
-      "kinds": [
-        "column"
-      ],
-      "tables": [
-        "profiles"
-      ],
+      "kinds": ["column"],
+      "tables": ["profiles"],
       "functions": [],
       "policies": [],
       "lines": 29
@@ -2651,13 +2519,9 @@
       "date": "2026-04-25",
       "ts": "20260425000000",
       "title": "Migration: swap_match_players RPC",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "swap_match_players"
-      ],
+      "functions": ["swap_match_players"],
       "policies": [],
       "lines": 128
     },
@@ -2666,18 +2530,10 @@
       "date": "2026-04-25",
       "ts": "20260425100000",
       "title": "Session Wrapped — intro dismiss persistence",
-      "kinds": [
-        "column",
-        "policy",
-        "rls"
-      ],
-      "tables": [
-        "session_wrapped_stats"
-      ],
+      "kinds": ["column", "policy", "rls"],
+      "tables": ["session_wrapped_stats"],
       "functions": [],
-      "policies": [
-        "Players can dismiss their own wrapped intro"
-      ],
+      "policies": ["Players can dismiss their own wrapped intro"],
       "lines": 39
     },
     {
@@ -2685,12 +2541,8 @@
       "date": "2026-04-26",
       "ts": "20260426000000",
       "title": "Add court_time_limit_minutes column to sessions table.",
-      "kinds": [
-        "column"
-      ],
-      "tables": [
-        "sessions"
-      ],
+      "kinds": ["column"],
+      "tables": ["sessions"],
       "functions": [],
       "policies": [],
       "lines": 11
@@ -2700,13 +2552,9 @@
       "date": "2026-04-26",
       "ts": "20260426100000",
       "title": "Head-to-Head record function for exact 2v2 team pairings.",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "get_h2h_record"
-      ],
+      "functions": ["get_h2h_record"],
       "policies": [],
       "lines": 96
     },
@@ -2715,13 +2563,9 @@
       "date": "2026-04-26",
       "ts": "20260426200000",
       "title": "Code-review fixes for get_h2h_record:",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "get_h2h_record"
-      ],
+      "functions": ["get_h2h_record"],
       "policies": [],
       "lines": 76
     },
@@ -2730,9 +2574,7 @@
       "date": "2026-04-26",
       "ts": "20260426300000",
       "title": "Performance indexes for get_h2h_record hot query path.",
-      "kinds": [
-        "index"
-      ],
+      "kinds": ["index"],
       "tables": [],
       "functions": [],
       "policies": [],
@@ -2743,15 +2585,9 @@
       "date": "2026-04-29",
       "ts": "20260429000000",
       "title": "Migration: Wave 2 Atomicity",
-      "kinds": [
-        "index",
-        "rpc"
-      ],
+      "kinds": ["index", "rpc"],
       "tables": [],
-      "functions": [
-        "migrate_player_identity",
-        "toggle_auto_matchmaking"
-      ],
+      "functions": ["migrate_player_identity", "toggle_auto_matchmaking"],
       "policies": [],
       "lines": 234
     },
@@ -2760,22 +2596,10 @@
       "date": "2026-04-30",
       "ts": "20260430000000",
       "title": "Migration: Identity Safety Net",
-      "kinds": [
-        "index",
-        "policy",
-        "rls",
-        "rpc",
-        "table"
-      ],
-      "tables": [
-        "identity_migrations"
-      ],
-      "functions": [
-        "migrate_player_identity"
-      ],
-      "policies": [
-        "identity_migrations_select_own"
-      ],
+      "kinds": ["index", "policy", "rls", "rpc", "table"],
+      "tables": ["identity_migrations"],
+      "functions": ["migrate_player_identity"],
+      "policies": ["identity_migrations_select_own"],
       "lines": 176
     },
     {
@@ -2783,21 +2607,9 @@
       "date": "2026-05-02",
       "ts": "20260502000000",
       "title": "Migration: match_origin_tracking",
-      "kinds": [
-        "column",
-        "index",
-        "rpc",
-        "type",
-        "view"
-      ],
-      "tables": [
-        "matches"
-      ],
-      "functions": [
-        "create_match_with_players",
-        "swap_match_players",
-        "swap_player_in_match"
-      ],
+      "kinds": ["column", "index", "rpc", "type", "view"],
+      "tables": ["matches"],
+      "functions": ["create_match_with_players", "swap_match_players", "swap_player_in_match"],
       "policies": [],
       "lines": 387
     },
@@ -2806,16 +2618,9 @@
       "date": "2026-05-02",
       "ts": "20260502093938",
       "title": "Anon session lookup for the QR-code join flow",
-      "kinds": [
-        "rls",
-        "rpc"
-      ],
-      "tables": [
-        "sessions"
-      ],
-      "functions": [
-        "lookup_active_session"
-      ],
+      "kinds": ["rls", "rpc"],
+      "tables": ["sessions"],
+      "functions": ["lookup_active_session"],
       "policies": [],
       "lines": 65
     },
@@ -2824,13 +2629,8 @@
       "date": "2026-05-02",
       "ts": "20260502100000",
       "title": "Migration: Draft Mode — is_published column on matches",
-      "kinds": [
-        "column",
-        "index"
-      ],
-      "tables": [
-        "matches"
-      ],
+      "kinds": ["column", "index"],
+      "tables": ["matches"],
       "functions": [],
       "policies": [],
       "lines": 35
@@ -2840,15 +2640,9 @@
       "date": "2026-05-06",
       "ts": "20260506000000",
       "title": "Migration: Draft Mode — Bug Fixes (BUG-001, BUG-004)",
-      "kinds": [
-        "rls",
-        "rpc"
-      ],
+      "kinds": ["rls", "rpc"],
       "tables": [],
-      "functions": [
-        "create_match_with_players",
-        "swap_player_in_match"
-      ],
+      "functions": ["create_match_with_players", "swap_player_in_match"],
       "policies": [],
       "lines": 209
     },
@@ -2868,13 +2662,9 @@
       "date": "2026-05-07",
       "ts": "20260507000000",
       "title": "Migration: Fix TOCTOU race condition in matchmaking engine",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "create_match_with_players"
-      ],
+      "functions": ["create_match_with_players"],
       "policies": [],
       "lines": 187
     },
@@ -2883,13 +2673,9 @@
       "date": "2026-05-08",
       "ts": "20260508000000",
       "title": "Migration: Expand Session Wrapped award catalogue (27 → 51)",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "compute_session_wrapped"
-      ],
+      "functions": ["compute_session_wrapped"],
       "policies": [],
       "lines": 1161
     },
@@ -2898,13 +2684,9 @@
       "date": "2026-05-09",
       "ts": "20260509000000",
       "title": "Migration: Make swap_player_in_match draft-aware",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "swap_player_in_match"
-      ],
+      "functions": ["swap_player_in_match"],
       "policies": [],
       "lines": 92
     },
@@ -2913,13 +2695,9 @@
       "date": "2026-05-09",
       "ts": "20260509000001",
       "title": "Migration: Session Wrapped — threshold & overlap tweaks",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "compute_session_wrapped"
-      ],
+      "functions": ["compute_session_wrapped"],
       "policies": [],
       "lines": 1168
     },
@@ -2928,26 +2706,10 @@
       "date": "2026-05-10",
       "ts": "20260510000000",
       "title": "Migration: Cross-session award persistence (Phase 1)",
-      "kinds": [
-        "column",
-        "index",
-        "policy",
-        "rls",
-        "rpc",
-        "table"
-      ],
-      "tables": [
-        "player_partnerships",
-        "player_rivalries",
-        "session_wrapped_stats"
-      ],
-      "functions": [
-        "refresh_cross_session_stats"
-      ],
-      "policies": [
-        "Players can read own rivalry data",
-        "Players can read own partnership data"
-      ],
+      "kinds": ["column", "index", "policy", "rls", "rpc", "table"],
+      "tables": ["player_partnerships", "player_rivalries", "session_wrapped_stats"],
+      "functions": ["refresh_cross_session_stats"],
+      "policies": ["Players can read own rivalry data", "Players can read own partnership data"],
       "lines": 246
     },
     {
@@ -2955,13 +2717,9 @@
       "date": "2026-05-10",
       "ts": "20260510000001",
       "title": "Migration: compute_session_wrapped — cross-session awards",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "compute_session_wrapped"
-      ],
+      "functions": ["compute_session_wrapped"],
       "policies": [],
       "lines": 1101
     },
@@ -2970,13 +2728,9 @@
       "date": "2026-05-10",
       "ts": "20260510000002",
       "title": "Migration: Fix carry_forward.ended_on_win_streak",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "compute_session_wrapped"
-      ],
+      "functions": ["compute_session_wrapped"],
       "policies": [],
       "lines": 190
     },
@@ -2985,13 +2739,9 @@
       "date": "2026-05-11",
       "ts": "20260511000000",
       "title": "Migration: Add 'drafted' queue_status + update create_match_with_players",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "create_match_with_players"
-      ],
+      "functions": ["create_match_with_players"],
       "policies": [],
       "lines": 157
     },
@@ -3000,13 +2750,9 @@
       "date": "2026-05-11",
       "ts": "20260511000001",
       "title": "Migration: Update swap_player_in_match to set 'drafted' for",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "swap_player_in_match"
-      ],
+      "functions": ["swap_player_in_match"],
       "policies": [],
       "lines": 89
     },
@@ -3015,14 +2761,9 @@
       "date": "2026-05-11",
       "ts": "20260511000002",
       "title": "Migration: missing_rpcs",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "elevate_to_organizer",
-        "rejoin_queue"
-      ],
+      "functions": ["elevate_to_organizer", "rejoin_queue"],
       "policies": [],
       "lines": 90
     },
@@ -3031,9 +2772,7 @@
       "date": "2026-05-11",
       "ts": "20260511210000",
       "title": "Migration: Atomic Server Actions",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
       "functions": [
         "checkout_player_cleanup_drafts",
@@ -3049,14 +2788,9 @@
       "date": "2026-05-11",
       "ts": "20260511210001",
       "title": "Hotfix: 3 issues found in 20260511210000_atomic_server_actions.sql",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "checkout_player_cleanup_drafts",
-        "publish_match"
-      ],
+      "functions": ["checkout_player_cleanup_drafts", "publish_match"],
       "policies": [],
       "lines": 159
     },
@@ -3065,14 +2799,9 @@
       "date": "2026-05-12",
       "ts": "20260512000000",
       "title": "Migration: Restore Step f — origin auto → modified flip",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "swap_player_in_match",
-        "with"
-      ],
+      "functions": ["swap_player_in_match", "with"],
       "policies": [],
       "lines": 103
     },
@@ -3081,13 +2810,9 @@
       "date": "2026-05-12",
       "ts": "20260512200000",
       "title": "Migration: Fix TOCTOU race in swap_player_in_match",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "swap_player_in_match"
-      ],
+      "functions": ["swap_player_in_match"],
       "policies": [],
       "lines": 162
     },
@@ -3096,13 +2821,9 @@
       "date": "2026-05-12",
       "ts": "20260512200001",
       "title": "Migration: Atomicize clearOnDeckMatch via new RPC (F2, P1)",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "clear_on_deck_match_atomic"
-      ],
+      "functions": ["clear_on_deck_match_atomic"],
       "policies": [],
       "lines": 90
     },
@@ -3111,13 +2832,9 @@
       "date": "2026-05-12",
       "ts": "20260512200002",
       "title": "Migration: Fix removeFromQueue — organizer kick with cleanup (F4, P2)",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "remove_player_from_queue_organizer"
-      ],
+      "functions": ["remove_player_from_queue_organizer"],
       "policies": [],
       "lines": 129
     },
@@ -3126,13 +2843,9 @@
       "date": "2026-05-12",
       "ts": "20260512200003",
       "title": "Migration: Atomicize updateMatchDetails revertToActive path (F5, P2)",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "revert_match_to_active"
-      ],
+      "functions": ["revert_match_to_active"],
       "policies": [],
       "lines": 103
     },
@@ -3141,13 +2854,9 @@
       "date": "2026-05-12",
       "ts": "20260512200004",
       "title": "Hotfix: Fix lock ordering in clear_on_deck_match_atomic (F2)",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "clear_on_deck_match_atomic"
-      ],
+      "functions": ["clear_on_deck_match_atomic"],
       "policies": [],
       "lines": 123
     },
@@ -3156,9 +2865,7 @@
       "date": "2026-05-20",
       "ts": "20260520000000",
       "title": "Migration: Add v_queue_full_with_wait_time",
-      "kinds": [
-        "view"
-      ],
+      "kinds": ["view"],
       "tables": [],
       "functions": [],
       "policies": [],
@@ -3169,14 +2876,9 @@
       "date": "2026-05-22",
       "ts": "20260522000000",
       "title": "Migration: fix_record_swap_player RPC",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
-      "functions": [
-        "_fix_record_partnership_delta",
-        "fix_record_swap_player"
-      ],
+      "functions": ["_fix_record_partnership_delta", "fix_record_swap_player"],
       "policies": [],
       "lines": 285
     },
@@ -3185,9 +2887,7 @@
       "date": "2026-06-01",
       "ts": "20260601000000",
       "title": "Live Match Player Swap — 3 atomic RPCs for fixing active courts",
-      "kinds": [
-        "rpc"
-      ],
+      "kinds": ["rpc"],
       "tables": [],
       "functions": [
         "swap_active_from_ondeck",
@@ -3203,16 +2903,9 @@
       "date": "2026-06-02",
       "ts": "20260602000000",
       "title": "Draft Cap Override — per-session max draft limit",
-      "kinds": [
-        "column",
-        "rpc"
-      ],
-      "tables": [
-        "sessions"
-      ],
-      "functions": [
-        "clear_all_unpublished_drafts"
-      ],
+      "kinds": ["column", "rpc"],
+      "tables": ["sessions"],
+      "functions": ["clear_all_unpublished_drafts"],
       "policies": [],
       "lines": 89
     }
@@ -3612,137 +3305,7 @@
     }
   ],
   "rlsCapturedAt": "2026-06-05",
-  "coverage": {
-    "totals": {
-      "lines": 976,
-      "hit": 861,
-      "pct": 88.2,
-      "files": 14
-    },
-    "dirs": [
-      {
-        "dir": "src/app/actions",
-        "lines": 183,
-        "hit": 162,
-        "files": 2,
-        "pct": 88.5
-      },
-      {
-        "dir": "src/hooks",
-        "lines": 605,
-        "hit": 573,
-        "files": 10,
-        "pct": 94.7
-      },
-      {
-        "dir": "src/lib",
-        "lines": 188,
-        "hit": 126,
-        "files": 2,
-        "pct": 67
-      }
-    ],
-    "files": [
-      {
-        "file": "src/app/actions/fix-player-record.ts",
-        "lines": 41,
-        "hit": 40,
-        "pct": 97.6,
-        "fnPct": 75
-      },
-      {
-        "file": "src/app/actions/matchmaking.ts",
-        "lines": 142,
-        "hit": 122,
-        "pct": 85.9,
-        "fnPct": 92.9
-      },
-      {
-        "file": "src/hooks/use-enriched-matches.ts",
-        "lines": 42,
-        "hit": 36,
-        "pct": 85.7,
-        "fnPct": 90
-      },
-      {
-        "file": "src/hooks/use-fix-record.ts",
-        "lines": 44,
-        "hit": 44,
-        "pct": 100,
-        "fnPct": 100
-      },
-      {
-        "file": "src/hooks/use-leaderboard.ts",
-        "lines": 111,
-        "hit": 105,
-        "pct": 94.6,
-        "fnPct": 87
-      },
-      {
-        "file": "src/hooks/use-match-alerts.ts",
-        "lines": 75,
-        "hit": 74,
-        "pct": 98.7,
-        "fnPct": 92.3
-      },
-      {
-        "file": "src/hooks/use-match-history.ts",
-        "lines": 36,
-        "hit": 36,
-        "pct": 100,
-        "fnPct": 100
-      },
-      {
-        "file": "src/hooks/use-organizer-dashboard.ts",
-        "lines": 92,
-        "hit": 79,
-        "pct": 85.9,
-        "fnPct": 86.7
-      },
-      {
-        "file": "src/hooks/use-player-match.ts",
-        "lines": 65,
-        "hit": 64,
-        "pct": 98.5,
-        "fnPct": 91.7
-      },
-      {
-        "file": "src/hooks/use-queue.ts",
-        "lines": 50,
-        "hit": 48,
-        "pct": 96,
-        "fnPct": 89.5
-      },
-      {
-        "file": "src/hooks/use-score-form.ts",
-        "lines": 21,
-        "hit": 21,
-        "pct": 100,
-        "fnPct": 100
-      },
-      {
-        "file": "src/hooks/use-swap-state.ts",
-        "lines": 69,
-        "hit": 66,
-        "pct": 95.7,
-        "fnPct": 94.4
-      },
-      {
-        "file": "src/lib/matchmaking-core.ts",
-        "lines": 184,
-        "hit": 122,
-        "pct": 66.3,
-        "fnPct": 80
-      },
-      {
-        "file": "src/lib/score-input.ts",
-        "lines": 4,
-        "hit": 4,
-        "pct": 100,
-        "fnPct": 100
-      }
-    ]
-  },
+  "coverage": null,
   "schemaDrift": {
     "capturedAt": "2026-06-05",
     "ok": true,
@@ -3794,13 +3357,8 @@
       "file": "_shared.ts",
       "name": "isSessionOrganizer",
       "signature": "isSessionOrganizer(userId: string, sessionId: string): Promise<boolean>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "session_organizers",
-        "sessions"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["session_organizers", "sessions"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3809,13 +3367,8 @@
       "file": "auth.ts",
       "name": "signInAnonymously",
       "signature": "signInAnonymously(formData: FormData)",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles",
-        "queue_entries"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["profiles", "queue_entries"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3824,20 +3377,9 @@
       "file": "auth.ts",
       "name": "reconnectPlayer",
       "signature": "reconnectPlayer(playerName: string, pin: string): Promise<ReconnectResult>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players",
-        "matches",
-        "profiles",
-        "queue_entries",
-        "session_wrapped_stats"
-      ],
-      "rpcs": [
-        "migrate_player_identity",
-        "refresh_alltime_leaderboard"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["match_players", "matches", "profiles", "queue_entries", "session_wrapped_stats"],
+      "rpcs": ["migrate_player_identity", "refresh_alltime_leaderboard"],
       "broadcasts": [],
       "pushes": false
     },
@@ -3866,9 +3408,7 @@
       "name": "getCurrentProfile",
       "signature": "getCurrentProfile()",
       "auth": [],
-      "tables": [
-        "profiles"
-      ],
+      "tables": ["profiles"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3877,14 +3417,8 @@
       "file": "courts.ts",
       "name": "addCourtAction",
       "signature": "addCourtAction(sessionId: string, name: string): Promise<CourtActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["courts"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3893,14 +3427,8 @@
       "file": "courts.ts",
       "name": "updateCourtStatusAction",
       "signature": "updateCourtStatusAction( sessionId: string, courtId: string, status: CourtStatus ): Promise<CourtActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["courts"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3909,14 +3437,8 @@
       "file": "courts.ts",
       "name": "removeCourtAction",
       "signature": "removeCourtAction( sessionId: string, courtId: string ): Promise<CourtActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["courts"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3925,14 +3447,8 @@
       "file": "dev.ts",
       "name": "seedTestData",
       "signature": "seedTestData(sessionId: string, count: number = 35): Promise<SeedResult>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles",
-        "queue_entries",
-        "sessions"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["profiles", "queue_entries", "sessions"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3941,14 +3457,8 @@
       "file": "dev.ts",
       "name": "seedNamedPlayers",
       "signature": "seedNamedPlayers(sessionId: string): Promise<SeedResult>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles",
-        "queue_entries",
-        "sessions"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["profiles", "queue_entries", "sessions"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3957,16 +3467,8 @@
       "file": "dev.ts",
       "name": "clearSessionData",
       "signature": "clearSessionData(sessionId: string): Promise<ClearResult>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts",
-        "match_games",
-        "match_players",
-        "matches",
-        "queue_entries"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["courts", "match_games", "match_players", "matches", "queue_entries"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3975,20 +3477,9 @@
       "file": "fix-player-record.ts",
       "name": "fixPlayerRecord",
       "signature": "fixPlayerRecord( matchId: string, outPlayerId: string, inPlayerId: string, sessionId: string ): Promise<FixRecordResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players",
-        "matches",
-        "sessions"
-      ],
-      "rpcs": [
-        "compute_session_wrapped",
-        "fix_record_swap_player"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["match_players", "matches", "sessions"],
+      "rpcs": ["compute_session_wrapped", "fix_record_swap_player"],
       "broadcasts": [],
       "pushes": false
     },
@@ -3996,16 +3487,9 @@
       "file": "h2h.ts",
       "name": "getH2HRecord",
       "signature": "getH2HRecord( teamAIds: string[], teamBIds: string[], sessionId: string ): Promise<H2HRecord | null>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "queue_entries"
-      ],
-      "rpcs": [
-        "get_h2h_record"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["queue_entries"],
+      "rpcs": ["get_h2h_record"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4014,9 +3498,7 @@
       "name": "getMatchHistory",
       "signature": "getMatchHistory( playerId: string, sessionId?: string, limit?: number ): Promise<MatchHistoryResult | MatchHistoryError>",
       "auth": [],
-      "tables": [
-        "v_match_history"
-      ],
+      "tables": ["v_match_history"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4026,10 +3508,7 @@
       "name": "getAllSessionsHistory",
       "signature": "getAllSessionsHistory( playerId: string ): Promise<AllSessionsHistoryResult | MatchHistoryError>",
       "auth": [],
-      "tables": [
-        "sessions",
-        "v_match_history"
-      ],
+      "tables": ["sessions", "v_match_history"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4039,12 +3518,8 @@
       "name": "getSessionLeaderboard",
       "signature": "getSessionLeaderboard( sessionId: string ): Promise<GetSessionLeaderboardResult>",
       "auth": [],
-      "tables": [
-        "v_session_leaderboard"
-      ],
-      "rpcs": [
-        "get_player_streaks"
-      ],
+      "tables": ["v_session_leaderboard"],
+      "rpcs": ["get_player_streaks"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4053,13 +3528,8 @@
       "name": "getAllTimeLeaderboard",
       "signature": "getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResult>",
       "auth": [],
-      "tables": [
-        "v_alltime_leaderboard_mat"
-      ],
-      "rpcs": [
-        "get_alltime_snapshot_before",
-        "get_player_streaks"
-      ],
+      "tables": ["v_alltime_leaderboard_mat"],
+      "rpcs": ["get_alltime_snapshot_before", "get_player_streaks"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4068,10 +3538,7 @@
       "name": "getPlayerStats",
       "signature": "getPlayerStats( playerId: string, sessionId: string | null // null = all-time scope ): Promise<GetPlayerStatsResult>",
       "auth": [],
-      "tables": [
-        "v_alltime_leaderboard_mat",
-        "v_session_leaderboard"
-      ],
+      "tables": ["v_alltime_leaderboard_mat", "v_session_leaderboard"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4080,56 +3547,30 @@
       "file": "live-match-swap.ts",
       "name": "swapPlayerInActiveMatch",
       "signature": "swapPlayerInActiveMatch( matchId: string, outPlayerId: string, inPlayerId: string, sessionId: string, outPlayerName: string, inPlayerName: string ): Promise<LiveSwapResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players"
-      ],
-      "rpcs": [
-        "swap_player_in_active_match"
-      ],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["match_players"],
+      "rpcs": ["swap_player_in_active_match"],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": true
     },
     {
       "file": "live-match-swap.ts",
       "name": "swapTeamsInActiveMatch",
       "signature": "swapTeamsInActiveMatch( matchId: string, sessionId: string, playerAId: string, playerBId: string, playerAName: string, playerBName: string ): Promise<LiveSwapResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
       "tables": [],
-      "rpcs": [
-        "swap_teams_in_active_match"
-      ],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "rpcs": ["swap_teams_in_active_match"],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": false
     },
     {
       "file": "live-match-swap.ts",
       "name": "swapActiveFromOnDeck",
       "signature": "swapActiveFromOnDeck( activeMatchId: string, outPlayerId: string, onDeckPlayerId: string, onDeckMatchId: string, fillPlayerId: string, sessionId: string, outPlayerName: string, onDeckPlayerName: string, fillPlayerName: string ): Promise<LiveSwapResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
       "tables": [],
-      "rpcs": [
-        "swap_active_from_ondeck"
-      ],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "rpcs": ["swap_active_from_ondeck"],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": true
     },
     {
@@ -4146,54 +3587,28 @@
       "file": "match-drafts.ts",
       "name": "clearOnDeckMatch",
       "signature": "clearOnDeckMatch(matchId: string): Promise<MatchActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players",
-        "matches",
-        "queue_entries"
-      ],
-      "rpcs": [
-        "clear_on_deck_match_atomic"
-      ],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["match_players", "matches", "queue_entries"],
+      "rpcs": ["clear_on_deck_match_atomic"],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": false
     },
     {
       "file": "match-drafts.ts",
       "name": "clearAllUnpublishedDrafts",
       "signature": "clearAllUnpublishedDrafts(sessionId: string): Promise<ClearAllDraftsResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
       "tables": [],
-      "rpcs": [
-        "clear_all_unpublished_drafts"
-      ],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "rpcs": ["clear_all_unpublished_drafts"],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": false
     },
     {
       "file": "match-drafts.ts",
       "name": "reorderOnDeckMatches",
       "signature": "reorderOnDeckMatches( sessionId: string, orderedMatchIds: string[] ): Promise<MatchActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "matches"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["matches"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4222,12 +3637,8 @@
       "file": "match-lifecycle.ts",
       "name": "submitMatchScore",
       "signature": "submitMatchScore( matchId: string, teamAScore: number, teamBScore: number ): Promise<MatchActionResult>",
-      "auth": [
-        "getAuthenticatedUser"
-      ],
-      "tables": [
-        "match_players"
-      ],
+      "auth": ["getAuthenticatedUser"],
+      "tables": ["match_players"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4236,20 +3647,9 @@
       "file": "match-lifecycle.ts",
       "name": "endMatchAction",
       "signature": "endMatchAction( matchId: string, teamAScore: number, teamBScore: number ): Promise<MatchActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts",
-        "match_players",
-        "matches",
-        "queue_entries"
-      ],
-      "rpcs": [
-        "refresh_alltime_leaderboard"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["courts", "match_players", "matches", "queue_entries"],
+      "rpcs": ["refresh_alltime_leaderboard"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4257,20 +3657,9 @@
       "file": "match-lifecycle.ts",
       "name": "updateMatchDetails",
       "signature": "updateMatchDetails( matchId: string, teamAScore: number, teamBScore: number, revertToActive = false ): Promise<MatchActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts",
-        "match_players",
-        "matches",
-        "queue_entries"
-      ],
-      "rpcs": [
-        "revert_match_to_active"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["courts", "match_players", "matches", "queue_entries"],
+      "rpcs": ["revert_match_to_active"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4278,39 +3667,19 @@
       "file": "match-lifecycle.ts",
       "name": "cancelMatchAction",
       "signature": "cancelMatchAction(matchId: string): Promise<MatchActionResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts",
-        "match_players",
-        "matches",
-        "queue_entries"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["courts", "match_players", "matches", "queue_entries"],
       "rpcs": [],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": false
     },
     {
       "file": "match-lifecycle.ts",
       "name": "createManualMatchAction",
       "signature": "createManualMatchAction( sessionId: string, teamAPlayerIds: string[], teamBPlayerIds: string[] ): Promise<CreateManualMatchResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles",
-        "queue_entries"
-      ],
-      "rpcs": [
-        "create_match_with_players"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["profiles", "queue_entries"],
+      "rpcs": ["create_match_with_players"],
       "broadcasts": [],
       "pushes": true
     },
@@ -4318,13 +3687,8 @@
       "file": "matchmaking.ts",
       "name": "callNextMatch",
       "signature": "callNextMatch( sessionId: string, courtId: string ): Promise<MatchmakingResult>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "sessions"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["sessions"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4333,12 +3697,8 @@
       "file": "matchmaking.ts",
       "name": "runEngineForSession",
       "signature": "runEngineForSession(sessionId: string): Promise<void>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "sessions"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["sessions"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4348,13 +3708,7 @@
       "name": "promoteOnDeckMatchInternal",
       "signature": "promoteOnDeckMatchInternal( supabase: ReturnType<typeof createServiceClient>, sessionId: string, courtId: string ): Promise<MatchmakingResult>",
       "auth": [],
-      "tables": [
-        "courts",
-        "match_players",
-        "matches",
-        "profiles",
-        "queue_entries"
-      ],
+      "tables": ["courts", "match_players", "matches", "profiles", "queue_entries"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": true
@@ -4373,14 +3727,8 @@
       "file": "profile.ts",
       "name": "updatePlayerSkill",
       "signature": "updatePlayerSkill( sessionId: string, userId: string, newSkill: SkillLevel ): Promise<UpdateSkillResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["profiles"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4389,14 +3737,8 @@
       "file": "profile.ts",
       "name": "getPlayerPin",
       "signature": "getPlayerPin(sessionId: string, userId: string): Promise<PinResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["profiles"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4405,14 +3747,8 @@
       "file": "profile.ts",
       "name": "resetPlayerPin",
       "signature": "resetPlayerPin(sessionId: string, userId: string): Promise<PinResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["profiles"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4421,14 +3757,8 @@
       "file": "profile.ts",
       "name": "updatePlayerPin",
       "signature": "updatePlayerPin( sessionId: string, userId: string, newPin: string ): Promise<PinResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "profiles"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["profiles"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4437,13 +3767,8 @@
       "file": "queue.ts",
       "name": "togglePlayerPause",
       "signature": "togglePlayerPause( sessionId: string, playerId: string, isPaused: boolean ): Promise<TogglePlayerPauseResult>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "queue_entries"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["queue_entries"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4452,17 +3777,9 @@
       "file": "queue.ts",
       "name": "checkoutPlayer",
       "signature": "checkoutPlayer(sessionId: string): Promise<CheckoutResult>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players",
-        "matches",
-        "queue_entries"
-      ],
-      "rpcs": [
-        "checkout_player_cleanup_drafts"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["match_players", "matches", "queue_entries"],
+      "rpcs": ["checkout_player_cleanup_drafts"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4470,13 +3787,9 @@
       "file": "queue.ts",
       "name": "joinQueueAction",
       "signature": "joinQueueAction(sessionId: string): Promise<JoinQueueResult>",
-      "auth": [
-        "createServiceClient"
-      ],
+      "auth": ["createServiceClient"],
       "tables": [],
-      "rpcs": [
-        "join_queue"
-      ],
+      "rpcs": ["join_queue"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4484,20 +3797,10 @@
       "file": "queue.ts",
       "name": "removePlayerFromQueue",
       "signature": "removePlayerFromQueue( sessionId: string, playerId: string ): Promise<RemovePlayerFromQueueResult>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players",
-        "queue_entries"
-      ],
-      "rpcs": [
-        "remove_player_from_queue_organizer"
-      ],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["match_players", "queue_entries"],
+      "rpcs": ["remove_player_from_queue_organizer"],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": false
     },
     {
@@ -4514,13 +3817,8 @@
       "file": "sessions.ts",
       "name": "joinAsCoOrganizer",
       "signature": "joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganizerResult>",
-      "auth": [
-        "createServiceClient"
-      ],
-      "tables": [
-        "session_organizers",
-        "sessions"
-      ],
+      "auth": ["createServiceClient"],
+      "tables": ["session_organizers", "sessions"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4529,17 +3827,10 @@
       "file": "sessions.ts",
       "name": "toggleAutoMatchmaking",
       "signature": "toggleAutoMatchmaking( sessionId: string ): Promise<ToggleAutoMatchmakingResult>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
       "tables": [],
-      "rpcs": [
-        "toggle_auto_matchmaking"
-      ],
-      "broadcasts": [
-        "broadcastAutoMatchmakingToggled"
-      ],
+      "rpcs": ["toggle_auto_matchmaking"],
+      "broadcasts": ["broadcastAutoMatchmakingToggled"],
       "pushes": false
     },
     {
@@ -4556,30 +3847,18 @@
       "file": "sessions.ts",
       "name": "setCapAndClearDrafts",
       "signature": "setCapAndClearDrafts( sessionId: string, cap: number | null ): Promise<SetCapResult>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "sessions"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["sessions"],
       "rpcs": [],
-      "broadcasts": [
-        "broadcastDraftCapPhase"
-      ],
+      "broadcasts": ["broadcastDraftCapPhase"],
       "pushes": false
     },
     {
       "file": "sessions.ts",
       "name": "getSessionForOrganizer",
       "signature": "getSessionForOrganizer(sessionId: string): Promise<GetSessionResult>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "sessions"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["sessions"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4588,63 +3867,29 @@
       "file": "sessions.ts",
       "name": "closeSession",
       "signature": "closeSession(sessionId: string): Promise<CloseSessionResult>",
-      "auth": [
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "courts",
-        "matches",
-        "queue_entries",
-        "sessions"
-      ],
-      "rpcs": [
-        "compute_session_wrapped",
-        "refresh_cross_session_stats"
-      ],
-      "broadcasts": [
-        "broadcastSessionClosed"
-      ],
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["courts", "matches", "queue_entries", "sessions"],
+      "rpcs": ["compute_session_wrapped", "refresh_cross_session_stats"],
+      "broadcasts": ["broadcastSessionClosed"],
       "pushes": false
     },
     {
       "file": "swap-player.ts",
       "name": "swapPlayerInMatch",
       "signature": "swapPlayerInMatch( matchId: string, outPlayerId: string, inPlayerId: string ): Promise<SwapResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players",
-        "matches",
-        "queue_entries"
-      ],
-      "rpcs": [
-        "swap_player_in_match"
-      ],
-      "broadcasts": [
-        "broadcastOrganizerIntervention"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["match_players", "matches", "queue_entries"],
+      "rpcs": ["swap_player_in_match"],
+      "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": true
     },
     {
       "file": "swap-player.ts",
       "name": "swapMatchPlayers",
       "signature": "swapMatchPlayers( aMatchId: string, aPlayerId: string, bMatchId: string, bPlayerId: string, sessionId: string ): Promise<SwapMatchPlayersResult>",
-      "auth": [
-        "getAuthenticatedUser",
-        "isSessionOrganizer",
-        "createServiceClient"
-      ],
-      "tables": [
-        "match_players",
-        "matches"
-      ],
-      "rpcs": [
-        "swap_match_players"
-      ],
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["match_players", "matches"],
+      "rpcs": ["swap_match_players"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4663,9 +3908,7 @@
       "name": "dismissWrappedIntro",
       "signature": "dismissWrappedIntro( sessionId: string, playerId: string ): Promise<DismissWrappedIntroResult>",
       "auth": [],
-      "tables": [
-        "session_wrapped_stats"
-      ],
+      "tables": ["session_wrapped_stats"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -4675,13 +3918,7 @@
     {
       "name": "Queue lifecycle",
       "field": "queue_entries.status",
-      "states": [
-        "waiting",
-        "drafted",
-        "on_deck",
-        "playing",
-        "left"
-      ],
+      "states": ["waiting", "drafted", "on_deck", "playing", "left"],
       "edges": [
         {
           "from": "waiting",
@@ -4738,12 +3975,7 @@
     {
       "name": "Match lifecycle",
       "field": "matches.status",
-      "states": [
-        "pending",
-        "in_progress",
-        "completed",
-        "cancelled"
-      ],
+      "states": ["pending", "in_progress", "completed", "cancelled"],
       "edges": [
         {
           "from": "pending",
