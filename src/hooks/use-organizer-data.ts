@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { EnrichedMatch } from "@/hooks/use-enriched-matches";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import type { CapSaturationPayload } from "@/lib/broadcast";
+import type { CapPhase } from "@/hooks/use-organizer-session";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
 import type { SwapResult, SwapMatchPlayersResult } from "@/app/actions/swap-player";
 import type { Court, Profile, QueueFullWithWaitTime, Session } from "@/types/database";
@@ -96,6 +97,11 @@ export interface UseOrganizerDataResult {
    */
   capSaturation: CapSaturationPayload | null;
   dismissCapSaturation: () => void;
+  /**
+   * Phase of a draft-cap reset triggered by a co-organizer.
+   * null = idle. 'clearing' / 'generating' = in-progress (lockout active).
+   */
+  externalCapPhase: CapPhase;
 }
 
 /**
@@ -122,6 +128,7 @@ export function useOrganizerData(
     capSaturation,
     dismissCapSaturation,
     handleChannelStatus,
+    externalCapPhase,
   } = useOrganizerSession(sessionId, initialSession, supabase);
 
   // ── Courts sub-hook ───────────────────────────────────────────
@@ -268,5 +275,6 @@ export function useOrganizerData(
     updateTimeLimit,
     capSaturation,
     dismissCapSaturation,
+    externalCapPhase,
   };
 }

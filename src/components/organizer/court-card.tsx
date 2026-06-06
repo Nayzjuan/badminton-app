@@ -15,6 +15,7 @@ import { MatchTimer } from "@/components/ui/match-timer";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import type { Court } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
+import type { RosterPlayer } from "@/components/organizer/match-roster";
 
 // ─── Alert tier ──────────────────────────────────────────────
 
@@ -41,6 +42,8 @@ export interface CourtCardProps {
   onClearOnDeckMatch: () => void;
   onUpdateStatus: (s: Court["status"]) => void;
   onRemove: () => void;
+  /** Called after a 500ms long-press on a player name to open the live swap sheet. */
+  onLongPressPlayer?: (player: RosterPlayer, team: "a" | "b") => void;
 }
 
 // ─── Component ───────────────────────────────────────────────
@@ -64,6 +67,7 @@ export function CourtCard({
   onClearOnDeckMatch,
   onUpdateStatus,
   onRemove,
+  onLongPressPlayer,
 }: CourtCardProps) {
   const hasActiveMatch = !!match;
   const teamA = match?.players.filter((p) => p.team === "a") ?? [];
@@ -92,13 +96,21 @@ export function CourtCard({
   const [alertTier, setAlertTier] = useState<AlertTier>("normal");
 
   useEffect(() => {
+    // Skip entirely when there is nothing to track — available / closed courts
+    // and active courts without a time limit never need a timer.
+    if (!isActive || !timeLimitMinutes || !match?.started_at) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAlertTier("normal");
+      return;
+    }
+
     function computeTier(): AlertTier {
-      if (!isActive || !timeLimitMinutes || !match?.started_at) return "normal";
-      const elapsed = (Date.now() - new Date(match.started_at).getTime()) / 60_000;
-      if (elapsed >= timeLimitMinutes + COURT_ALERT_CRITICAL_OFFSET_MINUTES) return "critical";
-      if (elapsed >= timeLimitMinutes) return "warning";
+      const elapsed = (Date.now() - new Date(match!.started_at!).getTime()) / 60_000;
+      if (elapsed >= timeLimitMinutes! + COURT_ALERT_CRITICAL_OFFSET_MINUTES) return "critical";
+      if (elapsed >= timeLimitMinutes!) return "warning";
       return "normal";
     }
+
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAlertTier(computeTier());
     const id = setInterval(() => setAlertTier(computeTier()), COURT_ALERT_RECOMPUTE_INTERVAL_MS);
@@ -226,6 +238,7 @@ export function CourtCard({
               }))}
               labelA="Team A"
               labelB="Team B"
+              onLongPress={onLongPressPlayer}
             />
           </div>
         )}

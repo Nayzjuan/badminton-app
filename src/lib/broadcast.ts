@@ -17,7 +17,11 @@
 
 // ── Payload types ─────────────────────────────────────────────
 
-export type OrganizerInterventionType = "on_deck_cleared" | "match_cancelled";
+export type OrganizerInterventionType =
+  | "on_deck_cleared"
+  | "match_cancelled"
+  /** Fired when a player is swapped into or out of an in-progress match. */
+  | "active_roster_changed";
 
 export interface OrganizerInterventionPayload {
   type: OrganizerInterventionType;
@@ -36,9 +40,7 @@ export interface OrganizerInterventionPayload {
  */
 async function postBroadcast(topic: string, event: string, payload: object): Promise<void> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !key) {
     console.warn("[broadcast] Missing SUPABASE_URL or service role key — skipping broadcast.");
@@ -85,11 +87,7 @@ export interface SessionClosedPayload {
  */
 export async function broadcastSessionClosed(sessionId: string): Promise<void> {
   const payload: SessionClosedPayload = { sessionId };
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "session_closed",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "session_closed", payload);
 }
 
 // ── auto_matchmaking_toggled ──────────────────────────────
@@ -116,11 +114,7 @@ export async function broadcastAutoMatchmakingToggled(
   isOn: boolean
 ): Promise<void> {
   const payload: AutoMatchmakingToggledPayload = { isOn };
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "auto_matchmaking_toggled",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "auto_matchmaking_toggled", payload);
 }
 
 // ── cap_saturation ────────────────────────────────────────
@@ -151,11 +145,37 @@ export async function broadcastCapSaturation(
   sessionId: string,
   payload: CapSaturationPayload
 ): Promise<void> {
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "cap_saturation",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "cap_saturation", payload);
+}
+
+// ── draft_cap_phase ───────────────────────────────────────
+
+export type DraftCapPhase = "clearing" | "generating" | "done";
+
+export interface DraftCapPhasePayload {
+  phase: DraftCapPhase;
+  /** The override cap being applied. null = Dynamic. */
+  override: number | null;
+}
+
+/**
+ * Broadcast the current phase of a draft-cap reset operation to all
+ * co-organizers so they can display the lockout overlay in sync.
+ *
+ * Three phases emitted sequentially by the hook:
+ *   'clearing'   — phase 1 started (all organizers lock)
+ *   'generating' — phase 2 started (engine running)
+ *   'done'       — operation complete (all organizers unlock)
+ *
+ * 'done' is also emitted on failure so screens never stay locked.
+ */
+export async function broadcastDraftCapPhase(
+  sessionId: string,
+  phase: DraftCapPhase,
+  override: number | null
+): Promise<void> {
+  const payload: DraftCapPhasePayload = { phase, override };
+  await postBroadcast(`realtime:session-events:${sessionId}`, "draft_cap_phase", payload);
 }
 
 /**
@@ -172,9 +192,5 @@ export async function broadcastOrganizerIntervention(
 
   const payload: OrganizerInterventionPayload = { type, affectedPlayerIds };
 
-  await postBroadcast(
-    `realtime:session-events:${sessionId}`,
-    "organizer_intervention",
-    payload
-  );
+  await postBroadcast(`realtime:session-events:${sessionId}`, "organizer_intervention", payload);
 }

@@ -3,16 +3,19 @@
 // ============================================================
 // match-drafts.ts — On-deck management + draft publishing
 // ============================================================
-// clearOnDeckMatch            — remove an on-deck match
+// clearOnDeckMatch            — remove a single on-deck match
+// clearAllUnpublishedDrafts   — batch-clear all unpublished drafts
 // reorderOnDeckMatches        — drag-reorder sort_order
 // publishMatchAction          — publish a single draft
 // publishAllDraftMatchesAction — publish all drafts at once
 // ============================================================
 
+import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import {
   getAuthenticatedUser,
@@ -148,6 +151,90 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
 }
 
 // ============================================================
+// clearAllUnpublishedDrafts — batch clear for cap-change reset
+// ============================================================
+// Atomically clears ALL is_published=false pending matches for
+// a session via a single Postgres RPC. Returns all affected
+// players to 'waiting' status. Published on-deck matches are
+// untouched.
+//
+// Does NOT trigger the engine — the caller (setCapAndClearDrafts)
+// is responsible for running the engine after this resolves.
+// ============================================================
+
+export type ClearAllDraftsResult = {
+  success: boolean;
+  message: string;
+  clearedCount: number;
+  affectedPlayerIds: string[];
+};
+
+/**
+ * Batch-clear all unpublished draft matches for a session.
+ * Called as phase 1 of the cap-change reset flow.
+ */
+export async function clearAllUnpublishedDrafts(sessionId: string): Promise<ClearAllDraftsResult> {
+  if (!isValidUUID(sessionId)) {
+    return {
+      success: false,
+      message: "Invalid session ID.",
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return {
+      success: false,
+      message: "Not authenticated.",
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) {
+    return {
+      success: false,
+      message: "Organizer access required.",
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const db = createServiceClient();
+
+  // Single atomic RPC — clears all drafts and returns player IDs in one transaction.
+  const { data: playerIds, error } = await db.rpc("clear_all_unpublished_drafts", {
+    p_session_id: sessionId,
+  });
+
+  if (error) {
+    return {
+      success: false,
+      message: `Failed to clear drafts: ${error.message}`,
+      clearedCount: 0,
+      affectedPlayerIds: [],
+    };
+  }
+
+  const ids = (playerIds as string[]) ?? [];
+
+  // Broadcast so affected players see the "you've been removed" notification.
+  if (ids.length > 0) {
+    void broadcastOrganizerIntervention(sessionId, "on_deck_cleared", ids);
+  }
+
+  return {
+    success: true,
+    message: `Cleared all unpublished drafts. ${ids.length} player(s) returned to queue.`,
+    clearedCount: ids.length,
+    affectedPlayerIds: ids,
+  };
+}
+
+// ============================================================
 // reorderOnDeckMatches — persist drag-and-drop sort order
 // ============================================================
 // Bulk-updates the sort_order column for a set of on-deck
@@ -247,11 +334,22 @@ export async function publishMatchAction(
   }
 
   switch (result) {
-    case "SUCCESS":
+    case "SUCCESS": {
+      // On-deck ping: this draft's players just transitioned drafted → on_deck.
+      // Fetch the roster and notify them (OS-level push for backgrounded phones),
+      // fired after the response flushes.
+      const { data: rosterRows } = await svc
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", matchId);
+      const rosterIds = (rosterRows ?? []).map((r) => r.player_id);
+      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+
       // Engine hook: publishing moves this draft out of the review queue,
       // opening a slot. Refill immediately so the organizer has fresh drafts.
       await runEngineForSession(match.session_id);
       return { success: true, message: "Match published." };
+    }
     case "NOT_ORGANIZER":
       return { success: false, message: "Forbidden" };
     case "NOT_FOUND":
@@ -392,6 +490,17 @@ export async function publishAllDraftMatchesAction(
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
   const svc = createServiceClient();
+
+  // Snapshot which matches are drafts right now, so after the bulk publish we
+  // can ping exactly the players who transitioned drafted → on_deck.
+  const { data: draftMatches } = await svc
+    .from("matches")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_published", false);
+  const draftMatchIds = (draftMatches ?? []).map((m) => m.id);
+
   const { data: result, error: rpcError } = await svc.rpc("publish_all_drafts", {
     p_session_id: sessionId,
     p_user_id: user.id,
@@ -416,6 +525,27 @@ export async function publishAllDraftMatchesAction(
     skippedCount > 0
       ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
       : "";
+
+  // On-deck ping: of the snapshot drafts, the ones now is_published=true were
+  // actually published (skipped left-player drafts stay false). Notify their
+  // rosters that they're on deck.
+  if (publishedCount > 0 && draftMatchIds.length > 0) {
+    const { data: publishedMatches } = await svc
+      .from("matches")
+      .select("id")
+      .in("id", draftMatchIds)
+      .eq("is_published", true)
+      .eq("status", "pending");
+    const publishedIds = (publishedMatches ?? []).map((m) => m.id);
+    if (publishedIds.length > 0) {
+      const { data: rosterRows } = await svc
+        .from("match_players")
+        .select("player_id")
+        .in("match_id", publishedIds);
+      const rosterIds = (rosterRows ?? []).map((r) => r.player_id);
+      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+    }
+  }
 
   // Engine hook: all drafts were just moved to on-deck, emptying the review
   // queue. Refill immediately so new drafts are ready for the next review cycle.

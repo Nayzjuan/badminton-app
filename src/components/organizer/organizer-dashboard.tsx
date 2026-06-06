@@ -4,13 +4,14 @@
 // Organizer Dashboard — Main shell with tab navigation
 // ============================================================
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useOrganizerData } from "@/hooks/use-organizer-data";
 import { useSwapState } from "@/hooks/use-swap-state";
 import { useOrganizerDashboard } from "@/hooks/use-organizer-dashboard";
 import { ActiveCourts } from "./active-courts";
+import { DraftCapPopover } from "./draft-cap-popover";
 import { OnDeckPanel } from "./on-deck-panel";
 import { SwapSheet } from "./swap-sheet";
 import { SwapFloatingBar } from "./swap-floating-bar";
@@ -43,7 +44,7 @@ import {
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import type { Profile, Session } from "@/types/database";
-import { DASHBOARD_GRID_SIZE_PX } from "@/lib/constants";
+import { DASHBOARD_GRID_SIZE_PX, TOAST_DISMISS_MS } from "@/lib/constants";
 
 // ── Design token constants ───────────────────────────────────
 // Command-center surface tokens (theme-aware via cc-* tokens in globals.css).
@@ -94,6 +95,7 @@ export function OrganizerDashboard({
     updateTimeLimit,
     capSaturation,
     dismissCapSaturation,
+    externalCapPhase,
   } = useOrganizerData(session.id, session);
 
   const {
@@ -104,6 +106,11 @@ export function OrganizerDashboard({
     handleSwapComplete,
     showFloatingBar,
   } = useSwapState(session.id, onDeckMatches, swapMatchPlayers, swapPlayer);
+
+  // ── Memoized queue derivations ────────────────────────────
+  // Declared before useOrganizerDashboard since bottleneckCount is passed as a prop.
+  const bottleneckCount = useMemo(() => queue.filter((q) => q.is_bottleneck).length, [queue]);
+  const waitingCount = useMemo(() => queue.filter((q) => q.status === "waiting").length, [queue]);
 
   const {
     activeTab,
@@ -124,18 +131,22 @@ export function OrganizerDashboard({
     autoMatchmaking,
     togglingAuto,
     handleToggleAuto,
+    capPhase,
+    isDashboardLocked,
+    handleCapChange,
     joinQueue,
     isClosed,
   } = useOrganizerDashboard({
     sessionId: session.id,
     sessionIsActive: session.is_active,
     liveAutoMatchmaking: liveSession.is_auto_matchmaking_on,
-    bottleneckCount: queue.filter((q) => q.is_bottleneck).length,
+    bottleneckCount,
     // Draft Mode badge: amber on Courts tab when drafts need approval.
     // Suppress badge when organizer is already on Courts tab — the
     // Publish All banner handles the prompt there.
     draftCount: draftMatches.length,
     handleCancelSwap,
+    externalCapPhase,
   });
 
   // ── New-draft notification ────────────────────────────────
@@ -163,7 +174,7 @@ export function OrganizerDashboard({
       setHasNewDraft(true);
       toast("Draft ready", {
         description: `${current} new match draft${current !== 1 ? "s" : ""} — review and publish to put on deck.`,
-        duration: 4000,
+        duration: TOAST_DISMISS_MS,
       });
       newDraftTimerRef.current = setTimeout(() => {
         setHasNewDraft(false);
@@ -256,6 +267,17 @@ export function OrganizerDashboard({
                   )}
                   {togglingAuto ? "…" : autoMatchmaking ? "Auto" : "Off"}
                 </button>
+
+                {/* Draft cap chip — mobile compact */}
+                {!isClosed && (
+                  <DraftCapPopover
+                    value={liveSession.max_auto_drafts_override ?? null}
+                    autoIsOn={autoMatchmaking}
+                    capPhase={capPhase}
+                    onChange={handleCapChange}
+                    compact
+                  />
+                )}
 
                 {/* More-options dropdown */}
                 <div className="relative" ref={moreMenuRef}>
@@ -496,6 +518,19 @@ export function OrganizerDashboard({
                   {togglingAuto ? "Saving…" : autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
 
+                {/* Draft cap separator + chip — desktop */}
+                {!isClosed && (
+                  <>
+                    <div className="w-px h-5 bg-cc-border shrink-0" aria-hidden="true" />
+                    <DraftCapPopover
+                      value={liveSession.max_auto_drafts_override ?? null}
+                      autoIsOn={autoMatchmaking}
+                      capPhase={capPhase}
+                      onChange={handleCapChange}
+                    />
+                  </>
+                )}
+
                 <ThemeToggle className="text-cc-t2 hover:text-cc-t1 hover:bg-cc-bg-3" />
                 {process.env.NODE_ENV === "development" && <DevTools sessionId={session.id} />}
 
@@ -644,8 +679,39 @@ export function OrganizerDashboard({
         </>
       )}
 
+      {/* ── Dashboard lockout overlay ─────────────────────────────
+          Shown during a draft-cap reset so no organizer (local or
+          co-organizer) can interact with the dashboard mid-flight.
+      ──────────────────────────────────────────────────────── */}
+      {isDashboardLocked && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center"
+          style={{ background: "oklch(0.07 0.012 245 / 0.60)", backdropFilter: "blur(2px)" }}
+          aria-live="polite"
+          aria-label={capPhase === "clearing" ? "Clearing drafts…" : "Generating new drafts…"}
+        >
+          <div
+            className="flex items-center gap-3 bg-cc-bg-2 border border-cc-border-hi
+                       px-5 py-3 font-command text-[10px] uppercase tracking-[0.14em] text-cc-t1"
+            style={{
+              clipPath:
+                "polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px))",
+            }}
+          >
+            <span
+              className="h-[10px] w-[10px] shrink-0 rounded-full border-[1.5px]
+                         border-current border-t-transparent animate-spin"
+            />
+            {capPhase === "clearing" ? "Clearing drafts…" : "Generating new drafts…"}
+          </div>
+        </div>
+      )}
+
       {/* Content */}
-      <main className="max-w-7xl mx-auto px-3 lg:px-6 py-4 lg:py-6">
+      <main
+        className="max-w-7xl mx-auto px-3 lg:px-6 py-4 lg:py-6"
+        style={isDashboardLocked ? { pointerEvents: "none", userSelect: "none" } : undefined}
+      >
         <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
           {activeTab === "courts" && (
             <div className="space-y-6">
@@ -661,13 +727,16 @@ export function OrganizerDashboard({
                 capSaturation={capSaturation}
                 onDismissCapSaturation={dismissCapSaturation}
                 isAutoMatchmakingOn={liveSession.is_auto_matchmaking_on}
-                waitingCount={queue.filter((q) => q.status === "waiting").length}
+                waitingCount={waitingCount}
                 hasNewDraft={hasNewDraft}
               />
 
               <ActiveCourts
                 courts={courts}
                 activeMatches={activeMatches}
+                onDeckMatches={onDeckMatches}
+                queuePlayers={queue}
+                sessionId={session.id}
                 timeLimitMinutes={liveSession.court_time_limit_minutes}
                 onAddCourt={addCourt}
                 onUpdateCourtStatus={updateCourtStatus}
@@ -683,6 +752,7 @@ export function OrganizerDashboard({
 
           {activeTab === "queue" && (
             <QueueControl
+              sessionId={session.id}
               queue={queue}
               profiles={profiles}
               onCreateManualMatch={createManualMatch}

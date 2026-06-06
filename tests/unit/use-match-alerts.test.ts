@@ -6,11 +6,17 @@
 // real Supabase connection or real audio hardware.
 //
 //   U-7  Bootstrap seeds lastQueueStatus / lastMatchStatus refs
-//   U-8  Queue transition waiting → on_deck fires ON_DECK_WARNING
-//   U-9  Queue transition on_deck → playing fires COURT_CALL
-//   U-10 Match transition pending → in_progress fires COURT_CALL
+//   U-8  Queue transition waiting → on_deck fires ON_DECK_WARNING (audio)
+//   U-9  Queue transition on_deck → playing fires COURT_CALL (audio)
+//   U-10 Match transition pending → in_progress fires COURT_CALL (audio)
 //   U-11 No duplicate alerts for same state
 //   U-12 Drafted transition fires haptic only (no audio)
+//
+// REGRESSION GUARD: This hook is now AUDIO-ONLY. Web Push is fired
+// server-side (pushToPlayers wired into the status-change actions), so
+// the client must NEVER call sendPlayerNotification — doing so would
+// double-notify. Every transition test asserts the push mock stays
+// untouched.
 //
 // Strategy: mock Supabase, realtime, audio, and navigator.vibrate.
 // ============================================================
@@ -198,7 +204,8 @@ describe("useMatchAlerts — Unit Suite", () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(playWarningBeepMock).toHaveBeenCalledTimes(1);
-    expect(sendPlayerNotificationMock).toHaveBeenCalledWith(PLAYER_ID, "ON_DECK_WARNING");
+    // Push is server-side now — the client must NOT fire it.
+    expect(sendPlayerNotificationMock).not.toHaveBeenCalled();
     expect(playCourtCallMock).not.toHaveBeenCalled();
   });
 
@@ -214,7 +221,8 @@ describe("useMatchAlerts — Unit Suite", () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(playCourtCallMock).toHaveBeenCalledTimes(1);
-    expect(sendPlayerNotificationMock).toHaveBeenCalledWith(PLAYER_ID, "COURT_CALL");
+    // Push is server-side now — the client must NOT fire it.
+    expect(sendPlayerNotificationMock).not.toHaveBeenCalled();
     expect(playWarningBeepMock).not.toHaveBeenCalled();
   });
 
@@ -231,7 +239,8 @@ describe("useMatchAlerts — Unit Suite", () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(playCourtCallMock).toHaveBeenCalledTimes(1);
-    expect(sendPlayerNotificationMock).toHaveBeenCalledWith(PLAYER_ID, "COURT_CALL");
+    // Push is server-side now — the client must NOT fire it.
+    expect(sendPlayerNotificationMock).not.toHaveBeenCalled();
   });
 
   // ── U-11 ───────────────────────────────────────────────────

@@ -1,3 +1,8 @@
+// Build-time enforcement: importing this module in a Client Component
+// causes a hard build error. Catches accidental client-side imports before
+// they ever reach production. Remove only if migrating off Next.js.
+import "server-only";
+
 // ============================================================
 // Supabase Service-Role Client  (SERVER ONLY — never import
 // this in client components or expose to the browser)
@@ -19,21 +24,18 @@ import type { Database } from "@/types/database";
 export function createServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-  // Accept either naming convention. SUPABASE_SERVICE_ROLE_KEY is preferred
-  // (server-only, never sent to the browser). NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY
-  // also works but NOTE: NEXT_PUBLIC_ variables are bundled into the client-side
-  // JavaScript — rename to SUPABASE_SERVICE_ROLE_KEY when you want to tighten
-  // security before going to production.
-  const serviceKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+  // Use SUPABASE_SERVICE_ROLE_KEY only — NOT the NEXT_PUBLIC_ variant.
+  // NEXT_PUBLIC_ variables are bundled into client-side JavaScript by Next.js,
+  // which would expose the service-role key to every browser that loads the app.
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !serviceKey) {
     throw new Error(
-      "Missing service role key. Add one of these to your .env.local and restart the dev server:\n" +
-        "  SUPABASE_SERVICE_ROLE_KEY=<key>           ← preferred (server-only)\n" +
-        "  NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=<key> ← also works\n" +
-        "Get the key: Supabase Dashboard → Project Settings → API → service_role secret"
+      "Missing Supabase service role key.\n" +
+        "Add to your .env.local and restart the dev server:\n" +
+        "  SUPABASE_SERVICE_ROLE_KEY=<key>\n" +
+        "Get the key: Supabase Dashboard → Project Settings → API → service_role secret\n" +
+        "IMPORTANT: Use SUPABASE_SERVICE_ROLE_KEY (no NEXT_PUBLIC_ prefix) — the key must never reach the browser."
     );
   }
 

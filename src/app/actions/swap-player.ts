@@ -29,8 +29,10 @@
 //   - Scenario D (double-tap):              isConfirming UI flag + guard 3 fallback
 // ============================================================
 
+import { after } from "next/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
 
@@ -186,6 +188,13 @@ export async function swapPlayerInMatch(
   // The incoming player's dashboard will update via subscribeToMatchPlayers
   // Postgres realtime (new match_players row fires fetchMyMatch).
   await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", [outPlayerId]);
+
+  // On-deck ping: only when this is a PUBLISHED match — the incoming player
+  // transitions waiting → on_deck. For an unpublished draft they go to
+  // 'drafted' (still hidden), so we stay silent until publish.
+  if (match.is_published) {
+    after(() => pushToPlayers([inPlayerId], "ON_DECK_WARNING"));
+  }
 
   return { success: true, message: "Swap complete." };
 }

@@ -12,7 +12,12 @@
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { broadcastSessionClosed, broadcastAutoMatchmakingToggled } from "@/lib/broadcast";
+import {
+  broadcastSessionClosed,
+  broadcastAutoMatchmakingToggled,
+  broadcastDraftCapPhase,
+} from "@/lib/broadcast";
+import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 import type { ScoringFormat } from "@/types/database";
@@ -333,19 +338,19 @@ export async function toggleAutoMatchmaking(
 export async function updateSessionSettings(
   sessionId: string,
   updates: { court_time_limit_minutes?: number | null }
-): Promise<{ error?: string }> {
-  if (!isValidUUID(sessionId)) return { error: "Invalid session ID." };
+): Promise<{ success?: boolean; error?: string }> {
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
 
   const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated." };
+  if (!user) return { success: false, error: "Not authenticated." };
 
   const svc = createServiceClient();
 
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
-  if (!isOrganizer) return { error: "Not an organizer of this session." };
+  if (!isOrganizer) return { success: false, error: "Not an organizer of this session." };
 
   // Explicitly allowlist updatable fields — prevents a crafted call from
   // updating sensitive columns (is_active, organizer_passcode, created_by, etc.)
@@ -357,7 +362,7 @@ export async function updateSessionSettings(
   if (updates.court_time_limit_minutes !== null) {
     const mins = updates.court_time_limit_minutes;
     if (!Number.isInteger(mins) || mins < 5 || mins > 180) {
-      return { error: "Court time limit must be between 5 and 180 minutes." };
+      return { success: false, error: "Court time limit must be between 5 and 180 minutes." };
     }
   }
 
@@ -368,8 +373,86 @@ export async function updateSessionSettings(
     .update({ court_time_limit_minutes: updates.court_time_limit_minutes })
     .eq("id", sessionId);
 
-  if (error) return { error: "Failed to update session settings." };
+  if (error) return { success: false, error: "Failed to update session settings." };
   return {};
+}
+
+// ── setCapAndClearDrafts ──────────────────────────────────────
+
+export type SetCapResult = {
+  success: boolean;
+  message?: string;
+  error?: string;
+  autoIsOn?: boolean;
+  clearedCount?: number;
+};
+
+/**
+ * Save the organizer's max-draft override and — when Auto is ON —
+ * atomically clear all unpublished drafts so the engine can
+ * regenerate fresh ones against the new cap.
+ *
+ * Called as Phase 1 of the cap-change reset flow. The hook
+ * calls runEngineForSession separately as Phase 2.
+ * Does NOT trigger the engine itself.
+ */
+export async function setCapAndClearDrafts(
+  sessionId: string,
+  cap: number | null
+): Promise<SetCapResult> {
+  if (!isValidUUID(sessionId)) {
+    return { success: false, error: "Invalid session ID." };
+  }
+  // Validate cap: null = dynamic, 1–5 = override ceiling.
+  if (cap !== null && (!Number.isInteger(cap) || cap < 1 || cap > 5)) {
+    return { success: false, error: "Cap must be null or an integer between 1 and 5." };
+  }
+
+  const db = createServiceClient();
+  const supabase = await createServerSupabaseClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Not authenticated." };
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) return { success: false, error: "Organizer access required." };
+
+  // Persist the override and read is_auto_matchmaking_on atomically in one
+  // UPDATE...RETURNING statement. This eliminates the race window where a
+  // co-organizer toggle between a separate read and write would produce a stale value.
+  const { data: updatedSession, error: updateErr } = await db
+    .from("sessions")
+    .update({ max_auto_drafts_override: cap })
+    .eq("id", sessionId)
+    .select("is_auto_matchmaking_on")
+    .single();
+
+  if (updateErr) {
+    return { success: false, error: `Failed to save cap: ${updateErr.message}` };
+  }
+
+  const autoIsOn = updatedSession?.is_auto_matchmaking_on ?? false;
+
+  if (!autoIsOn) {
+    // Auto is OFF — just saved the preference, nothing to clear.
+    return { success: true, autoIsOn: false, clearedCount: 0 };
+  }
+
+  const clearResult = await clearAllUnpublishedDrafts(sessionId);
+
+  if (!clearResult.success) {
+    // Clearing failed — broadcast 'done' so all organizer screens unlock.
+    void broadcastDraftCapPhase(sessionId, "done", cap);
+    return { success: false, error: clearResult.message };
+  }
+
+  return {
+    success: true,
+    autoIsOn: true,
+    clearedCount: clearResult.clearedCount,
+  };
 }
 
 // ── getSessionForOrganizer ────────────────────────────────────

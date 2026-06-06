@@ -27,10 +27,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
-export function useVisibilityRefresh(
-  onVisible?: () => void,
-  throttleMs = 5_000
-): void {
+export function useVisibilityRefresh(onVisible?: () => void, throttleMs = 5_000): void {
   const router = useRouter();
   const lastFiredAt = useRef<number>(0);
 
@@ -50,8 +47,6 @@ export function useVisibilityRefresh(
       const now = Date.now();
       if (now - lastFiredAt.current < throttleMs) return;
       lastFiredAt.current = now;
-
-      console.log("[visibility] Tab visible — refreshing state");
 
       // Re-run the current route's Server Components.
       // Syncs profile, session, and any server-rendered data

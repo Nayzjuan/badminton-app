@@ -62,6 +62,7 @@ const mockSession: Session = {
   is_active: true,
   is_auto_matchmaking_on: false,
   court_time_limit_minutes: null,
+  max_auto_drafts_override: null,
   ended_at: null,
   created_at: "2026-01-01T00:00:00Z",
 };

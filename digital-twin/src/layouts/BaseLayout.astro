@@ -1,5 +1,6 @@
 ---
 import Nav from '../components/Nav.astro';
+import manifest from '../data/manifest.json';
 import '../styles/global.css';
 
 interface Props {
@@ -15,6 +16,13 @@ const {
 const pageTitle = title === 'Badminton App · Digital Twin'
   ? title
   : `${title} — Badminton App · Digital Twin`;
+
+// When the manifest was last regenerated from the host codebase (extract.ts).
+// Surfaced in the footer so content-drift is self-evident.
+const extracted = new Date(manifest._lastExtracted);
+const extractedLabel = isNaN(extracted.getTime())
+  ? 'unknown'
+  : extracted.toISOString().slice(0, 10);
 ---
 
 <!doctype html>
@@ -43,6 +51,9 @@ const pageTitle = title === 'Badminton App · Digital Twin'
       <footer class="border-t border-edge-dim py-4 px-8 text-xs text-ink-3 flex items-center justify-between gap-4 flex-wrap">
         <span>Badminton Queue App · Digital Twin · v0.1</span>
         <div class="flex items-center gap-4">
+          <span class="text-ink-4" title="When extract.ts last regenerated the manifest from the host codebase">
+            Data extracted <span class="font-mono text-ink-3">{extractedLabel}</span>
+          </span>
           <a href="/about" class="hover:text-ink-2 transition-colors">About</a>
           <a
             href="https://github.com/nayzjuan/badminton-app"

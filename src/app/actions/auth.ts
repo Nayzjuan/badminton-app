@@ -32,7 +32,7 @@ export async function signInAnonymously(formData: FormData) {
   // ── Zod validation ───────────────────────────────────────
   const nameResult = displayNameSchema.safeParse(rawName ?? "");
   if (!nameResult.success) {
-    return { error: nameResult.error.issues[0].message };
+    return { success: false, error: nameResult.error.issues[0].message };
   }
   const displayName = nameResult.data; // trimmed + spaces collapsed
 
@@ -41,13 +41,13 @@ export async function signInAnonymously(formData: FormData) {
   // arbitrary string from a crafted FormData payload.
   const skillLevelResult = skillLevelSchema.safeParse(rawSkillLevel);
   if (!skillLevelResult.success) {
-    return { error: skillLevelResult.error.issues[0].message };
+    return { success: false, error: skillLevelResult.error.issues[0].message };
   }
   const skillLevel: SkillLevel = skillLevelResult.data;
 
   const pinResult = pinSchema.safeParse(rawPin ?? "");
   if (!pinResult.success) {
-    return { error: pinResult.error.issues[0].message };
+    return { success: false, error: pinResult.error.issues[0].message };
   }
   const pin = pinResult.data;
 
@@ -66,7 +66,7 @@ export async function signInAnonymously(formData: FormData) {
       .eq("id", existingUser.id);
 
     if (updateError) {
-      return { error: updateError.message };
+      return { success: false, error: updateError.message };
     }
 
     redirect(destination);
@@ -84,7 +84,7 @@ export async function signInAnonymously(formData: FormData) {
     .ilike("profiles.display_name", escapeLike(displayName));
 
   if (activeEntries && activeEntries.length > 0) {
-    return { error: 'Name taken. Add an initial (e.g. "Miggy L.").' };
+    return { success: false, error: 'Name taken. Add an initial (e.g. "Miggy L.").' };
   }
 
   // ── Returning player check ────────────────────────────────────
@@ -102,6 +102,7 @@ export async function signInAnonymously(formData: FormData) {
 
   if (existingProfile) {
     return {
+      success: false,
       error:
         'Looks like you\'ve played before! Use "Reconnect" below to pick up where you left off.',
     };
@@ -119,7 +120,7 @@ export async function signInAnonymously(formData: FormData) {
   });
 
   if (error) {
-    return { error: error.message };
+    return { success: false, error: error.message };
   }
 
   // The trigger should have created the profile, but if the metadata
@@ -139,7 +140,10 @@ export async function signInAnonymously(formData: FormData) {
     if (upsertError) {
       // PostgreSQL unique violation — display_name already registered
       if (upsertError.code === "23505") {
-        return { error: "That name is already taken! Try adding a number or your initial." };
+        return {
+          success: false,
+          error: "That name is already taken! Try adding a number or your initial.",
+        };
       }
       console.error("[auth] profile upsert safety-net failed:", upsertError);
     }
@@ -364,7 +368,7 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
   // Refreshing here eliminates the staleness window so the leaderboard
   // is immediately correct for the reconnected player.
   // Non-fatal: a refresh failure does not affect the reconnect itself.
-  service.rpc("refresh_alltime_leaderboard").then(({ error }) => {
+  void service.rpc("refresh_alltime_leaderboard").then(({ error }) => {
     if (error) {
       console.warn(
         "[reconnectPlayer] refresh_alltime_leaderboard failed (non-fatal):",

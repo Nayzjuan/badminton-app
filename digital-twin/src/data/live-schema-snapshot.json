@@ -1,0 +1,578 @@
+{
+  "_note": "Point-in-time snapshot of the LIVE Supabase public schema, captured via MCP introspection (information_schema + pg_policies). Consumed by extract.ts to compute schema drift vs the TypeScript types in src/types/database.ts, and to power the RLS Policy Explorer. Re-capture by re-running the introspection queries when the schema changes.",
+  "capturedAt": "2026-06-05",
+  "tables": {
+    "courts": [
+      ["id", "uuid", false],
+      ["session_id", "uuid", false],
+      ["name", "text", false],
+      ["status", "court_status", false],
+      ["created_at", "timestamptz", false]
+    ],
+    "identity_migrations": [
+      ["id", "uuid", false],
+      ["old_id", "uuid", false],
+      ["new_id", "uuid", false],
+      ["display_name", "text", false],
+      ["migrated_at", "timestamptz", false]
+    ],
+    "match_games": [
+      ["id", "uuid", false],
+      ["match_id", "uuid", false],
+      ["game_number", "integer", false],
+      ["team_a_score", "integer", false],
+      ["team_b_score", "integer", false],
+      ["completed_at", "timestamptz", false]
+    ],
+    "match_players": [
+      ["id", "uuid", false],
+      ["match_id", "uuid", false],
+      ["player_id", "uuid", false],
+      ["team", "character", false]
+    ],
+    "matches": [
+      ["id", "uuid", false],
+      ["session_id", "uuid", false],
+      ["court_id", "uuid", true],
+      ["status", "match_status", false],
+      ["team_a_score", "integer", true],
+      ["team_b_score", "integer", true],
+      ["created_at", "timestamptz", false],
+      ["started_at", "timestamptz", true],
+      ["completed_at", "timestamptz", true],
+      ["is_mixed_level", "boolean", false],
+      ["sort_order", "integer", true],
+      ["origin", "match_origin", false],
+      ["is_published", "boolean", false]
+    ],
+    "player_partnerships": [
+      ["player_id", "uuid", false],
+      ["partner_id", "uuid", false],
+      ["games_together", "integer", false],
+      ["wins_together", "integer", false],
+      ["losses_together", "integer", false],
+      ["sessions_together", "integer", false],
+      ["last_session_id", "uuid", true],
+      ["last_played_at", "timestamptz", true],
+      ["updated_at", "timestamptz", false]
+    ],
+    "player_rivalries": [
+      ["player_id", "uuid", false],
+      ["rival_id", "uuid", false],
+      ["wins_vs", "integer", false],
+      ["losses_vs", "integer", false],
+      ["sessions_faced", "integer", false],
+      ["last_session_id", "uuid", true],
+      ["last_faced_at", "timestamptz", true],
+      ["updated_at", "timestamptz", false]
+    ],
+    "profiles": [
+      ["id", "uuid", false],
+      ["display_name", "text", false],
+      ["skill_level", "skill_level", false],
+      ["created_at", "timestamptz", false],
+      ["updated_at", "timestamptz", false],
+      ["pin", "text", true],
+      ["vip_tag", "text", true],
+      ["vip_theme", "text", true]
+    ],
+    "push_subscriptions": [
+      ["id", "uuid", false],
+      ["user_id", "uuid", false],
+      ["endpoint", "text", false],
+      ["p256dh", "text", false],
+      ["auth_key", "text", false],
+      ["user_agent", "text", true],
+      ["created_at", "timestamptz", false],
+      ["updated_at", "timestamptz", false]
+    ],
+    "queue_entries": [
+      ["id", "uuid", false],
+      ["session_id", "uuid", false],
+      ["player_id", "uuid", false],
+      ["joined_at", "timestamptz", false],
+      ["games_played", "integer", false],
+      ["status", "queue_status", false],
+      ["position", "integer", true],
+      ["created_at", "timestamptz", false],
+      ["is_paused", "boolean", false]
+    ],
+    "session_organizers": [
+      ["id", "uuid", false],
+      ["session_id", "uuid", false],
+      ["user_id", "uuid", false],
+      ["granted_at", "timestamptz", false]
+    ],
+    "session_wrapped_stats": [
+      ["id", "uuid", false],
+      ["session_id", "uuid", false],
+      ["player_id", "uuid", false],
+      ["computed_at", "timestamptz", false],
+      ["games_played", "integer", false],
+      ["wins", "integer", false],
+      ["losses", "integer", false],
+      ["points_for", "integer", false],
+      ["points_against", "integer", false],
+      ["point_diff", "integer", true],
+      ["win_pct", "numeric", false],
+      ["win_streak", "integer", false],
+      ["session_rank", "integer", true],
+      ["earned_awards", "ARRAY", false],
+      ["award_data", "jsonb", false],
+      ["intro_dismissed_at", "timestamptz", true],
+      ["carry_forward", "jsonb", false]
+    ],
+    "sessions": [
+      ["id", "uuid", false],
+      ["name", "text", false],
+      ["created_by", "uuid", false],
+      ["organizer_passcode", "text", true],
+      ["scoring", "scoring_format", false],
+      ["is_active", "boolean", false],
+      ["created_at", "timestamptz", false],
+      ["ended_at", "timestamptz", true],
+      ["is_auto_matchmaking_on", "boolean", false],
+      ["court_time_limit_minutes", "integer", true],
+      ["max_auto_drafts_override", "integer", true]
+    ]
+  },
+  "views": [
+    "v_match_history",
+    "v_queue_full_with_wait_time",
+    "v_queue_with_wait_time",
+    "v_recent_pairings",
+    "v_session_leaderboard",
+    "v_alltime_leaderboard_mat"
+  ],
+  "functions": [
+    "_fix_record_partnership_delta",
+    "checkout_player_cleanup_drafts",
+    "clear_all_unpublished_drafts",
+    "clear_on_deck_match_atomic",
+    "compute_session_wrapped",
+    "create_match_with_players",
+    "elevate_to_organizer",
+    "fix_record_swap_player",
+    "get_alltime_snapshot_before",
+    "get_h2h_record",
+    "get_player_streaks",
+    "handle_new_session",
+    "handle_new_user",
+    "is_any_session_organizer",
+    "is_session_organizer",
+    "join_queue",
+    "lookup_active_session",
+    "migrate_player_identity",
+    "publish_all_drafts",
+    "publish_match",
+    "refresh_alltime_leaderboard",
+    "refresh_cross_session_stats",
+    "rejoin_queue",
+    "remove_player_from_queue_organizer",
+    "revert_match_to_active",
+    "set_updated_at",
+    "skill_level_to_int",
+    "swap_active_from_ondeck",
+    "swap_match_players",
+    "swap_player_in_active_match",
+    "swap_player_in_match",
+    "swap_teams_in_active_match",
+    "toggle_auto_matchmaking",
+    "touch_push_subscription_updated_at",
+    "undo_swap_active_from_ondeck"
+  ],
+  "policies": [
+    {
+      "table": "courts",
+      "name": "courts_delete",
+      "cmd": "DELETE",
+      "roles": "authenticated",
+      "using": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
+      "withCheck": null
+    },
+    {
+      "table": "courts",
+      "name": "courts_insert",
+      "cmd": "INSERT",
+      "roles": "authenticated",
+      "using": null,
+      "withCheck": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())"
+    },
+    {
+      "table": "courts",
+      "name": "courts_select",
+      "cmd": "SELECT",
+      "roles": "authenticated",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "courts",
+      "name": "courts_update",
+      "cmd": "UPDATE",
+      "roles": "authenticated",
+      "using": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
+      "withCheck": null
+    },
+    {
+      "table": "identity_migrations",
+      "name": "identity_migrations_select_own",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "auth.uid() = old_id OR auth.uid() = new_id",
+      "withCheck": null
+    },
+    {
+      "table": "match_games",
+      "name": "match_games_delete",
+      "cmd": "DELETE",
+      "roles": "public",
+      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_games.match_id AND is_session_organizer(m.session_id))",
+      "withCheck": null
+    },
+    {
+      "table": "match_games",
+      "name": "match_games_insert",
+      "cmd": "INSERT",
+      "roles": "public",
+      "using": null,
+      "withCheck": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_games.match_id AND is_session_organizer(m.session_id))"
+    },
+    {
+      "table": "match_games",
+      "name": "match_games_select",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "match_games",
+      "name": "match_games_update",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_games.match_id AND is_session_organizer(m.session_id))",
+      "withCheck": null
+    },
+    {
+      "table": "match_players",
+      "name": "match_players_delete",
+      "cmd": "DELETE",
+      "roles": "public",
+      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_players.match_id AND is_session_organizer(m.session_id))",
+      "withCheck": null
+    },
+    {
+      "table": "match_players",
+      "name": "match_players_insert",
+      "cmd": "INSERT",
+      "roles": "authenticated",
+      "using": null,
+      "withCheck": "true"
+    },
+    {
+      "table": "match_players",
+      "name": "match_players_select",
+      "cmd": "SELECT",
+      "roles": "authenticated",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "match_players",
+      "name": "match_players_update",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_players.match_id AND is_session_organizer(m.session_id))",
+      "withCheck": null
+    },
+    {
+      "table": "matches",
+      "name": "matches_delete",
+      "cmd": "DELETE",
+      "roles": "public",
+      "using": "is_session_organizer(session_id)",
+      "withCheck": null
+    },
+    {
+      "table": "matches",
+      "name": "matches_insert",
+      "cmd": "INSERT",
+      "roles": "authenticated",
+      "using": null,
+      "withCheck": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())"
+    },
+    {
+      "table": "matches",
+      "name": "matches_select",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "status <> 'pending' OR is_published = true OR is_session_organizer(session_id)",
+      "withCheck": null
+    },
+    {
+      "table": "matches",
+      "name": "matches_select_draft_firewall",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "status::text <> 'pending' OR is_published = true OR is_session_organizer(session_id)",
+      "withCheck": null
+    },
+    {
+      "table": "matches",
+      "name": "matches_update",
+      "cmd": "UPDATE",
+      "roles": "authenticated",
+      "using": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
+      "withCheck": null
+    },
+    {
+      "table": "player_partnerships",
+      "name": "Players can read own partnership data",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "player_id = auth.uid()",
+      "withCheck": null
+    },
+    {
+      "table": "player_rivalries",
+      "name": "Players can read own rivalry data",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "player_id = auth.uid()",
+      "withCheck": null
+    },
+    {
+      "table": "profiles",
+      "name": "profiles_insert",
+      "cmd": "INSERT",
+      "roles": "authenticated",
+      "using": null,
+      "withCheck": "id = auth.uid()"
+    },
+    {
+      "table": "profiles",
+      "name": "profiles_select",
+      "cmd": "SELECT",
+      "roles": "authenticated",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "profiles",
+      "name": "profiles_update",
+      "cmd": "UPDATE",
+      "roles": "authenticated",
+      "using": "id = auth.uid()",
+      "withCheck": "id = auth.uid()"
+    },
+    {
+      "table": "profiles",
+      "name": "profiles_update_organizer",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "is_any_session_organizer()",
+      "withCheck": null
+    },
+    {
+      "table": "profiles",
+      "name": "profiles_update_own",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "id = auth.uid()",
+      "withCheck": "id = auth.uid()"
+    },
+    {
+      "table": "push_subscriptions",
+      "name": "push_subscriptions_delete_own",
+      "cmd": "DELETE",
+      "roles": "authenticated",
+      "using": "user_id = auth.uid()",
+      "withCheck": null
+    },
+    {
+      "table": "push_subscriptions",
+      "name": "push_subscriptions_insert_own",
+      "cmd": "INSERT",
+      "roles": "authenticated",
+      "using": null,
+      "withCheck": "user_id = auth.uid()"
+    },
+    {
+      "table": "push_subscriptions",
+      "name": "push_subscriptions_select_own",
+      "cmd": "SELECT",
+      "roles": "authenticated",
+      "using": "user_id = auth.uid()",
+      "withCheck": null
+    },
+    {
+      "table": "push_subscriptions",
+      "name": "push_subscriptions_update_own",
+      "cmd": "UPDATE",
+      "roles": "authenticated",
+      "using": "user_id = auth.uid()",
+      "withCheck": "user_id = auth.uid()"
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_delete_organizer",
+      "cmd": "DELETE",
+      "roles": "public",
+      "using": "is_session_organizer(session_id)",
+      "withCheck": null
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_delete_own",
+      "cmd": "DELETE",
+      "roles": "public",
+      "using": "player_id = auth.uid()",
+      "withCheck": null
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_entries_insert",
+      "cmd": "INSERT",
+      "roles": "authenticated",
+      "using": null,
+      "withCheck": "player_id = auth.uid()"
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_entries_select",
+      "cmd": "SELECT",
+      "roles": "authenticated",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_entries_update",
+      "cmd": "UPDATE",
+      "roles": "authenticated",
+      "using": "player_id = auth.uid() OR session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
+      "withCheck": null
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_insert",
+      "cmd": "INSERT",
+      "roles": "public",
+      "using": null,
+      "withCheck": "player_id = auth.uid()"
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_select",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_update_organizer",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "is_session_organizer(session_id)",
+      "withCheck": null
+    },
+    {
+      "table": "queue_entries",
+      "name": "queue_update_own",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "player_id = auth.uid()",
+      "withCheck": null
+    },
+    {
+      "table": "session_organizers",
+      "name": "session_organizers_delete",
+      "cmd": "DELETE",
+      "roles": "public",
+      "using": "is_session_organizer(session_id)",
+      "withCheck": null
+    },
+    {
+      "table": "session_organizers",
+      "name": "session_organizers_insert",
+      "cmd": "INSERT",
+      "roles": "public",
+      "using": null,
+      "withCheck": "is_session_organizer(session_id)"
+    },
+    {
+      "table": "session_organizers",
+      "name": "session_organizers_select",
+      "cmd": "SELECT",
+      "roles": "authenticated",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "session_wrapped_stats",
+      "name": "Organizers can read wrapped stats for their sessions",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "EXISTS (SELECT 1 FROM session_organizers so WHERE so.session_id = session_wrapped_stats.session_id AND so.user_id = auth.uid())",
+      "withCheck": null
+    },
+    {
+      "table": "session_wrapped_stats",
+      "name": "Players can dismiss their own wrapped intro",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "player_id = auth.uid()",
+      "withCheck": "player_id = auth.uid()"
+    },
+    {
+      "table": "session_wrapped_stats",
+      "name": "Players can read own wrapped stats",
+      "cmd": "SELECT",
+      "roles": "public",
+      "using": "player_id = auth.uid()",
+      "withCheck": null
+    },
+    {
+      "table": "session_wrapped_stats",
+      "name": "Service role insert",
+      "cmd": "INSERT",
+      "roles": "public",
+      "using": null,
+      "withCheck": "auth.role() = 'service_role'"
+    },
+    {
+      "table": "session_wrapped_stats",
+      "name": "Service role update",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "auth.role() = 'service_role'",
+      "withCheck": null
+    },
+    {
+      "table": "sessions",
+      "name": "sessions_insert",
+      "cmd": "INSERT",
+      "roles": "public",
+      "using": null,
+      "withCheck": "created_by = auth.uid()"
+    },
+    {
+      "table": "sessions",
+      "name": "sessions_select",
+      "cmd": "SELECT",
+      "roles": "authenticated",
+      "using": "true",
+      "withCheck": null
+    },
+    {
+      "table": "sessions",
+      "name": "sessions_update",
+      "cmd": "UPDATE",
+      "roles": "public",
+      "using": "is_session_organizer(id)",
+      "withCheck": "is_session_organizer(id)"
+    }
+  ]
+}

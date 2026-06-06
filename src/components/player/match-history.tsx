@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Trophy, History } from "lucide-react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
+import { getMatchHistory } from "@/app/actions/history";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
 
 interface MatchHistoryProps {
@@ -28,34 +29,20 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
   const [history, setHistory] = useState<MatchHistoryType[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  // Browser client kept only for the realtime subscription — data fetching
+  // goes through the getMatchHistory server action instead.
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
   const fetchHistory = useCallback(async () => {
     setFetchError(null);
-    let query = supabase
-      .from("v_match_history")
-      .select("*")
-      .eq("player_id", playerId)
-      .order("completed_at", { ascending: false });
-
-    // Filter by session when provided.
-    if (sessionId) {
-      query = query.eq("session_id", sessionId);
-    }
-
-    // Cap results when a limit is given.
-    if (limit) {
-      query = query.limit(limit);
-    }
-
-    const { data, error } = await query;
-    if (error) {
+    const result = await getMatchHistory(playerId, sessionId, limit);
+    if (!result.success) {
       setFetchError("Failed to load match history. Please refresh.");
-    } else if (data) {
-      setHistory(data);
+    } else {
+      setHistory(result.matches);
     }
     setLoading(false);
-  }, [supabase, sessionId, playerId, limit]);
+  }, [sessionId, playerId, limit]);
 
   // Initial fetch. fetchHistory is a stable useCallback; calling it here is the
   // standard fetch-on-mount pattern — no infinite-loop risk.
@@ -112,20 +99,21 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
     );
   }
 
-  // Stats summary.
-  const wins = history.filter((m) => {
-    const isA = m.team === "a";
-    const myScore = isA ? m.team_a_score : m.team_b_score;
-    const theirScore = isA ? m.team_b_score : m.team_a_score;
-    return myScore !== null && theirScore !== null && myScore > theirScore;
-  }).length;
-  const draws = history.filter((m) => {
-    const isA = m.team === "a";
-    const myScore = isA ? m.team_a_score : m.team_b_score;
-    const theirScore = isA ? m.team_b_score : m.team_a_score;
-    return myScore !== null && theirScore !== null && myScore === theirScore;
-  }).length;
-  const losses = history.length - wins - draws;
+  // Stats summary — memoized so history filters don't re-run on every render.
+  const { wins, draws, losses } = useMemo(() => {
+    let w = 0;
+    let d = 0;
+    for (const m of history) {
+      const isA = m.team === "a";
+      const myScore = isA ? m.team_a_score : m.team_b_score;
+      const theirScore = isA ? m.team_b_score : m.team_a_score;
+      if (myScore !== null && theirScore !== null) {
+        if (myScore > theirScore) w++;
+        else if (myScore === theirScore) d++;
+      }
+    }
+    return { wins: w, draws: d, losses: history.length - w - d };
+  }, [history]);
 
   return (
     <div className="space-y-4">

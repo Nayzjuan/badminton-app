@@ -5,54 +5,39 @@
 // ============================================================
 // Skill override and PIN management for player profiles.
 //
-// Auth model:
-//   updatePlayerSkill — organizer-only (uses service role for
-//     the write, but verifies the caller is an organizer first).
-//   getPlayerPin / resetPlayerPin / updatePlayerPin — same.
+// Auth model (enforced on every action):
+//   1. getAuthenticatedUser()  — must be logged in
+//   2. isSessionOrganizer()    — must be organizer of the given
+//      session. Without this, any authenticated player could
+//      call these actions against any other player's profile
+//      using a crafted POST request (IDOR).
 //
-// P0-4 fix: all actions now call getUser() on the regular client
-// first to ensure the caller is authenticated before proceeding
-// with the service-role write. Without this, any authenticated
-// user could modify any other player's profile.
+// The `sessionId` parameter is required by all four actions so
+// the organizer gate can be verified before the service-role
+// write executes.
 // ============================================================
 
-import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
+import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
 import type { SkillLevel } from "@/types/database";
-
-// ── Auth helper ──────────────────────────────────────────────
-
-/**
- * Returns true if the authenticated user is an organizer for
- * the given session (created_by OR session_organizers membership).
- * Uses the regular (RLS-enforced) client so the user's own JWT
- * is checked — the service client is only used for the actual write.
- */
-async function verifyAuthenticated(): Promise<{ userId: string } | { error: string }> {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated." };
-  return { userId: user.id };
-}
 
 // ── Skill Override ────────────────────────────────────────────
 
-export interface UpdateSkillResult {
+export type UpdateSkillResult = {
   success: boolean;
   message: string;
-}
+};
 
 export async function updatePlayerSkill(
+  sessionId: string,
   userId: string,
   newSkill: SkillLevel
 ): Promise<UpdateSkillResult> {
-  // P0-4: Require authentication before using the service-role client.
-  const auth = await verifyAuthenticated();
-  if ("error" in auth) {
-    return { success: false, message: auth.error };
-  }
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) return { success: false, message: "Organizer access required." };
 
   let supabase: ReturnType<typeof createServiceClient>;
   try {
@@ -75,24 +60,23 @@ export async function updatePlayerSkill(
   return { success: true, message: `Skill updated to ${newSkill}` };
 }
 
-// ── PIN Management ──────────────────────────────────────────
+// ── PIN Management ────────────────────────────────────────────
 
-export interface PinResult {
+export type PinResult = {
   success: boolean;
   message: string;
   pin?: string;
-}
+};
 
-/** Get a player's PIN (organizer use only). */
-export async function getPlayerPin(userId: string): Promise<PinResult> {
-  // P0-4: Require authentication.
-  const auth = await verifyAuthenticated();
-  if ("error" in auth) {
-    return { success: false, message: auth.error };
-  }
+/** Get a player's PIN — organizer of the given session only. */
+export async function getPlayerPin(sessionId: string, userId: string): Promise<PinResult> {
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) return { success: false, message: "Organizer access required." };
 
   const supabase = createServiceClient();
-
   const { data, error } = await supabase.from("profiles").select("pin").eq("id", userId).single();
 
   if (error || !data) {
@@ -102,17 +86,21 @@ export async function getPlayerPin(userId: string): Promise<PinResult> {
   return { success: true, message: "OK", pin: data.pin ?? undefined };
 }
 
-/** Reset a player's PIN to a new random 4-digit value. */
-export async function resetPlayerPin(userId: string): Promise<PinResult> {
-  // P0-4: Require authentication.
-  const auth = await verifyAuthenticated();
-  if ("error" in auth) {
-    return { success: false, message: auth.error };
-  }
+/** Reset a player's PIN to a new cryptographically random 4-digit value. */
+export async function resetPlayerPin(sessionId: string, userId: string): Promise<PinResult> {
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) return { success: false, message: "Organizer access required." };
+
+  // crypto.getRandomValues produces a cryptographically secure random number,
+  // unlike Math.random() which is predictable given sufficient observations.
+  const arr = new Uint32Array(1);
+  crypto.getRandomValues(arr);
+  const newPin = String(1000 + (arr[0] % 9000)); // 1000–9999
 
   const supabase = createServiceClient();
-  const newPin = String(Math.floor(1000 + Math.random() * 9000)); // 1000-9999
-
   const { error } = await supabase.from("profiles").update({ pin: newPin }).eq("id", userId);
 
   if (error) {
@@ -122,20 +110,24 @@ export async function resetPlayerPin(userId: string): Promise<PinResult> {
   return { success: true, message: "PIN reset", pin: newPin };
 }
 
-/** Set a player's PIN to a specific value (organizer override). */
-export async function updatePlayerPin(userId: string, newPin: string): Promise<PinResult> {
-  if (!/^\d{4}$/.test(newPin)) {
-    return { success: false, message: "PIN must be exactly 4 digits." };
+/** Set a player's PIN to a specific value — organizer of the given session only. */
+export async function updatePlayerPin(
+  sessionId: string,
+  userId: string,
+  newPin: string
+): Promise<PinResult> {
+  // Must be exactly 4 digits and not trivially guessable "0000".
+  if (!/^\d{4}$/.test(newPin) || newPin === "0000") {
+    return { success: false, message: "PIN must be 4 digits and cannot be 0000." };
   }
 
-  // P0-4: Require authentication.
-  const auth = await verifyAuthenticated();
-  if ("error" in auth) {
-    return { success: false, message: auth.error };
-  }
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const organizer = await isSessionOrganizer(user.id, sessionId);
+  if (!organizer) return { success: false, message: "Organizer access required." };
 
   const supabase = createServiceClient();
-
   const { error } = await supabase.from("profiles").update({ pin: newPin }).eq("id", userId);
 
   if (error) {

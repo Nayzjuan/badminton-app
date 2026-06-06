@@ -400,6 +400,33 @@ export async function seedSession(
     };
   }
 
+  // ── Verify all profiles exist before inserting queue entries ─
+  // When deleteUser fails in a previous teardown, the old email stays taken.
+  // createUser then returns a NEW UUID, but the profile upsert may silently
+  // no-op if a constraint collision exists, leaving the new UUID without a
+  // profile row — causing a FK violation on queue_entries.player_id.
+  // We verify each profile exists and retry the upsert once if needed.
+  const allUserIds = playerDefs.map((d) => bots[d.key].userId);
+  const { data: existingProfiles } = await db.from("profiles").select("id").in("id", allUserIds);
+  const existingIds = new Set((existingProfiles ?? []).map((p) => p.id));
+  for (const def of playerDefs) {
+    const uid = bots[def.key].userId;
+    if (!existingIds.has(uid)) {
+      // Profile missing — upsert it. Using onConflict:"id" handles the race
+      // where the auth trigger fires between our SELECT and this write, creating
+      // the profile in the interim. Insert would PK-collide; upsert handles it.
+      const { error: upsertErr } = await db
+        .from("profiles")
+        .upsert(
+          { id: uid, display_name: def.name, skill_level: def.skill, pin: "1234" },
+          { onConflict: "id" }
+        );
+      if (upsertErr) {
+        throw new Error(`[seed] Force-upsert profile failed for ${def.name}: ${upsertErr.message}`);
+      }
+    }
+  }
+
   // ── Create courts ─────────────────────────────────────────
   const courtInserts = [
     { session_id: sessionId, name: "Court 1", status: "available" as const },

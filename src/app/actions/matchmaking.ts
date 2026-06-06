@@ -33,9 +33,11 @@
 //     fetchPartnershipCounts, fetchRecentRosters, executeMatch).
 // ============================================================
 
+import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastCapSaturation } from "@/lib/broadcast";
+import { pushToPlayers } from "@/lib/notifications/push-server";
 import {
   PLAYERS_PER_MATCH,
   RED_ZONE_SCORE_FLOOR,
@@ -320,20 +322,27 @@ async function runEngineInternal(
   //   the cap would block fresh draft generation while reviewed matches wait
   //   to be called to courts. The cap is a REVIEW QUEUE cap, not a total
   //   on-deck cap.
-  const [{ data: waitingRows, error: waitErr }, { count: draftCountRaw, error: draftErr }] =
-    await Promise.all([
-      supabase
-        .from("v_queue_with_wait_time")
-        .select("wait_minutes")
-        .eq("session_id", sessionId)
-        .eq("status", "waiting"),
-      supabase
-        .from("matches")
-        .select("id", { count: "exact", head: true })
-        .eq("session_id", sessionId)
-        .eq("status", "pending")
-        .eq("is_published", false),
-    ]);
+  const [
+    { data: waitingRows, error: waitErr },
+    { count: draftCountRaw, error: draftErr },
+    { data: sessionRow, error: sessionErr },
+  ] = await Promise.all([
+    supabase
+      .from("v_queue_with_wait_time")
+      .select("wait_minutes")
+      .eq("session_id", sessionId)
+      .eq("status", "waiting"),
+    supabase
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", sessionId)
+      .eq("status", "pending")
+      .eq("is_published", false),
+    supabase.from("sessions").select("max_auto_drafts_override").eq("id", sessionId).single(),
+  ]);
+  if (sessionErr) {
+    console.warn(`[engine] runEngineInternal: session fetch failed — ${sessionErr.message}`);
+  }
 
   if (draftErr) {
     console.error(`[engine] runEngineInternal: draft count failed — ${draftErr.message}`);
@@ -346,16 +355,20 @@ async function runEngineInternal(
 
   const waitingCount = waitingRows?.length ?? 0;
   const dynamicCap = getDynamicDraftCap(waitingCount);
+  // Apply organizer override as a ceiling: min(override, dynamicCap).
+  // null override means "use dynamic cap as-is".
+  const override = sessionRow?.max_auto_drafts_override ?? null;
+  const effectiveCap = override != null ? Math.min(override, dynamicCap) : dynamicCap;
   const draftCount = draftCountRaw ?? 0;
-  const slotsAvailable = Math.max(0, dynamicCap - draftCount);
+  const slotsAvailable = Math.max(0, effectiveCap - draftCount);
 
   console.log(
     `[engine] runEngineInternal: courts=${courtCount} waiting=${waitingCount} ` +
-      `drafts=${draftCount} cap=${dynamicCap} slots=${slotsAvailable}`
+      `drafts=${draftCount} dynamic=${dynamicCap} effective=${effectiveCap} slots=${slotsAvailable}`
   );
   if (slotsAvailable <= 0) {
     console.log(
-      `[engine] runEngineInternal: draft cap reached (${draftCount}/${dynamicCap}) — skipping`
+      `[engine] runEngineInternal: draft cap reached (${draftCount}/${effectiveCap}) — skipping`
     );
     return;
   }
@@ -603,6 +616,12 @@ export async function promoteOnDeckMatchInternal(
   }
 
   const playerIds = (matchPlayers ?? []).map((mp) => mp.player_id);
+
+  // Court call: ping every player on this match (OS-level notification for
+  // backgrounded/locked phones). Fired after the response flushes so it
+  // never delays or fails the promotion. pushToPlayers no-ops on empty.
+  after(() => pushToPlayers(playerIds, "COURT_CALL"));
+
   const { data: profiles } = await supabase
     .from("profiles")
     .select("id, display_name")

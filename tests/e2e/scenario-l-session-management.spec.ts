@@ -140,6 +140,8 @@ test.describe("Session Management — [L-2] Auto-matchmaking toggle", () => {
         .toBe(true);
 
       // ── Toggle OFF ───────────────────────────────────────────
+      // Toggle confirmation toast is positioned bottom-right so it no longer
+      // overlaps the header button.
       await toggleBtn.click();
       await expect(toggleBtn).toHaveText(/auto off/i, { timeout: 10_000 });
 

@@ -31,8 +31,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
+import { closeSession, toggleAutoMatchmaking, setCapAndClearDrafts } from "@/app/actions/sessions";
+import { runEngineForSession } from "@/app/actions/matchmaking";
+import { broadcastDraftCapPhase } from "@/lib/broadcast";
 import { joinQueueAction } from "@/app/actions/queue";
+import type { CapPhase } from "@/hooks/use-organizer-session";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -56,6 +59,8 @@ export interface UseOrganizerDashboardParams {
   draftCount: number;
   /** from useSwapState — wired to the Esc key */
   handleCancelSwap: () => void;
+  /** Phase received from a co-organizer's cap-change broadcast. */
+  externalCapPhase?: CapPhase;
 }
 
 export interface UseOrganizerDashboardResult {
@@ -87,6 +92,11 @@ export interface UseOrganizerDashboardResult {
   togglingAuto: boolean;
   handleToggleAuto: () => Promise<void>;
 
+  // Draft cap override
+  capPhase: CapPhase;
+  isDashboardLocked: boolean;
+  handleCapChange: (cap: number | null) => Promise<void>;
+
   // Organizer self-join
   joinQueue: () => Promise<void>;
 
@@ -111,6 +121,7 @@ export function useOrganizerDashboard({
   bottleneckCount,
   draftCount,
   handleCancelSwap,
+  externalCapPhase = null,
 }: UseOrganizerDashboardParams): UseOrganizerDashboardResult {
   const router = useRouter();
   const isClosed = !sessionIsActive;
@@ -195,52 +206,117 @@ export function useOrganizerDashboard({
 
   const handleCloseSession = useCallback(async () => {
     setClosing(true);
-    const result = await closeSession(sessionId);
-    if (result.success) {
-      router.push("/organizer");
-    } else {
+    try {
+      const result = await closeSession(sessionId);
+      if (result.success) {
+        router.push("/organizer");
+      } else {
+        toast.error(result.message ?? "Failed to close session.");
+      }
+    } catch (err) {
+      console.error("[handleCloseSession] unexpected throw:", err);
+      toast.error("Failed to close session. Please try again.");
+    } finally {
       setClosing(false);
-      toast.error(result.message ?? "Failed to close session.");
     }
   }, [sessionId, router]);
 
   const handleToggleAuto = useCallback(async () => {
     setTogglingAuto(true);
     setPendingAuto(!liveAutoMatchmaking); // optimistic
-    const result = await toggleAutoMatchmaking(sessionId);
-    if (result.success) {
-      // Hold the server-confirmed value as authoritative until the broadcast
-      // updates liveAutoMatchmaking. This prevents the toggle from flickering
-      // while waiting for the realtime broadcast to arrive.
-      setPendingAuto(result.isOn);
-      // Confirm the new state to the organizer — they need to know the server agreed.
-      if (result.isOn) {
-        toast.success("Engine running", {
-          description: "Auto-matchmaking is ON — drafts will appear as courts open.",
-          duration: 4000,
-        });
+    try {
+      const result = await toggleAutoMatchmaking(sessionId);
+      if (result.success) {
+        // Hold the server-confirmed value as authoritative until the broadcast
+        // updates liveAutoMatchmaking. This prevents the toggle from flickering
+        // while waiting for the realtime broadcast to arrive.
+        setPendingAuto(result.isOn);
+        if (result.isOn) {
+          toast.success("Engine running", {
+            description: "Auto-matchmaking is ON — drafts will appear as courts open.",
+            // Position bottom-right so the toast never overlaps the header
+            // toggle button (which sits at top-center behind the default toaster).
+            position: "bottom-right",
+            duration: 3_000,
+          });
+        } else {
+          toast("Engine paused", {
+            description: "Auto-matchmaking is OFF — create matches manually.",
+            position: "bottom-right",
+            duration: 3_000,
+          });
+        }
       } else {
-        toast("Engine paused", {
-          description: "Auto-matchmaking is OFF — create matches manually.",
-          duration: 4000,
-        });
+        setPendingAuto(null);
+        toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
       }
-    } else {
-      // Revert to liveAutoMatchmaking value on failure.
+    } catch (err) {
+      console.error("[handleToggleAuto] unexpected throw:", err);
       setPendingAuto(null);
-    }
-    setTogglingAuto(false);
-    if (!result.success) {
-      toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
+      toast.error("Failed to toggle auto-matchmaking. Please try again.");
+    } finally {
+      setTogglingAuto(false);
     }
   }, [sessionId, liveAutoMatchmaking]);
 
   const joinQueue = useCallback(async () => {
-    const result = await joinQueueAction(sessionId);
-    if (result.error) {
-      toast.error(result.error);
+    try {
+      const result = await joinQueueAction(sessionId);
+      if (result.error) {
+        toast.error(result.error);
+      }
+    } catch (err) {
+      console.error("[joinQueue] unexpected throw:", err);
+      toast.error("Failed to join queue. Please try again.");
     }
   }, [sessionId]);
+
+  // ── Draft cap override ────────────────────────────────────
+  // Local capPhase tracks the phase when THIS organizer triggers the change.
+  // externalCapPhase tracks the phase when a CO-ORGANIZER triggers it.
+  // The effective phase shown in the UI is whichever is non-null.
+  const [localCapPhase, setLocalCapPhase] = useState<CapPhase>(null);
+  const capPhase: CapPhase = localCapPhase ?? externalCapPhase;
+  const isDashboardLocked = capPhase !== null;
+
+  const handleCapChange = useCallback(
+    async (cap: number | null) => {
+      // Phase 1: clear drafts + save cap.
+      setLocalCapPhase("clearing");
+      void broadcastDraftCapPhase(sessionId, "clearing", cap);
+
+      const clearResult = await setCapAndClearDrafts(sessionId, cap);
+
+      if (!clearResult.success) {
+        toast.error(clearResult.error ?? "Failed to reset drafts. Please try again.");
+        setLocalCapPhase(null);
+        void broadcastDraftCapPhase(sessionId, "done", cap);
+        return;
+      }
+
+      // Auto OFF — just saved the preference, no engine run needed.
+      if (!clearResult.autoIsOn) {
+        setLocalCapPhase(null);
+        void broadcastDraftCapPhase(sessionId, "done", cap);
+        return;
+      }
+
+      // Phase 2: regenerate drafts with the new effective cap.
+      setLocalCapPhase("generating");
+      void broadcastDraftCapPhase(sessionId, "generating", cap);
+
+      try {
+        await runEngineForSession(sessionId);
+      } catch (err) {
+        console.error("[handleCapChange] engine threw unexpectedly:", err);
+      } finally {
+        // Always unlock — whether engine succeeded, returned an error, or threw.
+        setLocalCapPhase(null);
+        void broadcastDraftCapPhase(sessionId, "done", cap);
+      }
+    },
+    [sessionId]
+  );
 
   // ── Derived values ────────────────────────────────────────
 
@@ -289,6 +365,9 @@ export function useOrganizerDashboard({
     autoMatchmaking,
     togglingAuto,
     handleToggleAuto,
+    capPhase,
+    isDashboardLocked,
+    handleCapChange,
     joinQueue,
     isClosed,
   };

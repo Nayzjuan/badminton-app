@@ -53,17 +53,16 @@ const rpcs = [
 <BaseLayout title="Database" description="Interactive schema explorer for all tables, enums, views, and RPCs.">
   <PageHeader
     title="Database Schema Explorer"
-    subtitle="All 9 tables, 6 enums, 5 views, and 13 Postgres RPCs. Interactive ER diagram and FK overlays coming in Phase 2."
-    phase={2}
-    phaseStatus="next"
+    subtitle="Every table, enum, view, and Postgres RPC. For live schema verification see Schema Drift (TS types vs the real DB) and RLS Policies — both sourced from a live Supabase snapshot."
+    phaseStatus="live"
   />
 
   <div class="px-8 py-8 space-y-10">
 
     <!-- Tables -->
     <section id="tables" class="scroll-mt-6">
-      <h2 class="text-lg font-bold text-ink mb-1">Tables <span class="text-ink-3 font-normal text-base ml-1">9</span></h2>
-      <p class="text-sm text-ink-3 mb-4">Phase 2 will add a full ER diagram with FK arrows, trigger annotations, and RLS policy summaries per table.</p>
+      <h2 class="text-lg font-bold text-ink mb-1">Tables <span class="text-ink-3 font-normal text-base ml-1">{tables.length}</span></h2>
+      <p class="text-sm text-ink-3 mb-4">Per-table RLS policy summaries live on the <a href="/rls" class="text-accent hover:text-accent-hi underline underline-offset-2">RLS Policies</a> page; column-level type/DB parity is verified on <a href="/schema-drift" class="text-accent hover:text-accent-hi underline underline-offset-2">Schema Drift</a>.</p>
       <div class="dt-card">
         <table class="dt-table">
           <thead>

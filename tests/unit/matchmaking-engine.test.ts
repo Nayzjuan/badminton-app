@@ -45,6 +45,14 @@ vi.mock("@/utils/supabase/server", () => ({
 vi.mock("@/utils/supabase/service", () => ({
   createServiceClient: vi.fn(),
 }));
+// after() (used for fire-and-forget push) runs synchronously in tests.
+vi.mock("next/server", () => ({
+  after: (cb: () => unknown) => cb(),
+}));
+// Push delivery is out of scope here — stub it so the after() callback no-ops.
+vi.mock("@/lib/notifications/push-server", () => ({
+  pushToPlayers: vi.fn().mockResolvedValue({ sent: 0, errors: 0 }),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
@@ -404,20 +412,27 @@ describe("runEngineForSession", () => {
   });
 
   it("stops filling when on-deck is already at capacity", async () => {
-    // Promise.all([v_queue_with_wait_time, matches]) runs after courts.
+    // Promise.all([v_queue_with_wait_time, matches, sessions]) runs after courts.
     // waitingCount=0 → dynamicCap=3. draftCount=3 → slotsAvailable=0 → skipping.
     const mock = makeMockClient([
-      { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
+      { data: { is_auto_matchmaking_on: true }, error: null }, // sessions (toggle)
       { data: [{ id: "c1" }, { id: "c2" }], error: null }, // courts (2)
       { data: [], error: null }, // v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 3, data: null, error: null }, // matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      { data: { max_auto_drafts_override: null }, error: null }, // sessions override (Promise.all[2])
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
-    // Engine exits after parallel waiting+draft fetch: no queue/algorithm queries fired
-    expect(mock.queriedTables).toEqual(["sessions", "courts", "v_queue_with_wait_time", "matches"]);
+    // Engine exits after parallel waiting+draft+session fetch: no queue/algorithm queries fired
+    expect(mock.queriedTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+      "sessions",
+    ]);
   });
 
   it("returns gracefully when the session DB read fails", async () => {
@@ -473,16 +488,17 @@ describe("runEngineForSession", () => {
 
     const mock = makeMockClient(
       [
-        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
-        { data: fourPlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10 → gateTimedOut → releases (estimatedWaiting=4) (Promise.all[0])
+        { data: fourPlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10 → gateTimedOut (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
-        { data: [], error: null }, // [4] fetchRecentRosters: recent matches → []
+        { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
+        { data: [], error: null }, // [5] fetchRecentRosters: recent matches → []
         // (match_players not queried since recentMatchIds is empty)
-        { data: fourPlayers, error: null }, // [5] runAlgorithm: v_queue_with_wait_time → 4 players
-        { data: [], error: null }, // [6] queue_entries paused → []
-        { data: [], error: null }, // [7] fetchPartnershipCounts: matches (no prior session matches → empty map)
-        // [8] buildOverlapMap step 1: match_players → beyond array → undefined fallback
+        { data: fourPlayers, error: null }, // [6] runAlgorithm: v_queue_with_wait_time → 4 players
+        { data: [], error: null }, // [7] queue_entries paused → []
+        { data: [], error: null }, // [8] fetchPartnershipCounts: matches (no prior session matches → empty map)
+        // [9] buildOverlapMap step 1: match_players → beyond array → undefined fallback
         //     → anchorRows=null → early return; empty overlapMap
         // rpc fails → loop breaks (slot 1 never reached — estimatedWaiting=4 < MIN_POOL=8)
       ],
@@ -598,15 +614,16 @@ describe("runEngineForSession", () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const mock = makeMockClient([
-      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
       { data: [{ id: "c1" }], error: null }, // [1] courts (1)
-      { data: threePlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10≥8 → gateTimedOut=true → releases (estimatedWaiting=3) (Promise.all[0])
+      { data: threePlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10≥8 → gateTimedOut=true (Promise.all[0])
       { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=2 (Promise.all[1])
-      { data: [], error: null }, // [4] fetchRecentRosters: matches → [] (no recent matches → no step 2)
-      { data: threePlayers, error: null }, // [5] fetchActivePool: v_queue_with_wait_time
-      { data: [], error: null }, // [6] fetchActivePool: paused filter
-      { data: matchRows, error: null }, // [7] fetchPartnershipCounts step 1: match IDs
-      { data: mpRows, error: null }, // [8] fetchPartnershipCounts step 2: match_players rows
+      { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
+      { data: [], error: null }, // [5] fetchRecentRosters: matches → [] (no recent matches → no step 2)
+      { data: threePlayers, error: null }, // [6] fetchActivePool: v_queue_with_wait_time
+      { data: [], error: null }, // [7] fetchActivePool: paused filter
+      { data: matchRows, error: null }, // [8] fetchPartnershipCounts step 1: match IDs
+      { data: mpRows, error: null }, // [9] fetchPartnershipCounts step 2: match_players rows
       // buildOverlapMap step 1: beyond array → default {data:null} → early return → empty overlapMap
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
@@ -648,19 +665,17 @@ describe("runEngineForSession", () => {
     }));
 
     const mock2 = makeMockClient([
-      { data: { is_auto_matchmaking_on: true }, error: null }, // sessions
-      { data: [{ id: "c1" }], error: null }, // courts (1)
-      { data: eightExtremes, error: null }, // v_queue_with_wait_time: 8 players (8 > GATE_POOL_THRESHOLD=4 → gate not triggered; estimatedWaiting=8) (Promise.all[0])
-      { count: 0, data: null, error: null }, // matches draft count=0 → slotsAvailable=2 (Promise.all[1])
-      { data: [], error: null }, // fetchRecentRosters
-      { data: eightExtremes, error: null }, // fetchActivePool: pool=8
-      { data: [], error: null }, // paused filter
-      { data: [], error: null }, // fetchPartnershipCounts step 1 → no matches → empty counts
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
+      { data: [{ id: "c1" }], error: null }, // [1] courts (1)
+      { data: eightExtremes, error: null }, // [2] v_queue_with_wait_time: 8 players (Promise.all[0])
+      { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=2 (Promise.all[1])
+      { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
+      { data: [], error: null }, // [5] fetchRecentRosters
+      { data: eightExtremes, error: null }, // [6] fetchActivePool: pool=8
+      { data: [], error: null }, // [7] paused filter
+      { data: [], error: null }, // [8] fetchPartnershipCounts step 1 → no matches → empty counts
       // buildOverlapMap → beyond array → empty map
-      // runAlgorithm: anchor skill=1, candidates skill=9 → |9-1|=8 > max Red Zone window(4, only if Red Zone)
-      // anchor wait_minutes=8 < CRITICAL_WAIT_MINUTES=25 → not Red Zone → windows=[1,2]
-      // ±1: no candidates (|9-1|=8 > 1), ±2: no candidates → no match
-      // fallback: 8 > 15? No → no fallback
+      // runAlgorithm: anchor skill=1, candidates skill=9 → |9-1|=8 > max Red Zone window(4)
       // → { proposal: null, capSaturation: false } → console.error logged
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock2 as never);
@@ -701,15 +716,16 @@ describe("runEngineForSession", () => {
 
     const mock = makeMockClient(
       [
-        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
-        { data: eightPlayers, error: null }, // [2] v_queue_with_wait_time (estimatedWaiting=8; soft gate: 8>4 not triggered) (Promise.all[0])
+        { data: eightPlayers, error: null }, // [2] v_queue_with_wait_time (estimatedWaiting=8) (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
-        { data: [], error: null }, // [4] fetchRecentRosters: recent matches → []
-        { data: eightPlayers, error: null }, // [5] fetchActivePool: v_queue_with_wait_time → 8 players
-        { data: [], error: null }, // [6] fetchActivePool: queue_entries paused → []
-        { data: [], error: null }, // [7] fetchPartnershipCounts: matches → [] (no prior matches → empty map)
-        // [8] buildOverlapMap step 1: match_players → beyond array → default fallback → empty overlapMap
+        { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
+        { data: [], error: null }, // [5] fetchRecentRosters: recent matches → []
+        { data: eightPlayers, error: null }, // [6] fetchActivePool: v_queue_with_wait_time → 8 players
+        { data: [], error: null }, // [7] fetchActivePool: queue_entries paused → []
+        { data: [], error: null }, // [8] fetchPartnershipCounts: matches → [] (no prior matches → empty map)
+        // [9] buildOverlapMap step 1: match_players → beyond array → default fallback → empty overlapMap
         // runAlgorithm → proposal → rpc succeeds → estimatedWaiting=8-4=4
         // slot 1: estimatedWaiting(4) < MIN_POOL(8) → cap fires → break
       ],
@@ -742,6 +758,56 @@ describe("getDynamicDraftCap", () => {
     [100, 6], // well above xlarge threshold
   ])("waitingCount=%i → cap=%i", (waitingCount, expected) => {
     expect(getDynamicDraftCap(waitingCount)).toBe(expected);
+  });
+});
+
+// ── Override cap applied as ceiling ──────────────────────────
+// EO-1  max_auto_drafts_override=2 with dynamic=3 → slotsAvailable=max(0,2-draftCount)
+// EO-2  max_auto_drafts_override=5 with dynamic=3 → dynamic wins → effectiveCap=3
+
+describe("runEngineForSession — max_auto_drafts_override ceiling", () => {
+  it("EO-1: override=2 with dynamic=3 → effectiveCap=2, engine stops at 2 drafts", async () => {
+    // waitingCount=0 → dynamicCap=3. Override=2 → effectiveCap=min(2,3)=2.
+    // draftCount=2 → slotsAvailable=max(0,2-2)=0 → engine exits immediately.
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
+      { data: [{ id: "c1" }], error: null }, // [1] courts (1)
+      { data: [], error: null }, // [2] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 2, data: null, error: null }, // [3] matches draft count=2 (Promise.all[1])
+      { data: { max_auto_drafts_override: 2 }, error: null }, // [4] sessions override=2 (Promise.all[2])
+      // effectiveCap=min(2,3)=2; slotsAvailable=max(0,2-2)=0 → skip
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await runEngineForSession(SESSION_ID);
+
+    // Engine must have stopped without attempting any match creation
+    expect(mock.rpc).not.toHaveBeenCalled();
+    // Only 5 tables queried: sessions, courts, v_queue, matches, sessions
+    expect(mock.queriedTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+      "sessions",
+    ]);
+  });
+
+  it("EO-2: override=5 with dynamic=3 (small pool) → effectiveCap=3, dynamic wins", async () => {
+    // waitingCount=0 → dynamicCap=3. Override=5 → effectiveCap=min(5,3)=3.
+    // draftCount=3 → slotsAvailable=max(0,3-3)=0 → engine exits immediately.
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null },
+      { data: [{ id: "c1" }], error: null },
+      { data: [], error: null },
+      { count: 3, data: null, error: null },
+      { data: { max_auto_drafts_override: 5 }, error: null }, // override=5 but dynamic=3 wins
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await runEngineForSession(SESSION_ID);
+
+    expect(mock.rpc).not.toHaveBeenCalled();
   });
 });
 
@@ -823,6 +889,7 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null }, // [7] courts → engine proceeds
       { data: [], error: null }, // [8] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 3, data: null, error: null }, // [9] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      { data: { max_auto_drafts_override: null }, error: null }, // [10] sessions override (Promise.all[2])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -831,13 +898,14 @@ describe("callNextMatch", () => {
 
     // [6] must be "sessions" — confirms runEngineForSession (not runEngineInternal) was called.
     expect(serviceMock.queriedTables[6]).toBe("sessions");
-    // Post-promotion sequence: sessions (toggle) → courts → v_queue → matches.
+    // Post-promotion sequence: sessions (toggle) → courts → v_queue → matches → sessions (override).
     const postPromotionTables = serviceMock.queriedTables.slice(6);
     expect(postPromotionTables).toEqual([
       "sessions",
       "courts",
       "v_queue_with_wait_time",
       "matches",
+      "sessions",
     ]);
   });
 
@@ -878,11 +946,12 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
       { data: [], error: null }, // [5] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 2, data: null, error: null }, // [6] runEngine: matches draft count=2 → slotsAvailable=1 (Promise.all[1])
-      { data: [], error: null }, // [7] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [8] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
-      { data: [], error: null }, // [9] fetchActivePool: queue_entries paused → []
-      { data: [], error: null }, // [10] promote 2: no published pending
-      { count: 2, data: null, error: null }, // [11] promote 2: 2 drafts → hasDraftsBlocking
+      { data: { max_auto_drafts_override: null }, error: null }, // [7] runEngine: sessions override (Promise.all[2])
+      { data: [], error: null }, // [8] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [9] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
+      { data: [], error: null }, // [10] fetchActivePool: queue_entries paused → []
+      { data: [], error: null }, // [11] promote 2: no published pending
+      { count: 2, data: null, error: null }, // [12] promote 2: 2 drafts → hasDraftsBlocking
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -911,11 +980,12 @@ describe("callNextMatch", () => {
       { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
       { data: [], error: null }, // [5] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 0, data: null, error: null }, // [6] runEngine: matches draft count=0 → slotsAvailable=3 (Promise.all[1])
-      { data: [], error: null }, // [7] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [8] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
-      { data: [], error: null }, // [9] fetchActivePool: queue_entries paused → []
-      { data: [], error: null }, // [10] promote 2: still no pending
-      { count: 0, data: null, error: null }, // [11] promote 2: 0 drafts
+      { data: { max_auto_drafts_override: null }, error: null }, // [7] runEngine: sessions override (Promise.all[2])
+      { data: [], error: null }, // [8] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [9] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
+      { data: [], error: null }, // [10] fetchActivePool: queue_entries paused → []
+      { data: [], error: null }, // [11] promote 2: still no pending
+      { count: 0, data: null, error: null }, // [12] promote 2: 0 drafts
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);

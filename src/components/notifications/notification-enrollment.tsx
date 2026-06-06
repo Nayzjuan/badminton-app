@@ -26,6 +26,7 @@ import {
   markPromptDismissed,
   subscribeAndPersist,
 } from "@/lib/notifications/push-client";
+import { isIOS, isStandalone } from "@/lib/pwa/install-detection";
 
 interface NotificationEnrollmentProps {
   /** The authenticated user's ID — required to persist the subscription. */
@@ -39,6 +40,12 @@ export function NotificationEnrollment({ userId }: NotificationEnrollmentProps) 
 
   // ── Mount: decide whether to show the prompt ──────────────
   useEffect(() => {
+    // iOS in a Safari TAB can't enroll — Web Push needs an installed PWA.
+    // Suppress the "Enable Pings" prompt there; InstallPrompt shows the
+    // Add-to-Home-Screen hint instead. Once installed (standalone), we fall
+    // through and enroll normally.
+    if (isIOS() && !isStandalone()) return;
+
     // SSR / no push support → never show
     if (!isPushSupported()) return;
 
@@ -92,15 +99,11 @@ export function NotificationEnrollment({ userId }: NotificationEnrollmentProps) 
   // ── Post-permission feedback ─────────────────────────────
 
   if (state === "granted") {
-    return (
-      <GrantedBanner onClose={() => setState("dismissed")} />
-    );
+    return <GrantedBanner onClose={() => setState("dismissed")} />;
   }
 
   if (state === "denied") {
-    return (
-      <DeniedBanner onClose={() => setState("dismissed")} />
-    );
+    return <DeniedBanner onClose={() => setState("dismissed")} />;
   }
 
   // ── Soft prompt card ─────────────────────────────────────
@@ -137,7 +140,8 @@ export function NotificationEnrollment({ userId }: NotificationEnrollmentProps) 
               Enable Pocket Pings 🏸
             </p>
             <p className="mt-0.5 text-xs text-slate-500 dark:text-muted-foreground leading-relaxed">
-              Get notified when your match is ready — even if your screen is off or you&apos;re chatting with friends.
+              Get notified when your match is ready — even if your screen is off or you&apos;re
+              chatting with friends.
             </p>
           </div>
 
@@ -207,7 +211,8 @@ function GrantedBanner({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   return (
-    <div className="
+    <div
+      className="
       fixed bottom-4 left-1/2 -translate-x-1/2 z-50
       w-[calc(100vw-2rem)] max-w-sm
       flex items-center gap-3
@@ -215,7 +220,8 @@ function GrantedBanner({ onClose }: { onClose: () => void }) {
       border border-emerald-200 dark:border-emerald-800
       px-4 py-3 shadow-lg
       animate-in slide-in-from-bottom-4 fade-in duration-300
-    ">
+    "
+    >
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/50">
         <Bell className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
       </div>
@@ -241,7 +247,8 @@ function DeniedBanner({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   return (
-    <div className="
+    <div
+      className="
       fixed bottom-4 left-1/2 -translate-x-1/2 z-50
       w-[calc(100vw-2rem)] max-w-sm
       flex items-center gap-3
@@ -249,18 +256,15 @@ function DeniedBanner({ onClose }: { onClose: () => void }) {
       border border-slate-200 dark:border-border
       px-4 py-3 shadow-lg
       animate-in slide-in-from-bottom-4 fade-in duration-300
-    ">
+    "
+    >
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 dark:bg-muted">
         <BellOff className="h-4 w-4 text-slate-500 dark:text-muted-foreground" />
       </div>
       <p className="text-xs text-slate-500 dark:text-muted-foreground flex-1">
         No worries — you can always enable notifications later in your browser settings.
       </p>
-      <button
-        onClick={onClose}
-        aria-label="Close"
-        className="text-slate-400 hover:text-slate-600"
-      >
+      <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-600">
         <X className="h-4 w-4" />
       </button>
     </div>

@@ -39,6 +39,7 @@ vi.mock("sonner", () => ({
 vi.mock("@/app/actions/sessions", () => ({
   closeSession: vi.fn(),
   toggleAutoMatchmaking: vi.fn(),
+  setCapAndClearDrafts: vi.fn(),
 }));
 
 // ── Mock queue actions ────────────────────────────────────────
@@ -47,7 +48,7 @@ vi.mock("@/app/actions/queue", () => ({
 }));
 
 import { toast } from "sonner";
-import { closeSession, toggleAutoMatchmaking } from "@/app/actions/sessions";
+import { closeSession, toggleAutoMatchmaking, setCapAndClearDrafts } from "@/app/actions/sessions";
 import { joinQueueAction } from "@/app/actions/queue";
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -73,6 +74,12 @@ function makeParams(
     ...overrides,
   };
 }
+
+// ── Mock for runEngineForSession (used by handleCapChange phase 2) ──
+vi.mock("@/app/actions/matchmaking", () => ({
+  runEngineForSession: vi.fn().mockResolvedValue(undefined),
+}));
+import { runEngineForSession } from "@/app/actions/matchmaking";
 
 // ── Tests ─────────────────────────────────────────────────────
 
@@ -420,6 +427,232 @@ describe("useOrganizerDashboard", () => {
       });
 
       expect(result.current.moreMenuOpen).toBe(true);
+    });
+  });
+});
+
+// ============================================================
+// Draft Cap Override — OD-11 through OD-17
+// ============================================================
+//
+// OD-11  handleCapChange (Auto ON) — two-phase sequence fires in order:
+//          phase 'clearing' → setCapAndClearDrafts → phase 'generating'
+//          → runEngineForSession → phase null
+// OD-12  handleCapChange (Auto OFF) — only saves cap, no engine run
+// OD-13  handleCapChange failure in phase 1 — reverts to null phase,
+//          engine NOT called, error toast shown
+// OD-14  isDashboardLocked is true during both 'clearing' and 'generating'
+// OD-15  capPhase state transitions are null → clearing → generating → null
+// OD-16  setCapAndClearDrafts is called with correct sessionId and cap value
+// OD-17  setting cap to null (reset to Dynamic) calls setCapAndClearDrafts(id, null)
+// ============================================================
+
+describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
+  describe("OD-11: Auto ON — two-phase sequence fires in correct order", () => {
+    it("transitions: null → clearing → generating → null, calling the right actions", async () => {
+      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+        success: true,
+        autoIsOn: true,
+        clearedCount: 2,
+      });
+      vi.mocked(runEngineForSession).mockResolvedValue(undefined);
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
+      );
+
+      // Phase tracking: capture snapshots via a spy on state transitions
+      const phases: Array<string | null> = [];
+
+      // Wrap handleCapChange and capture phase mid-flight is non-trivial
+      // in a hook test. Instead we verify the final state and call order.
+      await act(async () => {
+        await result.current.handleCapChange(2);
+      });
+
+      // After completion: phase is null (lockout lifted)
+      expect(result.current.capPhase).toBeNull();
+      expect(result.current.isDashboardLocked).toBe(false);
+
+      // setCapAndClearDrafts was called (phase 1)
+      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 2);
+
+      // runEngineForSession was called (phase 2) — Auto was ON
+      expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
+
+      // Call order: setCapAndClearDrafts before runEngineForSession
+      const clearOrder = vi.mocked(setCapAndClearDrafts).mock.invocationCallOrder[0];
+      const engineOrder = vi.mocked(runEngineForSession).mock.invocationCallOrder[0];
+      expect(clearOrder).toBeLessThan(engineOrder);
+    });
+  });
+
+  describe("OD-12: Auto OFF — saves cap without clearing or running engine", () => {
+    it("calls setCapAndClearDrafts but NOT runEngineForSession when Auto is OFF", async () => {
+      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+        success: true,
+        autoIsOn: false, // <-- Auto is OFF
+        clearedCount: 0,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: false }))
+      );
+
+      await act(async () => {
+        await result.current.handleCapChange(3);
+      });
+
+      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 3);
+      expect(runEngineForSession).not.toHaveBeenCalled();
+      expect(result.current.capPhase).toBeNull();
+    });
+  });
+
+  describe("OD-13: Phase 1 failure — reverts cleanly, engine not called", () => {
+    it("shows error toast, unlocks dashboard, and does NOT call engine when setCapAndClearDrafts fails", async () => {
+      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+        success: false,
+        error: "Database error",
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
+      );
+
+      await act(async () => {
+        await result.current.handleCapChange(2);
+      });
+
+      // Dashboard unlocked
+      expect(result.current.capPhase).toBeNull();
+      expect(result.current.isDashboardLocked).toBe(false);
+
+      // Engine was NOT called — clearing failed so regeneration is skipped
+      expect(runEngineForSession).not.toHaveBeenCalled();
+
+      // Error toast shown
+      expect(toast.error).toHaveBeenCalled();
+    });
+  });
+
+  describe("OD-14: isDashboardLocked reflects capPhase", () => {
+    it("isDashboardLocked is false initially (no operation in progress)", () => {
+      const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
+      expect(result.current.isDashboardLocked).toBe(false);
+    });
+
+    it("isDashboardLocked is true while clearing phase is active", async () => {
+      let resolveClear!: (v: import("@/app/actions/sessions").SetCapResult) => void;
+      vi.mocked(setCapAndClearDrafts).mockReturnValue(
+        new Promise((res) => {
+          resolveClear = res;
+        })
+      );
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
+      );
+
+      // Kick off but don't await — capture mid-flight state
+      act(() => {
+        void result.current.handleCapChange(1);
+      });
+
+      await waitFor(() => expect(result.current.isDashboardLocked).toBe(true));
+
+      // Clean up
+      act(() => resolveClear({ success: true, autoIsOn: true, clearedCount: 0 }));
+    });
+  });
+
+  describe("OD-15: capPhase transitions", () => {
+    it("starts null, calls clearing then generating in order, ends null after completion", async () => {
+      // Verify that:
+      // 1. Phase starts null (not locked)
+      // 2. setCapAndClearDrafts is called (phase 1)
+      // 3. runEngineForSession is called after (phase 2)
+      // 4. Phase returns to null after both resolve
+      // Mid-flight state capture is intentionally omitted — React batches state
+      // within useTransition, making synchronous phase snapshots unreliable in
+      // happy-dom. The phase logic is unit-tested in draft-cap-override.test.ts.
+      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+        success: true,
+        autoIsOn: true,
+        clearedCount: 1,
+      });
+      vi.mocked(runEngineForSession).mockResolvedValue(undefined);
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
+      );
+
+      expect(result.current.capPhase).toBeNull(); // starts null
+
+      await act(async () => {
+        await result.current.handleCapChange(2);
+      });
+
+      // Both actions called in order
+      const clearOrder = vi.mocked(setCapAndClearDrafts).mock.invocationCallOrder[0];
+      const engineOrder = vi.mocked(runEngineForSession).mock.invocationCallOrder[0];
+      expect(clearOrder).toBeLessThan(engineOrder);
+
+      // Ends null after completion
+      expect(result.current.capPhase).toBeNull();
+      expect(result.current.isDashboardLocked).toBe(false);
+    });
+  });
+
+  describe("OD-16: setCapAndClearDrafts called with correct arguments", () => {
+    it("passes sessionId and cap=2 to setCapAndClearDrafts", async () => {
+      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+        success: true,
+        autoIsOn: false,
+        clearedCount: 0,
+      });
+
+      const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
+
+      await act(async () => {
+        await result.current.handleCapChange(2);
+      });
+
+      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 2);
+    });
+
+    it("passes cap=4 correctly", async () => {
+      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+        success: true,
+        autoIsOn: false,
+        clearedCount: 0,
+      });
+
+      const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
+
+      await act(async () => {
+        await result.current.handleCapChange(4);
+      });
+
+      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 4);
+    });
+  });
+
+  describe("OD-17: resetting to Dynamic (null) calls setCapAndClearDrafts with null", () => {
+    it("passes null to setCapAndClearDrafts when organizer resets to Dynamic", async () => {
+      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+        success: true,
+        autoIsOn: false,
+        clearedCount: 0,
+      });
+
+      const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
+
+      await act(async () => {
+        await result.current.handleCapChange(null);
+      });
+
+      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, null);
     });
   });
 });

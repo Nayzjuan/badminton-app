@@ -1,0 +1,218 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import PageHeader from '../components/PageHeader.astro';
+import manifest from '../data/manifest.json';
+
+interface RlsPolicy {
+  table: string;
+  name: string;
+  cmd: string;
+  roles: string;
+  using: string | null;
+  withCheck: string | null;
+}
+
+const policies = manifest.rlsPolicies as RlsPolicy[];
+const capturedAt = manifest.rlsCapturedAt as string;
+
+// ── cmd color metadata (mirrors glossary.astro severityMeta pattern) ──────
+type Cmd = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
+
+const cmdMeta: Record<Cmd, { bg: string; text: string; border: string }> = {
+  SELECT: {
+    bg:     'oklch(17% 0.025 245)',
+    text:   'oklch(68% 0.12 245)',
+    border: 'oklch(40% 0.08 245 / 0.5)',
+  },
+  INSERT: {
+    bg:     'oklch(18% 0.030 155)',
+    text:   'oklch(72% 0.16 155)',
+    border: 'oklch(42% 0.14 155 / 0.45)',
+  },
+  UPDATE: {
+    bg:     'oklch(20% 0.030 70)',
+    text:   'oklch(78% 0.16 70)',
+    border: 'oklch(50% 0.14 70 / 0.4)',
+  },
+  DELETE: {
+    bg:     'oklch(18% 0.030 22)',
+    text:   'oklch(70% 0.20 22)',
+    border: 'oklch(40% 0.18 22 / 0.4)',
+  },
+};
+
+const cmdOrder: Cmd[] = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
+
+function metaFor(cmd: string) {
+  return cmdMeta[(cmd as Cmd)] ?? cmdMeta.SELECT;
+}
+
+// ── Summary aggregates ────────────────────────────────────────────────────
+const totalPolicies = policies.length;
+const allTables = [...new Set(policies.map(p => p.table))].sort();
+const tablesCovered = allTables.length;
+
+const cmdCounts: Record<Cmd, number> = {
+  SELECT: policies.filter(p => p.cmd === 'SELECT').length,
+  INSERT: policies.filter(p => p.cmd === 'INSERT').length,
+  UPDATE: policies.filter(p => p.cmd === 'UPDATE').length,
+  DELETE: policies.filter(p => p.cmd === 'DELETE').length,
+};
+
+// ── Group policies by table (alpha sort), cmd-sort within each table ──────
+const cmdRank: Record<string, number> = { SELECT: 0, INSERT: 1, UPDATE: 2, DELETE: 3 };
+const grouped = allTables.map(table => ({
+  table,
+  policies: policies
+    .filter(p => p.table === table)
+    .sort((a, b) => (cmdRank[a.cmd] ?? 9) - (cmdRank[b.cmd] ?? 9) || a.name.localeCompare(b.name)),
+}));
+
+// Draft-firewall highlight detection
+const firewallNames = ['matches_select', 'matches_select_draft_firewall'];
+const hasFirewall = policies.some(p => firewallNames.includes(p.name));
+function isFirewall(name: string) {
+  return firewallNames.includes(name);
+}
+---
+
+<BaseLayout
+  title="RLS Policies"
+  description={`${totalPolicies} Row-Level Security policies across ${tablesCovered} tables — a live snapshot from pg_policies captured ${capturedAt}.`}
+>
+  <PageHeader
+    title="RLS Policies"
+    subtitle={`${totalPolicies} Row-Level Security policies across ${tablesCovered} tables, grouped by table. Live snapshot from Postgres pg_policies captured ${capturedAt}. RLS is the app's #1 source of silent bugs — a missing or mismatched USING clause fails closed, returning zero rows with no error.`}
+    phaseStatus="live"
+  />
+
+  <div class="px-8 py-8 space-y-8" data-pagefind-body>
+
+    <!-- ── Summary strip ──────────────────────────────────────────────── -->
+    <section class="bg-surface border border-edge-dim rounded-xl p-5">
+      <div class="flex flex-wrap items-center gap-x-8 gap-y-4">
+        <!-- Total policies -->
+        <div class="flex flex-col">
+          <span class="text-2xl font-bold text-ink font-heading tracking-tight">{totalPolicies}</span>
+          <span class="text-[11px] text-ink-4 font-mono uppercase tracking-wide">policies</span>
+        </div>
+        <!-- Tables covered -->
+        <div class="flex flex-col">
+          <span class="text-2xl font-bold text-ink font-heading tracking-tight">{tablesCovered}</span>
+          <span class="text-[11px] text-ink-4 font-mono uppercase tracking-wide">tables covered</span>
+        </div>
+
+        <!-- cmd count chips -->
+        <div class="flex flex-wrap gap-2 ml-auto">
+          {cmdOrder.map(cmd => {
+            const m = cmdMeta[cmd];
+            return (
+              <div class="flex items-center gap-2">
+                <span
+                  class="text-[10px] font-mono font-bold px-2 py-0.5 rounded"
+                  style={`background:${m.bg};color:${m.text};border:1px solid ${m.border}`}
+                >{cmd}</span>
+                <span class="text-xs text-ink-3 font-mono">{cmdCounts[cmd]}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <p class="text-[11px] text-ink-4 font-mono mt-4 pt-4 border-t border-edge-dim">
+        Source: live <code class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">pg_policies</code> snapshot · captured <span class="text-ink-3">{capturedAt}</span>
+      </p>
+    </section>
+
+    <!-- ── #1 silent-bug warning note ─────────────────────────────────── -->
+    <section
+      class="rounded-xl p-5 border"
+      style={`background:${cmdMeta.DELETE.bg};border-color:${cmdMeta.DELETE.border}`}
+    >
+      <div class="flex items-start gap-3">
+        <span
+          class="text-[10px] font-mono font-bold px-2 py-0.5 rounded shrink-0 mt-0.5"
+          style={`background:oklch(22% 0.04 22);color:${cmdMeta.DELETE.text};border:1px solid ${cmdMeta.DELETE.border}`}
+        >#1 SILENT BUG</span>
+        <div class="min-w-0">
+          <p class="text-sm text-ink-2 leading-relaxed">
+            RLS is the app's single biggest source of <span class="font-semibold text-ink">silent</span> failures. A policy whose
+            <code class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">USING</code> clause doesn't match
+            simply returns <span class="font-semibold text-ink">zero rows</span> — no exception, no log, just empty data the UI renders as "nothing here."
+          </p>
+          {hasFirewall && (
+            <p class="text-xs text-ink-3 leading-relaxed mt-3">
+              The classic example is the <span class="font-semibold text-ink-2">draft firewall</span> on
+              <code class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">matches</code>:
+              <code class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">matches_select</code> and
+              <code class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">matches_select_draft_firewall</code>
+              hide <code class="font-mono text-xs text-ink-3 bg-base px-1.5 py-0.5 rounded border border-edge-dim">pending</code> /
+              unpublished draft matches from players while keeping them visible to organizers. Get this wrong and either drafts leak to players, or published matches vanish — both with no error. These two policies are flagged with a ring below.
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Policies grouped by table ──────────────────────────────────── -->
+    {grouped.map(group => (
+      <section class="scroll-mt-6">
+        <h2 class="text-lg font-semibold text-ink font-heading tracking-tight mb-3 flex items-baseline gap-2">
+          <code class="font-mono text-accent text-base">{group.table}</code>
+          <span class="text-ink-4 font-normal text-xs font-mono">
+            {group.policies.length} {group.policies.length === 1 ? 'policy' : 'policies'}
+          </span>
+        </h2>
+
+        <div class="space-y-3">
+          {group.policies.map(p => {
+            const m = metaFor(p.cmd);
+            const flagged = isFirewall(p.name);
+            return (
+              <div
+                class:list={['bg-surface border rounded-xl p-5', flagged ? 'border-edge-hi' : 'border-edge-dim']}
+                style={flagged
+                  ? `box-shadow:0 0 0 1px ${cmdMeta.DELETE.border}`
+                  : undefined}
+              >
+                <!-- header: cmd badge · name · roles -->
+                <div class="flex items-center gap-2.5 flex-wrap mb-3">
+                  <span
+                    class="text-[10px] font-mono font-bold px-2 py-0.5 rounded shrink-0"
+                    style={`background:${m.bg};color:${m.text};border:1px solid ${m.border}`}
+                  >{p.cmd}</span>
+
+                  <code class="font-mono text-sm text-ink-2 font-semibold min-w-0 break-all">{p.name}</code>
+
+                  {flagged && (
+                    <span
+                      class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded shrink-0 uppercase tracking-wide"
+                      style={`background:oklch(22% 0.04 22);color:${cmdMeta.DELETE.text};border:1px solid ${cmdMeta.DELETE.border}`}
+                    >draft firewall</span>
+                  )}
+
+                  <span class="text-[10px] font-mono text-ink-4 bg-raised border border-edge-dim px-2 py-0.5 rounded shrink-0 ml-auto">
+                    {p.roles}
+                  </span>
+                </div>
+
+                <!-- USING -->
+                <div class="mb-2">
+                  <div class="text-[10px] font-mono uppercase tracking-wide text-ink-4 mb-1">USING</div>
+                  <pre class="font-mono text-xs text-ink-3 bg-base px-3 py-2 rounded-lg border border-edge-dim overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">{p.using ?? '—'}</pre>
+                </div>
+
+                <!-- WITH CHECK -->
+                <div>
+                  <div class="text-[10px] font-mono uppercase tracking-wide text-ink-4 mb-1">WITH CHECK</div>
+                  <pre class="font-mono text-xs text-ink-3 bg-base px-3 py-2 rounded-lg border border-edge-dim overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">{p.withCheck ?? '—'}</pre>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    ))}
+
+  </div>
+</BaseLayout>

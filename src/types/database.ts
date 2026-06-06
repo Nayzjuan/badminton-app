@@ -92,6 +92,8 @@ export type Session = {
   is_active: boolean;
   is_auto_matchmaking_on: boolean; // organizer toggle — auto-fill courts on match completion
   court_time_limit_minutes: number | null; // per-session court time cap; null = no limit
+  /** Organizer cap on auto-draft generation. null = dynamic (3/5/6 by pool size). 1–5 = ceiling. */
+  max_auto_drafts_override: number | null;
   created_at: string;
   ended_at: string | null;
 };
@@ -255,6 +257,7 @@ export type SessionUpdate = Partial<
     | "is_active"
     | "is_auto_matchmaking_on"
     | "court_time_limit_minutes"
+    | "max_auto_drafts_override"
     | "ended_at"
     | "created_by"
   >
@@ -693,6 +696,54 @@ export type Database = {
           p_session_id: string;
         };
         Returns: void;
+      };
+      // ── Live match player swap (migration 20260601000000) ──
+      swap_player_in_active_match: {
+        Args: {
+          p_match_id: string;
+          p_out_player_id: string;
+          p_in_player_id: string;
+          p_session_id: string;
+          p_team: string;
+        };
+        Returns: void;
+      };
+      swap_teams_in_active_match: {
+        Args: {
+          p_match_id: string;
+          p_player_a_id: string;
+          p_player_b_id: string;
+        };
+        Returns: void;
+      };
+      swap_active_from_ondeck: {
+        Args: {
+          p_active_match_id: string;
+          p_out_player_id: string;
+          p_ondeck_player_id: string;
+          p_ondeck_match_id: string;
+          p_fill_player_id: string;
+          p_session_id: string;
+        };
+        Returns: { o_out_team: string; o_ondeck_team: string }[];
+      };
+      undo_swap_active_from_ondeck: {
+        Args: {
+          p_active_match_id: string;
+          p_out_player_id: string;
+          p_ondeck_player_id: string;
+          p_ondeck_match_id: string;
+          p_fill_player_id: string;
+          p_session_id: string;
+          p_out_team: string;
+          p_ondeck_team: string;
+        };
+        Returns: void;
+      };
+      // ── Draft cap override (migration 20260602000000) ──
+      clear_all_unpublished_drafts: {
+        Args: { p_session_id: string };
+        Returns: string[]; // array of player UUIDs returned to 'waiting'
       };
     };
     Enums: {

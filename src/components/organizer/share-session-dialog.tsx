@@ -7,7 +7,7 @@
 // and join the session without needing to navigate manually.
 // ============================================================
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Share2, Copy, Check } from "lucide-react";
 import {
@@ -27,22 +27,42 @@ interface ShareSessionDialogProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-export function ShareSessionDialog({ sessionId, sessionName, open, onOpenChange }: ShareSessionDialogProps) {
+export function ShareSessionDialog({
+  sessionId,
+  sessionName,
+  open,
+  onOpenChange,
+}: ShareSessionDialogProps) {
   const isControlled = open !== undefined;
   const [joinUrl, setJoinUrl] = useState("");
   const [copied, setCopied] = useState(false);
+  // Tracks the "copied" reset timer so we can cancel it if the component
+  // unmounts before the 2-second window expires (prevents setState on unmounted component).
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build URL client-side so window.location.origin is available.
   useEffect(() => {
     setJoinUrl(`${window.location.origin}/play/join?session=${sessionId}`);
   }, [sessionId]);
 
+  // Clear the copied reset timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
+  function scheduleCopiedReset() {
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
+  }
+
   async function handleCopy() {
     if (!joinUrl) return;
     try {
       await navigator.clipboard.writeText(joinUrl);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      scheduleCopiedReset();
     } catch {
       // Fallback for browsers without clipboard API.
       const input = document.createElement("input");
@@ -52,12 +72,15 @@ export function ShareSessionDialog({ sessionId, sessionName, open, onOpenChange 
       document.execCommand("copy");
       document.body.removeChild(input);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      scheduleCopiedReset();
     }
   }
 
   return (
-    <Dialog open={isControlled ? open : undefined} onOpenChange={isControlled ? onOpenChange : undefined}>
+    <Dialog
+      open={isControlled ? open : undefined}
+      onOpenChange={isControlled ? onOpenChange : undefined}
+    >
       {!isControlled && (
         <DialogTrigger asChild>
           <button
@@ -94,8 +117,7 @@ export function ShareSessionDialog({ sessionId, sessionName, open, onOpenChange 
           </div>
 
           <p className="text-center text-xs text-muted-foreground leading-relaxed px-2">
-            Players scan this QR code to jump straight to the registration page
-            for this session.
+            Players scan this QR code to jump straight to the registration page for this session.
           </p>
 
           {/* Copy Link */}
