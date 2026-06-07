@@ -212,8 +212,9 @@ export async function endMatchAction(
     const finishingIds = matchPlayers.map((mp) => mp.player_id);
     // Narrow at the DB level: only fetch held drafts where at least one of the
     // finishing players appears in pulled_player_ids. Uses the && (overlaps)
-    // operator so Postgres can use the GIN index on pulled_player_ids rather
-    // than returning every held draft in the session.
+    // operator. Postgres uses the partial B-tree index on session_id (WHERE
+    // is_held=true AND status='pending') to limit the scan to the held-pending
+    // rows in this session; the && predicate then filters within that small set.
     const { data: heldDrafts } = await db
       .from("matches")
       .select("pulled_player_ids")
