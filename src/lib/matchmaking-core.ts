@@ -440,7 +440,7 @@ export type PullEligibilityOpts = {
  * N-4: deliberately NO skill-window check here — fetchPullablePlayers runs before
  * the anchor is known, so skill compatibility is left entirely to runAlgorithm.
  */
-export function isPullEligible(_player: ScoredPlayer, opts: PullEligibilityOpts): boolean {
+export function isPullEligible(_player: QueueWithWaitTime, opts: PullEligibilityOpts): boolean {
   if (opts.alreadyHeld) return false;
   return opts.streak < MAX_CONSECUTIVE_GAMES_FOR_PULL;
 }

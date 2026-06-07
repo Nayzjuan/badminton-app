@@ -20,7 +20,12 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QueueWithWaitTime } from "@/types/database";
-import { ANTI_REPEAT_LOOKBACK, COMMITTED_MATCH_STATUSES } from "@/lib/constants";
+import { skillLevelToInt } from "@/types/database";
+import {
+  ANTI_REPEAT_LOOKBACK,
+  COMMITTED_MATCH_STATUSES,
+  MATCH_REST_GAP_MINUTES,
+} from "@/lib/constants";
 import { pairKey, type MatchProposal } from "@/lib/matchmaking-core";
 
 // Convenience alias: all engine helpers run under the service-role client.
@@ -377,4 +382,201 @@ export async function executeMatch(
     matchId,
     message: isOnDeck ? "On-deck match created!" : "Match created successfully!",
   };
+}
+
+// ═════════════════════════════════════════════════════════════
+// CROSS-COURT DIVERSITY DRAFTING — DB helpers (Phase 4)
+// ═════════════════════════════════════════════════════════════
+
+// A currently-PLAYING body that may be pulled into a held draft, enriched with
+// everything the engine needs: a QueueWithWaitTime-shaped row + the eligibility
+// context (consecutive-games streak, already-in-a-held-draft) + the started_at of
+// its current in_progress match (for the pickEarliestFinishing tiebreak).
+export type PullableBody = QueueWithWaitTime & {
+  streak: number;
+  alreadyHeld: boolean;
+  /** id of the body's current in_progress match — passed as p_pulled_from_match_id. */
+  currentMatchId: string;
+  currentMatchStartedAt: string;
+};
+
+// ─────────────────────────────────────────────────────────────
+// fetchPullablePlayers
+// ─────────────────────────────────────────────────────────────
+// Returns the playing bodies eligible to be CONSIDERED for a held draft. The
+// engine still filters these through isPullEligible (streak/cooldown/already-held)
+// and the algorithm's skill window — this helper just gathers the candidate set.
+// Called lazily (only when the waiting pool produced a forced repeat), so its
+// handful of queries don't run on every engine tick.
+export async function fetchPullablePlayers(
+  supabase: DbClient,
+  sessionId: string
+): Promise<PullableBody[]> {
+  // 1. In-progress matches → player → currentMatchStartedAt. Manual join: this
+  //    codebase declares Relationships:[] (CLAUDE.md), so PostgREST embeds aren't typed.
+  const { data: activeMatchRows } = await supabase
+    .from("matches")
+    .select("id, started_at")
+    .eq("session_id", sessionId)
+    .eq("status", "in_progress");
+  const activeMatchIds = (activeMatchRows ?? []).map((m) => m.id);
+  if (activeMatchIds.length === 0) return [];
+  const activeStartedAt = new Map((activeMatchRows ?? []).map((m) => [m.id, m.started_at]));
+
+  const { data: activePlayers } = await supabase
+    .from("match_players")
+    .select("match_id, player_id")
+    .in("match_id", activeMatchIds);
+
+  const playingMap = new Map<string, { matchId: string; startedAt: string }>();
+  for (const mp of activePlayers ?? []) {
+    const startedAt = activeStartedAt.get(mp.match_id);
+    if (startedAt) playingMap.set(mp.player_id, { matchId: mp.match_id, startedAt });
+  }
+  if (playingMap.size === 0) return [];
+
+  const playingIds = [...playingMap.keys()];
+
+  // 2-4. Queue rows + profiles + already-held set + recent match timing (parallel).
+  const [
+    { data: queueRows },
+    { data: profileRows },
+    { data: heldDrafts },
+    { data: recentMatchRows },
+  ] = await Promise.all([
+    supabase
+      .from("queue_entries")
+      .select("id, player_id, games_played, joined_at, created_at, is_paused")
+      .eq("session_id", sessionId)
+      .in("player_id", playingIds),
+    supabase.from("profiles").select("id, display_name, skill_level").in("id", playingIds),
+    supabase
+      .from("matches")
+      .select("pulled_player_ids")
+      .eq("session_id", sessionId)
+      .eq("status", "pending")
+      .eq("is_held", true),
+    supabase
+      .from("matches")
+      .select("id, started_at, completed_at")
+      .eq("session_id", sessionId)
+      .in("status", ["in_progress", "completed"])
+      .order("started_at", { ascending: false })
+      .limit(16),
+  ]);
+
+  const profileMap = new Map((profileRows ?? []).map((p) => [p.id, p]));
+  const queueMap = new Map((queueRows ?? []).map((q) => [q.player_id, q]));
+  const alreadyHeld = new Set(
+    (heldDrafts ?? []).flatMap(
+      (m) => (m as { pulled_player_ids: string[] }).pulled_player_ids ?? []
+    )
+  );
+
+  // Recent rosters (manual join) → match_id → Set(player_id), for the streak.
+  const recentMatchIds = (recentMatchRows ?? []).map((m) => m.id);
+  const { data: recentRoster } =
+    recentMatchIds.length > 0
+      ? await supabase
+          .from("match_players")
+          .select("match_id, player_id")
+          .in("match_id", recentMatchIds)
+      : { data: [] as { match_id: string; player_id: string }[] };
+  const rosterByMatch = new Map<string, Set<string>>();
+  for (const mp of recentRoster ?? []) {
+    const set = rosterByMatch.get(mp.match_id) ?? new Set<string>();
+    set.add(mp.player_id);
+    rosterByMatch.set(mp.match_id, set);
+  }
+
+  // Per-player consecutive-games streak (R3-C): walk their recent matches
+  // newest-first; count the unbroken run where each game starts within
+  // MATCH_REST_GAP_MINUTES of the previous one finishing (no real rest between).
+  const gapMs = MATCH_REST_GAP_MINUTES * 60_000;
+  const streakFor = (playerId: string): number => {
+    const theirs = (recentMatchRows ?? []).filter((m) => rosterByMatch.get(m.id)?.has(playerId));
+    if (theirs.length === 0) return 0;
+    let streak = 1;
+    for (let i = 1; i < theirs.length; i++) {
+      const newer = theirs[i - 1];
+      const older = theirs[i];
+      if (!newer.started_at || !older.completed_at) break;
+      const gap = new Date(newer.started_at).getTime() - new Date(older.completed_at).getTime();
+      if (gap <= gapMs) streak++;
+      else break;
+    }
+    return streak;
+  };
+
+  // 5. Assemble. priorityScore:-1 (C-3) so a pulled body never out-anchors a
+  //    waiting player; isPulled flags it for the ≤1-pulled composition guard.
+  const result: PullableBody[] = [];
+  for (const playerId of playingIds) {
+    const prof = profileMap.get(playerId);
+    const q = queueMap.get(playerId);
+    if (!prof || !q || q.is_paused) continue;
+    result.push({
+      id: q.id,
+      session_id: sessionId,
+      player_id: playerId,
+      joined_at: q.joined_at,
+      games_played: q.games_played,
+      status: "playing",
+      position: null,
+      is_paused: false,
+      created_at: q.created_at,
+      display_name: prof.display_name,
+      skill_level: prof.skill_level,
+      skill_level_int: skillLevelToInt(prof.skill_level),
+      wait_minutes: 0,
+      is_bottleneck: false,
+      streak: streakFor(playerId),
+      alreadyHeld: alreadyHeld.has(playerId),
+      currentMatchId: playingMap.get(playerId)!.matchId,
+      currentMatchStartedAt: playingMap.get(playerId)!.startedAt,
+    });
+  }
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────
+// executeHeldMatch
+// ─────────────────────────────────────────────────────────────
+// Commits a held cross-court draft via the create_held_cross_court_match RPC.
+// Same NULL-return convention as executeMatch: NULL = a TOCTOU/reservation guard
+// fired → graceful slot-skip (not a hard error).
+export async function executeHeldMatch(
+  supabase: DbClient,
+  sessionId: string,
+  proposal: MatchProposal,
+  pulledPlayerId: string,
+  pulledFromMatchId: string
+): Promise<ExecuteMatchResult> {
+  const { teamA, teamB, isMixedLevel } = proposal;
+
+  const { data: matchId, error: rpcError } = await supabase.rpc("create_held_cross_court_match", {
+    p_session_id: sessionId,
+    p_is_mixed_level: isMixedLevel,
+    p_team_a_ids: teamA.map((p) => p.player_id),
+    p_team_b_ids: teamB.map((p) => p.player_id),
+    p_pulled_player_id: pulledPlayerId,
+    p_pulled_from_match_id: pulledFromMatchId,
+    p_origin: "auto" as const,
+  });
+
+  if (rpcError) {
+    return { success: false, message: `Failed to create held match: ${rpcError.message}` };
+  }
+
+  if (!matchId) {
+    console.warn(
+      "[matchmaking-db] executeHeldMatch: RPC returned NULL — a TOCTOU/reservation guard " +
+        "fired (waiting member taken, pulled body no longer playing, or already in a held draft). " +
+        "Skipping slot gracefully.",
+      { sessionId, pulledPlayerId }
+    );
+    return { success: false, message: "Slot skipped: held-draft guard fired." };
+  }
+
+  return { success: true, matchId, message: "Held cross-court draft created!" };
 }

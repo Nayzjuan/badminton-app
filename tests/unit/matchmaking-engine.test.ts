@@ -63,6 +63,7 @@ import {
   recomputeHeldReadiness,
 } from "@/app/actions/matchmaking";
 import { getDynamicDraftCap } from "@/lib/matchmaking-core";
+import { fetchPullablePlayers, executeHeldMatch } from "@/lib/matchmaking-db";
 
 // ─────────────────────────────────────────────────────────────
 // Mock infrastructure
@@ -1165,5 +1166,129 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
       p_session_id: SESSION_ID,
     });
     expect(mock.recorder.update).toHaveLength(0); // cancel, not stamp/downgrade
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// CROSS-COURT — producer helpers (Phase 4)
+// ═════════════════════════════════════════════════════════════
+
+describe("fetchPullablePlayers + executeHeldMatch (cross-court producer)", () => {
+  const heldProposal = {
+    teamA: [{ player_id: "a" }, { player_id: "b" }],
+    teamB: [{ player_id: "c" }, { player_id: "pp" }],
+    isMixedLevel: false,
+  };
+
+  it("CC-ENG-CC01: returns eligible playing bodies with streak + currentMatchId", async () => {
+    const mock = makeMockClient([
+      { data: [{ id: "m1", started_at: "2026-06-07T11:50:00.000Z" }], error: null }, // active in_progress
+      { data: [{ match_id: "m1", player_id: "pp" }], error: null }, // active match_players
+      {
+        data: [
+          {
+            id: "qe1",
+            player_id: "pp",
+            games_played: 2,
+            joined_at: "2026-06-07T11:00:00.000Z",
+            created_at: "2026-06-07T11:00:00.000Z",
+            is_paused: false,
+          },
+        ],
+        error: null,
+      }, // queue_entries
+      { data: [{ id: "pp", display_name: "PP", skill_level: "intermediate" }], error: null }, // profiles
+      { data: [], error: null }, // held drafts (none)
+      {
+        data: [{ id: "m1", started_at: "2026-06-07T11:50:00.000Z", completed_at: null }],
+        error: null,
+      }, // recent matches
+      { data: [{ match_id: "m1", player_id: "pp" }], error: null }, // recent roster
+    ]);
+
+    const bodies = await fetchPullablePlayers(mock as never, SESSION_ID);
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({
+      player_id: "pp",
+      currentMatchId: "m1",
+      currentMatchStartedAt: "2026-06-07T11:50:00.000Z",
+      alreadyHeld: false,
+      streak: 1,
+      skill_level_int: 3,
+      status: "playing",
+    });
+  });
+
+  it("CC-ENG-CC02: a body already reserved in a pending held draft is flagged alreadyHeld (Guard 1b mirror)", async () => {
+    const mock = makeMockClient([
+      { data: [{ id: "m1", started_at: "2026-06-07T11:50:00.000Z" }], error: null },
+      { data: [{ match_id: "m1", player_id: "pp" }], error: null },
+      {
+        data: [
+          {
+            id: "qe1",
+            player_id: "pp",
+            games_played: 0,
+            joined_at: "2026-06-07T11:00:00.000Z",
+            created_at: "2026-06-07T11:00:00.000Z",
+            is_paused: false,
+          },
+        ],
+        error: null,
+      },
+      { data: [{ id: "pp", display_name: "PP", skill_level: "intermediate" }], error: null },
+      { data: [{ pulled_player_ids: ["pp"] }], error: null }, // pp already in a held draft
+      {
+        data: [{ id: "m1", started_at: "2026-06-07T11:50:00.000Z", completed_at: null }],
+        error: null,
+      },
+      { data: [{ match_id: "m1", player_id: "pp" }], error: null },
+    ]);
+
+    const bodies = await fetchPullablePlayers(mock as never, SESSION_ID);
+    expect(bodies[0].alreadyHeld).toBe(true);
+  });
+
+  it("CC-ENG-CC03: no in_progress matches ⇒ nothing pullable", async () => {
+    const mock = makeMockClient([{ data: [], error: null }]);
+    expect(await fetchPullablePlayers(mock as never, SESSION_ID)).toEqual([]);
+  });
+
+  it("CC-ENG-CC04: executeHeldMatch calls create_held_cross_court_match and returns the new id", async () => {
+    const mock = makeMockClient([], [{ data: "held-id", error: null }]);
+
+    const r = await executeHeldMatch(
+      mock as never,
+      SESSION_ID,
+      heldProposal as never,
+      "pp",
+      "src-1"
+    );
+
+    expect(r.success).toBe(true);
+    expect(r.matchId).toBe("held-id");
+    expect(mock.rpc).toHaveBeenCalledWith("create_held_cross_court_match", {
+      p_session_id: SESSION_ID,
+      p_is_mixed_level: false,
+      p_team_a_ids: ["a", "b"],
+      p_team_b_ids: ["c", "pp"],
+      p_pulled_player_id: "pp",
+      p_pulled_from_match_id: "src-1",
+      p_origin: "auto",
+    });
+  });
+
+  it("CC-ENG-CC05: executeHeldMatch NULL return ⇒ graceful slot-skip (no throw)", async () => {
+    const mock = makeMockClient([], [{ data: null, error: null }]); // a guard fired
+    const r = await executeHeldMatch(
+      mock as never,
+      SESSION_ID,
+      heldProposal as never,
+      "pp",
+      "src-1"
+    );
+    expect(r.success).toBe(false);
+    expect(r.message).toMatch(/skipped/i);
   });
 });

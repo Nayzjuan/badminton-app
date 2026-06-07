@@ -52,6 +52,8 @@ import {
   runAlgorithm,
   scoreAndSortPool,
   isHeldMatchReady,
+  isPullEligible,
+  type ScoredPlayer,
 } from "@/lib/matchmaking-core";
 import {
   fetchActivePool,
@@ -59,6 +61,8 @@ import {
   fetchPartnershipCounts,
   buildOverlapMap,
   executeMatch,
+  fetchPullablePlayers,
+  executeHeldMatch,
 } from "@/lib/matchmaking-db";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
@@ -459,12 +463,8 @@ async function runEngineInternal(
     const overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
-    const { proposal, capSaturation } = runAlgorithm(
-      pool,
-      partnershipCounts,
-      overlapMap,
-      recentRosters
-    );
+    const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters);
+    const { proposal, capSaturation } = result;
 
     if (!proposal) {
       // Broadcast cap-saturation warning when the cap (not player shortage)
@@ -486,6 +486,58 @@ async function runEngineInternal(
       }
       break;
     }
+
+    // ── Cross-court augmented composition (Phase 4) ──────────────
+    // Fires only when the waiting pool could manage no better than a FORCED
+    // REPEAT, this is NOT a bypass run (M-4), we're past slot 0 (keep-courts-fed:
+    // slot 0 always seats a ready waiting-only match), and the anchor is not in
+    // the Red Zone (decision 4 — a Red-Zone player is seated now, never held).
+    // Reach into a live court for ONE fresh body to break the repeat.
+    let committedHeld = false;
+    const anchorIsRedZone = pool[0].priorityScore >= RED_ZONE_SCORE_FLOOR;
+    if (result.forcedRepeat && !bypassGate && i > 0 && !anchorIsRedZone) {
+      const pullable = await fetchPullablePlayers(supabase, sessionId);
+      const eligible = pullable
+        .filter((b) => isPullEligible(b, { streak: b.streak, alreadyHeld: b.alreadyHeld }))
+        // N-3: earliest-finishing first so the combination search prefers it on a fit tie.
+        .sort(
+          (a, b) =>
+            new Date(a.currentMatchStartedAt).getTime() -
+            new Date(b.currentMatchStartedAt).getTime()
+        );
+      if (eligible.length > 0) {
+        const pulledMatchId = new Map(eligible.map((b) => [b.player_id, b.currentMatchId]));
+        const augmented: ScoredPlayer[] = [
+          ...pool,
+          ...eligible.map((b) => ({ ...b, priorityScore: -1, isPulled: true as const })),
+        ];
+        const augResult = runAlgorithm(augmented, partnershipCounts, overlapMap, recentRosters);
+        const augFour = augResult.proposal
+          ? [...augResult.proposal.teamA, ...augResult.proposal.teamB]
+          : [];
+        const pulledInFour = augFour.filter((p) => p.isPulled);
+        // Take it only if it's a genuinely FRESH match with exactly ONE pulled body (N-1).
+        if (augResult.proposal && !augResult.forcedRepeat && pulledInFour.length === 1) {
+          const fromMatchId = pulledMatchId.get(pulledInFour[0].player_id);
+          if (fromMatchId) {
+            const heldExec = await executeHeldMatch(
+              supabase,
+              sessionId,
+              augResult.proposal,
+              pulledInFour[0].player_id,
+              fromMatchId
+            );
+            if (heldExec.success) {
+              committedHeld = true;
+              // A held draft consumes 3 waiting players, not 4 (C-1).
+              if (!bypassGate) estimatedWaiting -= PLAYERS_PER_MATCH - 1;
+            }
+          }
+        }
+      }
+    }
+
+    if (committedHeld) continue; // held draft created — on to the next slot
 
     // ── Commit the match ─────────────────────────────────────────
     const execResult = await executeMatch(supabase, sessionId, null, proposal, true);
