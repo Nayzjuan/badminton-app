@@ -52,7 +52,7 @@ Ran a sequential event-driven simulation of Saturday 06/06's 31-player roster ov
 
 Held drafts: when the waiting pool can only manage a **forced repeat**, the engine reaches into a live court, pulls ONE still-playing body, and pre-builds a **held** on-deck draft (3 waiting + 1 playing) that only promotes once the pulled body finishes **and** rests one match. Spec: `CROSS_COURT_DRAFTING_PLAN.md`; test catalog: `CROSS_COURT_TEST_CATALOG.md`.
 
-**Status: backend COMPLETE + UI core done. NOT merged to main (awaiting OK).** All 503 unit tests pass, `tsc` 0, `next build` succeeds. Initial code-review gate = **"Minor issues" (acceptable pass)**. External PR review validated 2026-06-07 — 2 true findings fixed (see below), 2 false positives confirmed.
+**Status: MERGED TO MAIN ✅.** 511 unit tests pass, `tsc` 0. Initial code-review gate = **"Minor issues" (acceptable pass)**. External PR review validated 2026-06-07 — 2 true findings fixed (see below), 2 false positives confirmed.
 
 **Commits (branch, off `stable-pre-cross-court`):** `c7a56e1` (P1-3 + migration), `2b19bb8` (P5 promotion/recompute), `dd6cc2e` (P4 engine producer), `0d82ad3` (P6 ghost-availability+triggers), `158a098` (deriveHeldState), `2a78376` (P7 held-card visual), `f9c99d0` (P9 docs), **`0336847` (PR review fixes L-2 + L-3)**.
 
@@ -92,6 +92,16 @@ The persistent E2E fixture was **permanently deleted from production** at the us
 3. The per-test `seedSession` recreates player data/bots into the session from there.
 
 (Reminder: `emergency-cleanup.ts` / `teardown.ts` only wipe child data and RESET the session row — they never delete it. Full deletion above was a manual one-off via MCP SQL.)
+
+---
+
+## ✅ MERGED TO MAIN — 2026-06-07 (3-Tier Scoring + Cross-Court Drafting + Opponent Diversity)
+
+All feat/cross-court-drafting changes merged to main and pushed to origin/main.
+- **Commits on main:** `2d2144c` (3-tier scoring + opponentCounts), `6eadee3` (prettier residue), merge commit, `1ff9f6d` (stale test name fixes)
+- **Tests:** 511/511 pass (26 test files, 1 expected skip). `tsc --noEmit` clean.
+- **DB migration `20260607000000_cross_court_held_drafts.sql`** — ships in main; apply to prod DB via Supabase dashboard or `supabase db push` before next deploy.
+- **Deferred items still open:** (1) `recomputeHeldReadiness` in callNextMatch/publish, (2) swap auto-downgrade, (3) staleness-escape 5d, (4) UI 3-state progression, (5) `SET search_path` on RPC.
 
 ---
 
