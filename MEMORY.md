@@ -19,6 +19,25 @@ Before building the **Cross-Court Diversity Drafting** feature (`CROSS_COURT_DRA
 
 ---
 
+## 🏸 CROSS-COURT DIVERSITY DRAFTING — built on `feat/cross-court-drafting` (2026-06-07)
+
+Held drafts: when the waiting pool can only manage a **forced repeat**, the engine reaches into a live court, pulls ONE still-playing body, and pre-builds a **held** on-deck draft (3 waiting + 1 playing) that only promotes once the pulled body finishes **and** rests one match. Spec: `CROSS_COURT_DRAFTING_PLAN.md`; test catalog: `CROSS_COURT_TEST_CATALOG.md`.
+
+**Status: backend COMPLETE + UI core done. NOT merged to main (awaiting OK).** All 503 unit tests pass, `tsc` 0, `next build` succeeds. Independent code-review gate verdict = **"Minor issues" (acceptable pass)** — 12 correctness claims verified correct, no bugs.
+
+**Commits (branch, off `stable-pre-cross-court`):** `c7a56e1` (P1-3 + migration), `2b19bb8` (P5 promotion/recompute), `dd6cc2e` (P4 engine producer), `0d82ad3` (P6 ghost-availability+triggers), `158a098` (deriveHeldState), `2a78376` (P7 held-card visual).
+
+**Migration `20260607000000` is APPLIED to prod** (matches columns `pulled_player_ids`/`pulled_from_match_id`/`held_ready_at`/`is_held` GENERATED + `create_held_cross_court_match` RPC). 469 existing matches untouched (`is_held=false`).
+
+**DEFERRED (Minor issues from review — not corruption, all self-heal):**
+1. `recomputeHeldReadiness` wired only into `endMatchAction`+`cancelMatchAction`; spec also wanted `callNextMatch`/publish (held draft promotes ≤1 event late otherwise — readiness is monotonic so any next end/cancel recomputes it). NOTE: adding to `callNextMatch` shifts the engine-test response-queue → update those mocks if you do.
+2. **Swap auto-downgrade (M-5) trigger not wired** — no swap action calls `recomputeHeldReadiness` post-swap. If the organizer swaps the pulled body out, the held draft stays stale (violet badge) until the next end/cancel recompute runs the N-2 downgrade (which works — CC-RDY-CC03). Add the call to `swapPlayerInMatch`/`swapMatchPlayers`/`swapActiveFromOnDeck`.
+3. **Staleness-escape (5d) not implemented** — a held draft whose waiting members age into the Red Zone while the pulled court drags isn't auto-abandoned (resolves when the court finishes).
+4. **UI is 2-state (Held/Ready)** not the full 3-state Holding→Resting→Ready track — `deriveHeldState` (tested) is ready; the card needs active-court ids threaded to compute `sourceStillPlaying`. Pulled-pill ring + reciprocal court hint also deferred.
+5. `create_held_cross_court_match` lacks `SET search_path` (SECURITY DEFINER) — but matches the existing `create_match_with_players` baseline; harden both together later.
+
+---
+
 ## ⚠️ E2E SANDBOX FULLY DELETED (2026-06-05) — must re-bootstrap before running E2E
 
 The persistent E2E fixture was **permanently deleted from production** at the user's request — NOT by the normal cleanup (which preserves it by design). Removed: the `🤖 E2E SANDBOX — DO NOT JOIN` session (`ed2666e3-…`), all its child data, and **all 9 bot accounts** (profiles + auth users): E2E_Alice/Bob/Cara/Dan/Eve/Frank/Grace/Henry + **E2E_OrganizerBot**. Verified zero remnants/orphans; 12 real sessions untouched.
