@@ -300,20 +300,48 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 
 The engine is a **pure on-deck filler** — it never places players directly onto courts. Court assignment only happens via `promoteOnDeckMatchInternal` when a court frees.
 
-#### Priority Scoring (`computePriorityScore`)
+#### Priority Scoring (`computePriorityScore`) — 3-Tier System
+
+Three tiers, evaluated top-down (Hard Cap checked first):
 
 ```
-Red Zone (wait ≥ 25 min):   priorityScore = 1000 + waitMinutes   [absolute urgency]
-Normal   (wait < 25 min):   priorityScore = max(0, waitMinutes − (gamesPlayed × 12))
+Tier 3 — Hard Cap   (score ≥ 2000):
+  Condition: wait ≥ HARD_WAIT_CAP_MINUTES (25)
+         AND games_played < HARD_CAP_GAMES_CEILING (5)
+  Score: HARD_CAP_SCORE_FLOOR + (wait − 25) × 10       [progressive — no ties]
+
+Tier 2 — Red Zone   (score nominally 1000–1999):
+  Condition: wait ≥ CRITICAL_WAIT_MINUTES (20)
+  Score: 1000 + waitMinutes − (gamesPlayed × GAME_PENALTY_MINUTES)
+  Note: heavy game debt can push score below 1000; downstream consumers
+        re-detect Red Zone via priorityScore ≥ RED_ZONE_SCORE_FLOOR check.
+
+Tier 1 — Normal     (score unbounded below 1000):
+  Score: waitMinutes − (gamesPlayed × GAME_PENALTY_MINUTES)   [no floor — can go negative]
 ```
 
-Floor at 0: game debt holds players back but never drops them below a brand-new joiner.
+**Design rationale:**
+- Hard Cap guarantees service within `hardCap + maxCourtDuration ≈ 25 + 22 = 47 min` for any player below the session game target. Progressive scoring (`+10 per extra minute`) eliminates flat-score ties, so the longest-waiting cap-eligible player always leads without a separate tiebreaker.
+- `HARD_CAP_GAMES_CEILING = 5` (= session target for all tested configs) prevents players who've already received their fair share from using the override to accumulate extra games at the expense of under-served players.
+- Red Zone fires 5 min before the Hard Cap (20 vs 25), giving urgency priority over Normal-queue players in advance.
+- No floor at 0 — negative scores let game count drive ordering even when everyone has been waiting a similar time.
+
+**Validated across 3 scenarios (scripts/simulate-scenarios.ts):**
+
+| Scenario | Players / Courts / Min | Games range | Max wait |
+|---|---|---|---|
+| Saturday 06/06 | 31p / 3c / 240m | ±1 ✅ | 43m |
+| Small session | 18p / 2c / 240m | ±1 ✅ | 43m |
+| Large session | 50p / 5c / 240m | ±1 ✅ | 36m |
+
+The 30 min max-wait target is a physics impossibility with 20–22 min courts (minimum achievable = hardCap + maxCourt = 47m). Actual 36–43m is the best achievable without sacrificing game equity.
 
 #### Candidate Scoring (`scoreCandidates`)
 
 ```
 Normal candidate:   candidateScore = -priorityScore + overlapCount × 10,000
 Red Zone candidate: candidateScore = -priorityScore + overlapCount × 100
+  (Red Zone = priorityScore ≥ RED_ZONE_SCORE_FLOOR — includes Hard Cap tier since 2000 ≫ 1000)
 ```
 
 Sorted ascending (lowest score = highest priority). Red Zone overlap penalty is capped at 100× so a Red Zone player with 1 recent overlap still beats a Normal player with 0.
@@ -339,8 +367,8 @@ Sort all 4 players DESC by skill, then apply a **two-pass approach** for partner
 
 Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3]` → `[0,1] vs [2,3]`.
 
-- **snakeDraft** (normal): two-pass as above. Returns **`null`** if every split would put either team pair at or above `MAX_PARTNERSHIP_REPEATS` — callers must null-guard.
-- **rotatedDraft** (forced repeat): cycles through 3 split configs based on `repeatCount % 3` starting from the natural rotation index; same two-pass freshness preference within each rotation attempt. Also returns **`null`** when cap enforcement prevents every split.
+- **snakeDraft** (normal): **four-pass** — 1a: fresh partnerships + no capped cross-net pair; 1b: fresh partnerships (relax opponent cap); 2a: below partnership cap + no capped cross-net; 2b: below partnership cap (last resort). Returns **`null`** only when the partnership cap blocks every split — the opponent cap never causes a stall.
+- **rotatedDraft** (forced repeat): cycles through 3 split configs based on `repeatCount % 3` starting from the natural rotation index; same four-pass structure within each rotation attempt. Also returns **`null`** when the partnership cap blocks every split.
 
 #### Anti-Repeat / Diversity Logic
 
@@ -348,9 +376,10 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
   1. Fetch all `match_players` rows for the anchor (limit 200)
   2. Filter to this session's recent matches (`completed`, `in_progress`, **`pending`** — Fix 2: sees live pairings, not just finished games)
   3. Fetch all co-players + teams → build weighted overlap map: **teammate appearances = 2×, opponent appearances = 1×** (Fix 3: same-side repetition penalised more than cross-side)
-- `fetchRecentRosters(sessionId)` — fetches last `ANTI_REPEAT_LOOKBACK` match rosters as arrays of player IDs. Pre-fetched **once per `runEngineInternal` run** and passed down to each `runAlgorithm` call to avoid redundant DB queries per slot. Includes `completed`, `in_progress`, and `pending` matches.
+- `fetchRecentRosters(sessionId)` — fetches last `ROSTER_LOOKBACK_COUNT` (10) match rosters as arrays of player IDs. Pre-fetched **once per `runEngineInternal` run** and passed down to each `runAlgorithm` call to avoid redundant DB queries per slot. Includes `completed`, `in_progress`, and `pending` matches.
 - `isDiversityViolation(playerIds, recentRosters)` — flags true if ≥3 of the proposed 4 players appeared together in any single recent match roster.
-- `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → 5) to prevent small-tier starvation.
+- `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → **7**) to prevent small-tier starvation. The 16+ tier was increased from 5 to 7 now that `fetchRecentRosters` fetches 10 matches (sufficient headroom).
+- `fetchPartnershipCounts(sessionId)` — now returns **`{ partnershipCounts, opponentCounts }`** (both maps built in one pass over the same DB data; zero extra DB calls). `opponentCounts` = cross-net (opponent) pair counts, used by snakeDraft/rotatedDraft as a soft preference.
 
 #### Engine Constants (`src/lib/constants.ts`)
 
@@ -360,15 +389,18 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `SKILL_VARIANCE_TARGET`        | 1     | Preferred max skill gap                                                                                                                                                                                                                                                                                                                            |
 | `SKILL_VARIANCE_MAX`           | 2     | Hard max skill gap                                                                                                                                                                                                                                                                                                                                 |
 | `FALLBACK_WAIT_MINUTES`        | 15    | Bypass skill windows entirely                                                                                                                                                                                                                                                                                                                      |
-| `CRITICAL_WAIT_MINUTES`        | 25    | Red Zone threshold                                                                                                                                                                                                                                                                                                                                 |
-| `GAME_PENALTY_MINUTES`         | 12    | Minutes deducted per game played from priority score                                                                                                                                                                                                                                                                                               |
-| `RED_ZONE_SCORE_FLOOR`         | 1000  | Sentinel — any score ≥ this = Red Zone                                                                                                                                                                                                                                                                                                             |
+| `CRITICAL_WAIT_MINUTES`        | **20**| Red Zone threshold (was 25; lowered so urgency fires sooner, narrowing the window before Hard Cap)                                                                                                                                                                                                                                                |
+| `HARD_WAIT_CAP_MINUTES`        | **25**| Hard Wait Cap threshold — fires 5 min after Red Zone; triggers Tier 3 absolute-override scoring for cap-eligible players                                                                                                                                                                                                                           |
+| `HARD_CAP_SCORE_FLOOR`         | **2000** | Tier 3 score floor — guaranteed above any Red Zone score (max Red Zone ≈ 1060 ≪ 2000)                                                                                                                                                                                                                                                          |
+| `HARD_CAP_GAMES_CEILING`       | **5** | Max games to remain cap-eligible. Players at/above session target (5 games for all standard 4h sessions) cannot use the Tier 3 override                                                                                                                                                                                                           |
+| `GAME_PENALTY_MINUTES`         | **8** | Minutes deducted per game played from priority score (calibrated to ~half average game cycle ≈ 20/2 = 10 min)                                                                                                                                                                                                                                      |
+| `RED_ZONE_SCORE_FLOOR`         | 1000  | Sentinel — any score ≥ this = Red Zone (used by scoreCandidates + runAlgorithm; note heavy game debt can push a Red Zone formula result below 1000)                                                                                                                                                                                                                                                                                                             |
 | `BOTTLENECK_THRESHOLD_MINUTES` | 20    | Wait-time monitor flag threshold                                                                                                                                                                                                                                                                                                                   |
-| `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches checked for diversity                                                                                                                                                                                                                                                                                                               |
+| `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches used by `buildOverlapMap` for familiarity weighting (count-based)                                                                                                                                                                                                                                                                   |
+| `ROSTER_LOOKBACK_COUNT`        | 10    | Recent match rosters fetched by `fetchRecentRosters` for diversity-violation checks (larger than `ANTI_REPEAT_LOOKBACK` so `getEffectiveLookback` can scale up for large sessions)                                                                                                                                                                 |
+| `MIN_REST_MINUTES`             | 18    | Minimum wait minutes before a returning player (games_played > 0) can be drafted again. Prevents 0-min back-to-back. Falls back to unfiltered pool if fewer than `PLAYERS_PER_MATCH` survive the filter.                                                                                                                                           |
 | `GATE_POOL_THRESHOLD`          | 4     | Pool size that triggers cross-court mixing deferral                                                                                                                                                                                                                                                                                                |
 | `GATE_HOLD_MINUTES`            | 8     | Minutes before gate auto-releases                                                                                                                                                                                                                                                                                                                  |
-| `ON_DECK_LOOKAHEAD`            | 1     | _Deprecated from engine capacity_ — still in `constants.ts`, referenced only by `simulate-engine.ts`. The live engine uses `MAX_AUTO_DRAFTS` instead.                                                                                                                                                                                              |
-| `MAX_ON_DECK_MATCHES`          | 2     | _Deprecated from engine capacity_ — still in `constants.ts`, no longer imported by `matchmaking.ts`. Superseded by `MAX_AUTO_DRAFTS`.                                                                                                                                                                                                              |
 | `MIN_FREE_POOL_FOR_ON_DECK`    | 4     | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards)                                                                                                                                                                                                                                      |
 | `MAX_AUTO_DRAFTS`              | 3     | **Tiered draft cap — small session** (< 25 waiting players). Counts only `is_published=false` drafts. Published on-deck matches do NOT count — they are already reviewed and should not block fresh draft generation. |
 | `MAX_AUTO_DRAFTS_LARGE`        | 5     | Tiered draft cap — medium session (25–29 waiting players).                                                                                                                                                          |
@@ -376,6 +408,7 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `DRAFT_CAP_LARGE_THRESHOLD`    | 25    | Waiting player count at which the cap upgrades from 3 → 5.                                                                                                                                                         |
 | `DRAFT_CAP_XLARGE_THRESHOLD`   | 30    | Waiting player count at which the cap upgrades from 5 → 6.                                                                                                                                                         |
 | `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                              |
+| `MAX_OPPONENT_REPEATS`         | 3     | **Soft** cap on cross-net (opponent) appearances per session pair. Preference only — snakeDraft/rotatedDraft try to avoid it but degrade gracefully (never a stall).                                                |
 | `MAX_BADMINTON_SCORE`          | 31    | Maximum valid score per game. Enforced server-side via `scoreSchema` in `src/lib/schemas/match.ts` (canonical) and client-side in `use-score-form.ts` + `use-edit-match.ts`. **Draws (equal scores) rejected at both layers** via `.refine()` on the schema and explicit `a === b` guard in hooks. |
 
 #### Engine Capacity (`runEngineInternal`) — Dynamic Draft Cap

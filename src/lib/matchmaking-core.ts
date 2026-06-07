@@ -20,10 +20,14 @@ import {
   DRAFT_CAP_XLARGE_THRESHOLD,
   FALLBACK_WAIT_MINUTES,
   GAME_PENALTY_MINUTES,
+  HARD_CAP_GAMES_CEILING,
+  HARD_CAP_SCORE_FLOOR,
+  HARD_WAIT_CAP_MINUTES,
   MAX_AUTO_DRAFTS,
   MAX_AUTO_DRAFTS_LARGE,
   MAX_AUTO_DRAFTS_XLARGE,
   MAX_CONSECUTIVE_GAMES_FOR_PULL,
+  MAX_OPPONENT_REPEATS,
   MAX_PARTNERSHIP_REPEATS,
   RED_ZONE_SCORE_FLOOR,
   RED_ZONE_SKILL_VARIANCE_MAX,
@@ -93,22 +97,69 @@ export function pairKey(a: string, b: string): string {
 // ─────────────────────────────────────────────────────────────
 // EXPORT: computePriorityScore
 // ─────────────────────────────────────────────────────────────
-// RED ZONE (wait ≥ 25 min): 1000 + waitMinutes → absolute urgency.
-// NORMAL   (wait < 25 min): max(0, waitMinutes − (gamesPlayed × 12)).
-//   Floored at 0 so a player with game debt never scores below a
-//   fresh joiner. Players in the same score bucket (both 0) are
-//   further sorted by joined_at in runAlgorithm — earlier joiner wins.
-// Higher score = higher urgency.
+// Three-tier urgency formula (higher score = higher urgency):
+//
+// ┌─────────────────────────────────────────────────────────────────────┐
+// │  TIER 3 — HARD CAP  (score ≥ 2000)                                  │
+// │  Condition: wait ≥ HARD_WAIT_CAP_MINUTES (25)                       │
+// │          AND games_played < HARD_CAP_GAMES_CEILING (5)              │
+// │  Score: HARD_CAP_SCORE_FLOOR + (wait − 25) × 10                     │
+// │  Progressive: longest-waiting cap-eligible player always leads.      │
+// │  The games ceiling prevents session-target players from using the    │
+// │  override to accumulate extra games at the expense of under-served   │
+// │  players.                                                            │
+// ├─────────────────────────────────────────────────────────────────────┤
+// │  TIER 2 — RED ZONE  (score nominally 1000–1999)                     │
+// │  Condition: wait ≥ CRITICAL_WAIT_MINUTES (20)                       │
+// │  Score: RED_ZONE_SCORE_FLOOR (1000) + wait − (games × PENALTY)      │
+// │  Game penalty still differentiates within Red Zone — fewer-games    │
+// │  players preferred even when both are urgent.                        │
+// │  ⚠ When game debt > wait, the actual score can fall below 1000       │
+// │  (e.g. wait=20, games=5 → 1000+20−40=980). Downstream consumers     │
+// │  (scoreCandidates, runAlgorithm) re-detect Red Zone by testing       │
+// │  priorityScore ≥ RED_ZONE_SCORE_FLOOR, so those players receive      │
+// │  Normal treatment (10_000× overlap penalty, tight skill window).     │
+// │  This is intentional: players well above the fair-share games target │
+// │  benefit less from Red Zone urgency because their wait is self-      │
+// │  caused by dense play rather than queue starvation.                  │
+// ├─────────────────────────────────────────────────────────────────────┤
+// │  TIER 1 — NORMAL  (score unbounded below 1000)                      │
+// │  Score: wait − (games × GAME_PENALTY_MINUTES)                       │
+// │  NO floor at 0 — negative scores let game count drive ordering      │
+// │  even when everyone has been waiting a similar time.                │
+// └─────────────────────────────────────────────────────────────────────┘
+//
+// Invariants:
+//   Hard Cap > Red Zone > Normal for any realistic game counts / waits.
+//   Hard Cap progressive: max(RedZone) ≈ 1000+60−0 = 1060 ≪ 2000 (floor).
+//   Red Zone beats Normal: 1000+20−(5×8)=980 > 19−0=19 (best Normal).
+//   Worst-case Red Zone score: 1000+20−(13×8)=916 ≫ 19 → invariant holds.
 
 export function computePriorityScore(player: QueueWithWaitTime): number {
   const wait = player.wait_minutes ?? 0;
-  if (wait >= CRITICAL_WAIT_MINUTES) {
-    return 1000 + wait; // Red Zone — ignore game debt entirely
+
+  // ── Tier 3: Hard Wait Cap ────────────────────────────────────
+  // Fires when a player has been waiting long enough that fairness demands
+  // service regardless of other players' game counts. Progressive scoring
+  // prevents flat-score ties, so the longest-waiting eligible player always
+  // leads without needing a separate tiebreaker.
+  if (player.games_played < HARD_CAP_GAMES_CEILING && wait >= HARD_WAIT_CAP_MINUTES) {
+    return HARD_CAP_SCORE_FLOOR + Math.round((wait - HARD_WAIT_CAP_MINUTES) * 10);
   }
-  // Floor at 0: game debt holds you back but never drops you below
-  // a brand-new joiner who has 0 wait time. The joined_at tiebreaker
-  // in runAlgorithm resolves ties within the 0-score bucket.
-  return Math.max(0, wait - player.games_played * GAME_PENALTY_MINUTES);
+
+  const gamePenalty = player.games_played * GAME_PENALTY_MINUTES;
+
+  // ── Tier 2: Red Zone ─────────────────────────────────────────
+  // Urgency boost ensures Red Zone players always anchor over Normal-queue
+  // players. Game penalty still applied so fewer-games players are preferred.
+  if (wait >= CRITICAL_WAIT_MINUTES) {
+    return RED_ZONE_SCORE_FLOOR + wait - gamePenalty;
+  }
+
+  // ── Tier 1: Normal ───────────────────────────────────────────
+  // Unbounded below — game count can push score negative, letting players
+  // with fewer games naturally rise above burst players at the same wait.
+  return wait - gamePenalty;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -145,11 +196,17 @@ export function isGroupValid(players: ScoredPlayer[], maxVariance: number): bool
 //
 // When partnershipCounts / cap are omitted, the function behaves
 // exactly as before (always returns the balanced Split 0).
+//
+// opponentCounts / opponentCap: when supplied, the engine PREFERS splits
+// where no cross-net pair is at the opponent cap (soft preference — never
+// a hard block so the engine cannot stall on small sessions).
 
 export function snakeDraft(
   allFour: ScoredPlayer[],
   partnershipCounts?: Map<string, number>,
-  cap?: number
+  cap?: number,
+  opponentCounts?: Map<string, number>,
+  opponentCap?: number
 ): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
   const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
@@ -168,10 +225,28 @@ export function snakeDraft(
     { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] },
   ];
 
-  // Pass 1: prefer splits where BOTH team pairs have never been partners (count=0).
-  // Avoids repeating recent partnerships even when they're still below the hard cap.
-  // Maintains skill-balance order within this preference tier so the most balanced
-  // fresh split is always tried before less balanced ones.
+  // Helper: true when no cross-net pair is at or above the opponent cap.
+  // Always returns true when opponentCounts / opponentCap are absent.
+  const crossNetOk = (split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }): boolean => {
+    if (!opponentCounts || opponentCap === undefined) return true;
+    return !split.teamA.some((a) =>
+      split.teamB.some(
+        (b) => (opponentCounts.get(pairKey(a.player_id, b.player_id)) ?? 0) >= opponentCap
+      )
+    );
+  };
+
+  // Pass 1a: both team pairs fresh (count=0) AND no cross-net pair at cap.
+  for (const split of splits) {
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA === 0 && countB === 0 && crossNetOk(split)) return split;
+  }
+
+  // Pass 1b: both team pairs fresh — relax opponent cap (rare: all fresh splits
+  // have capped opponent pairings; fresh partnerships still preferred over repeat ones).
   for (const split of splits) {
     const countA =
       partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
@@ -180,7 +255,16 @@ export function snakeDraft(
     if (countA === 0 && countB === 0) return split;
   }
 
-  // Pass 2: fall back to any split below the hard cap (original behavior).
+  // Pass 2a: below partnership cap AND no cross-net pair at cap.
+  for (const split of splits) {
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA < cap && countB < cap && crossNetOk(split)) return split;
+  }
+
+  // Pass 2b: below partnership cap only — last resort to prevent stalls.
   for (const split of splits) {
     const countA =
       partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
@@ -219,13 +303,14 @@ export function overlapWithRoster(playerIds: string[], roster: string[]): number
 //   ≤ 5  → 2  (nearly isolated tier — only avoid the last match)
 //   6–9  → 3  (small pool — today's Thursday-night scenario)
 //   10–15 → 4  (medium pool)
-//   16+  → 5  (full memory — current behaviour, unchanged)
+//   16+  → 7  (large session — ROSTER_LOOKBACK_COUNT=10 is now fetched so
+//              lookback can safely exceed the old ANTI_REPEAT_LOOKBACK=5)
 
 export function getEffectiveLookback(eligiblePoolSize: number): number {
   if (eligiblePoolSize <= 5) return 2;
   if (eligiblePoolSize <= 9) return 3;
   if (eligiblePoolSize <= 15) return 4;
-  return 5;
+  return 7;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -358,16 +443,20 @@ export function buildCombinationGroup(
 // When partnershipCounts / cap are omitted, behaviour is identical
 // to before: always returns the split at splitIndex (never null).
 //
-// Limitation: recentRosters is bounded by ANTI_REPEAT_LOOKBACK (5),
-// so repeatCount saturates at 5. After 5+ repeats the cycle may
-// stall on split 2. The soft gate limits how often forced repeats
-// occur, so this edge case is rare in practice.
+// opponentCounts / opponentCap: same soft-preference semantics as in
+// snakeDraft — used to avoid repeated cross-net matchups within rotations.
+//
+// Limitation: recentRosters is bounded by ROSTER_LOOKBACK_COUNT (10),
+// so repeatCount saturates at 10. The soft gate limits how often forced
+// repeats occur, so hitting the saturation ceiling is rare in practice.
 
 export function rotatedDraft(
   allFour: ScoredPlayer[],
   recentRosters: string[][],
   partnershipCounts?: Map<string, number>,
-  cap?: number
+  cap?: number,
+  opponentCounts?: Map<string, number>,
+  opponentCap?: number
 ): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
   const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
@@ -392,9 +481,27 @@ export function rotatedDraft(
     return splits[splitIndex];
   }
 
-  // Pass 1: prefer splits (starting from natural rotation index) where BOTH
-  // team pairs have never been partners (count=0). Avoids repeat partnerships
-  // even in the forced-repeat path when a fresher rotation is available.
+  // Helper: true when no cross-net pair is at or above opponentCap.
+  const crossNetOk = (split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }): boolean => {
+    if (!opponentCounts || opponentCap === undefined) return true;
+    return !split.teamA.some((a) =>
+      split.teamB.some(
+        (b) => (opponentCounts.get(pairKey(a.player_id, b.player_id)) ?? 0) >= opponentCap
+      )
+    );
+  };
+
+  // Pass 1a: both team pairs fresh AND no cross-net pair at cap, from natural rotation.
+  for (let i = 0; i < 3; i++) {
+    const split = splits[(splitIndex + i) % 3];
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA === 0 && countB === 0 && crossNetOk(split)) return split;
+  }
+
+  // Pass 1b: both team pairs fresh — relax opponent cap.
   for (let i = 0; i < 3; i++) {
     const split = splits[(splitIndex + i) % 3];
     const countA =
@@ -404,7 +511,17 @@ export function rotatedDraft(
     if (countA === 0 && countB === 0) return split;
   }
 
-  // Pass 2: fall back to any split below the hard cap, starting from natural rotation index.
+  // Pass 2a: below partnership cap AND no cross-net pair at cap.
+  for (let i = 0; i < 3; i++) {
+    const split = splits[(splitIndex + i) % 3];
+    const countA =
+      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
+    const countB =
+      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
+    if (countA < cap && countB < cap && crossNetOk(split)) return split;
+  }
+
+  // Pass 2b: below partnership cap only — last resort to prevent stalls.
   for (let i = 0; i < 3; i++) {
     const split = splits[(splitIndex + i) % 3];
     const countA =
@@ -592,7 +709,8 @@ export function runAlgorithm(
   pool: ScoredPlayer[],
   partnershipCounts: Map<string, number>,
   overlapMap: Map<string, number>,
-  recentRosters: string[][]
+  recentRosters: string[][],
+  opponentCounts: Map<string, number> = new Map()
 ): AlgorithmResult {
   // pool must be pre-scored and pre-sorted (pool[0] = anchor).
   const anchor = pool[0];
@@ -707,7 +825,9 @@ export function runAlgorithm(
               const draft = snakeDraft(
                 [anchor, ...swapGroup],
                 partnershipCounts,
-                MAX_PARTNERSHIP_REPEATS
+                MAX_PARTNERSHIP_REPEATS,
+                opponentCounts,
+                MAX_OPPONENT_REPEATS
               );
               if (!draft) {
                 if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -749,7 +869,9 @@ export function runAlgorithm(
                   const draft = snakeDraft(
                     [anchor, ...swapGroup],
                     partnershipCounts,
-                    MAX_PARTNERSHIP_REPEATS
+                    MAX_PARTNERSHIP_REPEATS,
+                    opponentCounts,
+                    MAX_OPPONENT_REPEATS
                   );
                   if (!draft) {
                     if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -779,7 +901,9 @@ export function runAlgorithm(
             [anchor, ...group],
             recentRosters,
             partnershipCounts,
-            MAX_PARTNERSHIP_REPEATS
+            MAX_PARTNERSHIP_REPEATS,
+            opponentCounts,
+            MAX_OPPONENT_REPEATS
           );
           if (!rotatedResult) {
             if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -806,7 +930,13 @@ export function runAlgorithm(
 
       const isMixed = maxVariance > SKILL_VARIANCE_MAX;
       const allFour = [anchor, ...group];
-      const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+      const draft = snakeDraft(
+        allFour,
+        partnershipCounts,
+        MAX_PARTNERSHIP_REPEATS,
+        opponentCounts,
+        MAX_OPPONENT_REPEATS
+      );
       if (!draft) {
         if (process.env.DEBUG_MATCHMAKING === "true") {
           console.log(
@@ -849,7 +979,13 @@ export function runAlgorithm(
 
     if (fallbackGroup.length >= 3) {
       const allFour = [anchor, ...fallbackGroup];
-      const draft = snakeDraft(allFour, partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+      const draft = snakeDraft(
+        allFour,
+        partnershipCounts,
+        MAX_PARTNERSHIP_REPEATS,
+        opponentCounts,
+        MAX_OPPONENT_REPEATS
+      );
       if (draft) {
         return {
           proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: true },

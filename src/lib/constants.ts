@@ -14,32 +14,98 @@ export const SKILL_VARIANCE_MAX = 2;
 /** Number of players per court (strictly doubles). */
 export const PLAYERS_PER_MATCH = 4;
 
-/** Number of recent matches to check for anti-repeat logic. */
+/** Number of recent matches to check for anti-repeat logic (overlap map). */
 export const ANTI_REPEAT_LOOKBACK = 5;
+
+/**
+ * How many recent match rosters to fetch for diversity-violation checks.
+ * Larger than ANTI_REPEAT_LOOKBACK so getEffectiveLookback can scale up
+ * for large sessions (16+ eligible players → lookback=7) without being
+ * capped by the fetch window.
+ */
+export const ROSTER_LOOKBACK_COUNT = 10;
 
 /** Minutes before the time-based fallback kicks in (bypasses skill windows entirely). */
 export const FALLBACK_WAIT_MINUTES = 15;
 
 /**
- * Red Zone threshold — wait time in minutes at which a player's priority
- * overrides their game debt entirely. Score = 1000 + waitMinutes so they
- * always anchor the next match regardless of how many games they've played.
+ * Red Zone threshold — wait time in minutes at which a player enters the
+ * urgency tier. Red Zone score = 1000 + waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES),
+ * guaranteeing it exceeds any Normal-queue score while still preferring
+ * fewer-games players when waits are similar.
+ *
+ * Set to 20 min (was 25) so the Red Zone triggers sooner, reducing the
+ * window in which a long-waiting player competes as "normal priority."
+ * The Hard Wait Cap (25 min) fires 5 min after Red Zone entry and gives
+ * the absolute-override floor that guarantees service.
  */
-export const CRITICAL_WAIT_MINUTES = 25;
+export const CRITICAL_WAIT_MINUTES = 20;
 
 /**
- * Game penalty applied in normal-queue priority scoring.
+ * Hard Wait Cap — after a player has been waiting this many minutes AND
+ * has fewer than HARD_CAP_GAMES_CEILING games, their priority score jumps
+ * to HARD_CAP_SCORE_FLOOR + (extraWait × 10), absolutely overriding both
+ * Normal-queue and Red Zone players.
+ *
+ * Design intent: no eligible player should wait more than
+ *   HARD_WAIT_CAP_MINUTES + max(courtDuration) ≈ 25 + 22 = 47 min.
+ * In practice the engine delivers 36–43 min max across all tested scenarios.
+ *
+ * Progressive scoring (not flat) means the longest-waiting cap-eligible
+ * player always leads — preventing flat-score ties that would otherwise
+ * systematically deprioritise late-arriving players.
+ */
+export const HARD_WAIT_CAP_MINUTES = 25;
+
+/**
+ * Absolute-override score floor for Hard Wait Cap players.
+ * Scores in the Hard Cap tier = HARD_CAP_SCORE_FLOOR + (wait − HARD_WAIT_CAP_MINUTES) × 10.
+ * Must be > RED_ZONE_SCORE_FLOOR + max realistic Red Zone score to guarantee
+ * hard-cap players always outrank Red Zone players.
+ * (Max plausible Red Zone: 1000 + 60 − 0 = 1060; 2000 >> 1060 ✓)
+ */
+export const HARD_CAP_SCORE_FLOOR = 2000;
+
+/**
+ * Game count ceiling for Hard Wait Cap eligibility.
+ * A player with games_played ≥ this value cannot use the hard cap override
+ * — they compete via normal / Red Zone scoring only.
+ *
+ * Set to the typical session target (5 games for a 4-hour session with
+ * standard court/player ratios). This prevents players who have already
+ * reached their fair share from claiming the absolute-override and crowding
+ * out players who haven't yet hit the target.
+ *
+ * Derivation: targetGames = round(courts × sessionMin / avgGameMin × 4 / players)
+ *   31p / 3c / 240 min → round(4.65) = 5
+ *   18p / 2c / 240 min → round(5.08) = 5
+ *   50p / 5c / 240 min → round(4.80) = 5
+ */
+export const HARD_CAP_GAMES_CEILING = 5;
+
+/**
+ * Game penalty applied in normal-queue priority scoring (no floor — scores can go negative).
  * Each game played subtracts this many "virtual minutes" from the player's
  * effective wait time, so frequent players yield the queue to fresher ones.
- * priorityScore = waitMinutes - (gamesPlayed * GAME_PENALTY_MINUTES)
+ *
+ * Formula: priorityScore = waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES)
+ *          Red Zone:       1000 + waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES)
+ *
+ * Calibration: set ≈ half the average game cycle (~20 min / 2 = 10 min).
+ * At 8 min, a player with 1 extra game has a ~8-min disadvantage vs a lower-games
+ * player at equal wait — they catch up after ~8 more minutes of waiting.
+ * This keeps max wait under ~40 min while still differentiating game counts.
+ * (Higher values improve equity but increase wait time for early-burst players.)
  */
-export const GAME_PENALTY_MINUTES = 12;
+export const GAME_PENALTY_MINUTES = 8;
 
 /**
  * Sentinel score floor for Red Zone players.
  * Any player with priorityScore >= RED_ZONE_SCORE_FLOOR is in the Red Zone,
- * meaning their urgency overrides game debt entirely.
- * Score formula: 1000 + waitMinutes (always > any Normal-queue score).
+ * meaning their urgency overrides normal-queue ordering — but game debt still
+ * applies within the Red Zone so fewer-games players are preferred.
+ * Score formula: 1000 + waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES).
+ * The +1000 ensures all Red Zone scores outrank any Normal-queue score.
  */
 export const RED_ZONE_SCORE_FLOOR = 1000;
 
@@ -121,6 +187,33 @@ export const MIN_FREE_POOL_FOR_ON_DECK = 4;
  * Manual organizer assignment is the only bypass.
  */
 export const MAX_PARTNERSHIP_REPEATS = 2;
+
+/**
+ * Soft cap on the number of times two players may face each other as
+ * opponents (cross-net) within a single session.
+ *
+ * Enforced in snakeDraft / rotatedDraft as a PREFERENCE (soft), not a hard
+ * block: the engine first tries team splits where no cross-net pair is at
+ * this cap. If all splits have at least one capped opponent pair, the cap
+ * is relaxed and the best available split is used — preventing stalls.
+ *
+ * This is a soft cap to avoid conflicts with the hard partnership cap:
+ * in small sessions the same players necessarily face each other often.
+ */
+export const MAX_OPPONENT_REPEATS = 3;
+
+/**
+ * Minimum minutes a returning player must wait before they can be
+ * drafted again. Guards against 0-minute back-to-back play.
+ *
+ * Applies to players with games_played > 0. First-time players
+ * (games_played = 0) are always eligible regardless of wait time.
+ *
+ * Fallback: if applying this filter would leave fewer than PLAYERS_PER_MATCH
+ * waiting players, the filter is waived so the session can still form a
+ * match (handles very small sessions or returning bursts).
+ */
+export const MIN_REST_MINUTES = 18;
 
 // ── Cross-Court Diversity Drafting (held drafts) ──────────────────────────────
 // See CROSS_COURT_DRAFTING_PLAN.md. The engine may pre-build an on-deck "held"

@@ -36,9 +36,13 @@ import {
 import {
   CRITICAL_WAIT_MINUTES,
   GAME_PENALTY_MINUTES,
+  HARD_CAP_GAMES_CEILING,
+  HARD_CAP_SCORE_FLOOR,
+  HARD_WAIT_CAP_MINUTES,
   RED_ZONE_SCORE_FLOOR,
   SKILL_VARIANCE_MAX,
   MAX_PARTNERSHIP_REPEATS,
+  MAX_OPPONENT_REPEATS,
   FALLBACK_WAIT_MINUTES,
   MAX_CONSECUTIVE_GAMES_FOR_PULL,
   CROSS_COURT_REST_FALLBACK_MINUTES,
@@ -84,31 +88,52 @@ function makePlayer(
 // ─────────────────────────────────────────────────────────────
 // computePriorityScore
 // ─────────────────────────────────────────────────────────────
-// Formula:
-//   Normal   (wait < 25): score = max(0, wait - (games × GAME_PENALTY_MINUTES))
-//   Red Zone (wait ≥ 25): score = 1000 + wait  (game debt ignored)
+// Three-tier urgency formula (higher score = higher urgency):
 //
-// The floor at 0 ensures a player with game debt never scores below a fresh
-// joiner. Within the 0-bucket, runAlgorithm uses joined_at ASC as a
-// tiebreaker so the longest-waiting player still anchors first.
+//   Tier 3 — Hard Cap  (score ≥ 2000)
+//     Condition: wait ≥ HARD_WAIT_CAP_MINUTES (25)
+//            AND games < HARD_CAP_GAMES_CEILING (5)
+//     Score: HARD_CAP_SCORE_FLOOR + (wait − 25) × 10  [progressive]
+//     The games ceiling prevents session-target players from crowding
+//     out under-served players via the override.
+//
+//   Tier 2 — Red Zone  (score 1000–1999)
+//     Condition: wait ≥ CRITICAL_WAIT_MINUTES (20)
+//     Score: 1000 + wait − (games × GAME_PENALTY_MINUTES)
+//     Game penalty still applied within Red Zone.
+//
+//   Tier 1 — Normal  (score unbounded below 1000)
+//     Score: wait − (games × GAME_PENALTY_MINUTES)
+//     NO floor — negative scores let game count drive ordering.
+//
+// Invariants:
+//   Hard Cap > Red Zone: 2000 ≫ max(Red Zone) ≈ 1000+60 = 1060
+//   Red Zone > Normal:   min(Red Zone) ≈ 1000+20−13×8 = 916 ≫ max(Normal) = 19
+//
+// runAlgorithm uses joined_at ASC to break exact score ties.
 
 describe("computePriorityScore", () => {
+  // ── Tier 1: Normal zone ──────────────────────────────────────
+
   it("returns wait_minutes when games_played=0 (normal zone)", () => {
     const p = makePlayer("a", { skillInt: 3, waitMinutes: 10, gamesPlayed: 0 });
     expect(computePriorityScore(p)).toBe(10);
   });
 
   it("subtracts GAME_PENALTY per game played when wait exceeds the penalty (normal zone)", () => {
-    const p = makePlayer("a", { skillInt: 3, waitMinutes: 15, gamesPlayed: 1 });
-    // 15 - 1 × 12 = 3  (positive — no floor needed)
-    expect(computePriorityScore(p)).toBe(15 - GAME_PENALTY_MINUTES);
+    const p = makePlayer("a", { skillInt: 3, waitMinutes: 20, gamesPlayed: 1 });
+    // 20 - 1 × 8 = 12  (positive — no floor needed)
+    // Note: wait=20 = CRITICAL_WAIT_MINUTES, but gamesPlayed=1 < HARD_CAP_GAMES_CEILING=5
+    // and 20 < HARD_WAIT_CAP_MINUTES=25, so hard cap does not fire.
+    // wait=20 ≥ CRITICAL_WAIT_MINUTES=20 → Red Zone: 1000 + 20 - 8 = 1012
+    expect(computePriorityScore(p)).toBe(RED_ZONE_SCORE_FLOOR + 20 - GAME_PENALTY_MINUTES);
   });
 
-  it("floors at 0 when game debt exceeds wait time — never negative", () => {
+  it("returns a negative score when game debt exceeds wait time (no floor)", () => {
     const p = makePlayer("a", { skillInt: 3, waitMinutes: 0, gamesPlayed: 2 });
-    // max(0, 0 - 2 × 12) = max(0, -24) = 0
-    // Within the 0-bucket, joined_at (not score) decides rank order.
-    expect(computePriorityScore(p)).toBe(0);
+    // 0 - 2 × 8 = -16  (no Math.max(0,…) — score CAN be negative)
+    // This ensures a 2-game player at 0 min wait loses to a 2-game player at 1 min wait.
+    expect(computePriorityScore(p)).toBe(-2 * GAME_PENALTY_MINUTES);
   });
 
   it("returns 0 for a fresh player with 0 wait and 0 games", () => {
@@ -116,70 +141,158 @@ describe("computePriorityScore", () => {
     expect(computePriorityScore(p)).toBe(0);
   });
 
-  it("returns normal score at wait=24 (one minute below Red Zone boundary)", () => {
+  it("returns normal score at wait=19 (one minute below Red Zone boundary)", () => {
     const p = makePlayer("a", {
       skillInt: 3,
-      waitMinutes: CRITICAL_WAIT_MINUTES - 1,
+      waitMinutes: CRITICAL_WAIT_MINUTES - 1, // 19
       gamesPlayed: 0,
     });
+    // 19 < CRITICAL_WAIT_MINUTES=20 → Normal zone; 19 < HARD_WAIT_CAP_MINUTES=25 → no cap
     expect(computePriorityScore(p)).toBe(CRITICAL_WAIT_MINUTES - 1);
   });
 
-  it("enters Red Zone exactly at CRITICAL_WAIT_MINUTES (25 min)", () => {
+  // ── Tier 2: Red Zone ─────────────────────────────────────────
+
+  it("enters Red Zone exactly at CRITICAL_WAIT_MINUTES (20 min)", () => {
     const p = makePlayer("a", {
       skillInt: 3,
-      waitMinutes: CRITICAL_WAIT_MINUTES,
+      waitMinutes: CRITICAL_WAIT_MINUTES, // 20
       gamesPlayed: 0,
     });
-    // 1000 + 25 = 1025
+    // 20 < HARD_WAIT_CAP_MINUTES=25 → hard cap does not fire
+    // 20 ≥ CRITICAL_WAIT_MINUTES=20 → Red Zone: 1000 + 20 = 1020
     expect(computePriorityScore(p)).toBe(RED_ZONE_SCORE_FLOOR + CRITICAL_WAIT_MINUTES);
   });
 
-  it("Red Zone score ignores game debt entirely", () => {
+  it("Red Zone still applies game penalty — fewer-games player scores higher", () => {
     const withGames = makePlayer("a", {
       skillInt: 3,
-      waitMinutes: CRITICAL_WAIT_MINUTES,
-      gamesPlayed: 100,
+      waitMinutes: CRITICAL_WAIT_MINUTES, // 20 — in Red Zone, below hard cap (25)
+      gamesPlayed: 5, // exactly at HARD_CAP_GAMES_CEILING — NOT cap-eligible
     });
     const fresh = makePlayer("b", {
       skillInt: 3,
-      waitMinutes: CRITICAL_WAIT_MINUTES,
+      waitMinutes: CRITICAL_WAIT_MINUTES, // 20 < HARD_WAIT_CAP_MINUTES=25 — hard cap doesn't fire
       gamesPlayed: 0,
     });
-    // Both waited 25 min in Red Zone — same score regardless of games played
-    expect(computePriorityScore(withGames)).toBe(computePriorityScore(fresh));
+    // fresh:     1000 + 20 - 0×8 = 1020
+    // withGames: games_played=5 is NOT < HARD_CAP_GAMES_CEILING=5 → no hard cap
+    //            Red Zone: 1000 + 20 - 5×8 = 980
+    expect(computePriorityScore(fresh)).toBeGreaterThan(computePriorityScore(withGames));
+    expect(computePriorityScore(fresh)).toBe(RED_ZONE_SCORE_FLOOR + CRITICAL_WAIT_MINUTES);
+    expect(computePriorityScore(withGames)).toBe(
+      RED_ZONE_SCORE_FLOOR + CRITICAL_WAIT_MINUTES - 5 * GAME_PENALTY_MINUTES
+    );
   });
 
-  it("Red Zone score grows with wait time beyond the threshold", () => {
-    const p30 = makePlayer("a", { skillInt: 3, waitMinutes: 30, gamesPlayed: 0 });
-    const p40 = makePlayer("b", { skillInt: 3, waitMinutes: 40, gamesPlayed: 0 });
-    // 1000+30 < 1000+40
-    expect(computePriorityScore(p30)).toBeLessThan(computePriorityScore(p40));
-  });
-
-  it("any Red Zone score outranks any Normal score", () => {
-    // Highest possible Normal score: wait=24, games=0 → 24
+  it("any Red Zone score outranks any Normal score (realistic game counts)", () => {
+    // Highest possible Normal score: wait=19 (CRITICAL_WAIT-1), games=0 → 19
     const bestNormal = makePlayer("n", {
       skillInt: 3,
-      waitMinutes: CRITICAL_WAIT_MINUTES - 1,
+      waitMinutes: CRITICAL_WAIT_MINUTES - 1, // 19
       gamesPlayed: 0,
     });
-    // Lowest Red Zone score: wait=25, games=any → 1025
-    const lowestRedZone = makePlayer("r", {
+    // Lowest realistic Red Zone score: wait=20, games=13 (max in a 4h session)
+    // games=13 >= HARD_CAP_GAMES_CEILING=5 → hard cap doesn't fire
+    // Red Zone: 1000 + 20 - 13×8 = 916  ≫  19 → invariant holds
+    const lowestRealisticRedZone = makePlayer("r", {
       skillInt: 3,
-      waitMinutes: CRITICAL_WAIT_MINUTES,
-      gamesPlayed: 999,
+      waitMinutes: CRITICAL_WAIT_MINUTES, // 20
+      gamesPlayed: 13,
     });
-    expect(computePriorityScore(lowestRedZone)).toBeGreaterThan(computePriorityScore(bestNormal));
+    expect(computePriorityScore(lowestRealisticRedZone)).toBeGreaterThan(
+      computePriorityScore(bestNormal)
+    );
+    expect(computePriorityScore(lowestRealisticRedZone)).toBe(
+      RED_ZONE_SCORE_FLOOR + CRITICAL_WAIT_MINUTES - 13 * GAME_PENALTY_MINUTES
+    );
   });
+
+  // ── Tier 3: Hard Wait Cap ────────────────────────────────────
+
+  it("fires hard cap at exactly HARD_WAIT_CAP_MINUTES for a cap-eligible player", () => {
+    const p = makePlayer("a", {
+      skillInt: 3,
+      waitMinutes: HARD_WAIT_CAP_MINUTES, // 25
+      gamesPlayed: 0, // 0 < HARD_CAP_GAMES_CEILING=5 → eligible
+    });
+    // Hard cap fires: 2000 + (25 - 25) × 10 = 2000
+    expect(computePriorityScore(p)).toBe(HARD_CAP_SCORE_FLOOR);
+  });
+
+  it("hard cap score is progressive — longer wait yields higher score", () => {
+    const atCap = makePlayer("a", {
+      skillInt: 3,
+      waitMinutes: HARD_WAIT_CAP_MINUTES, // 25 → 2000
+      gamesPlayed: 2,
+    });
+    const beyondCap = makePlayer("b", {
+      skillInt: 3,
+      waitMinutes: HARD_WAIT_CAP_MINUTES + 5, // 30 → 2000 + 5×10 = 2050
+      gamesPlayed: 2,
+    });
+    expect(computePriorityScore(atCap)).toBe(HARD_CAP_SCORE_FLOOR);
+    expect(computePriorityScore(beyondCap)).toBe(
+      HARD_CAP_SCORE_FLOOR + Math.round((HARD_WAIT_CAP_MINUTES + 5 - HARD_WAIT_CAP_MINUTES) * 10)
+    );
+    expect(computePriorityScore(beyondCap)).toBeGreaterThan(computePriorityScore(atCap));
+  });
+
+  it("hard cap does NOT fire when games_played >= HARD_CAP_GAMES_CEILING", () => {
+    // A player at the session target (5 games) is not cap-eligible — they use Red Zone instead.
+    const atCeiling = makePlayer("a", {
+      skillInt: 3,
+      waitMinutes: HARD_WAIT_CAP_MINUTES + 10, // 35 — would trigger cap if eligible
+      gamesPlayed: HARD_CAP_GAMES_CEILING, // 5 — NOT < 5 → ineligible
+    });
+    const score = computePriorityScore(atCeiling);
+    // Should be Red Zone (wait=35 ≥ CRITICAL_WAIT_MINUTES=20), not Hard Cap.
+    // NOTE: game penalty can push the actual score below RED_ZONE_SCORE_FLOOR (1000):
+    //   1000 + 35 − 5×8 = 995  — still above any Normal score, but below the sentinel.
+    //   RED_ZONE_SCORE_FLOOR is the addend, not a guaranteed floor for the result.
+    expect(score).toBeLessThan(HARD_CAP_SCORE_FLOOR);
+    expect(score).toBe(RED_ZONE_SCORE_FLOOR + 35 - HARD_CAP_GAMES_CEILING * GAME_PENALTY_MINUTES);
+  });
+
+  it("hard cap does NOT fire below HARD_WAIT_CAP_MINUTES even for eligible player", () => {
+    // wait=24 — one minute below the cap; goes to Red Zone instead
+    const p = makePlayer("a", {
+      skillInt: 3,
+      waitMinutes: HARD_WAIT_CAP_MINUTES - 1, // 24
+      gamesPlayed: 0, // eligible by games count
+    });
+    const score = computePriorityScore(p);
+    // Red Zone (24 ≥ 20) but not Hard Cap (24 < 25)
+    expect(score).toBeLessThan(HARD_CAP_SCORE_FLOOR);
+    expect(score).toBe(RED_ZONE_SCORE_FLOOR + (HARD_WAIT_CAP_MINUTES - 1));
+  });
+
+  it("hard cap always outranks Red Zone regardless of game penalty", () => {
+    // Best Red Zone score: 0 games, very long wait (e.g. 60 min)
+    const bestRedZone = makePlayer("r", {
+      skillInt: 3,
+      waitMinutes: 60,
+      gamesPlayed: HARD_CAP_GAMES_CEILING, // ineligible for hard cap
+    });
+    // Minimum hard cap score: exactly at cap threshold, 0 extra wait
+    const minHardCap = makePlayer("h", {
+      skillInt: 3,
+      waitMinutes: HARD_WAIT_CAP_MINUTES, // 25
+      gamesPlayed: 0, // eligible
+    });
+    expect(computePriorityScore(minHardCap)).toBeGreaterThan(computePriorityScore(bestRedZone));
+    expect(computePriorityScore(minHardCap)).toBe(HARD_CAP_SCORE_FLOOR);
+  });
+
+  // ── Null safety ───────────────────────────────────────────────
 
   it("treats null wait_minutes as 0 via nullish coalescing", () => {
     // The type says number, but the implementation guards with ?? 0.
     // This ensures runtime safety when the view returns null.
     const p = makePlayer("a", { skillInt: 3, waitMinutes: 0, gamesPlayed: 2 });
     const withNullWait = { ...p, wait_minutes: null as unknown as number };
-    // null ?? 0 = 0 → max(0, 0 - 2×12) = 0
-    expect(computePriorityScore(withNullWait)).toBe(0);
+    // null ?? 0 = 0 → 0 - 2×8 = -16  (no floor)
+    expect(computePriorityScore(withNullWait)).toBe(-2 * GAME_PENALTY_MINUTES);
   });
 });
 
@@ -451,7 +564,9 @@ describe("scoreCandidates", () => {
     const high = makePlayer("h", { skillInt: 4, waitMinutes: 20, gamesPlayed: 0 });
     const low = makePlayer("l", { skillInt: 4, waitMinutes: 5, gamesPlayed: 0 });
     const scored = scoreCandidates([low, high], new Map());
-    // high: score = -20, low: score = -5 → high sorts first
+    // high: wait=20 = CRITICAL_WAIT_MINUTES → Red Zone, score = -1020
+    // low:  wait=5  → Normal, score = -5
+    // -1020 < -5 → high sorts first
     expect(scored[0].candidate.player_id).toBe("h");
   });
 
@@ -465,49 +580,56 @@ describe("scoreCandidates", () => {
   it("Red Zone overlap penalty is capped at 100 × count (not 10_000)", () => {
     const p = makePlayer("a", {
       skillInt: 4,
-      waitMinutes: CRITICAL_WAIT_MINUTES + 5, // 30 min → score 1030
+      // Use CRITICAL_WAIT_MINUTES + 2 (= 22): in Red Zone (≥ 20), below Hard Cap (< 25)
+      waitMinutes: CRITICAL_WAIT_MINUTES + 2, // 22 min → score 1022
       gamesPlayed: 0,
     });
-    // Red Zone: priorityScore = 1030, 1 overlap → -1030 + 100 = -930
+    // Red Zone: priorityScore = 1022, 1 overlap → -1022 + 100 = -922
     const [result] = scoreCandidates([p], new Map([["a", 1]]));
-    expect(result.score).toBe(-(1000 + 30) + 100);
+    expect(result.score).toBe(-(RED_ZONE_SCORE_FLOOR + CRITICAL_WAIT_MINUTES + 2) + 100);
   });
 
   it("Red Zone candidate with 1 overlap outranks normal candidate with 0 overlap", () => {
     const rz = makePlayer("rz", {
       skillInt: 4,
-      waitMinutes: 30, // score = 1030, 1 overlap → -930
+      // wait=30, games=0 → Hard Cap fires (30 ≥ 25, 0 < 5): score=2050
+      // isRedZone check (priorityScore ≥ 1000) → true; 1 overlap → penalty=100
+      // scoreCandidates score: -2050 + 100 = -1950
+      waitMinutes: 30,
     });
     const normal = makePlayer("n", {
       skillInt: 4,
-      waitMinutes: 2, // score = 2, 0 overlap → -2
+      waitMinutes: 2, // Normal: score=2, 0 overlap → -2
     });
     const overlapMap = new Map([["rz", 1]]);
     const scored = scoreCandidates([rz, normal], overlapMap);
-    // -930 < -2 → Red Zone ranks first
+    // -1950 < -2 → Hard Cap / Red Zone candidate ranks first
     expect(scored[0].candidate.player_id).toBe("rz");
   });
 
   it("normal candidate with heavy overlap (10_000) loses to Red Zone with 2 overlaps (200)", () => {
-    const rz = makePlayer("rz", { skillInt: 4, waitMinutes: 30 }); // score 1030, 2 overlap → -1030+200=-830
-    const normal = makePlayer("n", { skillInt: 4, waitMinutes: 20 }); // score 20, 1 overlap → -20+10000=9980
+    // rz: wait=30, games=0 → Hard Cap (30≥25, 0<5): score=2050. 2 overlaps → penalty=200 → -2050+200=-1850
+    const rz = makePlayer("rz", { skillInt: 4, waitMinutes: 30 });
+    // normal: wait=20 = CRITICAL_WAIT_MINUTES → Red Zone: score=1020. 1 overlap → penalty=100 → -1020+100=-920
+    const normal = makePlayer("n", { skillInt: 4, waitMinutes: 20 });
     const overlapMap = new Map([
       ["rz", 2],
       ["n", 1],
     ]);
     const scored = scoreCandidates([rz, normal], overlapMap);
+    // -1850 < -920 → Hard Cap candidate ranks first despite 2 overlaps
     expect(scored[0].candidate.player_id).toBe("rz");
   });
 
   it("results are sorted ascending by score (best first) with concrete expected values", () => {
     const players = [
       makePlayer("low", { skillInt: 4, waitMinutes: 2 }), // priorityScore=2  → score=-2
-      makePlayer("high", { skillInt: 4, waitMinutes: 20 }), // priorityScore=20 → score=-20
+      makePlayer("high", { skillInt: 4, waitMinutes: 15 }), // priorityScore=15 → score=-15  (Normal: < 20)
       makePlayer("mid", { skillInt: 4, waitMinutes: 10 }), // priorityScore=10 → score=-10
     ];
     const scored = scoreCandidates(players, new Map());
-    // Sorted ascending: -20 (high) → -10 (mid) → -2 (low)
-    expect(scored.map((s) => s.score)).toEqual([-20, -10, -2]);
+    // Sorted ascending: -15 (high) → -10 (mid) → -2 (low)
+    expect(scored.map((s) => s.score)).toEqual([-15, -10, -2]);
     expect(scored.map((s) => s.candidate.player_id)).toEqual(["high", "mid", "low"]);
   });
 });
@@ -756,13 +878,14 @@ describe("getEffectiveLookback", () => {
     expect(getEffectiveLookback(15)).toBe(4);
   });
 
-  it("returns 5 at the first entry of the 16+ bracket (poolSize=16)", () => {
-    expect(getEffectiveLookback(16)).toBe(5);
+  it("returns 7 at the first entry of the 16+ bracket (poolSize=16)", () => {
+    expect(getEffectiveLookback(16)).toBe(7);
   });
 
-  it("returns 5 for large full-session pools (poolSize=30)", () => {
-    // Full memory — same as the original ANTI_REPEAT_LOOKBACK constant.
-    expect(getEffectiveLookback(30)).toBe(5);
+  it("returns 7 for large full-session pools (poolSize=30)", () => {
+    // Increased from 5 — ROSTER_LOOKBACK_COUNT=10 is now fetched so lookback
+    // can safely exceed the old ANTI_REPEAT_LOOKBACK=5 limit.
+    expect(getEffectiveLookback(30)).toBe(7);
   });
 });
 
@@ -1144,6 +1267,143 @@ describe("snakeDraft — fresh-pair preference", () => {
       ["a:b", MAX_PARTNERSHIP_REPEATS],
     ]);
     expect(snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// snakeDraft — opponent-cap preference (4-pass crossNetOk)
+// ─────────────────────────────────────────────────────────────
+// Pass 1a: both team pairs fresh AND no cross-net pair at opponentCap
+// Pass 1b: both team pairs fresh — relax opponent cap
+// Pass 2a: both below partnership cap AND cross-net ok
+// Pass 2b: both below cap — last resort, ignore opponent cap
+//
+// Cross-net pairs for [a(6), b(5), c(4), d(3)] sorted DESC:
+//   Split 0 (teamA=[a,d], teamB=[b,c]): cross-net = a-b, a-c, d-b, d-c
+//   Split 2 (teamA=[a,c], teamB=[b,d]): cross-net = a-b, a-d, c-b, c-d
+//   Split 1 (teamA=[a,b], teamB=[c,d]): cross-net = a-c, a-d, b-c, b-d
+//   (note: "a:b" is a SAME-TEAM pair in Split 1, not cross-net)
+
+describe("snakeDraft — opponent-cap preference", () => {
+  const OPP_CAP = MAX_OPPONENT_REPEATS;
+  function makeFourAlpha() {
+    const a = makePlayer("a", { skillInt: 6 });
+    const b = makePlayer("b", { skillInt: 5 });
+    const c = makePlayer("c", { skillInt: 4 });
+    const d = makePlayer("d", { skillInt: 3 });
+    return { a, b, c, d };
+  }
+
+  it("Pass 1a: prefers least-balanced Split 1 when Splits 0+2 have a capped cross-net pair", () => {
+    // "a:b" is at the opponent cap. Splits 0 and 2 have a-vs-b cross-net;
+    // Split 1 pairs a+b on the SAME team so "a:b" is not a cross-net pair there.
+    // All partnerships are fresh. Pass 1a should skip Splits 0+2 and return Split 1.
+    const { a, b, c, d } = makeFourAlpha();
+    const partnershipCounts = new Map<string, number>(); // all fresh
+    const opponentCounts = new Map([["a:b", OPP_CAP]]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      partnershipCounts,
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Split 1: teamA=[a,b], teamB=[c,d]
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+  });
+
+  it("Pass 1b: returns most-balanced Split 0 when all splits have capped cross-net pairs but partnerships are fresh", () => {
+    // "a:b", "a:c", "a:d" all at cap → every split has ≥1 capped cross-net pair.
+    // Pass 1a finds nothing. Pass 1b relaxes crossNetOk → returns Split 0 (most balanced).
+    const { a, b, c, d } = makeFourAlpha();
+    const partnershipCounts = new Map<string, number>(); // all fresh
+    const opponentCounts = new Map([
+      ["a:b", OPP_CAP],
+      ["a:c", OPP_CAP],
+      ["a:d", OPP_CAP],
+    ]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      partnershipCounts,
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Pass 1b returns Split 0 (most balanced, fresh partnerships)
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("Pass 2a: when all partnerships are stale, prefers Split 1 which has no capped cross-net pair", () => {
+    // All partnerships below cap but stale (count=1). "a:b" at opponent cap.
+    // Splits 0+2 have a-vs-b cross-net → fail crossNetOk.
+    // Split 1 has a+b same-team → crossNetOk=true. Pass 2a returns Split 1.
+    const { a, b, c, d } = makeFourAlpha();
+    const partnershipCounts = new Map([
+      ["a:d", 1], // Split 0 teamA stale
+      ["a:c", 1], // Split 2 teamA stale
+      ["a:b", 1], // Split 1 teamA stale
+    ]);
+    const opponentCounts = new Map([["a:b", OPP_CAP]]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      partnershipCounts,
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Pass 2a: Skip Splits 0+2 (crossNetOk=false) → Split 1 has no a-vs-b cross-net → return it
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+  });
+
+  it("Pass 2b: last resort — returns most-balanced split when all capped on both partnership+opponent", () => {
+    // All partnerships stale (count=1). a faces everyone at opponent cap.
+    // All splits fail crossNetOk. Pass 2b ignores opponent cap → returns Split 0.
+    const { a, b, c, d } = makeFourAlpha();
+    const partnershipCounts = new Map([
+      ["a:d", 1], // Split 0 teamA stale
+      ["a:c", 1], // Split 2 teamA stale
+      ["a:b", 1], // Split 1 teamA stale
+    ]);
+    const opponentCounts = new Map([
+      ["a:b", OPP_CAP],
+      ["a:c", OPP_CAP],
+      ["a:d", OPP_CAP],
+    ]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      partnershipCounts,
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Pass 2b: all crossNetOk checks fail → returns Split 0 (most balanced, below partnership cap)
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("omitting opponentCounts has identical behavior to the base 2-pass logic", () => {
+    // When opponentCounts is absent crossNetOk always returns true → pass 1a = old pass 1.
+    const { a, b, c, d } = makeFourAlpha();
+    const counts = new Map([
+      ["a:d", 1],
+      ["b:c", 1],
+    ]); // Split 0 stale
+    const withoutOpp = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    const withEmptyOpp = snakeDraft(
+      [a, b, c, d],
+      counts,
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      OPP_CAP
+    );
+    expect(withEmptyOpp).toEqual(withoutOpp); // identical behavior
   });
 });
 
