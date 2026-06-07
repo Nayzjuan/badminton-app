@@ -84,6 +84,10 @@ function makeMatch(playerIds = ["p1", "p2", "p3", "p4"]): CompletedMatch {
     created_at: "2026-01-01T00:00:00Z",
     started_at: "2026-01-01T00:05:00Z",
     completed_at: "2026-01-01T00:25:00Z",
+    pulled_player_ids: [],
+    pulled_from_match_id: null,
+    held_ready_at: null,
+    is_held: false,
     players,
     courtName: null,
   };

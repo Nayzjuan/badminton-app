@@ -5,6 +5,35 @@
 
 ---
 
+## 🟢 STABLE CHECKPOINT — `stable-pre-cross-court` (2026-06-07) — REVERT TARGET
+
+Before building the **Cross-Court Diversity Drafting** feature (`CROSS_COURT_DRAFTING_PLAN.md`), the last known-good app was tagged as a revert point.
+
+- **Tag:** `stable-pre-cross-court` — annotated, **pushed to `origin`** (durable across machines; survives any future `reset`).
+- **Commit:** `2e78054` (`fix(quality): address 5 LOW + 2 INFO findings`) — full `2e78054becf8687fe91848bc1b0c2b867f2bd99a`.
+- **Represents:** `main` with server-triggered push + digital-twin overhaul + LOW/INFO fixes. **Zero cross-court code.** (Untracked scratch — sandbox previews, review `.md`s — is NOT part of the tag.)
+- **Revert if the cross-court build proves unsuccessful:**
+  - Inspect: `git checkout stable-pre-cross-court`
+  - Roll `main` back: `git reset --hard stable-pre-cross-court` (⚠️ discards later commits; does NOT delete untracked files).
+- **Build isolation:** the cross-court feature is built on a **separate branch off this tag**, so `main` stays clean until the feature is proven and explicitly merged.
+
+---
+
+## ⚠️ E2E SANDBOX FULLY DELETED (2026-06-05) — must re-bootstrap before running E2E
+
+The persistent E2E fixture was **permanently deleted from production** at the user's request — NOT by the normal cleanup (which preserves it by design). Removed: the `🤖 E2E SANDBOX — DO NOT JOIN` session (`ed2666e3-…`), all its child data, and **all 9 bot accounts** (profiles + auth users): E2E_Alice/Bob/Cara/Dan/Eve/Frank/Grace/Henry + **E2E_OrganizerBot**. Verified zero remnants/orphans; 12 real sessions untouched.
+
+**Consequence:** the local E2E suite is now broken — `.env.test`'s `TEST_SESSION_ID` points to a session that no longer exists, and the OrganizerBot + its baked Playwright `storageState` are gone. `teardown.ts`/`seedSession` will FATAL ("Check TEST_SESSION_ID in .env.test").
+
+**To restore before running E2E again:**
+1. `npm run test:setup` → `tests/helpers/init-sandbox.ts` (idempotent): recreates E2E_OrganizerBot + a fresh `🤖 E2E SANDBOX` session and injects a new `TEST_SESSION_ID` into `.env.test`.
+2. Re-bake the Playwright auth storage state (the suite previously did this via scenario-k) so authenticated specs pass.
+3. The per-test `seedSession` recreates player data/bots into the session from there.
+
+(Reminder: `emergency-cleanup.ts` / `teardown.ts` only wipe child data and RESET the session row — they never delete it. Full deletion above was a manual one-off via MCP SQL.)
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-05 — Low/Info Finding Fixes)
 
 ### Validated + fixed 5 LOW + 2 INFO findings — COMPLETE ✅
