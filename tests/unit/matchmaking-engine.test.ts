@@ -60,6 +60,7 @@ import {
   promoteOnDeckMatchInternal,
   runEngineForSession,
   callNextMatch,
+  recomputeHeldReadiness,
 } from "@/app/actions/matchmaking";
 import { getDynamicDraftCap } from "@/lib/matchmaking-core";
 
@@ -80,8 +81,19 @@ type MockResponse = {
  * All chain methods (select, eq, neq, in, or, order, limit, update, insert)
  * return the same builder so the full chain resolves to one response.
  */
-function makeBuilder(response: MockResponse) {
+function makeBuilder(response: MockResponse, recorder?: { update: unknown[]; insert: unknown[] }) {
   const b: Record<string, unknown> = {};
+
+  // Capture mutation payloads so tests can assert WHAT was written, not just that
+  // a call happened (QA-PROM-02 / QA-TRG-03). update()/insert() still return `b`.
+  b["update"] = (arg: unknown) => {
+    recorder?.update.push(arg);
+    return b;
+  };
+  b["insert"] = (arg: unknown) => {
+    recorder?.insert.push(arg);
+    return b;
+  };
 
   // Make the builder itself awaitable (for patterns that don't call .single())
   b["then"] = (onFulfilled: (v: MockResponse) => unknown, onRejected: (e: unknown) => unknown) =>
@@ -104,10 +116,20 @@ function makeBuilder(response: MockResponse) {
     "or",
     "order",
     "limit",
-    "update",
     "upsert",
-    "insert",
     "maybeSingle",
+    // Cross-court readiness/promotion operators (QA-PROM-01): recomputeHeldReadiness
+    // and the held-draft scans use is()/gt()/contains(); add the common operators so
+    // those chains don't TypeError.
+    "is",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "contains",
+    "containedBy",
+    "overlaps",
+    "filter",
   ]) {
     b[method] = (..._args: unknown[]) => b;
   }
@@ -135,11 +157,12 @@ function makeMockClient(fromResponses: MockResponse[], rpcResponses: MockRespons
   let fromIdx = 0;
   let rpcIdx = 0;
   const queriedTables: string[] = [];
+  const recorder: { update: unknown[]; insert: unknown[] } = { update: [], insert: [] };
 
   const from = vi.fn((table: string) => {
     queriedTables.push(table);
     const result = fromResponses[fromIdx++] ?? { data: null, error: null };
-    return makeBuilder(result);
+    return makeBuilder(result, recorder);
   });
 
   const rpc = vi.fn(() => {
@@ -156,7 +179,7 @@ function makeMockClient(fromResponses: MockResponse[], rpcResponses: MockRespons
     }),
   };
 
-  return { from, rpc, queriedTables, auth };
+  return { from, rpc, queriedTables, auth, recorder };
 }
 
 // ── Test fixture UUIDs ─────────────────────────────────────────
@@ -994,5 +1017,153 @@ describe("callNextMatch", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not enough players/i);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// CROSS-COURT — promotion TS-filter + recomputeHeldReadiness (Phase 5)
+// ═════════════════════════════════════════════════════════════
+
+describe("promoteOnDeckMatchInternal — held-draft TS-filter (C-4 / R3-A)", () => {
+  // Past timestamp ⇒ a held match whose held_ready_at is due (no fake clock needed).
+  const READY_AT = "2020-01-01T00:00:00.000Z";
+
+  it("CC-PROM-CC01: skips a not-ready held match and promotes a READY match queued behind it", async () => {
+    const heldNotReady = {
+      id: "held-1",
+      is_held: true,
+      held_ready_at: null,
+      is_mixed_level: false,
+    };
+    const normalReady = {
+      id: "match-2",
+      is_held: false,
+      held_ready_at: null,
+      is_mixed_level: false,
+    };
+    const mock = makeMockClient([
+      { data: [heldNotReady, normalReady], error: null }, // published pending (front = not-ready held)
+      { data: { id: "match-2" }, error: null }, // CAS update on the chosen ready match
+      { data: null, error: null }, // courts update
+      { data: MOCK_MATCH_PLAYERS, error: null }, // match_players
+      { data: null, error: null }, // queue_entries update
+      { data: MOCK_PROFILES, error: null }, // profiles
+    ]);
+
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
+
+    expect(result.success).toBe(true);
+    expect(result.matchId).toBe("match-2"); // the ready one BEHIND the held one
+  });
+
+  it("CC-PROM-CC02: promotes a held match once its held_ready_at is due", async () => {
+    const readyHeld = {
+      id: "held-1",
+      is_held: true,
+      held_ready_at: READY_AT,
+      is_mixed_level: false,
+    };
+    const mock = makeMockClient([
+      { data: [readyHeld], error: null },
+      { data: { id: "held-1" }, error: null },
+      { data: null, error: null },
+      { data: MOCK_MATCH_PLAYERS, error: null },
+      { data: null, error: null },
+      { data: MOCK_PROFILES, error: null },
+    ]);
+
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
+
+    expect(result.success).toBe(true);
+    expect(result.matchId).toBe("held-1");
+  });
+
+  it("CC-PROM-CC03: only a not-ready held match ⇒ nothing promoted (court frees, engine refills)", async () => {
+    const mock = makeMockClient([
+      {
+        data: [{ id: "held-1", is_held: true, held_ready_at: null, is_mixed_level: false }],
+        error: null,
+      },
+      { count: 0, data: null, error: null }, // draft-blocking check → 0 unpublished drafts
+    ]);
+
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/no on-deck/i);
+    expect(mock.queriedTables).toEqual(["matches", "matches"]);
+  });
+});
+
+describe("recomputeHeldReadiness — held-draft health check", () => {
+  const held = (over: Record<string, unknown> = {}) => ({
+    id: "held-1",
+    pulled_player_ids: ["pp"],
+    pulled_from_match_id: "src-1",
+    held_ready_at: null,
+    ...over,
+  });
+
+  it("CC-RDY-CC01: source completed + ≥1 promotion ⇒ stamps held_ready_at (idempotent)", async () => {
+    const mock = makeMockClient([
+      { data: [held()], error: null }, // held not-ready pending matches
+      {
+        data: [{ player_id: "pp" }, { player_id: "w1" }, { player_id: "w2" }, { player_id: "w3" }],
+        error: null,
+      }, // roster (pulled body present)
+      { data: { status: "completed", completed_at: "2026-06-07T11:50:00.000Z" }, error: null }, // source match
+      { count: 1, data: null, error: null }, // promotionsSinceFreed
+      { data: null, error: null }, // stamp update
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.recorder.update).toHaveLength(1);
+    expect(mock.recorder.update[0]).toMatchObject({ held_ready_at: expect.any(String) });
+  });
+
+  it("CC-RDY-CC02: source still in_progress ⇒ NOT ready, no stamp", async () => {
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
+      { data: { status: "in_progress", completed_at: null }, error: null }, // source still live
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.recorder.update).toHaveLength(0);
+    expect(mock.queriedTables).toEqual(["matches", "match_players", "matches"]);
+  });
+
+  it("CC-RDY-CC03 [N-2]: pulled body swapped out of roster ⇒ downgrade to a normal draft", async () => {
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: [{ player_id: "x1" }, { player_id: "x2" }, { player_id: "x3" }], error: null }, // roster WITHOUT "pp"
+      { data: null, error: null }, // downgrade update
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.recorder.update).toContainEqual({
+      pulled_player_ids: [],
+      pulled_from_match_id: null,
+      held_ready_at: null,
+    });
+    expect(mock.rpc).not.toHaveBeenCalled(); // downgrade, not cancel
+  });
+
+  it("CC-RDY-CC04 [R3-B]: null source match ⇒ cancel via clear_on_deck_match_atomic", async () => {
+    const mock = makeMockClient([
+      { data: [held({ pulled_from_match_id: null })], error: null },
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.rpc).toHaveBeenCalledWith("clear_on_deck_match_atomic", {
+      p_match_id: "held-1",
+      p_session_id: SESSION_ID,
+    });
+    expect(mock.recorder.update).toHaveLength(0); // cancel, not stamp/downgrade
   });
 });
