@@ -120,7 +120,7 @@ describe("computePriorityScore", () => {
     expect(computePriorityScore(p)).toBe(10);
   });
 
-  it("subtracts GAME_PENALTY per game played when wait exceeds the penalty (normal zone)", () => {
+  it("subtracts GAME_PENALTY per game played — wait=CRITICAL_WAIT lands in Red Zone (score ≥ 1000)", () => {
     const p = makePlayer("a", { skillInt: 3, waitMinutes: 20, gamesPlayed: 1 });
     // 20 - 1 × 8 = 12  (positive — no floor needed)
     // Note: wait=20 = CRITICAL_WAIT_MINUTES, but gamesPlayed=1 < HARD_CAP_GAMES_CEILING=5
@@ -607,7 +607,7 @@ describe("scoreCandidates", () => {
     expect(scored[0].candidate.player_id).toBe("rz");
   });
 
-  it("normal candidate with heavy overlap (10_000) loses to Red Zone with 2 overlaps (200)", () => {
+  it("Hard Cap candidate with 2 overlaps (200) still outranks Red Zone with 1 overlap (100)", () => {
     // rz: wait=30, games=0 → Hard Cap (30≥25, 0<5): score=2050. 2 overlaps → penalty=200 → -2050+200=-1850
     const rz = makePlayer("rz", { skillInt: 4, waitMinutes: 30 });
     // normal: wait=20 = CRITICAL_WAIT_MINUTES → Red Zone: score=1020. 1 overlap → penalty=100 → -1020+100=-920
