@@ -25,6 +25,9 @@ import {
   ANTI_REPEAT_LOOKBACK,
   COMMITTED_MATCH_STATUSES,
   MATCH_REST_GAP_MINUTES,
+  MIN_REST_MINUTES,
+  PLAYERS_PER_MATCH,
+  ROSTER_LOOKBACK_COUNT,
 } from "@/lib/constants";
 import { pairKey, type MatchProposal } from "@/lib/matchmaking-core";
 
@@ -77,13 +80,23 @@ export async function fetchActivePool(
     .eq("is_paused", true);
 
   const pausedSet = new Set((pausedRows ?? []).map((r) => r.player_id));
-  return (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+  const active = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+
+  // Minimum rest filter: exclude players who just finished a game and haven't
+  // rested long enough. wait_minutes reflects time since re-entering the queue.
+  // First-time players (games_played=0) are always eligible — no rest needed.
+  // Fallback: if the filter would leave fewer than PLAYERS_PER_MATCH players,
+  // waive it so very small sessions can still form matches.
+  const rested = active.filter(
+    (p) => p.games_played === 0 || (p.wait_minutes ?? 0) >= MIN_REST_MINUTES
+  );
+  return rested.length >= PLAYERS_PER_MATCH ? rested : active;
 }
 
 // ─────────────────────────────────────────────────────────────
 // fetchRecentRosters
 // ─────────────────────────────────────────────────────────────
-// Returns the last ANTI_REPEAT_LOOKBACK match rosters (completed,
+// Returns the last ROSTER_LOOKBACK_COUNT match rosters (completed,
 // in_progress, and pending) as arrays of player IDs. Used by the
 // diversity-violation check in runAlgorithm.
 //
@@ -105,7 +118,7 @@ export async function fetchRecentRosters(
     .eq("session_id", sessionId)
     .in("status", COMMITTED_MATCH_STATUSES)
     .order("created_at", { ascending: false })
-    .limit(ANTI_REPEAT_LOOKBACK);
+    .limit(ROSTER_LOOKBACK_COUNT);
 
   const recentMatchIds = (recentMatchRows ?? []).map((m) => m.id);
   if (recentMatchIds.length === 0) return [];
@@ -130,20 +143,25 @@ export async function fetchRecentRosters(
 // ─────────────────────────────────────────────────────────────
 // fetchPartnershipCounts
 // ─────────────────────────────────────────────────────────────
-// Returns a Map<pairKey, count> of how many times each same-team
-// pair has played together in this session. Covers all match statuses
-// that represent a committed team assignment (completed, in_progress,
-// pending — including unpublished drafts) so the cap applies the
-// moment a draft match is created, not only after publish.
+// Returns both same-team (partnership) AND cross-team (opponent)
+// pair counts for this session in a single pass over the match_players
+// data — no extra DB calls.
 //
-// Called once per runAlgorithm invocation (hoisted above the anchor
-// selection loop) so it is NOT re-fetched per candidate scan.
+// partnershipCounts: Map<pairKey, count> of same-team co-appearances.
+// opponentCounts:    Map<pairKey, count> of cross-net opponent appearances.
+//
+// Covers completed, in_progress, and pending matches so caps apply the
+// moment a draft is created, not only after publish.
+//
+// Called once per slot (per runAlgorithm invocation) so fresh drafts
+// from earlier slots are counted before the next slot's cap check.
 
 export async function fetchPartnershipCounts(
   supabase: DbClient,
   sessionId: string
-): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
+): Promise<{ partnershipCounts: Map<string, number>; opponentCounts: Map<string, number> }> {
+  const partnershipCounts = new Map<string, number>();
+  const opponentCounts = new Map<string, number>();
 
   // Step 1: all match IDs for this session with committed statuses.
   const { data: sessionMatches, error: matchErr } = await supabase
@@ -159,7 +177,7 @@ export async function fetchPartnershipCounts(
         matchErr.message
       );
     }
-    return counts;
+    return { partnershipCounts, opponentCounts };
   }
 
   const matchIds = sessionMatches.map((m) => m.id);
@@ -177,11 +195,10 @@ export async function fetchPartnershipCounts(
         rowsErr.message
       );
     }
-    return counts;
+    return { partnershipCounts, opponentCounts };
   }
 
-  // Step 3: group by (match_id, team), count all same-team pairs.
-  // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
+  // Step 3: group by (match_id, team). row.team is typed Team (non-nullable).
   const byMatchTeam = new Map<string, string[]>();
   for (const row of rows) {
     const key = `${row.match_id}:${row.team}`;
@@ -190,23 +207,48 @@ export async function fetchPartnershipCounts(
     byMatchTeam.set(key, group);
   }
 
-  for (const teammates of byMatchTeam.values()) {
-    for (let i = 0; i < teammates.length; i++) {
-      for (let j = i + 1; j < teammates.length; j++) {
-        const key = pairKey(teammates[i], teammates[j]);
-        counts.set(key, (counts.get(key) ?? 0) + 1);
+  // Step 4: group team buckets by match_id so we can compute both
+  // same-team (partnership) pairs and cross-team (opponent) pairs.
+  const byMatch = new Map<string, string[][]>();
+  for (const [key, players] of byMatchTeam.entries()) {
+    const matchId = key.split(":")[0]; // match UUID precedes the first ':'
+    const teamList = byMatch.get(matchId) ?? [];
+    teamList.push(players);
+    byMatch.set(matchId, teamList);
+  }
+
+  for (const teamBuckets of byMatch.values()) {
+    // Same-team (partnership) pairs — within each team bucket.
+    for (const teammates of teamBuckets) {
+      for (let i = 0; i < teammates.length; i++) {
+        for (let j = i + 1; j < teammates.length; j++) {
+          const k = pairKey(teammates[i], teammates[j]);
+          partnershipCounts.set(k, (partnershipCounts.get(k) ?? 0) + 1);
+        }
+      }
+    }
+
+    // Cross-team (opponent) pairs — between team buckets for the same match.
+    if (teamBuckets.length === 2) {
+      const [teamA, teamB] = teamBuckets;
+      for (const a of teamA) {
+        for (const b of teamB) {
+          const k = pairKey(a, b);
+          opponentCounts.set(k, (opponentCounts.get(k) ?? 0) + 1);
+        }
       }
     }
   }
 
   if (process.env.DEBUG_MATCHMAKING === "true") {
     console.log(
-      `[matchmaking-db] fetchPartnershipCounts: ${counts.size} tracked pair(s) across ` +
+      `[matchmaking-db] fetchPartnershipCounts: ${partnershipCounts.size} partnership pair(s), ` +
+        `${opponentCounts.size} opponent pair(s) across ` +
         `${sessionMatches.length} match(es) for session ${sessionId}`
     );
   }
 
-  return counts;
+  return { partnershipCounts, opponentCounts };
 }
 
 // ─────────────────────────────────────────────────────────────

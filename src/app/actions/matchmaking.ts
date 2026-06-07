@@ -456,14 +456,14 @@ async function runEngineInternal(
       break;
     }
 
-    // partnershipCounts is per-slot: new drafts from previous iterations
-    // add pairs that must be counted before the next slot's cap check.
-    const partnershipCounts = await fetchPartnershipCounts(supabase, sessionId);
+    // partnershipCounts + opponentCounts are per-slot: new drafts from previous
+    // iterations add pairs that must be counted before the next slot's cap check.
+    const { partnershipCounts, opponentCounts } = await fetchPartnershipCounts(supabase, sessionId);
     // overlapMap is per-anchor: anchor changes each slot as pool reorders.
     const overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
-    const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters);
+    const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters, opponentCounts);
     const { proposal, capSaturation } = result;
 
     if (!proposal) {
@@ -511,7 +511,13 @@ async function runEngineInternal(
           ...pool,
           ...eligible.map((b) => ({ ...b, priorityScore: -1, isPulled: true as const })),
         ];
-        const augResult = runAlgorithm(augmented, partnershipCounts, overlapMap, recentRosters);
+        const augResult = runAlgorithm(
+          augmented,
+          partnershipCounts,
+          overlapMap,
+          recentRosters,
+          opponentCounts
+        );
         const augFour = augResult.proposal
           ? [...augResult.proposal.teamA, ...augResult.proposal.teamB]
           : [];
