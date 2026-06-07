@@ -237,6 +237,10 @@ export async function fetchPartnershipCounts(
           opponentCounts.set(k, (opponentCounts.get(k) ?? 0) + 1);
         }
       }
+    } else if (process.env.DEBUG_MATCHMAKING === "true") {
+      console.warn(
+        `[matchmaking-db] fetchPartnershipCounts: match has ${teamBuckets.length} team bucket(s) — opponent pairs skipped (expected 2)`
+      );
     }
   }
 

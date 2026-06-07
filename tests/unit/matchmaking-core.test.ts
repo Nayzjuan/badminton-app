@@ -1023,6 +1023,139 @@ describe("rotatedDraft", () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// rotatedDraft — opponent-cap preference (4-pass crossNetOk)
+// ─────────────────────────────────────────────────────────────
+// Mirrors the snakeDraft 4-pass structure. Sorted DESC by skill:
+//   [p6(0), p5(1), p4(2), p3(3)]
+// Split 0: teamA=[p6,p3] vs teamB=[p5,p4] — cross-net: p5:p6, p4:p6, p3:p5, p3:p4
+// Split 1: teamA=[p6,p5] vs teamB=[p4,p3] — cross-net: p4:p6, p3:p6, p4:p5, p3:p5
+// Split 2: teamA=[p6,p4] vs teamB=[p5,p3] — cross-net: p5:p6, p3:p6, p4:p5, p3:p4
+//
+// Partnership pairs per split:
+//   Split 0: "p3:p6" (teamA), "p4:p5" (teamB)
+//   Split 1: "p5:p6" (teamA), "p3:p4" (teamB)
+//   Split 2: "p4:p6" (teamA), "p3:p5" (teamB)
+//
+// "p5:p6" is cross-net in Splits 0 and 2, same-team in Split 1.
+
+describe("rotatedDraft — opponent-cap preference", () => {
+  const OPP_CAP = MAX_OPPONENT_REPEATS;
+
+  function makeFourAlpha() {
+    const p6 = makePlayer("p6", { skillInt: 6 });
+    const p5 = makePlayer("p5", { skillInt: 5 });
+    const p4 = makePlayer("p4", { skillInt: 4 });
+    const p3 = makePlayer("p3", { skillInt: 3 });
+    return { p6, p5, p4, p3 };
+  }
+
+  it("Pass 1a: skips splits with capped cross-net pair — returns the uncapped split from natural rotation", () => {
+    // 0 full-repeat rosters → splitIndex=0. "p5:p6" capped in Splits 0 and 2.
+    // Pass 1a cycles Splits 0→1→2; Split 1 has p5+p6 same-team (not cross-net) → crossNetOk → return it.
+    const { p6, p5, p4, p3 } = makeFourAlpha();
+    const opponentCounts = new Map([["p5:p6", OPP_CAP]]);
+    const result = rotatedDraft(
+      [p6, p5, p4, p3],
+      [], // 0 repeats → splitIndex=0
+      new Map(), // all partnerships fresh
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Split 1: teamA=[p6,p5], teamB=[p4,p3]
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p5", "p6"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p4"]);
+  });
+
+  it("Pass 1b: when ALL splits have a capped cross-net pair, relaxes opponent cap and returns first fresh-partnership split", () => {
+    // p6 faces every opponent at cap → no split passes crossNetOk.
+    // Pass 1b ignores crossNetOk → all partnerships fresh → Split 0 (first from splitIndex=0).
+    const { p6, p5, p4, p3 } = makeFourAlpha();
+    const opponentCounts = new Map([
+      ["p5:p6", OPP_CAP], // Splits 0 and 2 cross-net
+      ["p4:p6", OPP_CAP], // Splits 0 and 1 cross-net
+      ["p3:p6", OPP_CAP], // Splits 1 and 2 cross-net
+    ]);
+    const result = rotatedDraft(
+      [p6, p5, p4, p3],
+      [],
+      new Map(),
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Pass 1b: all splits fail crossNetOk → relax → return Split 0 (splitIndex=0, fresh partnerships)
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
+  });
+
+  it("Pass 2a: when all partnerships are stale, still prefers the split with no capped cross-net pair", () => {
+    // All 6 partnership pairs stale (count=1, below cap=2). "p5:p6" capped.
+    // Passes 1a+1b: no fresh partnerships → skip. Pass 2a: Splits 0+2 fail crossNetOk,
+    // Split 1 has p5+p6 same-team so crossNetOk=true → return Split 1.
+    const { p6, p5, p4, p3 } = makeFourAlpha();
+    const partnershipCounts = new Map([
+      ["p3:p6", 1], // Split 0 teamA
+      ["p4:p5", 1], // Split 0 teamB
+      ["p5:p6", 1], // Split 1 teamA
+      ["p3:p4", 1], // Split 1 teamB
+      ["p4:p6", 1], // Split 2 teamA
+      ["p3:p5", 1], // Split 2 teamB
+    ]);
+    const opponentCounts = new Map([["p5:p6", OPP_CAP]]);
+    const result = rotatedDraft(
+      [p6, p5, p4, p3],
+      [],
+      partnershipCounts,
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Pass 2a: Split 1 passes crossNetOk (p5:p6 same-team, not cross-net)
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p5", "p6"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p4"]);
+  });
+
+  it("Pass 2b: last resort — returns first below-partnership-cap split when all cross-net pairs are capped", () => {
+    // All 6 partnership pairs stale (count=1, below cap=2).
+    // All 6 cross-net pairs at OPP_CAP → every split fails crossNetOk.
+    // Pass 2b ignores crossNetOk → returns Split 0 (first from splitIndex=0, below partnership cap).
+    const { p6, p5, p4, p3 } = makeFourAlpha();
+    const partnershipCounts = new Map([
+      ["p3:p6", 1],
+      ["p4:p5", 1],
+      ["p5:p6", 1],
+      ["p3:p4", 1],
+      ["p4:p6", 1],
+      ["p3:p5", 1],
+    ]);
+    const opponentCounts = new Map([
+      ["p5:p6", OPP_CAP], // cross-net in Splits 0 and 2
+      ["p4:p6", OPP_CAP], // cross-net in Splits 0 and 1
+      ["p3:p5", OPP_CAP], // cross-net in Splits 0 and 1
+      ["p3:p4", OPP_CAP], // cross-net in Splits 0 and 2
+      ["p3:p6", OPP_CAP], // cross-net in Splits 1 and 2
+      ["p4:p5", OPP_CAP], // cross-net in Splits 1 and 2
+    ]);
+    const result = rotatedDraft(
+      [p6, p5, p4, p3],
+      [],
+      partnershipCounts,
+      MAX_PARTNERSHIP_REPEATS,
+      opponentCounts,
+      OPP_CAP
+    );
+    expect(result).not.toBeNull();
+    // Pass 2b: ignore crossNetOk → Split 0 (first from splitIndex=0, count < cap)
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // pairKey
 // ─────────────────────────────────────────────────────────────
 // Returns a canonical symmetric key for a same-team pair so that

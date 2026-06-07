@@ -31,6 +31,7 @@ import {
   MAX_PARTNERSHIP_REPEATS,
   RED_ZONE_SCORE_FLOOR,
   RED_ZONE_SKILL_VARIANCE_MAX,
+  ROSTER_LOOKBACK_COUNT,
   SKILL_VARIANCE_MAX,
   SKILL_VARIANCE_TARGET,
 } from "@/lib/constants";
@@ -310,7 +311,8 @@ export function getEffectiveLookback(eligiblePoolSize: number): number {
   if (eligiblePoolSize <= 5) return 2;
   if (eligiblePoolSize <= 9) return 3;
   if (eligiblePoolSize <= 15) return 4;
-  return 7;
+  // Math.min guards against ROSTER_LOOKBACK_COUNT shrinking below 7 in the future.
+  return Math.min(7, ROSTER_LOOKBACK_COUNT);
 }
 
 // ─────────────────────────────────────────────────────────────
