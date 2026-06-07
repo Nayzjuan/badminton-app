@@ -130,7 +130,7 @@ function HeldBadge({ match }: { match: EnrichedMatch }) {
   if (!match.is_held) return null;
   const ready = match.held_ready_at !== null;
   const pulledId = match.pulled_player_ids[0];
-  const pulledName = match.players.find((p) => p.player_id === pulledId)?.profile.display_name;
+  const pulledName = match.players.find((p) => p.player_id === pulledId)?.profile?.display_name;
   return (
     <span
       role="status"

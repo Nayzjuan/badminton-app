@@ -210,16 +210,21 @@ export async function endMatchAction(
     // otherwise they reappear in fetchActivePool and the engine wastes slots on
     // them (each blocked by a guard, so no corruption, but it's a reservation leak).
     const finishingIds = matchPlayers.map((mp) => mp.player_id);
+    // Narrow at the DB level: only fetch held drafts where at least one of the
+    // finishing players appears in pulled_player_ids. Uses the && (overlaps)
+    // operator so Postgres can use the GIN index on pulled_player_ids rather
+    // than returning every held draft in the session.
     const { data: heldDrafts } = await db
       .from("matches")
       .select("pulled_player_ids")
       .eq("session_id", match.session_id)
       .eq("status", "pending")
-      .eq("is_held", true);
+      .eq("is_held", true)
+      .overlaps("pulled_player_ids", finishingIds);
     const reservedAsHeld = new Set(
       (heldDrafts ?? [])
         .flatMap((m) => m.pulled_player_ids ?? [])
-        .filter((id) => finishingIds.includes(id))
+        .filter((id) => finishingIds.includes(id)) // safety: only flag IDs that are actually finishing
     );
 
     await Promise.all(
