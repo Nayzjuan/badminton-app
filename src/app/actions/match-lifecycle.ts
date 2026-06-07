@@ -13,7 +13,11 @@
 import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { promoteOnDeckMatchInternal, runEngineForSession } from "@/app/actions/matchmaking";
+import {
+  promoteOnDeckMatchInternal,
+  runEngineForSession,
+  recomputeHeldReadiness,
+} from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
@@ -201,6 +205,23 @@ export async function endMatchAction(
   //    entries for people who physically left the gym.
   const now = new Date().toISOString();
   if (matchPlayers && matchPlayers.length > 0) {
+    // Ghost-availability fix (R3-1): a finishing player who is the pulled body of
+    // a PENDING held draft must be re-reserved as 'drafted', NOT 'waiting' —
+    // otherwise they reappear in fetchActivePool and the engine wastes slots on
+    // them (each blocked by a guard, so no corruption, but it's a reservation leak).
+    const finishingIds = matchPlayers.map((mp) => mp.player_id);
+    const { data: heldDrafts } = await db
+      .from("matches")
+      .select("pulled_player_ids")
+      .eq("session_id", match.session_id)
+      .eq("status", "pending")
+      .eq("is_held", true);
+    const reservedAsHeld = new Set(
+      (heldDrafts ?? [])
+        .flatMap((m) => m.pulled_player_ids ?? [])
+        .filter((id) => finishingIds.includes(id))
+    );
+
     await Promise.all(
       matchPlayers.map(async (mp) => {
         const { data: entry } = await db
@@ -219,7 +240,7 @@ export async function endMatchAction(
         return db
           .from("queue_entries")
           .update({
-            status: "waiting" as const,
+            status: reservedAsHeld.has(mp.player_id) ? ("drafted" as const) : ("waiting" as const),
             games_played: updatedGames,
             joined_at: now,
           })
@@ -236,6 +257,9 @@ export async function endMatchAction(
   //    one for next time.
   //    Pass the service client so promotion writes are never RLS-blocked.
   if (match.court_id) {
+    // Phase 6: this match just completed, which may have freed a held draft's
+    // pulled body — refresh readiness so a now-ready held draft can take the court.
+    await recomputeHeldReadiness(db, match.session_id);
     const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id);
 
     if (!promoted.success) {
@@ -529,6 +553,8 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   //    If no on-deck match exists, free the court immediately.
   //    Mirrors the endMatchAction pipeline so behaviour is consistent.
   if (match.court_id) {
+    // Phase 6: a cancelled match also frees a held draft's pulled body — refresh readiness.
+    await recomputeHeldReadiness(db, match.session_id);
     const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id);
     if (!promoted.success) {
       // Nothing on deck — free the court for manual use.
