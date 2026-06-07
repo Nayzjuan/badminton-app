@@ -158,6 +158,15 @@ export type Match = {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+  // ── Cross-Court Diversity Drafting (held drafts) — migration 20260607000000 ──
+  /** Pulled (still-playing) bodies. `[]` = normal draft; exactly one element = held cross-court draft. */
+  pulled_player_ids: string[];
+  /** The live in_progress match the pulled body is finishing; null for non-held matches or once the source is deleted (ON DELETE SET NULL). */
+  pulled_from_match_id: string | null;
+  /** Stamped when the held draft first becomes promotable; null while Holding/Resting. */
+  held_ready_at: string | null;
+  /** GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0). Read-only — never write. */
+  is_held: boolean;
 };
 
 /** match_games table (for multi-set scoring) */
@@ -292,6 +301,10 @@ export type MatchUpdate = Partial<
     | "completed_at"
     | "origin"
     | "is_published"
+    // Cross-court held drafts: readiness stamp + downgrade-clear (is_held is GENERATED, never written).
+    | "pulled_player_ids"
+    | "pulled_from_match_id"
+    | "held_ready_at"
   >
 >;
 
@@ -744,6 +757,21 @@ export type Database = {
       clear_all_unpublished_drafts: {
         Args: { p_session_id: string };
         Returns: string[]; // array of player UUIDs returned to 'waiting'
+      };
+      // ── Cross-Court Diversity Drafting (migration 20260607000000) ──
+      create_held_cross_court_match: {
+        Args: {
+          p_session_id: string;
+          p_is_mixed_level: boolean;
+          p_team_a_ids: string[];
+          p_team_b_ids: string[];
+          p_pulled_player_id: string;
+          p_pulled_from_match_id: string;
+          /** Optional — DB default 'auto'. */
+          p_origin?: MatchOrigin;
+        };
+        /** UUID of the new held draft, or NULL on any TOCTOU/reservation guard (graceful slot-skip). */
+        Returns: string;
       };
     };
     Enums: {

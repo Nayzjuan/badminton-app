@@ -122,6 +122,34 @@ export const MIN_FREE_POOL_FOR_ON_DECK = 4;
  */
 export const MAX_PARTNERSHIP_REPEATS = 2;
 
+// ── Cross-Court Diversity Drafting (held drafts) ──────────────────────────────
+// See CROSS_COURT_DRAFTING_PLAN.md. The engine may pre-build an on-deck "held"
+// draft of 3 waiting players + 1 player still PLAYING on another court, to force
+// match diversity; the held draft only promotes once the pulled body finishes
+// and rests one match.
+
+/**
+ * A held draft becomes promotable this many minutes after its pulled player
+ * frees — the rest-timer fallback used when no other match promotes in the
+ * meantime. (The primary readiness signal is ≥1 intervening promotion.)
+ */
+export const CROSS_COURT_REST_FALLBACK_MINUTES = 3;
+
+/**
+ * Max consecutive back-to-back games before a playing body is excluded from
+ * being pulled. Pulled games count toward this streak, so this doubles as the
+ * relational pull-cooldown — robust to game-length variance (unlike a clock
+ * window). Guard 1b (DB) remains the hard "no body in two held drafts" rule.
+ */
+export const MAX_CONSECUTIVE_GAMES_FOR_PULL = 2;
+
+/**
+ * Max gap (in minutes) between a player's consecutive games for them to still
+ * count as "back-to-back" when computing the consecutive-games streak in
+ * fetchPullablePlayers.
+ */
+export const MATCH_REST_GAP_MINUTES = 5;
+
 // ── Skill level display metadata ─────────────────────────────────────────────
 // Single source of truth for skill level labels, abbreviations, and dot colors.
 // Used by match-roster.tsx (on-deck / active courts) and tv-board.tsx (TV view).

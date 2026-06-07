@@ -453,6 +453,22 @@ Published on-deck matches do **not** count against the cap — they are already 
 
 ---
 
+#### Cross-Court Diversity Drafting (held drafts)
+
+**Files:** `src/lib/matchmaking-core.ts` (pure: `isPullEligible`, `isHeldMatchReady`, `pickEarliestFinishing`, `forcedRepeat` on `AlgorithmResult`, ≤1-pulled guard in `buildCombinationGroup`), `src/lib/matchmaking-db.ts` (`fetchPullablePlayers`, `executeHeldMatch`), `src/app/actions/matchmaking.ts` (engine augmented composition + `recomputeHeldReadiness` + promotion TS-filter), `src/lib/cross-court/derive-held-state.ts`, `src/components/organizer/sortable-card.tsx` (`HeldBadge`). Plan: `CROSS_COURT_DRAFTING_PLAN.md`.
+
+When the waiting pool can only form a **forced repeat** (Tier-3 rotation / last-resort fallback — surfaced via `AlgorithmResult.forcedRepeat`), the engine reaches into a live court for ONE still-playing "pulled body" and pre-builds a **held draft** (3 waiting + 1 playing) to break the repeat.
+
+- **Trigger** (`runEngineInternal` slot loop): fires only when `forcedRepeat && !bypassGate && i > 0 && !anchorIsRedZone`. `fetchPullablePlayers` returns eligible playing bodies (relational cooldown via consecutive-games streak; excludes paused/left/already-held), mapped to `ScoredPlayer` with `priorityScore:-1` so a pulled body **never out-anchors a waiting player (C-3)**. The augmented pool re-runs through `runAlgorithm`; taken only if fresh with **exactly one** pulled body (N-1). Slot 0 stays a ready waiting-only match (keep-courts-fed). Held drafts decrement `estimatedWaiting` by **3** not 4 (C-1).
+- **Held RPC** `create_held_cross_court_match` (migration `20260607000000`): sibling of `create_match_with_players` that admits exactly one `status='playing'` body. Guard 0 split; Guard 1 locks **only the 3 waiting** rows (M-6); Guard 1b reservation (no body in two held drafts); 3 waiting → `drafted`, pulled body's status untouched. NULL = graceful slot-skip.
+- **Readiness** (`recomputeHeldReadiness`, before promote on end/cancel): roster-integrity downgrade (N-2), source-null cancel via `clear_on_deck_match_atomic` (R3-B), stamp `held_ready_at` once source completed AND (≥1 promotion since freed OR `CROSS_COURT_REST_FALLBACK_MINUTES` timer — C-5, no counter column).
+- **Promotion** (`promoteOnDeckMatchInternal`): fetch published pending, pick the front-most **ready** in JS — not-ready held matches skipped so a ready one behind still promotes (skip-and-defer; C-4/R3-A). Never idles a court.
+- **Ghost-availability** (`endMatchAction`): a finishing pulled body of a pending held draft is re-queued as `drafted`, not `waiting` (R3-1) — reservation by construction.
+
+New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (FK `ON DELETE SET NULL`), `held_ready_at timestamptz`, `is_held boolean GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0) STORED`. New constants: `CROSS_COURT_REST_FALLBACK_MINUTES=3`, `MAX_CONSECUTIVE_GAMES_FOR_PULL=2`, `MATCH_REST_GAP_MINUTES=5`. New token: `cc-violet`. **Deferred items** (UI 3-state track, swap auto-downgrade trigger, publish/callNextMatch recompute, staleness escape, RPC `search_path`) tracked in `MEMORY.md`.
+
+---
+
 ### 3.2 On-Deck Queue
 
 **File:** `src/components/organizer/on-deck-panel.tsx`

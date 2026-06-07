@@ -13,7 +13,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertTriangle, CheckCircle, GripVertical, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, GripVertical, Trash2, X } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
 import { H2HStrip } from "@/components/organizer/h2h-strip";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
@@ -120,6 +120,46 @@ export function CapSaturationNotice({
   );
 }
 
+// ── HeldBadge ─────────────────────────────────────────────────
+// Cross-court held-draft identity + state chip (Phase 7). Violet = the
+// "held / diverse" identity, distinct from amber (on-deck) and teal (command).
+// A stamped held_ready_at flips it to a solid READY chip. Icon + text on every
+// state (never colour-only — a11y). Names the pulled body so the organizer knows
+// which player is still finishing on a court.
+function HeldBadge({ match }: { match: EnrichedMatch }) {
+  if (!match.is_held) return null;
+  const ready = match.held_ready_at !== null;
+  const pulledId = match.pulled_player_ids[0];
+  const pulledName = match.players.find((p) => p.player_id === pulledId)?.profile?.display_name;
+  return (
+    <span
+      role="status"
+      aria-label={
+        ready
+          ? "Held cross-court draft — ready to promote"
+          : `Held cross-court draft — waiting on ${pulledName ?? "a court"} to finish`
+      }
+      className={[
+        "clip-cut-badge border px-2 py-0.5 inline-flex items-center gap-1",
+        "font-command text-[9px] uppercase tracking-[0.10em]",
+        ready
+          ? "bg-cc-violet border-cc-violet text-cc-btn-on-accent"
+          : "bg-cc-violet-dim border-cc-violet/40 text-cc-violet",
+      ].join(" ")}
+    >
+      {ready ? (
+        <CheckCircle className="h-2.5 w-2.5 shrink-0" />
+      ) : (
+        <Clock className="h-2.5 w-2.5 shrink-0" />
+      )}
+      {ready ? "Ready" : "Held"}
+      {pulledName && !ready && (
+        <span className="normal-case tracking-normal opacity-80">· {pulledName} finishing</span>
+      )}
+    </span>
+  );
+}
+
 // ── SortableCard ─────────────────────────────────────────────
 // ALL dnd-kit wiring lives here — no prop drilling, no child
 // component boundaries for refs or listeners.
@@ -222,7 +262,9 @@ export function SortableCard({
           // Draft: dashed slate border — indicates "hidden from players"
           // Published: solid teal border + corner accent + scan shimmer
           effectivelyDraft
-            ? "border-dashed border-cc-border bg-cc-bg-2"
+            ? match.is_held
+              ? "border-dashed border-cc-violet/50 bg-cc-violet-dim"
+              : "border-dashed border-cc-border bg-cc-bg-2"
             : selectedPlayerId
               ? "border-cc-accent/80 bg-cc-bg-2 cc-corner-accent cc-scan"
               : "border-cc-deck-border bg-cc-bg-2 cc-corner-accent cc-scan",
@@ -276,6 +318,7 @@ export function SortableCard({
                 </span>
               )}
               <MatchOriginTag origin={match.origin} />
+              <HeldBadge match={match} />
             </div>
             <span
               className={[

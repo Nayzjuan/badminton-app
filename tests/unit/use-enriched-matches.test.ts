@@ -56,6 +56,10 @@ function makeMatch(
     created_at: new Date().toISOString(),
     started_at: null,
     completed_at: null,
+    pulled_player_ids: [],
+    pulled_from_match_id: null,
+    held_ready_at: null,
+    is_held: false,
   };
 }
 

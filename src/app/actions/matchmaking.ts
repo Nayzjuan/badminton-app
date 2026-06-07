@@ -45,14 +45,24 @@ import {
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
   MIN_FREE_POOL_FOR_ON_DECK,
+  CROSS_COURT_REST_FALLBACK_MINUTES,
 } from "@/lib/constants";
-import { getDynamicDraftCap, runAlgorithm, scoreAndSortPool } from "@/lib/matchmaking-core";
+import {
+  getDynamicDraftCap,
+  runAlgorithm,
+  scoreAndSortPool,
+  isHeldMatchReady,
+  isPullEligible,
+  type ScoredPlayer,
+} from "@/lib/matchmaking-core";
 import {
   fetchActivePool,
   fetchRecentRosters,
   fetchPartnershipCounts,
   buildOverlapMap,
   executeMatch,
+  fetchPullablePlayers,
+  executeHeldMatch,
 } from "@/lib/matchmaking-db";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
@@ -453,12 +463,8 @@ async function runEngineInternal(
     const overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
-    const { proposal, capSaturation } = runAlgorithm(
-      pool,
-      partnershipCounts,
-      overlapMap,
-      recentRosters
-    );
+    const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters);
+    const { proposal, capSaturation } = result;
 
     if (!proposal) {
       // Broadcast cap-saturation warning when the cap (not player shortage)
@@ -480,6 +486,58 @@ async function runEngineInternal(
       }
       break;
     }
+
+    // ── Cross-court augmented composition (Phase 4) ──────────────
+    // Fires only when the waiting pool could manage no better than a FORCED
+    // REPEAT, this is NOT a bypass run (M-4), we're past slot 0 (keep-courts-fed:
+    // slot 0 always seats a ready waiting-only match), and the anchor is not in
+    // the Red Zone (decision 4 — a Red-Zone player is seated now, never held).
+    // Reach into a live court for ONE fresh body to break the repeat.
+    let committedHeld = false;
+    const anchorIsRedZone = pool[0].priorityScore >= RED_ZONE_SCORE_FLOOR;
+    if (result.forcedRepeat && !bypassGate && i > 0 && !anchorIsRedZone) {
+      const pullable = await fetchPullablePlayers(supabase, sessionId);
+      const eligible = pullable
+        .filter((b) => isPullEligible(b, { streak: b.streak, alreadyHeld: b.alreadyHeld }))
+        // N-3: earliest-finishing first so the combination search prefers it on a fit tie.
+        .sort(
+          (a, b) =>
+            new Date(a.currentMatchStartedAt).getTime() -
+            new Date(b.currentMatchStartedAt).getTime()
+        );
+      if (eligible.length > 0) {
+        const pulledMatchId = new Map(eligible.map((b) => [b.player_id, b.currentMatchId]));
+        const augmented: ScoredPlayer[] = [
+          ...pool,
+          ...eligible.map((b) => ({ ...b, priorityScore: -1, isPulled: true as const })),
+        ];
+        const augResult = runAlgorithm(augmented, partnershipCounts, overlapMap, recentRosters);
+        const augFour = augResult.proposal
+          ? [...augResult.proposal.teamA, ...augResult.proposal.teamB]
+          : [];
+        const pulledInFour = augFour.filter((p) => p.isPulled);
+        // Take it only if it's a genuinely FRESH match with exactly ONE pulled body (N-1).
+        if (augResult.proposal && !augResult.forcedRepeat && pulledInFour.length === 1) {
+          const fromMatchId = pulledMatchId.get(pulledInFour[0].player_id);
+          if (fromMatchId) {
+            const heldExec = await executeHeldMatch(
+              supabase,
+              sessionId,
+              augResult.proposal,
+              pulledInFour[0].player_id,
+              fromMatchId
+            );
+            if (heldExec.success) {
+              committedHeld = true;
+              // A held draft consumes 3 waiting players, not 4 (C-1).
+              if (!bypassGate) estimatedWaiting -= PLAYERS_PER_MATCH - 1;
+            }
+          }
+        }
+      }
+    }
+
+    if (committedHeld) continue; // held draft created — on to the next slot
 
     // ── Commit the match ─────────────────────────────────────────
     const execResult = await executeMatch(supabase, sessionId, null, proposal, true);
@@ -519,24 +577,34 @@ export async function promoteOnDeckMatchInternal(
   // (sort_order is NULL until the organizer drags a card).
   // Draft Mode: only promote published matches — drafts are hidden from
   // the court promotion pipeline until the organizer explicitly publishes.
-  const { data: pending, error } = await supabase
+  const { data: pendingAll, error } = await supabase
     .from("matches")
     .select("*")
     .eq("session_id", sessionId)
     .eq("status", "pending")
     .eq("is_published", true)
     .order("sort_order", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: true })
-    .limit(1);
+    .order("created_at", { ascending: true });
 
   if (error) {
     // Real DB error — don't mask it as a draft-blocking message.
     return { success: false, message: `Failed to fetch on-deck matches: ${error.message}` };
   }
 
-  if (!pending || pending.length === 0) {
-    // Empty result — check whether drafts are blocking the queue so callers
-    // can surface a contextual "review drafts" warning to the organizer.
+  // TS-filter (C-4 / R3-A): promote the front-most READY match. A held cross-court
+  // match is ready only once held_ready_at is stamped and due; a not-ready held
+  // match is SKIPPED so a ready match queued behind it still promotes (skip-and-defer).
+  // No timestamp goes into the query — we compare held_ready_at in JS (the published
+  // pending set is tiny), sidestepping the PostgREST filter-string fragility.
+  const nowMs = Date.now();
+  const match = (pendingAll ?? []).find(
+    (m) => !m.is_held || (m.held_ready_at !== null && new Date(m.held_ready_at).getTime() <= nowMs)
+  );
+
+  if (!match) {
+    // Nothing READY. Surface a contextual warning if unpublished drafts are blocking;
+    // held-not-ready matches simply wait their turn (the engine builds a ready match
+    // to feed the court, so it never idles).
     const { count: draftCount, error: draftCountError } = await supabase
       .from("matches")
       .select("id", { count: "exact", head: true })
@@ -555,7 +623,6 @@ export async function promoteOnDeckMatchInternal(
     return { success: false, message: "No on-deck match available." };
   }
 
-  const match = pending[0];
   const now = new Date().toISOString();
 
   // P0-2: Atomic compare-and-swap — add .eq("status", "pending") so that
@@ -643,4 +710,105 @@ export async function promoteOnDeckMatchInternal(
     teamB: teamBNames,
     isMixedLevel: match.is_mixed_level ?? false,
   };
+}
+
+// ─────────────────────────────────────────────────────────────
+// recomputeHeldReadiness — cross-court held-draft health check
+// ─────────────────────────────────────────────────────────────
+// Runs before the engine / promotion at every lifecycle event (Phase 6).
+// For each HELD, not-yet-ready, PENDING match in the session:
+//   1. Roster integrity (N-2): if the pulled body was swapped OUT of the
+//      roster, clear the held columns → downgrade to a normal draft.
+//   2. Source integrity (R3-B): if pulled_from_match_id is null/missing
+//      (source purged, FK set null), cancel the held draft — it can never
+//      resolve readiness, so leaving it would silently lock "Holding".
+//   3. Readiness: once the source match is completed/cancelled (body free)
+//      AND isHeldMatchReady (≥1 promotion since freed OR rest fallback),
+//      stamp held_ready_at so the promotion path may pick it up.
+// Idempotent and never throws — safe to call fire-and-forget before a run.
+export async function recomputeHeldReadiness(
+  supabase: ReturnType<typeof createServiceClient>,
+  sessionId: string
+): Promise<void> {
+  const { data: heldMatches, error } = await supabase
+    .from("matches")
+    .select("id, pulled_player_ids, pulled_from_match_id, held_ready_at")
+    .eq("session_id", sessionId)
+    .eq("is_held", true)
+    .eq("status", "pending")
+    .is("held_ready_at", null);
+
+  if (error || !heldMatches || heldMatches.length === 0) return;
+
+  for (const held of heldMatches) {
+    const pulledId = held.pulled_player_ids?.[0];
+
+    // 1. Roster integrity (N-2) — pulled body still in this match's roster?
+    if (pulledId) {
+      const { data: rosterRows } = await supabase
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", held.id);
+      const stillIn = (rosterRows ?? []).some((r) => r.player_id === pulledId);
+      if (!stillIn) {
+        await supabase
+          .from("matches")
+          .update({ pulled_player_ids: [], pulled_from_match_id: null, held_ready_at: null })
+          .eq("id", held.id);
+        continue; // downgraded to a normal draft
+      }
+    }
+
+    // 2. Source integrity (R3-B) — no source match ⇒ cancel the held draft.
+    if (!held.pulled_from_match_id) {
+      await supabase.rpc("clear_on_deck_match_atomic", {
+        p_match_id: held.id,
+        p_session_id: sessionId,
+      });
+      continue;
+    }
+
+    const { data: srcMatch } = await supabase
+      .from("matches")
+      .select("status, completed_at")
+      .eq("id", held.pulled_from_match_id)
+      .maybeSingle();
+
+    if (!srcMatch) {
+      await supabase.rpc("clear_on_deck_match_atomic", {
+        p_match_id: held.id,
+        p_session_id: sessionId,
+      });
+      continue;
+    }
+
+    // 3. Readiness — the body is free only once its source match ended.
+    const freed = srcMatch.status === "completed" || srcMatch.status === "cancelled";
+    const pulledFreedAt = freed ? srcMatch.completed_at : null;
+    if (!pulledFreedAt) continue; // still Holding (body playing)
+
+    // promotionsSinceFreed = matches that got a started_at after the body freed (C-5,
+    // derivable from existing timestamps — no dedicated counter column).
+    const { count: promotionsSinceFreed } = await supabase
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", sessionId)
+      .in("status", ["in_progress", "completed", "cancelled"])
+      .gt("started_at", pulledFreedAt);
+
+    const ready = isHeldMatchReady({
+      pulledFreedAt,
+      promotionsSinceFreed: promotionsSinceFreed ?? 0,
+      now: Date.now(),
+      restFallbackMs: CROSS_COURT_REST_FALLBACK_MINUTES * 60_000,
+    });
+
+    if (ready) {
+      await supabase
+        .from("matches")
+        .update({ held_ready_at: new Date().toISOString() })
+        .eq("id", held.id)
+        .is("held_ready_at", null); // idempotent — stamp once
+    }
+  }
 }

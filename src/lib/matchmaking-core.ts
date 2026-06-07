@@ -23,6 +23,7 @@ import {
   MAX_AUTO_DRAFTS,
   MAX_AUTO_DRAFTS_LARGE,
   MAX_AUTO_DRAFTS_XLARGE,
+  MAX_CONSECUTIVE_GAMES_FOR_PULL,
   MAX_PARTNERSHIP_REPEATS,
   RED_ZONE_SCORE_FLOOR,
   RED_ZONE_SKILL_VARIANCE_MAX,
@@ -54,7 +55,20 @@ export function getDynamicDraftCap(waitingCount: number): number {
 
 // ── Enriched player type ──────────────────────────────────────
 // QueueWithWaitTime enriched with the computed priority score.
-export type ScoredPlayer = QueueWithWaitTime & { priorityScore: number };
+export type ScoredPlayer = QueueWithWaitTime & {
+  priorityScore: number;
+  /**
+   * True = a currently-PLAYING body eligible to be pulled into a held draft
+   * (Cross-Court Diversity Drafting). fetchPullablePlayers sets priorityScore
+   * to -1 on these so a pulled body never out-anchors a waiting player (C-3).
+   */
+  isPulled?: boolean;
+  /**
+   * started_at of the pulled body's current in_progress match — used by
+   * pickEarliestFinishing as the court-preference tiebreak (N-3).
+   */
+  currentMatchStartedAt?: string;
+};
 
 // ── ScoredCandidate ────────────────────────────────────────────
 // A candidate paired with the composite sort score used to rank
@@ -307,6 +321,9 @@ export function buildCombinationGroup(
           scoredCandidates[j].candidate,
           scoredCandidates[k].candidate,
         ];
+        // Cross-court (N-1): at most ONE pulled (still-playing) body per match.
+        // The anchor is never pulled (C-3), so capping the triple caps the four.
+        if (combo.filter((c) => c.isPulled).length > 1) continue;
         if (isGroupValid([anchor, ...combo], maxVariance)) {
           // Early exit — first valid triple in priority order IS optimal.
           return combo;
@@ -401,6 +418,87 @@ export function rotatedDraft(
 }
 
 // ═════════════════════════════════════════════════════════════
+// CROSS-COURT DIVERSITY DRAFTING — pure helpers
+// ═════════════════════════════════════════════════════════════
+// See CROSS_COURT_DRAFTING_PLAN.md. These are DB-free and unit-tested in
+// matchmaking-core.test.ts. The DB-coupled side (fetchPullablePlayers,
+// recomputeHeldReadiness) lives in matchmaking-db.ts / matchmaking.ts.
+
+/** Context for pull eligibility, computed by fetchPullablePlayers (DB layer). */
+export type PullEligibilityOpts = {
+  /** Consecutive back-to-back games the body is currently on (pulled games count). */
+  streak: number;
+  /** True if the body is already reserved in another pending held draft. */
+  alreadyHeld: boolean;
+};
+
+/**
+ * Whether a currently-playing body may be pulled into a held draft. Relational
+ * cooldown only (R3-C): a body on a streak >= MAX_CONSECUTIVE_GAMES_FOR_PULL is
+ * excluded, as is one already reserved in another held draft.
+ *
+ * N-4: deliberately NO skill-window check here — fetchPullablePlayers runs before
+ * the anchor is known, so skill compatibility is left entirely to runAlgorithm.
+ */
+export function isPullEligible(_player: QueueWithWaitTime, opts: PullEligibilityOpts): boolean {
+  if (opts.alreadyHeld) return false;
+  return opts.streak < MAX_CONSECUTIVE_GAMES_FOR_PULL;
+}
+
+/** Inputs for the held-draft readiness predicate (all injected for determinism). */
+export type HeldReadinessInput = {
+  /** completed_at of the pulled body's source match; null = still playing. */
+  pulledFreedAt: string | null;
+  /** Matches promoted (got a started_at) since the body freed. */
+  promotionsSinceFreed: number;
+  /** Current time, ms epoch. */
+  now: number;
+  /** Rest-timer fallback, ms (CROSS_COURT_REST_FALLBACK_MINUTES * 60_000). */
+  restFallbackMs: number;
+};
+
+/**
+ * A held draft is promotable iff its pulled body is free AND either at least one
+ * other match has promoted since it freed, OR the rest-timer fallback has elapsed
+ * (decision 6). A still-playing body (pulledFreedAt === null) is never ready.
+ */
+export function isHeldMatchReady(input: HeldReadinessInput): boolean {
+  if (input.pulledFreedAt === null) return false;
+  if (input.promotionsSinceFreed >= 1) return true;
+  const elapsedMs = input.now - new Date(input.pulledFreedAt).getTime();
+  return elapsedMs >= input.restFallbackMs;
+}
+
+/**
+ * Court-preference tiebreak (N-3): among equally-good pulled candidates, prefer
+ * the one whose current game STARTED EARLIEST (closest to finishing). This is a
+ * tiebreak used when composing the single pulled slot — NOT a global pre-sort
+ * (that would override best-fit). Deterministic final tiebreak on player_id.
+ */
+export function pickEarliestFinishing(candidates: ScoredPlayer[]): ScoredPlayer | null {
+  if (candidates.length === 0) return null;
+  return [...candidates].sort((a, b) => {
+    const ta = a.currentMatchStartedAt ? new Date(a.currentMatchStartedAt).getTime() : Infinity;
+    const tb = b.currentMatchStartedAt ? new Date(b.currentMatchStartedAt).getTime() : Infinity;
+    if (ta !== tb) return ta - tb;
+    return a.player_id < b.player_id ? -1 : a.player_id > b.player_id ? 1 : 0;
+  })[0];
+}
+
+// Internal: keep at most one pulled body in a candidate list (order-preserving).
+// Belt-and-suspenders for the last-resort fallback path (buildCombinationGroup
+// already caps the primary path at one pulled).
+function limitPulledToOne(candidates: ScoredPlayer[]): ScoredPlayer[] {
+  let taken = false;
+  return candidates.filter((c) => {
+    if (!c.isPulled) return true;
+    if (taken) return false;
+    taken = true;
+    return true;
+  });
+}
+
+// ═════════════════════════════════════════════════════════════
 // PURE ALGORITHM LAYER
 // ═════════════════════════════════════════════════════════════
 // scoreAndSortPool, runAlgorithm, MatchProposal, AlgorithmResult
@@ -435,6 +533,13 @@ export type AlgorithmResult = {
   proposal: MatchProposal | null;
   /** True when the partnership cap shrank the candidate pool and no match was formed. */
   capSaturation: boolean;
+  /**
+   * True ONLY when the proposal is a forced repeat — the Tier-3 partner rotation
+   * or the last-resort fallback (a recent group re-emitted). The cross-court
+   * engine path triggers off this. Absent (falsy) on Tier-1/Tier-2/normal matches
+   * and on no-match.
+   */
+  forcedRepeat?: boolean;
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -694,6 +799,7 @@ export function runAlgorithm(
               isMixedLevel: isMixedRotation,
             },
             capSaturation: false,
+            forcedRepeat: true, // Tier-3 partner rotation = a forced repeat (cross-court trigger)
           };
         }
       }
@@ -738,7 +844,8 @@ export function runAlgorithm(
       );
     }
     const scoredFallback = scoreCandidates(candidates, overlapMap);
-    const fallbackGroup = scoredFallback.slice(0, 3).map((s) => s.candidate);
+    // Cross-court (N-1): keep at most one pulled body even in the last-resort path.
+    const fallbackGroup = limitPulledToOne(scoredFallback.map((s) => s.candidate)).slice(0, 3);
 
     if (fallbackGroup.length >= 3) {
       const allFour = [anchor, ...fallbackGroup];
@@ -747,6 +854,7 @@ export function runAlgorithm(
         return {
           proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: true },
           capSaturation: false,
+          forcedRepeat: true, // last-resort fallback = a forced repeat (cross-court trigger)
         };
       }
       if (process.env.DEBUG_MATCHMAKING === "true") {

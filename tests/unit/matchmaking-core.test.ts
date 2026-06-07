@@ -15,7 +15,7 @@
 //   buildCombinationGroup — N-choose-3 combination search
 // ============================================================
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import {
   computePriorityScore,
   isGroupValid,
@@ -29,6 +29,9 @@ import {
   pairKey,
   runAlgorithm,
   getDynamicDraftCap,
+  isPullEligible,
+  isHeldMatchReady,
+  pickEarliestFinishing,
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
@@ -37,6 +40,8 @@ import {
   SKILL_VARIANCE_MAX,
   MAX_PARTNERSHIP_REPEATS,
   FALLBACK_WAIT_MINUTES,
+  MAX_CONSECUTIVE_GAMES_FOR_PULL,
+  CROSS_COURT_REST_FALLBACK_MINUTES,
 } from "@/lib/constants";
 import type { ScoredPlayer } from "@/lib/matchmaking-core";
 import type { QueueWithWaitTime } from "@/types/database";
@@ -1558,5 +1563,254 @@ describe("getEffectiveCap — override ceiling logic", () => {
 
   it("DC-13: override 5 in xlarge session (dynamic=6) → capped at 5", () => {
     expect(getEffectiveCap(35, 5)).toBe(5); // 5 < 6, override wins
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// CROSS-COURT DIVERSITY DRAFTING — pure helpers (Phase 3)
+// ═════════════════════════════════════════════════════════════
+// Determinism (senior-QA QA-PURE-02): the whole section runs under a frozen
+// clock so makePlayer's Date.now()-seeded joined_at and makePulled's timestamps
+// are reproducible run-to-run.
+
+const FIXED_NOW = new Date("2026-06-07T12:00:00.000Z");
+
+// A still-playing body, exactly as fetchPullablePlayers emits it: priorityScore
+// forced to -1 (C-3, never recomputed), isPulled true, with the current match's
+// started_at for the pickEarliestFinishing tiebreak.
+function makePulled(
+  id: string,
+  opts: { skillInt: number; currentMatchStartedAt?: string; joinedMinutesAgo?: number }
+): ScoredPlayer {
+  const joinedMinutesAgo = opts.joinedMinutesAgo ?? 0;
+  const base: QueueWithWaitTime = {
+    id: `entry-${id}`,
+    session_id: "session-1",
+    player_id: id,
+    joined_at: new Date(FIXED_NOW.getTime() - joinedMinutesAgo * 60_000).toISOString(),
+    games_played: 0,
+    status: "playing",
+    position: null,
+    is_paused: false,
+    created_at: FIXED_NOW.toISOString(),
+    display_name: `Pulled-${id}`,
+    skill_level: "intermediate",
+    skill_level_int: opts.skillInt,
+    wait_minutes: 0,
+    is_bottleneck: false,
+  };
+  return {
+    ...base,
+    priorityScore: -1,
+    isPulled: true,
+    currentMatchStartedAt: opts.currentMatchStartedAt ?? FIXED_NOW.toISOString(),
+  };
+}
+
+describe("Cross-Court Diversity Drafting (pure)", () => {
+  beforeAll(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
+  describe("isPullEligible", () => {
+    const body = () => makePulled("p", { skillInt: 5 });
+
+    it("CC-PURE-CC01: streak 0, not already held → eligible", () => {
+      expect(isPullEligible(body(), { streak: 0, alreadyHeld: false })).toBe(true);
+    });
+
+    it("CC-PURE-CC02: streak === cap → excluded (relational cooldown, R3-C)", () => {
+      expect(
+        isPullEligible(body(), { streak: MAX_CONSECUTIVE_GAMES_FOR_PULL, alreadyHeld: false })
+      ).toBe(false);
+    });
+
+    it("CC-PURE-CC03: streak one below cap → still eligible", () => {
+      expect(
+        isPullEligible(body(), { streak: MAX_CONSECUTIVE_GAMES_FOR_PULL - 1, alreadyHeld: false })
+      ).toBe(true);
+    });
+
+    it("CC-PURE-CC04: streak above cap → excluded", () => {
+      expect(
+        isPullEligible(body(), { streak: MAX_CONSECUTIVE_GAMES_FOR_PULL + 1, alreadyHeld: false })
+      ).toBe(false);
+    });
+
+    it("CC-PURE-CC05: already in another held draft → excluded even at streak 0", () => {
+      expect(isPullEligible(body(), { streak: 0, alreadyHeld: true })).toBe(false);
+    });
+
+    it("CC-PURE-CC06 [N-4]: skill is irrelevant — extreme low/high both eligible (no skill-window)", () => {
+      expect(
+        isPullEligible(makePulled("lo", { skillInt: 1 }), { streak: 0, alreadyHeld: false })
+      ).toBe(true);
+      expect(
+        isPullEligible(makePulled("hi", { skillInt: 9 }), { streak: 0, alreadyHeld: false })
+      ).toBe(true);
+    });
+  });
+
+  describe("isHeldMatchReady", () => {
+    const FALLBACK_MS = CROSS_COURT_REST_FALLBACK_MINUTES * 60_000;
+    const now = FIXED_NOW.getTime();
+    const freedMsAgo = (ms: number) => new Date(now - ms).toISOString();
+
+    it("CC-PURE-CC07: still playing (pulledFreedAt null) → false regardless of promotions/timer", () => {
+      expect(
+        isHeldMatchReady({
+          pulledFreedAt: null,
+          promotionsSinceFreed: 9,
+          now,
+          restFallbackMs: FALLBACK_MS,
+        })
+      ).toBe(false);
+    });
+
+    it("CC-PURE-CC08: freed + ≥1 promotion → ready (fallback not needed)", () => {
+      expect(
+        isHeldMatchReady({
+          pulledFreedAt: freedMsAgo(0),
+          promotionsSinceFreed: 1,
+          now,
+          restFallbackMs: FALLBACK_MS,
+        })
+      ).toBe(true);
+    });
+
+    it("CC-PURE-CC09: freed + 0 promotions + elapsed < fallback → not ready", () => {
+      expect(
+        isHeldMatchReady({
+          pulledFreedAt: freedMsAgo(FALLBACK_MS - 1),
+          promotionsSinceFreed: 0,
+          now,
+          restFallbackMs: FALLBACK_MS,
+        })
+      ).toBe(false);
+    });
+
+    it("CC-PURE-CC10: freed + 0 promotions + elapsed === fallback → ready (boundary is >=)", () => {
+      expect(
+        isHeldMatchReady({
+          pulledFreedAt: freedMsAgo(FALLBACK_MS),
+          promotionsSinceFreed: 0,
+          now,
+          restFallbackMs: FALLBACK_MS,
+        })
+      ).toBe(true);
+    });
+
+    it("CC-PURE-CC11: freed + 0 promotions + elapsed > fallback → ready", () => {
+      expect(
+        isHeldMatchReady({
+          pulledFreedAt: freedMsAgo(FALLBACK_MS + 60_000),
+          promotionsSinceFreed: 0,
+          now,
+          restFallbackMs: FALLBACK_MS,
+        })
+      ).toBe(true);
+    });
+  });
+
+  describe("pickEarliestFinishing (N-3 tiebreak)", () => {
+    it("CC-PURE-CC12: returns the candidate whose current game started earliest", () => {
+      const early = makePulled("early", {
+        skillInt: 5,
+        currentMatchStartedAt: "2026-06-07T11:30:00.000Z",
+      });
+      const late = makePulled("late", {
+        skillInt: 5,
+        currentMatchStartedAt: "2026-06-07T11:55:00.000Z",
+      });
+      expect(pickEarliestFinishing([late, early])?.player_id).toBe("early");
+    });
+
+    it("CC-PURE-CC13: empty list → null", () => {
+      expect(pickEarliestFinishing([])).toBeNull();
+    });
+
+    it("CC-PURE-CC14: equal start times → deterministic by player_id", () => {
+      const a = makePulled("a", { skillInt: 5, currentMatchStartedAt: "2026-06-07T11:40:00.000Z" });
+      const b = makePulled("b", { skillInt: 5, currentMatchStartedAt: "2026-06-07T11:40:00.000Z" });
+      expect(pickEarliestFinishing([b, a])?.player_id).toBe("a");
+    });
+  });
+
+  describe("forcedRepeat flag (cross-court trigger signal)", () => {
+    it("CC-PURE-CC15: clean diverse match → forcedRepeat falsy", () => {
+      const pool = [
+        makePlayer("a", { skillInt: 3, waitMinutes: 10 }),
+        makePlayer("b", { skillInt: 3, waitMinutes: 9 }),
+        makePlayer("c", { skillInt: 3, waitMinutes: 8 }),
+        makePlayer("d", { skillInt: 3, waitMinutes: 7 }),
+      ];
+      const res = runAlgorithm(pool, new Map(), new Map(), []);
+      expect(res.proposal).not.toBeNull();
+      expect(res.forcedRepeat).toBeFalsy();
+    });
+
+    it("CC-PURE-CC16: unavoidable repeat (same 4 in every recent roster) → forcedRepeat true", () => {
+      const pool = [
+        makePlayer("a", { skillInt: 3, waitMinutes: 10 }),
+        makePlayer("b", { skillInt: 3, waitMinutes: 9 }),
+        makePlayer("c", { skillInt: 3, waitMinutes: 8 }),
+        makePlayer("d", { skillInt: 3, waitMinutes: 7 }),
+      ];
+      const ids = ["a", "b", "c", "d"];
+      const res = runAlgorithm(pool, new Map(), new Map(), [ids, ids, ids, ids, ids]);
+      expect(res.proposal).not.toBeNull();
+      expect(res.forcedRepeat).toBe(true);
+    });
+
+    it("CC-PURE-CC17: too few players → proposal null, forcedRepeat falsy", () => {
+      const res = runAlgorithm(
+        [makePlayer("a", { skillInt: 3 }), makePlayer("b", { skillInt: 3 })],
+        new Map(),
+        new Map(),
+        []
+      );
+      expect(res.proposal).toBeNull();
+      expect(res.forcedRepeat).toBeFalsy();
+    });
+  });
+
+  describe("≤1 pulled body per match (N-1)", () => {
+    const countPulled = (res: ReturnType<typeof runAlgorithm>) =>
+      res.proposal
+        ? [...res.proposal.teamA, ...res.proposal.teamB].filter((p) => p.isPulled).length
+        : 0;
+
+    it("CC-PURE-CC18: 3 waiting + 2 pulled → composes exactly ONE pulled; waiting anchors (C-3)", () => {
+      // Pre-scored pool (as fetchPullablePlayers emits): waiting >= 0, pulled at -1.
+      const pool = [
+        makePlayer("w0", { skillInt: 3, waitMinutes: 12 }),
+        makePlayer("w1", { skillInt: 3, waitMinutes: 8 }),
+        makePlayer("w2", { skillInt: 3, waitMinutes: 6 }),
+        makePulled("pullA", { skillInt: 3, currentMatchStartedAt: "2026-06-07T11:40:00.000Z" }),
+        makePulled("pullB", { skillInt: 3, currentMatchStartedAt: "2026-06-07T11:55:00.000Z" }),
+      ];
+      const res = runAlgorithm(pool, new Map(), new Map(), []);
+      expect(res.proposal).not.toBeNull();
+      // Exactly one pulled — NOT 0 (gave up) and NOT 2 (constraint violated).
+      expect(countPulled(res)).toBe(1);
+      // C-3: a waiting player anchors (pool[0] is never a pulled body).
+      expect(pool[0].isPulled).toBeFalsy();
+      expect(pool[0].player_id).toBe("w0");
+    });
+
+    it("CC-PURE-CC19: 2 waiting + 2 pulled (no ≤1-pulled four possible) → no match, NOT a 2-pulled match", () => {
+      const pool = [
+        makePlayer("w0", { skillInt: 3, waitMinutes: 5 }), // low wait → no last-resort fallback
+        makePlayer("w1", { skillInt: 3, waitMinutes: 4 }),
+        makePulled("pullA", { skillInt: 3 }),
+        makePulled("pullB", { skillInt: 3 }),
+      ];
+      const res = runAlgorithm(pool, new Map(), new Map(), []);
+      expect(res.proposal).toBeNull();
+    });
   });
 });
