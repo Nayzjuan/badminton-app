@@ -5,6 +5,24 @@
 
 ---
 
+## 🆕 GOOGLE OAUTH — code-only P0+P1 slice — branch `feat/duplicate-name-resolution` (2026-06-08)
+
+Built ON TOP of the duplicate-name feature (reuses normalizeName + partial unique index + isNameTaken + /rename gate). **Dark/flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`), NOT wired to live Google, migrations NOT applied to prod.** Review gate: **LGTM**. 550 tests pass · tsc/lint/build clean.
+
+**What's built:**
+- **Trigger hardening** (`20260608000002`): `handle_new_user` OAuth/metadata-less branch inserts a UNIQUE stub (`Player_`+id8) with `needs_rename=true` (excluded from the unique index → no 23505). Anonymous path unchanged.
+- `src/lib/oauth-name.ts` — `deriveDisplayName`/`sanitizeToDisplayName` (Google name → `[a-zA-Z0-9 ]`, 3–30, NFKD + transliterate ø/æ/ß…). `src/lib/pin.ts` — `generatePin()`. `src/lib/safe-next.ts` — shared open-redirect guard.
+- `src/lib/oauth-provision.ts` — `ensureOAuthProfile`: unresolved-stub = `needs_rename=true && collided_name=null`; derive→ensure PIN→ unique?assign+clear flag : set collided_name+keep flag (→ /rename gate). **Mints a PIN for every OAuth account** (recovery, no lockout). TOCTOU on assign → falls back to collision branch.
+- `src/app/actions/oauth.ts` — `signInWithGoogle` (signInWithOAuth) + `linkWithGoogle` (linkIdentity, same id → name preserved). `src/app/auth/callback/route.ts` — PKCE `exchangeCodeForSession`; branches: `error_code=identity_already_exists` (Phase 3 merge STUB), `intent=link` (profile no-op), fresh→`ensureOAuthProfile`.
+- `src/components/auth/google-sign-in-button.tsx` (flag-gated) mounted in login-form.
+- Tests: `tests/unit/oauth-name.test.ts` (12).
+
+**Verified Supabase facts:** linkIdentity keeps same user id (anonymous→permanent); the on_auth_user_created trigger does NOT re-fire on link (so display_name preserved by construction; any backfill must be explicit app code); `identity_already_exists`=HTTP 422; `exchangeCodeForSession` current; auto-linking can't touch the anonymous base (no email).
+
+**STILL NEEDED to go live (user's side):** Google Cloud OAuth client (free) → redirect URI `https://usxftpexoimletqmrggb.supabase.co/auth/v1/callback`; Supabase dashboard: enable Google provider + paste id/secret, set Site/redirect URLs, enable Manual Linking; set `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` + `NEXT_PUBLIC_SITE_URL`. Apply migrations `20260608000000/000001/000002`. **Deferred:** Phase 3 collision-merge (callback stub → wire migrate_player_identity); the dup-name data-fix runbook; Apple (dropped per user).
+
+---
+
 ## 🆕 DUPLICATE-NAME RESOLUTION — branch `feat/duplicate-name-resolution` (2026-06-08)
 
 Built (NOT yet merged / NOT applied to prod). Scope A = lazy/reactive. Code complete + reviewed (gate verdict: **Minor issues**, all 4 fixed). 538 tests pass · tsc/lint/build clean.

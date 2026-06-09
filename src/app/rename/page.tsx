@@ -9,15 +9,9 @@
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { RenameScreen } from "@/components/player/rename-screen";
+import { safeNext } from "@/lib/safe-next";
 
 export const dynamic = "force-dynamic";
-
-// Only allow internal absolute paths as the post-rename destination —
-// never a protocol-relative (//evil) or external URL (open-redirect guard).
-function sanitizeNext(next: string | undefined): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/play";
-  return next;
-}
 
 export default async function RenamePage({
   searchParams,
@@ -25,7 +19,7 @@ export default async function RenamePage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const { next } = await searchParams;
-  const safeNext = sanitizeNext(next);
+  const dest = safeNext(next);
 
   const supabase = await createServerSupabaseClient();
   const {
@@ -40,11 +34,11 @@ export default async function RenamePage({
     .maybeSingle();
 
   if (!profile) redirect("/"); // profileless → recovery path
-  if (!profile.needs_rename) redirect(safeNext); // not flagged → nothing to resolve
+  if (!profile.needs_rename) redirect(dest); // not flagged → nothing to resolve
 
   // Stem the player is disambiguating from (the persisted collided name,
   // falling back to the current display name).
   const stem = profile.collided_name ?? profile.display_name;
 
-  return <RenameScreen collidedName={stem} next={safeNext} />;
+  return <RenameScreen collidedName={stem} next={dest} />;
 }

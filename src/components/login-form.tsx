@@ -18,6 +18,7 @@ import { Eye, EyeOff, UserPlus, RotateCcw } from "lucide-react";
 import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
 import { SKILL_LEVELS } from "@/types/database";
 import { Spinner } from "./reconnect-modal";
+import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 
 interface LoginFormProps {
   /** If provided, the user will be redirected to /play/[sessionId] after login. */
@@ -519,6 +520,9 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           </button>
         </div>
       )}
+
+      {/* ── OAuth (flag-gated; renders nothing until Google is configured) ── */}
+      <GoogleSignInButton next={sessionId ? `/play/${sessionId}` : "/play"} />
     </div>
   );
 }
