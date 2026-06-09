@@ -9,6 +9,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { enforceRenameGate } from "@/lib/rename-gate";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
@@ -28,6 +29,9 @@ export default async function PlayPage() {
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
   if (!profile) redirect("/");
+
+  // Duplicate-name gate (L1): route flagged duplicates to /rename first.
+  await enforceRenameGate(profile, "/play");
 
   // Get active sessions.
   const { data: sessions } = await supabase

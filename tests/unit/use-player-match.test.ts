@@ -51,11 +51,23 @@ const mockCourt = {
   status: "in_use",
 };
 
+// Full Profile rows (all columns) so a future field access fails loudly rather
+// than silently returning undefined.
+const profileBase = {
+  pin: null,
+  vip_tag: null,
+  vip_theme: null,
+  needs_rename: false,
+  collided_name: null,
+  flagged_at: null,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
 const mockProfiles = [
-  { id: PLAYER_ID, display_name: "Me", skill_level: "intermediate" },
-  { id: "player-t1", display_name: "Teammate", skill_level: "intermediate" },
-  { id: "player-o1", display_name: "Opp1", skill_level: "advanced" },
-  { id: "player-o2", display_name: "Opp2", skill_level: "beginner" },
+  { id: PLAYER_ID, display_name: "Me", skill_level: "intermediate", ...profileBase },
+  { id: "player-t1", display_name: "Teammate", skill_level: "intermediate", ...profileBase },
+  { id: "player-o1", display_name: "Opp1", skill_level: "advanced", ...profileBase },
+  { id: "player-o2", display_name: "Opp2", skill_level: "beginner", ...profileBase },
 ];
 
 // ── Mock Supabase Client ──────────────────────────────────────

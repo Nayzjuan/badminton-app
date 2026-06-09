@@ -9,6 +9,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue } from "@/lib/realtime";
 import { joinQueueAction, checkoutPlayer } from "@/app/actions/queue";
@@ -34,6 +35,7 @@ interface UseQueueResult {
 }
 
 export function useQueue(sessionId: string, playerId: string): UseQueueResult {
+  const router = useRouter();
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -127,13 +129,21 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
 
     const result = await joinQueueAction(sessionId);
 
+    if (result.requiresRename) {
+      // Flagged duplicate (L2 backstop — the page gate usually catches this
+      // first). Roll back the optimistic entry and route to the rename gate.
+      setQueue(snapshot);
+      router.push(`/rename?next=${encodeURIComponent(`/play/${sessionId}`)}`);
+      return { error: result.error };
+    }
+
     if (result.error) {
       setQueue(snapshot); // Rollback on failure
       return { error: result.error };
     }
 
     return {};
-  }, [sessionId, playerId]);
+  }, [sessionId, playerId, router]);
 
   // Leave queue.
   // Delegates to checkoutPlayer (server action) so the atomic

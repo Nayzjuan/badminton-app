@@ -5,6 +5,71 @@
 
 ---
 
+## ✅ DUP-NAME + OAUTH ROLLOUT — APPLIED TO PROD (2026-06-08)
+
+All four migrations applied to prod (`usxftpexoimletqmrggb`) + data-fix executed + verified.
+
+- **Migrations applied:** `20260608000000` (cols/RPCs/migrate copy-all), `…000001` (partial UNIQUE index `idx_profiles_unique_active_name`, applied non-concurrent — tiny table), `…000002` (handle_new_user OAuth hardening).
+- **Data-fix executed (live, atomic, guarded):** MERGED Miggy ghost `3a14c449`→`499b5fb7` (61 games) and lianne `9c6bc387`→Lianne `f30a6c4f` (12 games, kept PIN 0000); FLAGGED 2 Tristans (`74029ccf`,`df80ed55`) + 1 Jason (`8ef4b364`). Bea/Bea T was merged earlier in-session. **0 un-flagged dup clusters remain** → index built clean.
+- **Runbook deviated from the committed file in 2 ways (the file predates the lessons):** (1) Miggy ghost was `sessions.created_by` on a session → had to reassign created_by + session_organizers to real Miggy before delete (the NO-ACTION FK); (2) added the scoped H2H rebuild (player_rivalries/partnerships) for the Lianne merge, same as the Bea/Bea T fix — the committed runbook still omits both.
+- **Hardening:** `player_renames` → RLS enabled (deny-all; service_role bypasses). `handle_new_user` → REVOKE EXECUTE from anon/authenticated (was RPC-exposed; trigger still fires). Leaderboard refreshed.
+- **Advisors (pre-existing, NOT mine, untouched):** `migrate_player_identity` mutable search_path (project-wide pattern, SECURITY INVOKER); `auth_allow_anonymous_sign_ins`; `rls_policy_always_true` on match_players; `materialized_view_in_api`.
+
+**⚠ DEPLOY GAP:** the branch `feat/duplicate-name-resolution` (dup-name gate + OAuth code) is **NOT merged to main / NOT deployed**. Prod runs OLD app code. Consequences right now:
+- The unique index DOES enforce global name uniqueness even for old code (registration 23505 → "name taken") — desirable early effect, handled by old code's 23505 path.
+- The 3 flagged players are INERT (old code has no `enforceRenameGate`) — they won't be forced to rename until the branch deploys. Same display state as before.
+- OAuth button hidden until branch deploys + Vercel env (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`, `NEXT_PUBLIC_SITE_URL`) set. Supabase dashboard (Google provider, Manual Linking, redirect URLs) = done by user.
+
+**NEXT:** merge branch → main + deploy (activates gate + OAuth); set Vercel env; (optional) wire Phase-3 collision-merge stub in /auth/callback.
+
+---
+
+## 🆕 GOOGLE OAUTH — code-only P0+P1 slice — branch `feat/duplicate-name-resolution` (2026-06-08)
+
+Built ON TOP of the duplicate-name feature (reuses normalizeName + partial unique index + isNameTaken + /rename gate). **Dark/flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`), NOT wired to live Google, migrations NOT applied to prod.** Review gate: **LGTM**. 550 tests pass · tsc/lint/build clean.
+
+**What's built:**
+- **Trigger hardening** (`20260608000002`): `handle_new_user` OAuth/metadata-less branch inserts a UNIQUE stub (`Player_`+id8) with `needs_rename=true` (excluded from the unique index → no 23505). Anonymous path unchanged.
+- `src/lib/oauth-name.ts` — `deriveDisplayName`/`sanitizeToDisplayName` (Google name → `[a-zA-Z0-9 ]`, 3–30, NFKD + transliterate ø/æ/ß…). `src/lib/pin.ts` — `generatePin()`. `src/lib/safe-next.ts` — shared open-redirect guard.
+- `src/lib/oauth-provision.ts` — `ensureOAuthProfile`: unresolved-stub = `needs_rename=true && collided_name=null`; derive→ensure PIN→ unique?assign+clear flag : set collided_name+keep flag (→ /rename gate). **Mints a PIN for every OAuth account** (recovery, no lockout). TOCTOU on assign → falls back to collision branch.
+- `src/app/actions/oauth.ts` — `signInWithGoogle` (signInWithOAuth) + `linkWithGoogle` (linkIdentity, same id → name preserved). `src/app/auth/callback/route.ts` — PKCE `exchangeCodeForSession`; branches: `error_code=identity_already_exists` (Phase 3 merge STUB), `intent=link` (profile no-op), fresh→`ensureOAuthProfile`.
+- `src/components/auth/google-sign-in-button.tsx` (flag-gated) mounted in login-form.
+- Tests: `tests/unit/oauth-name.test.ts` (12).
+
+**Verified Supabase facts:** linkIdentity keeps same user id (anonymous→permanent); the on_auth_user_created trigger does NOT re-fire on link (so display_name preserved by construction; any backfill must be explicit app code); `identity_already_exists`=HTTP 422; `exchangeCodeForSession` current; auto-linking can't touch the anonymous base (no email).
+
+**STILL NEEDED to go live (user's side):** Google Cloud OAuth client (free) → redirect URI `https://usxftpexoimletqmrggb.supabase.co/auth/v1/callback`; Supabase dashboard: enable Google provider + paste id/secret, set Site/redirect URLs, enable Manual Linking; set `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` + `NEXT_PUBLIC_SITE_URL`. Apply migrations `20260608000000/000001/000002`. **Deferred:** Phase 3 collision-merge (callback stub → wire migrate_player_identity); the dup-name data-fix runbook; Apple (dropped per user).
+
+---
+
+## 🆕 DUPLICATE-NAME RESOLUTION — branch `feat/duplicate-name-resolution` (2026-06-08)
+
+Built (NOT yet merged / NOT applied to prod). Scope A = lazy/reactive. Code complete + reviewed (gate verdict: **Minor issues**, all 4 fixed). 538 tests pass · tsc/lint/build clean.
+
+**Mechanism — three layers (the flag is a UX nudge; the index is the authority):**
+- **L1** `enforceRenameGate(profile, nextPath)` (`src/lib/rename-gate.ts`) at top of `/play` + `/play/[sessionId]` → redirects flagged profiles to `/rename`. Grandfathers active players (live queue entry) + skips active organizers. Fast path = zero queries for clean profiles.
+- **L2** `joinQueueAction` first step reads `needs_rename` → returns `requiresRename` (client routes to `/rename`). Real mutation boundary.
+- **L3** partial UNIQUE index `idx_profiles_unique_active_name` on `lower(btrim(regexp_replace(display_name,E'[ \t]+',' ','g'))) WHERE needs_rename=false` — cross-instance/TOCTOU authority. **Migration `20260608000001` — apply ONLY after the data-fix flags duplicates** (held).
+
+**Rules:** R1 (can't reuse `collided_name`, persisted) + R2 (global uniqueness). **R1 is NOT subsumed by R2** — Scope A's merges can delete the canonical sibling, after which R2 alone would re-accept the dup name (infinite-gate loop); R1 catches it. `normalizeName()` (`src/lib/normalize-name.ts`) is byte-identical to the SQL expr (ASCII space/tab only — NOT `\s`, NBSP divergence).
+
+**Registration (R2):** `signInAnonymously` now enforces GLOBAL uniqueness (was active-queue-only), ordered AFTER the returning-player (name+PIN→Reconnect) check. Already-authed path **upserts** (re-creates a missing profile) → fixes the profileless redirect loop (`/` now falls through to the form when authed-but-profileless).
+
+**Reconnect:** `migrate_player_identity` hardened to copy ALL profile columns (fixes pre-existing silent `vip_tag`/`vip_theme` loss on every reconnect; carries flag columns). Schema-drift test `tests/unit/migrate-identity-columns.test.ts` guards future columns. Reconnect returns `requiresRename`.
+
+**Schema (migration `20260608000000`, additive/safe):** `profiles.needs_rename bool / collided_name text / flagged_at timestamptz`; `player_renames` audit table; `rename_player_identity(p_user_id,p_new_name)` RPC (atomic rename+flag-clear+audit, server-side R1 recheck, 23505→name_taken, SECURITY DEFINER, service_role only). `src/types/database.ts` updated (Profile, PlayerRename, Functions).
+
+**DATA FIX — `supabase/data-fixes/20260608_duplicate_name_data_fix.sql` (BUILD ONLY, hand-run, guarded+idempotent):**
+- MERGE Miggy ghost `3a14c449` (0 games) → real `499b5fb7`; MERGE lianne `9c6bc387` (PIN 1111) → Lianne `f30a6c4f` (keep latest PIN 0000, reassign 6 games). Guards abort if the "ghost" owns data.
+- FLAG non-canonical of remaining clusters (Tristan/Bea/Jason) generically: canonical = most completed games, tiebreak `created_at,id`. Keeps real name in `collided_name`.
+- Then: apply unique index `000001` → `refresh_alltime_leaderboard()` → recompute Wrapped for merge-affected sessions. Preview + verify queries included.
+
+**ROLLOUT ORDER (gated on user go-ahead for prod):** apply `000000` → deploy app → run data-fix runbook → apply `000001` (unique index). None applied yet.
+
+**Deferred (low):** global reduced-motion utility in globals.css (only my spinners are `motion-reduce:animate-none`); reserved-words deny-list; organizer-manual rename tool (user declined).
+
+---
+
 ## 🟢 STABLE CHECKPOINT — `stable-pre-cross-court` (2026-06-07) — REVERT TARGET
 
 Before building the **Cross-Court Diversity Drafting** feature (`CROSS_COURT_DRAFTING_PLAN.md`), the last known-good app was tagged as a revert point.

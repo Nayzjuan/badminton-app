@@ -102,6 +102,12 @@ vi.mock("@/app/actions/queue", () => ({
   checkoutPlayer: (...args: unknown[]) => mockCheckoutPlayer(...args),
 }));
 
+// useQueue now calls useRouter() (to route flagged duplicates to /rename).
+const mockRouterPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockRouterPush, refresh: vi.fn() }),
+}));
+
 // ── Tests ─────────────────────────────────────────────────────
 
 describe("useQueue — Unit Suite", () => {

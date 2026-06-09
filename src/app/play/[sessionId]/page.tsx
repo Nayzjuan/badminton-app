@@ -7,6 +7,7 @@
 
 import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { enforceRenameGate } from "@/lib/rename-gate";
 import { PlayerDashboard } from "@/components/player/player-dashboard";
 
 interface PageProps {
@@ -27,6 +28,9 @@ export default async function PlayerDashboardPage({ params }: PageProps) {
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
   if (!profile) redirect("/");
+
+  // Duplicate-name gate (L1): route flagged duplicates to /rename first.
+  await enforceRenameGate(profile, `/play/${sessionId}`);
 
   // Get session — do NOT filter by is_active so closed sessions don't 404.
   const { data: session } = await supabase

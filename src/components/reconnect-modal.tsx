@@ -76,6 +76,13 @@ export function ReconnectModal({ open, onClose }: { open: boolean; onClose: () =
         setLocalError(result.error ?? "Reconnect failed.");
       } else {
         onClose();
+        // Duplicate-name gate takes priority: a flagged profile must resolve
+        // its name before anything else. Preserve the intended destination.
+        if (result.requiresRename) {
+          const dest = result.sessionId ? `/play/${result.sessionId}` : "/play";
+          router.push(`/rename?next=${encodeURIComponent(dest)}`);
+          return;
+        }
         // Priority: active session → pending Wrapped page → lobby.
         // wrappedUrl is set when the player's most recent session closed
         // while they were offline (within the last 48 h).

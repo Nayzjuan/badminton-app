@@ -90,8 +90,13 @@ Mirrors `auth.users` 1:1 — the UUID is the `auth.users.id`.
 | `pin`          | `text \| null`     | 4-digit reconnect PIN                                                           |
 | `vip_tag`      | `text \| null`     | Short label shown as badge (e.g. "MVP"). Set via Supabase dashboard only.       |
 | `vip_theme`    | `text \| null`     | Key into `VIP_THEMES` in `src/lib/vip-config.ts`. Controls neon/holo rendering. |
+| `needs_rename`  | `boolean`          | Duplicate-name flag — must rename at next login/join (§3.8b). Default `false`.   |
+| `collided_name` | `text \| null`     | The name this profile was flagged on (R1 source of truth). `null` when not flagged. |
+| `flagged_at`    | `timestamptz \| null` | When the duplicate flag was set.                                              |
 | `created_at`   | `timestamptz`      |                                                                                 |
 | `updated_at`   | `timestamptz`      |                                                                                 |
+
+Partial UNIQUE index `idx_profiles_unique_active_name` on `lower(btrim(regexp_replace(display_name,E'[ \t]+',' ','g'))) WHERE needs_rename = false` enforces global name uniqueness for non-flagged profiles (§3.8b). Audit table **`player_renames`** (`id, player_id, old_name, new_name, reason, actor_user_id, session_id, created_at`) is an append-only log of every name change.
 
 **Trigger:** `on_auth_user_created` → `handle_new_user()` — auto-creates a profile row from `raw_user_meta_data.display_name` and `raw_user_meta_data.skill_level` when a new auth user is inserted.
 
@@ -724,6 +729,37 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 - RPC returns `true` if the old user is the primary session organizer, preventing deletion of their auth record.
 - **Safety net**: After reconnect, the leaderboard auto-refreshes to reflect the merged identity. Organizer session is preserved if the reconnecting player is an organizer.
 - **Sign-out guard**: `signInAnonymously` is always preceded by `signOut()` to prevent stale sessions from causing identity conflicts.
+- **Column parity (2026-06-08):** `migrate_player_identity` Step 2 now copies **all** profile columns (previously only `id, display_name, skill_level, pin` — which silently dropped `vip_tag`/`vip_theme` on every reconnect, and would drop the new duplicate-name flags). `created_at`/`updated_at` are intentionally left to defaults. Guarded by the schema-drift test `tests/unit/migrate-identity-columns.test.ts`.
+
+---
+
+### 3.8b Duplicate-Name Resolution (forced rename on next login)
+
+**Files:** `src/lib/normalize-name.ts`, `src/lib/dup-name.ts`, `src/lib/rename-gate.ts`, `src/app/actions/rename.ts`, `src/app/actions/auth.ts`, `src/app/actions/queue.ts`, `src/app/rename/page.tsx`, `src/components/player/rename-screen.tsx`. Migrations `20260608000000` (schema + RPCs) and `20260608000001` (unique index). One-shot data fix: `supabase/data-fixes/20260608_duplicate_name_data_fix.sql`.
+
+**Problem:** `display_name` was never globally unique — registration only blocked names *active in a queue*, so two different people (and reconnect-ghost profiles) could share a name, splitting cross-session identity on the leaderboard/history.
+
+**Scope A (lazy/reactive):** fix the true same-person duplicates by **merge**; for genuinely-different people who share a first name, **flag** the non-canonical profiles and force a rename only when they next log in or join. Never-returners stay inert.
+
+**Normalization key (single source of truth):** `normalizeName()` = ASCII space/tab collapse → trim → lower, byte-identical to the SQL `lower(btrim(regexp_replace(display_name, E'[ \t]+', ' ', 'g')))`. Used by registration, the rename gate, the RPC's R1 recheck, and the unique index. Pinned to ASCII (not `\s`) to avoid a JS/Postgres NBSP divergence.
+
+**Two rules:** **R1** — a flagged profile cannot reuse the `collided_name` it was flagged on (persisted; checked per-keystroke + server-side). **R2** — the new name must be unique across all non-flagged profiles. R1 is **not** subsumed by R2: a merge can remove the canonical sibling, after which R2 alone would re-accept the old name (infinite-gate loop) — R1 prevents it.
+
+**Three enforcement layers:**
+
+1. **L1 redirect** — `enforceRenameGate(profile, nextPath)` at the top of `/play` and `/play/[sessionId]` routes a flagged profile to `/rename`. Fast path: zero queries for clean profiles. Grandfathers a player who is currently in a live queue/match; skips active organizers. Redirect-only (no cookie mutation → safe in a Server Component render).
+2. **L2 action gate** — `joinQueueAction` reads `needs_rename` as its first step and returns `requiresRename` (the client routes to `/rename`). The real mutation boundary.
+3. **L3 DB authority** — partial UNIQUE index `idx_profiles_unique_active_name` on the normalized name `WHERE needs_rename = false`. Flagged duplicates are excluded (so they keep their real name until they rename); the instant a rename flips the flag, the new name enters the index. This is the only TOCTOU/cross-instance-safe guard. **Held until the data fix flags duplicates** (it can't build over live collisions).
+
+**`/rename` screen:** `force-dynamic` (flag read fresh per request). Full-screen, non-dismissible. Prefilled with the stem + trailing space; one-tap suffix chips. Validation ladder mirrors the server: shape (Zod) → R1 (per-keystroke, amber guidance) → R2 (debounced async, `fetchSeq`-guarded, red error). a11y: real `<label>`, `aria-invalid`/`aria-busy`/`aria-describedby`, `aria-live` status, focus starts on the heading, every cue is icon + text, `motion-reduce` spinners.
+
+**`rename_player_identity(p_user_id, p_new_name)` RPC:** single transaction — server-side R1 recheck → `UPDATE display_name + needs_rename=false + collided_name=null` (the unique index arbitrates R2; 23505 → `name_taken`) → `player_renames` audit insert. SECURITY DEFINER, pinned `search_path`, granted to `service_role` only (the action derives the user id from the session — no IDOR).
+
+**Registration change:** `signInAnonymously` now enforces global uniqueness (after the returning-player name+PIN→Reconnect check). The already-authed path **upserts** (re-creating a missing profile), which — together with `/` falling through to the login form for an authed-but-profileless user — breaks the profileless redirect loop left by a merged-away ghost.
+
+**Schema:** `profiles.needs_rename boolean NOT NULL DEFAULT false`, `collided_name text`, `flagged_at timestamptz`; partial lookup index `idx_profiles_needs_rename`; audit table `player_renames(id, player_id, old_name, new_name, reason, actor_user_id, session_id, created_at)`.
+
+**Data fix (hand-run, guarded, idempotent):** merge Miggy ghost + Lianne (keep latest PIN), flag the non-canonical Tristan/Bea/Jason (canonical = most completed games, tiebreak earliest), build the unique index, refresh the leaderboard, recompute merge-affected Wrapped.
 
 ---
 

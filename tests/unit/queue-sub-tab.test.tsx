@@ -49,6 +49,9 @@ const mockProfile: Profile = {
   pin: "1234",
   vip_tag: null,
   vip_theme: null,
+  needs_rename: false,
+  collided_name: null,
+  flagged_at: null,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
