@@ -293,14 +293,12 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
   const supabase = await createServerSupabaseClient();
   await supabase.auth.signOut();
 
-  const { data: authData, error: authError } = await supabase.auth.signInAnonymously({
-    options: {
-      data: {
-        display_name: targetProfile.display_name,
-        skill_level: targetProfile.skill_level,
-      },
-    },
-  });
+  // Do NOT pass display_name in metadata here. The handle_new_user trigger would
+  // try to INSERT a profile with the same name that already exists, hitting the
+  // idx_profiles_unique_active_name unique index → "Database error creating anonymous
+  // user". migrate_player_identity deletes the placeholder profile immediately after,
+  // so the name in it never matters.
+  const { data: authData, error: authError } = await supabase.auth.signInAnonymously();
 
   if (authError || !authData.user) {
     return { success: false, error: authError?.message ?? "Failed to create session." };
