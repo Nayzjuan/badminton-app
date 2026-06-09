@@ -5,6 +5,25 @@
 
 ---
 
+## ✅ DUP-NAME + OAUTH ROLLOUT — APPLIED TO PROD (2026-06-08)
+
+All four migrations applied to prod (`usxftpexoimletqmrggb`) + data-fix executed + verified.
+
+- **Migrations applied:** `20260608000000` (cols/RPCs/migrate copy-all), `…000001` (partial UNIQUE index `idx_profiles_unique_active_name`, applied non-concurrent — tiny table), `…000002` (handle_new_user OAuth hardening).
+- **Data-fix executed (live, atomic, guarded):** MERGED Miggy ghost `3a14c449`→`499b5fb7` (61 games) and lianne `9c6bc387`→Lianne `f30a6c4f` (12 games, kept PIN 0000); FLAGGED 2 Tristans (`74029ccf`,`df80ed55`) + 1 Jason (`8ef4b364`). Bea/Bea T was merged earlier in-session. **0 un-flagged dup clusters remain** → index built clean.
+- **Runbook deviated from the committed file in 2 ways (the file predates the lessons):** (1) Miggy ghost was `sessions.created_by` on a session → had to reassign created_by + session_organizers to real Miggy before delete (the NO-ACTION FK); (2) added the scoped H2H rebuild (player_rivalries/partnerships) for the Lianne merge, same as the Bea/Bea T fix — the committed runbook still omits both.
+- **Hardening:** `player_renames` → RLS enabled (deny-all; service_role bypasses). `handle_new_user` → REVOKE EXECUTE from anon/authenticated (was RPC-exposed; trigger still fires). Leaderboard refreshed.
+- **Advisors (pre-existing, NOT mine, untouched):** `migrate_player_identity` mutable search_path (project-wide pattern, SECURITY INVOKER); `auth_allow_anonymous_sign_ins`; `rls_policy_always_true` on match_players; `materialized_view_in_api`.
+
+**⚠ DEPLOY GAP:** the branch `feat/duplicate-name-resolution` (dup-name gate + OAuth code) is **NOT merged to main / NOT deployed**. Prod runs OLD app code. Consequences right now:
+- The unique index DOES enforce global name uniqueness even for old code (registration 23505 → "name taken") — desirable early effect, handled by old code's 23505 path.
+- The 3 flagged players are INERT (old code has no `enforceRenameGate`) — they won't be forced to rename until the branch deploys. Same display state as before.
+- OAuth button hidden until branch deploys + Vercel env (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`, `NEXT_PUBLIC_SITE_URL`) set. Supabase dashboard (Google provider, Manual Linking, redirect URLs) = done by user.
+
+**NEXT:** merge branch → main + deploy (activates gate + OAuth); set Vercel env; (optional) wire Phase-3 collision-merge stub in /auth/callback.
+
+---
+
 ## 🆕 GOOGLE OAUTH — code-only P0+P1 slice — branch `feat/duplicate-name-resolution` (2026-06-08)
 
 Built ON TOP of the duplicate-name feature (reuses normalizeName + partial unique index + isNameTaken + /rename gate). **Dark/flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`), NOT wired to live Google, migrations NOT applied to prod.** Review gate: **LGTM**. 550 tests pass · tsc/lint/build clean.
