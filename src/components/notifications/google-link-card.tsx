@@ -24,13 +24,13 @@ import { GoogleLinkButton } from "@/components/auth/google-link-button";
 const DISMISSED_KEY = "google-link-card-dismissed";
 
 interface GoogleLinkCardProps {
-  /** Passed to GoogleLinkButton so the user returns to the same session. */
-  sessionId: string;
+  /** Return path after Google link completes (e.g. "/play" or "/play/[id]"). */
+  next: string;
 }
 
 type CardState = "idle" | "visible" | "dismissed";
 
-export function GoogleLinkCard({ sessionId }: GoogleLinkCardProps) {
+export function GoogleLinkCard({ next }: GoogleLinkCardProps) {
   const [state, setState] = useState<CardState>("idle");
 
   // SSR-safe: only read localStorage after mount.
@@ -85,7 +85,7 @@ export function GoogleLinkCard({ sessionId }: GoogleLinkCardProps) {
             className="inline-flex items-center rounded-lg border border-border bg-background
                           px-3 py-2 transition-colors hover:bg-muted"
           >
-            <GoogleLinkButton next={`/play/${sessionId}`} />
+            <GoogleLinkButton next={next} />
           </div>
         </div>
       </div>

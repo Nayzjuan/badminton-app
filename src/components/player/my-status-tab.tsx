@@ -75,7 +75,7 @@ export function MyStatusTab({
   return (
     <div className="space-y-5">
       {/* ── Google upgrade soft-prompt (anonymous players only) ── */}
-      {!hasGoogleLinked && <GoogleLinkCard sessionId={session.id} />}
+      {!hasGoogleLinked && <GoogleLinkCard next={`/play/${session.id}`} />}
 
       {/* Sub-tabs: Queue / History */}
       <div className="flex rounded-xl bg-slate-100 dark:bg-muted p-1">

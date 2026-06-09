@@ -14,6 +14,7 @@ import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
 import { VipTag } from "@/components/ui/vip-tag";
+import { GoogleLinkCard } from "@/components/notifications/google-link-card";
 import { Trophy } from "lucide-react";
 
 export default async function PlayPage() {
@@ -32,6 +33,8 @@ export default async function PlayPage() {
 
   // Duplicate-name gate (L1): route flagged duplicates to /rename first.
   await enforceRenameGate(profile, "/play");
+
+  const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
   // Get active sessions.
   const { data: sessions } = await supabase
@@ -59,6 +62,9 @@ export default async function PlayPage() {
 
           <SignOutButton variant="icon" />
         </div>
+
+        {/* Google upgrade card — shown to anonymous players who haven't linked Google */}
+        {!hasGoogleLinked && <GoogleLinkCard next="/play" />}
 
         {/* Session List */}
         {activeSessions.length > 0 ? (
