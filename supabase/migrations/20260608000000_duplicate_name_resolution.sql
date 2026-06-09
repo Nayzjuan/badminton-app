@@ -123,12 +123,15 @@ REVOKE ALL ON FUNCTION public.rename_player_identity(uuid, text) FROM public, au
 GRANT EXECUTE ON FUNCTION public.rename_player_identity(uuid, text) TO service_role;
 
 -- ── 5. migrate_player_identity — copy ALL profile columns ────────────────────
--- The ONLY change vs 20260430000000 is Step 2's INSERT/SELECT column list,
--- which previously copied just (id, display_name, skill_level, pin) and thus
--- SILENTLY DROPPED vip_tag / vip_theme on every reconnect (a live bug), and
--- would drop the new flag columns too. Now copies every non-id, non-timestamp
--- profile column. created_at/updated_at are intentionally left to defaults
--- (unchanged from prior behaviour). The schema-drift test guards future columns.
+-- Changes vs 20260430000000:
+--   • Step 2's INSERT/SELECT column list now copies ALL carried columns
+--     (previously dropped vip_tag/vip_theme silently — live bug fixed).
+--   • Step 1.5b: temporarily set needs_rename=true on the old profile before
+--     inserting the new one, so the unique partial index
+--     (idx_profiles_unique_active_name WHERE needs_rename=false) does not fire
+--     when both old and new profiles share the same display_name.
+--     The original value is restored (organizer path) or the row is deleted
+--     (non-organizer path), leaving no permanent state change.
 CREATE OR REPLACE FUNCTION migrate_player_identity(
   p_old_user_id uuid,
   p_new_user_id uuid
@@ -138,6 +141,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_is_active_organizer boolean := false;
+  v_old_needs_rename    boolean;
 BEGIN
   IF p_old_user_id = p_new_user_id THEN
     RAISE EXCEPTION
@@ -150,16 +154,31 @@ BEGIN
     WHERE created_by = p_old_user_id AND is_active = true
   ) INTO v_is_active_organizer;
 
+  -- Capture needs_rename before we modify the old profile.
+  SELECT needs_rename INTO v_old_needs_rename
+  FROM profiles WHERE id = p_old_user_id;
+
   -- Step 1: Remove trigger-created profile for new user.
   DELETE FROM profiles WHERE id = p_new_user_id;
 
-  -- Step 1.5: Audit old → new mapping (before the old profile is touched).
+  -- Step 1.5a: Temporarily exclude old profile from idx_profiles_unique_active_name
+  -- (the partial unique index only covers WHERE needs_rename = false).
+  -- This prevents a unique-violation when Step 2 inserts the new profile with
+  -- the same display_name while the old profile still exists.
+  -- The flag is restored in Step 5 (organizer) or the row is deleted (non-organizer).
+  IF NOT v_old_needs_rename THEN
+    UPDATE profiles SET needs_rename = true WHERE id = p_old_user_id;
+  END IF;
+
+  -- Step 1.5b: Audit old → new mapping (before the old profile is deleted).
   INSERT INTO identity_migrations (old_id, new_id, display_name)
   SELECT p_old_user_id, p_new_user_id, display_name
   FROM   profiles
   WHERE  id = p_old_user_id;
 
   -- Step 2: Re-create the profile under the new id, copying ALL carried columns.
+  -- Uses v_old_needs_rename (the original value) rather than selecting from the
+  -- now-temporarily-modified old row, so rename state is preserved correctly.
   -- ⚠ SCHEMA-DRIFT: if you add a column to `profiles`, add it here too (the
   -- migrate-copies-all-columns test in tests/unit/migrate-identity-columns.test.ts
   -- will fail until you do). created_at/updated_at are intentionally omitted.
@@ -171,7 +190,7 @@ BEGIN
   SELECT
     p_new_user_id, display_name, skill_level, pin,
     vip_tag, vip_theme,
-    needs_rename, collided_name, flagged_at
+    v_old_needs_rename, collided_name, flagged_at
   FROM profiles
   WHERE id = p_old_user_id;
 
@@ -227,9 +246,15 @@ BEGIN
       SQLERRM;
   END;
 
-  -- Step 5: Delete old profile (skipped for active organizers).
+  -- Step 5: Delete old profile (non-organizer) or restore its needs_rename (organizer).
   IF NOT v_is_active_organizer THEN
     DELETE FROM profiles WHERE id = p_old_user_id;
+  ELSE
+    -- Organizer's profile is kept so their dashboard on another device stays valid.
+    -- Undo the temporary needs_rename flip so the profile re-enters the unique index.
+    IF NOT v_old_needs_rename THEN
+      UPDATE profiles SET needs_rename = false WHERE id = p_old_user_id;
+    END IF;
   END IF;
 
   RETURN v_is_active_organizer;
