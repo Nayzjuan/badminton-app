@@ -227,6 +227,13 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
 
   return (
     <div className="w-full max-w-sm sm:max-w-md space-y-5">
+      {/* ── Google sign-in — top of form, optional fast path ── */}
+      {/* Outlined (not filled) — signals convenient shortcut, not mandatory primary action */}
+      <GoogleSignInButton
+        next={sessionId ? `/play/${sessionId}` : "/play"}
+        dividerPosition="below"
+      />
+
       {/* ── Segmented toggle — NEW PLAYER / RETURNING ──────── */}
       {/* This is the first element — returning players see their path
           immediately without scrolling past the entire new-player form. */}
@@ -285,7 +292,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           role="tabpanel"
           aria-labelledby="tab-new"
           action={handleNewPlayerSubmit}
-          className="space-y-5"
+          className="space-y-5 animate-in fade-in duration-150"
         >
           {/* ── Trust badge — anonymous-first framing ─────────── */}
           {/* Answers "do I need an account?" before the form starts */}
@@ -458,10 +465,6 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             {newIsPending && <Spinner />}
             {newIsPending ? "Joining…" : sessionId ? "Join Session" : "Join Queue"}
           </button>
-
-          {/* ── Google sign-in — alternative to anonymous join ── */}
-          {/* Lives inside the NEW tab only; hidden from RETURNING tab */}
-          <GoogleSignInButton next={sessionId ? `/play/${sessionId}` : "/play"} />
         </form>
       )}
 
@@ -471,7 +474,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           id="panel-returning"
           role="tabpanel"
           aria-labelledby="tab-returning"
-          className="space-y-5"
+          className="space-y-5 animate-in fade-in duration-150"
         >
           {/* Heading copy — sets expectation for what happens next */}
           <div className="space-y-1 pt-1">

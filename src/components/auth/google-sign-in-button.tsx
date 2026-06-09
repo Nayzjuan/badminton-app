@@ -15,9 +15,15 @@ import { Spinner } from "@/components/reconnect-modal";
 interface GoogleSignInButtonProps {
   /** Internal path to return to after sign-in (defaults to /play). */
   next?: string;
+  /**
+   * Where to render the "─── or ───" divider relative to the button.
+   * "above" (default) — button is at the bottom of a form, divider separates it from the CTA above.
+   * "below" — button is at the top of the page, divider separates it from the form below.
+   */
+  dividerPosition?: "above" | "below";
 }
 
-export function GoogleSignInButton({ next }: GoogleSignInButtonProps) {
+export function GoogleSignInButton({ next, dividerPosition = "above" }: GoogleSignInButtonProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -36,15 +42,17 @@ export function GoogleSignInButton({ next }: GoogleSignInButtonProps) {
     });
   }
 
+  const divider = (
+    <div className={`flex items-center gap-3 ${dividerPosition === "below" ? "pt-6 pb-2" : ""}`}>
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">or</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-3">
-        <span className="h-px flex-1 bg-border" />
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          or
-        </span>
-        <span className="h-px flex-1 bg-border" />
-      </div>
+      {dividerPosition === "above" && divider}
       <button
         type="button"
         onClick={onClick}
@@ -79,6 +87,7 @@ export function GoogleSignInButton({ next }: GoogleSignInButtonProps) {
         {isPending ? "Redirecting…" : "Continue with Google"}
       </button>
       {error && <p className="text-center text-sm text-red-600 dark:text-red-400">{error}</p>}
+      {dividerPosition === "below" && divider}
     </div>
   );
 }
