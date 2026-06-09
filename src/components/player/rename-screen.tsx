@@ -196,13 +196,14 @@ export function RenameScreen({ collidedName, next }: RenameScreenProps) {
                 onChange={onChange}
                 autoComplete="off"
                 autoCapitalize="words"
-                aria-invalid={isError}
+                aria-invalid={isError || check.phase === "reused"}
+                aria-busy={check.phase === "checking"}
                 aria-describedby={feedbackId}
                 className="w-full rounded-xl border border-input bg-background px-4 py-3 text-base text-foreground shadow-sm outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/40"
               />
               {check.phase === "checking" && (
                 <Loader2
-                  className="absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 animate-spin text-muted-foreground"
+                  className="absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 animate-spin text-muted-foreground motion-reduce:animate-none"
                   aria-hidden="true"
                 />
               )}
@@ -221,7 +222,8 @@ export function RenameScreen({ collidedName, next }: RenameScreenProps) {
                   key={suffix}
                   type="button"
                   onClick={() => applyChip(suffix)}
-                  className="min-h-[36px] rounded-full border border-input bg-background px-3 py-1 text-sm text-muted-foreground transition hover:border-amber-500 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                  aria-label={`Use ${collidedName} ${suffix}`}
+                  className="min-h-[44px] rounded-full border border-input bg-background px-3 py-1 text-sm text-muted-foreground transition hover:border-amber-500 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40"
                 >
                   {collidedName} {suffix}
                 </button>
@@ -264,11 +266,15 @@ export function RenameScreen({ collidedName, next }: RenameScreenProps) {
           <button
             type="submit"
             disabled={!canSubmit}
+            aria-describedby={feedbackId}
             className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-base font-semibold text-[#0E1C3A] shadow-sm transition hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? (
               <>
-                <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                <Loader2
+                  className="h-5 w-5 animate-spin motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
                 Saving…
               </>
             ) : (

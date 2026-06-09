@@ -5,6 +5,34 @@
 
 ---
 
+## 🆕 DUPLICATE-NAME RESOLUTION — branch `feat/duplicate-name-resolution` (2026-06-08)
+
+Built (NOT yet merged / NOT applied to prod). Scope A = lazy/reactive. Code complete + reviewed (gate verdict: **Minor issues**, all 4 fixed). 538 tests pass · tsc/lint/build clean.
+
+**Mechanism — three layers (the flag is a UX nudge; the index is the authority):**
+- **L1** `enforceRenameGate(profile, nextPath)` (`src/lib/rename-gate.ts`) at top of `/play` + `/play/[sessionId]` → redirects flagged profiles to `/rename`. Grandfathers active players (live queue entry) + skips active organizers. Fast path = zero queries for clean profiles.
+- **L2** `joinQueueAction` first step reads `needs_rename` → returns `requiresRename` (client routes to `/rename`). Real mutation boundary.
+- **L3** partial UNIQUE index `idx_profiles_unique_active_name` on `lower(btrim(regexp_replace(display_name,E'[ \t]+',' ','g'))) WHERE needs_rename=false` — cross-instance/TOCTOU authority. **Migration `20260608000001` — apply ONLY after the data-fix flags duplicates** (held).
+
+**Rules:** R1 (can't reuse `collided_name`, persisted) + R2 (global uniqueness). **R1 is NOT subsumed by R2** — Scope A's merges can delete the canonical sibling, after which R2 alone would re-accept the dup name (infinite-gate loop); R1 catches it. `normalizeName()` (`src/lib/normalize-name.ts`) is byte-identical to the SQL expr (ASCII space/tab only — NOT `\s`, NBSP divergence).
+
+**Registration (R2):** `signInAnonymously` now enforces GLOBAL uniqueness (was active-queue-only), ordered AFTER the returning-player (name+PIN→Reconnect) check. Already-authed path **upserts** (re-creates a missing profile) → fixes the profileless redirect loop (`/` now falls through to the form when authed-but-profileless).
+
+**Reconnect:** `migrate_player_identity` hardened to copy ALL profile columns (fixes pre-existing silent `vip_tag`/`vip_theme` loss on every reconnect; carries flag columns). Schema-drift test `tests/unit/migrate-identity-columns.test.ts` guards future columns. Reconnect returns `requiresRename`.
+
+**Schema (migration `20260608000000`, additive/safe):** `profiles.needs_rename bool / collided_name text / flagged_at timestamptz`; `player_renames` audit table; `rename_player_identity(p_user_id,p_new_name)` RPC (atomic rename+flag-clear+audit, server-side R1 recheck, 23505→name_taken, SECURITY DEFINER, service_role only). `src/types/database.ts` updated (Profile, PlayerRename, Functions).
+
+**DATA FIX — `supabase/data-fixes/20260608_duplicate_name_data_fix.sql` (BUILD ONLY, hand-run, guarded+idempotent):**
+- MERGE Miggy ghost `3a14c449` (0 games) → real `499b5fb7`; MERGE lianne `9c6bc387` (PIN 1111) → Lianne `f30a6c4f` (keep latest PIN 0000, reassign 6 games). Guards abort if the "ghost" owns data.
+- FLAG non-canonical of remaining clusters (Tristan/Bea/Jason) generically: canonical = most completed games, tiebreak `created_at,id`. Keeps real name in `collided_name`.
+- Then: apply unique index `000001` → `refresh_alltime_leaderboard()` → recompute Wrapped for merge-affected sessions. Preview + verify queries included.
+
+**ROLLOUT ORDER (gated on user go-ahead for prod):** apply `000000` → deploy app → run data-fix runbook → apply `000001` (unique index). None applied yet.
+
+**Deferred (low):** global reduced-motion utility in globals.css (only my spinners are `motion-reduce:animate-none`); reserved-words deny-list; organizer-manual rename tool (user declined).
+
+---
+
 ## 🟢 STABLE CHECKPOINT — `stable-pre-cross-court` (2026-06-07) — REVERT TARGET
 
 Before building the **Cross-Court Diversity Drafting** feature (`CROSS_COURT_DRAFTING_PLAN.md`), the last known-good app was tagged as a revert point.
