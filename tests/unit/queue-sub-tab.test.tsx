@@ -93,6 +93,7 @@ function renderQueueSubTab({
   totalWaiting = 4,
   queueLoading = false,
   myWaitMinutes = 10,
+  hasGoogleLinked = true, // default true so tests don't render the upgrade card
 }: {
   isInQueue?: boolean;
   myEntry?: QueueEntry | null;
@@ -100,6 +101,7 @@ function renderQueueSubTab({
   totalWaiting?: number;
   queueLoading?: boolean;
   myWaitMinutes?: number;
+  hasGoogleLinked?: boolean;
 }) {
   return render(
     <MyStatusTab
@@ -116,6 +118,7 @@ function renderQueueSubTab({
       matchLoading={false}
       joinQueue={noopAsync}
       leaveQueue={noopAsync}
+      hasGoogleLinked={hasGoogleLinked}
     />
   );
 }

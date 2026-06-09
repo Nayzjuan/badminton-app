@@ -24,6 +24,10 @@ export default async function PlayerDashboardPage({ params }: PageProps) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
+  // Determine whether this user already has a Google identity linked so the
+  // dashboard can conditionally show upgrade prompts.
+  const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
+
   // Get profile.
   const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
@@ -60,5 +64,5 @@ export default async function PlayerDashboardPage({ params }: PageProps) {
     redirect(`/wrapped/${sessionId}/${user.id}`);
   }
 
-  return <PlayerDashboard profile={profile} session={session} />;
+  return <PlayerDashboard profile={profile} session={session} hasGoogleLinked={hasGoogleLinked} />;
 }
