@@ -61,7 +61,7 @@ export default async function HomePage() {
           </div>
           <h1 className="text-3xl font-black tracking-tight text-foreground">Badminton Queue</h1>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Enter your name and skill level to get started.
+            No account needed — pick a name, skill, and a 4-digit PIN to play.
           </p>
         </div>
 

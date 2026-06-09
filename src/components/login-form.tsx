@@ -287,6 +287,27 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           action={handleNewPlayerSubmit}
           className="space-y-5"
         >
+          {/* ── Trust badge — anonymous-first framing ─────────── */}
+          {/* Answers "do I need an account?" before the form starts */}
+          <div className="flex items-center justify-center gap-4 py-0.5" aria-hidden="true">
+            {(["No email", "No password", "Just a PIN"] as const).map((label) => (
+              <span key={label} className="flex items-center gap-1 text-xs text-muted-foreground">
+                <svg
+                  className="h-3 w-3 shrink-0 text-emerald-500"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M2 6l3 3 5-5" />
+                </svg>
+                {label}
+              </span>
+            ))}
+          </div>
+
           {/* ── Name ─────────────────────────────────────────── */}
           <div className="space-y-2">
             <label htmlFor="display_name" className="block text-sm font-semibold text-foreground">
@@ -437,6 +458,10 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             {newIsPending && <Spinner />}
             {newIsPending ? "Joining…" : sessionId ? "Join Session" : "Join Queue"}
           </button>
+
+          {/* ── Google sign-in — alternative to anonymous join ── */}
+          {/* Lives inside the NEW tab only; hidden from RETURNING tab */}
+          <GoogleSignInButton next={sessionId ? `/play/${sessionId}` : "/play"} />
         </form>
       )}
 
@@ -520,9 +545,6 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
           </button>
         </div>
       )}
-
-      {/* ── OAuth (flag-gated; renders nothing until Google is configured) ── */}
-      <GoogleSignInButton next={sessionId ? `/play/${sessionId}` : "/play"} />
     </div>
   );
 }

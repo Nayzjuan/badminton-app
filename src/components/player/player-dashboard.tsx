@@ -32,6 +32,7 @@ import { useOrganizerBroadcast } from "@/hooks/use-organizer-broadcast";
 import { useMatchAlerts } from "@/hooks/use-match-alerts";
 import { NotificationEnrollment } from "@/components/notifications/notification-enrollment";
 import { InstallPrompt } from "@/components/notifications/install-prompt";
+import { GoogleLinkButton } from "@/components/auth/google-link-button";
 import { MatchAlert } from "./match-alert";
 import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
@@ -57,6 +58,8 @@ import type { Profile, Session } from "@/types/database";
 interface PlayerDashboardProps {
   profile: Profile;
   session: Session;
+  /** True when the user's Supabase identity list includes a Google provider. */
+  hasGoogleLinked: boolean;
 }
 
 type Tab = "status" | "courts" | "waitlist" | "leaderboard";
@@ -68,7 +71,7 @@ const TABS: { key: Tab; label: string; icon: typeof User }[] = [
   { key: "leaderboard", label: "Leaderboard", icon: Trophy },
 ];
 
-export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
+export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDashboardProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("status");
   const [pinVisible, setPinVisible] = useState(false);
@@ -254,6 +257,13 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                         <ThemeToggle className="text-muted-foreground hover:text-foreground hover:bg-muted" />
                       </div>
 
+                      {/* Google link upgrade — only for anonymous players */}
+                      {!hasGoogleLinked && (
+                        <div className="px-3 py-2.5 border-b border-border">
+                          <GoogleLinkButton next={`/play/${session.id}`} />
+                        </div>
+                      )}
+
                       <div className="px-3 py-2.5 border-b border-border">
                         <SignOutButton variant="text" />
                       </div>
@@ -391,6 +401,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                   matchLoading={matchLoading}
                   joinQueue={joinQueue}
                   leaveQueue={leaveQueue}
+                  hasGoogleLinked={hasGoogleLinked}
                 />
               </div>
             )}

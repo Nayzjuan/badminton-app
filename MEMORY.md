@@ -5,6 +5,38 @@
 
 ---
 
+## 🆕 LOGIN / REGISTRATION UX — ANONYMOUS CLARITY + GOOGLE UPGRADE PATH (2026-06-09)
+
+**Status: COMPLETE ✅** — tsc/lint (changed files)/build clean. Review gate: **LGTM**.
+
+### What changed
+
+**A — Registration page messaging:**
+- `src/app/page.tsx`: subtitle → "No account needed — pick a name, skill, and a 4-digit PIN to play."
+- `src/components/login-form.tsx`: (1) Trust badge row inside NEW PLAYER panel only ("✓ No email · ✓ No password · ✓ Just a PIN" with emerald checks). (2) `<GoogleSignInButton>` **moved inside** the NEW PLAYER `<form>` (after submit button) — was outside both panels, showing on RETURNING tab too. RETURNING now has NO Google button.
+
+**B — Google upgrade path (two surfaces):**
+1. **Overflow menu** (`player-dashboard.tsx`): "Link Google Account" row (`GoogleLinkButton`) between Theme and Sign Out, hidden when `hasGoogleLinked`.
+2. **My Status soft-card** (`google-link-card.tsx`): dismissible card at top of `MyStatusTab`; `localStorage["google-link-card-dismissed"]` persists dismiss; SSR-safe (idle → visible in `useEffect`).
+
+### New files
+- `src/components/auth/google-link-button.tsx` — compact `linkWithGoogle()` button; flag-gated; menu-style.
+- `src/components/notifications/google-link-card.tsx` — dismissible card; localStorage dismiss; flag-gated.
+
+### Modified files
+- `src/app/page.tsx`, `src/components/login-form.tsx`
+- `src/app/play/[sessionId]/page.tsx` — reads `user.identities?.some(i => i.provider === "google") ?? false` → `hasGoogleLinked` prop
+- `src/components/player/player-dashboard.tsx` — accepts + passes `hasGoogleLinked`; renders `GoogleLinkButton` in menu
+- `src/components/player/my-status-tab.tsx` — accepts `hasGoogleLinked`; renders `GoogleLinkCard`
+- `tests/unit/queue-sub-tab.test.tsx` — `renderQueueSubTab` gains `hasGoogleLinked?: boolean` (default `true`)
+
+### Key architecture notes
+- Both upgrade surfaces are independently flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`).
+- `GoogleLinkButton` inside `<form>` is safe — explicit `type="button"`.
+- `hasGoogleLinked` flows server page → `PlayerDashboard` → `MyStatusTab` (prop threading).
+
+---
+
 ## ✅ DUP-NAME + OAUTH ROLLOUT — APPLIED TO PROD (2026-06-08)
 
 All four migrations applied to prod (`usxftpexoimletqmrggb`) + data-fix executed + verified.
