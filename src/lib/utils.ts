@@ -21,6 +21,9 @@ export function createUnknownProfile(id: string): Profile {
     pin: null,
     vip_tag: null,
     vip_theme: null,
+    needs_rename: false,
+    collided_name: null,
+    flagged_at: null,
     created_at: "",
     updated_at: "",
   };

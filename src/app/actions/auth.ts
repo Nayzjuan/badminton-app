@@ -12,6 +12,10 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
+import { isNameTaken } from "@/lib/dup-name";
+
+// Shared friendly message for a globally-taken display name.
+const NAME_TAKEN_MESSAGE = 'Name taken. Add an initial (e.g. "Miggy L.").';
 
 // Escape ILIKE special characters so a caller-supplied string is always
 // treated as a literal — never as a wildcard pattern.
@@ -58,40 +62,37 @@ export async function signInAnonymously(formData: FormData) {
     data: { user: existingUser },
   } = await supabase.auth.getUser();
 
-  if (existingUser) {
-    // Already authenticated — just update the profile.
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({ display_name: displayName, skill_level: skillLevel, pin })
-      .eq("id", existingUser.id);
+  const service = createServiceClient();
 
-    if (updateError) {
-      return { success: false, error: updateError.message };
+  if (existingUser) {
+    // Already authenticated — upsert the profile. Upsert (not update) so an
+    // authed-but-profileless user (e.g. a merged-away ghost's stale cookie)
+    // RE-CREATES their missing profile here instead of a no-op update, which is
+    // what breaks the profileless redirect loop. The partial UNIQUE index is the
+    // authority for global name uniqueness, so a taken name surfaces as 23505.
+    const { error: upsertError } = await supabase
+      .from("profiles")
+      .upsert(
+        { id: existingUser.id, display_name: displayName, skill_level: skillLevel, pin },
+        { onConflict: "id" }
+      );
+
+    if (upsertError) {
+      if (upsertError.code === "23505") {
+        return { success: false, error: NAME_TAKEN_MESSAGE };
+      }
+      return { success: false, error: upsertError.message };
     }
 
     redirect(destination);
   }
 
-  // ── Duplicate name check ──────────────────────────────────
-  // Check if this name is already in use by a player who is
-  // actively in any session (waiting, on_deck, or playing).
-  const service = createServiceClient();
-
-  const { data: activeEntries } = await service
-    .from("queue_entries")
-    .select("player_id, profiles!inner(display_name)")
-    .in("status", ["waiting", "drafted", "on_deck", "playing"])
-    .ilike("profiles.display_name", escapeLike(displayName));
-
-  if (activeEntries && activeEntries.length > 0) {
-    return { success: false, error: 'Name taken. Add an initial (e.g. "Miggy L.").' };
-  }
-
-  // ── Returning player check ────────────────────────────────────
-  // If a profile already exists with this exact name + PIN, the player
-  // is returning and should use Reconnect instead of registering fresh.
-  // Without this check, they'd silently create a duplicate (ghost) profile
-  // every time they open the app between sessions.
+  // ── Returning player check (must precede the uniqueness block) ─────────────
+  // If a profile already exists with this exact name + PIN, the player is
+  // returning and should use Reconnect instead of registering fresh. This runs
+  // BEFORE the global-uniqueness check so a legitimate returning player (whose
+  // name necessarily already exists) is routed to Reconnect rather than told
+  // "name taken". Without it, they'd silently create a duplicate ghost profile.
   const { data: existingProfile } = await service
     .from("profiles")
     .select("id")
@@ -106,6 +107,15 @@ export async function signInAnonymously(formData: FormData) {
       error:
         'Looks like you\'ve played before! Use "Reconnect" below to pick up where you left off.',
     };
+  }
+
+  // ── Global uniqueness check (R2) ──────────────────────────────────────────
+  // The display name must be unique across ALL profiles — not merely those
+  // currently active in a queue (the previous, weaker rule). Gives a friendly
+  // message before an orphan auth user is minted; the partial UNIQUE index is
+  // the cross-instance/TOCTOU authority and the upsert below maps its 23505.
+  if (await isNameTaken(service, displayName)) {
+    return { success: false, error: NAME_TAKEN_MESSAGE };
   }
 
   // Sign in anonymously. Supabase creates an auth.users row
@@ -163,6 +173,8 @@ export interface ReconnectResult {
   error?: string;
   /** ID of an active session to rejoin, if one was found. */
   sessionId?: string;
+  /** Set when the reconnected profile is a flagged duplicate (→ /rename). */
+  requiresRename?: boolean;
   /**
    * If the player's most recent session has already closed and Wrapped stats
    * exist, this is set to the /wrapped URL so the caller can redirect them
@@ -499,7 +511,22 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
     }
   }
 
-  return { success: true, sessionId: targetSessionId ?? undefined, wrappedUrl };
+  // Duplicate-name gate: a flagged profile (the flag travels through
+  // migrate_player_identity) must resolve their name before continuing. The
+  // modal routes a requiresRename result to /rename.
+  const { data: renamedProfile } = await service
+    .from("profiles")
+    .select("needs_rename")
+    .eq("id", newUserId)
+    .maybeSingle();
+  const requiresRename = renamedProfile?.needs_rename ?? false;
+
+  return {
+    success: true,
+    sessionId: targetSessionId ?? undefined,
+    wrappedUrl,
+    requiresRename,
+  };
 }
 
 // ── Sign Out ─────────────────────────────────────────────────

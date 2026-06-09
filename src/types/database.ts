@@ -78,8 +78,33 @@ export type Profile = {
    * Must match a key in VIP_THEMES from @/lib/vip-config.
    */
   vip_theme: string | null;
+  /**
+   * Duplicate-name resolution (Scope A). true = this profile is a flagged
+   * duplicate that must be renamed at the next login/join before proceeding.
+   */
+  needs_rename: boolean;
+  /**
+   * The exact display_name this profile collided on. Persisted so R1 ("cannot
+   * reuse the duplicated name") holds even after the canonical sibling is
+   * merged/renamed away. null when not flagged.
+   */
+  collided_name: string | null;
+  /** When the duplicate flag was set. null when not flagged. */
+  flagged_at: string | null;
   created_at: string; // ISO 8601 timestamptz
   updated_at: string;
+};
+
+/** player_renames audit table — append-only record of name changes. */
+export type PlayerRename = {
+  id: string;
+  player_id: string;
+  old_name: string | null;
+  new_name: string;
+  reason: "duplicate_flag" | "organizer_manual" | "self_reconnect" | "data_fix_merge";
+  actor_user_id: string | null;
+  session_id: string | null;
+  created_at: string;
 };
 
 /** sessions table */
@@ -251,7 +276,17 @@ export type ProfileInsert = Pick<Profile, "id" | "display_name"> &
   Partial<Pick<Profile, "skill_level" | "pin">>;
 
 export type ProfileUpdate = Partial<
-  Pick<Profile, "display_name" | "skill_level" | "pin" | "vip_tag" | "vip_theme">
+  Pick<
+    Profile,
+    | "display_name"
+    | "skill_level"
+    | "pin"
+    | "vip_tag"
+    | "vip_theme"
+    | "needs_rename"
+    | "collided_name"
+    | "flagged_at"
+  >
 >;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
@@ -501,6 +536,13 @@ export type Database = {
         Update: Record<string, never>; // append-only, no updates allowed
         Relationships: [];
       };
+      player_renames: {
+        Row: PlayerRename;
+        Insert: Pick<PlayerRename, "player_id" | "new_name"> &
+          Partial<Pick<PlayerRename, "old_name" | "reason" | "actor_user_id" | "session_id">>;
+        Update: Record<string, never>; // append-only audit log
+        Relationships: [];
+      };
     };
     Views: {
       v_queue_with_wait_time: {
@@ -583,6 +625,15 @@ export type Database = {
       refresh_alltime_leaderboard: {
         Args: Record<string, never>;
         Returns: void;
+      };
+      rename_player_identity: {
+        Args: { p_user_id: string; p_new_name: string };
+        // jsonb: { success: true, new_name } | { success: false, error }
+        Returns: {
+          success: boolean;
+          new_name?: string;
+          error?: "profile_not_found" | "reused_dup_name" | "name_taken";
+        };
       };
       swap_player_in_match: {
         Args: {

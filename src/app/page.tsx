@@ -17,21 +17,35 @@ export default async function HomePage() {
   } = await supabase.auth.getUser();
 
   if (user) {
-    // Check if the player is actively in a session (queued or playing).
-    const { data: activeEntry } = await supabase
-      .from("queue_entries")
-      .select("session_id, sessions!inner(is_active)")
-      .eq("player_id", user.id)
-      .in("status", ["waiting", "drafted", "on_deck", "playing"])
-      .limit(1)
-      .single();
+    // Profileless-but-authed guard: a stale cookie whose profile was deleted
+    // (e.g. a merged-away ghost) must NOT be bounced to /play — that page would
+    // bounce it right back here, an infinite loop. Instead, fall through to the
+    // LoginForm so the user can re-register; signInAnonymously's already-authed
+    // path upserts, re-creating the missing profile and breaking the loop.
+    const { data: profileExists } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
 
-    if (activeEntry) {
-      redirect(`/play/${activeEntry.session_id}`);
+    if (profileExists) {
+      // Check if the player is actively in a session (queued or playing).
+      const { data: activeEntry } = await supabase
+        .from("queue_entries")
+        .select("session_id, sessions!inner(is_active)")
+        .eq("player_id", user.id)
+        .in("status", ["waiting", "drafted", "on_deck", "playing"])
+        .limit(1)
+        .single();
+
+      if (activeEntry) {
+        redirect(`/play/${activeEntry.session_id}`);
+      }
+
+      // Has auth + profile but no active session — go to session picker.
+      redirect("/play");
     }
-
-    // Has auth but no active session — go to session picker.
-    redirect("/play");
+    // else: authed but profileless → fall through to render the form (recovery).
   }
 
   return (
