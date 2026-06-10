@@ -143,6 +143,9 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
   const [reconnectPin, setReconnectPin] = useState("");
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [reconnectIsPending, startReconnectTransition] = useTransition();
+  // Set when the reconnected account has Google linked — prompts the player
+  // to use "Continue with Google" above instead of the PIN form.
+  const [googleHint, setGoogleHint] = useState(false);
 
   // Prefetch /play so the redirect after login is instant.
   useEffect(() => {
@@ -178,6 +181,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
 
   function handleReconnect() {
     setReconnectError(null);
+    setGoogleHint(false);
     if (!reconnectName.trim() || reconnectPin.length !== 4) {
       setReconnectError("Name and a 4-digit PIN are required.");
       return;
@@ -186,6 +190,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
       const result = await reconnectPlayer(reconnectName.trim(), reconnectPin);
       if (!result.success) {
         setReconnectError(result.error ?? "Reconnect failed. Check your name and PIN.");
+        if (result.useGoogleSignIn) setGoogleHint(true);
       } else {
         if (result.wrappedUrl) {
           router.push(result.wrappedUrl);
@@ -205,6 +210,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
     // Clear errors when switching tabs so we don't carry stale state
     setNewError(null);
     setReconnectError(null);
+    setGoogleHint(false);
   }
 
   // Arrow-key navigation for the tablist (ARIA APG pattern).
@@ -233,6 +239,30 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
         next={sessionId ? `/play/${sessionId}` : "/play"}
         dividerPosition="below"
       />
+
+      {/* ── PIN-holder note — bridges Google button & tab choice ── */}
+      {/* Shown only when OAuth is live. RotateCcw icon echoes the RETURNING
+          tab label, creating a visual link without needing an arrow. The mono
+          chip mirrors a keyboard-key aesthetic consistent with the sporty HUD
+          design language — not a generic help card. */}
+      {process.env.NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED === "true" && (
+        <div className="flex items-start gap-2">
+          <RotateCcw
+            className="mt-px h-3 w-3 shrink-0 text-muted-foreground/50"
+            aria-hidden="true"
+          />
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Played here before? Sign back in using the{" "}
+            <span
+              className="inline-flex items-center rounded bg-muted px-1.5 py-0.5
+                         font-mono text-[10px] font-semibold text-foreground"
+            >
+              RETURNING
+            </span>{" "}
+            tab below — then link Google from inside the app.
+          </p>
+        </div>
+      )}
 
       {/* ── Segmented toggle — NEW PLAYER / RETURNING ──────── */}
       {/* This is the first element — returning players see their path
@@ -528,8 +558,45 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
             />
           </div>
 
+          {/* ── Google sign-in hint — shown when PIN reconnect detects a Google-linked account */}
+          {googleHint && (
+            <div
+              role="status"
+              className="flex items-start gap-2.5 rounded-lg border border-sky-200 bg-sky-50/80
+                         px-3 py-2.5 text-sm dark:border-sky-800/40 dark:bg-sky-950/30"
+            >
+              <svg
+                className="mt-0.5 h-4 w-4 shrink-0 text-sky-500"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1Z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38Z"
+                />
+              </svg>
+              <p className="text-sky-700 dark:text-sky-300 leading-snug">
+                This account uses Google sign-in.
+                <br />
+                Use <strong>Continue with Google</strong> above to sign back in.
+              </p>
+            </div>
+          )}
+
           {/* ── Error ─────────────────────────────────────────── */}
-          {reconnectError && (
+          {reconnectError && !googleHint && (
             <ErrorBanner error={reconnectError} onDismiss={() => setReconnectError(null)} />
           )}
 

@@ -763,6 +763,66 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 ---
 
+### 3.8c Google OAuth — Sign-in & Account Upgrade
+
+**Files:**
+- `src/app/actions/oauth.ts` — `signInWithGoogle` + `linkWithGoogle` server actions
+- `src/app/auth/callback/route.ts` — PKCE exchange; `intent=link` branch; `ensureOAuthProfile` for fresh sign-ins
+- `src/lib/oauth-provision.ts` — `ensureOAuthProfile` (derive display name → check uniqueness → assign or flag for rename)
+- `src/lib/oauth-name.ts` — `deriveDisplayName` / `sanitizeToDisplayName` (Google name → `[a-zA-Z0-9 ]`, 3–30 chars)
+- `src/components/auth/google-sign-in-button.tsx` — "Continue with Google" button on the login form
+- `src/components/auth/google-link-button.tsx` — compact "Link Google Account" button for the overflow menu
+- `src/components/notifications/google-link-card.tsx` — dismissible upgrade card shown to non-linked players
+
+**Feature flag:** `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED === "true"` gates all three components (each returns `null` when the flag is absent). Inlined at build time — must be set in the Vercel dashboard and a new build triggered to activate in production.
+
+**Required env vars (both Vercel + `.env.local`):**
+- `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` — activates the UI and actions.
+- `NEXT_PUBLIC_SITE_URL=https://badminton-app-dusky-six.vercel.app` — used by `siteUrl()` in `oauth.ts` to build the `redirectTo` URI; falls back to `http://localhost:3000` if absent (causes localhost redirect in production).
+
+**Sign-in flow (fresh user):**
+1. User taps "Continue with Google" → `signInWithGoogle(next?)` → `supabase.auth.signInWithOAuth` → returns provider URL.
+2. Client does `window.location.href = result.url` (full-page PKCE redirect to Google).
+3. Google redirects to `/auth/callback?next=<path>` → `exchangeCodeForSession` → `ensureOAuthProfile` provisions or collides the profile → redirect to `next`.
+
+**Account upgrade flow (anonymous → Google-linked):**
+1. User taps "Link Google Account" (menu or card) → `linkWithGoogle(next?)` → `supabase.auth.linkIdentity` → returns provider URL.
+2. Client navigates to provider URL. After consent Google redirects to `/auth/callback?intent=link&next=<path>`.
+3. Callback detects `intent=link` → skips profile provisioning (name already set) → redirects to `next`.
+4. The user's `auth.uid()` is **unchanged** — all queue entries, match history, and display name are preserved.
+5. On next page load `user.identities?.some(i => i.provider === "google")` returns `true` → all upgrade surfaces disappear.
+
+**Prerequisite — Supabase dashboard settings:**
+- Google provider enabled (Authentication → Providers → Google) with OAuth client ID + secret.
+- Site URL set to the production URL.
+- Redirect URL `https://<project>.supabase.co/auth/v1/callback` added in Google Cloud Console.
+- "Allow manual linking" toggle **enabled** (Authentication → Providers → scroll to bottom). Without it, `linkIdentity` returns `"Manual Linking is disabled"`.
+
+**Four upgrade surfaces (all flag-gated, all hidden when `hasGoogleLinked`):**
+
+| Surface | Component | Location | Prop |
+|---------|-----------|----------|------|
+| Login form (top) | `GoogleSignInButton` with `dividerPosition="below"` | `src/components/login-form.tsx` — above tab control, NEW PLAYER panel only | `next="/play"` or `"/play/[id]"` |
+| Overflow menu | `GoogleLinkButton` | `src/components/player/player-dashboard.tsx` | `next="/play/[sessionId]"` |
+| My Status card | `GoogleLinkCard` (dismissible) | `src/components/player/my-status-tab.tsx` | `next="/play/[sessionId]"` |
+| Session picker | `GoogleLinkCard` | `src/app/play/page.tsx` | `next="/play"` |
+
+**`GoogleSignInButton` — `dividerPosition` prop:**
+- `"above"` (default): divider renders ABOVE the button (original position — button at bottom of a form).
+- `"below"`: divider renders BELOW the button with extra `pt-6 pb-2` breathing room (button at top of a form, divider separates it from the form beneath). The `divider` constant is defined after the `if (!enabled) return null` guard so there is no orphaned JSX when the flag is off.
+
+**`GoogleLinkCard` — `next` prop:**
+- Accepts any return path string (e.g. `"/play"`, `"/play/abc-123"`). The previous `sessionId` prop was removed.
+- SSR-safe: initial state `"idle"` → `useEffect` reads `localStorage["google-link-card-dismissed"]` → transitions to `"visible"` or stays hidden. Prevents hydration mismatch.
+
+**`hasGoogleLinked` — data flow:**
+- `src/app/play/[sessionId]/page.tsx` and `src/app/play/page.tsx` both compute `const hasGoogleLinked = user.identities?.some(i => i.provider === "google") ?? false;` after `auth.getUser()`.
+- Threaded as a prop from the server page component down to `PlayerDashboard` → `MyStatusTab`.
+
+**Deferred (Phase 3):** `/auth/callback` has a stub for `error_code=identity_already_exists` — this fires when a Google account is already linked to a *different* anonymous user. The correct resolution is `migrate_player_identity(existingUserId, currentUserId)`, but the wiring is not yet built.
+
+---
+
 ### 3.9 Leaderboard
 
 **Files:** `src/components/leaderboard/`, `src/hooks/use-leaderboard.ts`, `src/app/actions/leaderboard.ts`, `src/types/leaderboard.ts`

@@ -181,6 +181,12 @@ export interface ReconnectResult {
    * directly to their results instead of dropping them on the lobby.
    */
   wrappedUrl?: string;
+  /**
+   * True when the target account has Google linked — the caller should guide
+   * the user to use "Continue with Google" instead of PIN reconnect, which
+   * would lose the Google identity link.
+   */
+  useGoogleSignIn?: boolean;
 }
 
 export async function reconnectPlayer(playerName: string, pin: string): Promise<ReconnectResult> {
@@ -295,6 +301,20 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
   // targetSessionId remains null here; the return below handles it.
 
   const oldUserId = targetProfile.id;
+
+  // Guard: if the old account has Google linked, PIN reconnect would create a
+  // new anonymous user and lose the Google identity. Direct the player to
+  // "Continue with Google" instead — that flow signs back into the same user.
+  const { data: oldAuthData } = await service.auth.admin.getUserById(oldUserId);
+  const oldHasGoogleLinked =
+    oldAuthData?.user?.identities?.some((id) => id.provider === "google") ?? false;
+  if (oldHasGoogleLinked) {
+    return {
+      success: false,
+      error: "This account uses Google sign-in. Tap 'Continue with Google' above to sign back in.",
+      useGoogleSignIn: true,
+    };
+  }
 
   // Create a new anonymous auth session for this browser.
   // IMPORTANT: signInAnonymously returns the EXISTING user unchanged when a

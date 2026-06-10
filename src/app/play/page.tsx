@@ -6,6 +6,7 @@
 // Also allows updating profile (name/skill) from here.
 // ============================================================
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
@@ -64,7 +65,11 @@ export default async function PlayPage() {
         </div>
 
         {/* Google upgrade card — shown to anonymous players who haven't linked Google */}
-        {!hasGoogleLinked && <GoogleLinkCard next="/play" />}
+        {!hasGoogleLinked && (
+          <Suspense>
+            <GoogleLinkCard next="/play" />
+          </Suspense>
+        )}
 
         {/* Session List */}
         {activeSessions.length > 0 ? (

@@ -5,6 +5,68 @@
 
 ---
 
+## 🆕 GOOGLE OAUTH — RE-LOGIN + LINKED-STATE BUG FIXES (2026-06-10, Session 3)
+
+**Status: COMPLETE ✅** — tsc/lint (changed files)/build clean. Review gate: **Minor issues → addressed**.
+
+### Root causes fixed
+
+**Bug 1 — No "linked" indicator:** Overflow menu silently removed the Link Google button when `hasGoogleLinked=true` but added nothing in its place. Fixed by adding a "Google · Connected" info row (4-color G icon + muted text) in its place.
+
+**Bug 2 — Re-login shows link card → error page:** PIN reconnect (`reconnectPlayer`) creates a new anonymous Supabase user and migrates data, losing the Google identity. The new session is genuinely anonymous (`hasGoogleLinked=false`), so the link card shows correctly. When the user taps it, `identity_already_exists` fires because the old user's Google identity was orphaned (if `deleteUser` failed silently or was skipped for an organizer). The callback redirected to `/?error=link_conflict` which the root page silently bounced past (`redirect('/play')`), creating a silent loop.
+
+### What changed (Session 3)
+
+- **`src/app/actions/auth.ts`**: `ReconnectResult` gains `useGoogleSignIn?: boolean`. In `reconnectPlayer`, after selecting `targetProfile`, calls `service.auth.admin.getUserById(oldUserId)` to check for Google identities. If found, returns early with `{ success: false, error: "...", useGoogleSignIn: true }` — prevents the orphaned-identity scenario by blocking PIN reconnect for Google-linked accounts before any new anonymous user is created.
+- **`src/components/login-form.tsx`**: (1) Added `googleHint` state. When `useGoogleSignIn: true`, shows a sky-blue banner ("This account uses Google sign-in — use Continue with Google above") instead of the generic error banner. Clears on tab switch. (2) Added a contextual "Reconnect first" note between the Google button and the NEW/RETURNING tab control (only when OAuth flag is on): RotateCcw icon + "Played here before? Sign back in using the `RETURNING` tab below — then link Google from inside the app." Guides existing PIN users to the correct flow before trying to link. **Visually verified 2026-06-10.**
+- **`src/app/auth/callback/route.ts`**: `identity_already_exists` + `intent=link` now redirects to `${origin}${next}?error=already_linked` (e.g. `/play?error=already_linked`) instead of `/?error=link_conflict`. Sends the user back to the page they came from — root page would have bounced them past the error silently.
+- **`src/components/notifications/google-link-card.tsx`**: Uses `useSearchParams` + `useRouter`. When `?error=already_linked` is in the URL: (1) card shows even if previously dismissed, (2) shows an error explanation ("that Google account is connected to a different profile…"), (3) clears `?error` from URL via `router.replace` on mount, (4) dismissing in error state does NOT write `DISMISSED_KEY` (so the normal link CTA reappears after they dismiss the error).
+- **`src/app/play/page.tsx`** and **`src/components/player/my-status-tab.tsx`**: Wrapped `<GoogleLinkCard>` in `<Suspense>` (required by Next.js when `useSearchParams` is used in the component tree).
+- **`src/components/player/player-dashboard.tsx`**: Overflow menu now shows "Google · Connected" row when `hasGoogleLinked=true`, replacing the empty space left by hiding the link button.
+
+### Known gap (still deferred)
+- Phase 3 collision-merge (`identity_already_exists` full resolution via `migrate_player_identity(B, A)`) is still stubbed. The error state in `GoogleLinkCard` explains the situation to the user but doesn't auto-merge.
+
+---
+
+## 🆕 GOOGLE OAUTH — UX POLISH + ENV FIXES (2026-06-09, Session 2)
+
+**Status: COMPLETE ✅** — tsc/lint clean. Review gate: **LGTM**. Commits `6579dd2` + `2dffe41`.
+
+### What changed
+
+**A — `GoogleLinkCard` refactor: `sessionId` → `next` prop**
+- `src/components/notifications/google-link-card.tsx`: prop renamed from `sessionId: string` to `next: string`. The component itself uses `<GoogleLinkButton next={next} />` directly — callers pass the full return path.
+- `src/components/player/my-status-tab.tsx`: updated call site to `<GoogleLinkCard next={`/play/${session.id}`} />`.
+- Added a FOURTH upgrade surface: `src/app/play/page.tsx` — the `/play` session picker now renders `<GoogleLinkCard next="/play" />` when the user is not Google-linked (`hasGoogleLinked = user.identities?.some(i => i.provider === "google") ?? false`).
+
+**B — Google Sign-in moved to top of login form**
+- `src/components/auth/google-sign-in-button.tsx`: new `dividerPosition?: "above" | "below"` prop (default `"above"`). When `"below"`, the "─── or ───" divider renders BELOW the button with `pt-6 pb-2` extra padding. The `divider` constant is defined INSIDE the if-null check so there's no orphaned JSX when the flag is off.
+- `src/components/login-form.tsx`: moved `<GoogleSignInButton next={...} dividerPosition="below" />` to ABOVE the segmented tab control (the button is now the first element in the form, followed by the divider, then the NEW/RETURNING tabs). The old placement inside the NEW PLAYER panel was removed. Tab panels (`new` and `returning`) both gained `animate-in fade-in duration-150` on their root element for a smooth entrance on tab switch.
+
+**C — Env vars + Supabase config (infra, not code)**
+- `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` added to Vercel production env vars. An empty commit triggered redeployment.
+- Supabase "Allow manual linking" enabled (Authentication → Providers → scroll to bottom) — required for `linkIdentity()` to work.
+- `NEXT_PUBLIC_SITE_URL=https://badminton-app-dusky-six.vercel.app` — **RESOLVED + VERIFIED LIVE (2026-06-10).** Set on Vercel (Production) + picked up by redeploy `dpl_H8UZ…` (commit `2dffe41`, ~1781060076481). Confirmed via live intercept: production `signInWithGoogle` now returns a Supabase authorize URL whose `redirect_to` host = `badminton-app-dusky-six.vercel.app` (no longer localhost). **Gotcha learned:** `NEXT_PUBLIC_*` is inlined at BUILD time — setting the var on Vercel does nothing to already-built deployments; a fresh build/redeploy AFTER setting it (scoped to Production) is required. The test user who hit localhost was on the pre-redeploy build.
+- **ROOT CAUSE CONFIRMED + FIXED (2026-06-10):** dashboard screenshot showed **Site URL = `http://localhost:3000`** AND **Redirect URLs = EMPTY** (`No Redirect URLs`). With nothing whitelisted, GoTrue rejected the app's (correct, prod) `redirect_to` and fell back to the localhost Site URL → every link attempt landed on localhost, for every user (deterministic/global, not per-user — that's why it happened "every time"). User fixed both fields: **Site URL** → `https://badminton-app-dusky-six.vercel.app` (no wildcard — that box forbids them); **Redirect URLs** → added `https://badminton-app-dusky-six.vercel.app/**` (the `/**` is required so the full `/auth/callback?intent=link&next=…` URL passes) + kept `http://localhost:3000/**` for local dev. No redeploy needed (Supabase config is live instantly). **Pending:** user to confirm via a real end-to-end link in a fresh window. ⚠ Note for future: fixing ONLY the Site URL (not the allow-list) would have shifted the symptom from localhost → lands on prod **root** `/?code=…` with the link still failing (only `/auth/callback` runs `exchangeCodeForSession`, the bare Site-URL fallback skips it). Dashboard path: Authentication → URL Configuration.
+
+### Upgrade path surfaces (all four, post-refactor)
+1. **Login form top** — `GoogleSignInButton` with `dividerPosition="below"`, NEW PLAYER tab only.
+2. **Overflow menu** — `GoogleLinkButton` between Theme and Sign Out, anonymous users only.
+3. **My Status tab card** — dismissible `GoogleLinkCard` at top of tab (localStorage key `google-link-card-dismissed`).
+4. **Session picker (`/play`)** — `GoogleLinkCard` with `next="/play"` rendered above session list.
+
+### Still pending
+- ~~`NEXT_PUBLIC_SITE_URL` must be added to Vercel env vars + redeploy triggered.~~ **DONE + verified live 2026-06-10** (see Section C). ~~Supabase URL Configuration~~ **DONE** — Site URL set to prod + `https://badminton-app-dusky-six.vercel.app/**` added to Redirect URLs (was empty). Awaiting user's real end-to-end link confirmation.
+
+### Test-data reset (2026-06-10)
+- Unlinked Google from **Jackie B** (`2d394921-7221-4f63-9feb-6326bbb17d5d`) and **JVL** (`317ee635-a7a0-48cb-9675-a79b45273500`) to re-test the link flow on a clean Supabase config. Did via SQL: `DELETE FROM auth.identities WHERE provider='google' AND user_id IN (…)` + `UPDATE auth.users SET is_anonymous=true, email=null, email_confirmed_at=null`. Profiles/PINs/history untouched (keyed on unchanged `user_id`). Reversible by re-linking. Both verified `identity_count=0, is_anonymous=true`. Note: `raw_app_meta_data.providers` left stale (self-heals on re-link; app reads `user.identities`, not app_metadata, for `hasGoogleLinked`).
+- Phase 3 collision-merge: `/auth/callback` `identity_already_exists` stub → `migrate_player_identity(B, A)` (deferred).
+- Google Client Secret shared in prior session chat should be rotated at [console.cloud.google.com](https://console.cloud.google.com/).
+- No unit tests exist for `GoogleSignInButton` / `GoogleLinkButton` / `GoogleLinkCard` — test coverage gap.
+
+---
+
 ## 🆕 LOGIN / REGISTRATION UX — ANONYMOUS CLARITY + GOOGLE UPGRADE PATH (2026-06-09)
 
 **Status: COMPLETE ✅** — tsc/lint (changed files)/build clean. Review gate: **LGTM**.

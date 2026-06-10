@@ -32,8 +32,10 @@ export async function GET(request: Request): Promise<Response> {
   if (errorCode === "identity_already_exists") {
     // Phase 3: authenticate as the existing Google account and merge the
     // current anonymous user's history into it via migrate_player_identity.
-    // Stubbed here — surfaced to the UI for now rather than silently dropped.
-    return NextResponse.redirect(`${origin}/?error=link_conflict`);
+    // Stubbed here — redirect back to where they came from with an error so
+    // the link card can surface a human-readable explanation.
+    const returnPath = intent === "link" ? next : "/";
+    return NextResponse.redirect(`${origin}${returnPath}?error=already_linked`);
   }
 
   // Any other provider error, or a missing code.

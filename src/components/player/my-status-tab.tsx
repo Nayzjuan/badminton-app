@@ -4,7 +4,7 @@
 // MyStatusTab + QueueSubTab — player queue/history combined view
 // ============================================================
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { PauseCircle } from "lucide-react";
 import { toast } from "sonner";
 import { QueueStatus } from "./queue-status";
@@ -75,7 +75,11 @@ export function MyStatusTab({
   return (
     <div className="space-y-5">
       {/* ── Google upgrade soft-prompt (anonymous players only) ── */}
-      {!hasGoogleLinked && <GoogleLinkCard next={`/play/${session.id}`} />}
+      {!hasGoogleLinked && (
+        <Suspense>
+          <GoogleLinkCard next={`/play/${session.id}`} />
+        </Suspense>
+      )}
 
       {/* Sub-tabs: Queue / History */}
       <div className="flex rounded-xl bg-slate-100 dark:bg-muted p-1">
