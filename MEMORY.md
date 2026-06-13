@@ -5,6 +5,18 @@
 
 ---
 
+## 🆕 MY HISTORY — HOOKS VIOLATION FIX (2026-06-13)
+
+**Status: COMPLETE ✅** — Review gate: **LGTM**. Commit `d6080bc`.
+
+### Root cause
+`src/components/player/match-history.tsx`: `useMemo` for W/D/L stats was placed AFTER three conditional early returns (`if (loading)`, `if (fetchError)`, `if (history.length === 0)`). React's Rules of Hooks require all hooks to be called unconditionally in the same order every render. On the first render `loading=true` so the useMemo was skipped; on the next render (after data loads) it was called — hook count changed → React threw → global error boundary (`error.tsx`) showed "Unexpected Error" for any player with match history.
+
+### Fix
+Moved the `useMemo` before all early returns. Hook logic is unchanged; it just runs on every render (cheaply returns zeros when `history` is empty).
+
+---
+
 ## 🆕 GOOGLE OAUTH — RE-LOGIN + LINKED-STATE BUG FIXES (2026-06-10, Session 3)
 
 **Status: COMPLETE ✅** — tsc/lint (changed files)/build clean. Review gate: **Minor issues → addressed**.
