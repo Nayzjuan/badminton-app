@@ -71,6 +71,22 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
     return unsub;
   }, [supabase, sessionId]);
 
+  // Hooks must be called unconditionally — compute stats here, before any early return.
+  const { wins, draws, losses } = useMemo(() => {
+    let w = 0;
+    let d = 0;
+    for (const m of history) {
+      const isA = m.team === "a";
+      const myScore = isA ? m.team_a_score : m.team_b_score;
+      const theirScore = isA ? m.team_b_score : m.team_a_score;
+      if (myScore !== null && theirScore !== null) {
+        if (myScore > theirScore) w++;
+        else if (myScore === theirScore) d++;
+      }
+    }
+    return { wins: w, draws: d, losses: history.length - w - d };
+  }, [history]);
+
   if (loading) {
     return (
       <div className="py-12 text-center text-sm text-muted-foreground">Loading history...</div>
@@ -98,22 +114,6 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
       </div>
     );
   }
-
-  // Stats summary — memoized so history filters don't re-run on every render.
-  const { wins, draws, losses } = useMemo(() => {
-    let w = 0;
-    let d = 0;
-    for (const m of history) {
-      const isA = m.team === "a";
-      const myScore = isA ? m.team_a_score : m.team_b_score;
-      const theirScore = isA ? m.team_b_score : m.team_a_score;
-      if (myScore !== null && theirScore !== null) {
-        if (myScore > theirScore) w++;
-        else if (myScore === theirScore) d++;
-      }
-    }
-    return { wins: w, draws: d, losses: history.length - w - d };
-  }, [history]);
 
   return (
     <div className="space-y-4">
