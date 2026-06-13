@@ -226,6 +226,8 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
 export type JoinQueueResult = {
   success: boolean;
   error?: string;
+  /** Set when the player must resolve a duplicate name before joining (→ /rename). */
+  requiresRename?: boolean;
 };
 
 /**
@@ -250,6 +252,24 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   if (authError || !user) {
     return { success: false, error: "Not authenticated. Please refresh and try again." };
+  }
+
+  // Duplicate-name gate (L2): a flagged duplicate must resolve their name before
+  // a queue entry is created (this is the real mutation boundary — the page-level
+  // gate is only a UX redirect). The client routes a requiresRename result to
+  // /rename. Single cheap lookup; the column is indexed for flagged rows.
+  const { data: gateProfile } = await supabase
+    .from("profiles")
+    .select("needs_rename")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (gateProfile?.needs_rename) {
+    return {
+      success: false,
+      requiresRename: true,
+      error: "Please finish setting your name before joining.",
+    };
   }
 
   const svc = createServiceClient();

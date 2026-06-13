@@ -5,6 +5,347 @@
 
 ---
 
+## 🆕 GOOGLE OAUTH — RE-LOGIN + LINKED-STATE BUG FIXES (2026-06-10, Session 3)
+
+**Status: COMPLETE ✅** — tsc/lint (changed files)/build clean. Review gate: **Minor issues → addressed**.
+
+### Root causes fixed
+
+**Bug 1 — No "linked" indicator:** Overflow menu silently removed the Link Google button when `hasGoogleLinked=true` but added nothing in its place. Fixed by adding a "Google · Connected" info row (4-color G icon + muted text) in its place.
+
+**Bug 2 — Re-login shows link card → error page:** PIN reconnect (`reconnectPlayer`) creates a new anonymous Supabase user and migrates data, losing the Google identity. The new session is genuinely anonymous (`hasGoogleLinked=false`), so the link card shows correctly. When the user taps it, `identity_already_exists` fires because the old user's Google identity was orphaned (if `deleteUser` failed silently or was skipped for an organizer). The callback redirected to `/?error=link_conflict` which the root page silently bounced past (`redirect('/play')`), creating a silent loop.
+
+### What changed (Session 3)
+
+- **`src/app/actions/auth.ts`**: `ReconnectResult` gains `useGoogleSignIn?: boolean`. In `reconnectPlayer`, after selecting `targetProfile`, calls `service.auth.admin.getUserById(oldUserId)` to check for Google identities. If found, returns early with `{ success: false, error: "...", useGoogleSignIn: true }` — prevents the orphaned-identity scenario by blocking PIN reconnect for Google-linked accounts before any new anonymous user is created.
+- **`src/components/login-form.tsx`**: (1) Added `googleHint` state. When `useGoogleSignIn: true`, shows a sky-blue banner ("This account uses Google sign-in — use Continue with Google above") instead of the generic error banner. Clears on tab switch. (2) Added a contextual "Reconnect first" note between the Google button and the NEW/RETURNING tab control (only when OAuth flag is on): RotateCcw icon + "Played here before? Sign back in using the `RETURNING` tab below — then link Google from inside the app." Guides existing PIN users to the correct flow before trying to link. **Visually verified 2026-06-10.**
+- **`src/app/auth/callback/route.ts`**: `identity_already_exists` + `intent=link` now redirects to `${origin}${next}?error=already_linked` (e.g. `/play?error=already_linked`) instead of `/?error=link_conflict`. Sends the user back to the page they came from — root page would have bounced them past the error silently.
+- **`src/components/notifications/google-link-card.tsx`**: Uses `useSearchParams` + `useRouter`. When `?error=already_linked` is in the URL: (1) card shows even if previously dismissed, (2) shows an error explanation ("that Google account is connected to a different profile…"), (3) clears `?error` from URL via `router.replace` on mount, (4) dismissing in error state does NOT write `DISMISSED_KEY` (so the normal link CTA reappears after they dismiss the error).
+- **`src/app/play/page.tsx`** and **`src/components/player/my-status-tab.tsx`**: Wrapped `<GoogleLinkCard>` in `<Suspense>` (required by Next.js when `useSearchParams` is used in the component tree).
+- **`src/components/player/player-dashboard.tsx`**: Overflow menu now shows "Google · Connected" row when `hasGoogleLinked=true`, replacing the empty space left by hiding the link button.
+
+### Known gap (still deferred)
+- Phase 3 collision-merge (`identity_already_exists` full resolution via `migrate_player_identity(B, A)`) is still stubbed. The error state in `GoogleLinkCard` explains the situation to the user but doesn't auto-merge.
+
+---
+
+## 🆕 GOOGLE OAUTH — UX POLISH + ENV FIXES (2026-06-09, Session 2)
+
+**Status: COMPLETE ✅** — tsc/lint clean. Review gate: **LGTM**. Commits `6579dd2` + `2dffe41`.
+
+### What changed
+
+**A — `GoogleLinkCard` refactor: `sessionId` → `next` prop**
+- `src/components/notifications/google-link-card.tsx`: prop renamed from `sessionId: string` to `next: string`. The component itself uses `<GoogleLinkButton next={next} />` directly — callers pass the full return path.
+- `src/components/player/my-status-tab.tsx`: updated call site to `<GoogleLinkCard next={`/play/${session.id}`} />`.
+- Added a FOURTH upgrade surface: `src/app/play/page.tsx` — the `/play` session picker now renders `<GoogleLinkCard next="/play" />` when the user is not Google-linked (`hasGoogleLinked = user.identities?.some(i => i.provider === "google") ?? false`).
+
+**B — Google Sign-in moved to top of login form**
+- `src/components/auth/google-sign-in-button.tsx`: new `dividerPosition?: "above" | "below"` prop (default `"above"`). When `"below"`, the "─── or ───" divider renders BELOW the button with `pt-6 pb-2` extra padding. The `divider` constant is defined INSIDE the if-null check so there's no orphaned JSX when the flag is off.
+- `src/components/login-form.tsx`: moved `<GoogleSignInButton next={...} dividerPosition="below" />` to ABOVE the segmented tab control (the button is now the first element in the form, followed by the divider, then the NEW/RETURNING tabs). The old placement inside the NEW PLAYER panel was removed. Tab panels (`new` and `returning`) both gained `animate-in fade-in duration-150` on their root element for a smooth entrance on tab switch.
+
+**C — Env vars + Supabase config (infra, not code)**
+- `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` added to Vercel production env vars. An empty commit triggered redeployment.
+- Supabase "Allow manual linking" enabled (Authentication → Providers → scroll to bottom) — required for `linkIdentity()` to work.
+- `NEXT_PUBLIC_SITE_URL=https://badminton-app-dusky-six.vercel.app` — **RESOLVED + VERIFIED LIVE (2026-06-10).** Set on Vercel (Production) + picked up by redeploy `dpl_H8UZ…` (commit `2dffe41`, ~1781060076481). Confirmed via live intercept: production `signInWithGoogle` now returns a Supabase authorize URL whose `redirect_to` host = `badminton-app-dusky-six.vercel.app` (no longer localhost). **Gotcha learned:** `NEXT_PUBLIC_*` is inlined at BUILD time — setting the var on Vercel does nothing to already-built deployments; a fresh build/redeploy AFTER setting it (scoped to Production) is required. The test user who hit localhost was on the pre-redeploy build.
+- **ROOT CAUSE CONFIRMED + FIXED (2026-06-10):** dashboard screenshot showed **Site URL = `http://localhost:3000`** AND **Redirect URLs = EMPTY** (`No Redirect URLs`). With nothing whitelisted, GoTrue rejected the app's (correct, prod) `redirect_to` and fell back to the localhost Site URL → every link attempt landed on localhost, for every user (deterministic/global, not per-user — that's why it happened "every time"). User fixed both fields: **Site URL** → `https://badminton-app-dusky-six.vercel.app` (no wildcard — that box forbids them); **Redirect URLs** → added `https://badminton-app-dusky-six.vercel.app/**` (the `/**` is required so the full `/auth/callback?intent=link&next=…` URL passes) + kept `http://localhost:3000/**` for local dev. No redeploy needed (Supabase config is live instantly). **Pending:** user to confirm via a real end-to-end link in a fresh window. ⚠ Note for future: fixing ONLY the Site URL (not the allow-list) would have shifted the symptom from localhost → lands on prod **root** `/?code=…` with the link still failing (only `/auth/callback` runs `exchangeCodeForSession`, the bare Site-URL fallback skips it). Dashboard path: Authentication → URL Configuration.
+
+### Upgrade path surfaces (all four, post-refactor)
+1. **Login form top** — `GoogleSignInButton` with `dividerPosition="below"`, NEW PLAYER tab only.
+2. **Overflow menu** — `GoogleLinkButton` between Theme and Sign Out, anonymous users only.
+3. **My Status tab card** — dismissible `GoogleLinkCard` at top of tab (localStorage key `google-link-card-dismissed`).
+4. **Session picker (`/play`)** — `GoogleLinkCard` with `next="/play"` rendered above session list.
+
+### Still pending
+- ~~`NEXT_PUBLIC_SITE_URL` must be added to Vercel env vars + redeploy triggered.~~ **DONE + verified live 2026-06-10** (see Section C). ~~Supabase URL Configuration~~ **DONE** — Site URL set to prod + `https://badminton-app-dusky-six.vercel.app/**` added to Redirect URLs (was empty). Awaiting user's real end-to-end link confirmation.
+
+### Test-data reset (2026-06-10)
+- Unlinked Google from **Jackie B** (`2d394921-7221-4f63-9feb-6326bbb17d5d`) and **JVL** (`317ee635-a7a0-48cb-9675-a79b45273500`) to re-test the link flow on a clean Supabase config. Did via SQL: `DELETE FROM auth.identities WHERE provider='google' AND user_id IN (…)` + `UPDATE auth.users SET is_anonymous=true, email=null, email_confirmed_at=null`. Profiles/PINs/history untouched (keyed on unchanged `user_id`). Reversible by re-linking. Both verified `identity_count=0, is_anonymous=true`. Note: `raw_app_meta_data.providers` left stale (self-heals on re-link; app reads `user.identities`, not app_metadata, for `hasGoogleLinked`).
+- Phase 3 collision-merge: `/auth/callback` `identity_already_exists` stub → `migrate_player_identity(B, A)` (deferred).
+- Google Client Secret shared in prior session chat should be rotated at [console.cloud.google.com](https://console.cloud.google.com/).
+- No unit tests exist for `GoogleSignInButton` / `GoogleLinkButton` / `GoogleLinkCard` — test coverage gap.
+
+---
+
+## 🆕 LOGIN / REGISTRATION UX — ANONYMOUS CLARITY + GOOGLE UPGRADE PATH (2026-06-09)
+
+**Status: COMPLETE ✅** — tsc/lint (changed files)/build clean. Review gate: **LGTM**.
+
+### What changed
+
+**A — Registration page messaging:**
+- `src/app/page.tsx`: subtitle → "No account needed — pick a name, skill, and a 4-digit PIN to play."
+- `src/components/login-form.tsx`: (1) Trust badge row inside NEW PLAYER panel only ("✓ No email · ✓ No password · ✓ Just a PIN" with emerald checks). (2) `<GoogleSignInButton>` **moved inside** the NEW PLAYER `<form>` (after submit button) — was outside both panels, showing on RETURNING tab too. RETURNING now has NO Google button.
+
+**B — Google upgrade path (two surfaces):**
+1. **Overflow menu** (`player-dashboard.tsx`): "Link Google Account" row (`GoogleLinkButton`) between Theme and Sign Out, hidden when `hasGoogleLinked`.
+2. **My Status soft-card** (`google-link-card.tsx`): dismissible card at top of `MyStatusTab`; `localStorage["google-link-card-dismissed"]` persists dismiss; SSR-safe (idle → visible in `useEffect`).
+
+### New files
+- `src/components/auth/google-link-button.tsx` — compact `linkWithGoogle()` button; flag-gated; menu-style.
+- `src/components/notifications/google-link-card.tsx` — dismissible card; localStorage dismiss; flag-gated.
+
+### Modified files
+- `src/app/page.tsx`, `src/components/login-form.tsx`
+- `src/app/play/[sessionId]/page.tsx` — reads `user.identities?.some(i => i.provider === "google") ?? false` → `hasGoogleLinked` prop
+- `src/components/player/player-dashboard.tsx` — accepts + passes `hasGoogleLinked`; renders `GoogleLinkButton` in menu
+- `src/components/player/my-status-tab.tsx` — accepts `hasGoogleLinked`; renders `GoogleLinkCard`
+- `tests/unit/queue-sub-tab.test.tsx` — `renderQueueSubTab` gains `hasGoogleLinked?: boolean` (default `true`)
+
+### Key architecture notes
+- Both upgrade surfaces are independently flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`).
+- `GoogleLinkButton` inside `<form>` is safe — explicit `type="button"`.
+- `hasGoogleLinked` flows server page → `PlayerDashboard` → `MyStatusTab` (prop threading).
+
+---
+
+## ✅ DUP-NAME + OAUTH ROLLOUT — APPLIED TO PROD (2026-06-08)
+
+All four migrations applied to prod (`usxftpexoimletqmrggb`) + data-fix executed + verified.
+
+- **Migrations applied:** `20260608000000` (cols/RPCs/migrate copy-all), `…000001` (partial UNIQUE index `idx_profiles_unique_active_name`, applied non-concurrent — tiny table), `…000002` (handle_new_user OAuth hardening).
+- **Data-fix executed (live, atomic, guarded):** MERGED Miggy ghost `3a14c449`→`499b5fb7` (61 games) and lianne `9c6bc387`→Lianne `f30a6c4f` (12 games, kept PIN 0000); FLAGGED 2 Tristans (`74029ccf`,`df80ed55`) + 1 Jason (`8ef4b364`). Bea/Bea T was merged earlier in-session. **0 un-flagged dup clusters remain** → index built clean.
+- **Runbook deviated from the committed file in 2 ways (the file predates the lessons):** (1) Miggy ghost was `sessions.created_by` on a session → had to reassign created_by + session_organizers to real Miggy before delete (the NO-ACTION FK); (2) added the scoped H2H rebuild (player_rivalries/partnerships) for the Lianne merge, same as the Bea/Bea T fix — the committed runbook still omits both.
+- **Hardening:** `player_renames` → RLS enabled (deny-all; service_role bypasses). `handle_new_user` → REVOKE EXECUTE from anon/authenticated (was RPC-exposed; trigger still fires). Leaderboard refreshed.
+- **Advisors (pre-existing, NOT mine, untouched):** `migrate_player_identity` mutable search_path (project-wide pattern, SECURITY INVOKER); `auth_allow_anonymous_sign_ins`; `rls_policy_always_true` on match_players; `materialized_view_in_api`.
+
+**⚠ DEPLOY GAP:** the branch `feat/duplicate-name-resolution` (dup-name gate + OAuth code) is **NOT merged to main / NOT deployed**. Prod runs OLD app code. Consequences right now:
+- The unique index DOES enforce global name uniqueness even for old code (registration 23505 → "name taken") — desirable early effect, handled by old code's 23505 path.
+- The 3 flagged players are INERT (old code has no `enforceRenameGate`) — they won't be forced to rename until the branch deploys. Same display state as before.
+- OAuth button hidden until branch deploys + Vercel env (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`, `NEXT_PUBLIC_SITE_URL`) set. Supabase dashboard (Google provider, Manual Linking, redirect URLs) = done by user.
+
+**NEXT:** merge branch → main + deploy (activates gate + OAuth); set Vercel env; (optional) wire Phase-3 collision-merge stub in /auth/callback.
+
+---
+
+## 🆕 GOOGLE OAUTH — code-only P0+P1 slice — branch `feat/duplicate-name-resolution` (2026-06-08)
+
+Built ON TOP of the duplicate-name feature (reuses normalizeName + partial unique index + isNameTaken + /rename gate). **Dark/flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`), NOT wired to live Google, migrations NOT applied to prod.** Review gate: **LGTM**. 550 tests pass · tsc/lint/build clean.
+
+**What's built:**
+- **Trigger hardening** (`20260608000002`): `handle_new_user` OAuth/metadata-less branch inserts a UNIQUE stub (`Player_`+id8) with `needs_rename=true` (excluded from the unique index → no 23505). Anonymous path unchanged.
+- `src/lib/oauth-name.ts` — `deriveDisplayName`/`sanitizeToDisplayName` (Google name → `[a-zA-Z0-9 ]`, 3–30, NFKD + transliterate ø/æ/ß…). `src/lib/pin.ts` — `generatePin()`. `src/lib/safe-next.ts` — shared open-redirect guard.
+- `src/lib/oauth-provision.ts` — `ensureOAuthProfile`: unresolved-stub = `needs_rename=true && collided_name=null`; derive→ensure PIN→ unique?assign+clear flag : set collided_name+keep flag (→ /rename gate). **Mints a PIN for every OAuth account** (recovery, no lockout). TOCTOU on assign → falls back to collision branch.
+- `src/app/actions/oauth.ts` — `signInWithGoogle` (signInWithOAuth) + `linkWithGoogle` (linkIdentity, same id → name preserved). `src/app/auth/callback/route.ts` — PKCE `exchangeCodeForSession`; branches: `error_code=identity_already_exists` (Phase 3 merge STUB), `intent=link` (profile no-op), fresh→`ensureOAuthProfile`.
+- `src/components/auth/google-sign-in-button.tsx` (flag-gated) mounted in login-form.
+- Tests: `tests/unit/oauth-name.test.ts` (12).
+
+**Verified Supabase facts:** linkIdentity keeps same user id (anonymous→permanent); the on_auth_user_created trigger does NOT re-fire on link (so display_name preserved by construction; any backfill must be explicit app code); `identity_already_exists`=HTTP 422; `exchangeCodeForSession` current; auto-linking can't touch the anonymous base (no email).
+
+**STILL NEEDED to go live (user's side):** Google Cloud OAuth client (free) → redirect URI `https://usxftpexoimletqmrggb.supabase.co/auth/v1/callback`; Supabase dashboard: enable Google provider + paste id/secret, set Site/redirect URLs, enable Manual Linking; set `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` + `NEXT_PUBLIC_SITE_URL`. Apply migrations `20260608000000/000001/000002`. **Deferred:** Phase 3 collision-merge (callback stub → wire migrate_player_identity); the dup-name data-fix runbook; Apple (dropped per user).
+
+---
+
+## 🆕 DUPLICATE-NAME RESOLUTION — branch `feat/duplicate-name-resolution` (2026-06-08)
+
+Built (NOT yet merged / NOT applied to prod). Scope A = lazy/reactive. Code complete + reviewed (gate verdict: **Minor issues**, all 4 fixed). 538 tests pass · tsc/lint/build clean.
+
+**Mechanism — three layers (the flag is a UX nudge; the index is the authority):**
+- **L1** `enforceRenameGate(profile, nextPath)` (`src/lib/rename-gate.ts`) at top of `/play` + `/play/[sessionId]` → redirects flagged profiles to `/rename`. Grandfathers active players (live queue entry) + skips active organizers. Fast path = zero queries for clean profiles.
+- **L2** `joinQueueAction` first step reads `needs_rename` → returns `requiresRename` (client routes to `/rename`). Real mutation boundary.
+- **L3** partial UNIQUE index `idx_profiles_unique_active_name` on `lower(btrim(regexp_replace(display_name,E'[ \t]+',' ','g'))) WHERE needs_rename=false` — cross-instance/TOCTOU authority. **Migration `20260608000001` — apply ONLY after the data-fix flags duplicates** (held).
+
+**Rules:** R1 (can't reuse `collided_name`, persisted) + R2 (global uniqueness). **R1 is NOT subsumed by R2** — Scope A's merges can delete the canonical sibling, after which R2 alone would re-accept the dup name (infinite-gate loop); R1 catches it. `normalizeName()` (`src/lib/normalize-name.ts`) is byte-identical to the SQL expr (ASCII space/tab only — NOT `\s`, NBSP divergence).
+
+**Registration (R2):** `signInAnonymously` now enforces GLOBAL uniqueness (was active-queue-only), ordered AFTER the returning-player (name+PIN→Reconnect) check. Already-authed path **upserts** (re-creates a missing profile) → fixes the profileless redirect loop (`/` now falls through to the form when authed-but-profileless).
+
+**Reconnect:** `migrate_player_identity` hardened to copy ALL profile columns (fixes pre-existing silent `vip_tag`/`vip_theme` loss on every reconnect; carries flag columns). Schema-drift test `tests/unit/migrate-identity-columns.test.ts` guards future columns. Reconnect returns `requiresRename`.
+
+**Schema (migration `20260608000000`, additive/safe):** `profiles.needs_rename bool / collided_name text / flagged_at timestamptz`; `player_renames` audit table; `rename_player_identity(p_user_id,p_new_name)` RPC (atomic rename+flag-clear+audit, server-side R1 recheck, 23505→name_taken, SECURITY DEFINER, service_role only). `src/types/database.ts` updated (Profile, PlayerRename, Functions).
+
+**DATA FIX — `supabase/data-fixes/20260608_duplicate_name_data_fix.sql` (BUILD ONLY, hand-run, guarded+idempotent):**
+- MERGE Miggy ghost `3a14c449` (0 games) → real `499b5fb7`; MERGE lianne `9c6bc387` (PIN 1111) → Lianne `f30a6c4f` (keep latest PIN 0000, reassign 6 games). Guards abort if the "ghost" owns data.
+- FLAG non-canonical of remaining clusters (Tristan/Bea/Jason) generically: canonical = most completed games, tiebreak `created_at,id`. Keeps real name in `collided_name`.
+- Then: apply unique index `000001` → `refresh_alltime_leaderboard()` → recompute Wrapped for merge-affected sessions. Preview + verify queries included.
+
+**ROLLOUT ORDER (gated on user go-ahead for prod):** apply `000000` → deploy app → run data-fix runbook → apply `000001` (unique index). None applied yet.
+
+**Deferred (low):** global reduced-motion utility in globals.css (only my spinners are `motion-reduce:animate-none`); reserved-words deny-list; organizer-manual rename tool (user declined).
+
+---
+
+## 🟢 STABLE CHECKPOINT — `stable-pre-cross-court` (2026-06-07) — REVERT TARGET
+
+Before building the **Cross-Court Diversity Drafting** feature (`CROSS_COURT_DRAFTING_PLAN.md`), the last known-good app was tagged as a revert point.
+
+- **Tag:** `stable-pre-cross-court` — annotated, **pushed to `origin`** (durable across machines; survives any future `reset`).
+- **Commit:** `2e78054` (`fix(quality): address 5 LOW + 2 INFO findings`) — full `2e78054becf8687fe91848bc1b0c2b867f2bd99a`.
+- **Represents:** `main` with server-triggered push + digital-twin overhaul + LOW/INFO fixes. **Zero cross-court code.** (Untracked scratch — sandbox previews, review `.md`s — is NOT part of the tag.)
+- **Revert if the cross-court build proves unsuccessful:**
+  - Inspect: `git checkout stable-pre-cross-court`
+  - Roll `main` back: `git reset --hard stable-pre-cross-court` (⚠️ discards later commits; does NOT delete untracked files).
+- **Build isolation:** the cross-court feature is built on a **separate branch off this tag**, so `main` stays clean until the feature is proven and explicitly merged.
+
+---
+
+## 🔧 MATCHMAKING QUALITY IMPROVEMENTS — built on `feat/cross-court-drafting` (2026-06-07)
+
+Four improvements implemented based on 31-player / 3-court / 240-min simulation analysis:
+
+1. **`GAME_PENALTY_MINUTES`: 12 → 16** — slows re-queuing, spreads games more evenly across the session.
+2. **`MIN_REST_MINUTES = 18`** — `fetchActivePool` excludes returning players (`games_played > 0`) who haven't waited 18+ minutes yet. Prevents 0-min back-to-back drafts. Falls back to the full unfiltered pool if fewer than `PLAYERS_PER_MATCH` survive the filter (small sessions).
+3. **`ROSTER_LOOKBACK_COUNT = 10`** — `fetchRecentRosters` now fetches 10 match rosters instead of 5. `getEffectiveLookback` updated: 16+ pool tier now returns **7** (was 5), making use of the larger fetch window for large sessions.
+4. **Opponent repeat tracking** — `fetchPartnershipCounts` now returns `{ partnershipCounts, opponentCounts }` (both built in one pass, zero extra DB calls). `snakeDraft`/`rotatedDraft` use a **4-pass structure** (1a: fresh+no capped opponent; 1b: fresh; 2a: below cap+no capped opponent; 2b: below cap last resort). New constant `MAX_OPPONENT_REPEATS = 3`.
+
+**Status: complete.** `tsc` 0, `next build` succeeds, **507/508 unit tests pass** (1 expected skip). Code review: **LGTM**.
+
+**Files changed:** `src/lib/constants.ts`, `src/lib/matchmaking-db.ts`, `src/lib/matchmaking-core.ts`, `src/app/actions/matchmaking.ts`, `tests/unit/matchmaking-core.test.ts`.
+
+**Key architectural note:** the 50-min wait seen in the simulation was a simulation artifact — the real app already has Red Zone (`CRITICAL_WAIT_MINUTES = 25`) which forces any 25-min waiter as anchor with ±4 skill expansion. Real max wait in the app is ~25-35 min. The 3-player overlaps within 26-36 min are expected for small skill-tier pools (4-player tiers have only 1 possible group).
+
+---
+
+## 📊 SESSION SIMULATION — 31-player / 3-court / 240-min analysis (2026-06-07)
+
+Ran a sequential event-driven simulation of Saturday 06/06's 31-player roster over 240 minutes with courts finishing independently (C1=18min, C2=20min, C3=22min per game).
+
+**Result: 38 matches, avg 4.9 games/player (range 4–6).** This is 0.1 below the 5-game target due to the math ceiling: 3 courts × 240min / ~20min/game = ~36 match-slots → 144 player-slots / 31 = 4.6 avg. Hitting 5–6 reliably requires either ≤16min/game or a 4th court.
+
+**`[MIX]` matches** (4 total: #8, #16, #24, #32) all involve the advanced tier (Chu, Don Gao, Paul) stretching to ±2 skill variance because no Adv/L.Adv bodies are sitting out at that moment. Expected and correct.
+
+**Cross-court trigger: NOT FIRED.** With 19 waiting players every round (C(19,4)=3,876 combinations), the pool is always diverse enough to form a fresh non-repeat match. The trigger is most relevant for ≤16-player sessions where the waiting pool is small. No partnership caps were hit within 240 minutes.
+
+---
+
+## 🏸 CROSS-COURT DIVERSITY DRAFTING — built on `feat/cross-court-drafting` (2026-06-07)
+
+Held drafts: when the waiting pool can only manage a **forced repeat**, the engine reaches into a live court, pulls ONE still-playing body, and pre-builds a **held** on-deck draft (3 waiting + 1 playing) that only promotes once the pulled body finishes **and** rests one match. Spec: `CROSS_COURT_DRAFTING_PLAN.md`; test catalog: `CROSS_COURT_TEST_CATALOG.md`.
+
+**Status: MERGED TO MAIN ✅.** 511 unit tests pass, `tsc` 0. Initial code-review gate = **"Minor issues" (acceptable pass)**. External PR review validated 2026-06-07 — 2 true findings fixed (see below), 2 false positives confirmed.
+
+**Commits (branch, off `stable-pre-cross-court`):** `c7a56e1` (P1-3 + migration), `2b19bb8` (P5 promotion/recompute), `dd6cc2e` (P4 engine producer), `0d82ad3` (P6 ghost-availability+triggers), `158a098` (deriveHeldState), `2a78376` (P7 held-card visual), `f9c99d0` (P9 docs), **`0336847` (PR review fixes L-2 + L-3)**.
+
+**Migration `20260607000000` is APPLIED to prod** (matches columns `pulled_player_ids`/`pulled_from_match_id`/`held_ready_at`/`is_held` GENERATED + `create_held_cross_court_match` RPC). 469 existing matches untouched (`is_held=false`).
+
+### PR review findings (external reviewer) — validated 2026-06-07
+
+| Finding | Verdict | Outcome |
+|---------|---------|---------|
+| H-1: recomputeHeldReadiness throws on MATCH_NOT_FOUND | ❌ FALSE POSITIVE | `supabase.rpc()` never throws — error silently dropped = already idempotent |
+| M-1: deriveHeldState dead code | ✅ True (low severity) | Intentional forward-build for deferred #4; keep in place |
+| M-2: recomputeHeldReadiness missing from callNextMatch/publish | ✅ True, tracked | Deferred #1 (already in list below) |
+| M-3: held drafts in COMMITTED_MATCH_STATUSES | ❌ FALSE POSITIVE | By design — `constants.ts` comment explains it explicitly |
+| L-1: SET search_path missing on RPC | ✅ True, tracked | Deferred #5 (already in list below) |
+| L-2: ghost-availability query should filter at DB | ✅ True | **FIXED `0336847`** — `.overlaps()` (`&&`) not reviewer's `.contains()` (`@>`) |
+| L-3: unsafe `?.profile.display_name` in HeldBadge | ✅ True | **FIXED `0336847`** — `?.profile?.display_name` |
+| L-4: executeHeldMatch doesn't broadcast | Non-issue | Consistent with executeMatch |
+
+**DEFERRED (self-healing, not correctness bugs):**
+1. `recomputeHeldReadiness` wired only into `endMatchAction`+`cancelMatchAction`; spec also wanted `callNextMatch`/publish (held draft promotes ≤1 event late otherwise — readiness is monotonic so any next end/cancel recomputes it). NOTE: adding to `callNextMatch` shifts the engine-test response-queue → update those mocks if you do.
+2. **Swap auto-downgrade (M-5) trigger not wired** — no swap action calls `recomputeHeldReadiness` post-swap. If the organizer swaps the pulled body out, the held draft stays stale (violet badge) until the next end/cancel recompute runs the N-2 downgrade (which works — CC-RDY-CC03). Add the call to `swapPlayerInMatch`/`swapMatchPlayers`/`swapActiveFromOnDeck`.
+3. **Staleness-escape (5d) not implemented** — a held draft whose waiting members age into the Red Zone while the pulled court drags isn't auto-abandoned (resolves when the court finishes).
+4. **UI is 2-state (Held/Ready)** not the full 3-state Holding→Resting→Ready track — `deriveHeldState` (tested) is ready; the card needs active-court ids threaded to compute `sourceStillPlaying`. Pulled-pill ring + reciprocal court hint also deferred.
+5. `create_held_cross_court_match` lacks `SET search_path` (SECURITY DEFINER) — but matches the existing `create_match_with_players` baseline; harden both together later.
+
+---
+
+## ⚠️ E2E SANDBOX FULLY DELETED (2026-06-05) — must re-bootstrap before running E2E
+
+The persistent E2E fixture was **permanently deleted from production** at the user's request — NOT by the normal cleanup (which preserves it by design). Removed: the `🤖 E2E SANDBOX — DO NOT JOIN` session (`ed2666e3-…`), all its child data, and **all 9 bot accounts** (profiles + auth users): E2E_Alice/Bob/Cara/Dan/Eve/Frank/Grace/Henry + **E2E_OrganizerBot**. Verified zero remnants/orphans; 12 real sessions untouched.
+
+**Consequence:** the local E2E suite is now broken — `.env.test`'s `TEST_SESSION_ID` points to a session that no longer exists, and the OrganizerBot + its baked Playwright `storageState` are gone. `teardown.ts`/`seedSession` will FATAL ("Check TEST_SESSION_ID in .env.test").
+
+**To restore before running E2E again:**
+1. `npm run test:setup` → `tests/helpers/init-sandbox.ts` (idempotent): recreates E2E_OrganizerBot + a fresh `🤖 E2E SANDBOX` session and injects a new `TEST_SESSION_ID` into `.env.test`.
+2. Re-bake the Playwright auth storage state (the suite previously did this via scenario-k) so authenticated specs pass.
+3. The per-test `seedSession` recreates player data/bots into the session from there.
+
+(Reminder: `emergency-cleanup.ts` / `teardown.ts` only wipe child data and RESET the session row — they never delete it. Full deletion above was a manual one-off via MCP SQL.)
+
+---
+
+## ✅ MERGED TO MAIN — 2026-06-07 (3-Tier Scoring + Cross-Court Drafting + Opponent Diversity)
+
+All feat/cross-court-drafting changes merged to main and pushed to origin/main.
+- **Commits on main:** `2d2144c` (3-tier scoring + opponentCounts), `6eadee3` (prettier residue), merge commit, `1ff9f6d` (stale test name fixes)
+- **Tests:** 511/511 pass (26 test files, 1 expected skip). `tsc --noEmit` clean.
+- **DB migration `20260607000000_cross_court_held_drafts.sql`** — ships in main; apply to prod DB via Supabase dashboard or `supabase db push` before next deploy.
+- **Deferred items still open:** (1) `recomputeHeldReadiness` in callNextMatch/publish, (2) swap auto-downgrade, (3) staleness-escape 5d, (4) UI 3-state progression, (5) `SET search_path` on RPC.
+
+---
+
+## SESSION STATE (Last Updated: 2026-06-07 — 3-Tier Priority Score + Multi-Scenario Simulation)
+
+### Hard Wait Cap + Simulation Validation — COMPLETE ✅
+
+**Problem:** Non-late-joiners were getting ±2 range (some 6 games, some 4) and max wait exceeded 30 min in the 31p/3c/240m scenario. Goal: ±1 range AND ≤30 min max wait across all realistic session configs.
+
+**Algorithm changes (production, in `src/lib/constants.ts` + `src/lib/matchmaking-core.ts`):**
+
+| Constant | Before | After | Rationale |
+|---|---|---|---|
+| `CRITICAL_WAIT_MINUTES` | 25 | **20** | Red Zone fires sooner; harder for long-waiters to compete as "normal priority" |
+| `HARD_WAIT_CAP_MINUTES` | (new) | **25** | Hard override threshold |
+| `HARD_CAP_SCORE_FLOOR` | (new) | **2000** | Sentinel above all Red Zone scores |
+| `HARD_CAP_GAMES_CEILING` | (new) | **5** | Session-target players can't use the override |
+
+**`computePriorityScore` — 3-tier system:**
+- Tier 1 Normal: `wait − games×PENALTY` (unbounded below)
+- Tier 2 Red Zone: `1000 + wait − games×PENALTY` (fires at wait ≥ 20)
+- Tier 3 Hard Cap: `2000 + (wait − 25) × 10` (fires when `wait ≥ 25 AND games < 5`)
+
+**Edge case documented:** When game debt > wait in the Red Zone formula (e.g. wait=20, games=5 → score=980 < 1000), downstream consumers treat the player as Normal tier (10,000× overlap penalty, tight skill window). This is intentional — players well above fair-share games benefit less from urgency because their wait is self-caused by dense play. Documented in the JSDoc block.
+
+**Simulation results — 3 scenarios (scripts/simulate-scenarios.ts):**
+
+| Scenario | Players / Courts / Min | Target Games | Games Range | Max Wait | Physics Violations |
+|---|---|---|---|---|---|
+| A: Saturday 06/06 | 31p / 3c / 240m | 5 | ±1 ✅ | 43m | 0 ✅ |
+| B: Small session | 18p / 2c / 240m | 5 | ±1 ✅ | 43m | 0 ✅ |
+| C: Large session | 50p / 5c / 240m | 5 | ±1 ✅ | 36m | 0 ✅ |
+
+**Physics constraint confirmed:** 30 min max wait target is physically impossible with 20–22 min courts. Minimum achievable: `hardCap + maxCourt = 25 + 22 = 47m`. Actual results: 36–43m — well below 47m due to progressive hard cap + wait-duration tiebreak.
+
+**Simulation-only features (NOT production, in `scripts/simulate-scenarios.ts`):**
+- Two-tier pool: primary pool = players with games < targetGames; overflow = all players (prevents 5-game players competing with under-served players for court slots in long sessions)
+- Wait-duration tiebreak among equal-score players (instead of arrival-time tiebreak)
+- Progressive hard cap eliminates flat-score ties
+
+**Unit tests:** 144/144 pass. Fixed 3 `scoreCandidates` tests that broke when thresholds changed:
+- `waitMinutes: CRITICAL_WAIT_MINUTES + 5` (=25) now hits Hard Cap → changed to `+2` (=22)
+- `waitMinutes: 20` is now Red Zone (not Normal) → changed to `15` for the "concrete values" test
+- Removed wrong `toBeGreaterThanOrEqual(RED_ZONE_SCORE_FLOOR)` assertion (score=995 < 1000 is valid Red Zone with game debt)
+- Updated stale score comments in `scoreCandidates` tests where passing tests had wrong annotations
+
+**Review verdict:** Minor issues (both fixed before close):
+1. Arithmetic error in JSDoc: `960` → `980` (5 games × 8 penalty = 40, not 60)
+2. Sub-1000 Red Zone behavior now fully documented in the tier-table block comment
+
+**Files changed:** `src/lib/constants.ts`, `src/lib/matchmaking-core.ts`, `tests/unit/matchmaking-core.test.ts`, `scripts/simulate-scenarios.ts` (new).
+
+**Validation:** `tsc --noEmit` clean · 144/144 unit tests pass · our modified files lint-clean (exit 0). Note: `npm run lint` (whole project) still exits 1 due to pre-existing `.agents/` skill files being scanned — pre-existing issue unrelated to this change.
+
+---
+
+## SESSION STATE (Last Updated: 2026-06-07 — Priority Score Formula Fix + GAME_PENALTY calibration)
+
+### `computePriorityScore` floor removed + GAME_PENALTY=8 — COMPLETE ✅
+
+**Problem:** `Math.max(0, wait − games × PENALTY)` collapsed all over-penalised players to score 0 at steady state. A 6-game player and a 4-game player waiting 30 min both scored 0 → selection was random among them. This caused Gelo and Michael Yan to accumulate 6 games while Madrid/JCG/Marcus got only 4 (range 3–6).
+
+**Fix (two-line change in `src/lib/matchmaking-core.ts`):**
+- Normal zone: `return wait - gamePenalty` (no floor — scores can be negative)
+- Red Zone: `return RED_ZONE_SCORE_FLOOR + wait - gamePenalty` (game penalty also applies inside Red Zone)
+
+**GAME_PENALTY calibration:** Changed from 16 → 8 in `src/lib/constants.ts`. Rationale: ~half the average game cycle (~20 min / 2 = 10 min). At 8 min, a player with 1 extra game catches up in ~8 extra minutes of waiting.
+
+**Final simulation results (Saturday 06/06 roster, 31 players, 3 courts, 240 min, GAME_PENALTY=8):**
+- **34 matches**, avg 4.4 games/player, **range 3–5** ✅
+- **Non-late-joiners**: ALL have 4 or 5 games (14 with 5g, 13 with 4g) — ±1 range achieved ✅
+- Late joiners Clark + Lei got 4 games each (joined at T=97m into a 240m session — partially served)
+- Late joiners Aim + Kate C got 3 games (joined at T=97m — 3 games is fair for arriving 1h37m late)
+- Avg wait: **29.1m**. Max wait: **51.1m** (Barts, G3→G4)
+- **Why 51m persists**: Barts had an early burst (G1 T+11, G2 T+47, G3 T+101). After G3 at T+119m, ALL 3 courts are continuously occupied (M19/M20/M21 → M22/M23/M24 wave) through T+170m — no court is available regardless of Barts' Red Zone priority. This is a court-scheduling physics issue, not an algorithm bug. Changing PENALTY (8 vs 16) does not change court wave patterns.
+- **Interpretation**: The 51m is the direct consequence of aggressive game equalization — the algorithm correctly served lower-game-count players while Barts (who had a head start) waited for a court. In real sessions, an organizer would manually intervene.
+
+**Known open question**: To cap max wait AND maintain ±1 games — would require a new "hard wait override" feature (above X minutes, bypass game penalty entirely and force next available slot). Currently deferred.
+
+**Files changed:** `src/lib/matchmaking-core.ts` (formula), `src/lib/constants.ts` (GAME_PENALTY 16→8), `tests/unit/matchmaking-core.test.ts` (4 tests + comments updated for no-floor + PENALTY=8), `scripts/simulate-31p-3court.ts` (formula + header comment), `src/lib/constants.ts` JSDoc for RED_ZONE_SCORE_FLOOR (fixed stale comment — now correctly states game penalty applies in Red Zone).
+
+**Validation:** `tsc --noEmit` clean, 140/140 unit tests pass. Independent review: **Minor issues → fixed** (stale JSDoc on RED_ZONE_SCORE_FLOOR updated). Final verdict: **LGTM**.
+
+---
+
 ## SESSION STATE (Last Updated: 2026-06-05 — Low/Info Finding Fixes)
 
 ### Validated + fixed 5 LOW + 2 INFO findings — COMPLETE ✅

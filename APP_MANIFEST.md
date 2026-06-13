@@ -90,8 +90,13 @@ Mirrors `auth.users` 1:1 — the UUID is the `auth.users.id`.
 | `pin`          | `text \| null`     | 4-digit reconnect PIN                                                           |
 | `vip_tag`      | `text \| null`     | Short label shown as badge (e.g. "MVP"). Set via Supabase dashboard only.       |
 | `vip_theme`    | `text \| null`     | Key into `VIP_THEMES` in `src/lib/vip-config.ts`. Controls neon/holo rendering. |
+| `needs_rename`  | `boolean`          | Duplicate-name flag — must rename at next login/join (§3.8b). Default `false`.   |
+| `collided_name` | `text \| null`     | The name this profile was flagged on (R1 source of truth). `null` when not flagged. |
+| `flagged_at`    | `timestamptz \| null` | When the duplicate flag was set.                                              |
 | `created_at`   | `timestamptz`      |                                                                                 |
 | `updated_at`   | `timestamptz`      |                                                                                 |
+
+Partial UNIQUE index `idx_profiles_unique_active_name` on `lower(btrim(regexp_replace(display_name,E'[ \t]+',' ','g'))) WHERE needs_rename = false` enforces global name uniqueness for non-flagged profiles (§3.8b). Audit table **`player_renames`** (`id, player_id, old_name, new_name, reason, actor_user_id, session_id, created_at`) is an append-only log of every name change.
 
 **Trigger:** `on_auth_user_created` → `handle_new_user()` — auto-creates a profile row from `raw_user_meta_data.display_name` and `raw_user_meta_data.skill_level` when a new auth user is inserted.
 
@@ -300,20 +305,48 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 
 The engine is a **pure on-deck filler** — it never places players directly onto courts. Court assignment only happens via `promoteOnDeckMatchInternal` when a court frees.
 
-#### Priority Scoring (`computePriorityScore`)
+#### Priority Scoring (`computePriorityScore`) — 3-Tier System
+
+Three tiers, evaluated top-down (Hard Cap checked first):
 
 ```
-Red Zone (wait ≥ 25 min):   priorityScore = 1000 + waitMinutes   [absolute urgency]
-Normal   (wait < 25 min):   priorityScore = max(0, waitMinutes − (gamesPlayed × 12))
+Tier 3 — Hard Cap   (score ≥ 2000):
+  Condition: wait ≥ HARD_WAIT_CAP_MINUTES (25)
+         AND games_played < HARD_CAP_GAMES_CEILING (5)
+  Score: HARD_CAP_SCORE_FLOOR + (wait − 25) × 10       [progressive — no ties]
+
+Tier 2 — Red Zone   (score nominally 1000–1999):
+  Condition: wait ≥ CRITICAL_WAIT_MINUTES (20)
+  Score: 1000 + waitMinutes − (gamesPlayed × GAME_PENALTY_MINUTES)
+  Note: heavy game debt can push score below 1000; downstream consumers
+        re-detect Red Zone via priorityScore ≥ RED_ZONE_SCORE_FLOOR check.
+
+Tier 1 — Normal     (score unbounded below 1000):
+  Score: waitMinutes − (gamesPlayed × GAME_PENALTY_MINUTES)   [no floor — can go negative]
 ```
 
-Floor at 0: game debt holds players back but never drops them below a brand-new joiner.
+**Design rationale:**
+- Hard Cap guarantees service within `hardCap + maxCourtDuration ≈ 25 + 22 = 47 min` for any player below the session game target. Progressive scoring (`+10 per extra minute`) eliminates flat-score ties, so the longest-waiting cap-eligible player always leads without a separate tiebreaker.
+- `HARD_CAP_GAMES_CEILING = 5` (= session target for all tested configs) prevents players who've already received their fair share from using the override to accumulate extra games at the expense of under-served players.
+- Red Zone fires 5 min before the Hard Cap (20 vs 25), giving urgency priority over Normal-queue players in advance.
+- No floor at 0 — negative scores let game count drive ordering even when everyone has been waiting a similar time.
+
+**Validated across 3 scenarios (scripts/simulate-scenarios.ts):**
+
+| Scenario | Players / Courts / Min | Games range | Max wait |
+|---|---|---|---|
+| Saturday 06/06 | 31p / 3c / 240m | ±1 ✅ | 43m |
+| Small session | 18p / 2c / 240m | ±1 ✅ | 43m |
+| Large session | 50p / 5c / 240m | ±1 ✅ | 36m |
+
+The 30 min max-wait target is a physics impossibility with 20–22 min courts (minimum achievable = hardCap + maxCourt = 47m). Actual 36–43m is the best achievable without sacrificing game equity.
 
 #### Candidate Scoring (`scoreCandidates`)
 
 ```
 Normal candidate:   candidateScore = -priorityScore + overlapCount × 10,000
 Red Zone candidate: candidateScore = -priorityScore + overlapCount × 100
+  (Red Zone = priorityScore ≥ RED_ZONE_SCORE_FLOOR — includes Hard Cap tier since 2000 ≫ 1000)
 ```
 
 Sorted ascending (lowest score = highest priority). Red Zone overlap penalty is capped at 100× so a Red Zone player with 1 recent overlap still beats a Normal player with 0.
@@ -339,8 +372,8 @@ Sort all 4 players DESC by skill, then apply a **two-pass approach** for partner
 
 Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3]` → `[0,1] vs [2,3]`.
 
-- **snakeDraft** (normal): two-pass as above. Returns **`null`** if every split would put either team pair at or above `MAX_PARTNERSHIP_REPEATS` — callers must null-guard.
-- **rotatedDraft** (forced repeat): cycles through 3 split configs based on `repeatCount % 3` starting from the natural rotation index; same two-pass freshness preference within each rotation attempt. Also returns **`null`** when cap enforcement prevents every split.
+- **snakeDraft** (normal): **four-pass** — 1a: fresh partnerships + no capped cross-net pair; 1b: fresh partnerships (relax opponent cap); 2a: below partnership cap + no capped cross-net; 2b: below partnership cap (last resort). Returns **`null`** only when the partnership cap blocks every split — the opponent cap never causes a stall.
+- **rotatedDraft** (forced repeat): cycles through 3 split configs based on `repeatCount % 3` starting from the natural rotation index; same four-pass structure within each rotation attempt. Also returns **`null`** when the partnership cap blocks every split.
 
 #### Anti-Repeat / Diversity Logic
 
@@ -348,9 +381,10 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
   1. Fetch all `match_players` rows for the anchor (limit 200)
   2. Filter to this session's recent matches (`completed`, `in_progress`, **`pending`** — Fix 2: sees live pairings, not just finished games)
   3. Fetch all co-players + teams → build weighted overlap map: **teammate appearances = 2×, opponent appearances = 1×** (Fix 3: same-side repetition penalised more than cross-side)
-- `fetchRecentRosters(sessionId)` — fetches last `ANTI_REPEAT_LOOKBACK` match rosters as arrays of player IDs. Pre-fetched **once per `runEngineInternal` run** and passed down to each `runAlgorithm` call to avoid redundant DB queries per slot. Includes `completed`, `in_progress`, and `pending` matches.
+- `fetchRecentRosters(sessionId)` — fetches last `ROSTER_LOOKBACK_COUNT` (10) match rosters as arrays of player IDs. Pre-fetched **once per `runEngineInternal` run** and passed down to each `runAlgorithm` call to avoid redundant DB queries per slot. Includes `completed`, `in_progress`, and `pending` matches.
 - `isDiversityViolation(playerIds, recentRosters)` — flags true if ≥3 of the proposed 4 players appeared together in any single recent match roster.
-- `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → 5) to prevent small-tier starvation.
+- `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → **7**) to prevent small-tier starvation. The 16+ tier was increased from 5 to 7 now that `fetchRecentRosters` fetches 10 matches (sufficient headroom).
+- `fetchPartnershipCounts(sessionId)` — now returns **`{ partnershipCounts, opponentCounts }`** (both maps built in one pass over the same DB data; zero extra DB calls). `opponentCounts` = cross-net (opponent) pair counts, used by snakeDraft/rotatedDraft as a soft preference.
 
 #### Engine Constants (`src/lib/constants.ts`)
 
@@ -360,15 +394,18 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `SKILL_VARIANCE_TARGET`        | 1     | Preferred max skill gap                                                                                                                                                                                                                                                                                                                            |
 | `SKILL_VARIANCE_MAX`           | 2     | Hard max skill gap                                                                                                                                                                                                                                                                                                                                 |
 | `FALLBACK_WAIT_MINUTES`        | 15    | Bypass skill windows entirely                                                                                                                                                                                                                                                                                                                      |
-| `CRITICAL_WAIT_MINUTES`        | 25    | Red Zone threshold                                                                                                                                                                                                                                                                                                                                 |
-| `GAME_PENALTY_MINUTES`         | 12    | Minutes deducted per game played from priority score                                                                                                                                                                                                                                                                                               |
-| `RED_ZONE_SCORE_FLOOR`         | 1000  | Sentinel — any score ≥ this = Red Zone                                                                                                                                                                                                                                                                                                             |
+| `CRITICAL_WAIT_MINUTES`        | **20**| Red Zone threshold (was 25; lowered so urgency fires sooner, narrowing the window before Hard Cap)                                                                                                                                                                                                                                                |
+| `HARD_WAIT_CAP_MINUTES`        | **25**| Hard Wait Cap threshold — fires 5 min after Red Zone; triggers Tier 3 absolute-override scoring for cap-eligible players                                                                                                                                                                                                                           |
+| `HARD_CAP_SCORE_FLOOR`         | **2000** | Tier 3 score floor — guaranteed above any Red Zone score (max Red Zone ≈ 1060 ≪ 2000)                                                                                                                                                                                                                                                          |
+| `HARD_CAP_GAMES_CEILING`       | **5** | Max games to remain cap-eligible. Players at/above session target (5 games for all standard 4h sessions) cannot use the Tier 3 override                                                                                                                                                                                                           |
+| `GAME_PENALTY_MINUTES`         | **8** | Minutes deducted per game played from priority score (calibrated to ~half average game cycle ≈ 20/2 = 10 min)                                                                                                                                                                                                                                      |
+| `RED_ZONE_SCORE_FLOOR`         | 1000  | Sentinel — any score ≥ this = Red Zone (used by scoreCandidates + runAlgorithm; note heavy game debt can push a Red Zone formula result below 1000)                                                                                                                                                                                                                                                                                                             |
 | `BOTTLENECK_THRESHOLD_MINUTES` | 20    | Wait-time monitor flag threshold                                                                                                                                                                                                                                                                                                                   |
-| `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches checked for diversity                                                                                                                                                                                                                                                                                                               |
+| `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches used by `buildOverlapMap` for familiarity weighting (count-based)                                                                                                                                                                                                                                                                   |
+| `ROSTER_LOOKBACK_COUNT`        | 10    | Recent match rosters fetched by `fetchRecentRosters` for diversity-violation checks (larger than `ANTI_REPEAT_LOOKBACK` so `getEffectiveLookback` can scale up for large sessions)                                                                                                                                                                 |
+| `MIN_REST_MINUTES`             | 18    | Minimum wait minutes before a returning player (games_played > 0) can be drafted again. Prevents 0-min back-to-back. Falls back to unfiltered pool if fewer than `PLAYERS_PER_MATCH` survive the filter.                                                                                                                                           |
 | `GATE_POOL_THRESHOLD`          | 4     | Pool size that triggers cross-court mixing deferral                                                                                                                                                                                                                                                                                                |
 | `GATE_HOLD_MINUTES`            | 8     | Minutes before gate auto-releases                                                                                                                                                                                                                                                                                                                  |
-| `ON_DECK_LOOKAHEAD`            | 1     | _Deprecated from engine capacity_ — still in `constants.ts`, referenced only by `simulate-engine.ts`. The live engine uses `MAX_AUTO_DRAFTS` instead.                                                                                                                                                                                              |
-| `MAX_ON_DECK_MATCHES`          | 2     | _Deprecated from engine capacity_ — still in `constants.ts`, no longer imported by `matchmaking.ts`. Superseded by `MAX_AUTO_DRAFTS`.                                                                                                                                                                                                              |
 | `MIN_FREE_POOL_FOR_ON_DECK`    | 4     | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards)                                                                                                                                                                                                                                      |
 | `MAX_AUTO_DRAFTS`              | 3     | **Tiered draft cap — small session** (< 25 waiting players). Counts only `is_published=false` drafts. Published on-deck matches do NOT count — they are already reviewed and should not block fresh draft generation. |
 | `MAX_AUTO_DRAFTS_LARGE`        | 5     | Tiered draft cap — medium session (25–29 waiting players).                                                                                                                                                          |
@@ -376,6 +413,7 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `DRAFT_CAP_LARGE_THRESHOLD`    | 25    | Waiting player count at which the cap upgrades from 3 → 5.                                                                                                                                                         |
 | `DRAFT_CAP_XLARGE_THRESHOLD`   | 30    | Waiting player count at which the cap upgrades from 5 → 6.                                                                                                                                                         |
 | `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                              |
+| `MAX_OPPONENT_REPEATS`         | 3     | **Soft** cap on cross-net (opponent) appearances per session pair. Preference only — snakeDraft/rotatedDraft try to avoid it but degrade gracefully (never a stall).                                                |
 | `MAX_BADMINTON_SCORE`          | 31    | Maximum valid score per game. Enforced server-side via `scoreSchema` in `src/lib/schemas/match.ts` (canonical) and client-side in `use-score-form.ts` + `use-edit-match.ts`. **Draws (equal scores) rejected at both layers** via `.refine()` on the schema and explicit `a === b` guard in hooks. |
 
 #### Engine Capacity (`runEngineInternal`) — Dynamic Draft Cap
@@ -450,6 +488,22 @@ Published on-deck matches do **not** count against the cap — they are already 
   - `!matchId` (NULL, no error) → TOCTOU slot-skip, `console.warn`, `{ success: false }` — engine continues to next slot
 
 **⚠️ Scalar-NULL contract:** If the RPC is ever changed to `RETURNS SETOF uuid`, PostgREST wraps `null` as `[]` and the `!matchId` check breaks silently. Do not change the return type without updating `executeMatch`.
+
+---
+
+#### Cross-Court Diversity Drafting (held drafts)
+
+**Files:** `src/lib/matchmaking-core.ts` (pure: `isPullEligible`, `isHeldMatchReady`, `pickEarliestFinishing`, `forcedRepeat` on `AlgorithmResult`, ≤1-pulled guard in `buildCombinationGroup`), `src/lib/matchmaking-db.ts` (`fetchPullablePlayers`, `executeHeldMatch`), `src/app/actions/matchmaking.ts` (engine augmented composition + `recomputeHeldReadiness` + promotion TS-filter), `src/lib/cross-court/derive-held-state.ts`, `src/components/organizer/sortable-card.tsx` (`HeldBadge`). Plan: `CROSS_COURT_DRAFTING_PLAN.md`.
+
+When the waiting pool can only form a **forced repeat** (Tier-3 rotation / last-resort fallback — surfaced via `AlgorithmResult.forcedRepeat`), the engine reaches into a live court for ONE still-playing "pulled body" and pre-builds a **held draft** (3 waiting + 1 playing) to break the repeat.
+
+- **Trigger** (`runEngineInternal` slot loop): fires only when `forcedRepeat && !bypassGate && i > 0 && !anchorIsRedZone`. `fetchPullablePlayers` returns eligible playing bodies (relational cooldown via consecutive-games streak; excludes paused/left/already-held), mapped to `ScoredPlayer` with `priorityScore:-1` so a pulled body **never out-anchors a waiting player (C-3)**. The augmented pool re-runs through `runAlgorithm`; taken only if fresh with **exactly one** pulled body (N-1). Slot 0 stays a ready waiting-only match (keep-courts-fed). Held drafts decrement `estimatedWaiting` by **3** not 4 (C-1).
+- **Held RPC** `create_held_cross_court_match` (migration `20260607000000`): sibling of `create_match_with_players` that admits exactly one `status='playing'` body. Guard 0 split; Guard 1 locks **only the 3 waiting** rows (M-6); Guard 1b reservation (no body in two held drafts); 3 waiting → `drafted`, pulled body's status untouched. NULL = graceful slot-skip.
+- **Readiness** (`recomputeHeldReadiness`, before promote on end/cancel): roster-integrity downgrade (N-2), source-null cancel via `clear_on_deck_match_atomic` (R3-B), stamp `held_ready_at` once source completed AND (≥1 promotion since freed OR `CROSS_COURT_REST_FALLBACK_MINUTES` timer — C-5, no counter column).
+- **Promotion** (`promoteOnDeckMatchInternal`): fetch published pending, pick the front-most **ready** in JS — not-ready held matches skipped so a ready one behind still promotes (skip-and-defer; C-4/R3-A). Never idles a court.
+- **Ghost-availability** (`endMatchAction`): a finishing pulled body of a pending held draft is re-queued as `drafted`, not `waiting` (R3-1) — reservation by construction.
+
+New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (FK `ON DELETE SET NULL`), `held_ready_at timestamptz`, `is_held boolean GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0) STORED`. New constants: `CROSS_COURT_REST_FALLBACK_MINUTES=3`, `MAX_CONSECUTIVE_GAMES_FOR_PULL=2`, `MATCH_REST_GAP_MINUTES=5`. New token: `cc-violet`. **Deferred items** (UI 3-state track, swap auto-downgrade trigger, publish/callNextMatch recompute, staleness escape, RPC `search_path`) tracked in `MEMORY.md`.
 
 ---
 
@@ -675,6 +729,97 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 - RPC returns `true` if the old user is the primary session organizer, preventing deletion of their auth record.
 - **Safety net**: After reconnect, the leaderboard auto-refreshes to reflect the merged identity. Organizer session is preserved if the reconnecting player is an organizer.
 - **Sign-out guard**: `signInAnonymously` is always preceded by `signOut()` to prevent stale sessions from causing identity conflicts.
+- **Column parity (2026-06-08):** `migrate_player_identity` Step 2 now copies **all** profile columns (previously only `id, display_name, skill_level, pin` — which silently dropped `vip_tag`/`vip_theme` on every reconnect, and would drop the new duplicate-name flags). `created_at`/`updated_at` are intentionally left to defaults. Guarded by the schema-drift test `tests/unit/migrate-identity-columns.test.ts`.
+
+---
+
+### 3.8b Duplicate-Name Resolution (forced rename on next login)
+
+**Files:** `src/lib/normalize-name.ts`, `src/lib/dup-name.ts`, `src/lib/rename-gate.ts`, `src/app/actions/rename.ts`, `src/app/actions/auth.ts`, `src/app/actions/queue.ts`, `src/app/rename/page.tsx`, `src/components/player/rename-screen.tsx`. Migrations `20260608000000` (schema + RPCs) and `20260608000001` (unique index). One-shot data fix: `supabase/data-fixes/20260608_duplicate_name_data_fix.sql`.
+
+**Problem:** `display_name` was never globally unique — registration only blocked names *active in a queue*, so two different people (and reconnect-ghost profiles) could share a name, splitting cross-session identity on the leaderboard/history.
+
+**Scope A (lazy/reactive):** fix the true same-person duplicates by **merge**; for genuinely-different people who share a first name, **flag** the non-canonical profiles and force a rename only when they next log in or join. Never-returners stay inert.
+
+**Normalization key (single source of truth):** `normalizeName()` = ASCII space/tab collapse → trim → lower, byte-identical to the SQL `lower(btrim(regexp_replace(display_name, E'[ \t]+', ' ', 'g')))`. Used by registration, the rename gate, the RPC's R1 recheck, and the unique index. Pinned to ASCII (not `\s`) to avoid a JS/Postgres NBSP divergence.
+
+**Two rules:** **R1** — a flagged profile cannot reuse the `collided_name` it was flagged on (persisted; checked per-keystroke + server-side). **R2** — the new name must be unique across all non-flagged profiles. R1 is **not** subsumed by R2: a merge can remove the canonical sibling, after which R2 alone would re-accept the old name (infinite-gate loop) — R1 prevents it.
+
+**Three enforcement layers:**
+
+1. **L1 redirect** — `enforceRenameGate(profile, nextPath)` at the top of `/play` and `/play/[sessionId]` routes a flagged profile to `/rename`. Fast path: zero queries for clean profiles. Grandfathers a player who is currently in a live queue/match; skips active organizers. Redirect-only (no cookie mutation → safe in a Server Component render).
+2. **L2 action gate** — `joinQueueAction` reads `needs_rename` as its first step and returns `requiresRename` (the client routes to `/rename`). The real mutation boundary.
+3. **L3 DB authority** — partial UNIQUE index `idx_profiles_unique_active_name` on the normalized name `WHERE needs_rename = false`. Flagged duplicates are excluded (so they keep their real name until they rename); the instant a rename flips the flag, the new name enters the index. This is the only TOCTOU/cross-instance-safe guard. **Held until the data fix flags duplicates** (it can't build over live collisions).
+
+**`/rename` screen:** `force-dynamic` (flag read fresh per request). Full-screen, non-dismissible. Prefilled with the stem + trailing space; one-tap suffix chips. Validation ladder mirrors the server: shape (Zod) → R1 (per-keystroke, amber guidance) → R2 (debounced async, `fetchSeq`-guarded, red error). a11y: real `<label>`, `aria-invalid`/`aria-busy`/`aria-describedby`, `aria-live` status, focus starts on the heading, every cue is icon + text, `motion-reduce` spinners.
+
+**`rename_player_identity(p_user_id, p_new_name)` RPC:** single transaction — server-side R1 recheck → `UPDATE display_name + needs_rename=false + collided_name=null` (the unique index arbitrates R2; 23505 → `name_taken`) → `player_renames` audit insert. SECURITY DEFINER, pinned `search_path`, granted to `service_role` only (the action derives the user id from the session — no IDOR).
+
+**Registration change:** `signInAnonymously` now enforces global uniqueness (after the returning-player name+PIN→Reconnect check). The already-authed path **upserts** (re-creating a missing profile), which — together with `/` falling through to the login form for an authed-but-profileless user — breaks the profileless redirect loop left by a merged-away ghost.
+
+**Schema:** `profiles.needs_rename boolean NOT NULL DEFAULT false`, `collided_name text`, `flagged_at timestamptz`; partial lookup index `idx_profiles_needs_rename`; audit table `player_renames(id, player_id, old_name, new_name, reason, actor_user_id, session_id, created_at)`.
+
+**Data fix (hand-run, guarded, idempotent):** merge Miggy ghost + Lianne (keep latest PIN), flag the non-canonical Tristan/Bea/Jason (canonical = most completed games, tiebreak earliest), build the unique index, refresh the leaderboard, recompute merge-affected Wrapped.
+
+---
+
+### 3.8c Google OAuth — Sign-in & Account Upgrade
+
+**Files:**
+- `src/app/actions/oauth.ts` — `signInWithGoogle` + `linkWithGoogle` server actions
+- `src/app/auth/callback/route.ts` — PKCE exchange; `intent=link` branch; `ensureOAuthProfile` for fresh sign-ins
+- `src/lib/oauth-provision.ts` — `ensureOAuthProfile` (derive display name → check uniqueness → assign or flag for rename)
+- `src/lib/oauth-name.ts` — `deriveDisplayName` / `sanitizeToDisplayName` (Google name → `[a-zA-Z0-9 ]`, 3–30 chars)
+- `src/components/auth/google-sign-in-button.tsx` — "Continue with Google" button on the login form
+- `src/components/auth/google-link-button.tsx` — compact "Link Google Account" button for the overflow menu
+- `src/components/notifications/google-link-card.tsx` — dismissible upgrade card shown to non-linked players
+
+**Feature flag:** `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED === "true"` gates all three components (each returns `null` when the flag is absent). Inlined at build time — must be set in the Vercel dashboard and a new build triggered to activate in production.
+
+**Required env vars (both Vercel + `.env.local`):**
+- `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` — activates the UI and actions.
+- `NEXT_PUBLIC_SITE_URL=https://badminton-app-dusky-six.vercel.app` — used by `siteUrl()` in `oauth.ts` to build the `redirectTo` URI; falls back to `http://localhost:3000` if absent (causes localhost redirect in production).
+
+**Sign-in flow (fresh user):**
+1. User taps "Continue with Google" → `signInWithGoogle(next?)` → `supabase.auth.signInWithOAuth` → returns provider URL.
+2. Client does `window.location.href = result.url` (full-page PKCE redirect to Google).
+3. Google redirects to `/auth/callback?next=<path>` → `exchangeCodeForSession` → `ensureOAuthProfile` provisions or collides the profile → redirect to `next`.
+
+**Account upgrade flow (anonymous → Google-linked):**
+1. User taps "Link Google Account" (menu or card) → `linkWithGoogle(next?)` → `supabase.auth.linkIdentity` → returns provider URL.
+2. Client navigates to provider URL. After consent Google redirects to `/auth/callback?intent=link&next=<path>`.
+3. Callback detects `intent=link` → skips profile provisioning (name already set) → redirects to `next`.
+4. The user's `auth.uid()` is **unchanged** — all queue entries, match history, and display name are preserved.
+5. On next page load `user.identities?.some(i => i.provider === "google")` returns `true` → all upgrade surfaces disappear.
+
+**Prerequisite — Supabase dashboard settings:**
+- Google provider enabled (Authentication → Providers → Google) with OAuth client ID + secret.
+- Site URL set to the production URL.
+- Redirect URL `https://<project>.supabase.co/auth/v1/callback` added in Google Cloud Console.
+- "Allow manual linking" toggle **enabled** (Authentication → Providers → scroll to bottom). Without it, `linkIdentity` returns `"Manual Linking is disabled"`.
+
+**Four upgrade surfaces (all flag-gated, all hidden when `hasGoogleLinked`):**
+
+| Surface | Component | Location | Prop |
+|---------|-----------|----------|------|
+| Login form (top) | `GoogleSignInButton` with `dividerPosition="below"` | `src/components/login-form.tsx` — above tab control, NEW PLAYER panel only | `next="/play"` or `"/play/[id]"` |
+| Overflow menu | `GoogleLinkButton` | `src/components/player/player-dashboard.tsx` | `next="/play/[sessionId]"` |
+| My Status card | `GoogleLinkCard` (dismissible) | `src/components/player/my-status-tab.tsx` | `next="/play/[sessionId]"` |
+| Session picker | `GoogleLinkCard` | `src/app/play/page.tsx` | `next="/play"` |
+
+**`GoogleSignInButton` — `dividerPosition` prop:**
+- `"above"` (default): divider renders ABOVE the button (original position — button at bottom of a form).
+- `"below"`: divider renders BELOW the button with extra `pt-6 pb-2` breathing room (button at top of a form, divider separates it from the form beneath). The `divider` constant is defined after the `if (!enabled) return null` guard so there is no orphaned JSX when the flag is off.
+
+**`GoogleLinkCard` — `next` prop:**
+- Accepts any return path string (e.g. `"/play"`, `"/play/abc-123"`). The previous `sessionId` prop was removed.
+- SSR-safe: initial state `"idle"` → `useEffect` reads `localStorage["google-link-card-dismissed"]` → transitions to `"visible"` or stays hidden. Prevents hydration mismatch.
+
+**`hasGoogleLinked` — data flow:**
+- `src/app/play/[sessionId]/page.tsx` and `src/app/play/page.tsx` both compute `const hasGoogleLinked = user.identities?.some(i => i.provider === "google") ?? false;` after `auth.getUser()`.
+- Threaded as a prop from the server page component down to `PlayerDashboard` → `MyStatusTab`.
+
+**Deferred (Phase 3):** `/auth/callback` has a stub for `error_code=identity_already_exists` — this fires when a Google account is already linked to a *different* anonymous user. The correct resolution is `migrate_player_identity(existingUserId, currentUserId)`, but the wiring is not yet built.
 
 ---
 

@@ -57,6 +57,8 @@
   --color-cc-amber-dim: var(--cc-amber-dim);
   --color-cc-blue: var(--cc-blue);
   --color-cc-blue-dim: var(--cc-blue-dim);
+  --color-cc-violet: var(--cc-violet);
+  --color-cc-violet-dim: var(--cc-violet-dim);
   --color-cc-red: var(--cc-red);
   --color-cc-red-dim: var(--cc-red-dim);
   --color-cc-streak: var(--cc-streak);
@@ -123,6 +125,9 @@
     --cc-amber-dim: oklch(0.58 0.18 62 / 0.12);
     --cc-blue: oklch(0.48 0.2 255);
     --cc-blue-dim: oklch(0.48 0.2 255 / 0.12);
+    /* Cross-court "held / diverse" identity (Phase 7) — distinct from amber/teal/blue. Darker for white-bg contrast. */
+    --cc-violet: oklch(0.5 0.2 290);
+    --cc-violet-dim: oklch(0.5 0.2 290 / 0.12);
     --cc-red: oklch(0.52 0.22 25);
     --cc-red-dim: oklch(0.52 0.22 25 / 0.1);
     --cc-streak: oklch(0.64 0.22 38);
@@ -189,6 +194,9 @@
     --cc-amber-dim: oklch(0.78 0.17 62 / 0.14);
     --cc-blue: oklch(0.65 0.19 255);
     --cc-blue-dim: oklch(0.65 0.19 255 / 0.14);
+    /* Cross-court "held / diverse" identity (Phase 7) — distinct from amber/teal/blue. */
+    --cc-violet: oklch(0.64 0.19 290);
+    --cc-violet-dim: oklch(0.64 0.19 290 / 0.16);
     --cc-red: oklch(0.65 0.21 25);
     --cc-red-dim: oklch(0.65 0.21 25 / 0.1);
     --cc-streak: oklch(0.72 0.22 38);

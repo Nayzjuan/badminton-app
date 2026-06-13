@@ -32,6 +32,7 @@ import { useOrganizerBroadcast } from "@/hooks/use-organizer-broadcast";
 import { useMatchAlerts } from "@/hooks/use-match-alerts";
 import { NotificationEnrollment } from "@/components/notifications/notification-enrollment";
 import { InstallPrompt } from "@/components/notifications/install-prompt";
+import { GoogleLinkButton } from "@/components/auth/google-link-button";
 import { MatchAlert } from "./match-alert";
 import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
@@ -57,6 +58,8 @@ import type { Profile, Session } from "@/types/database";
 interface PlayerDashboardProps {
   profile: Profile;
   session: Session;
+  /** True when the user's Supabase identity list includes a Google provider. */
+  hasGoogleLinked: boolean;
 }
 
 type Tab = "status" | "courts" | "waitlist" | "leaderboard";
@@ -68,7 +71,7 @@ const TABS: { key: Tab; label: string; icon: typeof User }[] = [
   { key: "leaderboard", label: "Leaderboard", icon: Trophy },
 ];
 
-export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
+export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDashboardProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("status");
   const [pinVisible, setPinVisible] = useState(false);
@@ -254,6 +257,41 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                         <ThemeToggle className="text-muted-foreground hover:text-foreground hover:bg-muted" />
                       </div>
 
+                      {/* Google account status row */}
+                      {hasGoogleLinked ? (
+                        <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border">
+                          <svg
+                            className="h-3.5 w-3.5 shrink-0"
+                            viewBox="0 0 24 24"
+                            aria-hidden="true"
+                          >
+                            <path
+                              fill="#4285F4"
+                              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1Z"
+                            />
+                            <path
+                              fill="#34A853"
+                              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
+                            />
+                            <path
+                              fill="#FBBC05"
+                              d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z"
+                            />
+                            <path
+                              fill="#EA4335"
+                              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38Z"
+                            />
+                          </svg>
+                          <span className="text-[11px] text-muted-foreground">
+                            Google · Connected
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="px-3 py-2.5 border-b border-border">
+                          <GoogleLinkButton next={`/play/${session.id}`} />
+                        </div>
+                      )}
+
                       <div className="px-3 py-2.5 border-b border-border">
                         <SignOutButton variant="text" />
                       </div>
@@ -391,6 +429,7 @@ export function PlayerDashboard({ profile, session }: PlayerDashboardProps) {
                   matchLoading={matchLoading}
                   joinQueue={joinQueue}
                   leaveQueue={leaveQueue}
+                  hasGoogleLinked={hasGoogleLinked}
                 />
               </div>
             )}

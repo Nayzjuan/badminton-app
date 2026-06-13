@@ -56,6 +56,10 @@ function makeMatch(
     created_at: new Date().toISOString(),
     started_at: null,
     completed_at: null,
+    pulled_player_ids: [],
+    pulled_from_match_id: null,
+    held_ready_at: null,
+    is_held: false,
   };
 }
 
@@ -76,6 +80,9 @@ function makeProfile(id: string, displayName = "Player"): Profile {
     pin: null,
     vip_tag: null,
     vip_theme: null,
+    needs_rename: false,
+    collided_name: null,
+    flagged_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };

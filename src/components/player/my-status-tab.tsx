@@ -4,12 +4,13 @@
 // MyStatusTab + QueueSubTab — player queue/history combined view
 // ============================================================
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { PauseCircle } from "lucide-react";
 import { toast } from "sonner";
 import { QueueStatus } from "./queue-status";
 import { OnDeckAlert } from "./on-deck-alert";
 import { MatchHistory } from "./match-history";
+import { GoogleLinkCard } from "@/components/notifications/google-link-card";
 import type { useQueue } from "@/hooks/use-queue";
 import type { usePlayerMatch } from "@/hooks/use-player-match";
 import type { Profile, Session } from "@/types/database";
@@ -33,6 +34,8 @@ interface MyStatusTabProps {
   matchLoading: boolean;
   joinQueue: () => Promise<{ error?: string }>;
   leaveQueue: () => Promise<{ error?: string }>;
+  /** Whether the player has a Google identity linked. Drives upgrade prompts. */
+  hasGoogleLinked: boolean;
 }
 
 type SubTab = "queue" | "history";
@@ -51,6 +54,7 @@ export function MyStatusTab({
   matchLoading,
   joinQueue,
   leaveQueue,
+  hasGoogleLinked,
 }: MyStatusTabProps) {
   const [subTab, setSubTab] = useState<SubTab>("queue");
 
@@ -70,6 +74,13 @@ export function MyStatusTab({
 
   return (
     <div className="space-y-5">
+      {/* ── Google upgrade soft-prompt (anonymous players only) ── */}
+      {!hasGoogleLinked && (
+        <Suspense>
+          <GoogleLinkCard next={`/play/${session.id}`} />
+        </Suspense>
+      )}
+
       {/* Sub-tabs: Queue / History */}
       <div className="flex rounded-xl bg-slate-100 dark:bg-muted p-1">
         <button

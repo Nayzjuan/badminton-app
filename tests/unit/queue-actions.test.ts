@@ -85,11 +85,19 @@ function makeBuilder(response: MockResponse) {
 /**
  * Creates a mock Supabase client whose from() calls consume
  * responses in order. auth.getUser() always returns a valid user.
+ *
+ * joinQueueAction now runs a needs_rename gate query (the duplicate-name L2
+ * check) as its FIRST from() call, so we auto-inject that response ahead of the
+ * caller's responses. Pass opts.needsRename=true to exercise the gate.
  */
-function makeMockClient(fromResponses: MockResponse[]) {
+function makeMockClient(fromResponses: MockResponse[], opts?: { needsRename?: boolean }) {
+  const responses: MockResponse[] = [
+    { data: { needs_rename: opts?.needsRename ?? false }, error: null },
+    ...fromResponses,
+  ];
   let idx = 0;
   const from = vi.fn((_table: string) => {
-    const res = fromResponses[idx++] ?? { data: null, error: null };
+    const res = responses[idx++] ?? { data: null, error: null };
     return makeBuilder(res);
   });
   const auth = {
@@ -129,8 +137,8 @@ describe("joinQueueAction — active-match guard", () => {
 
     expect(result.error).toBeDefined();
     expect(result.error).toMatch(/currently in a match/i);
-    // Only one from() call (the existing-row fetch); floor query never ran
-    expect(mock.from).toHaveBeenCalledTimes(1);
+    // Two from() calls: needs_rename gate + existing-row fetch; floor never ran.
+    expect(mock.from).toHaveBeenCalledTimes(2);
   });
 
   it('returns an error and does NOT re-queue a player whose status is "playing"', async () => {
@@ -144,8 +152,8 @@ describe("joinQueueAction — active-match guard", () => {
 
     expect(result.error).toBeDefined();
     expect(result.error).toMatch(/currently in a match/i);
-    // Guard fires before any other DB call
-    expect(mock.from).toHaveBeenCalledTimes(1);
+    // needs_rename gate + existing-row fetch, then the guard fires.
+    expect(mock.from).toHaveBeenCalledTimes(2);
   });
 
   it('allows re-join when existing status is "left" (returning player)', async () => {
@@ -177,6 +185,19 @@ describe("joinQueueAction — active-match guard", () => {
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
+  });
+
+  it("blocks a flagged duplicate with requiresRename before any join logic (L2 gate)", async () => {
+    // needs_rename=true → gate returns immediately; no existing-row/floor/insert.
+    const mock = makeMockClient([], { needsRename: true });
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+
+    const result = await joinQueueAction(SESSION_ID);
+
+    expect(result.requiresRename).toBe(true);
+    expect(result.success).toBe(false);
+    // Only the gate query ran — nothing downstream.
+    expect(mock.from).toHaveBeenCalledTimes(1);
   });
 
   it("allows first-time joiner (no existing row) to proceed", async () => {
@@ -215,8 +236,8 @@ describe("joinQueueAction — Inherited Games floor", () => {
 
     // Should succeed — floor was applied
     expect(result.error).toBeUndefined();
-    // Three from() calls: existing fetch → floor query → update
-    expect(mock.from).toHaveBeenCalledTimes(3);
+    // Four from() calls: needs_rename gate → existing fetch → floor query → update
+    expect(mock.from).toHaveBeenCalledTimes(4);
   });
 
   it("preserves existing games_played when it is already above the floor", async () => {
