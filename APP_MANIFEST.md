@@ -1087,6 +1087,33 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 
 ---
 
+### 3.23a Match Provenance & Modification Audit (2026-06-17)
+
+**Branch `feat/match-provenance-audit` — built, not yet applied/merged.** Replaces the flat `matches.origin` enum with an auditable 3-layer model so every match's birth + every roster change is known.
+
+**Files:** `src/lib/match-provenance.ts` (pure logic), `src/lib/match-event-log.ts` (best-effort), `src/app/actions/match-events.ts` (reads), `src/components/organizer/match-event-timeline.tsx` (UI), migrations `20260617000000` (additive) + `20260617000001` (origin drop).
+
+**Data model:**
+
+| Layer | Column / table | Meaning |
+|---|---|---|
+| Birth (immutable) | `matches.created_method` | `auto` \| `manual` \| `held` — never overwritten |
+| Rollup | `matches.modification_count` | composition changes net of undos; `provenance_backfilled` marks pre-cutover rows |
+| Ultimate label | `matches.final_classification` | GENERATED: `created_method \|\| (count>0 ? '_modified' : '_clean')` → 6 values |
+| Full trail | `match_events` (append-only) | one row per organizer ACTION; JSONB movements; snapshotted actor/player names; `correlation_id` ties cross-match legs; `reverses_event_id` for undo; `ON DELETE SET NULL` + snapshots survive deletion |
+
+**How counting works:** the `record_match_event` RPC (called from inside every composition RPC under the match row lock) computes per-match `seq`, inserts the event, and applies the delta (`roster_swap`/`team_flip`/`ondeck_pull`/`player_left` = +1, `undo` = −1, else 0). The old `WHERE origin='auto'` guard is removed — composition changes count on auto/manual/held alike, so `manual_modified` is now real. **Undo correctness:** the two live undo paths re-call the forward RPC with `p_is_undo:true` → records an `undo` (−1), not a second forward (+1), so net counting and partial-undo are correct.
+
+**Cross-match:** the on-deck pull and the cross-match draft swap each write **two correlated rows** (+1 per match). Score edits / reverts / cancels are logged (best-effort, server-action) but never count.
+
+**Origin retirement (B-clean):** migration 1's RPCs are origin-free; the badge (`MatchOriginTag`) + `v_match_history` move to `final_classification`; migration 2 rebuilds the view chain and `DROP COLUMN origin`. The `match_origin` ENUM type is retained (vestigial — `p_origin` params still map to `created_method`).
+
+**Backfill:** birth method is recovered exactly for all existing matches (sticky rule: `origin='modified'` ⇒ born auto; `is_held` ⇒ held), so "% auto vs manual vs held" is accurate retroactively. `manual_modified` is unrecoverable for history (accurate only going forward); legacy modified rows get `modification_count=1` floor.
+
+**⚠ Migrations NOT applied to prod** (apply order: mig1 → deploy app → mig2). Deferred best-effort items: `player_left`/`published` events on leaver/clear/publish paths (zero metric impact — those matches cancel). See MEMORY.md + `MATCH_PROVENANCE_AUDIT_PLAN.md`.
+
+---
+
 ### 3.23 Security Hardening & Quality Improvements (2026-06-02)
 
 A systematic audit was applied and all confirmed findings were resolved. Key architectural changes that affect future development:

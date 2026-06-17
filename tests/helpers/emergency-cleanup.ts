@@ -84,7 +84,7 @@ async function run() {
   // Matches with their players
   const { data: matches } = await db
     .from("matches")
-    .select("id, status, origin, is_published, team_a_score, team_b_score")
+    .select("id, status, created_method, is_published, team_a_score, team_b_score")
     .eq("session_id", sessionId);
 
   const matchIds = (matches ?? []).map((m) => m.id);

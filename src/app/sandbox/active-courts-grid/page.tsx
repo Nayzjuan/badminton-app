@@ -110,7 +110,7 @@ function CourtCardMock({ court }: { court: (typeof COURTS)[number] }) {
               Mixed Level
             </span>
           )}
-          {court.id === "c3" && <MatchOriginTag origin="manual" />}
+          {court.id === "c3" && <MatchOriginTag classification="manual_clean" />}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {isActive && (

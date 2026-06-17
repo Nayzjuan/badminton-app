@@ -5,6 +5,52 @@
 
 ---
 
+## 🆕 MATCH PROVENANCE & MODIFICATION AUDIT — branch `feat/match-provenance-audit` (2026-06-17)
+
+**Status: BUILT, NOT applied to prod, NOT merged.** tsc clean · 571 unit tests pass (1 skip) · `next build` clean. Plan + adversarial review: `MATCH_PROVENANCE_AUDIT_PLAN.md` (§14 has the hardening + locked decisions). Implementation review gate: see end of this section.
+
+**Problem solved:** the flat `matches.origin` enum (auto|manual|modified) collapsed every modification into one tag with ZERO audit trail (no who/what/when/order). Replaced with a 3-layer model.
+
+### The model
+- **Birth (immutable):** `matches.created_method` ∈ {auto, manual, held}. Never overwritten. (held was previously stamped origin='auto' — now distinct.)
+- **Rollup:** `matches.modification_count` int (composition changes net of undos), `provenance_backfilled` bool (pre-cutover rows: floored count, no trail).
+- **Ultimate label:** `matches.final_classification` GENERATED ALWAYS AS `created_method || (count>0 ? '_modified' : '_clean')` → 6 values (auto_clean … held_modified).
+- **Full trail:** `match_events` append-only table (match_id/session_id ON DELETE SET NULL + *_snapshot cols so trail survives deletion). One row per organizer ACTION; movements in JSONB; actor_id + actor_name SNAPSHOT (durable vs profile merges); `correlation_id` ties cross-match legs; `reverses_event_id` for undo. RLS: organizers SELECT only, no insert/update/delete policy (RPC/service-role writes only).
+
+### Key files
+- **NEW** `src/lib/match-provenance.ts` — pure logic (deriveFinalClassification, backfillProvenance, modificationDelta, movement builders) + `tests/unit/match-provenance.test.ts` (21 tests, MP-CLS/BF/CNT/MOV).
+- **NEW** `src/lib/match-event-log.ts` — best-effort `logMatchEvent` (score_edit/revert/cancelled — never throws, never counts).
+- **NEW** `src/app/actions/match-events.ts` — `getMatchEvents` (organizer-gated trail read) + `getSessionProvenance` (completed-only % summary).
+- **NEW** `src/components/organizer/match-event-timeline.tsx` — lazy-loaded per-match trail in match-history-panel; empty-state for pre-cutover.
+- **Migration 1** `20260617000000_match_provenance_audit.sql` — columns + backfill + generated col + match_events + RLS + `record_match_event` helper (seq under caller's lock + counter delta) + redefines 9 composition RPCs (DROP+CREATE, +p_actor params, +event writes; live swaps +p_is_undo). **RPCs are origin-FREE** (no insert/flip) so migration 2 can drop the column without rewriting them. Idempotent.
+- **Migration 2** `20260617000001_drop_match_origin.sql` — rebuilds v_match_history → v_session_leaderboard → v_alltime_leaderboard_mat chain (origin→created_method/final_classification) + DROP COLUMN origin. Keeps `match_origin` TYPE (vestigial; p_origin params still use it). **Apply AFTER app deploy.**
+- `src/types/database.ts` — MatchOrigin retained for p_origin; Match drops origin, gains the 4 cols; new MatchEvent type + match_events table reg + record_match_event fn reg.
+- Badge `match-origin-tag.tsx` → `classification` prop (6-value: Manual/Held/·Edited). 5 call sites repointed to `match.final_classification`.
+
+### Critical correctness decisions (LOCKED by user)
+- **Undo = net accounting:** the 2 live undo paths re-call the FORWARD RPC with `p_is_undo:true` → records 'undo' (−1) not a 2nd forward (+1). Fixes the over-count the plan review (B1) caught. Decrement by exactly 1 (never reset) → partial-undo (2 swaps, undo 1) correctly stays modified.
+- **Composition counts in ALL phases** (draft/active/post_completion); the old `WHERE origin='auto'` guard is GONE → `manual_modified` is now trackable. Score/revert never count.
+- **Cross-match (on-deck pull + cross-match draft swap) = 2 correlated rows**, +1 each match.
+- **Full audit:** leaver/cancel via events — `cancelMatchAction` wired; **DEFERRED (best-effort gap):** organizer-kick `remove_player_from_queue_organizer`, self-checkout `checkout_player_cleanup_drafts`, `clear_*` — these always CANCEL the match (excluded from completed metrics) so low-value; not yet logged.
+
+### Backfill (existing ~541 prod matches — 62% manual, 31% auto, 7% modified, 0 held, 55 cancelled)
+- created_method recovered EXACTLY for birth (sticky rule: origin='modified' ⇒ born auto; is_held ⇒ held). "% auto vs manual vs held" accurate retroactively.
+- **manual_modified UNRECOVERABLE** (sticky kept swapped-manual at origin='manual') → ~335 manual matches read manual_clean; accurate only going forward. modification_count=1 floor for legacy modified rows (COUNT-safe, SUM-unsafe → `provenance_backfilled` marks them).
+
+### Implementation review gate (2026-06-17): **Minor issues → acceptable pass**
+3-dimension independent review (SQL / TS / plan-conformance) — NO blockers, NO true bugs. Fixes folded: **L4** wrapped the `created` event PERFORM in `BEGIN/EXCEPTION` in both create RPCs (an audit defect can't roll back matchmaking); **L3** rewrote the stale `MatchOrigin` doc comment; **M1/comments** corrected `match-event-log.ts` to stop overclaiming leaver coverage; **L5** documented the `record_match_event` service_role-only GRANT (reached via SECURITY DEFINER composition). Remaining minor items DEFERRED + documented (below).
+
+### ⚠ NOT DONE / NEXT
+- **Migrations NOT applied** (no local Postgres; needs Supabase branch validation OR prod apply with go-ahead). Apply order: mig1 → deploy app → mig2.
+- **DEFERRED — leaver/clear events (M1):** `player_left`/`cancelled` from `checkout_player_cleanup_drafts`, `remove_player_from_queue_organizer`, `clear_on_deck_match_atomic`, `clear_all_unpublished_drafts` are plumbed (type + DB CHECK + delta) but NOT emitted. All those paths CANCEL the draft → excluded from completed metrics → zero analytics impact; only the trail entry is missing. Wiring needs per-RPC affected-id handling (some RPCs return void → need a pre-query).
+- **DEFERRED — `published` event (L2):** never emitted (publish actions raw-update `is_published`). Non-counting; timeline just won't show the publish step.
+- **DEFERRED — `reverses_event_id` (L1):** column + RPC params exist but undo call sites pass NULL (forward actions don't return the emitted event id through `undoContext`). Counting is still correct (undo=−1); only the explicit reversed-event link is absent.
+- Integration suite `manual-and-swap.test.ts` migrated to new model (assertions flipped: swapped-manual → manual_modified) but needs a LIVE-DB run to confirm (not in unit CI).
+- Session provenance summary action built (`getSessionProvenance`) but not yet surfaced in a dashboard component.
+- `match_origin` ENUM type intentionally retained (vestigial; p_origin params). Future cleanup: retype p_origin→text, then `DROP TYPE`.
+
+---
+
 ## 🆕 GOOGLE OAUTH — RE-LOGIN + LINKED-STATE BUG FIXES (2026-06-10, Session 3)
 
 **Status: COMPLETE ✅** — tsc/lint (changed files)/build clean. Review gate: **Minor issues → addressed**.

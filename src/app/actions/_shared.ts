@@ -88,3 +88,22 @@ export async function isSessionOrganizer(userId: string, sessionId: string): Pro
 
   return !!membership;
 }
+
+/**
+ * Resolves the actor context for a match audit event: the organizer's profile
+ * id (= auth user id) and their current display_name snapshot. The name is
+ * looked up via the service client (the auth user carries no display_name).
+ * Returns null name when the profile can't be resolved — the event still
+ * records with a null actor_name rather than failing.
+ */
+export async function getActorContext(
+  userId: string
+): Promise<{ id: string; name: string | null }> {
+  const svc = createServiceClient();
+  const { data: profile } = await svc
+    .from("profiles")
+    .select("display_name")
+    .eq("id", userId)
+    .maybeSingle();
+  return { id: userId, name: profile?.display_name ?? null };
+}

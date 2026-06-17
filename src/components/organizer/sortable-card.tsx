@@ -317,7 +317,7 @@ export function SortableCard({
                   Mixed Level
                 </span>
               )}
-              <MatchOriginTag origin={match.origin} />
+              <MatchOriginTag classification={match.final_classification} />
               <HeldBadge match={match} />
             </div>
             <span
@@ -450,7 +450,7 @@ export function OverlayCard({
                 Mixed Level
               </span>
             )}
-            <MatchOriginTag origin={match.origin} />
+            <MatchOriginTag classification={match.final_classification} />
           </div>
           <span
             className={["text-xs font-medium shrink-0", isDraft ? "text-cc-t3" : "text-cc-t2"].join(
