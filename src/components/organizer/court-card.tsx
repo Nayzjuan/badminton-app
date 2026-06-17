@@ -194,7 +194,7 @@ export function CourtCard({
                   Mixed Level
                 </span>
               )}
-              {match && <MatchOriginTag origin={match.origin} />}
+              {match && <MatchOriginTag classification={match.final_classification} />}
             </div>
           </div>
           {/* Right group — timer on top, status badge below (column) */}

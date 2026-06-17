@@ -17,6 +17,7 @@ import { MatchTimer } from "@/components/ui/match-timer";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import { EditMatchDialog } from "./edit-match-dialog";
 import { FixRecordSheet } from "./fix-record-sheet";
+import { MatchEventTimeline } from "./match-event-timeline";
 import { useMatchHistory } from "@/hooks/use-match-history";
 
 interface MatchHistoryPanelProps {
@@ -145,7 +146,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                         &middot; {match.courtName}
                       </span>
                     )}
-                    <MatchOriginTag origin={match.origin} />
+                    <MatchOriginTag classification={match.final_classification} />
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400 dark:text-muted-foreground">
@@ -226,7 +227,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                       Mixed Level
                     </span>
                   )}
-                  <MatchOriginTag origin={match.origin} />
+                  <MatchOriginTag classification={match.final_classification} />
                 </div>
                 <div className="flex items-center gap-3">
                   {/* Static game-duration timer */}
@@ -325,6 +326,15 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                       </div>
                     ))}
                   </div>
+                </div>
+
+                {/* Provenance / modification trail */}
+                <div className="mt-3 border-t border-slate-100 pt-3 dark:border-border">
+                  <MatchEventTimeline
+                    matchId={match.id}
+                    sessionId={sessionId}
+                    preCutover={match.provenance_backfilled}
+                  />
                 </div>
               </div>
             </div>

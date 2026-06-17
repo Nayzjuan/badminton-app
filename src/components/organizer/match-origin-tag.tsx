@@ -1,44 +1,72 @@
 // ============================================================
-// MatchOriginTag — inline label for non-auto match origins
+// MatchOriginTag — inline provenance label for a match
 // ============================================================
-// Design rationale:
-//   • auto  → renders nothing  (the 90%+ default; silence = no noise)
-//   • manual → amber label     (matches the app's amber = organizer action)
-//   • modified → muted label   (informational; engine match that was edited)
+// Drives off `final_classification` (created_method × modified?). Design:
+//   • auto (clean)    → renders nothing  (the silent default; no noise)
+//   • manual          → amber "Manual"   (amber = organizer action)
+//   • held            → violet "Held"    (cross-court held draft; matches cc-violet)
+//   • …_modified      → appends a muted "· Edited" suffix
 //
-// Typography-only: no icons, no badges, no borders. A 10px
-// font-black ALL-CAPS label with generous tracking — readable
-// at a glance on a court card without fighting for attention.
+// Typography-only: no icons, no borders. A 10px font-black ALL-CAPS label.
 // ============================================================
 
-import type { MatchOrigin } from "@/types/database";
+import type { MatchClassification, MatchCreatedMethod } from "@/types/database";
 
 type Props = {
-  origin: MatchOrigin;
+  classification: MatchClassification;
 };
 
-export function MatchOriginTag({ origin }: Props) {
-  // Silent default — auto is by far the most common case. Rendering
-  // nothing here means the card stays clean for the vast majority of matches.
-  if (origin === "auto") return null;
+function parse(c: MatchClassification): { method: MatchCreatedMethod; modified: boolean } {
+  const modified = c.endsWith("_modified");
+  const method = c.replace(/_(clean|modified)$/, "") as MatchCreatedMethod;
+  return { method, modified };
+}
 
-  const isManual = origin === "manual";
+export function MatchOriginTag({ classification }: Props) {
+  const { method, modified } = parse(classification);
+
+  // Silent default — a clean auto match is by far the most common case.
+  if (method === "auto" && !modified) return null;
+
+  const base = "text-[10px] font-black uppercase tracking-[0.16em] leading-none";
+
+  // The primary label reflects how the match was BORN.
+  let label: string | null = null;
+  let labelClass = "";
+  let title = "";
+  if (method === "manual") {
+    label = "Manual";
+    labelClass = "text-amber-600 dark:text-amber-400";
+    title = "Manually composed";
+  } else if (method === "held") {
+    label = "Held";
+    labelClass = "text-violet-600 dark:text-violet-400";
+    title = "Cross-court held draft";
+  }
+
+  const aria = [
+    method === "manual"
+      ? "Manually composed match"
+      : method === "held"
+        ? "Cross-court held draft"
+        : "Engine match",
+    modified ? "edited after creation" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
-    <span
-      className={
-        isManual
-          ? "text-[10px] font-black uppercase tracking-[0.16em] leading-none text-amber-600 dark:text-amber-400"
-          : "text-[10px] font-black uppercase tracking-[0.16em] leading-none text-muted-foreground"
-      }
-      aria-label={
-        isManual
-          ? "Manually composed match"
-          : "Engine match edited after creation"
-      }
-      title={isManual ? "Manually composed" : "Edited after creation"}
-    >
-      {isManual ? "Manual" : "Edited"}
+    <span className={`inline-flex items-center gap-1 ${base}`} aria-label={aria}>
+      {label && (
+        <span className={labelClass} title={title}>
+          {label}
+        </span>
+      )}
+      {modified && (
+        <span className="text-muted-foreground" title="Roster edited after creation">
+          {label ? "· Edited" : "Edited"}
+        </span>
+      )}
     </span>
   );
 }

@@ -25,7 +25,7 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
-import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
+import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 
 // ── Return types ──────────────────────────────────────────────
 
@@ -120,12 +120,15 @@ export async function swapPlayerInActiveMatch(
     };
   }
 
+  const actor = await getActorContext(user.id);
   const { error } = await db.rpc("swap_player_in_active_match", {
     p_match_id: matchId,
     p_out_player_id: outPlayerId,
     p_in_player_id: inPlayerId,
     p_session_id: sessionId,
     p_team: outRow.team,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
   });
 
   if (error) {
@@ -203,10 +206,13 @@ export async function swapTeamsInActiveMatch(
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
 
+  const actor = await getActorContext(user.id);
   const { error } = await db.rpc("swap_teams_in_active_match", {
     p_match_id: matchId,
     p_player_a_id: playerAId,
     p_player_b_id: playerBId,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
   });
 
   if (error) {
@@ -273,6 +279,7 @@ export async function swapActiveFromOnDeck(
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
 
+  const actor = await getActorContext(user.id);
   // The RPC returns the original teams via OUT params, needed for undo.
   const { data, error } = await db.rpc("swap_active_from_ondeck", {
     p_active_match_id: activeMatchId,
@@ -281,6 +288,8 @@ export async function swapActiveFromOnDeck(
     p_ondeck_match_id: onDeckMatchId,
     p_fill_player_id: fillPlayerId,
     p_session_id: sessionId,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
   });
 
   if (error) {
@@ -371,11 +380,17 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
     const isOrg = await isSessionOrganizer(user.id, match.session_id);
     if (!isOrg) return { success: false };
 
+    const actor = await getActorContext(user.id);
     // Team swap is self-undoing — call with the same players to swap back.
+    // p_is_undo records an 'undo' event (decrements modification_count) rather
+    // than a second team_flip (which would over-count) — see plan §14 B1.
     const { error } = await db.rpc("swap_teams_in_active_match", {
       p_match_id: ctx.matchId,
       p_player_a_id: ctx.playerAId,
       p_player_b_id: ctx.playerBId,
+      p_actor_id: actor.id,
+      p_actor_name: actor.name,
+      p_is_undo: true,
     });
     if (!error) {
       await broadcastOrganizerIntervention(match.session_id, "active_roster_changed", [
@@ -389,13 +404,18 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
   if (ctx.type === "queue_replacement") {
     const organizer = await isSessionOrganizer(user.id, ctx.sessionId);
     if (!organizer) return { success: false };
-    // Undo: swap the players back (in_player → out_player, out_player → in_player)
+    const actor = await getActorContext(user.id);
+    // Undo: swap the players back (in_player → out_player, out_player → in_player).
+    // p_is_undo records an 'undo' event (decrements) — see plan §14 B1.
     const { error } = await db.rpc("swap_player_in_active_match", {
       p_match_id: ctx.matchId,
       p_out_player_id: ctx.inPlayerId,
       p_in_player_id: ctx.outPlayerId,
       p_session_id: ctx.sessionId,
       p_team: ctx.team,
+      p_actor_id: actor.id,
+      p_actor_name: actor.name,
+      p_is_undo: true,
     });
     if (!error) {
       await broadcastOrganizerIntervention(ctx.sessionId, "active_roster_changed", [
@@ -409,6 +429,7 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
   if (ctx.type === "ondeck_replacement") {
     const organizer = await isSessionOrganizer(user.id, ctx.sessionId);
     if (!organizer) return { success: false };
+    const actor = await getActorContext(user.id);
     const { error } = await db.rpc("undo_swap_active_from_ondeck", {
       p_active_match_id: ctx.activeMatchId,
       p_out_player_id: ctx.outPlayerId,
@@ -418,6 +439,8 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
       p_session_id: ctx.sessionId,
       p_out_team: ctx.outTeam,
       p_ondeck_team: ctx.onDeckTeam,
+      p_actor_id: actor.id,
+      p_actor_name: actor.name,
     });
     if (!error) {
       await broadcastOrganizerIntervention(ctx.sessionId, "active_roster_changed", [

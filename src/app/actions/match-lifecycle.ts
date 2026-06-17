@@ -24,9 +24,11 @@ import { isValidUUID } from "@/lib/validate";
 import {
   getAuthenticatedUser,
   isSessionOrganizer,
+  getActorContext,
   type MatchActionResult,
 } from "@/app/actions/_shared";
 import { scoreSchema } from "@/lib/schemas/match";
+import { logMatchEvent } from "@/lib/match-event-log";
 
 // ============================================================
 // submitMatchScore — player-initiated score submission
@@ -347,7 +349,7 @@ export async function updateMatchDetails(
 
   const { data: match, error: fetchErr } = await db
     .from("matches")
-    .select("id, session_id, court_id, status")
+    .select("id, session_id, court_id, status, team_a_score, team_b_score")
     .eq("id", matchId)
     .single();
 
@@ -360,6 +362,7 @@ export async function updateMatchDetails(
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
+  const actor = await getActorContext(user.id);
 
   if (!revertToActive) {
     // ── Score-only edit ──────────────────────────────────────
@@ -369,6 +372,20 @@ export async function updateMatchDetails(
       .eq("id", matchId);
 
     if (error) return { success: false, message: "Failed to update scores." };
+
+    // Best-effort audit (score edits never count as composition modifications).
+    await logMatchEvent({
+      matchId,
+      sessionId: match.session_id,
+      eventType: "score_edit",
+      phase: "post_completion",
+      actorId: actor.id,
+      actorName: actor.name,
+      payload: {
+        old: { a: match.team_a_score, b: match.team_b_score },
+        new: { a: safeA, b: safeB },
+      },
+    });
     return { success: true, message: "Scores updated." };
   }
 
@@ -456,6 +473,18 @@ export async function updateMatchDetails(
     }
   }
 
+  // Best-effort audit: a revert un-completes a match (players unchanged → never
+  // counts as a composition modification).
+  await logMatchEvent({
+    matchId,
+    sessionId: match.session_id,
+    eventType: "revert",
+    phase: "post_completion",
+    actorId: actor.id,
+    actorName: actor.name,
+    payload: { from_status: match.status },
+  });
+
   return { success: true, message: "Match reverted. Players can re-submit the correct score." };
 }
 
@@ -530,6 +559,18 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       message: "Match was already cancelled or completed by another request.",
     };
   }
+
+  // Best-effort audit: lifecycle cancel (does not count as a composition change).
+  const cancelActor = await getActorContext(user.id);
+  await logMatchEvent({
+    matchId,
+    sessionId: match.session_id,
+    eventType: "cancelled",
+    phase: match.status === "in_progress" ? "active" : "draft",
+    actorId: cancelActor.id,
+    actorName: cancelActor.name,
+    payload: { from_status: match.status },
+  });
 
   // 3. Return players to queue WITHOUT incrementing games_played.
   //    Done BEFORE running the engine so returned players are visible
@@ -618,6 +659,7 @@ export async function createManualMatchAction(
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
+  const actor = await getActorContext(user.id);
 
   const allPlayerIds = [...teamAPlayerIds, ...teamBPlayerIds];
   const svc = createServiceClient();
@@ -669,6 +711,8 @@ export async function createManualMatchAction(
     p_team_b_ids: teamBPlayerIds,
     p_origin: "manual",
     p_is_published: true,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
   });
 
   if (rpcError) {

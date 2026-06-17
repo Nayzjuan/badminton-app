@@ -84,7 +84,7 @@ async function createDraftMatch(sessionId: string, isPublished = false) {
       status: "pending",
       is_published: isPublished,
       is_mixed_level: false,
-      origin: "auto",
+      created_method: "auto",
     })
     .select("id")
     .single();
