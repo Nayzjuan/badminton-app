@@ -31,7 +31,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { closeSession, toggleAutoMatchmaking, setCapAndClearDrafts } from "@/app/actions/sessions";
+import {
+  closeSession,
+  toggleAutoMatchmaking,
+  toggleAutoPublish,
+  setCapAndClearDrafts,
+} from "@/app/actions/sessions";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastDraftCapPhase } from "@/lib/broadcast";
 import { joinQueueAction } from "@/app/actions/queue";
@@ -53,6 +58,8 @@ export interface UseOrganizerDashboardParams {
   sessionIsActive: boolean;
   /** liveSession.is_auto_matchmaking_on — updated via broadcast */
   liveAutoMatchmaking: boolean;
+  /** liveSession.auto_publish — updated via broadcast */
+  liveAutoPublish: boolean;
   /** queue.filter(q => q.is_bottleneck).length */
   bottleneckCount: number;
   /** draftMatches.length */
@@ -92,6 +99,12 @@ export interface UseOrganizerDashboardResult {
   togglingAuto: boolean;
   handleToggleAuto: () => Promise<void>;
 
+  // Auto-publish mode toggle
+  autoPublish: boolean;
+  togglingAutoPublish: boolean;
+  /** enabled = the desired new state. ON triggers the clear-and-refill (D3). */
+  handleToggleAutoPublish: (enabled: boolean) => Promise<void>;
+
   // Draft cap override
   capPhase: CapPhase;
   isDashboardLocked: boolean;
@@ -118,6 +131,7 @@ export function useOrganizerDashboard({
   sessionId,
   sessionIsActive,
   liveAutoMatchmaking,
+  liveAutoPublish,
   bottleneckCount,
   draftCount,
   handleCancelSwap,
@@ -143,6 +157,10 @@ export function useOrganizerDashboard({
   // null = no in-flight toggle; use liveAutoMatchmaking as truth.
   const [pendingAuto, setPendingAuto] = useState<boolean | null>(null);
   const [togglingAuto, setTogglingAuto] = useState(false);
+
+  // ── Auto-publish optimistic toggle (mirrors auto-matchmaking) ──
+  const [pendingAutoPublish, setPendingAutoPublish] = useState<boolean | null>(null);
+  const [togglingAutoPublish, setTogglingAutoPublish] = useState(false);
 
   // ── Click-outside refs ────────────────────────────────────
   const switcherRef = useRef<HTMLDivElement>(null);
@@ -184,6 +202,13 @@ export function useOrganizerDashboard({
       setPendingAuto(null);
     }
   }, [liveAutoMatchmaking, pendingAuto]);
+
+  // ── pendingAutoPublish yield-back (mirrors pendingAuto) ───
+  useEffect(() => {
+    if (pendingAutoPublish !== null && liveAutoPublish === pendingAutoPublish) {
+      setPendingAutoPublish(null);
+    }
+  }, [liveAutoPublish, pendingAutoPublish]);
 
   // ── Esc key cancels swap picking mode ────────────────────
   useEffect(() => {
@@ -259,6 +284,46 @@ export function useOrganizerDashboard({
     }
   }, [sessionId, liveAutoMatchmaking]);
 
+  const handleToggleAutoPublish = useCallback(
+    async (enabled: boolean) => {
+      setTogglingAutoPublish(true);
+      setPendingAutoPublish(enabled); // optimistic
+      try {
+        const result = await toggleAutoPublish(sessionId, enabled);
+        if (result.success) {
+          setPendingAutoPublish(result.isOn);
+          if (result.isOn) {
+            const clearedNote =
+              result.clearedCount && result.clearedCount > 0
+                ? ` Cleared ${result.clearedCount} draft${result.clearedCount !== 1 ? "s" : ""}.`
+                : "";
+            toast.success("Auto-publish ON", {
+              description: `New matches skip review and go straight to On Deck.${clearedNote}`,
+              position: "bottom-right",
+              duration: 3_000,
+            });
+          } else {
+            toast("Auto-publish OFF", {
+              description: "New matches return to draft review. On-deck matches stay live.",
+              position: "bottom-right",
+              duration: 3_000,
+            });
+          }
+        } else {
+          setPendingAutoPublish(null);
+          toast.error(result.message ?? "Failed to toggle auto-publish.");
+        }
+      } catch (err) {
+        console.error("[handleToggleAutoPublish] unexpected throw:", err);
+        setPendingAutoPublish(null);
+        toast.error("Failed to toggle auto-publish. Please try again.");
+      } finally {
+        setTogglingAutoPublish(false);
+      }
+    },
+    [sessionId]
+  );
+
   const joinQueue = useCallback(async () => {
     try {
       const result = await joinQueueAction(sessionId);
@@ -323,6 +388,7 @@ export function useOrganizerDashboard({
   // Show the optimistic value during the server round-trip, then
   // yield back to the authoritative liveAutoMatchmaking once confirmed.
   const autoMatchmaking = pendingAuto ?? liveAutoMatchmaking;
+  const autoPublish = pendingAutoPublish ?? liveAutoPublish;
 
   const tabs: TabConfig[] = isClosed
     ? [
@@ -365,6 +431,9 @@ export function useOrganizerDashboard({
     autoMatchmaking,
     togglingAuto,
     handleToggleAuto,
+    autoPublish,
+    togglingAutoPublish,
+    handleToggleAutoPublish,
     capPhase,
     isDashboardLocked,
     handleCapChange,

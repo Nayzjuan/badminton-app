@@ -21,6 +21,7 @@ import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
 import { getSessionForOrganizer } from "@/app/actions/sessions";
 import type {
   AutoMatchmakingToggledPayload,
+  AutoPublishToggledPayload,
   CapSaturationPayload,
   DraftCapPhasePayload,
 } from "@/lib/broadcast";
@@ -124,10 +125,11 @@ export function useOrganizerSession(
           filter: `id=eq.${sessionId}`,
         },
         (payload) => {
-          // Apply all session field changes EXCEPT is_auto_matchmaking_on.
-          // That field is synced via Broadcast so co-organizers also receive it.
+          // Apply all session field changes EXCEPT is_auto_matchmaking_on and
+          // auto_publish. Those are synced via Broadcast so co-organizers (who
+          // are blocked by the sessions RLS SELECT policy) also receive them.
           const next = payload.new as Partial<Session>;
-          const { is_auto_matchmaking_on: _, ...rest } = next;
+          const { is_auto_matchmaking_on: _a, auto_publish: _p, ...rest } = next;
           setSession((prev) => ({ ...prev, ...rest }));
         }
       )
@@ -142,6 +144,13 @@ export function useOrganizerSession(
         setSession((prev) => ({
           ...prev,
           is_auto_matchmaking_on: payload.isOn,
+        }));
+      },
+      onAutoPublishToggled: (payload: AutoPublishToggledPayload) => {
+        ++fetchSessionSeq.current;
+        setSession((prev) => ({
+          ...prev,
+          auto_publish: payload.isOn,
         }));
       },
       onCapSaturation: (payload: CapSaturationPayload) => {

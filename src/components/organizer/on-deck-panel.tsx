@@ -171,6 +171,12 @@ interface OnDeckPanelProps {
    */
   isAutoMatchmakingOn?: boolean;
   /**
+   * Whether auto-publish mode is ON. In auto mode the engine never produces
+   * unpublished drafts, so the draft section, divider, and "Publish All" banner
+   * are hidden — the published On-Deck section is the whole view (D2/D5).
+   */
+  autoPublishIsOn?: boolean;
+  /**
    * Number of players currently in waiting status. Used to compute the dynamic
    * draft cap threshold so the notice appears at the right fill level.
    */
@@ -196,6 +202,7 @@ function OnDeckPanelInner({
   capSaturation = null,
   onDismissCapSaturation,
   isAutoMatchmakingOn,
+  autoPublishIsOn = false,
   waitingCount,
   hasNewDraft,
 }: OnDeckPanelProps) {
@@ -353,10 +360,16 @@ function OnDeckPanelInner({
   // Draft cap notice: visible when all draft slots are full, auto-matchmaking
   // is ON, and there are enough players waiting — explains to the organizer
   // why the engine has stopped generating new matches.
+  // Suppressed in auto-publish mode: there is no review step, and unpublished
+  // held drafts (is_published=false) would otherwise inflate draftCount and fire
+  // a "publish the drafts below" notice for cards that aren't shown.
   const waiting = waitingCount ?? 0;
   const dynamicCap = getDynamicDraftCap(waiting);
   const isDraftCapBlocked =
-    isAutoMatchmakingOn === true && waiting >= PLAYERS_PER_MATCH && draftCount >= dynamicCap;
+    isAutoMatchmakingOn === true &&
+    !autoPublishIsOn &&
+    waiting >= PLAYERS_PER_MATCH &&
+    draftCount >= dynamicCap;
 
   // Stable identity for SortableContext — recreated only when the match
   // set changes, not on every loading-state update inside the component.
@@ -436,7 +449,8 @@ function OnDeckPanelInner({
 
       {/* ── Publish All banner ── shown when there are drafts ── */}
       {/* Publish All banner suppressed when DraftCapNotice is shown — it already has an inline button. */}
-      {draftCount > 0 && !isDraftCapBlocked && (
+      {/* Hidden entirely in auto-publish mode: there is no review step. */}
+      {draftCount > 0 && !isDraftCapBlocked && !autoPublishIsOn && (
         <div
           role="status"
           aria-label={`${draftCount} on-deck match${draftCount !== 1 ? "es" : ""} waiting for approval`}
@@ -493,7 +507,8 @@ function OnDeckPanelInner({
       >
         <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
           {/* ── Drafts section ─────────────────────────────── */}
-          {draftMatches.length > 0 && (
+          {/* Hidden in auto-publish mode (no unpublished drafts exist). */}
+          {draftMatches.length > 0 && !autoPublishIsOn && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
@@ -523,7 +538,7 @@ function OnDeckPanelInner({
           )}
 
           {/* ── Section divider ─────────────────────────────── */}
-          {draftMatches.length > 0 && publishedMatches.length > 0 && (
+          {draftMatches.length > 0 && publishedMatches.length > 0 && !autoPublishIsOn && (
             <div className="pointer-events-none flex items-center gap-3 py-1">
               <div className="flex-1 border-t border-dashed border-slate-200 dark:border-slate-700" />
               <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500 whitespace-nowrap">
