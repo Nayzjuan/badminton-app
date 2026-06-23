@@ -131,6 +131,9 @@ export function OrganizerDashboard({
     autoMatchmaking,
     togglingAuto,
     handleToggleAuto,
+    autoPublish,
+    togglingAutoPublish,
+    handleToggleAutoPublish,
     capPhase,
     isDashboardLocked,
     handleCapChange,
@@ -140,6 +143,7 @@ export function OrganizerDashboard({
     sessionId: session.id,
     sessionIsActive: session.is_active,
     liveAutoMatchmaking: liveSession.is_auto_matchmaking_on,
+    liveAutoPublish: liveSession.auto_publish,
     bottleneckCount,
     // Draft Mode badge: amber on Courts tab when drafts need approval.
     // Suppress badge when organizer is already on Courts tab — the
@@ -157,6 +161,8 @@ export function OrganizerDashboard({
   // never triggers a spurious notification.
   const prevDraftCountRef = useRef(draftMatches.length);
   const [hasNewDraft, setHasNewDraft] = useState(false);
+  // Confirm dialog for enabling auto-publish while unreviewed drafts exist (D9).
+  const [autoPublishConfirmOpen, setAutoPublishConfirmOpen] = useState(false);
   // Holds the active badge-reset timer so rapid 0→1→0→1 transitions
   // always cancel the previous timer before starting a new one.
   const newDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -268,11 +274,45 @@ export function OrganizerDashboard({
                   {togglingAuto ? "…" : autoMatchmaking ? "Auto" : "Off"}
                 </button>
 
+                {/* Auto-publish toggle — mobile compact. State shown via accent
+                    color; disabled until Auto-Matchmaking is ON (D11). */}
+                {!isClosed && (
+                  <button
+                    data-testid="toggle-auto-publish-mobile"
+                    onClick={() => {
+                      const enabling = !autoPublish;
+                      if (enabling && draftMatches.length > 0) {
+                        setAutoPublishConfirmOpen(true);
+                      } else {
+                        void handleToggleAutoPublish(enabling);
+                      }
+                    }}
+                    disabled={togglingAutoPublish || !autoMatchmaking || isDashboardLocked}
+                    aria-pressed={autoPublish}
+                    aria-label={autoPublish ? "Auto-publish on" : "Auto-publish off"}
+                    className={`inline-flex items-center gap-1 clip-cut-sm px-2 py-1.5 min-h-[36px]
+                                font-command text-[9px] uppercase tracking-[0.08em] transition-colors border
+                                ${
+                                  autoPublish
+                                    ? "bg-cc-accent-dim border-cc-accent/45 text-cc-accent"
+                                    : "bg-cc-bg-3 border-cc-border text-cc-t3"
+                                }
+                                disabled:opacity-50 disabled:cursor-not-allowed`}
+                    title={!autoMatchmaking ? "Enable Auto-Matchmaking first" : "Auto-publish mode"}
+                  >
+                    <span
+                      className={`relative inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${autoPublish ? "bg-cc-accent" : "bg-cc-t3"}`}
+                    />
+                    {togglingAutoPublish ? "…" : "Pub"}
+                  </button>
+                )}
+
                 {/* Draft cap chip — mobile compact */}
                 {!isClosed && (
                   <DraftCapPopover
                     value={liveSession.max_auto_drafts_override ?? null}
                     autoIsOn={autoMatchmaking}
+                    autoPublishIsOn={autoPublish}
                     capPhase={capPhase}
                     onChange={handleCapChange}
                     compact
@@ -518,6 +558,59 @@ export function OrganizerDashboard({
                   {togglingAuto ? "Saving…" : autoMatchmaking ? "Auto On" : "Auto Off"}
                 </button>
 
+                {/* Auto-publish toggle — desktop. Disabled until Auto-Matchmaking
+                    is ON (D11): the engine is paused otherwise. */}
+                {!isClosed && (
+                  <button
+                    data-testid="toggle-auto-publish"
+                    onClick={() => {
+                      const enabling = !autoPublish;
+                      if (enabling && draftMatches.length > 0) {
+                        setAutoPublishConfirmOpen(true);
+                      } else {
+                        void handleToggleAutoPublish(enabling);
+                      }
+                    }}
+                    disabled={togglingAutoPublish || !autoMatchmaking || isDashboardLocked}
+                    aria-pressed={autoPublish}
+                    className={`inline-flex items-center gap-1.5 clip-cut-sm px-3 py-2
+                                min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] transition-colors border
+                                ${
+                                  autoPublish
+                                    ? "bg-cc-accent-dim border-cc-accent/45 text-cc-accent hover:bg-cc-accent/20"
+                                    : "bg-cc-bg-3 border-cc-border text-cc-t3 hover:bg-cc-bg-2"
+                                }
+                                disabled:opacity-50 disabled:cursor-not-allowed`}
+                    title={
+                      !autoMatchmaking
+                        ? "Enable Auto-Matchmaking first — auto-publish only works while the engine runs"
+                        : "Auto-publish: when ON, generated matches skip review and go straight to On Deck"
+                    }
+                  >
+                    {togglingAutoPublish ? (
+                      <span className="h-2.5 w-2.5 shrink-0 animate-spin">
+                        <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                          <circle
+                            cx="5"
+                            cy="5"
+                            r="3.5"
+                            stroke="currentColor"
+                            strokeWidth="1.2"
+                            strokeDasharray="14 8"
+                            strokeLinecap="round"
+                            opacity=".9"
+                          />
+                        </svg>
+                      </span>
+                    ) : (
+                      <span
+                        className={`relative inline-flex h-2 w-2 shrink-0 rounded-full ${autoPublish ? "bg-cc-accent" : "bg-cc-t3"}`}
+                      />
+                    )}
+                    {togglingAutoPublish ? "Saving…" : autoPublish ? "Publish On" : "Publish Off"}
+                  </button>
+                )}
+
                 {/* Draft cap separator + chip — desktop */}
                 {!isClosed && (
                   <>
@@ -525,6 +618,7 @@ export function OrganizerDashboard({
                     <DraftCapPopover
                       value={liveSession.max_auto_drafts_override ?? null}
                       autoIsOn={autoMatchmaking}
+                      autoPublishIsOn={autoPublish}
                       capPhase={capPhase}
                       onChange={handleCapChange}
                     />
@@ -676,6 +770,33 @@ export function OrganizerDashboard({
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+
+          {/* Enable Auto-Publish confirmation — only shown when unreviewed
+              drafts exist, since enabling clears them (D3/D9). */}
+          <AlertDialog open={autoPublishConfirmOpen} onOpenChange={setAutoPublishConfirmOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Enable auto-publish?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This clears {draftMatches.length} unreviewed draft
+                  {draftMatches.length !== 1 ? "s" : ""} (their players return to waiting), then the
+                  engine publishes new matches straight to On Deck without review. You can turn this
+                  off anytime — live on-deck matches stay put.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Keep drafts</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    setAutoPublishConfirmOpen(false);
+                    void handleToggleAutoPublish(true);
+                  }}
+                >
+                  Enable auto-publish
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </>
       )}
 
@@ -727,6 +848,7 @@ export function OrganizerDashboard({
                 capSaturation={capSaturation}
                 onDismissCapSaturation={dismissCapSaturation}
                 isAutoMatchmakingOn={liveSession.is_auto_matchmaking_on}
+                autoPublishIsOn={autoPublish}
                 waitingCount={waitingCount}
                 hasNewDraft={hasNewDraft}
               />

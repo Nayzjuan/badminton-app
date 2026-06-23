@@ -142,6 +142,9 @@ export type Session = {
   court_time_limit_minutes: number | null; // per-session court time cap; null = no limit
   /** Organizer cap on auto-draft generation. null = dynamic (3/5/6 by pool size). 1–5 = ceiling. */
   max_auto_drafts_override: number | null;
+  /** Auto-publish mode: when true, engine-generated matches skip the draft gate
+   *  and go straight to On Deck (is_published=true). false = manual review. */
+  auto_publish: boolean;
   created_at: string;
   ended_at: string | null;
 };
@@ -365,6 +368,7 @@ export type SessionUpdate = Partial<
     | "is_auto_matchmaking_on"
     | "court_time_limit_minutes"
     | "max_auto_drafts_override"
+    | "auto_publish"
     | "ended_at"
     | "created_by"
   >
@@ -813,6 +817,14 @@ export type Database = {
       };
       publish_match: {
         Args: { p_match_id: string; p_session_id: string; p_user_id: string };
+        Returns: string;
+      };
+      // Engine-initiated publish (no organizer). Auto-publish mode uses this to
+      // publish a HELD draft the moment it becomes ready. Keeps left/conflict
+      // guards. Returns 'SUCCESS' | 'HAS_LEFT_PLAYERS' | 'CONFLICT' |
+      // 'NOT_PENDING' | 'ALREADY_PUBLISHED' | 'NOT_FOUND'.
+      auto_publish_match: {
+        Args: { p_match_id: string; p_session_id: string };
         Returns: string;
       };
       publish_all_drafts: {

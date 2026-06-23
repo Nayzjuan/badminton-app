@@ -18,6 +18,7 @@ import type {
   OrganizerInterventionPayload,
   SessionClosedPayload,
   AutoMatchmakingToggledPayload,
+  AutoPublishToggledPayload,
   CapSaturationPayload,
   DraftCapPhasePayload,
 } from "@/lib/broadcast";
@@ -190,6 +191,8 @@ export type OrganizerBroadcastHandlers = {
   onSessionClosed?: (payload: SessionClosedPayload) => void;
   /** Fired when any organizer flips the auto-matchmaking toggle. */
   onAutoMatchmakingToggled?: (payload: AutoMatchmakingToggledPayload) => void;
+  /** Fired when any organizer flips the auto-publish mode toggle. */
+  onAutoPublishToggled?: (payload: AutoPublishToggledPayload) => void;
   /** Fired when the partner-pair cap blocks match formation for a waiting player. */
   onCapSaturation?: (payload: CapSaturationPayload) => void;
   /**
@@ -217,6 +220,7 @@ export function subscribeToOrganizerBroadcast(
     onIntervention,
     onSessionClosed,
     onAutoMatchmakingToggled,
+    onAutoPublishToggled,
     onCapSaturation,
     onDraftCapPhaseChanged,
   } = handlers;
@@ -239,6 +243,13 @@ export function subscribeToOrganizerBroadcast(
       { event: "auto_matchmaking_toggled" },
       (msg: { payload: AutoMatchmakingToggledPayload }) => {
         onAutoMatchmakingToggled?.(msg.payload);
+      }
+    )
+    .on(
+      "broadcast",
+      { event: "auto_publish_toggled" },
+      (msg: { payload: AutoPublishToggledPayload }) => {
+        onAutoPublishToggled?.(msg.payload);
       }
     )
     .on("broadcast", { event: "cap_saturation" }, (msg: { payload: CapSaturationPayload }) => {

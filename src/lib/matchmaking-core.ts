@@ -58,6 +58,22 @@ export function getDynamicDraftCap(waitingCount: number): number {
   return MAX_AUTO_DRAFTS;
 }
 
+/**
+ * The `is_published` value an engine-generated match should be created with,
+ * given the session's auto-publish mode.
+ *
+ *   auto_publish = false → false (DRAFT — organizer must review then publish)
+ *   auto_publish = true  → true  (skip the gate — match goes straight to On Deck)
+ *
+ * Also dictates which pending matches the cap counts: in draft mode the cap
+ * limits the unpublished REVIEW queue (is_published=false); in auto mode it
+ * limits the published ON-DECK queue (is_published=true). Both are the same
+ * boolean, so callers can use this single value for the count filter too.
+ */
+export function shouldAutoPublishMatch(autoPublish: boolean): boolean {
+  return autoPublish === true;
+}
+
 // ── Enriched player type ──────────────────────────────────────
 // QueueWithWaitTime enriched with the computed priority score.
 export type ScoredPlayer = QueueWithWaitTime & {

@@ -29,6 +29,7 @@ import {
   pairKey,
   runAlgorithm,
   getDynamicDraftCap,
+  shouldAutoPublishMatch,
   isPullEligible,
   isHeldMatchReady,
   pickEarliestFinishing,
@@ -2205,5 +2206,22 @@ describe("Cross-Court Diversity Drafting (pure)", () => {
       const res = runAlgorithm(pool, new Map(), new Map(), []);
       expect(res.proposal).toBeNull();
     });
+  });
+});
+
+// ============================================================
+// shouldAutoPublishMatch — auto-publish mode decision (pure)
+// ============================================================
+//
+// AP-1  auto_publish=true  → true  (engine writes is_published=true)
+// AP-2  auto_publish=false → false (engine writes is_published=false / draft)
+
+describe("shouldAutoPublishMatch — auto-publish decision", () => {
+  it("AP-1: true → true (skip the draft gate)", () => {
+    expect(shouldAutoPublishMatch(true)).toBe(true);
+  });
+
+  it("AP-2: false → false (draft mode, organizer reviews)", () => {
+    expect(shouldAutoPublishMatch(false)).toBe(false);
   });
 });

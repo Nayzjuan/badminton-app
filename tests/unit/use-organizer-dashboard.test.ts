@@ -59,6 +59,7 @@ function makeParams(
   overrides: Partial<{
     sessionIsActive: boolean;
     liveAutoMatchmaking: boolean;
+    liveAutoPublish: boolean;
     bottleneckCount: number;
     draftCount: number;
     handleCancelSwap: () => void;
@@ -68,6 +69,7 @@ function makeParams(
     sessionId: SESSION_ID,
     sessionIsActive: true,
     liveAutoMatchmaking: false,
+    liveAutoPublish: false,
     bottleneckCount: 0,
     draftCount: 0,
     handleCancelSwap: vi.fn(),

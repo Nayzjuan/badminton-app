@@ -5,6 +5,40 @@
 
 ---
 
+## 🆕 AUTO-PUBLISH MODE — `main` (2026-06-23/24)
+
+**Status: BUILT + applied to prod + validated. NOT yet committed (working tree).** tsc clean · 581 unit tests pass (1 skip; +10 new) · `next build` clean · 0 new lint errors. Plan + adversarial analysis: `AUTO_PUBLISH_PLAN.md` (12 locked decisions D1–D12). 3-dimension review gate passed (LGTM / LGTM / Minor) — both real findings fixed (DraftCapNotice auto-mode gate + RPC grant lockdown).
+
+**Feature:** per-session `sessions.auto_publish` toggle. OFF (default) = engine writes drafts (`is_published=false`) for organizer review. ON = engine writes matches straight to On Deck (`is_published=true`), skipping the publish gate. The whole pipeline downstream of publish was already automatic, so this is the only manual step it removes.
+
+### The critical cluster (all 5 ship together or it silently no-ops)
+1. `database.ts` — `Session.auto_publish: boolean` + `SessionUpdate`. (Else TS drops the column → always falsy.)
+2. `runEngineInternal` session SELECT (`matchmaking.ts`) — also fetch `auto_publish`.
+3. Cap-count branch — draft mode counts `is_published=false`; **auto mode does an EXTRA query counting `is_published=true`** (else counts 0 → unbounded generation flooding courts).
+4. `executeMatch` (`matchmaking-db.ts`) — new `autoPublish=false` param → `p_is_published`.
+5. `executeMatch` call site passes `autoPublish`; auto-published matches fire `ON_DECK_WARNING` via `after()` (engine path bypasses the publish action's push).
+
+### Key decisions / mechanics
+- **D12 — held drafts auto-publish at READINESS, not creation:** held drafts born `is_published=false`; `recomputeHeldReadiness` publishes via new `auto_publish_match` RPC the moment `held_ready_at` is stamped (pulled body now free) → no premature ping / on-deck of a still-playing player. RPC = `publish_match` minus organizer gate, service-role-only (grants revoked anon/authenticated). Verified live `create_match_with_players`: `p_is_on_deck=true AND p_is_published=true → roster on_deck`.
+- **D7 ghost-player guard** in `promoteOnDeckMatchInternal`: skips+clears any ready match with a `left` roster player (adds 2 queries/candidate; reuses roster fetch).
+- **D11** — auto-publish toggle disabled while Auto-Matchmaking OFF (engine paused). **D3/D8** ON flip clears drafts + reruns engine inline. **D4** OFF flip leaves live on-deck alone. **D9** confirm dialog only when drafts exist. **D2** cap re-interpreted as on-deck cap; chip label MAX→DECK.
+- Realtime: `auto_publish_toggled` broadcast (RLS-bypass for co-orgs); `auto_publish` excluded from postgres_changes apply.
+
+### Migrations applied to prod (project usxftpexoimletqmrggb)
+- `20260623000000_add_auto_publish_mode.sql` — column (additive, NOT NULL DEFAULT false).
+- `20260623000001_auto_publish_match_rpc.sql` — service-role publish RPC.
+- `20260623000002_lock_auto_publish_match_grants.sql` — REVOKE from anon/authenticated/PUBLIC; GRANT service_role. Verified: only postgres + service_role have EXECUTE.
+
+### Tests added
+- `matchmaking-core.test.ts` AP-1/2 (shouldAutoPublishMatch). `matchmaking-engine.test.ts` ENG-AP-1/2 (p_is_published per mode + cap re-count). `auto-publish-session-action.test.ts` TAP-1..6 (toggle orchestration, mocked). `schema-parity.test.ts` (integration) +column +RPC checks. Existing engine-test mocks updated for the +2 promote queries and +1 recompute session fetch (no behavior masked).
+
+### Next steps / deferred
+- **Commit the working tree** (not yet committed; user to decide commit/push). Vercel deploy needed for the UI toggle to go live (engine/RPC already work server-side).
+- Double-notify timing (auto-published match → immediate court promote → ON_DECK_WARNING then COURT_CALL seconds apart) accepted for v1; consolidating to one `match_event` push topic is a fast-follow.
+- Concurrency: 2 engine workers can overshoot the on-deck cap by ~1–2 (soft cap, same as draft mode).
+
+---
+
 ## 🆕 MATCH PROVENANCE & MODIFICATION AUDIT — branch `feat/match-provenance-audit` (2026-06-17)
 
 **Status: BUILT, NOT applied to prod, NOT merged.** tsc clean · 571 unit tests pass (1 skip) · `next build` clean. Plan + adversarial review: `MATCH_PROVENANCE_AUDIT_PLAN.md` (§14 has the hardening + locked decisions). Implementation review gate: see end of this section.

@@ -15,6 +15,7 @@ import { runEngineForSession } from "@/app/actions/matchmaking";
 import {
   broadcastSessionClosed,
   broadcastAutoMatchmakingToggled,
+  broadcastAutoPublishToggled,
   broadcastDraftCapPhase,
 } from "@/lib/broadcast";
 import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
@@ -451,6 +452,116 @@ export async function setCapAndClearDrafts(
   return {
     success: true,
     autoIsOn: true,
+    clearedCount: clearResult.clearedCount,
+  };
+}
+
+// ── toggleAutoPublish ─────────────────────────────────────────
+
+export type ToggleAutoPublishResult = {
+  success: boolean;
+  isOn: boolean;
+  message: string;
+  /** Drafts cleared on an ON flip (D3). 0 on OFF flips and when nothing pending. */
+  clearedCount?: number;
+};
+
+/**
+ * Flips the `auto_publish` mode for a session.
+ *
+ *   ON  (D3): persist auto_publish=true, then — when Auto-Matchmaking is ON —
+ *             clear all unpublished drafts (return players to waiting) and re-run
+ *             the engine, which now writes matches straight to On Deck. Fills
+ *             immediately (D8).
+ *   OFF (D4): persist auto_publish=false only. Live published on-deck matches are
+ *             committed and left untouched; the engine generates drafts for the
+ *             NEXT batch.
+ *
+ * Auto-publish is meaningless while Auto-Matchmaking is OFF (the engine never
+ * runs), so the UI disables this toggle in that state (D11). Defensively, an ON
+ * flip while Auto-Matchmaking is OFF persists the preference but skips the
+ * clear-and-rerun — there is nothing to regenerate against.
+ *
+ * Takes an explicit target (not an atomic flip) so the result is deterministic
+ * under concurrent organizer clicks — last write wins, mirroring setCapAndClearDrafts.
+ */
+export async function toggleAutoPublish(
+  sessionId: string,
+  enabled: boolean
+): Promise<ToggleAutoPublishResult> {
+  if (!isValidUUID(sessionId)) {
+    return { success: false, isOn: false, message: "Invalid session ID." };
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, isOn: false, message: "Not authenticated." };
+
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) {
+    return { success: false, isOn: false, message: "Organizer access required." };
+  }
+
+  const db = createServiceClient();
+
+  // Persist the new mode and read is_auto_matchmaking_on atomically — closes the
+  // read→write race where a co-organizer toggle lands between a separate read and write.
+  const { data: updatedSession, error: updateErr } = await db
+    .from("sessions")
+    .update({ auto_publish: enabled })
+    .eq("id", sessionId)
+    .select("auto_publish, is_auto_matchmaking_on")
+    .single();
+
+  if (updateErr) {
+    return {
+      success: false,
+      isOn: false,
+      message: `Failed to save auto-publish: ${updateErr.message}`,
+    };
+  }
+  if (!updatedSession) {
+    return { success: false, isOn: false, message: "Session not found." };
+  }
+
+  const autoMmOn = updatedSession.is_auto_matchmaking_on ?? false;
+
+  // Broadcast the new state to co-organizers regardless of the path taken.
+  // Fire-and-forget: broadcast failure never affects the DB result.
+  broadcastAutoPublishToggled(sessionId, enabled).catch((err) => {
+    console.warn("[toggleAutoPublish] broadcast failed (non-fatal):", err);
+  });
+
+  if (!enabled) {
+    // OFF flip (D4): leave live on-deck matches alone, engine drafts going forward.
+    return { success: true, isOn: false, message: "Auto-publish disabled." };
+  }
+
+  // ON flip (D3). Only meaningful while the engine can run.
+  if (!autoMmOn) {
+    return {
+      success: true,
+      isOn: true,
+      message: "Auto-publish enabled — it takes effect once Auto-Matchmaking is on.",
+      clearedCount: 0,
+    };
+  }
+
+  // Clear unpublished drafts so the engine can regenerate them as published
+  // on-deck matches against the cap, then run it immediately (D8).
+  const clearResult = await clearAllUnpublishedDrafts(sessionId);
+  if (!clearResult.success) {
+    return { success: false, isOn: true, message: clearResult.message };
+  }
+
+  await runEngineForSession(sessionId);
+
+  return {
+    success: true,
+    isOn: true,
+    message: "Auto-publish enabled.",
     clearedCount: clearResult.clearedCount,
   };
 }

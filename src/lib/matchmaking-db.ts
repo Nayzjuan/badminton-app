@@ -375,7 +375,8 @@ export async function executeMatch(
   sessionId: string,
   courtId: string | null,
   proposal: MatchProposal,
-  isOnDeck: boolean
+  isOnDeck: boolean,
+  autoPublish = false
 ): Promise<ExecuteMatchResult> {
   const now = new Date().toISOString();
   const { teamA, teamB, isMixedLevel } = proposal;
@@ -390,12 +391,15 @@ export async function executeMatch(
     p_team_a_ids: teamA.map((p) => p.player_id),
     p_team_b_ids: teamB.map((p) => p.player_id),
     p_origin: "auto" as const,
-    // Engine-generated matches always start as drafts (is_published=false).
-    // The organizer must review — and optionally edit rosters — before
-    // publishing. "Publish All" or per-match Publish promotes them to On Deck
-    // where players and the TV board can see them.
-    // Manually-created matches (organizer UI) also start as is_published=false.
-    p_is_published: false,
+    // Draft mode (autoPublish=false, default): is_published=false → the match
+    // lands as a DRAFT for organizer review. "Publish All" or per-match Publish
+    // promotes it to On Deck. Manually-created matches also start unpublished.
+    //
+    // Auto-publish mode (autoPublish=true): is_published=true → the RPC promotes
+    // the roster straight to 'on_deck' and the match skips the review gate. The
+    // engine fires ON_DECK_WARNING itself (the push lives in the publish action,
+    // which this path bypasses).
+    p_is_published: autoPublish,
   });
 
   if (rpcError) {

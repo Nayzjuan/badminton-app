@@ -168,6 +168,38 @@ describe("Schema Parity — Suite G", () => {
     expect(found).toBe(true);
   });
 
+  it("sessions table has auto_publish column (NOT NULL, default false)", async () => {
+    let col: { is_nullable: string; column_default: string | null } | undefined;
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ is_nullable: string; column_default: string | null }>(
+        `SELECT is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name   = 'sessions'
+            AND column_name  = 'auto_publish'`
+      );
+      col = rows[0];
+    });
+    expect(col).toBeDefined();
+    expect(col?.is_nullable).toBe("NO");
+    expect(col?.column_default).toMatch(/false/);
+  });
+
+  it("auto_publish_match RPC exists in public schema", async () => {
+    let found = false;
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ exists: boolean }>(
+        `SELECT EXISTS (
+          SELECT 1 FROM pg_proc p
+          JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public' AND p.proname = 'auto_publish_match'
+        ) AS exists`
+      );
+      found = rows[0]?.exists ?? false;
+    });
+    expect(found).toBe(true);
+  });
+
   it("sessions.max_auto_drafts_override has CHECK constraint (1–5)", async () => {
     let found = false;
     await withTx(async (db) => {
