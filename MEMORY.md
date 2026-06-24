@@ -32,10 +32,18 @@
 ### Tests added
 - `matchmaking-core.test.ts` AP-1/2 (shouldAutoPublishMatch). `matchmaking-engine.test.ts` ENG-AP-1/2 (p_is_published per mode + cap re-count). `auto-publish-session-action.test.ts` TAP-1..6 (toggle orchestration, mocked). `schema-parity.test.ts` (integration) +column +RPC checks. Existing engine-test mocks updated for the +2 promote queries and +1 recompute session fetch (no behavior masked).
 
-### Next steps / deferred
-- **Commit the working tree** (not yet committed; user to decide commit/push). Vercel deploy needed for the UI toggle to go live (engine/RPC already work server-side).
-- Double-notify timing (auto-published match → immediate court promote → ON_DECK_WARNING then COURT_CALL seconds apart) accepted for v1; consolidating to one `match_event` push topic is a fast-follow.
-- Concurrency: 2 engine workers can overshoot the on-deck cap by ~1–2 (soft cap, same as draft mode).
+### Post-merge adversarial audit + cluster fix (2026-06-24)
+24-agent audit (7 hunters + per-finding adversarial verify) → 13 confirmed / 3 partial / 1 refuted. **All serious findings were in the held-cross-court-draft × auto-mode path** (the D12 readiness-publish); the normal auto-publish path is clean. Fixed the cluster on branch `fix/auto-publish-held-draft-cluster`:
+- **#1 (HIGH) orphaned held draft:** recomputeHeldReadiness stamped held_ready_at BEFORE auto_publish_match; on HAS_LEFT_PLAYERS/CONFLICT the draft was left stamped-ready-but-unpublished → orphaned (recompute skips held_ready_at≠null; promote needs is_published=true; auto mode hides the draft section) → players silently benched. FIX: on those two RPC results, `clear_on_deck_match_atomic` so players re-enter the pool. Tests CC-RDY-AP1/2/3.
+- **#3 (MED) cap overshoot:** held drafts (is_published=false) didn't count the auto-mode cap. FIX: recount `.or("is_published.eq.true,is_held.eq.true")`.
+- **#2 (MED) status corruption:** `clear_all_unpublished_drafts` swept up held drafts and flipped a still-PLAYING pulled body to 'waiting'. FIX: migration `20260624000000` adds `AND is_held IS NOT TRUE` (fixes toggleAutoPublish ON-flip AND the existing setCapAndClearDrafts cap-change). Integration test DCINT-13 (manual-run).
+- Independent review: LGTM. tsc clean, 584 unit pass (+3), build clean.
+
+### Accepted-for-v1 / deferred (audit confirmed, low-impact)
+- TOCTOU cap overshoot by ~1–2 under 2 concurrent engine workers (soft cap, same as draft mode).
+- Stale auto_publish read if toggle lands mid-engine-run (self-corrects next tick).
+- Double/stale ON_DECK_WARNING timing; confirm-dialog stale count; optimistic toggle could stick if action throws + broadcast lost; toggle clickable while dashboard locked. All low/UI polish, not fixed.
+- Vercel deploy needed for the UI toggle (engine/RPCs already live server-side).
 
 ---
 
