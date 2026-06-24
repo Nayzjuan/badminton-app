@@ -1064,7 +1064,7 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
       is_bottleneck: false,
     }));
 
-  it("ENG-AP-1: auto_publish=true → RPC gets p_is_published=true; cap counts published on-deck", async () => {
+  it("ENG-AP-1: auto_publish=true → RPC gets p_is_published=true; cap re-count runs (published + held)", async () => {
     const four = fourWaiting();
     const mock = makeMockClient(
       [
@@ -1279,6 +1279,67 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
       p_session_id: SESSION_ID,
     });
     expect(mock.recorder.update).toHaveLength(0); // cancel, not stamp/downgrade
+  });
+
+  const readyRoster = () => [
+    { data: [held()], error: null }, // held fetch
+    { data: { auto_publish: true }, error: null }, // auto mode
+    {
+      data: [{ player_id: "pp" }, { player_id: "w1" }, { player_id: "w2" }, { player_id: "w3" }],
+      error: null,
+    }, // roster (pp present)
+    { data: { status: "completed", completed_at: "2026-06-07T11:50:00.000Z" }, error: null }, // source completed
+    { count: 1, data: null, error: null }, // promotionsSinceFreed ≥1 → ready
+    { data: null, error: null }, // held_ready_at stamp update
+  ];
+
+  it("CC-RDY-AP1: auto mode, ready + auto_publish SUCCESS ⇒ publishes, no clear", async () => {
+    const mock = makeMockClient(
+      [
+        ...readyRoster(),
+        { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster fetch for ON_DECK_WARNING
+      ],
+      [{ data: "SUCCESS", error: null }] // auto_publish_match → SUCCESS
+    );
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.rpc).toHaveBeenCalledWith("auto_publish_match", {
+      p_match_id: "held-1",
+      p_session_id: SESSION_ID,
+    });
+    // SUCCESS path must NOT clear the match.
+    expect(mock.rpc).not.toHaveBeenCalledWith("clear_on_deck_match_atomic", expect.anything());
+  });
+
+  it("CC-RDY-AP2 [Fix #1]: auto mode, ready but auto_publish HAS_LEFT_PLAYERS ⇒ clears the orphan", async () => {
+    const mock = makeMockClient(readyRoster(), [
+      { data: "HAS_LEFT_PLAYERS", error: null }, // auto_publish_match → tainted roster
+      { data: null, error: null }, // clear_on_deck_match_atomic
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    // The stamped-but-unpublishable draft is cleared so players re-enter the pool
+    // instead of being orphaned (held_ready_at set, is_published=false, invisible).
+    expect(mock.rpc).toHaveBeenCalledWith("clear_on_deck_match_atomic", {
+      p_match_id: "held-1",
+      p_session_id: SESSION_ID,
+    });
+  });
+
+  it("CC-RDY-AP3 [Fix #1]: auto mode, ready but auto_publish CONFLICT ⇒ clears the orphan", async () => {
+    const mock = makeMockClient(readyRoster(), [
+      { data: "CONFLICT", error: null },
+      { data: null, error: null }, // clear_on_deck_match_atomic
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.rpc).toHaveBeenCalledWith("clear_on_deck_match_atomic", {
+      p_match_id: "held-1",
+      p_session_id: SESSION_ID,
+    });
   });
 });
 

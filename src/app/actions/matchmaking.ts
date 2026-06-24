@@ -379,17 +379,21 @@ async function runEngineInternal(
 
   // Mode-dependent cap count. Draft mode counts the unpublished review queue
   // (fetched above). Auto-publish mode has no review step, so the cap instead
-  // limits the PUBLISHED on-deck queue — re-count against is_published=true.
-  // (Unpublished held drafts stay hidden until ready and don't count here.)
+  // limits the on-deck queue — re-count published on-deck matches PLUS held
+  // drafts. Held drafts are born is_published=false (hidden until their pulled
+  // body is free) but they RESERVE a future on-deck slot — they auto-publish at
+  // readiness. Counting them here stops the engine over-generating while several
+  // held drafts are pending, which would otherwise overshoot the cap when they
+  // all publish at once.
   let draftCount = draftCountRaw ?? 0;
   if (autoPublish) {
-    const { count: publishedCountRaw } = await supabase
+    const { count: onDeckCountRaw } = await supabase
       .from("matches")
       .select("id", { count: "exact", head: true })
       .eq("session_id", sessionId)
       .eq("status", "pending")
-      .eq("is_published", true);
-    draftCount = publishedCountRaw ?? 0;
+      .or("is_published.eq.true,is_held.eq.true");
+    draftCount = onDeckCountRaw ?? 0;
   }
   const slotsAvailable = Math.max(0, effectiveCap - draftCount);
 
@@ -914,6 +918,22 @@ export async function recomputeHeldReadiness(
             .eq("match_id", held.id);
           const rosterIds = (roster ?? []).map((r) => r.player_id);
           after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+        } else if (pubResult === "HAS_LEFT_PLAYERS" || pubResult === "CONFLICT") {
+          // The draft is ready (held_ready_at now stamped) but the roster turned
+          // tainted between the stamp and the publish (a player left, or got
+          // committed elsewhere). We CANNOT leave it stamped-ready-but-unpublished:
+          // recompute only reprocesses held_ready_at IS NULL rows, and promotion
+          // only looks at is_published=true — so it would be orphaned forever
+          // (and invisible: auto mode hides the draft section). Clear it instead,
+          // returning the clean players to waiting so the engine regenerates.
+          console.warn(
+            `[matchmaking] recomputeHeldReadiness: held draft ${held.id} became ready but ` +
+              `auto-publish was blocked (${pubResult}) — clearing it so players re-enter the pool.`
+          );
+          await supabase.rpc("clear_on_deck_match_atomic", {
+            p_match_id: held.id,
+            p_session_id: sessionId,
+          });
         }
       }
     }
