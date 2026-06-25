@@ -45,7 +45,10 @@ if not SUPABASE_URL or not SERVICE_KEY:
 OUTPUT_DIR  = Path(__file__).parent          # same folder as this script
 BATCH_SIZE  = 1000
 
-# Table order respects FK dependencies (parents before children)
+# Table order respects FK dependencies (parents before children).
+# Kept in sync with the public base tables in the live schema — see the
+# pg_class relkind='r' inventory. Last reconciled 2026-06-24 (added
+# player_renames, match_events, player_partnerships, player_rivalries).
 TABLES = [
     "profiles",
     "sessions",
@@ -53,10 +56,14 @@ TABLES = [
     "courts",
     "push_subscriptions",
     "identity_migrations",
+    "player_renames",          # FK: → profiles (rename history)
     "queue_entries",
     "matches",
     "match_games",          # must come after matches (FK: match_games.match_id → matches.id)
-    "match_players",
+    "match_players",        # FK: → matches, profiles
+    "match_events",         # FK: → matches (ON DELETE SET NULL), sessions — provenance audit trail
+    "player_partnerships",  # FK: → profiles, sessions (cross-session stats)
+    "player_rivalries",     # FK: → profiles, sessions (cross-session stats)
     "session_wrapped_stats",
 ]
 
