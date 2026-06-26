@@ -24,6 +24,7 @@ import type { LeaderboardRow } from "@/types/leaderboard";
 
 // Minimum GP to appear on the board (matches server action constant)
 const MIN_SESSION_GP = 1;
+const MIN_MONTH_GP = 8;
 const MIN_ALLTIME_GP = 10;
 
 interface LeaderboardHeroCardProps {
@@ -31,8 +32,8 @@ interface LeaderboardHeroCardProps {
   row: LeaderboardRow | null;
   /** Total qualified players (for "you're #N of M" display) */
   totalPlayers: number;
-  /** Scope affects the minimum GP message */
-  scope: "session" | "alltime";
+  /** Scope affects the minimum GP threshold and the zero-games copy */
+  scope: "session" | "monthly" | "alltime";
   /** True when data is still loading — show skeleton */
   loading?: boolean;
 }
@@ -49,7 +50,14 @@ export function LeaderboardHeroCard({
   scope,
   loading = false,
 }: LeaderboardHeroCardProps) {
-  const minGP = scope === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
+  const minGP =
+    scope === "session" ? MIN_SESSION_GP : scope === "monthly" ? MIN_MONTH_GP : MIN_ALLTIME_GP;
+  const zeroGamesMsg =
+    scope === "session"
+      ? "You haven't played yet this session"
+      : scope === "monthly"
+        ? "You haven't played yet this month"
+        : "You haven't played any games yet";
 
   // ── Loading skeleton ────────────────────────────────────────
   if (loading) {
@@ -70,25 +78,24 @@ export function LeaderboardHeroCard({
   // ── Zero games state ────────────────────────────────────────
   if (!row || row.games_played === 0) {
     return (
-      <div
-        className={baseCard}
-        aria-label="Your current status: no games played yet"
-      >
+      <div className={baseCard} aria-label="Your current status: no games played yet">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
-                          bg-amber-100 dark:bg-amber-900/40">
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
+                          bg-amber-100 dark:bg-amber-900/40"
+          >
             <Trophy className="h-4 w-4 text-amber-500 dark:text-amber-400" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
-              You haven&apos;t played yet this session
-            </p>
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">{zeroGamesMsg}</p>
             <p className="text-xs text-muted-foreground">
               Complete a match to appear on the leaderboard
             </p>
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest
-                           text-amber-500 shrink-0">
+          <span
+            className="text-[10px] font-bold uppercase tracking-widest
+                           text-amber-500 shrink-0"
+          >
             ★ YOU
           </span>
         </div>
@@ -105,8 +112,10 @@ export function LeaderboardHeroCard({
         aria-label={`Your current status: play ${gamesNeeded} more game${gamesNeeded !== 1 ? "s" : ""} to qualify`}
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
-                          bg-amber-100 dark:bg-amber-900/40">
+          <div
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full
+                          bg-amber-100 dark:bg-amber-900/40"
+          >
             <Trophy className="h-4 w-4 text-amber-500 dark:text-amber-400" />
           </div>
           <div className="min-w-0 flex-1">
@@ -117,8 +126,10 @@ export function LeaderboardHeroCard({
               {row.games_played} GP · {row.wins}W–{row.losses}L so far
             </p>
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest
-                           text-amber-500 shrink-0">
+          <span
+            className="text-[10px] font-bold uppercase tracking-widest
+                           text-amber-500 shrink-0"
+          >
             ★ YOU
           </span>
         </div>
@@ -136,20 +147,18 @@ export function LeaderboardHeroCard({
     >
       <div className="flex items-center gap-3">
         {/* Rank number — visually large */}
-        <div className="shrink-0 text-3xl font-black tabular-nums leading-none
-                        text-amber-700 dark:text-amber-400 min-w-[2.5rem] text-center">
+        <div
+          className="shrink-0 text-3xl font-black tabular-nums leading-none
+                        text-amber-700 dark:text-amber-400 min-w-[2.5rem] text-center"
+        >
           #{row.rank}
         </div>
 
         {/* Name + streak */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-            <span className="text-sm font-bold text-foreground truncate">
-              {row.display_name}
-            </span>
-            {row.vip_tag && row.vip_theme && (
-              <VipTag tag={row.vip_tag} theme={row.vip_theme} />
-            )}
+            <span className="text-sm font-bold text-foreground truncate">{row.display_name}</span>
+            {row.vip_tag && row.vip_theme && <VipTag tag={row.vip_tag} theme={row.vip_theme} />}
             {streak && (
               <span
                 className="text-xs font-medium text-orange-500 dark:text-orange-400 shrink-0"
@@ -163,8 +172,7 @@ export function LeaderboardHeroCard({
             <span className="tabular-nums">{row.games_played} GP</span>
             <span className="text-border">·</span>
             <span className="tabular-nums font-semibold">
-              <span className="text-emerald-600 dark:text-emerald-400">{row.wins}W</span>
-              –
+              <span className="text-emerald-600 dark:text-emerald-400">{row.wins}W</span>–
               <span className="text-red-500 dark:text-red-400">{row.losses}L</span>
             </span>
             <span className="text-border">·</span>
@@ -176,13 +184,13 @@ export function LeaderboardHeroCard({
 
         {/* "of N" count + YOU label */}
         <div className="shrink-0 text-right">
-          <span className="text-[10px] font-bold uppercase tracking-widest
-                           text-amber-500 block">
+          <span
+            className="text-[10px] font-bold uppercase tracking-widest
+                           text-amber-500 block"
+          >
             ★ YOU
           </span>
-          <span className="text-[10px] text-muted-foreground tabular-nums">
-            of {totalPlayers}
-          </span>
+          <span className="text-[10px] text-muted-foreground tabular-nums">of {totalPlayers}</span>
         </div>
       </div>
     </div>

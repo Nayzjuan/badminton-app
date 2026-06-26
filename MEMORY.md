@@ -5,6 +5,35 @@
 
 ---
 
+## 🆕 MONTHLY LEADERBOARD — `main` (2026-06-26)
+
+**Status: BUILT + migration applied to prod + validated. NOT yet committed (working tree).** tsc clean · 592 unit pass (+8 month tests) · build clean · 0 new lint errors. Plan: `MONTHLY_LEADERBOARD_PLAN.md` (12 grilled decisions D1–D12 + O-1/2/3, skill-backed UI §3, 2 review rounds). Built per grill-me → ui-ux-pro-max + impeccable skills → whole-plan adversarial review → implement → review gate.
+
+**Feature:** third leaderboard scope **Monthly**, alongside Session + All-Time. Browsable months (default current); shows on all surfaces (players + organizers).
+
+### Decisions (locked)
+- **Month = Asia/Manila** (UTC+8, no DST), identical for every viewer. `CLUB_TIMEZONE='Asia/Manila'` (`src/lib/constants.ts`, app's first canonical tz).
+- **Live RPC** (no matview): `get_monthly_leaderboard(year,month)` aggregates one Manila-month slice off base tables (match_players⋈matches, NOT v_match_history). Boundary computed once via `make_timestamptz(...,'Asia/Manila')` → sargable `completed_at >= start AND < end` range on partial index `idx_matches_completed_at`. SECURITY INVOKER (respects matches RLS — which IS enabled but permissive for completed), granted anon+authenticated. `get_leaderboard_months()` = picker source (distinct Manila-months + current). Migration `20260626000000`. Verified live: 832=832 cross-check vs direct aggregation.
+- **Ranking:** MIN_MONTH_GP=8, MONTH_CONFIDENCE_K=6, **no win-streak** (streak RPC isn't month-scoped), **no Δ** column.
+- **Default tab:** session in-session, else **Monthly** (lobby).
+
+### Key files
+- DB: migration `20260626000000_monthly_leaderboard.sql`; `database.ts` Functions += get_monthly_leaderboard / get_leaderboard_months.
+- `src/lib/month.ts` (NEW, pure) — getCurrentManilaMonth (Intl + Asia/Manila, NOT runtime tz), formatMonthLabel, isCurrentManilaMonth. Tests `tests/unit/month.test.ts` (MON-1..8).
+- `src/app/actions/leaderboard.ts` — getMonthlyLeaderboard, getLeaderboardMonths, **getPlayerMonthlyStats (additive — getPlayerStats signature UNCHANGED)**. Reuses existing sortLeaderboard/assignRanks/buildVipMap (already shared module-level — no risky refactor).
+- `src/hooks/use-leaderboard.ts` — ScopeTab now 3-way; default 'monthly' when no session; activeMonth/availableMonths/monthsFetched/fetchMonthly/fetchMonthlySeq; monthly refetches on month change; realtime now also subscribes for **monthly current-month + active session**; derived activeRows/loading/minGP 3-way.
+- `src/components/leaderboard/leaderboard-page.tsx` — **removed the compact player-panel short-circuit**; ALL variants now use the unified render + 3-way switcher (APG tablist: roving tabindex + ←/→ arrow nav) + month picker (native `<select>`, Monthly tab only, static label when ≤1 month). scope-aware empty copy.
+- `stadium-leaderboard.tsx` — generalized `title` (was sessionName), `showMovement` prop (false hides Δ column + switches grid to 5-col), `scopeLabel` (podium subheader, was hardcoded "Session"), `minGP` (footer, was hardcoded "Min. 3 GP").
+- `leaderboard-hero-card.tsx` — scope 3-way; minGP 3-way; zero-games copy scope-aware ("this month").
+
+### Notable / deferred
+- **Deliberate side-effect:** `showMovement={alltime}` means the **session board no longer renders the ✦ Δ column** either (all session rows had null movement → ✦ on every row = noise). Improvement, but a behavior change to the existing session board beyond plan scope.
+- **Migration drift found (not blocking):** `get_alltime_snapshot_before` exists in prod but is absent from `supabase/migrations/` — the all-time board works; repo migrations just don't reproduce it. Worth back-filling.
+- Player panel expanded from session-only/compact to the full 3-way switch (per "monthly for all").
+- Review gate: logic/DB LGTM; UI minor (3 items: hardcoded footer/podium copy + arrow-key nav) — all fixed.
+
+---
+
 ## 🆕 AUTO-PUBLISH MODE — `main` (2026-06-23/24)
 
 **Status: BUILT + applied to prod + validated. NOT yet committed (working tree).** tsc clean · 581 unit tests pass (1 skip; +10 new) · `next build` clean · 0 new lint errors. Plan + adversarial analysis: `AUTO_PUBLISH_PLAN.md` (12 locked decisions D1–D12). 3-dimension review gate passed (LGTM / LGTM / Minor) — both real findings fixed (DraftCapNotice auto-mode gate + RPC grant lockdown).

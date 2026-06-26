@@ -2,6 +2,15 @@
 // App-wide Constants
 // ============================================================
 
+/**
+ * The club's canonical timezone. The app is single-locale; all "calendar"
+ * boundaries that must be identical for every viewer (e.g. the Monthly
+ * leaderboard's month membership) are anchored here, NOT in the browser's
+ * local timezone. Asia/Manila is a stable UTC+8 with no DST.
+ * If the club ever spans timezones, this should become a session/club setting.
+ */
+export const CLUB_TIMEZONE = "Asia/Manila";
+
 /** Minutes before a player is flagged as a "bottleneck" in the wait time monitor. */
 export const BOTTLENECK_THRESHOLD_MINUTES = 20;
 
