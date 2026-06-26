@@ -285,6 +285,8 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 | `skill_level_to_int(lvl)`                               | Enum → numeric (1–6)                                                                                                                                                                                                                                                                                                                 |
 | `get_player_streaks(p_session_id?)`                     | Win-streak per player for current session or all-time                                                                                                                                                                                                                                                                                |
 | `get_alltime_snapshot_before(p_cutoff)`                 | All-time stats as of a timestamp                                                                                                                                                                                                                                                                                                     |
+| `get_monthly_leaderboard(p_year, p_month)`              | **Monthly board** (migration `20260626000000`). Live aggregation of one Manila-month slice of completed matches off base tables. `SECURITY INVOKER`, public-read. Boundary anchored in `Asia/Manila` via `make_timestamptz`; sargable `completed_at` range on `idx_matches_completed_at`.                                              |
+| `get_leaderboard_months()`                              | Months for the monthly picker — distinct Manila-months with completed matches + the current month (always present), newest first. `SECURITY INVOKER`, public-read.                                                                                                                                                                    |
 | `refresh_alltime_leaderboard()`                         | Refreshes the materialized view                                                                                                                                                                                                                                                                                                      |
 | `swap_player_in_match(...)`                             | Atomic bench→on-deck swap; recomputes `is_mixed_level`                                                                                                                                                                                                                                                                               |
 | `swap_match_players(...)`                               | Cross-match atomic swap between two on-deck matches                                                                                                                                                                                                                                                                                  |
@@ -840,14 +842,17 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 ### 3.9 Leaderboard
 
-**Files:** `src/components/leaderboard/`, `src/hooks/use-leaderboard.ts`, `src/app/actions/leaderboard.ts`, `src/types/leaderboard.ts`
+**Files:** `src/components/leaderboard/`, `src/hooks/use-leaderboard.ts`, `src/app/actions/leaderboard.ts`, `src/types/leaderboard.ts`, `src/lib/month.ts`
 
-Two leaderboard modes:
+Three leaderboard scopes (3-way segmented control `[ Session · Monthly · All-Time ]` on every variant; `useLeaderboard` owns the `scopeTab`):
 
-- **Session leaderboard**: reads `v_session_leaderboard` — live stats for the current session. Shown on the organizer dashboard leaderboard tab and at `/leaderboard/[sessionId]`.
-- **All-time leaderboard**: reads `v_alltime_leaderboard_mat` (materialized view). Refreshed via `refresh_alltime_leaderboard()` RPC after each session. Accessible at `/leaderboard`.
+- **Session leaderboard**: reads `v_session_leaderboard` — live stats for the current session. `MIN_SESSION_GP=1`, confidence `K=3`.
+- **Monthly leaderboard** (migration `20260626000000`): live `get_monthly_leaderboard(year, month)` RPC aggregating one **Manila-month** (`Asia/Manila`, UTC+8, `CLUB_TIMEZONE`) slice of completed matches off the base tables. Browsable via a month picker fed by `get_leaderboard_months()` (distinct Manila-months with data + the current month). `MIN_MONTH_GP=8`, confidence `K=6`, **no win-streak, no Δ column**. SECURITY INVOKER (respects the permissive `matches_select` RLS), public-read. Month boundaries computed once as `make_timestamptz(y,m,1,…,'Asia/Manila')` → sargable `completed_at` range on partial index `idx_matches_completed_at`. Default tab on the no-session lobby.
+- **All-time leaderboard**: reads `v_alltime_leaderboard_mat` (materialized view). Refreshed via `refresh_alltime_leaderboard()` RPC after each session. `MIN_ALLTIME_GP=10`, confidence `K=10`, shows the rank-movement **Δ** column (vs a 7-days-ago snapshot via `get_alltime_snapshot_before`).
 
-**LeaderboardHeroCard**: Always-visible player status strip showing the authenticated user's rank, GP, Win%, and rank delta — renders above the leaderboard table on both session and all-time views.
+Default scope: the live **Session** when one is in context, else **Monthly** (current month). Month math lives in `src/lib/month.ts` (pure: `getCurrentManilaMonth` uses `Intl` + `Asia/Manila`, never the runtime tz). All three boards render through the single `StadiumLeaderboard` component (one unified rounded "stadium" aesthetic — the leaderboard is a deliberate exception to the player/organizer `cc-*` split); `showMovement` drops the Δ column (so Session + Monthly hide it).
+
+**LeaderboardHeroCard**: Always-visible player status strip showing the authenticated user's rank, GP, Win%, and rank delta — renders above the leaderboard table on session, monthly, and all-time views (`getPlayerMonthlyStats` feeds the monthly below-threshold state).
 
 Rank-change flash animation: `data-flash="true"` triggers `leaderboard-flash` keyframes (amber glow → transparent over 800ms).
 

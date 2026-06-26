@@ -28,20 +28,25 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   getSessionLeaderboard,
   getAllTimeLeaderboard,
+  getMonthlyLeaderboard,
+  getLeaderboardMonths,
   getPlayerStats,
+  getPlayerMonthlyStats,
 } from "@/app/actions/leaderboard";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
-import type { LeaderboardRow } from "@/types/leaderboard";
+import { getCurrentManilaMonth, isCurrentManilaMonth, type YearMonth } from "@/lib/month";
+import type { LeaderboardRow, LeaderboardMonth } from "@/types/leaderboard";
 
 // ── Constants ─────────────────────────────────────────────────
 
 export const MIN_SESSION_GP = 1;
+export const MIN_MONTH_GP = 8;
 export const MIN_ALLTIME_GP = 10;
 
 // ── Types ────────────────────────────────────────────────────
 
-export type ScopeTab = "session" | "alltime";
+export type ScopeTab = "session" | "monthly" | "alltime";
 
 /** Session metadata used by the picker when sessionId is null */
 export type LeaderboardSessionOption = {
@@ -72,10 +77,18 @@ export interface UseLeaderboardResult {
 
   // Board data
   sessionRows: LeaderboardRow[];
+  monthlyRows: LeaderboardRow[];
   alltimeRows: LeaderboardRow[];
+
+  // Monthly scope: selected month + the months offered by the picker
+  activeMonth: YearMonth;
+  availableMonths: LeaderboardMonth[];
+  /** Call when the user picks a month from the picker */
+  handleMonthPick: (m: LeaderboardMonth) => void;
 
   // Loading / error
   sessionLoading: boolean;
+  monthlyLoading: boolean;
   alltimeLoading: boolean;
   error: string | null;
 
@@ -117,17 +130,25 @@ export function useLeaderboard({
   initialSessionName,
   currentUserId,
 }: UseLeaderboardParams): UseLeaderboardResult {
-  // Default to all-time tab when no session is pre-selected (lobby / standalone).
-  const [scopeTab, setScopeTab] = useState<ScopeTab>(initialSessionId ? "session" : "alltime");
+  // Default tab: the live session when one is in context, else the current
+  // month (the lobby's headline view — O-1).
+  const [scopeTab, setScopeTab] = useState<ScopeTab>(initialSessionId ? "session" : "monthly");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId ?? null);
   const [activeSessionName, setActiveSessionName] = useState<string | undefined>(
     initialSessionName
   );
   const [sessionRows, setSessionRows] = useState<LeaderboardRow[]>([]);
+  const [monthlyRows, setMonthlyRows] = useState<LeaderboardRow[]>([]);
   const [alltimeRows, setAlltimeRows] = useState<LeaderboardRow[]>([]);
   const [sessionLoading, setSessionLoading] = useState(!!initialSessionId);
+  const [monthlyLoading, setMonthlyLoading] = useState(false);
   const [alltimeLoading, setAlltimeLoading] = useState(false);
   const [alltimeFetched, setAlltimeFetched] = useState(false);
+  // Monthly scope: default to the current Manila month (re-derived on mount so
+  // it rolls over naturally). availableMonths populates the picker (lazy).
+  const [activeMonth, setActiveMonth] = useState<YearMonth>(() => getCurrentManilaMonth());
+  const [availableMonths, setAvailableMonths] = useState<LeaderboardMonth[]>([]);
+  const [monthsFetched, setMonthsFetched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flashedIds, setFlashedIds] = useState<Set<string>>(new Set());
   const [myStats, setMyStats] = useState<LeaderboardRow | null>(null);
@@ -138,6 +159,7 @@ export function useLeaderboard({
   // fetch results so a slow-returning earlier fetch can't overwrite a
   // faster-returning later one. Critical when realtime triggers rapid refetches.
   const fetchSessionSeq = useRef(0);
+  const fetchMonthlySeq = useRef(0);
   const fetchAllTimeSeq = useRef(0);
 
   // Track previous row IDs to detect new entrants for flash effect.
@@ -197,6 +219,24 @@ export function useLeaderboard({
     }
   }, []);
 
+  // ── Fetch: monthly leaderboard ────────────────────────────
+  // Re-memoizes on activeMonth, so switching months refetches; the seq guard
+  // discards a slow prior-month result that returns after a newer pick.
+  const fetchMonthly = useCallback(async () => {
+    const seq = ++fetchMonthlySeq.current;
+    setMonthlyLoading(true);
+    setError(null);
+    const result = await getMonthlyLeaderboard(activeMonth.year, activeMonth.month);
+    if (seq !== fetchMonthlySeq.current) return;
+    setMonthlyLoading(false);
+    if (result.success) {
+      flashNewEntrants(result.rows);
+      setMonthlyRows(result.rows);
+    } else {
+      setError(result.error);
+    }
+  }, [activeMonth, flashNewEntrants]);
+
   // ── Initial load ──────────────────────────────────────────
   // Re-triggers when activeSessionId changes (fetchSession re-memoizes).
   useEffect(() => {
@@ -212,6 +252,29 @@ export function useLeaderboard({
     }
   }, [scopeTab, alltimeFetched, alltimeLoading, fetchAllTime]);
 
+  // ── Monthly: fetch board on tab visit + on month change ────
+  // Unlike all-time (fetch once), monthly must refetch when activeMonth changes,
+  // so this depends on fetchMonthly (which re-memoizes per month).
+  useEffect(() => {
+    if (scopeTab !== "monthly") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchMonthly();
+  }, [scopeTab, fetchMonthly]);
+
+  // ── Lazy load the month picker options on first monthly visit ──
+  useEffect(() => {
+    if (scopeTab !== "monthly" || monthsFetched) return;
+    let cancelled = false;
+    getLeaderboardMonths().then((result) => {
+      if (cancelled) return;
+      setMonthsFetched(true);
+      if (result.success) setAvailableMonths(result.months);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [scopeTab, monthsFetched]);
+
   // ── Fetch hero card stats ─────────────────────────────────
   // Extracted as a stable callback so the realtime subscription can
   // also trigger it. Without this, a match completing while the player
@@ -224,13 +287,13 @@ export function useLeaderboard({
       return;
     }
     setMyStatsLoading(true);
-    const result = await getPlayerStats(
-      currentUserId,
-      scopeTab === "session" ? activeSessionId! : null
-    );
+    const result =
+      scopeTab === "monthly"
+        ? await getPlayerMonthlyStats(currentUserId, activeMonth.year, activeMonth.month)
+        : await getPlayerStats(currentUserId, scopeTab === "session" ? activeSessionId! : null);
     setMyStatsLoading(false);
     if (result.success) setMyStats(result.row);
-  }, [currentUserId, scopeTab, activeSessionId]);
+  }, [currentUserId, scopeTab, activeSessionId, activeMonth]);
 
   // Initial load + reload on scope/session change.
   useEffect(() => {
@@ -258,28 +321,43 @@ export function useLeaderboard({
     fetchSessionRef.current = fetchSession;
   }, [fetchSession]);
 
+  const fetchMonthlyRef = useRef(fetchMonthly);
+  useEffect(() => {
+    fetchMonthlyRef.current = fetchMonthly;
+  }, [fetchMonthly]);
+
   const fetchMyStatsRef = useRef(fetchMyStats);
   useEffect(() => {
     fetchMyStatsRef.current = fetchMyStats;
   }, [fetchMyStats]);
 
   useEffect(() => {
-    if (scopeTab !== "session" || !activeSessionId) return;
+    // Live updates ride a session's match stream. Subscribe for the active
+    // session board, OR for the monthly board when viewing the CURRENT month
+    // during a live session (new completed matches fall into this month).
+    const liveSession = scopeTab === "session" && !!activeSessionId;
+    const liveMonthly =
+      scopeTab === "monthly" &&
+      !!activeSessionId &&
+      isCurrentManilaMonth(activeMonth.year, activeMonth.month);
+    if (!liveSession && !liveMonthly) return;
+
     const supabase = createBrowserSupabaseClient();
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const refetch = () => {
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
-        fetchSessionRef.current();
+        if (liveSession) fetchSessionRef.current();
+        else fetchMonthlyRef.current();
         fetchMyStatsRef.current(); // keep hero card in sync with updated stats
       }, 500);
     };
-    const unsubscribe = subscribeToMatches(supabase, activeSessionId, refetch, "leaderboard");
+    const unsubscribe = subscribeToMatches(supabase, activeSessionId!, refetch, "leaderboard");
     return () => {
       if (debounce) clearTimeout(debounce);
       unsubscribe();
     };
-  }, [scopeTab, activeSessionId]);
+  }, [scopeTab, activeSessionId, activeMonth]);
 
   // ── Handlers ──────────────────────────────────────────────
 
@@ -296,16 +374,34 @@ export function useLeaderboard({
     setSessionRows([]);
   }, []);
 
+  const handleMonthPick = useCallback((m: LeaderboardMonth) => {
+    setActiveMonth({ year: m.year, month: m.month });
+    setMonthlyRows([]); // clear stale rows immediately (loading skeleton shows)
+    setMyStats(null); // clear stale hero card data
+  }, []);
+
   const handleRefresh = useCallback(() => {
     if (scopeTab === "session" && activeSessionId) fetchSession();
+    else if (scopeTab === "monthly") fetchMonthly();
     else if (scopeTab === "alltime") fetchAllTime();
-  }, [scopeTab, activeSessionId, fetchSession, fetchAllTime]);
+  }, [scopeTab, activeSessionId, fetchSession, fetchMonthly, fetchAllTime]);
 
   // ── Derived state ─────────────────────────────────────────
 
-  const activeRows = scopeTab === "session" ? sessionRows : alltimeRows;
-  const activeLoading = scopeTab === "session" ? sessionLoading : alltimeLoading;
-  const minGP = scopeTab === "session" ? MIN_SESSION_GP : MIN_ALLTIME_GP;
+  const activeRows =
+    scopeTab === "session" ? sessionRows : scopeTab === "monthly" ? monthlyRows : alltimeRows;
+  const activeLoading =
+    scopeTab === "session"
+      ? sessionLoading
+      : scopeTab === "monthly"
+        ? monthlyLoading
+        : alltimeLoading;
+  const minGP =
+    scopeTab === "session"
+      ? MIN_SESSION_GP
+      : scopeTab === "monthly"
+        ? MIN_MONTH_GP
+        : MIN_ALLTIME_GP;
   const myRow = currentUserId ? activeRows.find((r) => r.player_id === currentUserId) : null;
 
   return {
@@ -316,8 +412,13 @@ export function useLeaderboard({
     handleSessionPick,
     handleClearSession,
     sessionRows,
+    monthlyRows,
     alltimeRows,
+    activeMonth,
+    availableMonths,
+    handleMonthPick,
     sessionLoading,
+    monthlyLoading,
     alltimeLoading,
     error,
     flashedIds,

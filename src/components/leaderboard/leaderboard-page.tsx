@@ -3,16 +3,15 @@
 // ============================================================
 // LeaderboardPage — Layout shell for all leaderboard variants
 // ============================================================
-// Three variants controlled by the `variant` prop:
+// All variants show the 3-way scope switcher (Session / Monthly / All-Time).
+// The `variant` prop only controls padding + centering:
 //
-//   player-panel    — embedded in player dashboard tab.
-//                     Session stats only. Compact padding.
-//
+//   player-panel    — embedded in player dashboard tab. Compact padding.
 //   organizer-panel — embedded in organizer dashboard tab.
-//                     Session + All-Time tabs.
+//   standalone      — public /leaderboard[/sessionId] page. Max-width centered.
 //
-//   standalone      — public /leaderboard/[sessionId] page.
-//                     Session + All-Time tabs. Max-width centered.
+// Default tab: the live session when one is in context, else the current
+// month (the lobby's headline) — decided in useLeaderboard.
 //
 // All data fetching, realtime subscription, flash detection, and
 // derived state live in useLeaderboard (src/hooks/use-leaderboard.ts).
@@ -23,6 +22,7 @@ import { RefreshCw, ChevronLeft, TriangleAlert } from "lucide-react";
 import { StadiumLeaderboard } from "./stadium-leaderboard";
 import { LeaderboardHeroCard } from "./leaderboard-hero-card";
 import { useLeaderboard, type LeaderboardSessionOption } from "@/hooks/use-leaderboard";
+import { formatMonthLabel } from "@/lib/month";
 import type { LeaderboardVariant } from "@/types/leaderboard";
 
 // ── Props ─────────────────────────────────────────────────────
@@ -59,7 +59,6 @@ export function LeaderboardPage({
   variant = "player-panel",
 }: LeaderboardPageProps) {
   const isCompact = variant === "player-panel";
-  const showAllTimeTab = variant === "organizer-panel" || variant === "standalone";
   const isCentered = variant === "standalone";
 
   const {
@@ -69,8 +68,9 @@ export function LeaderboardPage({
     activeSessionName,
     handleSessionPick,
     handleClearSession,
-    sessionRows,
-    sessionLoading,
+    activeMonth,
+    availableMonths,
+    handleMonthPick,
     error,
     myStats,
     myStatsLoading,
@@ -84,6 +84,27 @@ export function LeaderboardPage({
     initialSessionName: sessionName,
     currentUserId,
   });
+
+  // The leaderboard scope tabs (Session / Monthly / All-Time) now show on every
+  // variant so Monthly + All-Time are reachable everywhere; the default tab is
+  // the live session in-session, else the current month (handled by the hook).
+  const SCOPE_TABS = [
+    { key: "session", label: "This Session" },
+    { key: "monthly", label: "Monthly" },
+    { key: "alltime", label: "All-Time" },
+  ] as const;
+
+  const monthLabel = formatMonthLabel(activeMonth.year, activeMonth.month);
+  const boardTitle =
+    scopeTab === "session" ? activeSessionName : scopeTab === "monthly" ? monthLabel : "All-Time";
+  const scopeLabel =
+    scopeTab === "session" ? "Session" : scopeTab === "monthly" ? "Monthly" : "All-Time";
+  const emptyMsg =
+    scopeTab === "monthly"
+      ? `No ranked players this month yet — play ${minGP}+ games to appear.`
+      : minGP === 1
+        ? "No completed games in this session yet."
+        : `No players with ${minGP}+ games yet.`;
 
   // Show session picker when on session tab but no session is selected.
   // Computed here (not in the hook) because it depends on the `sessions`
@@ -99,93 +120,85 @@ export function LeaderboardPage({
     .filter(Boolean)
     .join(" ");
 
-  // ── Render: player-panel → Stadium layout ─────────────────
-  // The compact player-panel variant short-circuits the regular table
-  // and renders the dedicated Stadium component. It uses session rows
-  // only (no all-time / advanced toggle in the player dashboard).
-  if (isCompact) {
-    return (
-      <div className="px-1">
-        {error && (
-          <p
-            role="alert"
-            className="my-3 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
-          >
-            {error}
-          </p>
-        )}
-        {sessionLoading && sessionRows.length === 0 ? (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            Loading leaderboard…
-          </div>
-        ) : sessionRows.length === 0 ? (
-          <div className="py-12 text-center">
-            <p className="text-sm font-medium text-foreground">No ranked players yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {minGP === 1
-                ? "Complete at least 1 game to appear."
-                : `Min. ${minGP} games to appear on the board.`}
-            </p>
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={sessionLoading}
-              aria-label="Refresh leaderboard"
-              className="mt-5 inline-flex items-center gap-1.5 rounded-lg border border-border
-                         bg-card px-3 py-1.5 text-xs font-medium text-foreground
-                         hover:bg-muted transition-colors disabled:opacity-50
-                         disabled:cursor-not-allowed"
-            >
-              <RefreshCw
-                className={`h-3 w-3 ${sessionLoading ? "animate-spin" : ""}`}
-                aria-hidden="true"
-              />
-              Refresh
-            </button>
-          </div>
-        ) : (
-          <StadiumLeaderboard
-            sessionName={activeSessionName}
-            rows={sessionRows}
-            currentUserId={currentUserId}
-            onRefresh={handleRefresh}
-          />
-        )}
-      </div>
-    );
-  }
-
-  // ── Render: organizer / standalone ────────────────────────
+  // ── Render — unified across all variants ──────────────────
+  // Every variant (player-panel, organizer-panel, standalone) shows the 3-way
+  // scope switcher; padding/centering differ via wrapperClass.
   return (
     <div className={wrapperClass}>
       {/* StadiumLeaderboard owns its own header + refresh button —
           no duplicate header needed here. */}
 
-      {/* ── Scope tab switcher (organizer-panel + standalone) ── */}
-      {showAllTimeTab && (
-        <div
-          role="tablist"
-          aria-label="Leaderboard scope"
-          className="flex gap-1 rounded-xl bg-muted/50 p-1"
-        >
-          {(["session", "alltime"] as const).map((tab) => (
+      {/* ── Scope tab switcher: Session / Monthly / All-Time ── */}
+      <div
+        role="tablist"
+        aria-label="Leaderboard scope"
+        className="flex gap-1 rounded-xl bg-muted/50 p-1"
+      >
+        {SCOPE_TABS.map((t, idx) => {
+          const selected = scopeTab === t.key;
+          return (
             <button
-              key={tab}
+              key={t.key}
               role="tab"
-              aria-selected={scopeTab === tab}
-              onClick={() => setScopeTab(tab)}
+              aria-selected={selected}
+              // Roving tabindex: only the selected tab is in the tab order.
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setScopeTab(t.key)}
+              // APG tablist: ←/→ move to the previous/next tab and activate it.
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+                e.preventDefault();
+                const dir = e.key === "ArrowRight" ? 1 : -1;
+                const nextIdx = (idx + dir + SCOPE_TABS.length) % SCOPE_TABS.length;
+                setScopeTab(SCOPE_TABS[nextIdx].key);
+                (
+                  e.currentTarget.parentElement?.children[nextIdx] as HTMLElement | undefined
+                )?.focus();
+              }}
               className={[
-                "flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors",
-                scopeTab === tab
+                "flex-1 rounded-lg py-2 min-h-[36px] text-xs font-semibold transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                selected
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               ].join(" ")}
             >
-              {tab === "session" ? "This Session" : "All-Time"}
+              {t.label}
             </button>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
+
+      {/* ── Month picker — Monthly tab only ──────────────────── */}
+      {scopeTab === "monthly" &&
+        (availableMonths.length > 1 ? (
+          <div className="flex items-center justify-end gap-2">
+            <label htmlFor="leaderboard-month" className="sr-only">
+              Select month
+            </label>
+            <select
+              id="leaderboard-month"
+              value={`${activeMonth.year}-${activeMonth.month}`}
+              onChange={(e) => {
+                const picked = availableMonths.find(
+                  (m) => `${m.year}-${m.month}` === e.target.value
+                );
+                if (picked) handleMonthPick(picked);
+              }}
+              className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold
+                         text-foreground transition-colors hover:bg-muted
+                         focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              {availableMonths.map((m) => (
+                <option key={`${m.year}-${m.month}`} value={`${m.year}-${m.month}`}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <p className="text-right text-xs font-semibold text-muted-foreground">{monthLabel}</p>
+        ))}
 
       {/* ── Error banner ───────────────────────────────────── */}
       {error && !activeLoading && (
@@ -279,11 +292,7 @@ export function LeaderboardPage({
           </div>
         ) : activeRows.length === 0 && !activeLoading ? (
           <div className="py-12 text-center">
-            <p className="text-sm text-muted-foreground">
-              {minGP === 1
-                ? "No completed games in this session yet."
-                : `No players with ${minGP}+ games yet.`}
-            </p>
+            <p className="text-sm text-muted-foreground">{emptyMsg}</p>
             <button
               type="button"
               onClick={handleRefresh}
@@ -303,10 +312,13 @@ export function LeaderboardPage({
           </div>
         ) : (
           <StadiumLeaderboard
-            sessionName={scopeTab === "session" ? activeSessionName : undefined}
+            title={boardTitle}
             rows={activeRows}
             currentUserId={currentUserId}
             onRefresh={handleRefresh}
+            showMovement={scopeTab === "alltime"}
+            scopeLabel={scopeLabel}
+            minGP={minGP}
           />
         ))}
     </div>

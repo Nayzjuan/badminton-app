@@ -17,8 +17,8 @@
 
 /** Row returned by v_session_leaderboard */
 export type SessionLeaderboardEntry = {
-  player_id: string;      // uuid
-  session_id: string;     // uuid
+  player_id: string; // uuid
+  session_id: string; // uuid
   display_name: string;
   games_played: number;
   wins: number;
@@ -26,12 +26,12 @@ export type SessionLeaderboardEntry = {
   points_for: number;
   points_against: number;
   point_diff: number;
-  win_pct: number;        // e.g. 71.4
+  win_pct: number; // e.g. 71.4
 };
 
 /** Row returned by v_alltime_leaderboard_mat */
 export type AllTimeLeaderboardEntry = {
-  player_id: string;      // uuid
+  player_id: string; // uuid
   display_name: string;
   games_played: number;
   wins: number;
@@ -39,13 +39,35 @@ export type AllTimeLeaderboardEntry = {
   points_for: number;
   points_against: number;
   point_diff: number;
-  win_pct: number;        // e.g. 71.4
+  win_pct: number; // e.g. 71.4
+};
+
+/** Row returned by get_monthly_leaderboard(year, month) — same columns as
+ *  the all-time view (no session_id); the month is fixed by the RPC args. */
+export type MonthlyLeaderboardEntry = {
+  player_id: string; // uuid
+  display_name: string;
+  games_played: number;
+  wins: number;
+  losses: number;
+  points_for: number;
+  points_against: number;
+  point_diff: number;
+  win_pct: number; // e.g. 71.4
+};
+
+/** A selectable month in the Monthly leaderboard picker.
+ *  year/month are the Manila calendar year + 1-based month; label is "June 2026". */
+export type LeaderboardMonth = {
+  year: number;
+  month: number; // 1–12
+  label: string; // "June 2026"
 };
 
 /** Row returned by get_player_streaks() */
 export type PlayerStreak = {
-  player_id: string;      // uuid
-  win_streak: number;     // consecutive wins; 0 if most recent match was a loss
+  player_id: string; // uuid
+  win_streak: number; // consecutive wins; 0 if most recent match was a loss
 };
 
 // ------------------------------------------------------------
@@ -71,8 +93,8 @@ export type LeaderboardRow = {
   win_pct: number;
 
   // Computed in TypeScript
-  rank: number;           // 1-based position after tie-breaker sort
-  win_streak: number;     // 0 if no active streak or most recent match was a loss
+  rank: number; // 1-based position after tie-breaker sort
+  win_streak: number; // 0 if no active streak or most recent match was a loss
 
   /**
    * All-time tab only. Delta vs. 7 days ago.
@@ -84,7 +106,7 @@ export type LeaderboardRow = {
   rank_movement: number | null;
 
   // VIP badge — fetched from profiles in the server action
-  vip_tag:   string | null;
+  vip_tag: string | null;
   vip_theme: string | null;
 };
 
@@ -92,34 +114,51 @@ export type LeaderboardRow = {
 // Action Return Types
 // ------------------------------------------------------------
 
-export type GetSessionLeaderboardResult = {
-  success: true;
-  rows: LeaderboardRow[];
-} | {
-  success: false;
-  error: string;
-};
+export type GetSessionLeaderboardResult =
+  | {
+      success: true;
+      rows: LeaderboardRow[];
+    }
+  | {
+      success: false;
+      error: string;
+    };
 
-export type GetAllTimeLeaderboardResult = {
-  success: true;
-  rows: LeaderboardRow[];
-} | {
-  success: false;
-  error: string;
-};
+export type GetAllTimeLeaderboardResult =
+  | {
+      success: true;
+      rows: LeaderboardRow[];
+    }
+  | {
+      success: false;
+      error: string;
+    };
 
 /**
  * Return type for getPlayerStats().
  * row = null means the player has zero games in this scope (no row in the view).
  * row.rank = 0 means the player has games but hasn't hit the minimum GP threshold.
  */
-export type GetPlayerStatsResult = {
-  success: true;
-  row: LeaderboardRow | null;
-} | {
-  success: false;
-  error: string;
-};
+export type GetPlayerStatsResult =
+  | {
+      success: true;
+      row: LeaderboardRow | null;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+/** Return type for getMonthlyLeaderboard(year, month). */
+export type GetMonthlyLeaderboardResult =
+  | { success: true; rows: LeaderboardRow[] }
+  | { success: false; error: string };
+
+/** Return type for getLeaderboardMonths(). Newest month first; always includes
+ *  the current Manila month even if it has no matches yet. */
+export type GetLeaderboardMonthsResult =
+  | { success: true; months: LeaderboardMonth[] }
+  | { success: false; error: string };
 
 // ------------------------------------------------------------
 // Leaderboard Variant (controls which features render)

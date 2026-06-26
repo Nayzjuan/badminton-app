@@ -701,6 +701,28 @@ export type Database = {
           win_pct: number;
         }[];
       };
+      // Monthly leaderboard (migration 20260626000000). Live aggregation of one
+      // Manila-month slice of completed matches. SECURITY INVOKER, public-read.
+      get_monthly_leaderboard: {
+        Args: { p_year: number; p_month: number };
+        Returns: {
+          player_id: string;
+          display_name: string;
+          games_played: number;
+          wins: number;
+          losses: number;
+          points_for: number;
+          points_against: number;
+          point_diff: number;
+          win_pct: number;
+        }[];
+      };
+      // Months selectable in the monthly picker — distinct Manila-months with
+      // completed matches, plus the current month (always present), newest first.
+      get_leaderboard_months: {
+        Args: Record<string, never>;
+        Returns: { year: number; month: number }[];
+      };
       refresh_alltime_leaderboard: {
         Args: Record<string, never>;
         Returns: void;
