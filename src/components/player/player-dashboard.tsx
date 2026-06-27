@@ -119,6 +119,7 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
 
   const {
     currentMatch,
+    upcomingHeld,
     loading: matchLoading,
     refresh: refreshMatch,
   } = usePlayerMatch(session.id, profile.id);
@@ -405,6 +406,11 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
                     onDeckPosition={currentMatch.onDeckPosition}
                     totalOnDeck={currentMatch.totalOnDeck}
                     onLeaveQueue={leaveQueue}
+                    upcomingReserved={
+                      currentMatch.match.status === "in_progress" && upcomingHeld?.reserved
+                        ? { ready: upcomingHeld.ready }
+                        : null
+                    }
                     scoreSlot={
                       currentMatch.match.status === "in_progress" ? (
                         <ScoreInputCard

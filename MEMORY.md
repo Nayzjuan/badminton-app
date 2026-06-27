@@ -5,6 +5,26 @@
 
 ---
 
+## 🆕 PLAYER "UPCOMING RESERVED" STRIP — held-draft heads-up (2026-06-27)
+
+**Status: BUILT on `claude/pull-latest-main-EpwqL`. NOT committed, NOT deployed.** tsc clean · eslint (changed files) clean · `next build` clean. Independent review gate: **LGTM**. Built via `/impeccable` (product register, PRODUCT.md amber-on-navy on-deck semantic).
+
+**Problem:** When a player is the still-playing "pulled body" of a cross-court **held draft**, they're in TWO `match_players` rows at once (in_progress source + pending held draft). `usePlayerMatch` correctly shows the in_progress match (held draft is `is_published=false`, firewalled), so the player had **zero signal** they're already booked for the next game.
+
+**Fix (4 files):** keep the active-match screen as the hero, add a compact non-covering strip pinned **above Leave Queue** inside the `in_progress` overlay.
+- **NEW `src/app/actions/upcoming-match.ts`** — `getUpcomingHeldDraft(sessionId)`: service-role, scoped to `user.id` only (no roster leak, firewall stays intact for all other drafts). Detects `status='pending' AND is_held=true AND pulled_player_ids @> [user.id]` via `.contains()`. Returns `{ reserved, ready }` (`ready` = `held_ready_at` stamped). `{success}` union, never throws.
+- **`src/hooks/use-player-match.ts`** — returns `upcomingHeld`. Fetched inside `fetchMyMatch` only when resolved match is `in_progress`; seq-guarded after the await; `setUpcomingHeld(null)` on all null-match early returns + non-in_progress branch.
+- **`src/components/player/match-alert.tsx`** — `upcomingReserved?: {ready} | null` prop + `UpcomingReservedStrip` (amber `CalendarClock`, "Next match reserved" → "Up right after this" when ready, pulsing dot on ready). Bottom region restructured so strip + Leave Queue share the `mt-auto` anchor; null `upcomingReserved` = original layout exactly.
+- **`src/components/player/player-dashboard.tsx`** — passes `upcomingReserved` only when `status==='in_progress' && upcomingHeld?.reserved`.
+
+**Realtime caveat (accepted):** the held draft (unpublished) does NOT push realtime to the player (firewall), so the strip appears on the next `fetchMyMatch` trigger (own-match realtime event / visibility refresh), not instantly on held-draft creation. Eventual-consistency within seconds; acceptable for a heads-up.
+
+**⚠ STILL OPEN (separate bug, not addressed here):** if a held draft is **published while its pulled body is still on court** (reachable in DRAFT mode via Publish All / manual publish — `publish_all_drafts` / `publish_match` have no `is_held` guard, unlike `clear_all_unpublished_drafts`), `usePlayerMatch`'s `created_at DESC limit 1` flips the overlay from in_progress → on-deck mid-game, masking the live match + score input. Fix surface: add `AND is_held IS NOT TRUE` (or "source still in_progress") guard to the publish RPCs, and/or make `use-player-match.ts` prefer `in_progress` over `pending` instead of newest-by-created_at.
+
+**Verify on device:** pull a playing player into a held draft → confirm they keep the COURT screen + see the amber "Next match reserved" strip above Leave Queue; when the held draft's source frees, strip flips to "Up right after this". Sandbox route `/sandbox/player-alert` exists for visual checks.
+
+---
+
 ## 🆕 MONTHLY LEADERBOARD — `main` (2026-06-26)
 
 **Status: BUILT + migration applied to prod + validated. NOT yet committed (working tree).** tsc clean · 592 unit pass (+8 month tests) · build clean · 0 new lint errors. Plan: `MONTHLY_LEADERBOARD_PLAN.md` (12 grilled decisions D1–D12 + O-1/2/3, skill-backed UI §3, 2 review rounds). Built per grill-me → ui-ux-pro-max + impeccable skills → whole-plan adversarial review → implement → review gate.

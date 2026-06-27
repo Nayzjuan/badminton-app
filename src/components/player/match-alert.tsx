@@ -20,7 +20,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, CalendarClock } from "lucide-react";
 import type { Court, Profile, SkillLevel } from "@/types/database";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -41,6 +41,13 @@ interface MatchAlertProps {
   onLeaveQueue?: () => Promise<{ error?: string } | void>;
   /** Score input slot — rendered inside the in_progress overlay. */
   scoreSlot?: ReactNode;
+  /**
+   * Set when the player is already reserved for a held cross-court match
+   * that promotes after the one they're playing now. Renders a compact,
+   * non-covering strip inside the in_progress overlay. `ready` shifts the
+   * wording once the reserved match is next to take a court.
+   */
+  upcomingReserved?: { ready: boolean } | null;
 }
 
 // ── Skill tier map — 3 tiers for quick scanning ──────────────
@@ -203,6 +210,7 @@ export function MatchAlert({
   totalOnDeck = 0,
   onLeaveQueue,
   scoreSlot,
+  upcomingReserved = null,
 }: MatchAlertProps) {
   const me = { name: myDisplayName, skill: mySkillLevel };
 
@@ -274,9 +282,14 @@ export function MatchAlert({
 
         {scoreSlot && <div className="px-6 pt-5">{scoreSlot}</div>}
 
-        {onLeaveQueue && (
+        {(upcomingReserved || onLeaveQueue) && (
           <div className="mt-auto px-6 pt-4 pb-5">
-            <LeaveQueueButton tone="navy" onClick={onLeaveQueue} />
+            {upcomingReserved && <UpcomingReservedStrip ready={upcomingReserved.ready} />}
+            {onLeaveQueue && (
+              <div className={upcomingReserved ? "pt-3" : undefined}>
+                <LeaveQueueButton tone="navy" onClick={onLeaveQueue} />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -366,6 +379,49 @@ export function MatchAlert({
         <div className="mt-auto px-6 pt-4 pb-5">
           <LeaveQueueButton tone="amber" onClick={onLeaveQueue} />
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Upcoming reserved strip (in_progress overlay only) ────────────
+// Compact, non-covering signal that the player is already booked for a
+// held cross-court match that promotes after their current game. Lives
+// pinned above Leave Queue so the live match stays the hero. Amber is the
+// app's "on-deck / upcoming" semantic, set against the navy in_progress
+// canvas. No roster shown — the held draft is firewalled until it promotes.
+
+function UpcomingReservedStrip({ ready }: { ready: boolean }) {
+  const heading = ready ? "Up right after this" : "Next match reserved";
+  const detail = ready
+    ? "You're first on court when this game ends."
+    : "You're already booked for the next game. Finish strong.";
+
+  return (
+    <div
+      role="status"
+      aria-label={`${heading}. ${detail}`}
+      className="flex items-center gap-2.5 rounded-xl bg-amber-50 px-3.5 py-2.5 ring-1 ring-amber-200
+        dark:bg-amber-500/10 dark:ring-amber-500/30"
+    >
+      <CalendarClock
+        className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400"
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
+          {heading}
+        </p>
+        <p className="mt-0.5 text-[11px] leading-snug text-amber-700/70 dark:text-amber-300/70">
+          {detail}
+        </p>
+      </div>
+      {ready && (
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+          style={{ animation: "status-pulse 1.4s ease-in-out infinite" }}
+          aria-hidden="true"
+        />
       )}
     </div>
   );
