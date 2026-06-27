@@ -49,6 +49,7 @@ import {
 } from "@/lib/constants";
 import {
   getDynamicDraftCap,
+  shouldAutoPublishMatch,
   runAlgorithm,
   scoreAndSortPool,
   isHeldMatchReady,
@@ -319,7 +320,7 @@ async function runEngineInternal(
     return;
   }
 
-  // ── Fetch waiting players + draft count in parallel ───────────
+  // ── Fetch waiting players + draft count + session in parallel ─
   //
   // waitingRows is hoisted here (outside !bypassGate) for two reasons:
   //   1. The waiting count drives getDynamicDraftCap — we need it before
@@ -348,7 +349,11 @@ async function runEngineInternal(
       .eq("session_id", sessionId)
       .eq("status", "pending")
       .eq("is_published", false),
-    supabase.from("sessions").select("max_auto_drafts_override").eq("id", sessionId).single(),
+    supabase
+      .from("sessions")
+      .select("max_auto_drafts_override, auto_publish")
+      .eq("id", sessionId)
+      .single(),
   ]);
   if (sessionErr) {
     console.warn(`[engine] runEngineInternal: session fetch failed — ${sessionErr.message}`);
@@ -363,18 +368,39 @@ async function runEngineInternal(
     console.warn(`[engine] runEngineInternal: waiting-rows fetch failed — ${waitErr.message}`);
   }
 
+  const autoPublish = shouldAutoPublishMatch(sessionRow?.auto_publish ?? false);
+
   const waitingCount = waitingRows?.length ?? 0;
   const dynamicCap = getDynamicDraftCap(waitingCount);
   // Apply organizer override as a ceiling: min(override, dynamicCap).
   // null override means "use dynamic cap as-is".
   const override = sessionRow?.max_auto_drafts_override ?? null;
   const effectiveCap = override != null ? Math.min(override, dynamicCap) : dynamicCap;
-  const draftCount = draftCountRaw ?? 0;
+
+  // Mode-dependent cap count. Draft mode counts the unpublished review queue
+  // (fetched above). Auto-publish mode has no review step, so the cap instead
+  // limits the on-deck queue — re-count published on-deck matches PLUS held
+  // drafts. Held drafts are born is_published=false (hidden until their pulled
+  // body is free) but they RESERVE a future on-deck slot — they auto-publish at
+  // readiness. Counting them here stops the engine over-generating while several
+  // held drafts are pending, which would otherwise overshoot the cap when they
+  // all publish at once.
+  let draftCount = draftCountRaw ?? 0;
+  if (autoPublish) {
+    const { count: onDeckCountRaw } = await supabase
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", sessionId)
+      .eq("status", "pending")
+      .or("is_published.eq.true,is_held.eq.true");
+    draftCount = onDeckCountRaw ?? 0;
+  }
   const slotsAvailable = Math.max(0, effectiveCap - draftCount);
 
   console.log(
-    `[engine] runEngineInternal: courts=${courtCount} waiting=${waitingCount} ` +
-      `drafts=${draftCount} dynamic=${dynamicCap} effective=${effectiveCap} slots=${slotsAvailable}`
+    `[engine] runEngineInternal: mode=${autoPublish ? "auto" : "draft"} courts=${courtCount} ` +
+      `waiting=${waitingCount} pending=${draftCount} dynamic=${dynamicCap} ` +
+      `effective=${effectiveCap} slots=${slotsAvailable}`
   );
   if (slotsAvailable <= 0) {
     console.log(
@@ -546,7 +572,7 @@ async function runEngineInternal(
     if (committedHeld) continue; // held draft created — on to the next slot
 
     // ── Commit the match ─────────────────────────────────────────
-    const execResult = await executeMatch(supabase, sessionId, null, proposal, true);
+    const execResult = await executeMatch(supabase, sessionId, null, proposal, true, autoPublish);
     if (!execResult.success) {
       // "Slot skipped" = TOCTOU guard fired — expected under concurrent load.
       const isExpected = execResult.message?.includes("Slot skipped");
@@ -560,6 +586,15 @@ async function runEngineInternal(
         );
       }
       break;
+    }
+
+    // Auto-publish mode: the match went straight to On Deck (is_published=true),
+    // skipping the publish action where ON_DECK_WARNING normally fires. Send it
+    // here so players learn they're on deck. Fire-and-forget; never blocks the
+    // engine. (Draft mode stays silent until the organizer publishes.)
+    if (autoPublish) {
+      const rosterIds = [...proposal.teamA, ...proposal.teamB].map((p) => p.player_id);
+      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
     }
 
     // Match created — 4 players locked in on-deck.
@@ -603,9 +638,52 @@ export async function promoteOnDeckMatchInternal(
   // No timestamp goes into the query — we compare held_ready_at in JS (the published
   // pending set is tiny), sidestepping the PostgREST filter-string fragility.
   const nowMs = Date.now();
-  const match = (pendingAll ?? []).find(
+  const readyCandidates = (pendingAll ?? []).filter(
     (m) => !m.is_held || (m.held_ready_at !== null && new Date(m.held_ready_at).getTime() <= nowMs)
   );
+
+  // Pre-promotion safety guard (auto-publish): a match can reach On Deck and
+  // then have a roster player leave before a court frees. Promoting it would put
+  // a "ghost" on court — the TV shows 4 but only 3 arrive. The downstream
+  // status update already refuses to flip a 'left' player to 'playing', but the
+  // match itself would still promote. So here we skip (and clear) any ready
+  // candidate that contains a 'left' player and promote the first clean one.
+  // The ready set is tiny (≤ cap), and the roster fetch is reused below instead
+  // of a second round-trip, so the hot path costs one extra query.
+  let match: NonNullable<typeof pendingAll>[number] | null = null;
+  let matchPlayers: Array<{ player_id: string; team: string }> | null = null;
+  for (const candidate of readyCandidates) {
+    const { data: rosterRows } = await supabase
+      .from("match_players")
+      .select("player_id, team")
+      .eq("match_id", candidate.id);
+    const rosterIds = (rosterRows ?? []).map((r) => r.player_id);
+
+    const { count: leftCount } = await supabase
+      .from("queue_entries")
+      .select("player_id", { count: "exact", head: true })
+      .eq("session_id", sessionId)
+      .in("player_id", rosterIds)
+      .eq("status", "left");
+
+    if ((leftCount ?? 0) > 0) {
+      // Tainted roster — clear it (returns the remaining players to waiting and
+      // frees the slot for the engine to refill) and try the next ready match.
+      console.warn(
+        `[matchmaking] promoteOnDeckMatch: skipping match ${candidate.id} — a roster ` +
+          `player has left; clearing it so the court isn't blocked.`
+      );
+      await supabase.rpc("clear_on_deck_match_atomic", {
+        p_match_id: candidate.id,
+        p_session_id: sessionId,
+      });
+      continue;
+    }
+
+    match = candidate;
+    matchPlayers = rosterRows ?? [];
+    break;
+  }
 
   if (!match) {
     // Nothing READY. Surface a contextual warning if unpublished drafts are blocking;
@@ -670,11 +748,8 @@ export async function promoteOnDeckMatchInternal(
     .update({ status: "in_use" as const })
     .eq("id", courtId);
 
-  const { data: matchPlayers } = await supabase
-    .from("match_players")
-    .select("player_id, team")
-    .eq("match_id", match.id);
-
+  // matchPlayers was fetched during candidate selection above — reused here
+  // instead of re-querying.
   if (matchPlayers && matchPlayers.length > 0) {
     const playerIds = matchPlayers.map((mp) => mp.player_id);
     // BUG-002 fix: guard against overwriting a 'left' player's status.
@@ -746,6 +821,15 @@ export async function recomputeHeldReadiness(
 
   if (error || !heldMatches || heldMatches.length === 0) return;
 
+  // Auto-publish mode publishes each held draft the moment it becomes ready
+  // (below), rather than at creation — see the if (ready) block. Fetch once.
+  const { data: heldSessionRow } = await supabase
+    .from("sessions")
+    .select("auto_publish")
+    .eq("id", sessionId)
+    .single();
+  const autoPublish = shouldAutoPublishMatch(heldSessionRow?.auto_publish ?? false);
+
   for (const held of heldMatches) {
     const pulledId = held.pulled_player_ids?.[0];
 
@@ -810,11 +894,48 @@ export async function recomputeHeldReadiness(
     });
 
     if (ready) {
-      await supabase
+      const { error: stampErr } = await supabase
         .from("matches")
         .update({ held_ready_at: new Date().toISOString() })
         .eq("id", held.id)
         .is("held_ready_at", null); // idempotent — stamp once
+
+      // Auto-publish (D12): publish the held draft the instant it's ready, so it
+      // can take a court with no organizer review. Publishing HERE — not at
+      // creation — means the still-playing pulled body was never pinged or shown
+      // on-deck early; by now its source match has ended and all four members are
+      // 'drafted'. auto_publish_match keeps the left/conflict guards and skips
+      // (non-SUCCESS) rather than publishing a tainted roster.
+      if (!stampErr && autoPublish) {
+        const { data: pubResult } = await supabase.rpc("auto_publish_match", {
+          p_match_id: held.id,
+          p_session_id: sessionId,
+        });
+        if (pubResult === "SUCCESS") {
+          const { data: roster } = await supabase
+            .from("match_players")
+            .select("player_id")
+            .eq("match_id", held.id);
+          const rosterIds = (roster ?? []).map((r) => r.player_id);
+          after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+        } else if (pubResult === "HAS_LEFT_PLAYERS" || pubResult === "CONFLICT") {
+          // The draft is ready (held_ready_at now stamped) but the roster turned
+          // tainted between the stamp and the publish (a player left, or got
+          // committed elsewhere). We CANNOT leave it stamped-ready-but-unpublished:
+          // recompute only reprocesses held_ready_at IS NULL rows, and promotion
+          // only looks at is_published=true — so it would be orphaned forever
+          // (and invisible: auto mode hides the draft section). Clear it instead,
+          // returning the clean players to waiting so the engine regenerates.
+          console.warn(
+            `[matchmaking] recomputeHeldReadiness: held draft ${held.id} became ready but ` +
+              `auto-publish was blocked (${pubResult}) — clearing it so players re-enter the pool.`
+          );
+          await supabase.rpc("clear_on_deck_match_atomic", {
+            p_match_id: held.id,
+            p_session_id: sessionId,
+          });
+        }
+      }
     }
   }
 }

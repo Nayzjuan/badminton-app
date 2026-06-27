@@ -117,6 +117,26 @@ export async function broadcastAutoMatchmakingToggled(
   await postBroadcast(`realtime:session-events:${sessionId}`, "auto_matchmaking_toggled", payload);
 }
 
+// ── auto_publish_toggled ──────────────────────────────────
+
+export interface AutoPublishToggledPayload {
+  /** The new state of the auto-publish toggle after the flip. */
+  isOn: boolean;
+}
+
+/**
+ * Notify all organizers in a session that the auto-publish mode
+ * toggle has changed. Same Broadcast-over-RLS rationale as
+ * broadcastAutoMatchmakingToggled.
+ *
+ * Channel: session-events:{sessionId}
+ * Event:   auto_publish_toggled
+ */
+export async function broadcastAutoPublishToggled(sessionId: string, isOn: boolean): Promise<void> {
+  const payload: AutoPublishToggledPayload = { isOn };
+  await postBroadcast(`realtime:session-events:${sessionId}`, "auto_publish_toggled", payload);
+}
+
 // ── cap_saturation ────────────────────────────────────────
 
 export interface CapSaturationPayload {

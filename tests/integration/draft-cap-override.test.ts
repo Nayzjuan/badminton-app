@@ -84,7 +84,7 @@ async function createDraftMatch(sessionId: string, isPublished = false) {
       status: "pending",
       is_published: isPublished,
       is_mixed_level: false,
-      origin: "auto",
+      created_method: "auto",
     })
     .select("id")
     .single();
@@ -214,6 +214,60 @@ describe("DCINT-4: clear_all_unpublished_drafts deletes only is_published=false 
 
       expect(ids).not.toContain(unpublishedId); // unpublished → deleted
       expect(ids).toContain(publishedId); // published → untouched
+    } finally {
+      await cleanup(sessionId);
+    }
+  });
+});
+
+describe("DCINT-13: held cross-court drafts are excluded from the bulk clear (Fix #2)", () => {
+  it("held drafts survive clear_all_unpublished_drafts; a still-playing pulled body keeps 'playing'", async () => {
+    const sessionId = await createTestSession();
+    try {
+      // A normal unpublished draft (must be cleared) + a held draft (must survive).
+      const normalId = await createDraftMatch(sessionId, false);
+      // The app only ever creates held drafts via the create_held_cross_court_match
+      // RPC, so `is_held` is not part of the typed MatchInsert surface — cast to set
+      // it directly for this DB-behavior test.
+      const heldPayload = {
+        session_id: sessionId,
+        status: "pending",
+        is_published: false,
+        is_mixed_level: false,
+        created_method: "held",
+        is_held: true,
+      };
+      const { data: heldRow } = await db
+        .from("matches")
+        .insert(heldPayload as never)
+        .select("id")
+        .single();
+      const heldId = (heldRow as { id: string } | null)?.id as string;
+
+      // The held draft's pulled body is still PLAYING on its source court.
+      const { userId } = await createWaitingPlayer(sessionId);
+      await db
+        .from("queue_entries")
+        .update({ status: "playing" })
+        .eq("session_id", sessionId)
+        .eq("player_id", userId);
+      await db.from("match_players").insert({ match_id: heldId, player_id: userId, team: "a" });
+
+      await db.rpc("clear_all_unpublished_drafts", { p_session_id: sessionId });
+
+      const { data: remaining } = await db.from("matches").select("id").eq("session_id", sessionId);
+      const ids = remaining?.map((m) => m.id) ?? [];
+      expect(ids).toContain(heldId); // held draft survives
+      expect(ids).not.toContain(normalId); // normal draft cleared
+
+      // The still-playing pulled body must NOT have been flipped to 'waiting'.
+      const { data: entry } = await db
+        .from("queue_entries")
+        .select("status")
+        .eq("session_id", sessionId)
+        .eq("player_id", userId)
+        .single();
+      expect(entry?.status).toBe("playing");
     } finally {
       await cleanup(sessionId);
     }

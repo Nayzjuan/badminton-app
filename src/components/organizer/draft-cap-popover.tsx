@@ -30,6 +30,12 @@ interface DraftCapPopoverProps {
   value: number | null;
   /** Whether auto-matchmaking is currently ON. */
   autoIsOn: boolean;
+  /**
+   * Whether auto-publish mode is ON. The same cap column means different things
+   * by mode (D2): the review-queue size in draft mode vs the live on-deck queue
+   * size in auto-publish mode. Only the label/copy swaps — the value does not.
+   */
+  autoPublishIsOn?: boolean;
   /** Phase of an in-progress cap-reset. null = idle. */
   capPhase: CapPhase;
   /** Called when the organizer picks a new cap value. */
@@ -62,6 +68,7 @@ const CAP_OPTIONS: Array<{ label: string; sub?: string; value: number | null }> 
 export function DraftCapPopover({
   value,
   autoIsOn,
+  autoPublishIsOn = false,
   capPhase,
   onChange,
   compact = false,
@@ -137,8 +144,10 @@ export function DraftCapPopover({
         disabled={isDisabled}
         title={
           !autoIsOn
-            ? "Turn on Auto matchmaking to change the draft cap"
-            : "Set maximum number of auto-generated drafts"
+            ? "Turn on Auto matchmaking to change the cap"
+            : autoPublishIsOn
+              ? "Set how many published matches to keep On Deck at once"
+              : "Set maximum number of auto-generated drafts"
         }
         className={[
           ...chipBase,
@@ -153,7 +162,9 @@ export function DraftCapPopover({
             "polygon(0 0,calc(100% - 5px) 0,100% 5px,100% 100%,5px 100%,0 calc(100% - 5px))",
         }}
       >
-        <span className="text-cc-t3 text-[8px] tracking-[0.18em]">MAX</span>
+        <span className="text-cc-t3 text-[8px] tracking-[0.18em]">
+          {autoPublishIsOn ? "DECK" : "MAX"}
+        </span>
         <span
           className="font-semibold"
           style={{ color: isDynamic && !isDisabled ? "var(--cc-accent)" : undefined }}
@@ -175,7 +186,7 @@ export function DraftCapPopover({
         >
           <div className="px-3 pt-2.5 pb-1">
             <p className="font-command text-[8px] uppercase tracking-[0.20em] text-cc-t3">
-              Max drafts
+              {autoPublishIsOn ? "On-deck cap" : "Max drafts"}
             </p>
           </div>
 

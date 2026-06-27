@@ -408,19 +408,24 @@ describe("fixPlayerRecord — RPC layer", () => {
     expect(result.message).toContain("deadlock detected");
   });
 
-  it("FRA-18: calls the RPC with the correct four arguments", async () => {
+  it("FRA-18: calls the RPC with the core arguments + actor context", async () => {
     const svcMock = makeServiceClient(HAPPY_PATH_FULL_REPLACE);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(makeAuthClient(USER_ID) as never);
     vi.mocked(createServiceClient).mockReturnValue(svcMock as never);
 
     await fixPlayerRecord(MATCH_ID, OUT_PLAYER, IN_PLAYER, SESSION_ID);
 
-    expect(svcMock.rpc).toHaveBeenCalledWith("fix_record_swap_player", {
-      p_match_id: MATCH_ID,
-      p_out_player_id: OUT_PLAYER,
-      p_in_player_id: IN_PLAYER,
-      p_session_id: SESSION_ID,
-    });
+    // The provenance audit threads p_actor_id/p_actor_name for the post_completion event.
+    expect(svcMock.rpc).toHaveBeenCalledWith(
+      "fix_record_swap_player",
+      expect.objectContaining({
+        p_match_id: MATCH_ID,
+        p_out_player_id: OUT_PLAYER,
+        p_in_player_id: IN_PLAYER,
+        p_session_id: SESSION_ID,
+        p_actor_id: USER_ID,
+      })
+    );
   });
 });
 

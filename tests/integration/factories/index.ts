@@ -317,7 +317,7 @@ export async function makeMatch({
       status,
       is_published: isPublished,
       is_mixed_level: isMixedLevel,
-      origin: "manual",
+      created_method: "manual",
     })
     .select("id")
     .single();
@@ -388,7 +388,7 @@ export async function makeCompletedMatch({
       status: "completed",
       is_published: true,
       is_mixed_level: false,
-      origin: "auto",
+      created_method: "auto",
       started_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
     })
     .select("id")

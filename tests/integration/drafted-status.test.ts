@@ -1127,7 +1127,7 @@ describe("drafted queue_status", () => {
         status: "completed" as const,
         is_published: true,
         is_mixed_level: false,
-        origin: "auto",
+        created_method: "auto",
       })
       .select("id")
       .single();

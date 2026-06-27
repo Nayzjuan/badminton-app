@@ -19,21 +19,28 @@
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { isValidUUID } from "@/lib/validate";
+import { formatMonthLabel } from "@/lib/month";
 import type {
   SessionLeaderboardEntry,
   AllTimeLeaderboardEntry,
+  MonthlyLeaderboardEntry,
+  LeaderboardMonth,
   PlayerStreak,
   LeaderboardRow,
   GetSessionLeaderboardResult,
   GetAllTimeLeaderboardResult,
+  GetMonthlyLeaderboardResult,
+  GetLeaderboardMonthsResult,
   GetPlayerStatsResult,
 } from "@/types/leaderboard";
 
 // ── Constants ─────────────────────────────────────────────────
 const MIN_SESSION_GP = 1; // minimum games to appear on session board
+const MIN_MONTH_GP = 8; // minimum games to appear on monthly board (one+ session's worth)
 const MIN_ALLTIME_GP = 10; // minimum games to appear on all-time board
 const RANK_MOVEMENT_DAYS = 7; // compare current rank vs. N days ago
 const SESSION_CONFIDENCE_K = 3; // confidence smoothing constant for session ranking
+const MONTH_CONFIDENCE_K = 6; // confidence smoothing constant for monthly ranking
 const ALLTIME_CONFIDENCE_K = 10; // confidence smoothing constant for all-time ranking
 
 // ── Confidence-Weighted Score ─────────────────────────────────
@@ -289,6 +296,141 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[getAllTimeLeaderboard] unexpected error:", message);
+    return { success: false, error: message };
+  }
+}
+
+// ============================================================
+// getMonthlyLeaderboard
+// ============================================================
+// Live aggregation of one Manila-month slice (via get_monthly_leaderboard RPC),
+// reusing the shared confidence-sort + rank + VIP helpers. No streak (O-2:
+// the streak RPC isn't month-scoped) and no rank movement (monthly omits Δ).
+// Anti-ghost: players with < MIN_MONTH_GP are excluded.
+// ============================================================
+export async function getMonthlyLeaderboard(
+  year: number,
+  month: number
+): Promise<GetMonthlyLeaderboardResult> {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return { success: false, error: "Invalid year or month." };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+
+    const { data, error } = await supabase.rpc("get_monthly_leaderboard", {
+      p_year: year,
+      p_month: month,
+    });
+
+    if (error) {
+      console.error("[getMonthlyLeaderboard] error:", error);
+      return { success: false, error: error.message };
+    }
+
+    const rawStats = ((data ?? []) as MonthlyLeaderboardEntry[]).filter(
+      (r) => r.games_played >= MIN_MONTH_GP
+    );
+
+    const sorted = sortLeaderboard(rawStats, MONTH_CONFIDENCE_K);
+    const ranked = assignRanks(sorted, MONTH_CONFIDENCE_K);
+
+    const vipMap = await buildVipMap(
+      supabase,
+      ranked.map((r) => r.player_id)
+    );
+
+    const rows: LeaderboardRow[] = ranked.map((entry) => ({
+      player_id: entry.player_id,
+      display_name: entry.display_name,
+      games_played: entry.games_played,
+      wins: entry.wins,
+      losses: entry.losses,
+      points_for: entry.points_for,
+      points_against: entry.points_against,
+      point_diff: entry.point_diff,
+      win_pct: entry.win_pct,
+      rank: entry.rank,
+      win_streak: 0, // O-2: monthly omits win-streak
+      rank_movement: null, // monthly omits Δ
+      vip_tag: vipMap.get(entry.player_id)?.vip_tag ?? null,
+      vip_theme: vipMap.get(entry.player_id)?.vip_theme ?? null,
+    }));
+
+    return { success: true, rows };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[getMonthlyLeaderboard] unexpected error:", message);
+    return { success: false, error: message };
+  }
+}
+
+// ============================================================
+// getLeaderboardMonths
+// ============================================================
+// Months selectable in the monthly picker: distinct Manila-months with
+// completed matches, plus the current month (always present), newest first.
+// ============================================================
+export async function getLeaderboardMonths(): Promise<GetLeaderboardMonthsResult> {
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.rpc("get_leaderboard_months");
+    if (error) {
+      console.error("[getLeaderboardMonths] error:", error);
+      return { success: false, error: error.message };
+    }
+    const months: LeaderboardMonth[] = ((data ?? []) as { year: number; month: number }[]).map(
+      (m) => ({ year: m.year, month: m.month, label: formatMonthLabel(m.year, m.month) })
+    );
+    return { success: true, months };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[getLeaderboardMonths] unexpected error:", message);
+    return { success: false, error: message };
+  }
+}
+
+// ============================================================
+// getPlayerMonthlyStats
+// ============================================================
+// A single player's monthly stats (incl. below-threshold) for the hero card.
+// Additive — does NOT change getPlayerStats's signature. Reuses the monthly RPC
+// and finds the player; the month slice is small so this is cheap.
+// ============================================================
+export async function getPlayerMonthlyStats(
+  playerId: string,
+  year: number,
+  month: number
+): Promise<GetPlayerStatsResult> {
+  if (!isValidUUID(playerId)) return { success: false, error: "Invalid player ID." };
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+    return { success: false, error: "Invalid year or month." };
+  }
+  try {
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await supabase.rpc("get_monthly_leaderboard", {
+      p_year: year,
+      p_month: month,
+    });
+    if (error) {
+      console.error("[getPlayerMonthlyStats] error:", error);
+      return { success: false, error: error.message };
+    }
+    const entry = ((data ?? []) as MonthlyLeaderboardEntry[]).find((r) => r.player_id === playerId);
+    if (!entry) return { success: true, row: null }; // zero games this month
+
+    const row: LeaderboardRow = {
+      ...entry,
+      rank: 0, // not on ranked board
+      win_streak: 0, // not shown in below-threshold state
+      rank_movement: null,
+      vip_tag: null,
+      vip_theme: null,
+    };
+    return { success: true, row };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[getPlayerMonthlyStats] unexpected error:", message);
     return { success: false, error: message };
   }
 }

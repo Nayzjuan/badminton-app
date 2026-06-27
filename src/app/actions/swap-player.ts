@@ -34,7 +34,7 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
-import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
+import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 
 // ── Return types ──────────────────────────────────────────────
 
@@ -153,6 +153,7 @@ export async function swapPlayerInMatch(
   // swap_player_in_match RPC (migration 20260420000000).
   // If the server crashes mid-execution Postgres rolls back
   // automatically — no manual compensation needed.
+  const actor = await getActorContext(user.id);
   const { error: swapError } = await db.rpc("swap_player_in_match", {
     p_match_id: matchId,
     p_out_player_id: outPlayerId,
@@ -160,6 +161,8 @@ export async function swapPlayerInMatch(
     p_session_id: match.session_id,
     p_team: outPlayerRow.team,
     p_is_published: match.is_published,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
   });
 
   if (swapError) {
@@ -298,11 +301,14 @@ export async function swapMatchPlayers(
   }
 
   // ── Atomic write via swap_match_players RPC ───────────────
+  const actor = await getActorContext(user.id);
   const { error: swapError } = await db.rpc("swap_match_players", {
     p_a_match_id: aMatchId,
     p_a_player_id: aPlayerId,
     p_b_match_id: bMatchId,
     p_b_player_id: bPlayerId,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
   });
 
   if (swapError) {

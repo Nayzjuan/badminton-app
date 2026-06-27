@@ -54,12 +54,14 @@ createServiceClient(); // uses service role key
 
 ### Broadcast System
 
-`src/lib/broadcast.ts` — Server-side REST broadcast helpers (no WebSocket opened from the server). Sends ephemeral messages to topic `"realtime:session-events:{sessionId}"`. Four event types:
+`src/lib/broadcast.ts` — Server-side REST broadcast helpers (no WebSocket opened from the server). Sends ephemeral messages to topic `"realtime:session-events:{sessionId}"`. Event types:
 
 - `organizer_intervention` — `{ type: "on_deck_cleared" | "match_cancelled", affectedPlayerIds }` → triggers player-side toast via `useOrganizerBroadcast`.
 - `session_closed` — redirects all connected players to `/wrapped/{sessionId}/{playerId}`.
 - `auto_matchmaking_toggled` — `{ isOn: boolean }` → syncs auto-matchmaking state to all co-organizers (bypasses the sessions RLS SELECT policy that would silently drop postgres_changes for non-creator organizers).
+- `auto_publish_toggled` — `{ isOn: boolean }` → syncs auto-publish mode state to all co-organizers (same RLS-bypass rationale). Handled in `use-organizer-session.ts`; `auto_publish` is also excluded from the postgres_changes apply so it never double-syncs.
 - `cap_saturation` — `{ affectedPlayerIds, reason }` → fires when `MAX_PARTNERSHIP_REPEATS` blocks every possible team split. Surfaces a `CapSaturationNotice` banner in the on-deck panel so the organizer knows to intervene manually.
+- `draft_cap_phase` — `{ phase: "clearing" | "generating" | "done", cap }` → drives the synchronized dashboard lockout overlay during a cap-change reset.
 
 ### Shared Server Action Helpers
 
@@ -111,6 +113,8 @@ Partial UNIQUE index `idx_profiles_unique_active_name` on `lower(btrim(regexp_re
 | `scoring`                  | `scoring_format` enum | `single` \| `best_of_3` \| `best_of_5`                                         |
 | `is_active`                | `bool`                | `false` when session is closed                                                 |
 | `is_auto_matchmaking_on`   | `bool`                | Engine toggle — auto-fills on-deck when `true`                                 |
+| `max_auto_drafts_override` | `int \| null`         | Organizer cap on the auto-draft queue. `null` = dynamic (3/5/6 by pool size); 1–5 = ceiling. In auto-publish mode this caps the published On-Deck queue instead. |
+| `auto_publish`             | `bool`                | **Auto-publish mode** (migration `20260623000000`). `false` (default) = engine writes drafts (`is_published=false`) for organizer review. `true` = engine writes matches straight to On Deck (`is_published=true`), skipping the publish gate. |
 | `court_time_limit_minutes` | `int \| null`         | Per-court time cap; `null` = unlimited                                         |
 | `created_at`               | `timestamptz`         |                                                                                |
 | `ended_at`                 | `timestamptz \| null` | Set when session is closed                                                     |
@@ -281,6 +285,8 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 | `skill_level_to_int(lvl)`                               | Enum → numeric (1–6)                                                                                                                                                                                                                                                                                                                 |
 | `get_player_streaks(p_session_id?)`                     | Win-streak per player for current session or all-time                                                                                                                                                                                                                                                                                |
 | `get_alltime_snapshot_before(p_cutoff)`                 | All-time stats as of a timestamp                                                                                                                                                                                                                                                                                                     |
+| `get_monthly_leaderboard(p_year, p_month)`              | **Monthly board** (migration `20260626000000`). Live aggregation of one Manila-month slice of completed matches off base tables. `SECURITY INVOKER`, public-read. Boundary anchored in `Asia/Manila` via `make_timestamptz`; sargable `completed_at` range on `idx_matches_completed_at`.                                              |
+| `get_leaderboard_months()`                              | Months for the monthly picker — distinct Manila-months with completed matches + the current month (always present), newest first. `SECURITY INVOKER`, public-read.                                                                                                                                                                    |
 | `refresh_alltime_leaderboard()`                         | Refreshes the materialized view                                                                                                                                                                                                                                                                                                      |
 | `swap_player_in_match(...)`                             | Atomic bench→on-deck swap; recomputes `is_mixed_level`                                                                                                                                                                                                                                                                               |
 | `swap_match_players(...)`                               | Cross-match atomic swap between two on-deck matches                                                                                                                                                                                                                                                                                  |
@@ -288,6 +294,7 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 | `compute_session_wrapped(p_session_id)`                 | Computes and upserts all `session_wrapped_stats` for a session                                                                                                                                                                                                                                                                       |
 | `get_h2h_record(p_team_a, p_team_b, p_session_id)`      | Head-to-head wins for exact 2v2 team pairing (all-time + tonight)                                                                                                                                                                                                                                                                    |
 | `toggle_auto_matchmaking(p_session_id)`                 | Atomic toggle; returns new boolean value                                                                                                                                                                                                                                                                                             |
+| `auto_publish_match(p_match_id, p_session_id)`          | **Auto-publish mode** (migration `20260623000001`). `publish_match` minus the organizer gate — service-role-only (grants revoked from anon/authenticated, `20260623000002`). Used by `recomputeHeldReadiness` to publish a held draft the instant it becomes ready. Keeps the `HAS_LEFT_PLAYERS`/`CONFLICT` guards; sets `is_published=true` and transitions roster `drafted`/`waiting` → `on_deck`. Returns `SUCCESS` \| `HAS_LEFT_PLAYERS` \| `CONFLICT` \| `NOT_PENDING` \| `ALREADY_PUBLISHED` \| `NOT_FOUND`. |
 | `migrate_player_identity(p_old_user_id, p_new_user_id)` | Reconnect identity migration; returns `true` if old user is primary organizer                                                                                                                                                                                                                                                        |
 | `lookup_active_session(p_session_id)`                   | Safe public lookup for QR-code join (`/play/join`) — no RLS exposure                                                                                                                                                                                                                                                                 |
 | `swap_player_in_active_match(...)`                      | Replaces one player in an `in_progress` match with a queue player; recomputes `is_mixed_level`, marks `origin='modified'`                                                                                                                                                                                                            |
@@ -600,6 +607,16 @@ Draft Mode is a **publish gate** for auto-generated on-deck matches.
 
 **Amber Courts-tab badge**: The organizer dashboard shows an amber badge on the **Courts** tab whenever `drafts > 0` (count of on-deck matches with `is_published = false`). This is a persistent visual signal that unpublished draft matches are waiting for review, even when the organizer is on a different tab.
 
+#### Auto-Publish Mode (the publish gate, OFF) — `sessions.auto_publish`
+
+Auto-Publish Mode is the **per-session opposite** of Draft Mode: when ON, the engine skips the manual publish gate entirely and matches go **straight to On Deck**. The whole pipeline downstream of publish is already automatic (`endMatchAction → promoteOnDeckMatchInternal → COURT_CALL`), so this single flag flips the only remaining manual step. Migrations `20260623000000` (column) + `20260623000001` (RPC) + `20260623000002` (grants).
+
+- **Engine output (the critical cluster, `runEngineInternal`):** `runEngineInternal` reads `auto_publish` alongside `max_auto_drafts_override` (one `sessions` fetch). `executeMatch` is called with `autoPublish`, so `create_match_with_players` receives `p_is_published = true` and atomically promotes the roster to `on_deck`. The engine then fires `ON_DECK_WARNING` itself via `after()` (the publish action that normally fires it is bypassed).
+- **Cap re-interpretation (D2):** the same `max_auto_drafts_override` cap means "max published matches to keep On Deck" in auto mode. Because there are no unpublished drafts, the cap-count query re-counts `is_published = true` pending matches (an extra count query that runs **only** in auto mode). Held-but-not-ready drafts (`is_published=false`) stay hidden and don't count. UI chip label swaps `MAX` → `DECK`.
+- **Held cross-court drafts publish at READINESS, not creation (D12):** held drafts are still born `is_published=false` (the pulled body may be mid-game). When `recomputeHeldReadiness` stamps `held_ready_at` and `auto_publish` is ON, it calls `auto_publish_match` (service-role RPC) to publish that one draft and ping all four players — so a still-playing player is never pinged or shown on-deck early.
+- **Ghost-player guard (`promoteOnDeckMatchInternal`):** before promoting, the function skips and clears any ready match whose roster contains a `left` player (auto-published matches reach On Deck without organizer review, so this is the safety net that the manual publish path provided).
+- **Toggle (`toggleAutoPublish`):** ON flip — persist `auto_publish=true`, then (only while Auto-Matchmaking is ON) clear unpublished drafts and re-run the engine so it refills On Deck immediately (D3/D8); a confirm dialog warns when drafts will be cleared (D9). OFF flip — persist only; live On-Deck matches are committed and left untouched (D4). The toggle is disabled in the header while Auto-Matchmaking is OFF (D11, the engine can't run). State syncs to co-organizers via the `auto_publish_toggled` broadcast. In auto mode the On-Deck panel hides the drafts section, the divider, and the Publish-All banner.
+
 **Three-layer server firewall (RLS-level enforcement):**
 
 1. `matches` RLS `SELECT` policy: `is_published = true OR creator_id = auth.uid()` — non-organizer users can only query published matches.
@@ -825,14 +842,17 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 ### 3.9 Leaderboard
 
-**Files:** `src/components/leaderboard/`, `src/hooks/use-leaderboard.ts`, `src/app/actions/leaderboard.ts`, `src/types/leaderboard.ts`
+**Files:** `src/components/leaderboard/`, `src/hooks/use-leaderboard.ts`, `src/app/actions/leaderboard.ts`, `src/types/leaderboard.ts`, `src/lib/month.ts`
 
-Two leaderboard modes:
+Three leaderboard scopes (3-way segmented control `[ Session · Monthly · All-Time ]` on every variant; `useLeaderboard` owns the `scopeTab`):
 
-- **Session leaderboard**: reads `v_session_leaderboard` — live stats for the current session. Shown on the organizer dashboard leaderboard tab and at `/leaderboard/[sessionId]`.
-- **All-time leaderboard**: reads `v_alltime_leaderboard_mat` (materialized view). Refreshed via `refresh_alltime_leaderboard()` RPC after each session. Accessible at `/leaderboard`.
+- **Session leaderboard**: reads `v_session_leaderboard` — live stats for the current session. `MIN_SESSION_GP=1`, confidence `K=3`.
+- **Monthly leaderboard** (migration `20260626000000`): live `get_monthly_leaderboard(year, month)` RPC aggregating one **Manila-month** (`Asia/Manila`, UTC+8, `CLUB_TIMEZONE`) slice of completed matches off the base tables. Browsable via a month picker fed by `get_leaderboard_months()` (distinct Manila-months with data + the current month). `MIN_MONTH_GP=8`, confidence `K=6`, **no win-streak, no Δ column**. SECURITY INVOKER (respects the permissive `matches_select` RLS), public-read. Month boundaries computed once as `make_timestamptz(y,m,1,…,'Asia/Manila')` → sargable `completed_at` range on partial index `idx_matches_completed_at`. Default tab on the no-session lobby.
+- **All-time leaderboard**: reads `v_alltime_leaderboard_mat` (materialized view). Refreshed via `refresh_alltime_leaderboard()` RPC after each session. `MIN_ALLTIME_GP=10`, confidence `K=10`, shows the rank-movement **Δ** column (vs a 7-days-ago snapshot via `get_alltime_snapshot_before`).
 
-**LeaderboardHeroCard**: Always-visible player status strip showing the authenticated user's rank, GP, Win%, and rank delta — renders above the leaderboard table on both session and all-time views.
+Default scope: the live **Session** when one is in context, else **Monthly** (current month). Month math lives in `src/lib/month.ts` (pure: `getCurrentManilaMonth` uses `Intl` + `Asia/Manila`, never the runtime tz). All three boards render through the single `StadiumLeaderboard` component (one unified rounded "stadium" aesthetic — the leaderboard is a deliberate exception to the player/organizer `cc-*` split); `showMovement` drops the Δ column (so Session + Monthly hide it).
+
+**LeaderboardHeroCard**: Always-visible player status strip showing the authenticated user's rank, GP, Win%, and rank delta — renders above the leaderboard table on session, monthly, and all-time views (`getPlayerMonthlyStats` feeds the monthly below-threshold state).
 
 Rank-change flash animation: `data-flash="true"` triggers `leaderboard-flash` keyframes (amber glow → transparent over 800ms).
 
@@ -1084,6 +1104,33 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 **`PlayerRowDark` changes:** `onLongPress` prop adds pointer-event handlers + keyboard fallback (Enter/Space fires immediately). `lp-hold` CSS class applied during the hold for visual feedback. Non-interactive rows restore `hover:bg-cc-border`.
 
 **Migration `20260601000000_live_match_player_swap.sql` applied to Supabase production ✅ (2026-06-01).**
+
+---
+
+### 3.23a Match Provenance & Modification Audit (2026-06-17)
+
+**Branch `feat/match-provenance-audit` — built, not yet applied/merged.** Replaces the flat `matches.origin` enum with an auditable 3-layer model so every match's birth + every roster change is known.
+
+**Files:** `src/lib/match-provenance.ts` (pure logic), `src/lib/match-event-log.ts` (best-effort), `src/app/actions/match-events.ts` (reads), `src/components/organizer/match-event-timeline.tsx` (UI), migrations `20260617000000` (additive) + `20260617000001` (origin drop).
+
+**Data model:**
+
+| Layer | Column / table | Meaning |
+|---|---|---|
+| Birth (immutable) | `matches.created_method` | `auto` \| `manual` \| `held` — never overwritten |
+| Rollup | `matches.modification_count` | composition changes net of undos; `provenance_backfilled` marks pre-cutover rows |
+| Ultimate label | `matches.final_classification` | GENERATED: `created_method \|\| (count>0 ? '_modified' : '_clean')` → 6 values |
+| Full trail | `match_events` (append-only) | one row per organizer ACTION; JSONB movements; snapshotted actor/player names; `correlation_id` ties cross-match legs; `reverses_event_id` for undo; `ON DELETE SET NULL` + snapshots survive deletion |
+
+**How counting works:** the `record_match_event` RPC (called from inside every composition RPC under the match row lock) computes per-match `seq`, inserts the event, and applies the delta (`roster_swap`/`team_flip`/`ondeck_pull`/`player_left` = +1, `undo` = −1, else 0). The old `WHERE origin='auto'` guard is removed — composition changes count on auto/manual/held alike, so `manual_modified` is now real. **Undo correctness:** the two live undo paths re-call the forward RPC with `p_is_undo:true` → records an `undo` (−1), not a second forward (+1), so net counting and partial-undo are correct.
+
+**Cross-match:** the on-deck pull and the cross-match draft swap each write **two correlated rows** (+1 per match). Score edits / reverts / cancels are logged (best-effort, server-action) but never count.
+
+**Origin retirement (B-clean):** migration 1's RPCs are origin-free; the badge (`MatchOriginTag`) + `v_match_history` move to `final_classification`; migration 2 rebuilds the view chain and `DROP COLUMN origin`. The `match_origin` ENUM type is retained (vestigial — `p_origin` params still map to `created_method`).
+
+**Backfill:** birth method is recovered exactly for all existing matches (sticky rule: `origin='modified'` ⇒ born auto; `is_held` ⇒ held), so "% auto vs manual vs held" is accurate retroactively. `manual_modified` is unrecoverable for history (accurate only going forward); legacy modified rows get `modification_count=1` floor.
+
+**⚠ Migrations NOT applied to prod** (apply order: mig1 → deploy app → mig2). Deferred best-effort items: `player_left`/`published` events on leaver/clear/publish paths (zero metric impact — those matches cancel). See MEMORY.md + `MATCH_PROVENANCE_AUDIT_PLAN.md`.
 
 ---
 

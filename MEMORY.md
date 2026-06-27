@@ -5,6 +5,123 @@
 
 ---
 
+## 🆕 MONTHLY LEADERBOARD — `main` (2026-06-26)
+
+**Status: BUILT + migration applied to prod + validated. NOT yet committed (working tree).** tsc clean · 592 unit pass (+8 month tests) · build clean · 0 new lint errors. Plan: `MONTHLY_LEADERBOARD_PLAN.md` (12 grilled decisions D1–D12 + O-1/2/3, skill-backed UI §3, 2 review rounds). Built per grill-me → ui-ux-pro-max + impeccable skills → whole-plan adversarial review → implement → review gate.
+
+**Feature:** third leaderboard scope **Monthly**, alongside Session + All-Time. Browsable months (default current); shows on all surfaces (players + organizers).
+
+### Decisions (locked)
+- **Month = Asia/Manila** (UTC+8, no DST), identical for every viewer. `CLUB_TIMEZONE='Asia/Manila'` (`src/lib/constants.ts`, app's first canonical tz).
+- **Live RPC** (no matview): `get_monthly_leaderboard(year,month)` aggregates one Manila-month slice off base tables (match_players⋈matches, NOT v_match_history). Boundary computed once via `make_timestamptz(...,'Asia/Manila')` → sargable `completed_at >= start AND < end` range on partial index `idx_matches_completed_at`. SECURITY INVOKER (respects matches RLS — which IS enabled but permissive for completed), granted anon+authenticated. `get_leaderboard_months()` = picker source (distinct Manila-months + current). Migration `20260626000000`. Verified live: 832=832 cross-check vs direct aggregation.
+- **Ranking:** MIN_MONTH_GP=8, MONTH_CONFIDENCE_K=6, **no win-streak** (streak RPC isn't month-scoped), **no Δ** column.
+- **Default tab:** session in-session, else **Monthly** (lobby).
+
+### Key files
+- DB: migration `20260626000000_monthly_leaderboard.sql`; `database.ts` Functions += get_monthly_leaderboard / get_leaderboard_months.
+- `src/lib/month.ts` (NEW, pure) — getCurrentManilaMonth (Intl + Asia/Manila, NOT runtime tz), formatMonthLabel, isCurrentManilaMonth. Tests `tests/unit/month.test.ts` (MON-1..8).
+- `src/app/actions/leaderboard.ts` — getMonthlyLeaderboard, getLeaderboardMonths, **getPlayerMonthlyStats (additive — getPlayerStats signature UNCHANGED)**. Reuses existing sortLeaderboard/assignRanks/buildVipMap (already shared module-level — no risky refactor).
+- `src/hooks/use-leaderboard.ts` — ScopeTab now 3-way; default 'monthly' when no session; activeMonth/availableMonths/monthsFetched/fetchMonthly/fetchMonthlySeq; monthly refetches on month change; realtime now also subscribes for **monthly current-month + active session**; derived activeRows/loading/minGP 3-way.
+- `src/components/leaderboard/leaderboard-page.tsx` — **removed the compact player-panel short-circuit**; ALL variants now use the unified render + 3-way switcher (APG tablist: roving tabindex + ←/→ arrow nav) + month picker (native `<select>`, Monthly tab only, static label when ≤1 month). scope-aware empty copy.
+- `stadium-leaderboard.tsx` — generalized `title` (was sessionName), `showMovement` prop (false hides Δ column + switches grid to 5-col), `scopeLabel` (podium subheader, was hardcoded "Session"), `minGP` (footer, was hardcoded "Min. 3 GP").
+- `leaderboard-hero-card.tsx` — scope 3-way; minGP 3-way; zero-games copy scope-aware ("this month").
+
+### Notable / deferred
+- **Deliberate side-effect:** `showMovement={alltime}` means the **session board no longer renders the ✦ Δ column** either (all session rows had null movement → ✦ on every row = noise). Improvement, but a behavior change to the existing session board beyond plan scope.
+- **Migration drift found (not blocking):** `get_alltime_snapshot_before` exists in prod but is absent from `supabase/migrations/` — the all-time board works; repo migrations just don't reproduce it. Worth back-filling.
+- Player panel expanded from session-only/compact to the full 3-way switch (per "monthly for all").
+- Review gate: logic/DB LGTM; UI minor (3 items: hardcoded footer/podium copy + arrow-key nav) — all fixed.
+
+---
+
+## 🆕 AUTO-PUBLISH MODE — `main` (2026-06-23/24)
+
+**Status: BUILT + applied to prod + validated. NOT yet committed (working tree).** tsc clean · 581 unit tests pass (1 skip; +10 new) · `next build` clean · 0 new lint errors. Plan + adversarial analysis: `AUTO_PUBLISH_PLAN.md` (12 locked decisions D1–D12). 3-dimension review gate passed (LGTM / LGTM / Minor) — both real findings fixed (DraftCapNotice auto-mode gate + RPC grant lockdown).
+
+**Feature:** per-session `sessions.auto_publish` toggle. OFF (default) = engine writes drafts (`is_published=false`) for organizer review. ON = engine writes matches straight to On Deck (`is_published=true`), skipping the publish gate. The whole pipeline downstream of publish was already automatic, so this is the only manual step it removes.
+
+### The critical cluster (all 5 ship together or it silently no-ops)
+1. `database.ts` — `Session.auto_publish: boolean` + `SessionUpdate`. (Else TS drops the column → always falsy.)
+2. `runEngineInternal` session SELECT (`matchmaking.ts`) — also fetch `auto_publish`.
+3. Cap-count branch — draft mode counts `is_published=false`; **auto mode does an EXTRA query counting `is_published=true`** (else counts 0 → unbounded generation flooding courts).
+4. `executeMatch` (`matchmaking-db.ts`) — new `autoPublish=false` param → `p_is_published`.
+5. `executeMatch` call site passes `autoPublish`; auto-published matches fire `ON_DECK_WARNING` via `after()` (engine path bypasses the publish action's push).
+
+### Key decisions / mechanics
+- **D12 — held drafts auto-publish at READINESS, not creation:** held drafts born `is_published=false`; `recomputeHeldReadiness` publishes via new `auto_publish_match` RPC the moment `held_ready_at` is stamped (pulled body now free) → no premature ping / on-deck of a still-playing player. RPC = `publish_match` minus organizer gate, service-role-only (grants revoked anon/authenticated). Verified live `create_match_with_players`: `p_is_on_deck=true AND p_is_published=true → roster on_deck`.
+- **D7 ghost-player guard** in `promoteOnDeckMatchInternal`: skips+clears any ready match with a `left` roster player (adds 2 queries/candidate; reuses roster fetch).
+- **D11** — auto-publish toggle disabled while Auto-Matchmaking OFF (engine paused). **D3/D8** ON flip clears drafts + reruns engine inline. **D4** OFF flip leaves live on-deck alone. **D9** confirm dialog only when drafts exist. **D2** cap re-interpreted as on-deck cap; chip label MAX→DECK.
+- Realtime: `auto_publish_toggled` broadcast (RLS-bypass for co-orgs); `auto_publish` excluded from postgres_changes apply.
+
+### Migrations applied to prod (project usxftpexoimletqmrggb)
+- `20260623000000_add_auto_publish_mode.sql` — column (additive, NOT NULL DEFAULT false).
+- `20260623000001_auto_publish_match_rpc.sql` — service-role publish RPC.
+- `20260623000002_lock_auto_publish_match_grants.sql` — REVOKE from anon/authenticated/PUBLIC; GRANT service_role. Verified: only postgres + service_role have EXECUTE.
+
+### Tests added
+- `matchmaking-core.test.ts` AP-1/2 (shouldAutoPublishMatch). `matchmaking-engine.test.ts` ENG-AP-1/2 (p_is_published per mode + cap re-count). `auto-publish-session-action.test.ts` TAP-1..6 (toggle orchestration, mocked). `schema-parity.test.ts` (integration) +column +RPC checks. Existing engine-test mocks updated for the +2 promote queries and +1 recompute session fetch (no behavior masked).
+
+### Post-merge adversarial audit + cluster fix (2026-06-24)
+24-agent audit (7 hunters + per-finding adversarial verify) → 13 confirmed / 3 partial / 1 refuted. **All serious findings were in the held-cross-court-draft × auto-mode path** (the D12 readiness-publish); the normal auto-publish path is clean. Fixed the cluster on branch `fix/auto-publish-held-draft-cluster`:
+- **#1 (HIGH) orphaned held draft:** recomputeHeldReadiness stamped held_ready_at BEFORE auto_publish_match; on HAS_LEFT_PLAYERS/CONFLICT the draft was left stamped-ready-but-unpublished → orphaned (recompute skips held_ready_at≠null; promote needs is_published=true; auto mode hides the draft section) → players silently benched. FIX: on those two RPC results, `clear_on_deck_match_atomic` so players re-enter the pool. Tests CC-RDY-AP1/2/3.
+- **#3 (MED) cap overshoot:** held drafts (is_published=false) didn't count the auto-mode cap. FIX: recount `.or("is_published.eq.true,is_held.eq.true")`.
+- **#2 (MED) status corruption:** `clear_all_unpublished_drafts` swept up held drafts and flipped a still-PLAYING pulled body to 'waiting'. FIX: migration `20260624000000` adds `AND is_held IS NOT TRUE` (fixes toggleAutoPublish ON-flip AND the existing setCapAndClearDrafts cap-change). Integration test DCINT-13 (manual-run).
+- Independent review: LGTM. tsc clean, 584 unit pass (+3), build clean.
+
+### Accepted-for-v1 / deferred (audit confirmed, low-impact)
+- TOCTOU cap overshoot by ~1–2 under 2 concurrent engine workers (soft cap, same as draft mode).
+- Stale auto_publish read if toggle lands mid-engine-run (self-corrects next tick).
+- Double/stale ON_DECK_WARNING timing; confirm-dialog stale count; optimistic toggle could stick if action throws + broadcast lost; toggle clickable while dashboard locked. All low/UI polish, not fixed.
+- Vercel deploy needed for the UI toggle (engine/RPCs already live server-side).
+
+---
+
+## 🆕 MATCH PROVENANCE & MODIFICATION AUDIT — branch `feat/match-provenance-audit` (2026-06-17)
+
+**Status: BUILT, NOT applied to prod, NOT merged.** tsc clean · 571 unit tests pass (1 skip) · `next build` clean. Plan + adversarial review: `MATCH_PROVENANCE_AUDIT_PLAN.md` (§14 has the hardening + locked decisions). Implementation review gate: see end of this section.
+
+**Problem solved:** the flat `matches.origin` enum (auto|manual|modified) collapsed every modification into one tag with ZERO audit trail (no who/what/when/order). Replaced with a 3-layer model.
+
+### The model
+- **Birth (immutable):** `matches.created_method` ∈ {auto, manual, held}. Never overwritten. (held was previously stamped origin='auto' — now distinct.)
+- **Rollup:** `matches.modification_count` int (composition changes net of undos), `provenance_backfilled` bool (pre-cutover rows: floored count, no trail).
+- **Ultimate label:** `matches.final_classification` GENERATED ALWAYS AS `created_method || (count>0 ? '_modified' : '_clean')` → 6 values (auto_clean … held_modified).
+- **Full trail:** `match_events` append-only table (match_id/session_id ON DELETE SET NULL + *_snapshot cols so trail survives deletion). One row per organizer ACTION; movements in JSONB; actor_id + actor_name SNAPSHOT (durable vs profile merges); `correlation_id` ties cross-match legs; `reverses_event_id` for undo. RLS: organizers SELECT only, no insert/update/delete policy (RPC/service-role writes only).
+
+### Key files
+- **NEW** `src/lib/match-provenance.ts` — pure logic (deriveFinalClassification, backfillProvenance, modificationDelta, movement builders) + `tests/unit/match-provenance.test.ts` (21 tests, MP-CLS/BF/CNT/MOV).
+- **NEW** `src/lib/match-event-log.ts` — best-effort `logMatchEvent` (score_edit/revert/cancelled — never throws, never counts).
+- **NEW** `src/app/actions/match-events.ts` — `getMatchEvents` (organizer-gated trail read) + `getSessionProvenance` (completed-only % summary).
+- **NEW** `src/components/organizer/match-event-timeline.tsx` — lazy-loaded per-match trail in match-history-panel; empty-state for pre-cutover.
+- **Migration 1** `20260617000000_match_provenance_audit.sql` — columns + backfill + generated col + match_events + RLS + `record_match_event` helper (seq under caller's lock + counter delta) + redefines 9 composition RPCs (DROP+CREATE, +p_actor params, +event writes; live swaps +p_is_undo). **RPCs are origin-FREE** (no insert/flip) so migration 2 can drop the column without rewriting them. Idempotent.
+- **Migration 2** `20260617000001_drop_match_origin.sql` — rebuilds v_match_history → v_session_leaderboard → v_alltime_leaderboard_mat chain (origin→created_method/final_classification) + DROP COLUMN origin. Keeps `match_origin` TYPE (vestigial; p_origin params still use it). **Apply AFTER app deploy.**
+- `src/types/database.ts` — MatchOrigin retained for p_origin; Match drops origin, gains the 4 cols; new MatchEvent type + match_events table reg + record_match_event fn reg.
+- Badge `match-origin-tag.tsx` → `classification` prop (6-value: Manual/Held/·Edited). 5 call sites repointed to `match.final_classification`.
+
+### Critical correctness decisions (LOCKED by user)
+- **Undo = net accounting:** the 2 live undo paths re-call the FORWARD RPC with `p_is_undo:true` → records 'undo' (−1) not a 2nd forward (+1). Fixes the over-count the plan review (B1) caught. Decrement by exactly 1 (never reset) → partial-undo (2 swaps, undo 1) correctly stays modified.
+- **Composition counts in ALL phases** (draft/active/post_completion); the old `WHERE origin='auto'` guard is GONE → `manual_modified` is now trackable. Score/revert never count.
+- **Cross-match (on-deck pull + cross-match draft swap) = 2 correlated rows**, +1 each match.
+- **Full audit:** leaver/cancel via events — `cancelMatchAction` wired; **DEFERRED (best-effort gap):** organizer-kick `remove_player_from_queue_organizer`, self-checkout `checkout_player_cleanup_drafts`, `clear_*` — these always CANCEL the match (excluded from completed metrics) so low-value; not yet logged.
+
+### Backfill (existing ~541 prod matches — 62% manual, 31% auto, 7% modified, 0 held, 55 cancelled)
+- created_method recovered EXACTLY for birth (sticky rule: origin='modified' ⇒ born auto; is_held ⇒ held). "% auto vs manual vs held" accurate retroactively.
+- **manual_modified UNRECOVERABLE** (sticky kept swapped-manual at origin='manual') → ~335 manual matches read manual_clean; accurate only going forward. modification_count=1 floor for legacy modified rows (COUNT-safe, SUM-unsafe → `provenance_backfilled` marks them).
+
+### Implementation review gate (2026-06-17): **Minor issues → acceptable pass**
+3-dimension independent review (SQL / TS / plan-conformance) — NO blockers, NO true bugs. Fixes folded: **L4** wrapped the `created` event PERFORM in `BEGIN/EXCEPTION` in both create RPCs (an audit defect can't roll back matchmaking); **L3** rewrote the stale `MatchOrigin` doc comment; **M1/comments** corrected `match-event-log.ts` to stop overclaiming leaver coverage; **L5** documented the `record_match_event` service_role-only GRANT (reached via SECURITY DEFINER composition). Remaining minor items DEFERRED + documented (below).
+
+### ⚠ NOT DONE / NEXT
+- **Migrations NOT applied** (no local Postgres; needs Supabase branch validation OR prod apply with go-ahead). Apply order: mig1 → deploy app → mig2.
+- **DEFERRED — leaver/clear events (M1):** `player_left`/`cancelled` from `checkout_player_cleanup_drafts`, `remove_player_from_queue_organizer`, `clear_on_deck_match_atomic`, `clear_all_unpublished_drafts` are plumbed (type + DB CHECK + delta) but NOT emitted. All those paths CANCEL the draft → excluded from completed metrics → zero analytics impact; only the trail entry is missing. Wiring needs per-RPC affected-id handling (some RPCs return void → need a pre-query).
+- **DEFERRED — `published` event (L2):** never emitted (publish actions raw-update `is_published`). Non-counting; timeline just won't show the publish step.
+- **DEFERRED — `reverses_event_id` (L1):** column + RPC params exist but undo call sites pass NULL (forward actions don't return the emitted event id through `undoContext`). Counting is still correct (undo=−1); only the explicit reversed-event link is absent.
+- Integration suite `manual-and-swap.test.ts` migrated to new model (assertions flipped: swapped-manual → manual_modified) but needs a LIVE-DB run to confirm (not in unit CI).
+- Session provenance summary action built (`getSessionProvenance`) but not yet surfaced in a dashboard component.
+- `match_origin` ENUM type intentionally retained (vestigial; p_origin params). Future cleanup: retype p_origin→text, then `DROP TYPE`.
+
+---
+
 ## 🆕 MY HISTORY — HOOKS VIOLATION FIX (2026-06-13)
 
 **Status: COMPLETE ✅** — Review gate: **LGTM**. Commit `d6080bc`.

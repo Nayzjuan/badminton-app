@@ -71,7 +71,7 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
     return unsub;
   }, [supabase, sessionId]);
 
-  // Hooks must be called unconditionally — compute stats here, before any early return.
+  // Stats summary — must be unconditionally before any early return (Rules of Hooks).
   const { wins, draws, losses } = useMemo(() => {
     let w = 0;
     let d = 0;

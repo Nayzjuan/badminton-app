@@ -64,7 +64,10 @@ import {
 vi.mock("@/app/actions/leaderboard", () => ({
   getSessionLeaderboard: vi.fn(),
   getAllTimeLeaderboard: vi.fn(),
+  getMonthlyLeaderboard: vi.fn().mockResolvedValue({ success: true, rows: [] }),
+  getLeaderboardMonths: vi.fn().mockResolvedValue({ success: true, months: [] }),
   getPlayerStats: vi.fn(),
+  getPlayerMonthlyStats: vi.fn().mockResolvedValue({ success: true, row: null }),
 }));
 
 // ── Mock: Supabase browser client ─────────────────────────────

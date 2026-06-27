@@ -36,7 +36,7 @@
 
 import { after } from "next/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
+import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 
 // ── Return types ──────────────────────────────────────────────
@@ -153,11 +153,14 @@ export async function fixPlayerRecord(
   }
 
   // ── Atomic write via RPC ─────────────────────────────────────
+  const actor = await getActorContext(user.id);
   const { error: rpcError } = await db.rpc("fix_record_swap_player", {
     p_match_id: matchId,
     p_out_player_id: outPlayerId,
     p_in_player_id: inPlayerId,
     p_session_id: sessionId,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
   });
 
   if (rpcError) {

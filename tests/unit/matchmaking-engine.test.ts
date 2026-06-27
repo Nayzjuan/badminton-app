@@ -269,6 +269,8 @@ describe("promoteOnDeckMatchInternal", () => {
     // The UPDATE affects 0 rows → .single() resolves with data:null, error:null.
     const mock = makeMockClient([
       { data: [MOCK_MATCH], error: null }, // matches fetch → 1 pending
+      { data: MOCK_MATCH_PLAYERS, error: null }, // match_players (left-guard roster)
+      { count: 0, data: null, error: null }, // queue_entries left-count → none left
       { data: null, error: null }, // matches update → 0 rows (CAS guard fails)
     ]);
 
@@ -276,13 +278,15 @@ describe("promoteOnDeckMatchInternal", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/already promoted/i);
-    // Stopped after the failed CAS update — only matches queried twice (fetch + update attempt)
-    expect(mock.queriedTables).toEqual(["matches", "matches"]);
+    // Left-guard roster + left-count run before the (failed) CAS update.
+    expect(mock.queriedTables).toEqual(["matches", "match_players", "queue_entries", "matches"]);
   });
 
   it("returns success:false with error detail on a DB error during the CAS update", async () => {
     const mock = makeMockClient([
       { data: [MOCK_MATCH], error: null }, // fetch
+      { data: MOCK_MATCH_PLAYERS, error: null }, // match_players (left-guard roster)
+      { count: 0, data: null, error: null }, // queue_entries left-count → none left
       { data: null, error: { message: "FK violation" } }, // update → DB error
     ]);
 
@@ -293,13 +297,14 @@ describe("promoteOnDeckMatchInternal", () => {
   });
 
   it("succeeds with empty match player list (no queue_entries update performed)", async () => {
-    // Sequence (5 from() calls — no queue_entries since matchPlayers=[]):
-    // matches(fetch), matches(update CAS), courts(update), match_players(select=[]), profiles(select=[])
+    // Sequence: the left-guard fetches the roster (empty) + left-count first, then
+    // CAS update, courts update, profiles. No playing-update since matchPlayers=[].
     const mock = makeMockClient([
       { data: [MOCK_MATCH], error: null }, // matches fetch
+      { data: [], error: null }, // match_players (left-guard roster) → empty
+      { count: 0, data: null, error: null }, // queue_entries left-count → none left
       { data: { id: "match-1" }, error: null }, // matches update (CAS passes)
       { data: null, error: null }, // courts update
-      { data: [], error: null }, // match_players → empty
       { data: [], error: null }, // profiles → empty
     ]);
 
@@ -309,26 +314,27 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.matchId).toBe("match-1");
     expect(result.teamA).toEqual([]);
     expect(result.teamB).toEqual([]);
-    // Full query sequence: fetch pending → CAS update → courts update → match_players → profiles
     expect(mock.queriedTables).toEqual([
       "matches", // fetch pending on-deck match
+      "match_players", // left-guard roster (empty)
+      "queue_entries", // left-count check
       "matches", // CAS status update
       "courts", // mark court occupied
-      "match_players", // load match player list (empty)
       "profiles", // resolve display names (empty)
     ]);
   });
 
   it("succeeds and resolves player names into teamA and teamB", async () => {
-    // Sequence (6 from() calls — queue_entries update included):
-    // matches(fetch), matches(update), courts(update), match_players, queue_entries(update), profiles
+    // Sequence: left-guard roster + left-count, then CAS update, courts update,
+    // queue_entries playing-update (roster non-empty), profiles.
     const mock = makeMockClient([
-      { data: [MOCK_MATCH], error: null },
-      { data: { id: "match-1" }, error: null },
-      { data: null, error: null },
-      { data: MOCK_MATCH_PLAYERS, error: null },
-      { data: null, error: null }, // queue_entries update
-      { data: MOCK_PROFILES, error: null },
+      { data: [MOCK_MATCH], error: null }, // matches fetch
+      { data: MOCK_MATCH_PLAYERS, error: null }, // match_players (left-guard roster)
+      { count: 0, data: null, error: null }, // queue_entries left-count → none left
+      { data: { id: "match-1" }, error: null }, // matches update (CAS passes)
+      { data: null, error: null }, // courts update
+      { data: null, error: null }, // queue_entries playing-update
+      { data: MOCK_PROFILES, error: null }, // profiles
     ]);
 
     const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
@@ -336,13 +342,13 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.success).toBe(true);
     expect(result.teamA).toEqual(["Alice", "Bob"]);
     expect(result.teamB).toEqual(["Charlie", "Diana"]);
-    // Full query sequence includes queue_entries update (players moved from waiting → playing)
     expect(mock.queriedTables).toEqual([
       "matches", // fetch pending on-deck match
+      "match_players", // left-guard roster
+      "queue_entries", // left-count check
       "matches", // CAS status update
       "courts", // mark court occupied
-      "match_players", // load match player list (non-empty → triggers queue_entries update)
-      "queue_entries", // mark matched players status = in_match
+      "queue_entries", // players waiting → playing
       "profiles", // resolve display names
     ]);
   });
@@ -350,10 +356,11 @@ describe("promoteOnDeckMatchInternal", () => {
   it("passes through is_mixed_level=true from the match row", async () => {
     const mixedMatch = { id: "match-1", is_mixed_level: true };
     const mock = makeMockClient([
-      { data: [mixedMatch], error: null },
-      { data: { id: "match-1" }, error: null },
-      { data: null, error: null },
-      { data: [], error: null }, // match_players empty
+      { data: [mixedMatch], error: null }, // matches fetch
+      { data: [], error: null }, // match_players (left-guard roster) → empty
+      { count: 0, data: null, error: null }, // queue_entries left-count
+      { data: { id: "match-1" }, error: null }, // matches update
+      { data: null, error: null }, // courts update
       { data: [], error: null }, // profiles empty
     ]);
 
@@ -371,12 +378,13 @@ describe("promoteOnDeckMatchInternal", () => {
       // p3, p4 missing from profiles
     ];
     const mock = makeMockClient([
-      { data: [MOCK_MATCH], error: null },
-      { data: { id: "match-1" }, error: null },
-      { data: null, error: null },
-      { data: MOCK_MATCH_PLAYERS, error: null },
-      { data: null, error: null },
-      { data: partialProfiles, error: null },
+      { data: [MOCK_MATCH], error: null }, // matches fetch
+      { data: MOCK_MATCH_PLAYERS, error: null }, // match_players (left-guard roster)
+      { count: 0, data: null, error: null }, // queue_entries left-count
+      { data: { id: "match-1" }, error: null }, // matches update
+      { data: null, error: null }, // courts update
+      { data: null, error: null }, // queue_entries playing-update
+      { data: partialProfiles, error: null }, // profiles
     ]);
 
     const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
@@ -871,13 +879,16 @@ describe("callNextMatch", () => {
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
       { data: [MOCK_MATCH], error: null }, // [1] matches fetch → pending non-empty
-      { data: { id: "match-1" }, error: null }, // [2] matches update (CAS)
-      { data: null, error: null }, // [3] courts update
-      { data: [], error: null }, // [4] match_players → empty
-      { data: [], error: null }, // [5] profiles → empty (no player ids)
-      { data: [{ id: "c1" }], error: null }, // [6] runEngineInternal: courts
-      { data: [], error: null }, // [7] runEngineInternal: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 3, data: null, error: null }, // [8] runEngineInternal: matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      { data: [], error: null }, // [2] match_players (left-guard roster) → empty
+      { count: 0, data: null, error: null }, // [3] queue_entries left-count → none left
+      { data: { id: "match-1" }, error: null }, // [4] matches update (CAS)
+      { data: null, error: null }, // [5] courts update
+      { data: [], error: null }, // [6] profiles → empty (no player ids)
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [7] runEngineForSession toggle → ON
+      { data: [{ id: "c1" }], error: null }, // [8] runEngineInternal: courts
+      { data: [], error: null }, // [9] runEngineInternal: v_queue (Promise.all[0])
+      { count: 3, data: null, error: null }, // [10] runEngineInternal: matches draft count=3 (Promise.all[1])
+      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [11] sessions (Promise.all[2])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -905,25 +916,28 @@ describe("callNextMatch", () => {
     const serviceMock = makeMockClient([
       { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
       { data: [MOCK_MATCH], error: null }, // [1] matches fetch → pending non-empty
-      { data: { id: "match-1" }, error: null }, // [2] matches update (CAS)
-      { data: null, error: null }, // [3] courts update
-      { data: [], error: null }, // [4] match_players → empty
-      { data: [], error: null }, // [5] profiles → empty
-      { data: { is_auto_matchmaking_on: true }, error: null }, // [6] sessions → toggle ON
-      { data: [{ id: "c1" }], error: null }, // [7] courts → engine proceeds
-      { data: [], error: null }, // [8] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 3, data: null, error: null }, // [9] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
-      { data: { max_auto_drafts_override: null }, error: null }, // [10] sessions override (Promise.all[2])
+      { data: [], error: null }, // [2] match_players (left-guard roster) → empty
+      { count: 0, data: null, error: null }, // [3] queue_entries left-count → none left
+      { data: { id: "match-1" }, error: null }, // [4] matches update (CAS)
+      { data: null, error: null }, // [5] courts update
+      { data: [], error: null }, // [6] profiles → empty
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [7] sessions → toggle ON
+      { data: [{ id: "c1" }], error: null }, // [8] courts → engine proceeds
+      { data: [], error: null }, // [9] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 3, data: null, error: null }, // [10] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [11] sessions (Promise.all[2])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     await callNextMatch(SESSION_ID, COURT_ID);
 
-    // [6] must be "sessions" — confirms runEngineForSession (not runEngineInternal) was called.
-    expect(serviceMock.queriedTables[6]).toBe("sessions");
+    // [7] must be "sessions" — confirms runEngineForSession (not runEngineInternal) was called.
+    // (The left-player guard adds match_players + queue_entries inside promote, so the
+    //  toggle check now lands at index 7.)
+    expect(serviceMock.queriedTables[7]).toBe("sessions");
     // Post-promotion sequence: sessions (toggle) → courts → v_queue → matches → sessions (override).
-    const postPromotionTables = serviceMock.queriedTables.slice(6);
+    const postPromotionTables = serviceMock.queriedTables.slice(7);
     expect(postPromotionTables).toEqual([
       "sessions",
       "courts",
@@ -1022,6 +1036,99 @@ describe("callNextMatch", () => {
 });
 
 // ═════════════════════════════════════════════════════════════
+// AUTO-PUBLISH MODE — engine writes is_published per session.auto_publish
+// ═════════════════════════════════════════════════════════════
+//
+// ENG-AP-1  auto_publish=true  → executeMatch RPC called with p_is_published=true
+//           (and the cap counts the PUBLISHED on-deck set — an extra count query)
+// ENG-AP-2  auto_publish=false → RPC called with p_is_published=false (draft, regression)
+
+describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
+  // Four waiting players, maxWait=10 ≥ GATE_HOLD_MINUTES so the soft gate releases
+  // and the engine proceeds to generate a match (cloned from the G-1 RPC-failure setup).
+  const fourWaiting = () =>
+    Array.from({ length: 4 }, (_, i) => ({
+      id: `entry-p${i}`,
+      session_id: SESSION_ID,
+      player_id: `p${i}`,
+      joined_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      games_played: 0,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: `Player ${i}`,
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 10,
+      is_bottleneck: false,
+    }));
+
+  it("ENG-AP-1: auto_publish=true → RPC gets p_is_published=true; cap re-count runs (published + held)", async () => {
+    const four = fourWaiting();
+    const mock = makeMockClient(
+      [
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+        { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
+        { data: four, error: null }, // [2] v_queue (Promise.all[0])
+        { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
+        { data: { max_auto_drafts_override: null, auto_publish: true }, error: null }, // [4] session (Promise.all[2])
+        { count: 0, data: null, error: null }, // [5] PUBLISHED on-deck count (auto-mode extra)
+        { data: [], error: null }, // [6] fetchRecentRosters
+        { data: four, error: null }, // [7] fetchActivePool v_queue
+        { data: [], error: null }, // [8] queue_entries paused
+        { data: [], error: null }, // [9] fetchPartnershipCounts matches
+        // [10] buildOverlapMap match_players → fallback → empty map
+      ],
+      [{ data: null, error: { message: "stop after one slot" } }] // rpc → error to break the loop
+    );
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+    expect(mock.rpc).toHaveBeenCalledWith(
+      "create_match_with_players",
+      expect.objectContaining({ p_is_published: true, p_origin: "auto" })
+    );
+    // Auto mode counts the published on-deck set: a 2nd matches count query runs in the
+    // cap phase (unpublished [3] + published [5]) before fetchRecentRosters.
+    expect(mock.queriedTables.slice(0, 6)).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+      "sessions",
+      "matches",
+    ]);
+  });
+
+  it("ENG-AP-2: auto_publish=false → RPC gets p_is_published=false (draft mode regression)", async () => {
+    const four = fourWaiting();
+    const mock = makeMockClient(
+      [
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+        { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
+        { data: four, error: null }, // [2] v_queue (Promise.all[0])
+        { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
+        { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session (Promise.all[2])
+        // no published-count query in draft mode
+        { data: [], error: null }, // [5] fetchRecentRosters
+        { data: four, error: null }, // [6] fetchActivePool v_queue
+        { data: [], error: null }, // [7] queue_entries paused
+        { data: [], error: null }, // [8] fetchPartnershipCounts matches
+      ],
+      [{ data: null, error: { message: "stop after one slot" } }]
+    );
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+    expect(mock.rpc).toHaveBeenCalledWith(
+      "create_match_with_players",
+      expect.objectContaining({ p_is_published: false, p_origin: "auto" })
+    );
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
 // CROSS-COURT — promotion TS-filter + recomputeHeldReadiness (Phase 5)
 // ═════════════════════════════════════════════════════════════
 
@@ -1044,10 +1151,11 @@ describe("promoteOnDeckMatchInternal — held-draft TS-filter (C-4 / R3-A)", () 
     };
     const mock = makeMockClient([
       { data: [heldNotReady, normalReady], error: null }, // published pending (front = not-ready held)
+      { data: MOCK_MATCH_PLAYERS, error: null }, // left-guard roster (for the ready candidate)
+      { count: 0, data: null, error: null }, // queue_entries left-count → none left
       { data: { id: "match-2" }, error: null }, // CAS update on the chosen ready match
       { data: null, error: null }, // courts update
-      { data: MOCK_MATCH_PLAYERS, error: null }, // match_players
-      { data: null, error: null }, // queue_entries update
+      { data: null, error: null }, // queue_entries playing-update
       { data: MOCK_PROFILES, error: null }, // profiles
     ]);
 
@@ -1065,12 +1173,13 @@ describe("promoteOnDeckMatchInternal — held-draft TS-filter (C-4 / R3-A)", () 
       is_mixed_level: false,
     };
     const mock = makeMockClient([
-      { data: [readyHeld], error: null },
-      { data: { id: "held-1" }, error: null },
-      { data: null, error: null },
-      { data: MOCK_MATCH_PLAYERS, error: null },
-      { data: null, error: null },
-      { data: MOCK_PROFILES, error: null },
+      { data: [readyHeld], error: null }, // published pending (ready held)
+      { data: MOCK_MATCH_PLAYERS, error: null }, // left-guard roster
+      { count: 0, data: null, error: null }, // queue_entries left-count → none left
+      { data: { id: "held-1" }, error: null }, // CAS update
+      { data: null, error: null }, // courts update
+      { data: null, error: null }, // queue_entries playing-update
+      { data: MOCK_PROFILES, error: null }, // profiles
     ]);
 
     const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
@@ -1108,6 +1217,7 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
   it("CC-RDY-CC01: source completed + ≥1 promotion ⇒ stamps held_ready_at (idempotent)", async () => {
     const mock = makeMockClient([
       { data: [held()], error: null }, // held not-ready pending matches
+      { data: { auto_publish: false }, error: null }, // session auto_publish mode → draft
       {
         data: [{ player_id: "pp" }, { player_id: "w1" }, { player_id: "w2" }, { player_id: "w3" }],
         error: null,
@@ -1126,6 +1236,7 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
   it("CC-RDY-CC02: source still in_progress ⇒ NOT ready, no stamp", async () => {
     const mock = makeMockClient([
       { data: [held()], error: null },
+      { data: { auto_publish: false }, error: null }, // session auto_publish mode → draft
       { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
       { data: { status: "in_progress", completed_at: null }, error: null }, // source still live
     ]);
@@ -1133,12 +1244,13 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
     await recomputeHeldReadiness(mock as never, SESSION_ID);
 
     expect(mock.recorder.update).toHaveLength(0);
-    expect(mock.queriedTables).toEqual(["matches", "match_players", "matches"]);
+    expect(mock.queriedTables).toEqual(["matches", "sessions", "match_players", "matches"]);
   });
 
   it("CC-RDY-CC03 [N-2]: pulled body swapped out of roster ⇒ downgrade to a normal draft", async () => {
     const mock = makeMockClient([
       { data: [held()], error: null },
+      { data: { auto_publish: false }, error: null }, // session auto_publish mode → draft
       { data: [{ player_id: "x1" }, { player_id: "x2" }, { player_id: "x3" }], error: null }, // roster WITHOUT "pp"
       { data: null, error: null }, // downgrade update
     ]);
@@ -1156,6 +1268,7 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
   it("CC-RDY-CC04 [R3-B]: null source match ⇒ cancel via clear_on_deck_match_atomic", async () => {
     const mock = makeMockClient([
       { data: [held({ pulled_from_match_id: null })], error: null },
+      { data: { auto_publish: false }, error: null }, // session auto_publish mode → draft
       { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
     ]);
 
@@ -1166,6 +1279,67 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
       p_session_id: SESSION_ID,
     });
     expect(mock.recorder.update).toHaveLength(0); // cancel, not stamp/downgrade
+  });
+
+  const readyRoster = () => [
+    { data: [held()], error: null }, // held fetch
+    { data: { auto_publish: true }, error: null }, // auto mode
+    {
+      data: [{ player_id: "pp" }, { player_id: "w1" }, { player_id: "w2" }, { player_id: "w3" }],
+      error: null,
+    }, // roster (pp present)
+    { data: { status: "completed", completed_at: "2026-06-07T11:50:00.000Z" }, error: null }, // source completed
+    { count: 1, data: null, error: null }, // promotionsSinceFreed ≥1 → ready
+    { data: null, error: null }, // held_ready_at stamp update
+  ];
+
+  it("CC-RDY-AP1: auto mode, ready + auto_publish SUCCESS ⇒ publishes, no clear", async () => {
+    const mock = makeMockClient(
+      [
+        ...readyRoster(),
+        { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster fetch for ON_DECK_WARNING
+      ],
+      [{ data: "SUCCESS", error: null }] // auto_publish_match → SUCCESS
+    );
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.rpc).toHaveBeenCalledWith("auto_publish_match", {
+      p_match_id: "held-1",
+      p_session_id: SESSION_ID,
+    });
+    // SUCCESS path must NOT clear the match.
+    expect(mock.rpc).not.toHaveBeenCalledWith("clear_on_deck_match_atomic", expect.anything());
+  });
+
+  it("CC-RDY-AP2 [Fix #1]: auto mode, ready but auto_publish HAS_LEFT_PLAYERS ⇒ clears the orphan", async () => {
+    const mock = makeMockClient(readyRoster(), [
+      { data: "HAS_LEFT_PLAYERS", error: null }, // auto_publish_match → tainted roster
+      { data: null, error: null }, // clear_on_deck_match_atomic
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    // The stamped-but-unpublishable draft is cleared so players re-enter the pool
+    // instead of being orphaned (held_ready_at set, is_published=false, invisible).
+    expect(mock.rpc).toHaveBeenCalledWith("clear_on_deck_match_atomic", {
+      p_match_id: "held-1",
+      p_session_id: SESSION_ID,
+    });
+  });
+
+  it("CC-RDY-AP3 [Fix #1]: auto mode, ready but auto_publish CONFLICT ⇒ clears the orphan", async () => {
+    const mock = makeMockClient(readyRoster(), [
+      { data: "CONFLICT", error: null },
+      { data: null, error: null }, // clear_on_deck_match_atomic
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.rpc).toHaveBeenCalledWith("clear_on_deck_match_atomic", {
+      p_match_id: "held-1",
+      p_session_id: SESSION_ID,
+    });
   });
 });
 

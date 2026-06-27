@@ -17,22 +17,42 @@ import { RefreshCw, Zap } from "lucide-react";
 import type { LeaderboardRow } from "@/types/leaderboard";
 
 interface StadiumLeaderboardProps {
+  /** Small label above "LEADERBOARD" — session name, month ("June 2026"), or "All-Time". */
+  title?: string;
+  /** @deprecated prefer `title`; kept for back-compat. `title` wins when both are set. */
   sessionName?: string;
   rows: LeaderboardRow[];
   currentUserId: string | null;
   /** Optional refresh handler — when omitted, refresh button is hidden. */
   onRefresh?: () => void;
+  /**
+   * Show the rank-movement (Δ) column. Default true (all-time). Pass false for
+   * the monthly board: every row has null movement, which would render a ✦ on
+   * every row ("everyone's new") — so the column is dropped entirely.
+   */
+  showMovement?: boolean;
+  /** Scope context shown opposite "Top 3" on the podium (e.g. "Monthly", "All-Time"). */
+  scopeLabel?: string;
+  /** Minimum games to appear — rendered in the footer note. Omit to hide the "Min." part. */
+  minGP?: number;
 }
 
 const GRID_COLS = "34px 1fr 30px 64px 52px 26px";
+const GRID_COLS_NO_DELTA = "34px 1fr 30px 64px 52px";
 
 export function StadiumLeaderboard({
+  title,
   sessionName,
   rows,
   currentUserId,
   onRefresh,
+  showMovement = true,
+  scopeLabel,
+  minGP,
 }: StadiumLeaderboardProps) {
   const me = currentUserId ? (rows.find((r) => r.player_id === currentUserId) ?? null) : null;
+  const headerLabel = title ?? sessionName;
+  const gridCols = showMovement ? GRID_COLS : GRID_COLS_NO_DELTA;
 
   // Podium positions 1-3 (with sparse fallback if fewer than 3 ranked players).
   const podium = [rows[0] ?? null, rows[1] ?? null, rows[2] ?? null];
@@ -43,9 +63,9 @@ export function StadiumLeaderboard({
       {/* ── 1. Header ────────────────────────────────────── */}
       <header className="flex items-end justify-between px-1 pt-2 pb-3 border-b border-border">
         <div>
-          {sessionName && (
+          {headerLabel && (
             <p className="font-mono text-[9.5px] font-bold uppercase tracking-[0.2em] text-accent">
-              {sessionName}
+              {headerLabel}
             </p>
           )}
           <h1
@@ -131,9 +151,11 @@ export function StadiumLeaderboard({
                 background: "linear-gradient(to right, oklch(0.78 0.17 62), transparent)",
               }}
             />
-            <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.2em] text-muted-foreground/40">
-              Session
-            </span>
+            {scopeLabel && (
+              <span className="font-mono text-[9.5px] font-bold uppercase tracking-[0.2em] text-muted-foreground/40">
+                {scopeLabel}
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-[1fr_1.2fr_1fr] gap-1.5">
@@ -148,20 +170,26 @@ export function StadiumLeaderboard({
       <div
         className="grid items-center px-4 py-1.5 border-y border-border bg-muted/40
                    font-mono text-[9px] font-bold uppercase tracking-[0.16em] text-muted-foreground"
-        style={{ gridTemplateColumns: GRID_COLS, gap: "6px" }}
+        style={{ gridTemplateColumns: gridCols, gap: "6px" }}
       >
         <span className="text-left">#</span>
         <span className="text-left">Player</span>
         <span className="text-right">GP</span>
         <span className="text-right">W–L</span>
         <span className="text-right">Win%</span>
-        <span className="text-right">Δ</span>
+        {showMovement && <span className="text-right">Δ</span>}
       </div>
 
       {/* ── 5. Rows 4-N ──────────────────────────────────── */}
       <div>
         {tail.map((row) => (
-          <StadiumRow key={row.player_id} row={row} isMe={row.player_id === currentUserId} />
+          <StadiumRow
+            key={row.player_id}
+            row={row}
+            isMe={row.player_id === currentUserId}
+            gridCols={gridCols}
+            showMovement={showMovement}
+          />
         ))}
         {tail.length === 0 && rows.length > 0 && rows.length < 4 && (
           <p className="px-4 py-6 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -173,7 +201,7 @@ export function StadiumLeaderboard({
       </div>
 
       <p className="px-4 pt-3 pb-4 text-center font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/60">
-        Min. 3 GP to appear · Ranked by win rate
+        {minGP != null ? `Min. ${minGP} GP to appear · ` : ""}Ranked by win rate
       </p>
     </div>
   );
@@ -269,7 +297,17 @@ function PodiumCell({
 
 // ── Tail rows (rank 4+) ───────────────────────────────────────
 
-function StadiumRow({ row, isMe }: { row: LeaderboardRow; isMe: boolean }) {
+function StadiumRow({
+  row,
+  isMe,
+  gridCols,
+  showMovement,
+}: {
+  row: LeaderboardRow;
+  isMe: boolean;
+  gridCols: string;
+  showMovement: boolean;
+}) {
   const delta = row.rank_movement;
   const deltaCls =
     delta && delta > 0
@@ -285,7 +323,7 @@ function StadiumRow({ row, isMe }: { row: LeaderboardRow; isMe: boolean }) {
       data-flash={isMe ? undefined : "false"}
       className={`grid items-center px-4 py-2.5 border-b border-border transition-colors
         ${isMe ? "bg-accent/10" : "hover:bg-muted/30"}`}
-      style={{ gridTemplateColumns: GRID_COLS, gap: "6px" }}
+      style={{ gridTemplateColumns: gridCols, gap: "6px" }}
     >
       <span className="font-mono text-[11px] font-bold text-muted-foreground text-left">
         {row.rank}
@@ -320,7 +358,11 @@ function StadiumRow({ row, isMe }: { row: LeaderboardRow; isMe: boolean }) {
       >
         {row.win_pct.toFixed(1)}%
       </span>
-      <span className={`font-mono text-[10px] font-bold text-right ${deltaCls}`}>{deltaText}</span>
+      {showMovement && (
+        <span className={`font-mono text-[10px] font-bold text-right ${deltaCls}`}>
+          {deltaText}
+        </span>
+      )}
     </div>
   );
 }

@@ -65,21 +65,31 @@ async function seedSessionWithPlayers(playerCount: number) {
   return { organizer, session, court, players };
 }
 
-/** Reads matches.origin via service client. */
-async function getMatchOrigin(matchId: string): Promise<string> {
+// NOTE (provenance audit, 2026-06-17): this suite was migrated off the legacy
+// `matches.origin` enum to the new model — created_method (immutable birth) +
+// modification_count + the generated final_classification. The biggest semantic
+// change: a swapped MANUAL match is now `manual_modified` (previously origin
+// "stayed manual" by the sticky rule). Requires a live DB run to validate.
+
+/** Reads matches.final_classification via service client. */
+async function getMatchClassification(matchId: string): Promise<string> {
   const { data, error } = await serviceClient()
     .from("matches")
-    .select("origin")
+    .select("final_classification")
     .eq("id", matchId)
     .single();
-  if (error || !data) throw new Error(`[getMatchOrigin] ${error?.message ?? "not found"}`);
-  return data.origin;
+  if (error || !data) throw new Error(`[getMatchClassification] ${error?.message ?? "not found"}`);
+  return data.final_classification;
 }
 
-/** Forces a match.origin to a specific value (for sticky-rule fixtures). */
-async function setMatchOrigin(matchId: string, origin: "auto" | "manual" | "modified") {
-  const { error } = await serviceClient().from("matches").update({ origin }).eq("id", matchId);
-  if (error) throw new Error(`[setMatchOrigin] ${error.message}`);
+/** Forces a match's birth method (for fixtures). created_method is immutable in
+ *  prod but tests may seed it directly. */
+async function setMatchCreatedMethod(matchId: string, method: "auto" | "manual" | "held") {
+  const { error } = await serviceClient()
+    .from("matches")
+    .update({ created_method: method })
+    .eq("id", matchId);
+  if (error) throw new Error(`[setMatchCreatedMethod] ${error.message}`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -106,11 +116,11 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
 
       const { data: match } = await serviceClient()
         .from("matches")
-        .select("origin, is_published, status")
+        .select("final_classification, is_published, status")
         .eq("id", result.matchId!)
         .single();
 
-      expect(match?.origin).toBe("manual");
+      expect(match?.final_classification).toBe("manual_clean");
       expect(match?.is_published).toBe(true);
       expect(match?.status).toBe("pending");
 
@@ -253,7 +263,7 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       teamB: [players[2].id, players[3].id],
       isPublished: true,
     });
-    await setMatchOrigin(match.id, "auto");
+    await setMatchCreatedMethod(match.id, "auto");
 
     const restore = mockAuthAs(organizer.id);
     try {
@@ -261,8 +271,8 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       const result = await swapPlayerInMatch(match.id, players[0].id, players[4].id);
       expect(result.success).toBe(true);
 
-      const origin = await getMatchOrigin(match.id);
-      expect(origin).toBe("modified");
+      const cls = await getMatchClassification(match.id);
+      expect(cls).toBe("auto_modified");
 
       // Outgoing player → waiting; incoming player → on_deck (because is_published=true).
       const { data: entries } = await serviceClient()
@@ -289,7 +299,7 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       isPublished: true,
     });
     // makeMatchViaRpc inserts with origin='manual' already; assert before the swap.
-    expect(await getMatchOrigin(match.id)).toBe("manual");
+    expect(await getMatchClassification(match.id)).toBe("manual_clean");
 
     const restore = mockAuthAs(organizer.id);
     try {
@@ -297,8 +307,8 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       expect(result.success).toBe(true);
 
       // Manual MUST NOT be demoted to modified.
-      const origin = await getMatchOrigin(match.id);
-      expect(origin).toBe("manual");
+      const cls = await getMatchClassification(match.id);
+      expect(cls).toBe("manual_modified");
     } finally {
       restore();
     }
@@ -313,15 +323,19 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       teamB: [players[2].id, players[3].id],
       isPublished: true,
     });
-    await setMatchOrigin(match.id, "modified");
+    // Seed an already-modified auto match (created_method auto + count 1).
+    await serviceClient()
+      .from("matches")
+      .update({ created_method: "auto", modification_count: 1 })
+      .eq("id", match.id);
 
     const restore = mockAuthAs(organizer.id);
     try {
       const result = await swapPlayerInMatch(match.id, players[0].id, players[4].id);
       expect(result.success).toBe(true);
 
-      // Origin remains modified — there's no further demotion path.
-      expect(await getMatchOrigin(match.id)).toBe("modified");
+      // Stays modified — another swap increments the count (now 2).
+      expect(await getMatchClassification(match.id)).toBe("auto_modified");
     } finally {
       restore();
     }
@@ -441,8 +455,8 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       isPublished: true,
     });
 
-    await setMatchOrigin(matchA.id, "auto");
-    await setMatchOrigin(matchB.id, "auto");
+    await setMatchCreatedMethod(matchA.id, "auto");
+    await setMatchCreatedMethod(matchB.id, "auto");
 
     const restore = mockAuthAs(organizer.id);
     try {
@@ -455,8 +469,8 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       );
       expect(result.success).toBe(true);
 
-      expect(await getMatchOrigin(matchA.id)).toBe("modified");
-      expect(await getMatchOrigin(matchB.id)).toBe("modified");
+      expect(await getMatchClassification(matchA.id)).toBe("auto_modified");
+      expect(await getMatchClassification(matchB.id)).toBe("auto_modified");
 
       // Player 0 now in match B, player 4 now in match A.
       const { data: mpA } = await serviceClient()
@@ -496,7 +510,7 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
     });
 
     // makeMatchViaRpc inserts as 'manual' — keep matchManual as is, demote matchAuto.
-    await setMatchOrigin(matchAuto.id, "auto");
+    await setMatchCreatedMethod(matchAuto.id, "auto");
 
     const restore = mockAuthAs(organizer.id);
     try {
@@ -510,8 +524,8 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       expect(result.success).toBe(true);
 
       // Sticky rule: manual stays manual; auto becomes modified.
-      expect(await getMatchOrigin(matchManual.id)).toBe("manual");
-      expect(await getMatchOrigin(matchAuto.id)).toBe("modified");
+      expect(await getMatchClassification(matchManual.id)).toBe("manual_modified");
+      expect(await getMatchClassification(matchAuto.id)).toBe("auto_modified");
     } finally {
       restore();
     }
