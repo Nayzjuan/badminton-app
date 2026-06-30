@@ -1164,6 +1164,42 @@ All `{ error }` bare returns in `auth.ts` and `sessions.ts` now include `success
 
 ---
 
+### 3.24 Player-Specific Session History Filter (2026-06-26)
+
+**Files:** `src/lib/match-history-filter.ts` (pure helpers), `src/components/organizer/match-history-player-filter.tsx` (filter UI), `src/components/organizer/match-history-panel.tsx` (wired in).
+
+**Purpose:** Organizer-only type-to-filter search inside the existing Match History tab. Lets the organizer narrow the history view to a single player's matches for quick review. **Zero new DB tables, migrations, or server actions** — 100% client-side filtering over the already-fetched `CompletedMatch[]` from `useMatchHistory`.
+
+**Architecture:**
+
+| Layer | File | Responsibility |
+|---|---|---|
+| Pure logic | `src/lib/match-history-filter.ts` | 4 exported pure helpers: `filterMatchesByPlayer`, `derivePlayerOptions`, `resolvePartnerIds`, `selectionStillValid` |
+| Unit tests | `tests/unit/match-history-filter.test.ts` | 28 MHF-* Vitest tests covering all edge cases (null id, leave-triggered cancel, dup names, swapped-out player, empty history) |
+| Filter UI | `src/components/organizer/match-history-player-filter.tsx` | Controlled searchable list — `<input>` + `<ul>` of `<button aria-pressed>` (swap-sheet pattern, NOT a combobox) |
+| Panel integration | `src/components/organizer/match-history-panel.tsx` | Adds `selected` state, `playerOptions` + `visibleMatches` memos, reconcile effect, active-filter chip, highlight rings, safety-net empty state, legend |
+
+**Filtering mechanics:**
+- `filterMatchesByPlayer(matches, id)` — null id returns the same array reference (identity, zero re-renders); otherwise filters by roster membership.
+- `derivePlayerOptions(matches)` — deduplicates by `player_id`, alpha-sorts by `display_name`, attaches a `player_id.slice(-4)` disambiguator when two players share the same display name.
+- `resolvePartnerIds(match, id)` — returns teammate `player_id`s (same team, different id) for the selected player in a single match.
+- `selectionStillValid(matches, id)` — checks raw `matches` roster (NOT derived `playerOptions`). Used to detect stale selections after identity merges or score reverts.
+
+**Selection lifecycle:**
+- Pinned `selected: { id: string; display_name: string } | null` state — name captured at select time so the active-filter chip stays correct even if the player's profile vanishes from `playerOptions` on a realtime refetch.
+- **Conservative reconcile:** if `selectionStillValid` returns false (player gone from all rosters), the filter chip stays visible with a safety-net empty state — never auto-cleared. The organizer dismisses via ✕. This is intentional for score-revert via `FixRecordSheet` which temporarily removes a match from history.
+- **Two cancel paths handled correctly:** organizer-cancel retains all `match_players` rows (player appears in filtered history). Leave-triggered cancel deletes the leaver's row first — they do NOT appear in the match's roster.
+
+**Highlight encoding (when a filter is active):**
+- `●` Selected player: `bg-cc-accent-dim outline outline-1 outline-cc-accent/55` (solid ring, both completed and cancelled branches).
+- `○` Partner: `outline outline-1 outline-dashed outline-cc-accent/55` (dashed ring, both branches).
+- Cancelled branch: ring uses `outline-2` (heavier) because the player area is inside an `opacity-60` wrapper — thicker ring reads through the dimming.
+- Legend renders below the cards when filter is active: `◍ solid = selected · ◌ dashed = partner`.
+
+**Access control:** `MatchHistoryPlayerFilter` is rendered only inside `MatchHistoryPanel` which lives in the `src/components/organizer/` subtree. Player-facing components (`PlayerDashboard`, `match-history.tsx`) do not import anything from this subtree — organizer-only by structural exclusion, no runtime checks needed.
+
+---
+
 ## 4. UI/UX Conventions (Impeccable Standards)
 
 ### 4.1 Design System — "Court Nights" Theme
@@ -1814,3 +1850,40 @@ npm run build        # Production build + Pagefind indexing
 npm run watch:extract # Re-run extraction on host-app source changes
 npx tsx scripts/extract.ts  # One-shot extraction
 ```
+
+---
+
+## 11. Multi-Tenant (Clubs)
+
+> **STATUS:** Built on branch `feat/multi-tenant` (NOT merged to main, app NOT deployed). The **schema
+> is LIVE on prod** (Phase 0 applied + Legacy backfill). The full design lives in `MULTI_TENANT_PLAN.md`
+> + `MULTI_TENANT_PHASE2_PLAN.md`; this is the architecture summary.
+
+**Model.** Shared-schema multi-tenancy. New tables `clubs` / `club_members` (role `owner`/`admin`/`member`,
+`is_active` soft-offboard) / `club_invites`. Every `sessions` row (and the rivalry/partnership ledgers)
+carries a `club_id`. All pre-existing data was absorbed into a fixed **"Legacy" club** (`…0001`), and every
+existing player was backfilled as a Legacy member (`supabase/data-fixes/20260630_legacy_club_membership_backfill.sql`).
+
+**Isolation = application layer.** The club tables are **RLS deny-all** (enabled, no policies), so only the
+service role reads them. Tenant isolation is enforced in code: `src/lib/clubs.ts` (server-only read/guard
+layer — `getClubBySlug`, `getClubRole`, `requireClubMembership`, `ensureClubMembership`,
+`resolveSessionClubSlug`) + `src/app/actions/clubs.ts` (`createClub`, `createClubInvite`, `acceptClubInvite`).
+
+**Routing.** All club surfaces live under `/c/[clubSlug]/…` (path builders in `src/lib/club-paths.ts`;
+client components self-resolve the slug from the path via `useClubSlug`). Route groups under
+`/c/[clubSlug]`: minimal root layout (resolve + 404) · `(app)` = member-gated + chrome (lobby `/c/[slug]`,
+`/admin`) · `(full)` = member-gated, no chrome (full-screen `play`/`organizer` dashboards) · **public**
+(no gate): `tv`, `join`. Each session route cross-checks `session.club_id === club.id` (404 on mismatch).
+
+**ADD-and-redirect migration.** New club routes re-use the existing PlayerDashboard / OrganizerDashboard /
+TvBoard / LoginForm. Legacy `/play/[id]` + `/organizer/[id]` became thin resolve-and-redirect shims (308 →
+`/c/<slug>/…`) that **auto-enroll** the requester (same philosophy as QR-join) so no one is stranded behind
+the gate. Public boards (`/tv/[id]`, `/leaderboard/[id]`, `/wrapped`, `/play/join`) stay at root, shareable.
+
+**Onboarding.** QR/`/c/[slug]/join` (+ the `/play/join` back-compat shim → forwards to it): authed users
+auto-enroll + queue; fresh scanners register via `signInAnonymously` (a `club_slug` hidden field enrolls
+them post-registration). `lookup_active_session` (SECURITY DEFINER, anon-safe) returns `club_slug`.
+
+**Deferred (not yet built):** club-scoped leaderboard data (Phase 3 — DB views/RPCs need `club_id`);
+no-session lobby redirects (`/play`,`/organizer` → `/clubs`, held back so the main-login flow + a fresh
+player aren't stranded on an empty `/clubs`); direct session push deep-links; E2E spec path updates.

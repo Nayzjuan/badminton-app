@@ -5,6 +5,81 @@
 
 ---
 
+## 🆕 MULTI-TENANT (MULTI-CLUB SaaS) — PHASE 0 FOUNDATION — branch `feat/multi-tenant` (2026-06-30)
+
+**Status: BUILT + ✅ APPLIED TO PROD (2026-06-30) + verified. NOT merged.** tsc clean · lint clean · 620/621 unit pass · review gate **LGTM** (7-dimension independent review, incl. byte-diff of migrate_player_identity vs live prod). Plan: `MULTI_TENANT_PLAN.md` (v2; committed `6562b83`).
+
+**✅ APPLIED TO PROD (project usxftpexoimletqmrggb) 2026-06-30 — all 4 migrations, verified:**
+- clubs/club_invites/club_members created, RLS deny-all (0 policies, 7 FKs). Legacy club `00000000-0000-0000-0000-000000000001` created (created_by = top session creator).
+- sessions.club_id NOT NULL, all 16 sessions backfilled to Legacy. Rivalry/partnership PKs swapped to (club_id,…); 1050+702 rows backfilled, none lost. refresh_cross_session_stats + migrate_player_identity updated (verified live).
+- Functional smoke (txn rollback, zero residue): club+owner+invite+club-session inserts all satisfy FK/CHECK/UNIQUE. Advisors: no new ERROR/serious lints (3 new tables = expected deny-all `rls_enabled_no_policy` INFO only).
+- **⚠ Migration-history drift (benign):** recorded under generated versions `20260630092810..093017` (names = file stems), NOT the file versions `20260630000000..3`. So `supabase db push` would see the local files as unapplied + re-run them — but all 4 are idempotent/safe to re-run (verified). Reconcile or ignore.
+- **⚠ Prod app still runs OLD code (main):** the Phase 1 club UI is on `feat/multi-tenant`, NOT deployed. So the live site won't show `/clubs` until the branch is deployed. Schema is ready; UI needs a deploy to be reachable.
+
+**Goal:** single-organizer → multi-club SaaS. Shared schema, `club_id` FK, path routing `/c/[clubSlug]/...`. Phase 0 = DB foundation only (no app code wired yet).
+
+### Migrations (build-only, in `supabase/migrations/`)
+- `20260630000000_clubs_foundation.sql` — `clubs` (slug UNIQUE, 3–50 char CHECK), `club_invites` (one-time tokens), `club_members` (UNIQUE(club_id,player_id), role owner/admin/member, is_active soft-offboard). RLS enabled, **deny-all** (service-role only; member-read policies deferred to route phase).
+- `20260630000001_sessions_club_id.sql` — Legacy club at **fixed uuid `00000000-0000-0000-0000-000000000001`** (created_by = most-prolific session creator) + `sessions.club_id` nullable→backfill→NOT NULL. **Transition DEFAULT = Legacy club** so the still-deployed club-unaware createSession keeps working post-NOT-NULL (DEFAULT dropped in Phase 2). ON DELETE RESTRICT.
+- `20260630000002_rivalries_partnerships_club_id.sql` — **ATOMIC** (C4): add club_id + backfill + SET NOT NULL + swap PRIMARY KEY `(player_id,rival_id)`→`(club_id,player_id,rival_id)` (same for partnerships) + `CREATE OR REPLACE refresh_cross_session_stats` with `v_club_id` threaded (ON CONFLICT targets now include club_id). Must stay one file or next closeSession() throws.
+- `20260630000003_migrate_identity_club_members.sql` — `migrate_player_identity` reproduced byte-faithful + ONE new non-fatal block re-pointing `club_members.player_id` (delete-old-if-new-already-member, then UPDATE).
+
+### Types (`src/types/database.ts`)
+- New: `ClubRole`, `Club`/`ClubInsert`/`ClubUpdate`, `ClubInvite`/…, `ClubMember`/… + 3 table registrations.
+- `club_id: string` added to `Session`, `PlayerRivalry`, `PlayerPartnership` Row types; optional in `SessionInsert` (DB default fills it); excluded from ledger Update types (part of PK).
+- Test fixture `queue-sub-tab.test.tsx` got `club_id` (only full Session literal in repo).
+
+### Corrections made during build (beyond the v2 plan)
+- **Transition DEFAULT on sessions.club_id** — the plan's bare SET NOT NULL would break new-session creation by the old app. Added DEFAULT→Legacy as the bridge. Documented in migration header + needs a Phase-2 "DROP DEFAULT" step.
+- **DEFERRED (pre-existing gap, C7):** migrate_player_identity still does NOT re-point `player_rivalries`/`player_partnerships` (needs counter-merge both directions + drift test → own migration). Documented in migration header.
+
+### Phase 1 — CLUB REGISTRATION UI — BUILT (2026-06-30, same branch)
+**Status: BUILT. Migrations still NOT applied to prod (UI can't run until they are).** tsc/lint/build clean · 635/636 tests (+15 CS-* slug tests) · review gate **Minor issues → fixed** (no authz holes — every app-layer gate correctly placed, which is the ONLY isolation since club tables are RLS deny-all).
+
+**Review fixes applied:** (#1 med) `acceptClubInvite` now handles the 3 membership states explicitly — re-activates a soft-removed (is_active=false) member instead of an `ignoreDuplicates` upsert that silently skipped them and lied "success" → redirect loop. (#2 low) `createClub` no longer leaks raw Postgres error to client (logs + generic msg). (#3 low) club rollback delete now logs on failure.
+**Deferred (Phase 2):** member removal/restore UI (admin panel is read-only roster + invites today); `getMyClubs` issues 1 count query/club (fan-out, fine at scale); one-time invites only (no reusable/multi-use links).
+- **Pure:** `src/lib/club-slug.ts` (slugifyClubName/isValidClubSlug, parity w/ SQL CHECK) + `tests/unit/club-slug.test.ts` (CS-1..15).
+- **Data (server-only):** `src/lib/clubs.ts` — getClubBySlug (React cache), getMyClubs, getClubRole (cache), isClubMember, isClubAdmin, getClubMembers, getClubSessions. All via service client (club tables are RLS deny-all → app-layer authz is the ONLY control).
+- **Actions:** `src/app/actions/clubs.ts` — createClub (club+owner membership, best-effort rollback), createClubInvite (admin-gated, one-time token), acceptClubInvite (idempotent join + consume). `sessions.ts` createSession gained optional `clubId` (admin-gated; omitted → Legacy DEFAULT).
+- **Routes:** `/clubs` (multi-club home), `/clubs/new`, `/clubs/join?invite=`, `/c/[clubSlug]/layout` (auth+membership guard+switcher), `/c/[clubSlug]` (lobby), `/c/[clubSlug]/admin` (admin-gated: members + invite links + create session).
+- **Components:** create-club-form, join-club-panel, club-switcher (native `<details>`, server comp), club-admin-panel.
+- **Routing decided:** `/c/[clubSlug]/...` prefix (user picked; no reserved-slug denylist needed). `/clubs` is the new multi-club home; existing `/` login untouched (route relocation is Phase 2).
+
+### Next (await user approval before building)
+- ✅ Schema APPLIED to prod + verified (see Phase 0 section). Phase 1 UI write/read paths confirmed valid against the live schema.
+- **To see the UI live:** deploy `feat/multi-tenant` (prod main runs old code without the club routes).
+- **Phase 2** = Route Migration (relocate `/play`,`/organizer`,`/tv` under `/c/[clubSlug]`; isClubMember/Admin guards; reconnect/leaderboard/QR club-scoping; getPlayerStats `.maybeSingle()` fix; the cross-session aggregators H1–H6). Largest, mostly-breaking phase. See `MULTI_TENANT_PLAN.md` §8.
+- Organizer access model = §3.4 (`/c/chillax/organizer/[uuid]`).
+
+---
+
+## 🆕 PLAYER-SPECIFIC SESSION HISTORY FILTER — `main` (2026-06-26)
+
+**Status: BUILT + validated. NOT yet committed (working tree).** tsc clean · 28/28 MHF-* unit tests pass · build clean · 0 new lint errors on changed files. Plan: `ORGANIZER_PLAYER_HISTORY_PLAN.md` (5-section plan + 2 adversarial review rounds).
+
+**Feature:** Organizer-only player filter inside the Match History tab. Type-to-search, select a player, see only their matches. Zero new DB tables, migrations, RPC, or server actions — 100% client-side `useMemo` filtering over already-fetched `CompletedMatch[]`.
+
+### New files
+- `src/lib/match-history-filter.ts` — 4 pure helpers: `filterMatchesByPlayer`, `derivePlayerOptions`, `resolvePartnerIds`, `selectionStillValid`. Exportable; no React/Supabase deps.
+- `src/components/organizer/match-history-player-filter.tsx` — controlled `<input>` + `<ul>/<button aria-pressed>` filter UI (swap-sheet.tsx pattern). Shows game count + SkillBadge + disambiguator suffix for dup names + checkmark when selected.
+- `tests/unit/match-history-filter.test.ts` — 28 MHF-* Vitest unit tests.
+
+### Modified files
+- `src/components/organizer/match-history-panel.tsx` — wired filter, active-filter chip (N of M count + ✕ clear), `selected` pinned state, `playerOptions` + `visibleMatches` memos, conservative reconcile effect, highlight rings in both completed + cancelled branches, legend, safety-net empty state.
+
+### Key design decisions (locked)
+- **Conservative reconcile:** never auto-clears on revert; keeps chip + safety-net so organizer dismisses via ✕.
+- **Cancelled match handling:** organizer-cancel retains all rows → player appears. Leave-triggered cancel deletes leaver's row first → leaver absent from filter. Both correctly handled.
+- **Disambiguator = `player_id.slice(-4)`** (last 4 chars, more unique than first 4 for UUIDs).
+- **Highlights:** solid ring = selected, dashed ring = partner. Cancelled branch uses `outline-2` (heavier) to read through `opacity-60` parent.
+- **Access control:** structural exclusion — `MatchHistoryPlayerFilter` is imported only inside `match-history-panel.tsx` which lives in `src/components/organizer/`. Player dashboard imports nothing from this subtree.
+- **Review gate:** Minor issues (unused `idx` param + dead `if` body in effect) — both fixed. Final verdict: LGTM.
+
+### Next steps
+- Commit the working tree (monthly leaderboard + player history filter together, or as two separate commits).
+
+---
+
 ## 🆕 MONTHLY LEADERBOARD — `main` (2026-06-26)
 
 **Status: BUILT + migration applied to prod + validated. NOT yet committed (working tree).** tsc clean · 592 unit pass (+8 month tests) · build clean · 0 new lint errors. Plan: `MONTHLY_LEADERBOARD_PLAN.md` (12 grilled decisions D1–D12 + O-1/2/3, skill-backed UI §3, 2 review rounds). Built per grill-me → ui-ux-pro-max + impeccable skills → whole-plan adversarial review → implement → review gate.
