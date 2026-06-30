@@ -1,0 +1,155 @@
+import "server-only";
+
+// ============================================================
+// Club data layer — server-only read helpers
+// ============================================================
+// Used by Server Components (the /c/[clubSlug] layout, club home, admin) and
+// by the club Server Actions. All reads go through the service-role client:
+// the club tables have RLS enabled with NO policies (deny-all to anon /
+// authenticated), so only the service role can read them in Phase 0/1.
+//
+// Membership is keyed on profiles.id (= auth uid). Unlike sessions — which
+// deliberately avoid created_by filtering because of anonymous multi-UUID
+// users (see organizer/page.tsx) — club_members is reliable here: the
+// reconnect/identity system (migrate_player_identity) preserves a returning
+// player's profile id, so "my clubs" stays stable across reconnects.
+// ============================================================
+
+import { cache } from "react";
+import { createServiceClient } from "@/utils/supabase/service";
+import type { Club, ClubRole, Session } from "@/types/database";
+
+/** Rank for sorting members: owners first, then admins, then members. */
+function roleRank(role: ClubRole): number {
+  return role === "owner" ? 0 : role === "admin" ? 1 : 2;
+}
+
+/**
+ * Resolve a club by its URL slug. Wrapped in React `cache` so the
+ * /c/[clubSlug] layout and the page beneath it share a single query per request.
+ * Returns null on miss (callers `notFound()`).
+ */
+export const getClubBySlug = cache(async (slug: string): Promise<Club | null> => {
+  const db = createServiceClient();
+  const { data } = await db.from("clubs").select("*").eq("slug", slug).maybeSingle();
+  return data ?? null;
+});
+
+export type MyClub = { club: Club; role: ClubRole; activeSessions: number };
+
+/** Clubs the authenticated player actively belongs to, with role + active-session count. */
+export async function getMyClubs(userId: string): Promise<MyClub[]> {
+  const db = createServiceClient();
+
+  const { data: memberships } = await db
+    .from("club_members")
+    .select("club_id, role")
+    .eq("player_id", userId)
+    .eq("is_active", true);
+
+  if (!memberships || memberships.length === 0) return [];
+
+  const roleByClub = new Map<string, ClubRole>(
+    memberships.map((m) => [m.club_id, m.role as ClubRole])
+  );
+
+  const { data: clubs } = await db
+    .from("clubs")
+    .select("*")
+    .in("id", Array.from(roleByClub.keys()))
+    .eq("is_active", true);
+
+  const result = await Promise.all(
+    (clubs ?? []).map(async (club) => {
+      const { count } = await db
+        .from("sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("club_id", club.id)
+        .eq("is_active", true);
+      return { club, role: roleByClub.get(club.id) as ClubRole, activeSessions: count ?? 0 };
+    })
+  );
+
+  return result.sort((a, b) => a.club.name.localeCompare(b.club.name));
+}
+
+/**
+ * The player's role in a club, or null if not an active member.
+ * Cached per-request: the /c/[clubSlug] layout and page both resolve role.
+ */
+export const getClubRole = cache(
+  async (userId: string, clubId: string): Promise<ClubRole | null> => {
+    const db = createServiceClient();
+    const { data } = await db
+      .from("club_members")
+      .select("role")
+      .eq("player_id", userId)
+      .eq("club_id", clubId)
+      .eq("is_active", true)
+      .maybeSingle();
+    return (data?.role as ClubRole) ?? null;
+  }
+);
+
+/** True when the player is an active member of the club. */
+export async function isClubMember(userId: string, clubId: string): Promise<boolean> {
+  return (await getClubRole(userId, clubId)) !== null;
+}
+
+/** True when the player is an owner or admin of the club (implicit organizer). */
+export async function isClubAdmin(userId: string, clubId: string): Promise<boolean> {
+  const role = await getClubRole(userId, clubId);
+  return role === "owner" || role === "admin";
+}
+
+export type ClubMemberRow = {
+  player_id: string;
+  role: ClubRole;
+  display_name: string;
+  joined_at: string;
+};
+
+/** Active members of a club with their display names, sorted by role then name. */
+export async function getClubMembers(clubId: string): Promise<ClubMemberRow[]> {
+  const db = createServiceClient();
+
+  const { data: members } = await db
+    .from("club_members")
+    .select("player_id, role, joined_at")
+    .eq("club_id", clubId)
+    .eq("is_active", true);
+
+  if (!members || members.length === 0) return [];
+
+  const { data: profiles } = await db
+    .from("profiles")
+    .select("id, display_name")
+    .in(
+      "id",
+      members.map((m) => m.player_id)
+    );
+
+  const nameById = new Map<string, string>((profiles ?? []).map((p) => [p.id, p.display_name]));
+
+  return members
+    .map((m) => ({
+      player_id: m.player_id,
+      role: m.role as ClubRole,
+      joined_at: m.joined_at,
+      display_name: nameById.get(m.player_id) ?? "Unknown player",
+    }))
+    .sort(
+      (a, b) => roleRank(a.role) - roleRank(b.role) || a.display_name.localeCompare(b.display_name)
+    );
+}
+
+/** All sessions belonging to a club, newest first. */
+export async function getClubSessions(clubId: string): Promise<Session[]> {
+  const db = createServiceClient();
+  const { data } = await db
+    .from("sessions")
+    .select("*")
+    .eq("club_id", clubId)
+    .order("created_at", { ascending: false });
+  return data ?? [];
+}
