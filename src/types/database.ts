@@ -81,6 +81,9 @@ export type ScoringFormat = "single" | "best_of_3" | "best_of_5";
 
 export type Team = "a" | "b";
 
+/** club_members.role / club_invites.role — tenancy roles within a club */
+export type ClubRole = "owner" | "admin" | "member";
+
 // ------------------------------------------------------------
 // Table Row Types  (type aliases — NOT interfaces)
 // ------------------------------------------------------------
@@ -135,6 +138,7 @@ export type Session = {
   id: string;
   name: string;
   created_by: string; // uuid — references profiles.id
+  club_id: string; // uuid — references clubs.id (owning tenant). NOT NULL post Phase-0 migration.
   organizer_passcode: string | null;
   scoring: ScoringFormat;
   is_active: boolean;
@@ -356,7 +360,9 @@ export type ProfileUpdate = Partial<
 >;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
-  Partial<Pick<Session, "organizer_passcode" | "scoring" | "is_auto_matchmaking_on">>;
+  // club_id optional during the Phase-0 transition (DB DEFAULT = Legacy club);
+  // becomes a required, explicitly-passed value when createSession is club-aware (Phase 2).
+  Partial<Pick<Session, "organizer_passcode" | "scoring" | "is_auto_matchmaking_on" | "club_id">>;
 
 export type SessionUpdate = Partial<
   Pick<
@@ -459,6 +465,7 @@ export type SessionWrappedStatsUpdate = Partial<
 
 /** player_rivalries table — running all-time H2H ledger between players (directional) */
 export type PlayerRivalry = {
+  club_id: string; // uuid — references clubs.id (tenant scope); part of the PK
   player_id: string;
   rival_id: string;
   wins_vs: number;
@@ -471,6 +478,7 @@ export type PlayerRivalry = {
 
 /** player_partnerships table — running all-time partnership ledger between players (directional) */
 export type PlayerPartnership = {
+  club_id: string; // uuid — references clubs.id (tenant scope); part of the PK
   player_id: string;
   partner_id: string;
   games_together: number;
@@ -512,6 +520,59 @@ export type PushSubscriptionInsert = Pick<
 export type PushSubscriptionUpdate = Partial<
   Pick<PushSubscription, "p256dh" | "auth_key" | "user_agent">
 >;
+
+// ------------------------------------------------------------
+// Multi-tenancy (Phase 0 foundation)
+// ------------------------------------------------------------
+
+/** clubs table — tenant root. slug is the URL identifier under /c/[slug]. */
+export type Club = {
+  id: string;
+  name: string;
+  slug: string;
+  created_by: string; // uuid — references profiles.id
+  is_active: boolean;
+  created_at: string;
+};
+
+export type ClubInsert = Pick<Club, "name" | "slug" | "created_by"> &
+  Partial<Pick<Club, "id" | "is_active">>;
+
+export type ClubUpdate = Partial<Pick<Club, "name" | "slug" | "is_active">>;
+
+/** club_invites table — one-time invite tokens for joining a club. */
+export type ClubInvite = {
+  id: string;
+  club_id: string;
+  token: string;
+  role: ClubRole;
+  created_by: string | null;
+  consumed_by: string | null;
+  consumed_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+export type ClubInviteInsert = Pick<ClubInvite, "club_id" | "token"> &
+  Partial<Pick<ClubInvite, "role" | "created_by" | "expires_at">>;
+
+export type ClubInviteUpdate = Partial<Pick<ClubInvite, "consumed_by" | "consumed_at">>;
+
+/** club_members table — membership + role of a player within a club. */
+export type ClubMember = {
+  id: string;
+  club_id: string;
+  player_id: string;
+  role: ClubRole;
+  is_active: boolean;
+  invited_by: string | null;
+  joined_at: string;
+};
+
+export type ClubMemberInsert = Pick<ClubMember, "club_id" | "player_id"> &
+  Partial<Pick<ClubMember, "role" | "is_active" | "invited_by">>;
+
+export type ClubMemberUpdate = Partial<Pick<ClubMember, "role" | "is_active">>;
 
 // ------------------------------------------------------------
 // Supabase Database Type
@@ -599,14 +660,14 @@ export type Database = {
       player_rivalries: {
         Row: PlayerRivalry;
         Insert: Omit<PlayerRivalry, "updated_at"> & Partial<Pick<PlayerRivalry, "updated_at">>;
-        Update: Partial<Omit<PlayerRivalry, "player_id" | "rival_id">>;
+        Update: Partial<Omit<PlayerRivalry, "club_id" | "player_id" | "rival_id">>;
         Relationships: [];
       };
       player_partnerships: {
         Row: PlayerPartnership;
         Insert: Omit<PlayerPartnership, "updated_at"> &
           Partial<Pick<PlayerPartnership, "updated_at">>;
-        Update: Partial<Omit<PlayerPartnership, "player_id" | "partner_id">>;
+        Update: Partial<Omit<PlayerPartnership, "club_id" | "player_id" | "partner_id">>;
         Relationships: [];
       };
       identity_migrations: {
@@ -620,6 +681,24 @@ export type Database = {
         Insert: Pick<PlayerRename, "player_id" | "new_name"> &
           Partial<Pick<PlayerRename, "old_name" | "reason" | "actor_user_id" | "session_id">>;
         Update: Record<string, never>; // append-only audit log
+        Relationships: [];
+      };
+      clubs: {
+        Row: Club;
+        Insert: ClubInsert;
+        Update: ClubUpdate;
+        Relationships: [];
+      };
+      club_invites: {
+        Row: ClubInvite;
+        Insert: ClubInviteInsert;
+        Update: ClubInviteUpdate;
+        Relationships: [];
+      };
+      club_members: {
+        Row: ClubMember;
+        Insert: ClubMemberInsert;
+        Update: ClubMemberUpdate;
         Relationships: [];
       };
     };
