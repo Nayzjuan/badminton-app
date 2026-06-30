@@ -9,6 +9,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { History } from "lucide-react";
 import { getClubBySlug, getClubSessions } from "@/lib/clubs";
+import { clubPlay } from "@/lib/club-paths";
 
 export default async function ClubLobbyPage({ params }: { params: Promise<{ clubSlug: string }> }) {
   const { clubSlug } = await params;
@@ -51,7 +52,7 @@ export default async function ClubLobbyPage({ params }: { params: Promise<{ club
                 {active.map((s) => (
                   <li key={s.id}>
                     <Link
-                      href={`/play/${s.id}`}
+                      href={clubPlay(club.slug, s.id)}
                       className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm transition-colors hover:bg-slate-50 dark:border-border dark:bg-card dark:hover:bg-muted/40"
                     >
                       <span className="font-semibold text-slate-800 dark:text-foreground">

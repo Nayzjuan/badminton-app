@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { Loader2, Copy, Check, Link2, Users } from "lucide-react";
 import { createClubInvite } from "@/app/actions/clubs";
 import { createSession } from "@/app/actions/sessions";
+import { clubOrganizer } from "@/lib/club-paths";
 import type { ClubRole, ScoringFormat } from "@/types/database";
 
 type AdminMember = {
@@ -46,7 +47,7 @@ export function ClubAdminPanel({ clubId, clubSlug, clubName, members }: ClubAdmi
     startSession(async () => {
       const result = await createSession({ name: sessionName.trim(), scoring, clubId });
       if (result.success && result.sessionId) {
-        router.push(`/organizer/${result.sessionId}`);
+        router.push(clubOrganizer(clubSlug, result.sessionId));
       } else {
         setSessionError(result.message);
       }

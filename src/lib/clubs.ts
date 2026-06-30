@@ -16,7 +16,9 @@ import "server-only";
 // ============================================================
 
 import { cache } from "react";
+import { redirect, notFound } from "next/navigation";
 import { createServiceClient } from "@/utils/supabase/service";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import type { Club, ClubRole, Session } from "@/types/database";
 
 /** Rank for sorting members: owners first, then admins, then members. */
@@ -152,4 +154,30 @@ export async function getClubSessions(clubId: string): Promise<Session[]> {
     .eq("club_id", clubId)
     .order("created_at", { ascending: false });
   return data ?? [];
+}
+
+/**
+ * Route guard for member-only club routes. Resolves auth + club + membership
+ * and short-circuits via redirect/notFound; returns the resolved trio on
+ * success. Used by the /c/[clubSlug] gated route-group layouts.
+ *   - unauthenticated → redirect("/")
+ *   - unknown slug    → notFound()
+ *   - non-member      → redirect("/clubs")
+ */
+export async function requireClubMembership(
+  clubSlug: string
+): Promise<{ userId: string; club: Club; role: ClubRole }> {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/");
+
+  const club = await getClubBySlug(clubSlug);
+  if (!club) notFound();
+
+  const role = await getClubRole(user.id, club.id);
+  if (!role) redirect("/clubs");
+
+  return { userId: user.id, club, role };
 }
