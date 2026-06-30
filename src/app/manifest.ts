@@ -12,7 +12,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Chillax Badminton",
     short_name: "Chillax",
     description: "Real-time badminton social queuing and matchmaking",
-    start_url: "/play",
+    start_url: "/clubs",
     scope: "/",
     display: "standalone",
     // "any" allows both portrait and landscape so organizers can rotate their
@@ -56,10 +56,10 @@ export default function manifest(): MetadataRoute.Manifest {
     // Deep-link shortcuts — long-press the icon on Android/iOS.
     shortcuts: [
       {
-        name: "Join a Session",
-        short_name: "Join",
-        description: "Scan a QR code or enter a session",
-        url: "/play",
+        name: "My Clubs",
+        short_name: "Clubs",
+        description: "Open your clubs, or scan a session QR code",
+        url: "/clubs",
         icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }],
       },
     ],

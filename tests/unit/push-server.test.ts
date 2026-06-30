@@ -129,7 +129,7 @@ describe("pushToPlayers — server push core", () => {
     expect(payload.type).toBe("COURT_CALL");
     expect(typeof payload.title).toBe("string");
     expect(typeof payload.body).toBe("string");
-    expect(payload.data.url).toBe("/play");
+    expect(payload.data.url).toBe("/clubs"); // club-consistent deep-link default (multi-tenant)
   });
 
   // ── PS-6 ────────────────────────────────────────────────────

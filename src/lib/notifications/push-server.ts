@@ -124,10 +124,14 @@ export async function pushToPlayers(
     return { sent: 0, errors: 0 };
   }
 
+  // Deep-link target. Club-consistent default (/clubs → the player's club →
+  // session). NOTE: a direct /c/<slug>/play/<sessionId> link would be better UX
+  // for an urgent court call — deferred, as it needs sessionId threaded through
+  // pushToPlayers' ~10 call sites + a send-time club-slug lookup.
   const payload = JSON.stringify({
     type,
     ...PAYLOADS[type],
-    data: { url: "/play" },
+    data: { url: "/clubs" },
   });
 
   let sent = 0;
