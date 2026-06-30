@@ -17,10 +17,13 @@
 import { useState, useRef, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { ChevronLeft, Home, ArrowRight, Globe } from "lucide-react";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubBase } from "@/lib/club-paths";
 
 export function PwaNavBar() {
   const pathname = usePathname();
   const router = useRouter();
+  const clubSlug = useClubSlug();
 
   // All hooks are declared unconditionally before any early return to
   // satisfy the Rules of Hooks. Conditional rendering (Wrapped suppression)
@@ -173,7 +176,7 @@ export function PwaNavBar() {
         </button>
       ) : (
         <button
-          onClick={() => router.push("/play")}
+          onClick={() => router.push(clubSlug ? clubBase(clubSlug) : "/play")}
           aria-label="Go home"
           className="shrink-0 h-10 w-10 flex items-center justify-center
                      rounded-lg text-muted-foreground
