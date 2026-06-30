@@ -204,3 +204,35 @@ export async function resolveSessionClubSlug(sessionId: string): Promise<string 
     .maybeSingle();
   return club?.slug ?? null;
 }
+
+/**
+ * Auto-enroll a player as an active member of the club (QR-join path).
+ * Insert if missing · re-activate if soft-removed · no-op if already active —
+ * never downgrades an existing owner/admin. Service-role write (bypasses RLS).
+ * Returns true on success / already-member, false if the club can't be resolved.
+ */
+export async function ensureClubMembership(clubSlug: string, userId: string): Promise<boolean> {
+  const club = await getClubBySlug(clubSlug);
+  if (!club) return false;
+  const db = createServiceClient();
+  const { data: existing } = await db
+    .from("club_members")
+    .select("id, is_active")
+    .eq("club_id", club.id)
+    .eq("player_id", userId)
+    .maybeSingle();
+  if (!existing) {
+    const { error } = await db
+      .from("club_members")
+      .insert({ club_id: club.id, player_id: userId, role: "member" });
+    return !error;
+  }
+  if (!existing.is_active) {
+    const { error } = await db
+      .from("club_members")
+      .update({ is_active: true })
+      .eq("id", existing.id);
+    return !error;
+  }
+  return true; // already an active member — keep their role
+}

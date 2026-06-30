@@ -23,6 +23,9 @@ import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
 interface LoginFormProps {
   /** If provided, the user will be redirected to /play/[sessionId] after login. */
   sessionId?: string;
+  /** Club context (from a /c/[clubSlug]/join QR): the new player is auto-enrolled
+   *  in the club and routed to the club-scoped session. */
+  clubSlug?: string;
 }
 
 type LoginMode = "new" | "returning";
@@ -125,7 +128,7 @@ function ErrorBanner({ error, onDismiss }: { error: string; onDismiss: () => voi
 // Main LoginForm
 // ─────────────────────────────────────────────────────────────
 
-export function LoginForm({ sessionId }: LoginFormProps = {}) {
+export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
   const router = useRouter();
 
   // ── Mode toggle ───────────────────────────────────────────
@@ -479,6 +482,8 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
 
           {/* Hidden session_id — routes redirect to /play/[id] after login */}
           {sessionId && <input type="hidden" name="session_id" value={sessionId} />}
+          {/* Hidden club_slug — QR join: enroll in the club + route to /c/[slug]/play/[id] */}
+          {clubSlug && <input type="hidden" name="club_slug" value={clubSlug} />}
 
           {/* ── Error ─────────────────────────────────────────── */}
           {newError && <ErrorBanner error={newError} onDismiss={() => setNewError(null)} />}

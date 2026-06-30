@@ -13,6 +13,8 @@ import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
+import { ensureClubMembership } from "@/lib/clubs";
+import { clubPlay, clubBase } from "@/lib/club-paths";
 
 // Shared friendly message for a globally-taken display name.
 const NAME_TAKEN_MESSAGE = 'Name taken. Add an initial (e.g. "Miggy L.").';
@@ -31,7 +33,15 @@ export async function signInAnonymously(formData: FormData) {
   const rawPin = formData.get("pin") as string | null;
   // Optional: if joining via QR/link, redirect straight to that session.
   const sessionId = (formData.get("session_id") as string)?.trim() || null;
-  const destination = sessionId ? `/play/${sessionId}` : "/play";
+  // Optional: club context from a /c/[clubSlug]/join QR — enroll + route into the club.
+  const clubSlug = (formData.get("club_slug") as string)?.trim() || null;
+  const destination = clubSlug
+    ? sessionId
+      ? clubPlay(clubSlug, sessionId)
+      : clubBase(clubSlug)
+    : sessionId
+      ? `/play/${sessionId}`
+      : "/play";
 
   // ── Zod validation ───────────────────────────────────────
   const nameResult = displayNameSchema.safeParse(rawName ?? "");
@@ -84,6 +94,7 @@ export async function signInAnonymously(formData: FormData) {
       return { success: false, error: upsertError.message };
     }
 
+    if (clubSlug) await ensureClubMembership(clubSlug, existingUser.id);
     redirect(destination);
   }
 
@@ -159,6 +170,9 @@ export async function signInAnonymously(formData: FormData) {
     }
   }
 
+  // QR-join enrollment: a brand-new scanner becomes an active member of the
+  // club, so the club route's membership gate lets them straight in.
+  if (clubSlug && data.user) await ensureClubMembership(clubSlug, data.user.id);
   redirect(destination);
 }
 
