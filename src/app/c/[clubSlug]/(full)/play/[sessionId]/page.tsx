@@ -10,7 +10,7 @@ import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { enforceRenameGate } from "@/lib/rename-gate";
 import { getClubBySlug } from "@/lib/clubs";
-import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
+import { clubPlay, clubBase } from "@/lib/club-paths";
 import { PlayerDashboard } from "@/components/player/player-dashboard";
 
 interface PageProps {
@@ -57,7 +57,9 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
     if (wrappedStats?.intro_dismissed_at) {
       redirect(clubBase(clubSlug));
     }
-    redirect(clubWrapped(clubSlug, sessionId, user.id));
+    // Wrapped is a public, shareable recap — it stays at the root route
+    // (like the TV board), not under the club namespace.
+    redirect(`/wrapped/${sessionId}/${user.id}`);
   }
 
   return <PlayerDashboard profile={profile} session={session} hasGoogleLinked={hasGoogleLinked} />;

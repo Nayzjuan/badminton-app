@@ -19,6 +19,7 @@ import { cache } from "react";
 import { redirect, notFound } from "next/navigation";
 import { createServiceClient } from "@/utils/supabase/service";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { isValidUUID } from "@/lib/validate";
 import type { Club, ClubRole, Session } from "@/types/database";
 
 /** Rank for sorting members: owners first, then admins, then members. */
@@ -180,4 +181,26 @@ export async function requireClubMembership(
   if (!role) redirect("/clubs");
 
   return { userId: user.id, club, role };
+}
+
+/**
+ * Resolve a session's owning club slug (for the legacy → /c/[slug] redirect
+ * shims). Service-role read — no auth needed, the redirect target enforces it.
+ * Returns null if the session or its club can't be resolved.
+ */
+export async function resolveSessionClubSlug(sessionId: string): Promise<string | null> {
+  if (!isValidUUID(sessionId)) return null;
+  const db = createServiceClient();
+  const { data: session } = await db
+    .from("sessions")
+    .select("club_id")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session?.club_id) return null;
+  const { data: club } = await db
+    .from("clubs")
+    .select("slug")
+    .eq("id", session.club_id)
+    .maybeSingle();
+  return club?.slug ?? null;
 }
