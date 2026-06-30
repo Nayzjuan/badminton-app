@@ -901,11 +901,13 @@ export type Database = {
       lookup_active_session: {
         Args: { p_session_id: string };
         /** Returns at most one row.  Empty when the session does not exist
-         *  or is no longer active.  Used by /play/join so anonymous QR-code
-         *  visitors can resolve a session without needing direct SELECT
-         *  on the underlying `sessions` table (which would expose
-         *  organizer_passcode and created_by). */
-        Returns: { id: string; name: string; is_active: boolean }[];
+         *  or is no longer active.  Used by the QR-join flow so anonymous
+         *  visitors can resolve a session (and its owning club slug) without
+         *  needing direct SELECT on the underlying `sessions` table (which
+         *  would expose organizer_passcode and created_by).
+         *  `club_slug` is null if the session's club_id has no clubs row
+         *  (defensive — non-null in practice post Phase-0). */
+        Returns: { id: string; name: string; is_active: boolean; club_slug: string | null }[];
       };
       // ── Draft-mode atomicity RPCs ─────────────────────────────────
       revert_match_to_active: {
