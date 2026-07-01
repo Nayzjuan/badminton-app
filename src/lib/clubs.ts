@@ -182,18 +182,6 @@ export async function getClubMembers(
     );
 }
 
-/** Count of active owners in a club — used to guard against a zero-owner club. */
-export async function countActiveOwners(clubId: string): Promise<number> {
-  const db = createServiceClient();
-  const { count } = await db
-    .from("club_members")
-    .select("id", { count: "exact", head: true })
-    .eq("club_id", clubId)
-    .eq("role", "owner")
-    .eq("is_active", true);
-  return count ?? 0;
-}
-
 /** All sessions belonging to a club, newest first. */
 export async function getClubSessions(clubId: string): Promise<Session[]> {
   const db = createServiceClient();

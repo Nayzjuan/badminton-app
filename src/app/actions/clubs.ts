@@ -15,7 +15,7 @@
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/utils/supabase/service";
 import { getAuthenticatedUser } from "@/app/actions/_shared";
-import { isClubAdmin, getClubRole, countActiveOwners } from "@/lib/clubs";
+import { isClubAdmin, getClubRole } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
 import { slugifyClubName, isValidClubSlug } from "@/lib/club-slug";
 import type { ClubRole } from "@/types/database";
@@ -216,7 +216,7 @@ export type LeaveClubResult = { success: boolean; message: string };
  * historical stats. Blocked if they're the club's only active owner —
  * ownership must be handed off first.
  */
-export async function leaveClub(clubId: string): Promise<LeaveClubResult> {
+export async function leaveClub(clubId: string, clubSlug: string): Promise<LeaveClubResult> {
   const user = await getAuthenticatedUser();
   if (!user) return { success: false, message: "Not authenticated." };
   if (!isValidUUID(clubId)) return { success: false, message: "Invalid club." };
@@ -232,22 +232,24 @@ export async function leaveClub(clubId: string): Promise<LeaveClubResult> {
 
   if (!membership) return { success: false, message: "You're not a member of this club." };
 
-  if (membership.role === "owner" && (await countActiveOwners(clubId)) <= 1) {
-    return {
-      success: false,
-      message: "You're the only owner — promote someone else to owner before leaving.",
-    };
+  const { data: result, error } = await db.rpc("club_member_deactivate", {
+    p_club_id: clubId,
+    p_member_id: membership.id,
+  });
+
+  if (error || !result?.success) {
+    if (result?.reason === "only_owner") {
+      return {
+        success: false,
+        message: "You're the only owner — promote someone else to owner before leaving.",
+      };
+    }
+    return { success: false, message: "Failed to leave the club. Please try again." };
   }
 
-  const { error } = await db
-    .from("club_members")
-    .update({ is_active: false })
-    .eq("id", membership.id)
-    .eq("club_id", clubId);
-
-  if (error) return { success: false, message: "Failed to leave the club. Please try again." };
-
   revalidatePath("/clubs");
+  revalidatePath(`/c/${clubSlug}`, "layout");
+  revalidatePath(`/c/${clubSlug}/admin`);
   return { success: true, message: "You've left the club." };
 }
 
@@ -305,17 +307,18 @@ export async function removeMember(
   if (!canManageTarget(actorRole, target.role as ClubRole)) {
     return { success: false, message: "Admins can only remove plain members." };
   }
-  if (target.role === "owner" && (await countActiveOwners(clubId)) <= 1) {
-    return { success: false, message: "Can't remove the club's only owner." };
+
+  const { data: result, error } = await db.rpc("club_member_deactivate", {
+    p_club_id: clubId,
+    p_member_id: memberId,
+  });
+
+  if (error || !result?.success) {
+    if (result?.reason === "only_owner") {
+      return { success: false, message: "Can't remove the club's only owner." };
+    }
+    return { success: false, message: "Failed to remove member. Please try again." };
   }
-
-  const { error } = await db
-    .from("club_members")
-    .update({ is_active: false })
-    .eq("id", memberId)
-    .eq("club_id", clubId);
-
-  if (error) return { success: false, message: "Failed to remove member. Please try again." };
 
   revalidatePath(`/c/${clubSlug}/admin`);
   return { success: true, message: "Member removed." };
@@ -408,20 +411,22 @@ export async function changeMemberRole(
   if (target.player_id === user.id) {
     return { success: false, message: "You can't change your own role." };
   }
-  if (target.role === "owner" && newRole !== "owner" && (await countActiveOwners(clubId)) <= 1) {
-    return { success: false, message: "Can't demote the club's only owner." };
-  }
   if (target.role === newRole) {
     return { success: true, message: "No change." };
   }
 
-  const { error } = await db
-    .from("club_members")
-    .update({ role: newRole })
-    .eq("id", memberId)
-    .eq("club_id", clubId);
+  const { data: result, error } = await db.rpc("club_member_set_role", {
+    p_club_id: clubId,
+    p_member_id: memberId,
+    p_new_role: newRole,
+  });
 
-  if (error) return { success: false, message: "Failed to change role. Please try again." };
+  if (error || !result?.success) {
+    if (result?.reason === "only_owner") {
+      return { success: false, message: "Can't demote the club's only owner." };
+    }
+    return { success: false, message: "Failed to change role. Please try again." };
+  }
 
   revalidatePath(`/c/${clubSlug}/admin`);
   return { success: true, message: "Role updated." };

@@ -5,11 +5,24 @@
 
 ---
 
-## 🆕 LEAVE-CLUB / MEMBER-MANAGEMENT + 2 MORE `migrate_player_identity` FK FIXES — branch `feat/multi-tenant` (2026-07-01)
+## 🆕 LEAVE-CLUB / MEMBER-MANAGEMENT + 2 MORE `migrate_player_identity` FK FIXES — branch `feat/multi-tenant` (2026-07-01, follow-ups 2026-07-02)
 
-**Status: BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + fully live-verified end-to-end + all test fixtures cleaned up.** tsc clean · lint clean · build clean. Working tree not yet committed/pushed — awaiting explicit user go-ahead.
+**Status: feature BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + fully live-verified + committed/pushed (`2ef6b93`).** Both known follow-ups from the initial ship are now also fixed, applied to prod, and functionally live-verified:
+1. `leaveClub`'s `revalidatePath` scope gap — done, tsc-clean, not yet committed (pending — see below).
+2. `countActiveOwners` TOCTOU race — atomic-RPC fix **built, applied to prod, functionally live-verified with disposable fixtures (9/9 cases passed), not yet committed.** See `supabase/migrations/20260702000000_club_member_atomic_owner_guard.sql` + `20260702000001_club_member_atomic_owner_guard_lockdown.sql` and `APP_MANIFEST.md` §11.3 for full design (two `SECURITY DEFINER` RPCs, `pg_advisory_xact_lock` per `club_id`).
+   - **Mid-verification finding, fixed same-session:** the original migration's `REVOKE ALL FROM PUBLIC` +
+     `GRANT ... TO service_role` left both RPCs callable by `anon`/`authenticated` in prod (ground-truth
+     `pg_proc.proacl` check, not caught by the code-review agent's LGTM which only read the SQL text). This
+     project's default privileges grant `EXECUTE` to `anon`/`authenticated` directly, independent of `PUBLIC` —
+     revoking `PUBLIC` alone doesn't retract it. Fixed with an explicit `REVOKE EXECUTE ... FROM anon,
+     authenticated` corrective migration, re-verified via `pg_proc.proacl` (now `postgres`/`service_role` only)
+     and via `get_advisors` (WARN findings for both functions gone). **Rule going forward: any future
+     service_role-only function in this schema needs the explicit named-role revoke, not just `FROM PUBLIC`.**
+     Full details in `APP_MANIFEST.md` §11.3. `migrate_player_identity` has the same anon/authenticated
+     `proacl` exposure but is `SECURITY INVOKER` (lower severity) — flagged as a separate, out-of-scope
+     follow-up, not fixed.
 
-**Feature (Tasks #37–39):** `leaveClub`/`removeMember`/`restoreMember`/`changeMemberRole` server actions (`src/app/actions/clubs.ts`) + admin panel role-dropdown/remove/restore UI (`src/components/clubs/club-admin-panel.tsx`) + self-service Leave control on `/clubs` (`src/components/clubs/club-list.tsx`). Full permission model + two known non-blocking follow-ups (TOCTOU race on `countActiveOwners`, `leaveClub`'s `revalidatePath` scope gap) written up in `APP_MANIFEST.md` §11.3.
+**Feature (Tasks #37–39):** `leaveClub`/`removeMember`/`restoreMember`/`changeMemberRole` server actions (`src/app/actions/clubs.ts`) + admin panel role-dropdown/remove/restore UI (`src/components/clubs/club-admin-panel.tsx`) + self-service Leave control on `/clubs` (`src/components/clubs/club-list.tsx`). Full permission model written up in `APP_MANIFEST.md` §11.3.
 
 **Live-verified in prod (Task #42), fixture club `qa-member-test-club`, 3 real anonymous PIN accounts (QA Owner/Admin/Member Test):** admin blocked from acting on owner/self; admin remove→restore cycle on a plain member; owner promote→demote of an admin via `changeMemberRole`; owner's own row hides manage controls; owner's self-leave correctly rejected (sole-owner guard: *"You're the only owner — promote someone else to owner before leaving"*); member's genuine self-service leave succeeds. Every fixture (3 profiles, 3 `auth.users`, the club, its `club_members`/`club_invites` rows) deleted afterward — verified zero residue via count query.
 
@@ -29,7 +42,7 @@ Both fixes are blind two-row `UPDATE ... WHERE col = p_old_user_id` (safe: neith
 3. `getMyClubs` had an N+1 query (one `sessions` count query per club) — fixed: batched into one `sessions.club_id` query grouped in-memory into a `Map`, run in parallel with the `clubs` query. **Live-verified twice**, the second time specifically to close a gap flagged by the fix's own review agent (the first test only had 1 club, which can't distinguish correct per-club grouping from a buggy global-sum): created 2 clubs under one profile — Club Alpha (0 sessions) and Club Beta (2 sessions) — confirmed `/clubs` showed no badge on Alpha and "2 live" on Beta, proving the `Map` keys correctly by `club_id` and sums correctly per club. Both fixture profiles/clubs/sessions deleted afterward, zero residue.
 Both fixes also passed their own dedicated review agent pass: LGTM.
 
-**Next steps:** commit + push, pending user go-ahead. Nothing else known-broken on this branch.
+**Next steps:** decide whether to re-spawn the mandatory review agent (the original LGTM missed the anon/authenticated grant hole — now fixed, but the agent hasn't re-reviewed the corrected state); then ask the user for go-ahead to commit + push the accumulated follow-up work (both migration files, `database.ts`, `clubs.ts`, `lib/clubs.ts`, `APP_MANIFEST.md`, `MEMORY.md`). Nothing else known-broken on this branch. Separately, out-of-scope but flagged: `migrate_player_identity`'s anon/authenticated `proacl` exposure (see above) could use its own audit pass sometime.
 
 ---
 

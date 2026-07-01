@@ -43,7 +43,7 @@ function ClubListRow({ entry, onLeft }: { entry: MyClub; onLeft: (clubId: string
   function handleLeave() {
     setError(null);
     startTransition(async () => {
-      const result = await leaveClub(club.id);
+      const result = await leaveClub(club.id, club.slug);
       if (result.success) {
         onLeft(club.id);
       } else {

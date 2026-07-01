@@ -1089,6 +1089,21 @@ export type Database = {
         /** UUID of the new held draft, or NULL on any TOCTOU/reservation guard (graceful slot-skip). */
         Returns: string;
       };
+      // ── Atomic club member owner-guard (migration 20260702000000) ──
+      // Per-club advisory-lock guard against the TOCTOU race in leaveClub /
+      // removeMember / changeMemberRole. service_role-only; actor
+      // authorization stays in src/app/actions/clubs.ts.
+      club_member_deactivate: {
+        Args: { p_club_id: string; p_member_id: string };
+        Returns: { success: boolean; reason: "ok" | "not_found" | "only_owner" };
+      };
+      club_member_set_role: {
+        Args: { p_club_id: string; p_member_id: string; p_new_role: string };
+        Returns: {
+          success: boolean;
+          reason: "ok" | "no_change" | "not_found" | "only_owner" | "invalid_role";
+        };
+      };
     };
     Enums: {
       skill_level: SkillLevel;
