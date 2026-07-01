@@ -51,6 +51,9 @@ BATCH_SIZE  = 1000
 # player_renames, match_events, player_partnerships, player_rivalries).
 TABLES = [
     "profiles",
+    "clubs",                # multi-tenant: before sessions (sessions.club_id FK)
+    "club_members",         # FK: → clubs, profiles
+    "club_invites",         # FK: → clubs, profiles
     "sessions",
     "session_organizers",
     "courts",
