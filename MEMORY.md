@@ -5,6 +5,34 @@
 
 ---
 
+## 🆕 LEAVE-CLUB / MEMBER-MANAGEMENT + 2 MORE `migrate_player_identity` FK FIXES — branch `feat/multi-tenant` (2026-07-01)
+
+**Status: BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + fully live-verified end-to-end + all test fixtures cleaned up.** tsc clean · lint clean · build clean. Working tree not yet committed/pushed — awaiting explicit user go-ahead.
+
+**Feature (Tasks #37–39):** `leaveClub`/`removeMember`/`restoreMember`/`changeMemberRole` server actions (`src/app/actions/clubs.ts`) + admin panel role-dropdown/remove/restore UI (`src/components/clubs/club-admin-panel.tsx`) + self-service Leave control on `/clubs` (`src/components/clubs/club-list.tsx`). Full permission model + two known non-blocking follow-ups (TOCTOU race on `countActiveOwners`, `leaveClub`'s `revalidatePath` scope gap) written up in `APP_MANIFEST.md` §11.3.
+
+**Live-verified in prod (Task #42), fixture club `qa-member-test-club`, 3 real anonymous PIN accounts (QA Owner/Admin/Member Test):** admin blocked from acting on owner/self; admin remove→restore cycle on a plain member; owner promote→demote of an admin via `changeMemberRole`; owner's own row hides manage controls; owner's self-leave correctly rejected (sole-owner guard: *"You're the only owner — promote someone else to owner before leaving"*); member's genuine self-service leave succeeds. Every fixture (3 profiles, 3 `auth.users`, the club, its `club_members`/`club_invites` rows) deleted afterward — verified zero residue via count query.
+
+**Standing rule reconfirmed this session:** production DDL/schema changes to the live Supabase DB (`apply_migration`) require an **explicit in-session user go-ahead** each time, even under a broad "do everything autonomously" authorization — the platform's permission classifier blocks a subsequent action citing missing authorization otherwise.
+
+**Two more `migrate_player_identity` FK gaps found + fixed while live-testing (same bug class as Task #35's rivalries/partnerships fix above — a new multi-tenant FK to `profiles.id` never retrofitted into the repoint function, so its final `DELETE FROM profiles` hard-fails on reconnect):**
+1. `club_invites.created_by`/`consumed_by` — hit reconnecting as the admin who redeemed an invite. Fixed by `supabase/migrations/20260701000016_migrate_identity_club_invites.sql`, applied to prod, live-verified.
+2. `clubs.created_by`/`club_members.invited_by` — `clubs.created_by` hit reconnecting as the club's original creator (`clubs_created_by_fkey` violation); `club_members.invited_by` found via a full FK audit (query `information_schema.table_constraints`/`key_column_usage`/`constraint_column_usage` filtered to `ccu.table_name='profiles' AND ccu.column_name='id'`, enumerating all FK columns referencing `profiles(id)` — reusable technique if this bug class recurs). Fixed by `supabase/migrations/20260701000017_migrate_identity_clubs_invited_by.sql`, applied to prod, live-verified (reconnect succeeded; `clubs.created_by` confirmed repointed to the new profile id; no orphan duplicate profile).
+
+Both fixes are blind two-row `UPDATE ... WHERE col = p_old_user_id` (safe: neither column carries a uniqueness constraint — unlike `club_members.player_id`/rivalries/partnerships, which need merge-then-dedupe).
+
+**Migrations 016/017 got their own dedicated review agent pass (separate from the broader feature's review): LGTM.** Verified against actual DDL (not just TS types) that none of the 4 columns carry a uniqueness constraint; confirmed each `CREATE OR REPLACE FUNCTION` strictly preserves every prior block (015→016→017 is additive only, nothing dropped/reordered); confirmed both new blocks sit before the `DELETE FROM profiles` branch; cross-referenced every FK column referencing `profiles(id)` and confirmed all are now handled.
+
+**Stop hook flagged 3 more things after the feature build; triaged and fixed the 2 real ones:**
+1. `removeMember` "optimistic UI before confirming server success" — **false positive**, verified: `club-admin-panel.tsx`'s `handleRemove` only calls `onUpdate`/`setConfirming(false)` inside `if (result.success)`, strictly after the awaited server action resolves. No fix made.
+2. `acceptClubInvite`'s invite-consume `UPDATE` didn't check its error result — fixed: now captures `{ error: consumeErr }` and logs via `console.error` on failure. Purely additive (no behavior/return-value change) — membership is already granted earlier in the function, so this stays non-fatal by design.
+3. `getMyClubs` had an N+1 query (one `sessions` count query per club) — fixed: batched into one `sessions.club_id` query grouped in-memory into a `Map`, run in parallel with the `clubs` query. **Live-verified twice**, the second time specifically to close a gap flagged by the fix's own review agent (the first test only had 1 club, which can't distinguish correct per-club grouping from a buggy global-sum): created 2 clubs under one profile — Club Alpha (0 sessions) and Club Beta (2 sessions) — confirmed `/clubs` showed no badge on Alpha and "2 live" on Beta, proving the `Map` keys correctly by `club_id` and sums correctly per club. Both fixture profiles/clubs/sessions deleted afterward, zero residue.
+Both fixes also passed their own dedicated review agent pass: LGTM.
+
+**Next steps:** commit + push, pending user go-ahead. Nothing else known-broken on this branch.
+
+---
+
 ## 🆕 IDENTITY-MIGRATION CLUB SCOPING + OAUTH CLUB-SCOPED SIGN-IN — branch `feat/multi-tenant` (2026-07-01)
 
 **Status: APPLIED TO PROD (usxftpexoimletqmrggb) + browser-verified. Review gate: 3 independent agents, all LGTM.** tsc clean · lint clean · build clean · working tree not yet committed. Two follow-on gaps from the Phase-3-follow-up security audit below, tracked as Task #35 and Task #36.

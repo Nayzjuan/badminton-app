@@ -9,29 +9,52 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Copy, Check, Link2, Users } from "lucide-react";
-import { createClubInvite } from "@/app/actions/clubs";
+import { Loader2, Copy, Check, Link2, Users, UserMinus } from "lucide-react";
+import {
+  createClubInvite,
+  removeMember,
+  restoreMember,
+  changeMemberRole,
+} from "@/app/actions/clubs";
 import { createSession } from "@/app/actions/sessions";
 import { clubOrganizer } from "@/lib/club-paths";
 import type { ClubRole, ScoringFormat } from "@/types/database";
 
 type AdminMember = {
+  id: string;
   player_id: string;
   role: ClubRole;
   display_name: string;
   joined_at: string;
+  is_active: boolean;
 };
 
 const ROLE_LABEL: Record<ClubRole, string> = { owner: "Owner", admin: "Admin", member: "Member" };
+
+/** Client-side mirror of the server's permission hierarchy — a UI hint only, the actions re-check authoritatively. */
+function canManage(viewerRole: ClubRole, targetRole: ClubRole): boolean {
+  if (viewerRole === "owner") return true;
+  if (viewerRole === "admin") return targetRole === "member";
+  return false;
+}
 
 interface ClubAdminPanelProps {
   clubId: string;
   clubSlug: string;
   clubName: string;
   members: AdminMember[];
+  viewerRole: ClubRole;
+  viewerId: string;
 }
 
-export function ClubAdminPanel({ clubId, clubSlug, clubName, members }: ClubAdminPanelProps) {
+export function ClubAdminPanel({
+  clubId,
+  clubSlug,
+  clubName,
+  members,
+  viewerRole,
+  viewerId,
+}: ClubAdminPanelProps) {
   const router = useRouter();
 
   // ── New session ──
@@ -86,6 +109,14 @@ export function ClubAdminPanel({ clubId, clubSlug, clubName, members }: ClubAdmi
       // clipboard blocked — leave the link visible for manual copy
     }
   }
+
+  // ── Members ──
+  const [memberList, setMemberList] = useState<AdminMember[]>(members);
+  function updateMember(id: string, patch: Partial<AdminMember>) {
+    setMemberList((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  }
+  const activeMembers = memberList.filter((m) => m.is_active);
+  const removedMembers = memberList.filter((m) => !m.is_active);
 
   return (
     <div className="space-y-8">
@@ -196,21 +227,177 @@ export function ClubAdminPanel({ clubId, clubSlug, clubName, members }: ClubAdmi
       <section>
         <h2 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
           <Users className="h-3.5 w-3.5" />
-          Members ({members.length})
+          Members ({activeMembers.length})
         </h2>
         <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-border dark:border-border dark:bg-card">
-          {members.map((m) => (
-            <li key={m.player_id} className="flex items-center justify-between px-4 py-3">
-              <span className="truncate font-medium text-slate-800 dark:text-foreground">
-                {m.display_name}
-              </span>
-              <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:bg-muted dark:text-muted-foreground">
-                {ROLE_LABEL[m.role]}
-              </span>
-            </li>
+          {activeMembers.map((m) => (
+            <MemberRow
+              key={m.id}
+              member={m}
+              clubId={clubId}
+              clubSlug={clubSlug}
+              viewerRole={viewerRole}
+              viewerId={viewerId}
+              onUpdate={updateMember}
+            />
           ))}
         </ul>
       </section>
+
+      {/* Removed members — restore-only */}
+      {removedMembers.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400 dark:text-muted-foreground">
+            Removed ({removedMembers.length})
+          </h2>
+          <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/60 dark:divide-border dark:border-border dark:bg-muted/20">
+            {removedMembers.map((m) => (
+              <MemberRow
+                key={m.id}
+                member={m}
+                clubId={clubId}
+                clubSlug={clubSlug}
+                viewerRole={viewerRole}
+                viewerId={viewerId}
+                onUpdate={updateMember}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
+  );
+}
+
+interface MemberRowProps {
+  member: AdminMember;
+  clubId: string;
+  clubSlug: string;
+  viewerRole: ClubRole;
+  viewerId: string;
+  onUpdate: (id: string, patch: Partial<AdminMember>) => void;
+}
+
+function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }: MemberRowProps) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const isSelf = member.player_id === viewerId;
+  const manageable = !isSelf && canManage(viewerRole, member.role);
+
+  function handleRemove() {
+    setError(null);
+    startTransition(async () => {
+      const result = await removeMember(clubId, member.id, clubSlug);
+      if (result.success) {
+        onUpdate(member.id, { is_active: false });
+        setConfirming(false);
+      } else {
+        setError(result.message);
+      }
+    });
+  }
+
+  function handleRestore() {
+    setError(null);
+    startTransition(async () => {
+      const result = await restoreMember(clubId, member.id, clubSlug);
+      if (result.success) {
+        onUpdate(member.id, { is_active: true });
+      } else {
+        setError(result.message);
+      }
+    });
+  }
+
+  function handleRoleChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const newRole = e.target.value as ClubRole;
+    setError(null);
+    startTransition(async () => {
+      const result = await changeMemberRole(clubId, member.id, newRole, clubSlug);
+      if (result.success) {
+        onUpdate(member.id, { role: newRole });
+      } else {
+        setError(result.message);
+      }
+    });
+  }
+
+  return (
+    <li className="flex flex-col gap-1.5 px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-medium text-slate-800 dark:text-foreground">
+          {member.display_name}
+        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {viewerRole === "owner" && !isSelf && member.is_active ? (
+            <select
+              value={member.role}
+              disabled={pending}
+              onChange={handleRoleChange}
+              aria-label={`Change ${member.display_name}'s role`}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-500 outline-none focus:border-cc-accent disabled:opacity-50 dark:border-border dark:bg-background dark:text-muted-foreground"
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+              <option value="owner">Owner</option>
+            </select>
+          ) : (
+            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:bg-muted dark:text-muted-foreground">
+              {ROLE_LABEL[member.role]}
+            </span>
+          )}
+
+          {manageable && member.is_active && !confirming && (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              aria-label={`Remove ${member.display_name}`}
+              className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-muted-foreground dark:hover:bg-red-950/40 dark:hover:text-red-400"
+            >
+              <UserMinus className="h-3.5 w-3.5" />
+            </button>
+          )}
+
+          {manageable && member.is_active && confirming && (
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] font-medium text-slate-500 dark:text-muted-foreground">
+                Remove?
+              </span>
+              <button
+                type="button"
+                onClick={handleRemove}
+                disabled={pending}
+                className="rounded-full bg-red-600 px-2 py-1 text-[11px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Yes"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={pending}
+                className="rounded-full px-2 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:text-muted-foreground dark:hover:bg-muted"
+              >
+                No
+              </button>
+            </div>
+          )}
+
+          {manageable && !member.is_active && (
+            <button
+              type="button"
+              onClick={handleRestore}
+              disabled={pending}
+              className="inline-flex items-center gap-1 rounded-full border border-cc-accent/55 bg-cc-accent-dim px-2.5 py-1 text-[11px] font-bold text-cc-accent-text transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {pending && <Loader2 className="h-3 w-3 animate-spin" />}
+              Restore
+            </button>
+          )}
+        </div>
+      </div>
+      {error && <p className="text-[11px] text-red-600 dark:text-red-400">{error}</p>}
+    </li>
   );
 }

@@ -1990,3 +1990,63 @@ Two follow-on gaps from the 11.1 audit, closed the same day:
 All of the above was independently reviewed by three separate code-review agent passes (all clean/LGTM) and
 personally re-verified by direct file reads against the review reports before being marked done — no
 discrepancies found.
+
+### 11.3 Leave-club / member-management (2026-07-01)
+
+**Permission model.** `src/app/actions/clubs.ts` gains `leaveClub`, `removeMember`, `restoreMember`,
+`changeMemberRole` (`MemberActionResult = { success: boolean; message?: string }`):
+- `removeMember`/`restoreMember`: actor must be `owner` OR `admin`; both reject self-action ("Use the Leave
+  club option to remove yourself"); both gate via `canManageTarget(actorRole, targetRole)` — admins may only
+  manage plain members, never another admin or the owner. `removeMember` additionally blocks removing the
+  club's only owner (`countActiveOwners(clubId) <= 1`). `restoreMember` intentionally mirrors `removeMember`'s
+  permission shape (an admin-visible "Restore" control on a removed plain member is correct by design, not a
+  bug).
+- `changeMemberRole`: strictly `owner`-only; the same last-active-owner guard applies to demotions of the
+  sole owner.
+- `leaveClub`: self-service, any role; blocked with "You're the only owner — promote someone else to owner
+  before leaving" when the caller is the club's sole active owner.
+- Known follow-ups (not yet fixed): a TOCTOU race on `countActiveOwners` (two concurrent last-owner actions
+  could both pass the guard), and `leaveClub`'s `revalidatePath` scope not covering every surface that shows
+  membership.
+
+**UI.** `src/components/clubs/club-admin-panel.tsx` (admin/owner panel: role `<select>` + remove/restore
+per-row, hidden for the actor's own row and for rows the actor can't manage) and
+`src/components/clubs/club-list.tsx` (`/clubs` roster: inline Leave with a Yes/No confirm, not a modal).
+
+**Live-verified end-to-end in prod** (fixture club `qa-member-test-club`, three real anonymous PIN accounts —
+QA Owner/Admin/Member Test): admin blocked from acting on the owner and on itself; admin remove→restore cycle
+on a plain member; owner promote→demote of an admin via `changeMemberRole`; owner's own row shows no manage
+controls; owner's self-leave correctly rejected (sole-owner guard); member's genuine self-service leave
+succeeds. All fixtures (profiles, `auth.users`, `club_members`, `club_invites`, the test club) deleted after
+verification.
+
+**`migrate_player_identity` — two more FK gaps found and fixed via live-testing this feature.** Every time a
+new multi-tenant table gets a FK to `profiles.id`, it must be retrofitted into this function's non-fatal
+repoint blocks, or the function's final `DELETE FROM profiles WHERE id = p_old_user_id` hard-fails on
+reconnect for any player who touched that table. Found two more instances (beyond the pre-existing
+`matches`/`match_players`/rivalries/partnerships coverage):
+- `club_invites.created_by` / `club_invites.consumed_by` — surfaced when reconnecting as an admin who had
+  redeemed a club invite. Fixed by migration `20260701000016_migrate_identity_club_invites.sql`.
+- `clubs.created_by` / `club_members.invited_by` — surfaced when reconnecting as the club's original creator
+  (`clubs_created_by_fkey` violation). `club_members.invited_by` was found via a full audit (query
+  `information_schema.table_constraints`/`key_column_usage`/`constraint_column_usage` filtered to
+  `ccu.table_name = 'profiles' AND ccu.column_name = 'id'`, enumerating all 14 FK columns referencing
+  `profiles(id)`) rather than triggered live, but is the same bug class. Fixed by migration
+  `20260701000017_migrate_identity_clubs_invited_by.sql`.
+Both columns are blind two-row `UPDATE ... WHERE col = p_old_user_id` (safe: neither carries a uniqueness
+constraint, unlike `club_members.player_id`/rivalries/partnerships which need merge-then-dedupe). Both
+migrations applied to prod and live-verified (reconnect succeeds; old profile deleted; FK columns correctly
+repointed to the new profile id).
+
+**Two small hardening fixes found by an automated review pass on this feature:**
+- `acceptClubInvite` (`src/app/actions/clubs.ts`) now captures and logs the error result of the invite-consume
+  `UPDATE` instead of firing-and-forgetting it — purely additive observability, no behavior change (membership
+  is already granted earlier in the function, so a consume failure stays non-fatal by design).
+- `getMyClubs` (`src/lib/clubs.ts`) had an N+1 query — one `sessions` active-count query per club. Replaced with
+  a single batched `sessions.club_id` query grouped in-memory into a `Map<clubId, count>`, run in parallel with
+  the `clubs` query. Live-verified with 2 clubs under one profile (one with 0 sessions, one with 2) to prove the
+  `Map` groups by `club_id` correctly rather than summing globally — `/clubs` showed no badge on the 0-session
+  club and "2 live" on the other.
+A third flagged item — `removeMember`'s admin-panel local-state update being "optimistic" — was investigated and
+found to be a false positive: `club-admin-panel.tsx`'s `handleRemove` only updates local state inside
+`if (result.success)`, strictly after the server action resolves.

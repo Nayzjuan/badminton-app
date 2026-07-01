@@ -56,22 +56,23 @@ export async function getMyClubs(userId: string): Promise<MyClub[]> {
     memberships.map((m) => [m.club_id, m.role as ClubRole])
   );
 
-  const { data: clubs } = await db
-    .from("clubs")
-    .select("*")
-    .in("id", Array.from(roleByClub.keys()))
-    .eq("is_active", true);
+  const clubIds = Array.from(roleByClub.keys());
 
-  const result = await Promise.all(
-    (clubs ?? []).map(async (club) => {
-      const { count } = await db
-        .from("sessions")
-        .select("id", { count: "exact", head: true })
-        .eq("club_id", club.id)
-        .eq("is_active", true);
-      return { club, role: roleByClub.get(club.id) as ClubRole, activeSessions: count ?? 0 };
-    })
-  );
+  const [{ data: clubs }, { data: activeSessions }] = await Promise.all([
+    db.from("clubs").select("*").in("id", clubIds).eq("is_active", true),
+    db.from("sessions").select("club_id").in("club_id", clubIds).eq("is_active", true),
+  ]);
+
+  const sessionCountByClub = new Map<string, number>();
+  for (const { club_id } of activeSessions ?? []) {
+    sessionCountByClub.set(club_id, (sessionCountByClub.get(club_id) ?? 0) + 1);
+  }
+
+  const result = (clubs ?? []).map((club) => ({
+    club,
+    role: roleByClub.get(club.id) as ClubRole,
+    activeSessions: sessionCountByClub.get(club.id) ?? 0,
+  }));
 
   return result.sort((a, b) => a.club.name.localeCompare(b.club.name));
 }
@@ -126,21 +127,31 @@ export async function isClubAdmin(userId: string, clubId: string): Promise<boole
 }
 
 export type ClubMemberRow = {
+  id: string;
   player_id: string;
   role: ClubRole;
   display_name: string;
   joined_at: string;
+  is_active: boolean;
 };
 
-/** Active members of a club with their display names, sorted by role then name. */
-export async function getClubMembers(clubId: string): Promise<ClubMemberRow[]> {
+/**
+ * Members of a club with their display names, sorted active-first then by
+ * role then name. Pass `includeInactive` to also return soft-removed
+ * (is_active=false) rows — the admin roster needs these to offer "restore".
+ */
+export async function getClubMembers(
+  clubId: string,
+  opts?: { includeInactive?: boolean }
+): Promise<ClubMemberRow[]> {
   const db = createServiceClient();
 
-  const { data: members } = await db
+  let query = db
     .from("club_members")
-    .select("player_id, role, joined_at")
-    .eq("club_id", clubId)
-    .eq("is_active", true);
+    .select("id, player_id, role, joined_at, is_active")
+    .eq("club_id", clubId);
+  if (!opts?.includeInactive) query = query.eq("is_active", true);
+  const { data: members } = await query;
 
   if (!members || members.length === 0) return [];
 
@@ -156,14 +167,31 @@ export async function getClubMembers(clubId: string): Promise<ClubMemberRow[]> {
 
   return members
     .map((m) => ({
+      id: m.id,
       player_id: m.player_id,
       role: m.role as ClubRole,
       joined_at: m.joined_at,
+      is_active: m.is_active,
       display_name: nameById.get(m.player_id) ?? "Unknown player",
     }))
     .sort(
-      (a, b) => roleRank(a.role) - roleRank(b.role) || a.display_name.localeCompare(b.display_name)
+      (a, b) =>
+        Number(b.is_active) - Number(a.is_active) ||
+        roleRank(a.role) - roleRank(b.role) ||
+        a.display_name.localeCompare(b.display_name)
     );
+}
+
+/** Count of active owners in a club — used to guard against a zero-owner club. */
+export async function countActiveOwners(clubId: string): Promise<number> {
+  const db = createServiceClient();
+  const { count } = await db
+    .from("club_members")
+    .select("id", { count: "exact", head: true })
+    .eq("club_id", clubId)
+    .eq("role", "owner")
+    .eq("is_active", true);
+  return count ?? 0;
 }
 
 /** All sessions belonging to a club, newest first. */

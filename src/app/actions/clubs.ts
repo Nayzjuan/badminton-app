@@ -15,7 +15,7 @@
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/utils/supabase/service";
 import { getAuthenticatedUser } from "@/app/actions/_shared";
-import { isClubAdmin } from "@/lib/clubs";
+import { isClubAdmin, getClubRole, countActiveOwners } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
 import { slugifyClubName, isValidClubSlug } from "@/lib/club-slug";
 import type { ClubRole } from "@/types/database";
@@ -190,12 +190,239 @@ export async function acceptClubInvite(token: string): Promise<AcceptInviteResul
 
   // Consume the token (one-time). The `is(consumed_at, null)` guard makes a
   // double-redeem race a no-op rather than overwriting the first consumer.
-  await db
+  // Membership was already granted above, so a failure here doesn't block the
+  // join — but it's logged since a silently-unconsumed token could otherwise
+  // be redeemed indefinitely.
+  const { error: consumeErr } = await db
     .from("club_invites")
     .update({ consumed_by: user.id, consumed_at: new Date().toISOString() })
     .eq("id", invite.id)
     .is("consumed_at", null);
+  if (consumeErr) {
+    console.error(`acceptClubInvite: failed to consume invite ${invite.id}:`, consumeErr);
+  }
 
   revalidatePath("/clubs");
   return { success: true, message: "You've joined the club.", slug: club.slug };
+}
+
+// ── leaveClub ─────────────────────────────────────────────────
+
+export type LeaveClubResult = { success: boolean; message: string };
+
+/**
+ * Self-service: the authenticated player leaves a club they belong to.
+ * Soft-removes their own membership row (is_active=false), preserving
+ * historical stats. Blocked if they're the club's only active owner —
+ * ownership must be handed off first.
+ */
+export async function leaveClub(clubId: string): Promise<LeaveClubResult> {
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+  if (!isValidUUID(clubId)) return { success: false, message: "Invalid club." };
+
+  const db = createServiceClient();
+  const { data: membership } = await db
+    .from("club_members")
+    .select("id, role")
+    .eq("club_id", clubId)
+    .eq("player_id", user.id)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!membership) return { success: false, message: "You're not a member of this club." };
+
+  if (membership.role === "owner" && (await countActiveOwners(clubId)) <= 1) {
+    return {
+      success: false,
+      message: "You're the only owner — promote someone else to owner before leaving.",
+    };
+  }
+
+  const { error } = await db
+    .from("club_members")
+    .update({ is_active: false })
+    .eq("id", membership.id)
+    .eq("club_id", clubId);
+
+  if (error) return { success: false, message: "Failed to leave the club. Please try again." };
+
+  revalidatePath("/clubs");
+  return { success: true, message: "You've left the club." };
+}
+
+// ── Member management (owner/admin) ──────────────────────────
+//
+// Permission hierarchy: owners may manage admins, members, and other owners
+// (subject to the last-active-owner guard); admins may only manage plain
+// members. Nobody can act on their own row through these actions — self
+// exits go through `leaveClub`. Every mutation filters by BOTH the member's
+// row id AND clubId as defense-in-depth against acting on a row that
+// resolves to a different club.
+
+function canManageTarget(actorRole: ClubRole, targetRole: ClubRole): boolean {
+  if (actorRole === "owner") return true;
+  if (actorRole === "admin") return targetRole === "member";
+  return false;
+}
+
+export type MemberActionResult = { success: boolean; message: string };
+
+/**
+ * Owner/admin action: soft-removes another member (is_active=false).
+ * Admins may only remove plain members; owners may also remove admins and
+ * other owners, subject to the last-active-owner guard.
+ */
+export async function removeMember(
+  clubId: string,
+  memberId: string,
+  clubSlug: string
+): Promise<MemberActionResult> {
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+  if (!isValidUUID(clubId) || !isValidUUID(memberId)) {
+    return { success: false, message: "Invalid request." };
+  }
+
+  const actorRole = await getClubRole(user.id, clubId);
+  if (actorRole !== "owner" && actorRole !== "admin") {
+    return { success: false, message: "Only club owners and admins can remove members." };
+  }
+
+  const db = createServiceClient();
+  const { data: target } = await db
+    .from("club_members")
+    .select("id, player_id, role")
+    .eq("id", memberId)
+    .eq("club_id", clubId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!target) return { success: false, message: "That member is not active in this club." };
+  if (target.player_id === user.id) {
+    return { success: false, message: "Use the Leave club option to remove yourself." };
+  }
+  if (!canManageTarget(actorRole, target.role as ClubRole)) {
+    return { success: false, message: "Admins can only remove plain members." };
+  }
+  if (target.role === "owner" && (await countActiveOwners(clubId)) <= 1) {
+    return { success: false, message: "Can't remove the club's only owner." };
+  }
+
+  const { error } = await db
+    .from("club_members")
+    .update({ is_active: false })
+    .eq("id", memberId)
+    .eq("club_id", clubId);
+
+  if (error) return { success: false, message: "Failed to remove member. Please try again." };
+
+  revalidatePath(`/c/${clubSlug}/admin`);
+  return { success: true, message: "Member removed." };
+}
+
+/**
+ * Owner/admin action: restores a previously-removed member (is_active=true).
+ * Their prior role is preserved. Same permission hierarchy as `removeMember`.
+ */
+export async function restoreMember(
+  clubId: string,
+  memberId: string,
+  clubSlug: string
+): Promise<MemberActionResult> {
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+  if (!isValidUUID(clubId) || !isValidUUID(memberId)) {
+    return { success: false, message: "Invalid request." };
+  }
+
+  const actorRole = await getClubRole(user.id, clubId);
+  if (actorRole !== "owner" && actorRole !== "admin") {
+    return { success: false, message: "Only club owners and admins can restore members." };
+  }
+
+  const db = createServiceClient();
+  const { data: target } = await db
+    .from("club_members")
+    .select("id, player_id, role")
+    .eq("id", memberId)
+    .eq("club_id", clubId)
+    .eq("is_active", false)
+    .maybeSingle();
+
+  if (!target) return { success: false, message: "That member isn't removed." };
+  if (target.player_id === user.id) {
+    return { success: false, message: "You can't restore your own membership this way." };
+  }
+  if (!canManageTarget(actorRole, target.role as ClubRole)) {
+    return { success: false, message: "Admins can only restore plain members." };
+  }
+
+  const { error } = await db
+    .from("club_members")
+    .update({ is_active: true })
+    .eq("id", memberId)
+    .eq("club_id", clubId);
+
+  if (error) return { success: false, message: "Failed to restore member. Please try again." };
+
+  revalidatePath(`/c/${clubSlug}/admin`);
+  return { success: true, message: "Member restored." };
+}
+
+/**
+ * Owner-only action: changes another active member's role. Demoting the
+ * club's only owner is blocked by the same last-active-owner guard used by
+ * `leaveClub` and `removeMember`.
+ */
+export async function changeMemberRole(
+  clubId: string,
+  memberId: string,
+  newRole: ClubRole,
+  clubSlug: string
+): Promise<MemberActionResult> {
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+  if (!isValidUUID(clubId) || !isValidUUID(memberId)) {
+    return { success: false, message: "Invalid request." };
+  }
+  if (newRole !== "owner" && newRole !== "admin" && newRole !== "member") {
+    return { success: false, message: "Invalid role." };
+  }
+
+  const actorRole = await getClubRole(user.id, clubId);
+  if (actorRole !== "owner") {
+    return { success: false, message: "Only club owners can change roles." };
+  }
+
+  const db = createServiceClient();
+  const { data: target } = await db
+    .from("club_members")
+    .select("id, player_id, role")
+    .eq("id", memberId)
+    .eq("club_id", clubId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!target) return { success: false, message: "That member is not active in this club." };
+  if (target.player_id === user.id) {
+    return { success: false, message: "You can't change your own role." };
+  }
+  if (target.role === "owner" && newRole !== "owner" && (await countActiveOwners(clubId)) <= 1) {
+    return { success: false, message: "Can't demote the club's only owner." };
+  }
+  if (target.role === newRole) {
+    return { success: true, message: "No change." };
+  }
+
+  const { error } = await db
+    .from("club_members")
+    .update({ role: newRole })
+    .eq("id", memberId)
+    .eq("club_id", clubId);
+
+  if (error) return { success: false, message: "Failed to change role. Please try again." };
+
+  revalidatePath(`/c/${clubSlug}/admin`);
+  return { success: true, message: "Role updated." };
 }

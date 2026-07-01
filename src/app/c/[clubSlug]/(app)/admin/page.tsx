@@ -25,9 +25,16 @@ export default async function ClubAdminPage({ params }: { params: Promise<{ club
   const role = await getClubRole(user.id, club.id);
   if (role !== "owner" && role !== "admin") redirect(`/c/${club.slug}`);
 
-  const members = await getClubMembers(club.id);
+  const members = await getClubMembers(club.id, { includeInactive: true });
 
   return (
-    <ClubAdminPanel clubId={club.id} clubSlug={club.slug} clubName={club.name} members={members} />
+    <ClubAdminPanel
+      clubId={club.id}
+      clubSlug={club.slug}
+      clubName={club.name}
+      members={members}
+      viewerRole={role}
+      viewerId={user.id}
+    />
   );
 }
