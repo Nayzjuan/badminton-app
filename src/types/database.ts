@@ -723,6 +723,7 @@ export type Database = {
         Row: {
           player_id: string;
           session_id: string;
+          club_id: string;
           display_name: string;
           games_played: number;
           wins: number;
@@ -737,6 +738,7 @@ export type Database = {
       v_alltime_leaderboard_mat: {
         Row: {
           player_id: string;
+          club_id: string;
           display_name: string;
           games_played: number;
           wins: number;
@@ -763,11 +765,11 @@ export type Database = {
         Returns: number;
       };
       get_player_streaks: {
-        Args: { p_session_id?: string | null };
+        Args: { p_session_id?: string | null; p_club_id?: string | null };
         Returns: { player_id: string; win_streak: number }[];
       };
       get_alltime_snapshot_before: {
-        Args: { p_cutoff: string };
+        Args: { p_cutoff: string; p_club_id?: string | null };
         Returns: {
           player_id: string;
           display_name: string;
@@ -783,7 +785,7 @@ export type Database = {
       // Monthly leaderboard (migration 20260626000000). Live aggregation of one
       // Manila-month slice of completed matches. SECURITY INVOKER, public-read.
       get_monthly_leaderboard: {
-        Args: { p_year: number; p_month: number };
+        Args: { p_year: number; p_month: number; p_club_id?: string | null };
         Returns: {
           player_id: string;
           display_name: string;
@@ -799,7 +801,7 @@ export type Database = {
       // Months selectable in the monthly picker — distinct Manila-months with
       // completed matches, plus the current month (always present), newest first.
       get_leaderboard_months: {
-        Args: Record<string, never>;
+        Args: { p_club_id?: string | null };
         Returns: { year: number; month: number }[];
       };
       refresh_alltime_leaderboard: {

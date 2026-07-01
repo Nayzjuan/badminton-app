@@ -1884,6 +1884,21 @@ the gate. Public boards (`/tv/[id]`, `/leaderboard/[id]`, `/wrapped`, `/play/joi
 auto-enroll + queue; fresh scanners register via `signInAnonymously` (a `club_slug` hidden field enrolls
 them post-registration). `lookup_active_session` (SECURITY DEFINER, anon-safe) returns `club_slug`.
 
-**Deferred (not yet built):** club-scoped leaderboard data (Phase 3 — DB views/RPCs need `club_id`);
-no-session lobby redirects (`/play`,`/organizer` → `/clubs`, held back so the main-login flow + a fresh
-player aren't stranded on an empty `/clubs`); direct session push deep-links; E2E spec path updates.
+**Phase 3 — club-scoped leaderboard + Wrapped (DONE, DB live on prod).** The leaderboard now filters by
+club. DB layer (additive, backward-compatible): `v_session_leaderboard` + `v_alltime_leaderboard_mat`
+gained a `club_id` column (mat view chain, migration `20260701000001`), and the leaderboard RPCs
+(`get_alltime_snapshot_before`, `get_player_streaks`, `get_monthly_leaderboard`, `get_leaderboard_months`)
+gained an **additive `p_club_id uuid DEFAULT NULL`** (NULL = all-clubs = pre-existing behavior; monthly RPCs
+in `20260701000002`). App layer: `src/app/actions/leaderboard.ts` takes an optional `clubSlug` →
+`getClubBySlug(slug)?.id` → conditional `.eq("club_id", clubId)` on matview reads + `p_club_id: clubId` on
+RPCs; `getPlayerStats`'s all-time branch filters `club_id` **before** `.maybeSingle()` (the matview is now one
+row per player per club — an unfiltered `.maybeSingle()` would PGRST116). `useLeaderboard` reads the slug via
+`useClubSlug()` (null on root routes) and threads it through (with `clubSlug` in the fetch dep arrays so a club
+switch refetches). New member-gated route `c/[clubSlug]/(app)/leaderboard` + a Leaderboard nav link. The
+Wrapped/awards engine `compute_session_wrapped` (migration `20260701000003`, File C) club-scopes its two reads
+of `v_alltime_leaderboard_mat` (the `alltime_top3` CTE + the `amat` LEFT JOIN → `the_veteran`/`century_club`
+inputs) by resolving `v_club_id` from the session. Root/no-slug callers (public boards) pass no slug → all-clubs.
+
+**Deferred (assessed NOT necessary now, single club in practice):** no-session lobby redirects
+(`/play`,`/organizer` → `/clubs`, held back so the main-login flow + a fresh player aren't stranded on an empty
+`/clubs`); direct session push deep-links; E2E spec path updates.
