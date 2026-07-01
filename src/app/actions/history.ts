@@ -54,6 +54,13 @@ export async function getMatchHistory(
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Not authenticated." };
 
+  // Ownership gate — club-scoped RLS on matches/match_players (see
+  // 20260701000008_club_scoped_rls.sql) only restricts by club membership,
+  // not by specific player identity, so a fellow club member could otherwise
+  // pass someone else's id and read their history. This is the check that
+  // stops that.
+  if (playerId !== user.id) return { success: false, error: "Not authorized." };
+
   let query = supabase
     .from("v_match_history")
     .select("*")
@@ -91,6 +98,12 @@ export async function getAllSessionsHistory(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Not authenticated." };
+
+  // Ownership gate — see getMatchHistory above: club-scoped RLS on
+  // matches/match_players restricts by club membership, not by specific
+  // player identity, so without this check a fellow club member could pass
+  // another player's id and read their full cross-club history.
+  if (playerId !== user.id) return { success: false, error: "Not authorized." };
 
   const { data: matches, error: matchError } = await supabase
     .from("v_match_history")

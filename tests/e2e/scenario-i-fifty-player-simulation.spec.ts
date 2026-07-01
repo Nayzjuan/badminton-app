@@ -628,11 +628,13 @@ test.describe("Group 2 — PIN Reconnect", () => {
 
       // The reconnect flow is complex (signOut → signInAnonymously →
       // migrate_player_identity RPC → deleteUser → router.push), and in the
-      // deployed test env the post-reconnect navigation can land at /play
-      // or /play/{sessionId}.  Wait for the URL to leave the join page —
-      // any /play/* path that is not the join entry point signals success.
+      // deployed test env the post-reconnect navigation can land at /play,
+      // /play/{sessionId}, or (multi-tenant) the club-scoped
+      // /c/{slug}/play/{sessionId} the legacy route 308-redirects to.  Wait
+      // for the URL to leave the join page — any /play* path (flat or
+      // club-scoped) that is not the join entry point signals success.
       await page.waitForURL(
-        (url) => url.pathname.startsWith("/play") && !url.pathname.includes("join"),
+        (url) => /\/play(\/|$)/.test(url.pathname) && !url.pathname.includes("join"),
         { timeout: 20_000 }
       );
 

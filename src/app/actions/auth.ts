@@ -11,6 +11,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
 import { ensureClubMembership } from "@/lib/clubs";
@@ -80,7 +81,11 @@ export async function signInAnonymously(formData: FormData) {
     // RE-CREATES their missing profile here instead of a no-op update, which is
     // what breaks the profileless redirect loop. The partial UNIQUE index is the
     // authority for global name uniqueness, so a taken name surfaces as 23505.
-    const { error: upsertError } = await supabase
+    // Service client — ON CONFLICT DO UPDATE needs column-read privilege on
+    // the SET columns (including pin), which the browser/anon-key client no
+    // longer has (20260701000010_column_lockdown_fix_table_grants.sql).
+    // Sanctioned service-role-for-PINs use case (CLAUDE.md §Database Strictness).
+    const { error: upsertError } = await service
       .from("profiles")
       .upsert(
         { id: existingUser.id, display_name: displayName, skill_level: skillLevel, pin },
@@ -148,7 +153,8 @@ export async function signInAnonymously(formData: FormData) {
   // didn't propagate, fire an upsert as a safety net (with PIN).
   // Awaited so we can surface DB-level errors (e.g. 23505 unique violation).
   if (data.user) {
-    const { error: upsertError } = await supabase.from("profiles").upsert(
+    // Service client — same column-privilege reason as the upsert above.
+    const { error: upsertError } = await service.from("profiles").upsert(
       {
         id: data.user.id,
         display_name: displayName,
@@ -593,7 +599,11 @@ export async function getCurrentProfile() {
 
   if (!user) return null;
 
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select(PUBLIC_PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .single();
 
-  return profile;
+  return profile ? { ...profile, pin: null } : null;
 }

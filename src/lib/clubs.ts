@@ -77,6 +77,26 @@ export async function getMyClubs(userId: string): Promise<MyClub[]> {
 }
 
 /**
+ * Club IDs the player is an active member of. Cheaper than getMyClubs when
+ * only membership scoping is needed (no session counts / club rows).
+ * Used to scope legacy cross-club listings (e.g. /play, /organizer session
+ * pickers, all-time match history) to clubs the caller actually belongs to.
+ *
+ * Joins clubs!inner(is_active) so a deactivated club (same filter getMyClubs
+ * applies) never counts as one of "my" clubs here either.
+ */
+export async function getMyActiveClubIds(userId: string): Promise<string[]> {
+  const db = createServiceClient();
+  const { data } = await db
+    .from("club_members")
+    .select("club_id, clubs!inner(is_active)")
+    .eq("player_id", userId)
+    .eq("is_active", true)
+    .eq("clubs.is_active", true);
+  return (data ?? []).map((m) => m.club_id);
+}
+
+/**
  * The player's role in a club, or null if not an active member.
  * Cached per-request: the /c/[clubSlug] layout and page both resolve role.
  */

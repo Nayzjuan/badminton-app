@@ -7,11 +7,15 @@
 //   PS-2 De-dupes user ids before querying subscriptions
 //   PS-3 COURT_CALL sends with { urgency:high, TTL:600, topic:court-call }
 //   PS-4 ON_DECK_WARNING sends with { urgency:high, TTL:300, topic:on-deck }
-//   PS-5 Payload carries the type + title/body
+//   PS-5 Payload carries the type + title/body; no sessionId → /clubs fallback
 //   PS-6 Prunes 410/404 (expired) endpoints; counts the rest
+//   PS-7 sessionId resolves to a club → deep-links to /c/<slug>/play/<sessionId>
+//   PS-8 sessionId given but club resolution fails → falls back to /clubs
+//   PS-9 resolveSessionClubSlug rejects → swallowed, falls back to /clubs,
+//        pushToPlayers still resolves (never-throws contract preserved)
 //
-// Strategy: mock web-push, the service client, and server-only.
-// VAPID env vars are set so ensureVapid() passes.
+// Strategy: mock web-push, the service client, resolveSessionClubSlug, and
+// server-only. VAPID env vars are set so ensureVapid() passes.
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -66,6 +70,12 @@ vi.mock("@/utils/supabase/service", () => ({
   createServiceClient: () => makeClient(),
 }));
 
+// ── Mock club slug resolution ─────────────────────────────────
+const resolveSessionClubSlugMock = vi.fn<(sessionId: string) => Promise<string | null>>();
+vi.mock("@/lib/clubs", () => ({
+  resolveSessionClubSlug: (sessionId: string) => resolveSessionClubSlugMock(sessionId),
+}));
+
 import { pushToPlayers } from "@/lib/notifications/push-server";
 
 const SUB_A: Sub = { endpoint: "https://push/a", p256dh: "pa", auth_key: "aa" };
@@ -82,6 +92,8 @@ describe("pushToPlayers — server push core", () => {
     deletedEndpoints = null;
     sendNotificationMock.mockReset();
     sendNotificationMock.mockResolvedValue(undefined);
+    resolveSessionClubSlugMock.mockReset();
+    resolveSessionClubSlugMock.mockResolvedValue(null);
   });
 
   // ── PS-1 ────────────────────────────────────────────────────
@@ -129,7 +141,8 @@ describe("pushToPlayers — server push core", () => {
     expect(payload.type).toBe("COURT_CALL");
     expect(typeof payload.title).toBe("string");
     expect(typeof payload.body).toBe("string");
-    expect(payload.data.url).toBe("/clubs"); // club-consistent deep-link default (multi-tenant)
+    expect(payload.data.url).toBe("/clubs"); // no sessionId passed → fallback default
+    expect(resolveSessionClubSlugMock).not.toHaveBeenCalled();
   });
 
   // ── PS-6 ────────────────────────────────────────────────────
@@ -146,5 +159,37 @@ describe("pushToPlayers — server push core", () => {
     expect(res.sent).toBe(1); // SUB_A delivered
     expect(res.errors).toBe(0); // 410 is a prune, not an error
     expect(deletedEndpoints).toEqual([SUB_B.endpoint]);
+  });
+
+  // ── PS-7 ────────────────────────────────────────────────────
+  it("PS-7: sessionId resolves to a club → deep-links to /c/<slug>/play/<sessionId>", async () => {
+    subscriptions = [SUB_A];
+    resolveSessionClubSlugMock.mockResolvedValue("smashville");
+    await pushToPlayers(["u1"], "COURT_CALL", "sess-123");
+    expect(resolveSessionClubSlugMock).toHaveBeenCalledWith("sess-123");
+    const [, payloadStr] = sendNotificationMock.mock.calls[0];
+    const payload = JSON.parse(payloadStr as string);
+    expect(payload.data.url).toBe("/c/smashville/play/sess-123");
+  });
+
+  // ── PS-8 ────────────────────────────────────────────────────
+  it("PS-8: sessionId given but club resolution fails → falls back to /clubs", async () => {
+    subscriptions = [SUB_A];
+    resolveSessionClubSlugMock.mockResolvedValue(null);
+    await pushToPlayers(["u1"], "COURT_CALL", "sess-orphaned");
+    const [, payloadStr] = sendNotificationMock.mock.calls[0];
+    const payload = JSON.parse(payloadStr as string);
+    expect(payload.data.url).toBe("/clubs");
+  });
+
+  // ── PS-9 ────────────────────────────────────────────────────
+  it("PS-9: resolveSessionClubSlug rejects → swallowed, falls back to /clubs, never throws", async () => {
+    subscriptions = [SUB_A];
+    resolveSessionClubSlugMock.mockRejectedValue(new Error("service client misconfigured"));
+    const res = await pushToPlayers(["u1"], "COURT_CALL", "sess-broken");
+    expect(res).toEqual({ sent: 1, errors: 0 });
+    const [, payloadStr] = sendNotificationMock.mock.calls[0];
+    const payload = JSON.parse(payloadStr as string);
+    expect(payload.data.url).toBe("/clubs");
   });
 });

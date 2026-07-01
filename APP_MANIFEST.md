@@ -856,6 +856,8 @@ Default scope: the live **Session** when one is in context, else **Monthly** (cu
 
 Rank-change flash animation: `data-flash="true"` triggers `leaderboard-flash` keyframes (amber glow → transparent over 800ms).
 
+**Realtime staleness fallback (2026-07-01):** `useLeaderboard`'s `matches` realtime subscription (session/monthly scope) is paired with a `setInterval(refetch, 15_000)` polling fallback, mirroring `use-tv-board.ts`. Needed because anon/non-member viewers of the legacy `/leaderboard` pages have their realtime `postgres_changes` events silently filtered by club-scoped RLS (no error — the event just never arrives) — the poll ensures the board still catches up within 15s.
+
 ---
 
 ### 3.10 QR-Code Session Join
@@ -1864,10 +1866,15 @@ npx tsx scripts/extract.ts  # One-shot extraction
 carries a `club_id`. All pre-existing data was absorbed into a fixed **"Legacy" club** (`…0001`), and every
 existing player was backfilled as a Legacy member (`supabase/data-fixes/20260630_legacy_club_membership_backfill.sql`).
 
-**Isolation = application layer.** The club tables are **RLS deny-all** (enabled, no policies), so only the
-service role reads them. Tenant isolation is enforced in code: `src/lib/clubs.ts` (server-only read/guard
-layer — `getClubBySlug`, `getClubRole`, `requireClubMembership`, `ensureClubMembership`,
-`resolveSessionClubSlug`) + `src/app/actions/clubs.ts` (`createClub`, `createClubInvite`, `acceptClubInvite`).
+**Isolation = application layer + RLS on operational tables.** The club tables themselves (`clubs`/
+`club_members`/`club_invites`) are **RLS deny-all** (enabled, no policies), so only the service role reads
+them — tenant isolation for those is enforced in code: `src/lib/clubs.ts` (server-only read/guard layer —
+`getClubBySlug`, `getClubRole`, `requireClubMembership`, `ensureClubMembership`, `resolveSessionClubSlug`,
+`getMyActiveClubIds`) + `src/app/actions/clubs.ts` (`createClub`, `createClubInvite`, `acceptClubInvite`).
+The *operational* tables that reference a club indirectly (`matches`, `match_players`, `queue_entries`,
+`courts`, `session_organizers`, `match_games`) additionally carry real club-scoped RLS as of the 2026-07-01
+security audit (see below) — not deny-all, but a genuine `is_session_organizer(...) OR is_<x>_club_member(...)`
+check, so a cross-club data leak is closed at the DB layer even if an app-layer guard were ever missed.
 
 **Routing.** All club surfaces live under `/c/[clubSlug]/…` (path builders in `src/lib/club-paths.ts`;
 client components self-resolve the slug from the path via `useClubSlug`). Route groups under
@@ -1899,6 +1906,46 @@ Wrapped/awards engine `compute_session_wrapped` (migration `20260701000003`, Fil
 of `v_alltime_leaderboard_mat` (the `alltime_top3` CTE + the `amat` LEFT JOIN → `the_veteran`/`century_club`
 inputs) by resolving `v_club_id` from the session. Root/no-slug callers (public boards) pass no slug → all-clubs.
 
-**Deferred (assessed NOT necessary now, single club in practice):** no-session lobby redirects
-(`/play`,`/organizer` → `/clubs`, held back so the main-login flow + a fresh player aren't stranded on an empty
-`/clubs`); direct session push deep-links; E2E spec path updates.
+### 11.1 Security audit — club-scoped RLS + credential-leak closure (2026-07-01)
+
+Follow-up audit triggered by the goal of running 2+ real, data-segregated clubs (not just one club in
+practice). Found and closed 3 gaps beyond the Phase 3 leaderboard/Wrapped scoping above:
+
+- **Operational-table RLS.** `matches`, `match_players`, `queue_entries`, `courts`, `session_organizers`,
+  `match_games` had SELECT policies with no club dimension at all (`qual: true`, or for `matches` an
+  organizer/draft-firewall check only) — any authenticated (some: even anonymous) caller could read any
+  club's live queue/match/court/organizer data. `supabase/migrations/20260701000008_club_scoped_rls.sql`
+  adds 3 `SECURITY DEFINER` SQL helpers mirroring the existing `is_session_organizer` shape —
+  `is_club_member(p_club_id)` → `is_session_club_member(p_session_id)` → `is_match_club_member(p_match_id)`
+  — and ANDs club membership into every policy, preserving the organizer bypass and the `matches`
+  draft-mode PERMISSIVE+RESTRICTIVE firewall (duplicate qual, precedent: `20260506000000_draft_mode_bugfixes.sql`)
+  exactly. Verified live via RLS impersonation inside rolled-back transactions: a real club member sees
+  full expected data, a non-member sees zero rows across all 6 tables, the session organizer is unaffected.
+- **`profiles.pin` exposure via bulk `.select("*")`.** `profiles_select` stays `qual: true` by design
+  (leaderboard + Wrapped share page read profiles unauthenticated on purpose), so RLS can't close this —
+  it's closed at the column layer instead. `PUBLIC_PROFILE_COLUMNS` (`src/types/database.ts`) is an
+  explicit 10-column safe list (no `pin`), used by the 5 client hooks that bulk-fetch other players'
+  profiles (`use-enriched-matches.ts`, `use-match-history.ts`, `use-organizer-queue.ts`,
+  `use-player-match.ts`, `use-session-data.ts`); results are reconstructed as `{ ...p, pin: null }`. Own-row
+  reads and the service-role reconnect lookup are untouched.
+- **Realtime broadcast scoping.** `profiles.pin` and `sessions.organizer_passcode` were included in the
+  `supabase_realtime` publication's replicated column set, so every UPDATE broadcast the raw secret to all
+  subscribers regardless of relevance. `20260701000006_realtime_publication_exclude_secrets.sql` restricts
+  each table's publication column list to exclude the secret column.
+
+`getMyActiveClubIds(userId)` (`src/lib/clubs.ts`) was added as a cheaper alternative to `getMyClubs` for
+pure membership-scoping, and is now used to fix `/play` and `/organizer`'s session listings (previously
+unfiltered — a multi-club user saw every club's session names): both now filter to
+`getMyActiveClubIds()`, and `/organizer` disables session creation (pointing to `/clubs` instead) whenever
+membership is ambiguous (0 or 2+ clubs) rather than silently defaulting the new session to Legacy.
+
+**Push deep-links are club-scoped.** `pushToPlayers(userIds, type, sessionId?)` (`src/lib/notifications/push-server.ts`)
+resolves the session's club via `resolveSessionClubSlug` and deep-links to `/c/<slug>/play/<sessionId>` when
+resolvable, falling back to `/clubs` otherwise (never throws — a resolution failure is swallowed). All ~9
+call sites across `actions/matchmaking.ts`, `actions/match-drafts.ts`, `actions/match-lifecycle.ts`,
+`actions/live-match-swap.ts`, `actions/swap-player.ts`, and `actions/notifications.ts`'s
+`sendPlayerNotification` now thread `sessionId` through.
+
+**Deferred:** further E2E spec path updates for `/c/[clubSlug]/...` routes (the 50-player simulation spec's
+reconnect-navigation assertion was widened to accept both the flat `/play` path and the club-scoped
+`/c/[slug]/play/[sessionId]` redirect target, but the rest of the E2E suite still asserts flat paths only).

@@ -8,10 +8,12 @@
 
 import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import { enforceRenameGate } from "@/lib/rename-gate";
 import { getClubBySlug } from "@/lib/clubs";
 import { clubPlay, clubBase } from "@/lib/club-paths";
 import { PlayerDashboard } from "@/components/player/player-dashboard";
+import { PUBLIC_SESSION_COLUMNS } from "@/types/database";
 
 interface PageProps {
   params: Promise<{ clubSlug: string; sessionId: string }>;
@@ -28,7 +30,13 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
 
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  // Service client — PlayerDashboard displays the player's OWN pin (reconnect
+  // reminder), and the browser client's column privilege on profiles no
+  // longer includes it (20260701000010_column_lockdown_fix_table_grants.sql).
+  // Already scoped to this exact authenticated user.id, so this is the
+  // sanctioned service-role-for-PINs use case (CLAUDE.md §Database Strictness).
+  const db = createServiceClient();
+  const { data: profile } = await db.from("profiles").select("*").eq("id", user.id).single();
   if (!profile) redirect("/");
 
   // Duplicate-name gate (L1) — return to the club-scoped player path after rename.
@@ -37,13 +45,15 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
   const club = await getClubBySlug(clubSlug);
   if (!club) notFound();
 
-  const { data: session } = await supabase
+  // player-dashboard.tsx never displays organizer_passcode — explicit column list.
+  const { data: sessionRow } = await supabase
     .from("sessions")
-    .select("*")
+    .select(PUBLIC_SESSION_COLUMNS)
     .eq("id", sessionId)
     .single();
-  if (!session) notFound();
-  if (session.club_id !== club.id) notFound(); // session belongs to another club
+  if (!sessionRow) notFound();
+  if (sessionRow.club_id !== club.id) notFound(); // session belongs to another club
+  const session = { ...sessionRow, organizer_passcode: null };
 
   // Session ended → Wrapped (unless the intro was already dismissed → club lobby).
   if (!session.is_active) {

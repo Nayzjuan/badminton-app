@@ -7,6 +7,14 @@ Fetches all rows from all tables via Supabase REST API (service role key),
 generates INSERT-based SQL, and writes a timestamped file to this directory.
 No external dependencies — stdlib only.
 
+Restore-safety (see ARRAY_COLUMNS / GENERATED_COLUMNS below):
+  • Postgres ARRAY columns (text[], uuid[]) are emitted as array literals
+    ('{"a","b"}'::text[]), NOT as jsonb — the REST API returns them as JSON
+    lists, which would otherwise restore-fail with "is of type text[] but
+    expression is of type jsonb".
+  • GENERATED (STORED) columns are OMITTED from the column list + VALUES —
+    Postgres rejects inserting a non-DEFAULT value into a generated column.
+
 Credentials
 -----------
 Set SUPABASE_URL and SUPABASE_SERVICE_KEY in your environment (or .env),
@@ -70,6 +78,28 @@ TABLES = [
     "session_wrapped_stats",
 ]
 
+# ── Column-type overrides (schema-driven; reconcile when the schema changes) ──
+# ARRAY_COLUMNS: Postgres array columns must be dumped as array literals, not
+#   jsonb. Maps table -> {column: sql_array_type}. Every element is double-quoted
+#   (valid for text[] AND uuid[]); see pg_array_literal().
+ARRAY_COLUMNS = {
+    "matches":               {"pulled_player_ids": "uuid[]"},
+    "session_wrapped_stats": {"earned_awards": "text[]"},
+}
+# GENERATED_COLUMNS: STORED generated columns — must be OMITTED from INSERTs
+#   (Postgres derives them; inserting a value errors). Maps table -> {columns}.
+GENERATED_COLUMNS = {
+    "matches":               {"is_held", "final_classification"},
+    "session_wrapped_stats": {"point_diff"},
+}
+# Reconcile both maps against prod whenever the schema changes (last: 2026-07-01):
+#   SELECT c.relname, a.attname, t.typname, (t.typcategory='A') AS is_array,
+#          a.attgenerated
+#   FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
+#     JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_type t ON t.oid=a.atttypid
+#   WHERE n.nspname='public' AND c.relkind='r' AND a.attnum>0 AND NOT a.attisdropped
+#     AND (t.typcategory='A' OR a.attgenerated<>'') ORDER BY c.relname, a.attnum;
+
 HEADERS = {
     "apikey":        SERVICE_KEY,
     "Authorization": f"Bearer {SERVICE_KEY}",
@@ -91,6 +121,25 @@ def sql_value(v) -> str:
         raw = json.dumps(v, ensure_ascii=False, separators=(',', ':'))
         return f"'{raw.replace(chr(39), chr(39)+chr(39))}'::jsonb"
     return f"'{str(v).replace(chr(39), chr(39)+chr(39))}'"
+
+
+def pg_array_literal(items, sql_type: str) -> str:
+    """Render a Python list as a Postgres array literal — e.g. text[] ->
+    '{"ice_cold","point_machine"}'::text[]. Each element is double-quoted with
+    embedded " and \\ escaped, which is valid for text[] and uuid[] alike; a NULL
+    element becomes the unquoted token NULL. The whole literal is single-quoted
+    (with ' doubled) and cast to the column's array type."""
+    if items is None:
+        return "NULL"
+    parts = []
+    for el in items:
+        if el is None:
+            parts.append("NULL")
+        else:
+            s = str(el).replace("\\", "\\\\").replace('"', '\\"')
+            parts.append(f'"{s}"')
+    inner = "{" + ",".join(parts) + "}"
+    return f"'{inner.replace(chr(39), chr(39)+chr(39))}'::{sql_type}"
 
 
 def fetch_all_rows(table: str) -> list:
@@ -117,10 +166,21 @@ def fetch_all_rows(table: str) -> list:
 def build_sql(table: str, rows: list) -> list:
     if not rows:
         return [f"-- {table}: 0 rows"]
-    cols = list(rows[0].keys())
+    generated = GENERATED_COLUMNS.get(table, set())
+    arrays = ARRAY_COLUMNS.get(table, {})
+    # Skip generated columns entirely (can't be inserted).
+    cols = [c for c in rows[0].keys() if c not in generated]
     col_list = ", ".join(cols)
+
+    def render(col: str, val) -> str:
+        # Array columns -> Postgres array literal; everything else -> sql_value
+        # (which still emits genuine jsonb objects/arrays as ::jsonb).
+        if col in arrays:
+            return pg_array_literal(val, arrays[col])
+        return sql_value(val)
+
     return [
-        f"INSERT INTO public.{table} ({col_list}) VALUES ({', '.join(sql_value(r[c]) for c in cols)});"
+        f"INSERT INTO public.{table} ({col_list}) VALUES ({', '.join(render(c, r[c]) for c in cols)});"
         for r in rows
     ]
 

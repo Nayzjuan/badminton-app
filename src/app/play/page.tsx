@@ -11,6 +11,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { enforceRenameGate } from "@/lib/rename-gate";
+import { getMyActiveClubIds } from "@/lib/clubs";
+import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
@@ -27,24 +29,40 @@ export default async function PlayPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
-  // Get profile.
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  // Get profile. Explicit column list — this page (session picker) never
+  // displays the player's own PIN, and the browser client's column privilege
+  // on profiles no longer includes it (20260701000010_column_lockdown_fix_table_grants.sql).
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select(PUBLIC_PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .single();
 
-  if (!profile) redirect("/");
+  if (!profileRow) redirect("/");
+  const profile = { ...profileRow, pin: null };
 
   // Duplicate-name gate (L1): route flagged duplicates to /rename first.
   await enforceRenameGate(profile, "/play");
 
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
-  // Get active sessions.
-  const { data: sessions } = await supabase
-    .from("sessions")
-    .select("*")
-    .eq("is_active", true)
-    .order("created_at", { ascending: false });
+  // Get active sessions — scoped to clubs the player actually belongs to, so
+  // a multi-club deployment never lists another club's session names here.
+  const clubIds = await getMyActiveClubIds(user.id);
 
-  const activeSessions = sessions ?? [];
+  // SessionList doesn't display organizer_passcode — explicit column list.
+  const activeSessionRows =
+    clubIds.length === 0
+      ? []
+      : ((
+          await supabase
+            .from("sessions")
+            .select(PUBLIC_SESSION_COLUMNS)
+            .eq("is_active", true)
+            .in("club_id", clubIds)
+            .order("created_at", { ascending: false })
+        ).data ?? []);
+  const activeSessions = activeSessionRows.map((s) => ({ ...s, organizer_passcode: null }));
 
   return (
     <main className="flex min-h-screen flex-col px-4 py-6">

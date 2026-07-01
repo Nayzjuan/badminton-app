@@ -161,7 +161,7 @@ export async function swapPlayerInActiveMatch(
 
   // Court call: the incoming queue player was just dropped into a live match
   // (waiting → playing). Ping them to head to the court now.
-  after(() => pushToPlayers([inPlayerId], "COURT_CALL"));
+  after(() => pushToPlayers([inPlayerId], "COURT_CALL", sessionId));
 
   return {
     success: true,
@@ -338,8 +338,8 @@ export async function swapActiveFromOnDeck(
   // (on_deck → playing = court call), and the fill player took the vacated
   // on-deck slot (waiting → on_deck = get ready). The displaced outPlayer
   // returns to 'waiting' and is intentionally not pinged.
-  after(() => pushToPlayers([onDeckPlayerId], "COURT_CALL"));
-  after(() => pushToPlayers([fillPlayerId], "ON_DECK_WARNING"));
+  after(() => pushToPlayers([onDeckPlayerId], "COURT_CALL", sessionId));
+  after(() => pushToPlayers([fillPlayerId], "ON_DECK_WARNING", sessionId));
 
   return {
     success: true,

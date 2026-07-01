@@ -361,8 +361,14 @@ export function useLeaderboard({
       }, 500);
     };
     const unsubscribe = subscribeToMatches(supabase, activeSessionId!, refetch, "leaderboard");
+    // Polling fallback — 15 s interval ensures the board never goes stale even
+    // when anon/non-member viewers have RLS policies that filter realtime
+    // `matches` events before they reach the client (mirrors the same
+    // fallback in use-tv-board.ts).
+    const poll = setInterval(refetch, 15_000);
     return () => {
       if (debounce) clearTimeout(debounce);
+      clearInterval(poll);
       unsubscribe();
     };
   }, [scopeTab, activeSessionId, activeMonth]);

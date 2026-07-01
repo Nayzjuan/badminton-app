@@ -732,7 +732,7 @@ export async function createManualMatchAction(
   // On-deck ping: a manual on-deck match (p_is_published=true) moves all four
   // players waiting → on_deck. Notify them (OS-level push for backgrounded
   // phones), fired after the response flushes.
-  after(() => pushToPlayers(allPlayerIds, "ON_DECK_WARNING"));
+  after(() => pushToPlayers(allPlayerIds, "ON_DECK_WARNING", sessionId));
 
   return { success: true, message: "Match added to On Deck.", matchId };
 }

@@ -121,6 +121,28 @@ export type Profile = {
   updated_at: string;
 };
 
+/**
+ * profiles columns safe to bulk-select for players OTHER than the caller
+ * (queue/match participants, teammates, opponents, etc.) — excludes `pin`.
+ * profiles RLS SELECT is broadly permissive (leaderboard.ts and the Wrapped
+ * share page both read arbitrary profiles unauthenticated by design), so the
+ * column list — not the row policy — is what keeps another player's 4-digit
+ * reconnect PIN out of the browser response. Use with `pin: null` when
+ * constructing a `Profile` object so consumers keep a stable shape.
+ */
+export const PUBLIC_PROFILE_COLUMNS =
+  "id, display_name, skill_level, vip_tag, vip_theme, needs_rename, collided_name, flagged_at, created_at, updated_at" as const;
+
+/**
+ * Every `sessions` column except `organizer_passcode` — the browser/anon-key
+ * client's column privilege was locked down to this same set (see
+ * 20260701000010_column_lockdown_fix_table_grants.sql), so a bare
+ * `select("*")` now throws `permission denied for table sessions`. Use this
+ * whenever the caller doesn't need to display the passcode itself.
+ */
+export const PUBLIC_SESSION_COLUMNS =
+  "id, name, created_by, club_id, scoring, is_active, is_auto_matchmaking_on, court_time_limit_minutes, max_auto_drafts_override, auto_publish, created_at, ended_at" as const;
+
 /** player_renames audit table — append-only record of name changes. */
 export type PlayerRename = {
   id: string;
@@ -326,6 +348,8 @@ export type MatchHistory = {
   game_scores: GameScore[] | null;
   teammates: string[] | null;
   opponents: string[] | null;
+  /** Resolved via sessions.club_id (migration: 20260701000001_leaderboard_club_scoping). */
+  club_id: string;
 };
 
 /** v_recent_pairings view */
@@ -879,6 +903,9 @@ export type Database = {
           p_team_a: string[];
           p_team_b: string[];
           p_session_id: string;
+          /** Club-scopes both the all-time and session counters — required
+           *  since matches/match_players carry no club_id of their own. */
+          p_club_id: string;
         };
         Returns: {
           alltime_a: number;
