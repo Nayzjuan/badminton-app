@@ -14,7 +14,7 @@ import type { SkillLevel } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
-import { ensureClubMembership } from "@/lib/clubs";
+import { ensureClubMembership, getClubBySlug } from "@/lib/clubs";
 import { clubPlay, clubBase } from "@/lib/club-paths";
 
 // Shared friendly message for a globally-taken display name.
@@ -115,7 +115,7 @@ export async function signInAnonymously(formData: FormData) {
     .ilike("display_name", escapeLike(displayName))
     .eq("pin", pin)
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (existingProfile) {
     return {
@@ -209,7 +209,11 @@ export interface ReconnectResult {
   useGoogleSignIn?: boolean;
 }
 
-export async function reconnectPlayer(playerName: string, pin: string): Promise<ReconnectResult> {
+export async function reconnectPlayer(
+  playerName: string,
+  pin: string,
+  clubSlug?: string | null
+): Promise<ReconnectResult> {
   // Validate via Zod — same rules as registration
   const nameResult = displayNameSchema.safeParse(playerName ?? "");
   if (!nameResult.success) {
@@ -223,12 +227,35 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
   }
   const service = createServiceClient();
 
-  // Find the profile by name + PIN (case-insensitive name match).
-  const { data: profiles } = await service
-    .from("profiles")
-    .select("*")
-    .ilike("display_name", escapeLike(name))
-    .eq("pin", pinResult.data);
+  // Resolve the caller's club context (set when reconnecting via a
+  // club-scoped page, e.g. /c/[clubSlug]/join) so the lookup below can be
+  // scoped to that club instead of matching across every club in the system.
+  const club = clubSlug ? await getClubBySlug(clubSlug) : null;
+
+  // Find the profile by name + PIN (case-insensitive name match). Scoped to
+  // the caller's own club when known — display_name is unique only among
+  // non-flagged profiles (a flagged duplicate keeps its old name until it
+  // renames, see dup-name.ts), and PINs are a short numeric code with
+  // limited entropy, so an unscoped global lookup could match a different
+  // player in another club who coincidentally shares both. Mirrors the
+  // sessions!inner(...) nested-join filter pattern used elsewhere in this
+  // function (Phase 1/3 queue_entries lookups below).
+  //
+  // club_members has TWO foreign keys to profiles (player_id, invited_by),
+  // so the embed must be disambiguated with the FK constraint name — a bare
+  // `club_members!inner(...)` throws PGRST201 (ambiguous relationship).
+  const { data: profiles } = club
+    ? await service
+        .from("profiles")
+        .select("*, club_members!club_members_player_id_fkey!inner(club_id)")
+        .ilike("display_name", escapeLike(name))
+        .eq("pin", pinResult.data)
+        .eq("club_members.club_id", club.id)
+    : await service
+        .from("profiles")
+        .select("*")
+        .ilike("display_name", escapeLike(name))
+        .eq("pin", pinResult.data);
 
   if (!profiles || profiles.length === 0) {
     return { success: false, error: "No match found. Check your name and PIN." };

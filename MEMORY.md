@@ -5,6 +5,26 @@
 
 ---
 
+## 🆕 IDENTITY-MIGRATION CLUB SCOPING + OAUTH CLUB-SCOPED SIGN-IN — branch `feat/multi-tenant` (2026-07-01)
+
+**Status: APPLIED TO PROD (usxftpexoimletqmrggb) + browser-verified. Review gate: 3 independent agents, all LGTM.** tsc clean · lint clean · build clean · working tree not yet committed. Two follow-on gaps from the Phase-3-follow-up security audit below, tracked as Task #35 and Task #36.
+
+1. **Task #35 — `migrate_player_identity` didn't repoint `rivalries`/`partnerships`.** When `reconnectPlayer` merges a guest profile into a returning player's identity, the RPC repoints `matches`/`match_players`/etc. from the old id to the surviving id, but `rivalries` and `partnerships` rows were left pointing at the now-orphaned guest id — silently losing head-to-head/partner history across a reconnect merge. **Fix:** migration `migrate_identity_rivalries_partnerships` adds the same repoint logic for both tables. Confirmed live on prod via `list_migrations`.
+2. **Task #36 — OAuth sign-in wasn't club-scoped** (the anonymous sign-in flow already threaded `club_slug` through, Google sign-in didn't). **Fix:**
+   - `signInWithGoogle(next?, clubSlug?)` (`src/app/actions/oauth.ts`) appends `&club=${encodeURIComponent(clubSlug)}` to the PKCE `redirectTo` when a `clubSlug` is provided.
+   - `GoogleSignInButton` (`src/components/auth/google-sign-in-button.tsx`) takes a `clubSlug` prop and threads it through.
+   - `/auth/callback` reads the `club` param post-consent and calls `ensureClubMembership`, same as the anonymous flow.
+   - **Verified live via browser click-through** (button clicked from `/c/legacy/join`): the RSC-stream server-action response was `{"success":true,"url":"...redirect_to=...%2Fauth%2Fcallback%3Fnext%3D%252Fc%252Flegacy%26club%3Dlegacy..."}` — decoded `redirect_to` = `/auth/callback?next=/c/legacy&club=legacy`, proving the club survives the full PKCE round trip. (Full Google consent completion is untestable in this sandbox without real credentials — accepted environment limit, not a defect.)
+
+**3 newly-discovered files verified as part of Task #36's review** (all matched what the review agents reported, no discrepancies):
+- `src/app/actions/_shared.ts` — `isSessionOrganizer` (C6) now also treats an active (`is_active=true`) `club_members` row with `role IN ('owner','admin')` for the session's club as organizer, mirrored at the DB level by migration `club_admin_auto_organizer` (confirmed live on prod).
+- `src/app/actions/auth.ts` — `reconnectPlayer(playerName, pin, clubSlug?)` scopes its profile lookup via `club_members!club_members_player_id_fkey!inner(club_id)` (explicit constraint name required — `club_members` has two FKs to `profiles`) when a `clubSlug` is given, so reconnecting inside a club only matches that club's members.
+- `src/app/leaderboard/page.tsx` + `src/app/leaderboard/[sessionId]/page.tsx` — lobby picker scopes via `getMyActiveClubIds`; public share link intentionally keeps `createServiceClient()` for the sanctioned public-share bypass (same pattern as TV board/Wrapped). Backed by migration `scope_sessions_select` (confirmed live on prod).
+
+**Net result:** Task #35 and #36 both complete, all 3 associated migrations (`migrate_identity_rivalries_partnerships`, `club_admin_auto_organizer`, `scope_sessions_select`) confirmed live on prod. Still not committed/pushed — awaiting user go-ahead. `APP_MANIFEST.md` §11.2 has the full architectural writeup.
+
+---
+
 ## 🆕 MULTI-TENANT SECURITY AUDIT — Phase 3 follow-up — branch `feat/multi-tenant` (2026-07-01)
 
 **Status: APPLIED TO PROD (usxftpexoimletqmrggb) + verified via direct RLS simulation. Review gate: LGTM.** tsc clean · lint clean (0 new errors) · working tree not yet committed. Triggered by explicit user directive: "the purpose of this is to have 2+ clubs running with data properly managed and segregated... fix everything before moving to the next phase" — a full audit of every remaining cross-club leak beyond the leaderboard/Wrapped scoping already done in Phase 3 (see block below).

@@ -13,6 +13,7 @@
 import Link from "next/link";
 import { ChevronLeft, Trophy } from "lucide-react";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { getMyActiveClubIds } from "@/lib/clubs";
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 
 export default async function LobbyLeaderboardPage() {
@@ -23,11 +24,19 @@ export default async function LobbyLeaderboardPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Fetch all sessions ordered newest-first for the session picker.
-  const { data: sessions } = await supabase
-    .from("sessions")
-    .select("id, name, created_at, is_active")
-    .order("created_at", { ascending: false });
+  // Session picker is scoped to the caller's own clubs — sessions_select RLS
+  // now enforces this too, but we filter here first so a logged-out visitor
+  // (no club membership possible) gets an empty picker instead of relying on
+  // the club-scoped policy to deny every row.
+  const clubIds = user ? await getMyActiveClubIds(user.id) : [];
+  const { data: sessions } =
+    clubIds.length === 0
+      ? { data: [] }
+      : await supabase
+          .from("sessions")
+          .select("id, name, created_at, is_active")
+          .in("club_id", clubIds)
+          .order("created_at", { ascending: false });
 
   return (
     <main className="flex min-h-screen flex-col">

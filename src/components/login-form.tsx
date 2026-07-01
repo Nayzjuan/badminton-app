@@ -19,6 +19,7 @@ import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
 import { SKILL_LEVELS } from "@/types/database";
 import { Spinner } from "./reconnect-modal";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
+import { clubPlay, clubBase } from "@/lib/club-paths";
 
 interface LoginFormProps {
   /** If provided, the user will be redirected to /play/[sessionId] after login. */
@@ -190,7 +191,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
       return;
     }
     startReconnectTransition(async () => {
-      const result = await reconnectPlayer(reconnectName.trim(), reconnectPin);
+      const result = await reconnectPlayer(reconnectName.trim(), reconnectPin, clubSlug);
       if (!result.success) {
         setReconnectError(result.error ?? "Reconnect failed. Check your name and PIN.");
         if (result.useGoogleSignIn) setGoogleHint(true);
@@ -239,7 +240,16 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
       {/* ── Google sign-in — top of form, optional fast path ── */}
       {/* Outlined (not filled) — signals convenient shortcut, not mandatory primary action */}
       <GoogleSignInButton
-        next={sessionId ? `/play/${sessionId}` : "/play"}
+        next={
+          clubSlug
+            ? sessionId
+              ? clubPlay(clubSlug, sessionId)
+              : clubBase(clubSlug)
+            : sessionId
+              ? `/play/${sessionId}`
+              : "/play"
+        }
+        clubSlug={clubSlug}
         dividerPosition="below"
       />
 
