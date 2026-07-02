@@ -15,9 +15,10 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, RealtimeChannel } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
+import { whenRealtimeAuthReady } from "@/utils/supabase/client";
 import { getSessionForOrganizer } from "@/app/actions/sessions";
 import type {
   AutoMatchmakingToggledPayload,
@@ -114,26 +115,37 @@ export function useOrganizerSession(
     // this channel. The sessions table RLS SELECT policy only grants access
     // to the session creator, so co-organizers would never receive this
     // UPDATE event. Auto-toggle state is synced via the Broadcast channel.
-    const sessionChannel = supabase
-      .channel(`session-settings:${sessionId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "sessions",
-          filter: `id=eq.${sessionId}`,
-        },
-        (payload) => {
-          // Apply all session field changes EXCEPT is_auto_matchmaking_on and
-          // auto_publish. Those are synced via Broadcast so co-organizers (who
-          // are blocked by the sessions RLS SELECT policy) also receive them.
-          const next = payload.new as Partial<Session>;
-          const { is_auto_matchmaking_on: _a, auto_publish: _p, ...rest } = next;
-          setSession((prev) => ({ ...prev, ...rest }));
-        }
-      )
-      .subscribe();
+    // Defer the join until the Realtime JWT is set (see whenRealtimeAuthReady
+    // in src/utils/supabase/client.ts): postgres_changes RLS binds to the
+    // socket's role at join time, and the club-scoped sessions SELECT policy
+    // rejects `anon`, so joining before the organizer's JWT propagates would
+    // silently deliver zero events. The 15s poll below is the fallback.
+    let sessionChannel: RealtimeChannel | null = null;
+    let sessionChannelCancelled = false;
+
+    void whenRealtimeAuthReady().then(() => {
+      if (sessionChannelCancelled) return;
+      sessionChannel = supabase
+        .channel(`session-settings:${sessionId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "sessions",
+            filter: `id=eq.${sessionId}`,
+          },
+          (payload) => {
+            // Apply all session field changes EXCEPT is_auto_matchmaking_on and
+            // auto_publish. Those are synced via Broadcast so co-organizers (who
+            // are blocked by the sessions RLS SELECT policy) also receive them.
+            const next = payload.new as Partial<Session>;
+            const { is_auto_matchmaking_on: _a, auto_publish: _p, ...rest } = next;
+            setSession((prev) => ({ ...prev, ...rest }));
+          }
+        )
+        .subscribe();
+    });
 
     // Auto-matchmaking toggle sync via Broadcast (bypasses RLS).
     const unsubBroadcast = subscribeToOrganizerBroadcast(supabase, sessionId, {
@@ -168,7 +180,8 @@ export function useOrganizerSession(
     });
 
     return () => {
-      supabase.removeChannel(sessionChannel);
+      sessionChannelCancelled = true;
+      if (sessionChannel) supabase.removeChannel(sessionChannel);
       unsubBroadcast();
     };
   }, [supabase, sessionId]);
