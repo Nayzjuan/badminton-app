@@ -118,6 +118,25 @@ export type Profile = {
   updated_at: string;
 };
 
+/**
+ * profiles columns safe to bulk-select for players OTHER than the caller —
+ * excludes `pin`. The authenticated role's column privilege on profiles no
+ * longer includes `pin` (column lockdown), so a bare select("*") throws
+ * `permission denied for table profiles` (42501). Use with `pin: null` when
+ * constructing a `Profile` object so consumers keep a stable shape.
+ */
+export const PUBLIC_PROFILE_COLUMNS =
+  "id, display_name, skill_level, vip_tag, vip_theme, needs_rename, collided_name, flagged_at, created_at, updated_at" as const;
+
+/**
+ * Every `sessions` column except `organizer_passcode` — the authenticated
+ * role's column privilege no longer includes it, so a bare select("*") throws
+ * `permission denied for table sessions` (42501). Use with
+ * `organizer_passcode: null` when constructing a `Session` object.
+ */
+export const PUBLIC_SESSION_COLUMNS =
+  "id, name, created_by, scoring, is_active, is_auto_matchmaking_on, court_time_limit_minutes, max_auto_drafts_override, auto_publish, created_at, ended_at" as const;
+
 /** player_renames audit table — append-only record of name changes. */
 export type PlayerRename = {
   id: string;

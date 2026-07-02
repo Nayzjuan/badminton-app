@@ -11,6 +11,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { redirect } from "next/navigation";
 import type { SkillLevel } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
 
@@ -579,7 +580,11 @@ export async function getCurrentProfile() {
 
   if (!user) return null;
 
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select(PUBLIC_PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .single();
 
-  return profile;
+  return profile ? { ...profile, pin: null } : null;
 }

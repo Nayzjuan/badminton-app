@@ -27,6 +27,7 @@ import {
   subscribeToProfiles,
 } from "@/lib/realtime";
 import type { Court, Profile, QueueEntry } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     const playerIds = entries.map((e) => e.player_id);
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("*")
+      .select(PUBLIC_PROFILE_COLUMNS)
       .in("id", playerIds);
 
     if (mySeq !== fetchWaitlistSeq.current) return;
@@ -135,7 +136,7 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       return; // preserve stale waitlist
     }
 
-    const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+    const profileMap = new Map((profiles ?? []).map((p) => [p.id, { ...p, pin: null }]));
 
     const enriched: QueueEntryWithProfile[] = entries
       .map((entry) => ({

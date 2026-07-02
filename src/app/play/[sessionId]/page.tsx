@@ -9,6 +9,8 @@ import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { enforceRenameGate } from "@/lib/rename-gate";
 import { PlayerDashboard } from "@/components/player/player-dashboard";
+import { createServiceClient } from "@/utils/supabase/service";
+import { PUBLIC_SESSION_COLUMNS } from "@/types/database";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -28,8 +30,11 @@ export default async function PlayerDashboardPage({ params }: PageProps) {
   // dashboard can conditionally show upgrade prompts.
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
-  // Get profile.
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  // Get profile via the service client: PlayerDashboard shows the player their
+  // own reconnect PIN, and the authenticated role can no longer read
+  // profiles.pin (column lockdown). Scoped to the caller's own id.
+  const service = createServiceClient();
+  const { data: profile } = await service.from("profiles").select("*").eq("id", user.id).single();
 
   if (!profile) redirect("/");
 
@@ -37,13 +42,15 @@ export default async function PlayerDashboardPage({ params }: PageProps) {
   await enforceRenameGate(profile, `/play/${sessionId}`);
 
   // Get session — do NOT filter by is_active so closed sessions don't 404.
-  const { data: session } = await supabase
+  // PlayerDashboard never displays organizer_passcode → explicit column list.
+  const { data: sessionRow } = await supabase
     .from("sessions")
-    .select("*")
+    .select(PUBLIC_SESSION_COLUMNS)
     .eq("id", sessionId)
     .single();
 
-  if (!session) notFound();
+  if (!sessionRow) notFound();
+  const session = { ...sessionRow, organizer_passcode: null };
 
   // Session has ended — send the player to their Wrapped page,
   // but only if they haven't already dismissed the intro.

@@ -13,6 +13,7 @@ import {
   removePlayerFromQueue as removePlayerFromQueueAction,
 } from "@/app/actions/queue";
 import type { Profile, QueueFullWithWaitTime } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
 /**
  * Factory for thin server-action wrappers that:
@@ -105,11 +106,14 @@ export function useOrganizerQueue(
   const fetchQueueProfiles = useCallback(async () => {
     const playerIds = queue.map((q) => q.player_id);
     if (playerIds.length === 0) return;
-    const { data } = await supabase.from("profiles").select("*").in("id", playerIds);
+    const { data } = await supabase
+      .from("profiles")
+      .select(PUBLIC_PROFILE_COLUMNS)
+      .in("id", playerIds);
     if (data) {
       setProfiles((prev) => {
         const next = new Map(prev);
-        data.forEach((p) => next.set(p.id, p));
+        data.forEach((p) => next.set(p.id, { ...p, pin: null }));
         return next;
       });
     }

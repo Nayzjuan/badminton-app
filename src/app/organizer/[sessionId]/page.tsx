@@ -17,6 +17,7 @@
 import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { OrganizerDashboard } from "@/components/organizer/organizer-dashboard";
+import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -32,31 +33,42 @@ export default async function OrganizerDashboardPage({ params }: PageProps) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
-  // Get profile.
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  // Get profile. Neither this page nor the dashboard displays the caller's own
+  // PIN, and the authenticated role can no longer select it (column lockdown).
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select(PUBLIC_PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .single();
 
-  if (!profile) redirect("/");
+  if (!profileRow) redirect("/");
+  const profile = { ...profileRow, pin: null };
 
   // Fetch the session (active OR closed — closed sessions are viewable for history).
-  const { data: session } = await supabase
+  // OrganizerDashboard doesn't display organizer_passcode → explicit column list.
+  const { data: sessionRow } = await supabase
     .from("sessions")
-    .select("*")
+    .select(PUBLIC_SESSION_COLUMNS)
     .eq("id", sessionId)
     .single();
 
-  if (!session) notFound();
+  if (!sessionRow) notFound();
+  const session = { ...sessionRow, organizer_passcode: null };
 
   // ── Other active sessions for the session switcher ─────────
   // Fetch ALL other active sessions — not filtered by ownership.
   // See the comment at the top of this file for why.
   const { data: otherSessionsData } = await supabase
     .from("sessions")
-    .select("*")
+    .select(PUBLIC_SESSION_COLUMNS)
     .eq("is_active", true)
     .neq("id", sessionId)
     .order("created_at", { ascending: false });
 
-  const otherSessions = otherSessionsData ?? [];
+  const otherSessions = (otherSessionsData ?? []).map((s) => ({
+    ...s,
+    organizer_passcode: null,
+  }));
 
   return <OrganizerDashboard profile={profile} session={session} otherSessions={otherSessions} />;
 }

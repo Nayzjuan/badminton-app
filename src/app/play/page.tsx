@@ -12,6 +12,7 @@ import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { enforceRenameGate } from "@/lib/rename-gate";
 import { SessionList } from "@/components/session-list";
+import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
 import { VipTag } from "@/components/ui/vip-tag";
@@ -27,24 +28,30 @@ export default async function PlayPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
-  // Get profile.
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  // Get profile. Explicit column list — this picker never displays the caller's
+  // own PIN, and the authenticated role can no longer select profiles.pin.
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select(PUBLIC_PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .single();
 
-  if (!profile) redirect("/");
+  if (!profileRow) redirect("/");
+  const profile = { ...profileRow, pin: null };
 
   // Duplicate-name gate (L1): route flagged duplicates to /rename first.
   await enforceRenameGate(profile, "/play");
 
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
-  // Get active sessions.
+  // Get active sessions. SessionList never displays organizer_passcode.
   const { data: sessions } = await supabase
     .from("sessions")
-    .select("*")
+    .select(PUBLIC_SESSION_COLUMNS)
     .eq("is_active", true)
     .order("created_at", { ascending: false });
 
-  const activeSessions = sessions ?? [];
+  const activeSessions = (sessions ?? []).map((s) => ({ ...s, organizer_passcode: null }));
 
   return (
     <main className="flex min-h-screen flex-col px-4 py-6">

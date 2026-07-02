@@ -19,7 +19,9 @@
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { OrganizerEntry } from "@/components/organizer/organizer-entry";
+import { createServiceClient } from "@/utils/supabase/service";
 import type { Session } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
 
 export type SessionWithStats = Session & {
   playerCount: number;
@@ -35,17 +37,35 @@ export default async function OrganizerPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+  const { data: profileRow } = await supabase
+    .from("profiles")
+    .select(PUBLIC_PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .single();
 
-  if (!profile) redirect("/");
+  if (!profileRow) redirect("/");
+  const profile = { ...profileRow, pin: null };
 
   // ── 1. Fetch ALL sessions (active + closed) ───────────────
+  // Column list excludes organizer_passcode (locked from the authed client).
   const { data: allSessionsData } = await supabase
     .from("sessions")
-    .select("*")
+    .select(PUBLIC_SESSION_COLUMNS)
     .order("created_at", { ascending: false });
 
-  const allSessions = allSessionsData ?? [];
+  // Re-attach organizer_passcode ONLY for sessions this user created, via the
+  // service client — never exposes another organizer's passcode.
+  const svc = createServiceClient();
+  const { data: ownPasscodes } = await svc
+    .from("sessions")
+    .select("id, organizer_passcode")
+    .eq("created_by", user.id);
+  const passcodeById = new Map((ownPasscodes ?? []).map((s) => [s.id, s.organizer_passcode]));
+
+  const allSessions = (allSessionsData ?? []).map((s) => ({
+    ...s,
+    organizer_passcode: passcodeById.get(s.id) ?? null,
+  }));
   const activeSessions = allSessions.filter((s) => s.is_active);
   const pastSessions = allSessions.filter((s) => !s.is_active);
 

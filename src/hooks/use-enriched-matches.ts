@@ -21,6 +21,7 @@ import type { MutableRefObject } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Court, Match, MatchPlayer, Profile } from "@/types/database";
 import type { Database } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { createUnknownProfile } from "@/lib/utils";
 
 /**
@@ -125,7 +126,7 @@ export function useEnrichedMatches(
     if (playerIds.length > 0) {
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
-        .select("*")
+        .select(PUBLIC_PROFILE_COLUMNS)
         .in("id", playerIds);
 
       if (mySeq !== seqRef.current) return;
@@ -135,7 +136,7 @@ export function useEnrichedMatches(
         return; // preserve stale state
       }
 
-      profileMap = new Map((profileData ?? []).map((p) => [p.id, p]));
+      profileMap = new Map((profileData ?? []).map((p) => [p.id, { ...p, pin: null }]));
     }
 
     // Notify caller so they can merge into their own profiles state
