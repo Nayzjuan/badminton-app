@@ -178,7 +178,10 @@ test("J-A: drafted player sees Match Forming card and pulsing QueueStatus indica
     // ── Primary messaging card ───────────────────────────────
     // Use exact: true to disambiguate from the QueueStatus "Match forming"
     // span (same text, different casing). Two elements match case-insensitive.
-    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({ timeout: 8000 });
+    // 15s tolerates a cold Vercel serverless load on the run's first navigation.
+    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
 
     await expect(page.getByText("Hang tight", { exact: false })).toBeVisible();
 
@@ -220,9 +223,10 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
     await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
     // Confirm drafted state is showing first (exact: true avoids strict-mode
-    // violation with the QueueStatus "Match forming" span)
+    // violation with the QueueStatus "Match forming" span). 15s tolerates a
+    // cold Vercel serverless page load on the first navigation of the run.
     await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
-      timeout: 8000,
+      timeout: 15_000,
     });
 
     // Simulate organizer publishing: flip matches.is_published AND
@@ -256,9 +260,15 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       timeout: 20_000,
     });
 
-    // MatchAlert renders with role="alert" AND a specific heading — assert both
-    // so the test fails if the overlay mounts empty rather than passing silently.
-    await expect(page.getByRole("alert")).toBeVisible({ timeout: 20_000 });
+    // MatchAlert renders the on-deck overlay with role="alert" AND a specific
+    // heading — assert both so the test fails if the overlay mounts empty
+    // rather than passing silently. Scope to the overlay's accessible name
+    // (aria-label "You're on deck …") because useMatchAlerts also fires a
+    // sonner toast that carries role="alert", so a bare getByRole("alert")
+    // matches two elements (strict-mode violation).
+    await expect(page.getByRole("alert", { name: /on deck/i })).toBeVisible({
+      timeout: 20_000,
+    });
     // "Heads Up" is the heading for a pending (on-deck) match in MatchAlert
     await expect(page.getByRole("heading", { name: /heads up/i })).toBeVisible({
       timeout: 5_000,
@@ -283,9 +293,10 @@ test("J-C: cancelling a draft returns player to normal waiting state with positi
 
     await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
-    // Confirm drafted state (exact: true avoids strict-mode violation)
+    // Confirm drafted state (exact: true avoids strict-mode violation).
+    // 15s tolerates a cold Vercel serverless page load.
     await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
-      timeout: 8000,
+      timeout: 15_000,
     });
 
     // Simulate cancel: restore player to waiting
