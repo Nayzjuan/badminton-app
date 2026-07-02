@@ -139,9 +139,7 @@ export async function getSessionLeaderboard(
     // Fetch session stats and streaks in parallel
     const [statsResult, streaksResult] = await Promise.all([
       supabase
-        .from("v_session_leaderboard")
-        .select("*")
-        .eq("session_id", sessionId)
+        .rpc("get_session_leaderboard_public", { p_session_id: sessionId })
         .gte("games_played", MIN_SESSION_GP),
       supabase.rpc("get_player_streaks", { p_session_id: sessionId }),
     ]);
@@ -487,9 +485,7 @@ export async function getPlayerStats(
     if (sessionId) {
       // ── Session scope ────────────────────────────────────────
       const { data, error } = await supabase
-        .from("v_session_leaderboard")
-        .select("*")
-        .eq("session_id", sessionId)
+        .rpc("get_session_leaderboard_public", { p_session_id: sessionId })
         .eq("player_id", playerId)
         .maybeSingle();
 

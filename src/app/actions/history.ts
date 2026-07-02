@@ -11,6 +11,7 @@
 // ============================================================
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import type { MatchHistory } from "@/types/database";
 
 // ── Session metadata subset used in AllSessionsHistory ────────
@@ -20,6 +21,10 @@ export type SessionMeta = {
   name: string | null;
   created_at: string;
   ended_at: string | null;
+  club_id: string | null;
+  /** Null when the club row can't be resolved (defensive — clubs has no RLS
+   *  policies, so this is always looked up via the service-role client). */
+  club_name: string | null;
 };
 
 export type MatchHistoryResult = {
@@ -61,7 +66,12 @@ export async function getMatchHistory(
   // stops that.
   if (playerId !== user.id) return { success: false, error: "Not authorized." };
 
-  let query = supabase
+  // v_match_history has no direct anon/authenticated grant (hardened in
+  // 20260702000003_harden_security_definer_views.sql to close a cross-club
+  // unfiltered-dump vector) — service role is required here. Safe because
+  // the ownership gate above already restricts results to the caller's own id.
+  const db = createServiceClient();
+  let query = db
     .from("v_match_history")
     .select("*")
     .eq("player_id", playerId)
@@ -105,7 +115,12 @@ export async function getAllSessionsHistory(
   // another player's id and read their full cross-club history.
   if (playerId !== user.id) return { success: false, error: "Not authorized." };
 
-  const { data: matches, error: matchError } = await supabase
+  // v_match_history has no direct anon/authenticated grant (hardened in
+  // 20260702000003_harden_security_definer_views.sql to close a cross-club
+  // unfiltered-dump vector) — service role is required here. Safe because
+  // the ownership gate above already restricts results to the caller's own id.
+  const db = createServiceClient();
+  const { data: matches, error: matchError } = await db
     .from("v_match_history")
     .select("*")
     .eq("player_id", playerId)
@@ -126,12 +141,32 @@ export async function getAllSessionsHistory(
 
   const { data: sessions } = await supabase
     .from("sessions")
-    .select("id, name, created_at, ended_at")
+    .select("id, name, created_at, ended_at, club_id")
     .in("id", sessionIds);
+
+  // Club names — sessions RLS lets a member read their own club's sessions,
+  // but `clubs` itself has no RLS policies (deny-all to anon/authenticated;
+  // see src/lib/clubs.ts), so this lookup goes through the service role.
+  // Session ownership was already established above via the sessions query.
+  const clubIds = Array.from(new Set((sessions ?? []).map((s) => s.club_id).filter(Boolean)));
+  let clubNameById = new Map<string, string>();
+  if (clubIds.length > 0) {
+    const { data: clubs } = await db.from("clubs").select("id, name").in("id", clubIds);
+    clubNameById = new Map((clubs ?? []).map((c) => [c.id, c.name]));
+  }
+
+  const sessionMetas: SessionMeta[] = (sessions ?? []).map((s) => ({
+    id: s.id,
+    name: s.name,
+    created_at: s.created_at,
+    ended_at: s.ended_at,
+    club_id: s.club_id,
+    club_name: s.club_id ? (clubNameById.get(s.club_id) ?? null) : null,
+  }));
 
   return {
     success: true,
     matches,
-    sessions: (sessions ?? []) as SessionMeta[],
+    sessions: sessionMetas,
   };
 }

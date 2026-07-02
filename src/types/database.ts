@@ -914,6 +914,25 @@ export type Database = {
           session_b: number;
         }[];
       };
+      // Public share-link leaderboard (migration 20260702000003). SECURITY
+      // DEFINER with a mandatory p_session_id — replaces direct anon/authenticated
+      // access to v_session_leaderboard so the view can't be dumped unfiltered.
+      get_session_leaderboard_public: {
+        Args: { p_session_id: string };
+        Returns: {
+          player_id: string;
+          session_id: string;
+          club_id: string;
+          display_name: string;
+          games_played: number;
+          wins: number;
+          losses: number;
+          points_for: number;
+          points_against: number;
+          point_diff: number;
+          win_pct: number;
+        }[];
+      };
       // ── Wave 2 atomicity RPCs (migration 20260429000000) ────────
       toggle_auto_matchmaking: {
         Args: { p_session_id: string };
