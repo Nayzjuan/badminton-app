@@ -1885,7 +1885,8 @@ client components self-resolve the slug from the path via `useClubSlug`). Route 
 **ADD-and-redirect migration.** New club routes re-use the existing PlayerDashboard / OrganizerDashboard /
 TvBoard / LoginForm. Legacy `/play/[id]` + `/organizer/[id]` became thin resolve-and-redirect shims (308 →
 `/c/<slug>/…`) that **auto-enroll** the requester (same philosophy as QR-join) so no one is stranded behind
-the gate. Public boards (`/tv/[id]`, `/leaderboard/[id]`, `/wrapped`, `/play/join`) stay at root, shareable.
+the gate. Public boards (`/tv/[id]`, `/leaderboard/[id]`, `/play/join`) stay at root, shareable — **and**,
+mirroring the TV board, also get a club-namespaced convenience variant for in-app nav (§11.4 for Wrapped's).
 
 **Onboarding.** QR/`/c/[slug]/join` (+ the `/play/join` back-compat shim → forwards to it): authed users
 auto-enroll + queue; fresh scanners register via `signInAnonymously` (a `club_slug` hidden field enrolls
@@ -2094,3 +2095,122 @@ found to be a false positive: `club-admin-panel.tsx`'s `handleRemove` only updat
     `SECURITY INVOKER`, not `SECURITY DEFINER` as previously assumed, so the RLS-bypass severity is lower
     (it runs with the caller's own privileges, not the definer's). Worth auditing separately; left untouched
     here since it's out of scope for the owner-guard fix.
+
+### 11.4 Club-scoped Wrapped route (2026-07-02)
+
+**Gap closed.** `MULTI_TENANT_PHASE2_PLAN.md` (step 4 + its redirect-map table) always planned
+`/c/[clubSlug]/wrapped/[sessionId]/[playerId]` alongside the TV/Leaderboard club variants, but it was never
+built — a dead `clubWrapped()` path builder existed in `src/lib/club-paths.ts` with zero call sites, and every
+redirect into Wrapped (session-end, organizer `session_closed` broadcast, offline-reconnect, a misleading code
+comment claiming Wrapped "stays root-only like the TV board") pointed at the flat root path only. Root TV does
+**not** stay root-only either — it already has both variants — so the comment's premise was false; this was a
+real implementation gap, not a documented deviation.
+
+**Fix — dual-path, same pattern as TV/Leaderboard.** New `src/app/actions/wrapped.ts::getWrappedData(sessionId,
+playerId)` is a shared server-action data-fetcher (mirrors `getTvData`), always using the service-role client
+since Wrapped is a public/shareable recap and the viewer may not be authenticated as the player at all. New
+route `src/app/c/[clubSlug]/wrapped/[sessionId]/[playerId]/page.tsx` mirrors the TV club-route structure:
+resolves the club via `getClubBySlug` (404 if missing), calls `getWrappedData`, 404s if the profile is missing
+or if `sessionClubId !== club.id`. The root `/wrapped/[sessionId]/[playerId]` page now just calls the same
+`getWrappedData` instead of inline queries. Every redirect site was updated to prefer the club-scoped path
+when a club slug is resolvable, falling back to root otherwise: the club play-page's session-end redirect,
+`WrappedShell`'s "Done" button (via `useClubSlug()`, same pathname-derived pattern as `PwaNavBar`),
+`useOrganizerBroadcast`'s `session_closed` redirect (via a new `clubSlugRef`, following the hook's existing
+`playerIdRef`/`routerRef` ref-stability pattern so the realtime subscription never re-registers on a slug
+change), and `reconnectPlayer`'s offline-Wrapped redirect (via `resolveSessionClubSlug`). `PwaNavBar`'s
+Wrapped-suppression check widened from `pathname.startsWith("/wrapped/")` to `.includes("/wrapped/")` to also
+catch the club-namespaced variant.
+
+**Side-effect bugfix, not just a refactor.** The original root page fetched `session_wrapped_stats` via the
+RLS-scoped client; that table's RLS only grants SELECT to the row's own player or a session organizer
+(`20260423000000_session_wrapped_stats.sql`), so any third party opening someone else's shared Wrapped link
+previously got silently bounced to the empty-stats fallback despite a real stats row existing. `getWrappedData`'s
+always-service-role fetch fixes this as a side effect.
+
+**Verified:** `tsc`/`build`/lint clean; independent review verdict **Minor issues, non-blocking** (the stats
+RLS behavior change above, called out explicitly so it isn't mistaken for a silent regression; the
+`.single()`→`.maybeSingle()` swap confirmed semantically equivalent for the not-found branches). Live-clicked
+through both routes against a real prod session (`bcf19499…`, Legacy club): intro overlay + real awards feed
+render correctly on both `/wrapped/...` and `/c/legacy/wrapped/...`; nav bar stays suppressed on both; the
+"Done" button issues `GET /c/legacy` (confirmed via dev-server request log) on the club route vs `/play` on
+root — both then bounce to `/` only because the test session wasn't authenticated (the membership gate doing
+its job, not a Wrapped bug). The organizer-broadcast and offline-reconnect redirect sites were verified by
+code reading + successful build only, not clicked through live (both require a live session-close/reconnect
+event to trigger).
+
+### 11.5 Hardened SECURITY DEFINER views (2026-07-02)
+
+**Gap closed.** Supabase's security advisor flagged 5 views as `SECURITY DEFINER` (owner-privilege,
+RLS-bypassing regardless of caller): `v_match_history`, `v_session_leaderboard`, `v_recent_pairings`,
+`v_queue_with_wait_time`, `v_queue_full_with_wait_time`. The real risk wasn't the intentionally-public
+single-session leaderboard share link — it was that anyone could query these views directly via PostgREST
+with **zero filter** and dump every club's complete match history/leaderboard in one request, since RLS on
+the underlying base tables never applies to a `SECURITY DEFINER` view.
+
+**Fix — split by actual consumer.** `supabase/migrations/20260702000003_harden_security_definer_views.sql`:
+- `v_recent_pairings`, `v_queue_with_wait_time`, `v_queue_full_with_wait_time` → `ALTER VIEW ... SET
+  (security_invoker = true)`. Zero risk: every consumer is either a service-role client
+  (`matchmaking-db.ts`, `matchmaking.ts::runEngineInternal`) or an RLS-scoped browser client already gated
+  by club membership before it ever queries (`use-organizer-queue.ts`, behind `(full)/layout.tsx`'s
+  `requireClubMembership()`). `v_recent_pairings` has zero call sites at all today.
+- `v_match_history`, `v_session_leaderboard` → kept `SECURITY DEFINER` (the public share-link page needs the
+  RLS bypass for genuinely logged-out visitors) but `REVOKE SELECT ... FROM anon, authenticated`, closing
+  direct-dump access. Added `get_session_leaderboard_public(p_session_id uuid)` — a new `SECURITY DEFINER`
+  RPC with a mandatory scoping param, mirroring the existing `is_club_member`/`is_session_club_member`
+  pattern (a parameter can't be omitted the way a `.eq()` filter on a raw view can be).
+  `src/app/actions/leaderboard.ts`'s two `v_session_leaderboard` call sites
+  (`getSessionLeaderboard`/`getPlayerStats`) now call this RPC instead of `.from(...)`; `get_session_leaderboard_public`'s type added to `src/types/database.ts`'s `Functions` section.
+
+**Side-effect bugfix, caught by re-review, not just a refactor.** `v_match_history` itself needed no
+replacement RPC — its only two call sites (`src/app/actions/history.ts`'s `getMatchHistory`/
+`getAllSessionsHistory`) were assumed service-role like `wrapped.ts`'s call site, but they actually used the
+RLS-scoped `createServerSupabaseClient()`. The grant revoke above broke both in prod immediately (caught by
+an independent review pass, not the original build). Fixed by switching both to `createServiceClient()`,
+matching `wrapped.ts`'s existing pattern — safe because both functions already gate on `playerId ===
+user.id` before querying.
+
+**Verified:** `tsc`/lint/build clean. `get_advisors` (security) re-run post-fix — all 5
+`security_definer_view` findings gone. Live-verified `/leaderboard/[sessionId]` still renders full real data
+for a genuinely logged-out browser session via the new RPC. Live-verified the dump vector is closed:
+`set role anon; select * from v_session_leaderboard` and `set role authenticated; select * from
+v_match_history` both now return `permission denied`. Independent review: first pass caught the
+`history.ts` regression (Needs fixes); re-review after the fix returned **LGTM**.
+
+**Known follow-up, not yet actioned (needs a scope decision, not a technical blocker):**
+`v_alltime_leaderboard_mat` (materialized view) grants full privileges to `anon`/`authenticated` via
+`pg_class.relacl` (inherited default privileges, same pattern noted in §11.3) and contains `club_id`-tagged
+rows spanning every club. `getAllTimeLeaderboard()` (`leaderboard.ts`) applies `.eq("club_id", clubId)`
+client-side only when a `clubSlug` is passed — the legacy root `/leaderboard` route intentionally passes
+none, showing an all-clubs combined board by design (pre-multi-tenant behavior, kept for backward compat).
+Whether an all-clubs public leaderboard should still exist post-multi-tenant is a product decision, not
+purely a security bug — flagged for the user rather than silently changed. Materialized views also can't
+carry RLS policies in Postgres, so if the decision is "club-scoped only," the fix mirrors this section's
+pattern: revoke direct grants, add a mandatory-`p_club_id` RPC (`get_alltime_snapshot_before` already
+exists as the point-in-time-slice sibling and could serve as the exact style template).
+
+### 11.6 Task #56 resolved — `search_path` hardening + remaining advisory triage (2026-07-02)
+
+**Decision (user):** keep `v_alltime_leaderboard_mat`/legacy all-clubs `/leaderboard` behavior as-is — established,
+intentional, no fix needed. `rls_enabled_no_policy` on `club_invites`/`clubs`/`player_renames` already accepted as
+deny-all-by-design (no action). `auth_leaked_password_protection` (HaveIBeenPwned check) is a Supabase Auth
+dashboard toggle, not reachable via migration/SQL — left as a manual to-do for the user, not chased further.
+
+**Fixed — `function_search_path_mutable` (20 functions):** `supabase/migrations/20260702000004_pin_search_path_hardening.sql`,
+applied to prod. `ALTER FUNCTION ... SET search_path = public, pg_temp` on all 20 flagged functions (`is_club_member`,
+`is_session_club_member`, `is_session_organizer`, `elevate_to_organizer`, `get_h2h_record`,
+`compute_session_wrapped`, `migrate_player_identity`, `refresh_alltime_leaderboard`,
+`refresh_cross_session_stats`, `get_alltime_snapshot_before`, `get_player_streaks`, `rejoin_queue`,
+`toggle_auto_matchmaking`, `handle_new_session`, `set_updated_at`, `skill_level_to_int`,
+`clear_all_unpublished_drafts`, `touch_push_subscription_updated_at`, `_fix_record_partnership_delta`,
+`is_match_club_member`) — a pure config-parameter pin via `ALTER FUNCTION`, no `CREATE OR REPLACE`, zero risk of
+logic drift since function bodies are untouched.
+
+**Verified:** `pg_proc.proconfig` confirms `search_path=public, pg_temp` on all 20 live. `get_advisors` re-run —
+`function_search_path_mutable` finding count now 0. Functional smoke: `skill_level_to_int`/`is_club_member`
+still execute correctly post-change. Independent review: confirmed zero overloaded function names in `public`
+(so no `ALTER FUNCTION` call could have targeted the wrong overload), diffed all 20 signatures 1:1 against
+`pg_get_function_identity_arguments` on prod, checked every function body for unqualified cross-schema references
+(none found — all `auth.*` calls are schema-qualified, everything else is `pg_catalog`/`public`). Verdict: **LGTM**.
+
+**Task #56 is now fully closed** — every item from the original advisory triage is either fixed, already accepted
+by design, or explicitly deferred to the user with a clear reason (dashboard-only setting).

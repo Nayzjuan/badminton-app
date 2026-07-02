@@ -5,11 +5,51 @@
 
 ---
 
+## 🆕 HARDENED SECURITY DEFINER VIEWS — branch `feat/multi-tenant` (2026-07-02, Task #55)
+
+**Status: BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + tsc/lint/build clean + live-verified + independently reviewed.** First review pass: **Needs fixes** (caught a real regression). Fix applied, re-reviewed: **LGTM**. NOT yet committed.
+
+**Gap closed:** Supabase advisor flagged 5 views as `SECURITY DEFINER` (owner-privilege, bypasses RLS on base tables regardless of caller). The real risk: `v_match_history`/`v_session_leaderboard` were queryable directly via PostgREST with zero filter — any anon/authenticated caller could dump every club's complete match history/leaderboard in one request.
+
+**Fix** (`supabase/migrations/20260702000003_harden_security_definer_views.sql`, applied): 3 views with no RLS-bypass-needing consumer (`v_recent_pairings`, `v_queue_with_wait_time`, `v_queue_full_with_wait_time`) flipped to `security_invoker = true`. The 2 genuinely-public-facing views (`v_match_history`, `v_session_leaderboard`) kept `SECURITY DEFINER` (the public leaderboard share link needs it for logged-out visitors) but `REVOKE SELECT ... FROM anon, authenticated`; added `get_session_leaderboard_public(p_session_id uuid)` — a mandatory-param `SECURITY DEFINER` RPC replacing direct view access (mirrors `is_club_member`/`is_session_club_member`'s pattern: a required param can't be omitted the way a `.eq()` filter can be). `leaderboard.ts`'s `getSessionLeaderboard`/`getPlayerStats` now call the RPC; type added to `database.ts`.
+
+**Regression caught by review, not by me:** assumed (wrongly, carried over from a stale assumption) that all `v_match_history` consumers were service-role. `history.ts`'s `getMatchHistory`/`getAllSessionsHistory` actually used the RLS-scoped client — the grant revoke broke both live in prod. Fixed by switching both to `createServiceClient()`, matching `wrapped.ts`'s already-correct pattern (safe: both already gate on `playerId === user.id`).
+
+**Verified:** tsc/lint/build clean. `get_advisors` re-run — zero `security_definer_view` findings remain. Live SQL proof (`set role anon/authenticated; select ...`) — both views now `permission denied` for direct access. Live browser test — public `/leaderboard/[sessionId]` share page still renders correctly for a logged-out session via the new RPC. Full writeup: `APP_MANIFEST.md` §11.5.
+
+**Task #56 (rls-4/rls-6/rls-7 low-priority hardening) — RESOLVED 2026-07-02, all 4 items closed:**
+- `function_search_path_mutable` (20 functions, incl. `is_club_member`/`is_session_club_member` themselves) — user said "yes, prepare + apply now." **Fixed + applied to prod**: `supabase/migrations/20260702000004_pin_search_path_hardening.sql`, pure `ALTER FUNCTION ... SET search_path` (no body changes). `get_advisors` re-run — 0 remaining findings. Independent review: **LGTM**. Full writeup: `APP_MANIFEST.md` §11.6.
+- `materialized_view_in_api` (`v_alltime_leaderboard_mat`) — user chose **"keep it as-is."** The legacy root `/leaderboard` all-clubs-combined board is confirmed-intentional, not a new leak — no fix made, no longer tracked as an open item.
+- `rls_enabled_no_policy` (`club_invites`/`clubs`/`player_renames`) — already-accepted deny-all-by-design pattern, no action needed.
+- `auth_leaked_password_protection` — Supabase Auth dashboard toggle (HaveIBeenPwned check), not reachable via SQL/migration. User said **"just note it, no action needed"** — documented as an optional manual to-do, not chased further.
+
+**Next steps:** Task #61 — commit this work (both new migrations + `leaderboard.ts`/`database.ts`/`history.ts` changes) + the still-uncommitted club-wrapped route (§ below) together, excluding unrelated scratch/WIP files sitting in the working tree. After that: deliver the final consolidated multi-tenant status report.
+
+---
+
+## 🆕 CLUB-SCOPED WRAPPED ROUTE — branch `feat/multi-tenant` (2026-07-02)
+
+**Status: feature BUILT + tsc/build/lint clean + independently reviewed (Minor issues, non-blocking) + live-verified in browser against a real prod session.** NOT yet committed.
+
+**Gap closed (Task #52):** `MULTI_TENANT_PHASE2_PLAN.md` always planned a club-scoped `/c/[clubSlug]/wrapped/[sessionId]/[playerId]` route alongside the TV/Leaderboard dual-path pattern, but it was never built — a dead `clubWrapped()` path builder sat in `src/lib/club-paths.ts` with zero call sites, and every redirect into Wrapped (session-end, organizer `session_closed` broadcast, offline-reconnect) pointed at the flat root path only, with a stale code comment falsely claiming Wrapped "stays root-only like the TV board" (root TV does **not** stay root-only — it already has both variants).
+
+**Fix — dual-path, same pattern as TV/Leaderboard:** new shared fetcher `src/app/actions/wrapped.ts::getWrappedData(sessionId, playerId)` (mirrors `getTvData`, always uses the service-role client since Wrapped is a public/shareable recap and the viewer may not be authenticated as the player). New route `src/app/c/[clubSlug]/wrapped/[sessionId]/[playerId]/page.tsx` mirrors the TV club-route structure (resolves club via `getClubBySlug`, 404s if missing, 404s if profile missing or `sessionClubId !== club.id`). Root `/wrapped/[sessionId]/[playerId]` now just calls the same `getWrappedData` instead of inline queries. Every redirect site updated to prefer the club-scoped path when a slug is resolvable, falling back to root otherwise: club play-page's session-end redirect, `WrappedShell`'s "Done" button (via `useClubSlug()`, same pathname-derived pattern as `PwaNavBar`), `useOrganizerBroadcast`'s `session_closed` redirect (new `clubSlugRef`, following the hook's existing `playerIdRef`/`routerRef` ref-stability pattern so the realtime subscription never re-registers on a slug change), `reconnectPlayer`'s offline-Wrapped redirect (via `resolveSessionClubSlug`). `PwaNavBar`'s Wrapped-suppression check widened from `pathname.startsWith("/wrapped/")` to `.includes("/wrapped/")` to also catch the club-namespaced variant.
+
+**Side-effect bugfix, not just a refactor:** the old root page fetched `session_wrapped_stats` via the RLS-scoped client; that table's RLS only grants SELECT to the row's own player or a session organizer (`20260423000000_session_wrapped_stats.sql`), so any third party opening someone else's shared Wrapped link previously got silently bounced to the empty-stats fallback despite a real stats row existing. `getWrappedData`'s always-service-role fetch fixes this as a side effect — flagged explicitly in `APP_MANIFEST.md` §11.4 per the review agent's recommendation, so it isn't mistaken for an unintentional regression.
+
+**Review:** first spawned agent misfired — recursively spawned a nested reviewer instead of answering directly (a CLAUDE.md self-application quirk: a subagent inherits the project's own Code Review Gate mandate and can misapply it a level too deep). Corrected via a follow-up message telling it it IS the review gate with no meta-level above it. Final verdict: **Minor issues, non-blocking** — the `.single()`→`.maybeSingle()` swap and the RLS→service-role change were both flagged then confirmed intentional/correct, not regressions.
+
+**Live-verified** against a real prod session (`bcf19499…`, Legacy club): intro overlay + full awards feed + match recap render correctly on both `/wrapped/...` and `/c/legacy/wrapped/...`; nav bar stays suppressed on both; the "Done" button issues `GET /c/legacy` (club route, confirmed via dev-server request log) vs `/play` (root) respectively — both then bounce to `/` only because the test session wasn't authenticated (the membership gate doing its job, not a Wrapped bug). The organizer-broadcast and offline-reconnect redirect sites were verified by code reading + successful build only, not clicked through live (both require a live session-close/reconnect event to trigger).
+
+**Next steps:** Task #53 — update 67 hardcoded legacy-path `page.goto()` calls across e2e specs to club-scoped equivalents. Task #54 — make test factories club-aware (`makeClub`/`makeClubMember`). ~~Task #55 — harden the 5 `SECURITY DEFINER` views~~ **DONE** (see "HARDENED SECURITY DEFINER VIEWS" entry above). Task #56 — decide with the user on lower-priority rls-4/rls-6/rls-7 hardening items (concrete tradeoffs now written up in that same entry).
+
+---
+
 ## 🆕 LEAVE-CLUB / MEMBER-MANAGEMENT + 2 MORE `migrate_player_identity` FK FIXES — branch `feat/multi-tenant` (2026-07-01, follow-ups 2026-07-02)
 
-**Status: feature BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + fully live-verified + committed/pushed (`2ef6b93`).** Both known follow-ups from the initial ship are now also fixed, applied to prod, and functionally live-verified:
-1. `leaveClub`'s `revalidatePath` scope gap — done, tsc-clean, not yet committed (pending — see below).
-2. `countActiveOwners` TOCTOU race — atomic-RPC fix **built, applied to prod, functionally live-verified with disposable fixtures (9/9 cases passed), not yet committed.** See `supabase/migrations/20260702000000_club_member_atomic_owner_guard.sql` + `20260702000001_club_member_atomic_owner_guard_lockdown.sql` and `APP_MANIFEST.md` §11.3 for full design (two `SECURITY DEFINER` RPCs, `pg_advisory_xact_lock` per `club_id`).
+**Status: feature BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + fully live-verified + committed/pushed (`2ef6b93`, follow-ups in `9f50c23`).** Both known follow-ups from the initial ship are now also fixed, applied to prod, functionally live-verified, re-reviewed LGTM, and committed/pushed:
+1. `leaveClub`'s `revalidatePath` scope gap — done, tsc-clean, committed in `9f50c23`.
+2. `countActiveOwners` TOCTOU race — atomic-RPC fix **built, applied to prod, functionally live-verified with disposable fixtures (9/9 cases passed), committed in `9f50c23`.** See `supabase/migrations/20260702000000_club_member_atomic_owner_guard.sql` + `20260702000001_club_member_atomic_owner_guard_lockdown.sql` and `APP_MANIFEST.md` §11.3 for full design (two `SECURITY DEFINER` RPCs, `pg_advisory_xact_lock` per `club_id`).
    - **Mid-verification finding, fixed same-session:** the original migration's `REVOKE ALL FROM PUBLIC` +
      `GRANT ... TO service_role` left both RPCs callable by `anon`/`authenticated` in prod (ground-truth
      `pg_proc.proacl` check, not caught by the code-review agent's LGTM which only read the SQL text). This
@@ -42,7 +82,7 @@ Both fixes are blind two-row `UPDATE ... WHERE col = p_old_user_id` (safe: neith
 3. `getMyClubs` had an N+1 query (one `sessions` count query per club) — fixed: batched into one `sessions.club_id` query grouped in-memory into a `Map`, run in parallel with the `clubs` query. **Live-verified twice**, the second time specifically to close a gap flagged by the fix's own review agent (the first test only had 1 club, which can't distinguish correct per-club grouping from a buggy global-sum): created 2 clubs under one profile — Club Alpha (0 sessions) and Club Beta (2 sessions) — confirmed `/clubs` showed no badge on Alpha and "2 live" on Beta, proving the `Map` keys correctly by `club_id` and sums correctly per club. Both fixture profiles/clubs/sessions deleted afterward, zero residue.
 Both fixes also passed their own dedicated review agent pass: LGTM.
 
-**Next steps:** decide whether to re-spawn the mandatory review agent (the original LGTM missed the anon/authenticated grant hole — now fixed, but the agent hasn't re-reviewed the corrected state); then ask the user for go-ahead to commit + push the accumulated follow-up work (both migration files, `database.ts`, `clubs.ts`, `lib/clubs.ts`, `APP_MANIFEST.md`, `MEMORY.md`). Nothing else known-broken on this branch. Separately, out-of-scope but flagged: `migrate_player_identity`'s anon/authenticated `proacl` exposure (see above) could use its own audit pass sometime.
+**Next steps:** none outstanding on this feature — re-spawned review agent independently re-verified live `pg_proc.proacl` grant state (not just SQL text) and returned LGTM, work is committed as `9f50c23` and pushed to `origin/feat/multi-tenant`. Nothing else known-broken on this branch. Separately, out-of-scope but flagged: `migrate_player_identity`'s anon/authenticated `proacl` exposure (see above) could use its own audit pass sometime.
 
 ---
 
