@@ -20,10 +20,19 @@ import type { Database } from "@/types/database";
 // an already-logged-in user's postgres_changes subscriptions are evaluated
 // under the `anon` Postgres role forever, so any RLS policy relying on
 // auth.uid() never matches and no realtime events are ever delivered.
-// Guarded by a module flag since createBrowserClient() is a singleton and
-// this function is called from many hooks — without the guard we'd attach
-// a duplicate listener per call site.
+//
+// Crucially, INITIAL_SESSION fires *asynchronously* during auth
+// initialization, which loses the race against channel `.subscribe()`
+// calls made synchronously in hook effects: the channel joins as `anon`
+// and Supabase binds the postgres_changes RLS filter at join time, so a
+// later setAuth never re-evaluates it. We fix this by (a) kicking off an
+// eager getSession()→setAuth() at client-creation time and exposing the
+// resulting promise via `whenRealtimeAuthReady()` so subscribe helpers can
+// await it *before* joining, and (b) keeping the Realtime JWT fresh on
+// every subsequent auth transition. Guarded by a module flag since
+// createBrowserClient() is a singleton called from many hooks.
 let hasWiredRealtimeAuth = false;
+let realtimeAuthReady: Promise<void> | null = null;
 
 export function createBrowserSupabaseClient() {
   const client = createBrowserClient<Database>(
@@ -33,12 +42,44 @@ export function createBrowserSupabaseClient() {
 
   if (!hasWiredRealtimeAuth) {
     hasWiredRealtimeAuth = true;
-    client.auth.onAuthStateChange((event, session) => {
-      if (event === "INITIAL_SESSION" && session?.access_token) {
+
+    // (a) Eagerly hydrate the Realtime JWT from the persisted session, and
+    // record the promise so subscribers can defer `.subscribe()` until it
+    // settles. A failure (e.g. no session / anon visitor) is non-fatal —
+    // channels simply join as `anon`, which is correct for public tables.
+    realtimeAuthReady = client.auth
+      .getSession()
+      .then(({ data }) => {
+        if (data.session?.access_token) {
+          client.realtime.setAuth(data.session.access_token);
+        }
+      })
+      .catch(() => {
+        /* anon / no session — join as anon */
+      });
+
+    // (b) Keep the Realtime JWT current across every later auth transition
+    // (INITIAL_SESSION hydration, SIGNED_IN, TOKEN_REFRESHED).
+    client.auth.onAuthStateChange((_event, session) => {
+      if (session?.access_token) {
         client.realtime.setAuth(session.access_token);
       }
     });
   }
 
   return client;
+}
+
+/**
+ * Resolves once the persisted session's JWT has been pushed to the Realtime
+ * client (or immediately, for anon visitors / before any client is created).
+ *
+ * Realtime binds a channel's `postgres_changes` RLS filter to the socket's
+ * JWT **at join time**, and a later `setAuth` does not re-bind an
+ * already-joined channel. Subscribe helpers therefore await this before
+ * calling `.subscribe()` so club-scoped RLS evaluates under the real user
+ * instead of `anon` (which silently delivers zero rows).
+ */
+export function whenRealtimeAuthReady(): Promise<void> {
+  return realtimeAuthReady ?? Promise.resolve();
 }

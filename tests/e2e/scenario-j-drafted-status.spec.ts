@@ -245,9 +245,15 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       .eq("session_id", SESSION_ID)
       .eq("player_id", organizerUserId);
 
-    // "Match Forming" card should disappear
+    // "Match Forming" card should disappear once the drafted→on_deck
+    // queue_entries UPDATE arrives over Realtime. Delivery is prompt now that
+    // the browser client sets the Realtime JWT *before* joining channels (see
+    // whenRealtimeAuthReady in src/utils/supabase/client.ts) — previously the
+    // channel joined as `anon` and club-scoped RLS silently dropped the event.
+    // Timeout stays generous to tolerate preview cold-start under full-suite
+    // load, matching the file's 20s convention for realtime-dependent asserts.
     await expect(page.getByText("Match Forming", { exact: true })).not.toBeVisible({
-      timeout: 8000,
+      timeout: 20_000,
     });
 
     // MatchAlert renders with role="alert" AND a specific heading — assert both
@@ -290,9 +296,11 @@ test("J-C: cancelling a draft returns player to normal waiting state with positi
       .eq("session_id", SESSION_ID)
       .eq("player_id", organizerUserId);
 
-    // "Match Forming" card should disappear
+    // "Match Forming" card should disappear once the cancel (status→waiting)
+    // UPDATE arrives over Realtime. Same JWT-before-join rationale as J-B above
+    // (see whenRealtimeAuthReady in src/utils/supabase/client.ts).
     await expect(page.getByText("Match Forming", { exact: true })).not.toBeVisible({
-      timeout: 8000,
+      timeout: 20_000,
     });
 
     // Player should now see their queue position (#1 in the large number span,

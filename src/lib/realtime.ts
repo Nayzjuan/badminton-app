@@ -12,8 +12,13 @@
 //   [realtime] courts:abc123 → CHANNEL_ERROR
 // ============================================================
 
-import type { SupabaseClient, RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import type {
+  SupabaseClient,
+  RealtimePostgresChangesPayload,
+  RealtimeChannel,
+} from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import { whenRealtimeAuthReady } from "@/utils/supabase/client";
 import type {
   OrganizerInterventionPayload,
   SessionClosedPayload,
@@ -101,24 +106,35 @@ function subscribeToTable<T extends Record<string, unknown>>(
     ? `${channelPrefix}:${table}:${sessionId}`
     : `${table}:${sessionId}`;
 
-  const channel = supabase
-    .channel(channelName)
-    .on<T>(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table,
-        filter: `session_id=eq.${sessionId}`,
-      },
-      (payload) => {
-        onChange(payload);
-      }
-    )
-    .subscribe(createStatusHandler(channelName, onStatus));
+  // Defer the join until the Realtime JWT is set (see whenRealtimeAuthReady):
+  // postgres_changes RLS binds to the socket's role at join time, so joining
+  // before the user's JWT propagates would evaluate club-scoped policies as
+  // `anon` and silently deliver zero rows.
+  let channel: RealtimeChannel | null = null;
+  let cancelled = false;
+
+  void whenRealtimeAuthReady().then(() => {
+    if (cancelled) return;
+    channel = supabase
+      .channel(channelName)
+      .on<T>(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table,
+          filter: `session_id=eq.${sessionId}`,
+        },
+        (payload) => {
+          onChange(payload);
+        }
+      )
+      .subscribe(createStatusHandler(channelName, onStatus));
+  });
 
   return () => {
-    supabase.removeChannel(channel);
+    cancelled = true;
+    if (channel) supabase.removeChannel(channel);
   };
 }
 
@@ -167,15 +183,27 @@ export function subscribeToMatchPlayers(
     ? `${channelPrefix}:match_players:${sessionId}`
     : `match_players:${sessionId}`;
 
-  const channel = supabase
-    .channel(channelName)
-    .on("postgres_changes", { event: "*", schema: "public", table: "match_players" }, (payload) => {
-      onChange(castPayload<Database["public"]["Tables"]["match_players"]["Row"]>(payload));
-    })
-    .subscribe(createStatusHandler(channelName, onStatus));
+  // Defer the join until the Realtime JWT is set (see whenRealtimeAuthReady).
+  let channel: RealtimeChannel | null = null;
+  let cancelled = false;
+
+  void whenRealtimeAuthReady().then(() => {
+    if (cancelled) return;
+    channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "match_players" },
+        (payload) => {
+          onChange(castPayload<Database["public"]["Tables"]["match_players"]["Row"]>(payload));
+        }
+      )
+      .subscribe(createStatusHandler(channelName, onStatus));
+  });
 
   return () => {
-    supabase.removeChannel(channel);
+    cancelled = true;
+    if (channel) supabase.removeChannel(channel);
   };
 }
 
@@ -285,14 +313,22 @@ export function subscribeToProfiles(
     ? `${channelPrefix}:profiles:${sessionId}`
     : `profiles:${sessionId}`;
 
-  const channel = supabase
-    .channel(channelName)
-    .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (payload) => {
-      onChange(castPayload<Database["public"]["Tables"]["profiles"]["Row"]>(payload));
-    })
-    .subscribe(createStatusHandler(channelName, onStatus));
+  // Defer the join until the Realtime JWT is set (see whenRealtimeAuthReady).
+  let channel: RealtimeChannel | null = null;
+  let cancelled = false;
+
+  void whenRealtimeAuthReady().then(() => {
+    if (cancelled) return;
+    channel = supabase
+      .channel(channelName)
+      .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (payload) => {
+        onChange(castPayload<Database["public"]["Tables"]["profiles"]["Row"]>(payload));
+      })
+      .subscribe(createStatusHandler(channelName, onStatus));
+  });
 
   return () => {
-    supabase.removeChannel(channel);
+    cancelled = true;
+    if (channel) supabase.removeChannel(channel);
   };
 }
