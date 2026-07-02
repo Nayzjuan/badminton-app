@@ -48,48 +48,93 @@ export const ORGANIZER_STORAGE_STATE = path.resolve(
   "../../.playwright/organizer-storage-state.json"
 );
 
+// ── findUserIdByEmail ────────────────────────────────────────────
+// Paginated fallback lookup used when createUser() reports "already
+// registered" — the account exists but listUsers()'s default single
+// page (50 users) can miss it once the live table grows past that,
+// or once a prior run's teardown leaves an orphaned bot behind.
+async function findUserIdByEmail(
+  db: ReturnType<typeof getAdminClient>,
+  email: string,
+  label: string
+): Promise<string> {
+  const perPage = 1000;
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await db.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      throw new Error(`[seed] findUserIdByEmail(${label}): ${error.message}`);
+    }
+    const found = data.users.find((u) => u.email === email);
+    if (found) return found.id;
+    if (data.users.length < perPage) break; // last page reached, exhausted
+  }
+  throw new Error(
+    `[seed] findUserIdByEmail(${label}): createUser reported "already registered" but no ` +
+      `matching user was found across up to ${perPage * 20} accounts`
+  );
+}
+
+// ── findOrCreateBotUser ──────────────────────────────────────────
+// Idempotent bot creation: creates a throwaway auth user + profile,
+// or reuses the existing account if it was already created by a
+// prior run (e.g. an aborted/network-flaky run whose teardown never
+// got to delete it). Deterministic e2e bot emails otherwise collide
+// hard on "already registered" — this self-heals instead.
+export async function findOrCreateBotUser(
+  email: string,
+  displayName: string,
+  opts: { skill?: string; pin?: string; password?: string } = {}
+): Promise<string> {
+  const db = getAdminClient();
+  const { data, error } = await db.auth.admin.createUser({
+    email,
+    email_confirm: true,
+    ...(opts.password ? { password: opts.password } : {}),
+    user_metadata: { display_name: displayName },
+  });
+
+  let userId: string;
+  if (error || !data.user) {
+    const alreadyExists =
+      error?.message?.includes("already been registered") ||
+      error?.message?.includes("already exists") ||
+      error?.message?.includes("already registered");
+    if (!alreadyExists) {
+      throw new Error(`[seed] findOrCreateBotUser(${displayName}): ${error?.message}`);
+    }
+    userId = await findUserIdByEmail(db, email, displayName);
+  } else {
+    userId = data.user.id;
+  }
+
+  const { error: profileErr } = await db.from("profiles").upsert(
+    {
+      id: userId,
+      display_name: displayName,
+      skill_level: opts.skill ?? "intermediate",
+      pin: opts.pin ?? "1234",
+    },
+    { onConflict: "id" }
+  );
+  if (profileErr) {
+    throw new Error(
+      `[seed] findOrCreateBotUser(${displayName}): profile upsert failed: ${profileErr.message}`
+    );
+  }
+
+  return userId;
+}
+
 // ── ensureOrganizerAccount ─────────────────────────────────────
 // Idempotent: creates the organizer bot Supabase account if it
 // doesn't exist yet. Run once before the first test of the suite.
 export async function ensureOrganizerAccount(): Promise<string> {
   const db = getAdminClient();
 
-  // Check if the organizer already exists
-  const { data: existing } = await db.auth.admin.listUsers();
-  const found = existing?.users?.find((u) => u.email === ORGANIZER_EMAIL);
-
-  let organizerId: string;
-
-  if (found) {
-    organizerId = found.id;
-  } else {
-    // Create the organizer bot account
-    const { data, error } = await db.auth.admin.createUser({
-      email: ORGANIZER_EMAIL,
-      password: ORGANIZER_PASSWORD,
-      email_confirm: true,
-      user_metadata: {
-        display_name: "E2E_OrganizerBot",
-      },
-    });
-
-    if (error || !data.user) {
-      throw new Error(`[auth] Failed to create organizer bot: ${error?.message}`);
-    }
-
-    // Upsert profile
-    await db.from("profiles").upsert(
-      {
-        id: data.user.id,
-        display_name: "E2E_OrganizerBot",
-        skill_level: "intermediate",
-        pin: "9999",
-      },
-      { onConflict: "id" }
-    );
-
-    organizerId = data.user.id;
-  }
+  const organizerId = await findOrCreateBotUser(ORGANIZER_EMAIL, "E2E_OrganizerBot", {
+    pin: "9999",
+    password: ORGANIZER_PASSWORD,
+  });
 
   await ensureOrganizerClubMembership(db, organizerId);
 

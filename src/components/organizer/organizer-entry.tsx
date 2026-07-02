@@ -9,6 +9,7 @@
 // ============================================================
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useState } from "react";
 import {
   ChevronRight,
@@ -481,7 +482,11 @@ function CreateSessionForm({
       {disabled && (
         <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
           You&apos;re in multiple clubs (or none yet) — create sessions from a specific club&apos;s
-          Admin page instead. Go to <span className="font-semibold">/clubs</span> and pick one.
+          Admin page instead. Go to{" "}
+          <Link href="/clubs" className="font-semibold underline hover:text-amber-900">
+            /clubs
+          </Link>{" "}
+          and pick one.
         </p>
       )}
       <div className="space-y-1.5">

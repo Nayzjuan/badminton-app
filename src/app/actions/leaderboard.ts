@@ -518,33 +518,82 @@ export async function getPlayerStats(
     } else {
       // ── All-time scope ───────────────────────────────────────
       const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
-      // Scope by club BEFORE maybeSingle() — a multi-club player would otherwise
-      // have >1 matview row and maybeSingle() throws PGRST116.
       let allTimeQuery = supabase
         .from("v_alltime_leaderboard_mat")
         .select("*")
         .eq("player_id", playerId);
       if (clubId) allTimeQuery = allTimeQuery.eq("club_id", clubId);
-      const { data, error } = await allTimeQuery.maybeSingle();
+
+      if (clubId) {
+        // Club-scoped: exactly 0 or 1 matview row for this player, safe to
+        // use maybeSingle().
+        const { data, error } = await allTimeQuery.maybeSingle();
+
+        if (error) {
+          console.error("[getPlayerStats] alltime error:", error);
+          return { success: false, error: error.message };
+        }
+
+        if (!data) return { success: true, row: null }; // zero all-time games
+
+        const entry = data as AllTimeLeaderboardEntry;
+        const row: LeaderboardRow = {
+          player_id: entry.player_id,
+          display_name: entry.display_name,
+          games_played: entry.games_played,
+          wins: entry.wins,
+          losses: entry.losses,
+          points_for: entry.points_for,
+          points_against: entry.points_against,
+          point_diff: entry.point_diff,
+          win_pct: entry.win_pct,
+          rank: 0, // not on ranked board
+          win_streak: 0, // not shown in below-threshold state
+          rank_movement: null,
+          vip_tag: null, // not shown in below-threshold state
+          vip_theme: null,
+        };
+
+        return { success: true, row };
+      }
+
+      // Unscoped (legacy "all clubs" root /leaderboard): the matview is
+      // keyed by (club_id, player_id), so a player active in 2+ clubs has
+      // one row per club here. maybeSingle() would throw PGRST116 for such
+      // a player — merge all of their rows into one combined stats row
+      // instead, matching what an "all clubs" view should mean.
+      const { data, error } = await allTimeQuery;
 
       if (error) {
         console.error("[getPlayerStats] alltime error:", error);
         return { success: false, error: error.message };
       }
 
-      if (!data) return { success: true, row: null }; // zero all-time games
+      const entries = (data ?? []) as AllTimeLeaderboardEntry[];
+      if (entries.length === 0) return { success: true, row: null }; // zero all-time games
 
-      const entry = data as AllTimeLeaderboardEntry;
+      const merged = entries.reduce(
+        (acc, entry) => ({
+          games_played: acc.games_played + entry.games_played,
+          wins: acc.wins + entry.wins,
+          losses: acc.losses + entry.losses,
+          points_for: acc.points_for + entry.points_for,
+          points_against: acc.points_against + entry.points_against,
+        }),
+        { games_played: 0, wins: 0, losses: 0, points_for: 0, points_against: 0 }
+      );
+
       const row: LeaderboardRow = {
-        player_id: entry.player_id,
-        display_name: entry.display_name,
-        games_played: entry.games_played,
-        wins: entry.wins,
-        losses: entry.losses,
-        points_for: entry.points_for,
-        points_against: entry.points_against,
-        point_diff: entry.point_diff,
-        win_pct: entry.win_pct,
+        player_id: playerId,
+        display_name: entries[0].display_name,
+        games_played: merged.games_played,
+        wins: merged.wins,
+        losses: merged.losses,
+        points_for: merged.points_for,
+        points_against: merged.points_against,
+        point_diff: merged.points_for - merged.points_against,
+        win_pct:
+          merged.games_played > 0 ? Math.round((merged.wins / merged.games_played) * 1000) / 10 : 0,
         rank: 0, // not on ranked board
         win_streak: 0, // not shown in below-threshold state
         rank_movement: null,

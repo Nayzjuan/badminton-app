@@ -194,11 +194,15 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
   }
 
   // ── Step 7: Delete bot auth users (cascades to profiles) ──
-  // Bot accounts are identified by display_name prefix "E2E_".
+  // Bot accounts are identified by display_name prefix "E2E_", excluding
+  // the organizer bot ("E2E_OrganizerBot" would otherwise also match this
+  // prefix) — the organizer account is permanent and reused across every
+  // test file, never recreated per-test like player bots.
   const { data: botProfiles } = await db
     .from("profiles")
     .select("id")
-    .like("display_name", "E2E_%");
+    .like("display_name", "E2E_%")
+    .neq("display_name", "E2E_OrganizerBot");
 
   let botUsersDeleted = 0;
   for (const p of botProfiles ?? []) {

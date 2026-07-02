@@ -44,6 +44,7 @@ import {
   signInOrganizerBot,
   getOrganizerUserId,
   ORGANIZER_STORAGE_STATE,
+  findOrCreateBotUser,
 } from "../fixtures/auth";
 
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
@@ -75,22 +76,11 @@ test.beforeEach(async () => {
 });
 
 // ── Helper: create a throwaway bot user + profile ─────────────
+// Idempotent via findOrCreateBotUser — self-heals if a prior run's
+// teardown left this deterministic email's bot account orphaned.
 async function createBot(displayName: string): Promise<{ userId: string }> {
-  const db = adminDb();
-  const { data, error } = await db.auth.admin.createUser({
-    email: `${displayName.toLowerCase().replace(/\s/g, "-")}@playwright.local`,
-    email_confirm: true,
-  });
-  if (error || !data.user) {
-    throw new Error(`[seed] createBot(${displayName}): ${error?.message}`);
-  }
-  const userId = data.user.id;
-  await db
-    .from("profiles")
-    .upsert(
-      { id: userId, display_name: displayName, skill_level: "intermediate", pin: "1234" },
-      { onConflict: "id" }
-    );
+  const email = `${displayName.toLowerCase().replace(/\s/g, "-")}@playwright.local`;
+  const userId = await findOrCreateBotUser(email, displayName);
   return { userId };
 }
 
