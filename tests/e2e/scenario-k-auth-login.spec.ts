@@ -23,7 +23,8 @@ import { test, expect } from "@playwright/test";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession } from "../helpers/teardown";
+import { resetSandboxSession, getSandboxClubSlug } from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -35,10 +36,12 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
+let CLUB_SLUG: string;
 
 // ── One-time global setup ─────────────────────────────────────
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
+  CLUB_SLUG = await getSandboxClubSlug();
 
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -98,7 +101,9 @@ test.describe("Auth — [K-2] Organizer bot dashboard access", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/organizer/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubOrganizer(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // The organizer dashboard renders a tab bar with "Active Courts".
       // Wait for the tabpanel to confirm the dashboard fully mounted.

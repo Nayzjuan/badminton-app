@@ -32,6 +32,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 import { resetSandboxSession, seedSession } from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -69,11 +70,7 @@ test.beforeEach(async () => {
 // teamAWins: how many times alice+bob (Team A) won.
 // teamBWins: how many times cara+dan (Team B) won.
 // Remaining matches (up to total) don't count since we only track W/L.
-async function seedCompletedMatches(
-  sessionId: string,
-  teamAWins: number,
-  teamBWins: number
-) {
+async function seedCompletedMatches(sessionId: string, teamAWins: number, teamBWins: number) {
   const db = adminDb();
 
   type MatchRow = {
@@ -109,10 +106,7 @@ async function seedCompletedMatches(
 
   if (matchInserts.length === 0) return;
 
-  const { data: matches, error } = await db
-    .from("matches")
-    .insert(matchInserts)
-    .select("id");
+  const { data: matches, error } = await db.from("matches").insert(matchInserts).select("id");
 
   if (error || !matches) {
     throw new Error(`[G:seed] Failed to insert completed matches: ${error?.message}`);
@@ -128,9 +122,9 @@ async function seedCompletedMatches(
   for (const m of matches) {
     playerInserts.push(
       { match_id: m.id, player_id: seeded.players.alice.userId, team: "a" },
-      { match_id: m.id, player_id: seeded.players.bob.userId,   team: "a" },
-      { match_id: m.id, player_id: seeded.players.cara.userId,  team: "b" },
-      { match_id: m.id, player_id: seeded.players.dan.userId,   team: "b" }
+      { match_id: m.id, player_id: seeded.players.bob.userId, team: "a" },
+      { match_id: m.id, player_id: seeded.players.cara.userId, team: "b" },
+      { match_id: m.id, player_id: seeded.players.dan.userId, team: "b" }
     );
   }
 
@@ -151,7 +145,9 @@ test.describe("H2H Strip — history exists", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // On-deck card must be visible first
@@ -183,7 +179,9 @@ test.describe("H2H Strip — history exists", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
       await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
 
@@ -244,9 +242,9 @@ test.describe("H2H Strip — first time tonight", () => {
 
       await db.from("match_players").insert([
         { match_id: histMatch.id, player_id: seeded.players.alice.userId, team: "a" as const },
-        { match_id: histMatch.id, player_id: seeded.players.bob.userId,   team: "a" as const },
-        { match_id: histMatch.id, player_id: seeded.players.cara.userId,  team: "b" as const },
-        { match_id: histMatch.id, player_id: seeded.players.dan.userId,   team: "b" as const },
+        { match_id: histMatch.id, player_id: seeded.players.bob.userId, team: "a" as const },
+        { match_id: histMatch.id, player_id: seeded.players.cara.userId, team: "b" as const },
+        { match_id: histMatch.id, player_id: seeded.players.dan.userId, team: "b" as const },
       ]);
 
       // alltime: A=1, B=0 (from historical session)
@@ -257,7 +255,9 @@ test.describe("H2H Strip — first time tonight", () => {
       const page = await context.newPage();
 
       try {
-        await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+        await page.goto(
+          `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+        );
         await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
         await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
 
@@ -303,7 +303,9 @@ test.describe("H2H Strip — first meeting (no history)", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Wait for the on-deck card to appear AND for the async H2H fetch to settle.
@@ -346,9 +348,9 @@ test.describe("H2H Strip — pairing specificity", () => {
       // alice + cara (Team A) vs bob + dan (Team B) — different pairing
       await db.from("match_players").insert([
         { match_id: otherMatch.id, player_id: seeded.players.alice.userId, team: "a" as const },
-        { match_id: otherMatch.id, player_id: seeded.players.cara.userId,  team: "a" as const },
-        { match_id: otherMatch.id, player_id: seeded.players.bob.userId,   team: "b" as const },
-        { match_id: otherMatch.id, player_id: seeded.players.dan.userId,   team: "b" as const },
+        { match_id: otherMatch.id, player_id: seeded.players.cara.userId, team: "a" as const },
+        { match_id: otherMatch.id, player_id: seeded.players.bob.userId, team: "b" as const },
+        { match_id: otherMatch.id, player_id: seeded.players.dan.userId, team: "b" as const },
       ]);
     }
 
@@ -356,7 +358,9 @@ test.describe("H2H Strip — pairing specificity", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
       await expect(page.getByText("On Deck #1")).toBeVisible({ timeout: 10_000 });
       await page.waitForLoadState("networkidle");
@@ -374,9 +378,7 @@ test.describe("H2H Strip — pairing specificity", () => {
 // ── Regression: on-deck card layout not broken ─────────────────
 
 test.describe("Regression — on-deck card renders cleanly", () => {
-  test("on-deck card loads without JS errors after H2HStrip integration", async ({
-    browser,
-  }) => {
+  test("on-deck card loads without JS errors after H2HStrip integration", async ({ browser }) => {
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
 
@@ -384,7 +386,9 @@ test.describe("Regression — on-deck card renders cleanly", () => {
     page.on("pageerror", (err) => errors.push(err.message));
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // On-deck card present and functional

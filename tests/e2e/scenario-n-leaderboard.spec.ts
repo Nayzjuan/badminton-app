@@ -26,7 +26,12 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession, softResetSandboxSession } from "../helpers/teardown";
+import {
+  resetSandboxSession,
+  softResetSandboxSession,
+  getSandboxClubSlug,
+} from "../helpers/teardown";
+import { clubOrganizer, clubPlay } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -38,6 +43,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
+let CLUB_SLUG: string;
 
 // ── Vercel bypass headers ─────────────────────────────────────
 const BYPASS_HEADERS: Record<string, string> = process.env.VERCEL_BYPASS_SECRET
@@ -47,6 +53,7 @@ const BYPASS_HEADERS: Record<string, string> = process.env.VERCEL_BYPASS_SECRET
 // ── One-time global setup ─────────────────────────────────────
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
+  CLUB_SLUG = await getSandboxClubSlug();
 
   const context = await browser.newContext({ extraHTTPHeaders: BYPASS_HEADERS });
   const page = await context.newPage();
@@ -75,7 +82,7 @@ test.describe("Leaderboard — [N-1] Player dashboard leaderboard tab", () => {
     try {
       // Don't use waitUntil:"networkidle" — Supabase realtime WebSocket
       // connections keep the network active indefinitely.
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
       // Wait for the player dashboard to hydrate — the header renders a
       // div with role="tablist" containing the 4 navigation tabs.
@@ -95,9 +102,9 @@ test.describe("Leaderboard — [N-1] Player dashboard leaderboard tab", () => {
       // table header if matches exist.
       const tabPanel = page.locator('[role="tabpanel"]');
       await expect(tabPanel).toBeVisible({ timeout: 10_000 });
-      await expect(tabPanel.getByText(/rank|no ranked players|minimum games/i).first()).toBeVisible(
-        { timeout: 12_000 }
-      );
+      await expect(
+        tabPanel.getByText(/rank|no ranked players|no completed games|minimum games/i).first()
+      ).toBeVisible({ timeout: 12_000 });
     } finally {
       await context.close();
     }
@@ -116,7 +123,9 @@ test.describe("Leaderboard — [N-2] Organizer dashboard leaderboard tab", () =>
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/organizer/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubOrganizer(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // Wait for the courts tabpanel to confirm the dashboard is mounted.
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 20_000 });
@@ -231,7 +240,9 @@ test.describe("Leaderboard — [N-3] Data after completed match", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/organizer/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubOrganizer(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 20_000 });
 
       await page.getByRole("tab", { name: /leaderboard/i }).click();

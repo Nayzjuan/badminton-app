@@ -23,7 +23,8 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession } from "../helpers/teardown";
+import { resetSandboxSession, getSandboxClubSlug } from "../helpers/teardown";
+import { clubPlay } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -36,6 +37,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const SESSION_ID = process.env.TEST_SESSION_ID!;
 const BASE_URL = process.env.TEST_BASE_URL!;
+let CLUB_SLUG: string;
 
 // ── Bot player type ────────────────────────────────────────────
 interface BotPlayer {
@@ -231,6 +233,7 @@ let organizerUserId: string;
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
   organizerUserId = await getOrganizerUserId();
+  CLUB_SLUG = await getSandboxClubSlug();
 
   const context = await browser.newContext();
   try {
@@ -268,7 +271,9 @@ test.describe("MatchAlert — [A] On-deck base layout", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // Wait for the on-deck alert to appear (role=alert is added by our fix)
       const card = page.getByRole("alert").first();
@@ -305,7 +310,9 @@ test.describe("MatchAlert — [B] On-deck position 2 shows #2 copy", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // Position-2 heading
       await expect(page.getByText(/#2 on deck/i)).toBeVisible({
@@ -333,7 +340,9 @@ test.describe("MatchAlert — [C] In-progress card shows court name", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // role=alert is set on the in-progress card too
       const card = page.getByRole("alert").first();
@@ -373,7 +382,9 @@ test.describe("MatchAlert — [D] VIP tag visible on organizer row", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // Wait for the card to be visible
       await expect(page.getByRole("alert").first()).toBeVisible({ timeout: 12_000 });

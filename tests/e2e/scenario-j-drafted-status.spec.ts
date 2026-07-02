@@ -26,7 +26,8 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession } from "../helpers/teardown";
+import { resetSandboxSession, getSandboxClubSlug } from "../helpers/teardown";
+import { clubPlay } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -39,10 +40,12 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const SESSION_ID = process.env.TEST_SESSION_ID!;
 const BASE_URL = process.env.TEST_BASE_URL!;
+let CLUB_SLUG: string;
 
 // ── One-time setup ────────────────────────────────────────────
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
+  CLUB_SLUG = await getSandboxClubSlug();
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
@@ -133,7 +136,7 @@ async function seedDraftedState(organizerUserId: string) {
       status: "pending",
       is_published: false,
       is_mixed_level: false,
-      origin: "auto",
+      created_method: "auto",
     })
     .select("id")
     .single();
@@ -170,7 +173,7 @@ test("J-A: drafted player sees Match Forming card and pulsing QueueStatus indica
     const organizerUserId = await getOrganizerUserId();
     await seedDraftedState(organizerUserId);
 
-    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+    await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
     // ── Primary messaging card ───────────────────────────────
     // Use exact: true to disambiguate from the QueueStatus "Match forming"
@@ -214,7 +217,7 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
     const organizerUserId = await getOrganizerUserId();
     await seedDraftedState(organizerUserId);
 
-    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+    await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
     // Confirm drafted state is showing first (exact: true avoids strict-mode
     // violation with the QueueStatus "Match forming" span)
@@ -272,7 +275,7 @@ test("J-C: cancelling a draft returns player to normal waiting state with positi
     const organizerUserId = await getOrganizerUserId();
     await seedDraftedState(organizerUserId);
 
-    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+    await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
     // Confirm drafted state (exact: true avoids strict-mode violation)
     await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({

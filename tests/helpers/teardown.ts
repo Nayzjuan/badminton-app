@@ -47,6 +47,54 @@ function getSessionId(): string {
   return id.trim();
 }
 
+// ── Sandbox club resolution (cached — the sandbox session's club never
+// changes within a test run, so this resolves once per worker process) ──
+let cachedSandboxClub: { id: string; slug: string } | null = null;
+
+async function resolveSandboxClub(
+  db: ReturnType<typeof getAdminClient>,
+  sessionId: string
+): Promise<{ id: string; slug: string }> {
+  if (cachedSandboxClub) return cachedSandboxClub;
+
+  const { data: session, error: sessionErr } = await db
+    .from("sessions")
+    .select("club_id")
+    .eq("id", sessionId)
+    .single();
+
+  if (sessionErr || !session?.club_id) {
+    throw new Error(
+      `[teardown] Could not resolve club_id for session ${sessionId}: ${sessionErr?.message ?? "missing club_id"}`
+    );
+  }
+
+  const { data: club, error: clubErr } = await db
+    .from("clubs")
+    .select("id, slug")
+    .eq("id", session.club_id)
+    .single();
+
+  if (clubErr || !club) {
+    throw new Error(
+      `[teardown] Could not resolve club for club_id ${session.club_id}: ${clubErr?.message ?? "not found"}`
+    );
+  }
+
+  cachedSandboxClub = { id: club.id, slug: club.slug };
+  return cachedSandboxClub;
+}
+
+// Exported for e2e specs that navigate club-scoped routes but don't call
+// seedSession() (module-level SESSION_ID specs) — resolves the sandbox
+// session's club slug once so tests can build club-scoped URLs.
+export async function getSandboxClubSlug(): Promise<string> {
+  const db = getAdminClient();
+  const sessionId = getSessionId();
+  const club = await resolveSandboxClub(db, sessionId);
+  return club.slug;
+}
+
 // ── Main export ───────────────────────────────────────────────
 
 export interface TeardownResult {
@@ -267,6 +315,8 @@ export interface SeedResult {
   extraPlayers: Record<string, BotPlayer>;
   matchId?: string; // Primary / first match ID
   matchId2?: string; // Second match ID (two_matches_on_deck preset only)
+  /** Slug of the sandbox session's club — for building club-scoped test URLs. */
+  clubSlug: string;
 }
 
 export type QueuePreset =
@@ -1081,6 +1131,28 @@ export async function seedSession(
     }
   }
 
+  // ── Enroll every bot player in the sandbox session's club ───────────
+  // Route-level requireClubMembership gates club-scoped pages — without
+  // this, tests that navigate directly to /c/[slug]/... (bypassing the
+  // legacy root shims that used to auto-enroll via ensureClubMembership)
+  // would get redirected away as non-members.
+  const club = await resolveSandboxClub(db, sessionId);
+  const allBotIds = [
+    ...Object.values(bots).map((b) => b.userId),
+    ...Object.values(extraPlayers).map((b) => b.userId),
+  ];
+  const { error: memberErr } = await db.from("club_members").upsert(
+    allBotIds.map((playerId) => ({
+      club_id: club.id,
+      player_id: playerId,
+      role: "member" as const,
+    })),
+    { onConflict: "club_id,player_id" }
+  );
+  if (memberErr) {
+    throw new Error(`[seed] Failed to upsert club_members: ${memberErr.message}`);
+  }
+
   return {
     sessionId,
     courtIds: courts.map((c) => c.id),
@@ -1088,5 +1160,6 @@ export async function seedSession(
     extraPlayers,
     matchId,
     matchId2,
+    clubSlug: club.slug,
   };
 }

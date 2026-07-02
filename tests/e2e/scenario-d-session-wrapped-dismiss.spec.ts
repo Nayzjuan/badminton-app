@@ -40,7 +40,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: false });
 
 const SESSION_ID = process.env.TEST_SESSION_ID!;
-const BASE_URL   = process.env.TEST_BASE_URL!;
+const BASE_URL = process.env.TEST_BASE_URL!;
 
 // ── Seed a wrapped stats row for the organizer bot ─────────────
 async function seedWrappedStats(
@@ -50,19 +50,19 @@ async function seedWrappedStats(
   const db = adminDb();
   const { error } = await db.from("session_wrapped_stats").upsert(
     {
-      session_id:          SESSION_ID,
-      player_id:           playerId,
-      games_played:        5,
-      wins:                3,
-      losses:              2,
-      points_for:          75,
-      points_against:      60,
-      win_pct:             60.00,
-      win_streak:          2,
-      session_rank:        1,
-      earned_awards:       [],
-      award_data:          {},
-      intro_dismissed_at:  introDismissedAt,
+      session_id: SESSION_ID,
+      player_id: playerId,
+      games_played: 5,
+      wins: 3,
+      losses: 2,
+      points_for: 75,
+      points_against: 60,
+      win_pct: 60.0,
+      win_streak: 2,
+      session_rank: 1,
+      earned_awards: [],
+      award_data: {},
+      intro_dismissed_at: introDismissedAt,
     },
     { onConflict: "session_id,player_id" }
   );
@@ -204,7 +204,9 @@ test.describe("Wrapped Dismiss — [C] See Awards → in-memory dismiss only", (
 // [D] "Done" header button persists dismiss to DB
 // ─────────────────────────────────────────────────────────────
 test.describe("Wrapped Dismiss — [D] Done button persists dismiss", () => {
-  test("clicking Done sets intro_dismissed_at in DB and navigates to /play", async ({ browser }) => {
+  test("clicking Done sets intro_dismissed_at in DB and navigates to /play", async ({
+    browser,
+  }) => {
     await seedWrappedStats(organizerUserId, null);
 
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
@@ -302,15 +304,14 @@ test.describe("Wrapped Dismiss — [F] /play redirect → wrapped when not dismi
       await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
 
       // Should land on the wrapped page for this player
-      await expect(page).toHaveURL(
-        new RegExp(`/wrapped/${SESSION_ID}/${organizerUserId}`),
-        { timeout: 10_000 }
-      );
+      await expect(page).toHaveURL(new RegExp(`/wrapped/${SESSION_ID}/${organizerUserId}`), {
+        timeout: 10_000,
+      });
 
       // Intro overlay should be visible (not dismissed)
-      await expect(
-        page.getByRole("dialog", { name: "Session Wrapped intro" })
-      ).toBeVisible({ timeout: 8_000 });
+      await expect(page.getByRole("dialog", { name: "Session Wrapped intro" })).toBeVisible({
+        timeout: 8_000,
+      });
     } finally {
       await context.close();
     }
@@ -318,10 +319,10 @@ test.describe("Wrapped Dismiss — [F] /play redirect → wrapped when not dismi
 });
 
 // ─────────────────────────────────────────────────────────────
-// [G] /play/[sessionId] → /play (already dismissed)
+// [G] /play/[sessionId] → /c/[clubSlug] (already dismissed)
 // ─────────────────────────────────────────────────────────────
-test.describe("Wrapped Dismiss — [G] /play redirect → lobby when already dismissed", () => {
-  test("navigating /play/[sessionId] redirects to /play when intro_dismissed_at is set", async ({
+test.describe("Wrapped Dismiss — [G] /play redirect → club lobby when already dismissed", () => {
+  test("navigating /play/[sessionId] redirects to the club lobby when intro_dismissed_at is set", async ({
     browser,
   }) => {
     // Close the session + mark as already dismissed
@@ -334,10 +335,10 @@ test.describe("Wrapped Dismiss — [G] /play redirect → lobby when already dis
     try {
       await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
 
-      // The server redirects to /play, which may itself auto-forward to
-      // /play/[some-other-active-session-id]. Either way, the player must
-      // NOT be sent to the wrapped page for this already-dismissed session.
-      await page.waitForURL(/\/play/, { timeout: 10_000 });
+      // The legacy shim resolves the session's club, then the club-scoped
+      // route sees intro_dismissed_at is set and redirects to the club
+      // lobby (/c/[clubSlug] exactly — clubBase()), not back to the wrapped page.
+      await page.waitForURL(/\/c\/[^/]+(?:\?.*)?$/, { timeout: 10_000 });
       expect(page.url()).not.toContain(`/wrapped/${SESSION_ID}`);
     } finally {
       await context.close();

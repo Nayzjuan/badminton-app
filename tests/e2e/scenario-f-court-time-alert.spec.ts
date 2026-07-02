@@ -29,6 +29,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 import { resetSandboxSession, seedSession } from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -67,10 +68,7 @@ test.beforeEach(async () => {
 
   // Guarantee a clean time limit (teardown doesn't reset this column)
   const db = adminDb();
-  await db
-    .from("sessions")
-    .update({ court_time_limit_minutes: null })
-    .eq("id", sandboxSessionId());
+  await db.from("sessions").update({ court_time_limit_minutes: null }).eq("id", sandboxSessionId());
 });
 
 // ── F-1: Threshold hint ────────────────────────────────────────
@@ -81,20 +79,20 @@ test.describe("Court Time Popover — UI content", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Open the time limit popover
       await page.getByTestId("court-time-trigger").click();
 
       // Threshold hint should be visible in the open popover
-      await expect(
-        page.getByTestId("court-time-threshold-hint")
-      ).toBeVisible({ timeout: 3_000 });
+      await expect(page.getByTestId("court-time-threshold-hint")).toBeVisible({ timeout: 3_000 });
 
-      await expect(
-        page.getByTestId("court-time-threshold-hint")
-      ).toHaveText("Card glows amber at the limit, red at +10 min");
+      await expect(page.getByTestId("court-time-threshold-hint")).toHaveText(
+        "Card glows amber at the limit, red at +10 min"
+      );
     } finally {
       await context.close();
     }
@@ -110,7 +108,9 @@ test.describe("Court Time Popover — setting and clearing the limit", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Trigger shows "Off" initially (no limit set)
@@ -137,22 +137,19 @@ test.describe("Court Time Popover — setting and clearing the limit", () => {
     }
   });
 
-  test("F-3: clearing the limit (Off) → DB null and pill displays 'Off'", async ({
-    browser,
-  }) => {
+  test("F-3: clearing the limit (Off) → DB null and pill displays 'Off'", async ({ browser }) => {
     const db = adminDb();
 
     // Pre-set limit to 30 so we can clear it
-    await db
-      .from("sessions")
-      .update({ court_time_limit_minutes: 30 })
-      .eq("id", sandboxSessionId());
+    await db.from("sessions").update({ court_time_limit_minutes: 30 }).eq("id", sandboxSessionId());
 
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Trigger should already reflect the pre-set value
@@ -187,29 +184,23 @@ test.describe("Court Time Popover — setting and clearing the limit", () => {
 // data-alert-tier attribute on [data-testid="court-card-{courtId}"].
 
 test.describe("Court Time Alert — tier thresholds", () => {
-  test("F-4: normal (green) glow when match is under the time limit", async ({
-    browser,
-  }) => {
+  test("F-4: normal (green) glow when match is under the time limit", async ({ browser }) => {
     const db = adminDb();
     const courtId = seeded.courtIds[0]; // Court 1 is in_use
     const matchId = seeded.matchId!;
 
     // Limit: 30 min, elapsed: 10 min → normal
     const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
-    await db
-      .from("sessions")
-      .update({ court_time_limit_minutes: 30 })
-      .eq("id", sandboxSessionId());
-    await db
-      .from("matches")
-      .update({ started_at: startedAt })
-      .eq("id", matchId);
+    await db.from("sessions").update({ court_time_limit_minutes: 30 }).eq("id", sandboxSessionId());
+    await db.from("matches").update({ started_at: startedAt }).eq("id", matchId);
 
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Wait for the court card to appear
@@ -223,29 +214,23 @@ test.describe("Court Time Alert — tier thresholds", () => {
     }
   });
 
-  test("F-5: warning (amber) glow when match has reached the time limit", async ({
-    browser,
-  }) => {
+  test("F-5: warning (amber) glow when match has reached the time limit", async ({ browser }) => {
     const db = adminDb();
     const courtId = seeded.courtIds[0];
     const matchId = seeded.matchId!;
 
     // Limit: 30 min, elapsed: 31 min → warning
     const startedAt = new Date(Date.now() - 31 * 60_000).toISOString();
-    await db
-      .from("sessions")
-      .update({ court_time_limit_minutes: 30 })
-      .eq("id", sandboxSessionId());
-    await db
-      .from("matches")
-      .update({ started_at: startedAt })
-      .eq("id", matchId);
+    await db.from("sessions").update({ court_time_limit_minutes: 30 }).eq("id", sandboxSessionId());
+    await db.from("matches").update({ started_at: startedAt }).eq("id", matchId);
 
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       const courtCard = page.getByTestId(`court-card-${courtId}`);
@@ -258,29 +243,23 @@ test.describe("Court Time Alert — tier thresholds", () => {
     }
   });
 
-  test("F-6: critical (red) glow when 10+ minutes past the time limit", async ({
-    browser,
-  }) => {
+  test("F-6: critical (red) glow when 10+ minutes past the time limit", async ({ browser }) => {
     const db = adminDb();
     const courtId = seeded.courtIds[0];
     const matchId = seeded.matchId!;
 
     // Limit: 30 min, elapsed: 41 min → critical
     const startedAt = new Date(Date.now() - 41 * 60_000).toISOString();
-    await db
-      .from("sessions")
-      .update({ court_time_limit_minutes: 30 })
-      .eq("id", sandboxSessionId());
-    await db
-      .from("matches")
-      .update({ started_at: startedAt })
-      .eq("id", matchId);
+    await db.from("sessions").update({ court_time_limit_minutes: 30 }).eq("id", sandboxSessionId());
+    await db.from("matches").update({ started_at: startedAt }).eq("id", matchId);
 
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       const courtCard = page.getByTestId(`court-card-${courtId}`);
@@ -301,16 +280,15 @@ test.describe("Court Time Alert — tier thresholds", () => {
     // Match has been going for 45 min but no time limit is set
     const startedAt = new Date(Date.now() - 45 * 60_000).toISOString();
     // court_time_limit_minutes is already null from beforeEach reset
-    await db
-      .from("matches")
-      .update({ started_at: startedAt })
-      .eq("id", matchId);
+    await db.from("matches").update({ started_at: startedAt }).eq("id", matchId);
 
     const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       const courtCard = page.getByTestId(`court-card-${courtId}`);
@@ -339,7 +317,9 @@ test.describe("Regression — courts tab loads cleanly", () => {
     page.on("pageerror", (err) => errors.push(err.message));
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // The time limit picker pill renders in the add-court bar

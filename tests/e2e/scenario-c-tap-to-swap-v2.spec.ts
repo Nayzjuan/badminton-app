@@ -37,6 +37,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 import { resetSandboxSession, seedSession } from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -77,7 +78,9 @@ test.describe("Tap-to-Swap v2 — [A] Picking mode activation", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Floating bar should NOT exist before any tap
@@ -123,7 +126,9 @@ test.describe("Tap-to-Swap v2 — [B] Cancel by re-tap", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       const alicePill = page.getByTestId(`player-pill-${seeded.players.alice.userId}`);
@@ -150,7 +155,9 @@ test.describe("Tap-to-Swap v2 — [C] Cancel via × button", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       const alicePill = page.getByTestId(`player-pill-${seeded.players.alice.userId}`);
@@ -185,7 +192,9 @@ test.describe("Tap-to-Swap v2 — [D] Cancel via Esc key", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       const alicePill = page.getByTestId(`player-pill-${seeded.players.alice.userId}`);
@@ -213,7 +222,9 @@ test.describe("Tap-to-Swap v2 — [E] Same-match team swap", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Tap Alice (match 1, Team A)
@@ -274,7 +285,9 @@ test.describe("Tap-to-Swap v2 — [F] Cross-match player swap", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       // Reload once if the courts tab doesn't appear — by test [F] (6th beforeEach cycle)
       // the dev server can be slow to hydrate on the first navigation attempt.
       const tabReady = await page
@@ -366,7 +379,9 @@ test.describe("Tap-to-Swap v2 — [G] VIP tag preserved", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // VIP tag visible before picking mode.
@@ -410,7 +425,9 @@ test.describe("Tap-to-Swap v2 — [H] Pick from Bench escape", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Tap Alice — enter picking mode
@@ -445,7 +462,9 @@ test.describe("Tap-to-Swap v2 — [I] Undo", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Execute cross-match swap: Alice ↔ Eve
@@ -515,7 +534,9 @@ test.describe("Tap-to-Swap v2 — [J] Active court locked", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Active court card should be visible
@@ -559,7 +580,9 @@ test.describe("Tap-to-Swap v2 — [K] Layer 2 pre-flight guard", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Tap Alice — enters picking mode (match 1 selected)
