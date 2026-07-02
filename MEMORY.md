@@ -5,6 +5,20 @@
 
 ---
 
+## 🆕 REALTIME JWT-BEFORE-JOIN FIX — branch `feat/multi-tenant` (2026-07-02)
+
+**Status: FIXED + committed + pushed + independently reviewed (LGTM ×2) + tsc/lint/build clean + E2E-verified.** Commits `1eefb04` (client.ts + realtime.ts), `67b40a4` (scenario-j test hardening), `eac5ad6` (use-organizer-session.ts). NOT merged/deployed to prod (cutover still gated on user go).
+
+**Bug (long-standing #76, pre-existing on `main`, NOT a cutover regression):** Supabase Realtime binds a channel's `postgres_changes` RLS row-filter to the socket's JWT **at channel-join time**; a later `setAuth()` does not re-bind an already-joined channel. `@supabase/ssr` hydrates the persisted cookie session asynchronously (`INITIAL_SESSION`), which fires _after_ hook effects synchronously call `.subscribe()` → channels joined as `anon` → under the new club-scoped RLS (`is_session_club_member`/`is_session_organizer`), anon matched **zero rows** → drafted→on_deck / cancel updates never reached the player's browser (e2e scenario-j J-B/J-C; UX-only, refresh recovered). An earlier `INITIAL_SESSION → setAuth` attempt (`743eb10`, superseded) lost the same race — it fired too late.
+
+**Fix:** `createBrowserSupabaseClient()` eagerly runs `getSession() → realtime.setAuth()` and exposes the promise via **`whenRealtimeAuthReady()`**; all five `postgres_changes` helpers in `src/lib/realtime.ts` (`subscribeToTable` → courts/queue/matches, `subscribeToMatchPlayers`, `subscribeToProfiles`) **and** the organizer `session-settings` channel in `use-organizer-session.ts` now `await` it before `.subscribe()`. Cleanup: `cancelled` flag + null-guarded `removeChannel` (StrictMode-safe, no channel leak). Broadcast channel intentionally NOT deferred (no postgres_changes RLS). Full audit confirmed these are the ONLY channel-creation sites. Writeup: `APP_MANIFEST.md` → "Realtime Subscription Auth (JWT-before-join)".
+
+**Verification:** scenario-j 3/3 green ×2 consecutive; **full E2E suite 99/99 green** on `1eefb04`; final all-fixes run on `eac5ad6` = **98/99** (sole failure = known-flaky I-3c auto-matchmaking toggle click, documented toast-interception timeout under full-suite load — passed 34/34 on isolated scenario-i re-run, unrelated to the session-settings deferral which uses broadcast not court-time); `npm run build` clean; two independent review gates returned **LGTM** (verified `setAuth` synchronous-before-join vs `RealtimeClient.js`, no leak, no circular import, SSR-safe, health-counter untouched, 15s poll fallback intact). scenario-j test defects also fixed: ambiguous `getByRole("alert")` scoped to the on-deck overlay's accessible name; flaky 8s cold-start setup timeouts widened to 15s.
+
+**Next steps:** await user go for the production cutover (merge `feat/multi-tenant` → `main`); at cutover, re-REVOKE the 2 leaderboard/history view grants (no-op for the app — reads already use RPC/service-client). Remaining non-blocking: doc-staleness polish (gap-audit #15/16/17/18), migration-history reconciliation, `ZZ_`/bot test-data cleanup in prod sandbox.
+
+---
+
 ## 🆕 HARDENED SECURITY DEFINER VIEWS — branch `feat/multi-tenant` (2026-07-02, Task #55)
 
 **Status: BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + tsc/lint/build clean + live-verified + independently reviewed.** First review pass: **Needs fixes** (caught a real regression). Fix applied, re-reviewed: **LGTM**. NOT yet committed.

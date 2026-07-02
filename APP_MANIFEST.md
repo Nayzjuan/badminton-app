@@ -63,6 +63,16 @@ createServiceClient(); // uses service role key
 - `cap_saturation` — `{ affectedPlayerIds, reason }` → fires when `MAX_PARTNERSHIP_REPEATS` blocks every possible team split. Surfaces a `CapSaturationNotice` banner in the on-deck panel so the organizer knows to intervene manually.
 - `draft_cap_phase` — `{ phase: "clearing" | "generating" | "done", cap }` → drives the synchronized dashboard lockout overlay during a cap-change reset.
 
+### Realtime Subscription Auth (JWT-before-join)
+
+Supabase Realtime binds a channel's `postgres_changes` RLS row-filter to the socket's JWT **at channel-join time** — a later `setAuth()` does **not** re-bind an already-joined channel. `@supabase/ssr` hydrates a persisted cookie session asynchronously (the `INITIAL_SESSION` auth event), which fires _after_ hook effects synchronously call `.subscribe()`. So without care, channels join under the `anon` Postgres role; under the club-scoped RLS on `sessions` / `queue_entries` / `matches` / `match_players` / `courts` (`is_session_club_member` / `is_session_organizer`), `anon` matches zero rows and **no realtime events are ever delivered** — e.g. a drafted player's "Match Forming" card never flips to on-deck until a manual refresh (was e2e scenario-j J-B/J-C).
+
+**Fix (`src/utils/supabase/client.ts` + `src/lib/realtime.ts`):**
+
+- `createBrowserSupabaseClient()` eagerly runs `getSession() → realtime.setAuth(access_token)` on first call and exposes the resulting promise via **`whenRealtimeAuthReady()`**; it also re-`setAuth`s on every later auth transition (SIGNED_IN / TOKEN_REFRESHED / INITIAL_SESSION).
+- Every `postgres_changes` subscribe helper — `subscribeToTable` (courts/queue/matches), `subscribeToMatchPlayers`, `subscribeToProfiles` — and the organizer `session-settings` channel in `use-organizer-session.ts` **defer `.subscribe()` behind `whenRealtimeAuthReady()`**, guaranteeing the JWT is set before join. Cleanup uses a `cancelled` flag + null-guarded `removeChannel`, so an unmount before the deferred join leaks nothing (StrictMode-safe).
+- The Broadcast channel (`subscribeToOrganizerBroadcast`) is intentionally **not** deferred — broadcast delivery has no `postgres_changes` RLS and needs no JWT-before-join.
+
 ### Shared Server Action Helpers
 
 **File:** `src/app/actions/_shared.ts`
