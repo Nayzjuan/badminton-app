@@ -1876,9 +1876,12 @@ npx tsx scripts/extract.ts  # One-shot extraction
 carries a `club_id`. All pre-existing data was absorbed into a fixed **"Legacy" club** (`…0001`), and every
 existing player was backfilled as a Legacy member (`supabase/data-fixes/20260630_legacy_club_membership_backfill.sql`).
 
-**Isolation = application layer + RLS on operational tables.** The club tables themselves (`clubs`/
-`club_members`/`club_invites`) are **RLS deny-all** (enabled, no policies), so only the service role reads
-them — tenant isolation for those is enforced in code: `src/lib/clubs.ts` (server-only read/guard layer —
+**Isolation = application layer + RLS on operational tables.** `clubs` and `club_invites` are **RLS
+deny-all** (enabled, no policies), so only the service role reads them. `club_members` additionally has a
+member-scoped SELECT policy (`club_members_select`: `player_id = auth.uid() OR is_club_member(club_id)`,
+added in `20260702000002`) so the browser client can render the club roster/switcher; all writes still go
+only through the service-role server actions. Tenant isolation for these tables is enforced in code:
+`src/lib/clubs.ts` (server-only read/guard layer —
 `getClubBySlug`, `getClubRole`, `requireClubMembership`, `ensureClubMembership`, `resolveSessionClubSlug`,
 `getMyActiveClubIds`) + `src/app/actions/clubs.ts` (`createClub`, `createClubInvite`, `acceptClubInvite`).
 The *operational* tables that reference a club indirectly (`matches`, `match_players`, `queue_entries`,

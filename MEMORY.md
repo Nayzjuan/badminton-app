@@ -5,9 +5,13 @@
 
 ---
 
+> **📍 CURRENT STATUS (2026-07-02): MULTI-TENANT IS SHIPPED.** `feat/multi-tenant` was merged → `main` (`f3aae17`) and deployed to prod (club **CHILLAX**, slug `legacy`, ~163 active members). **Every "NOT yet committed" / "gated on user go" note in the entries below is now HISTORICAL** — all that work is committed to `main` and live. Prod DB matches the code; the leaderboard/history view-grant stopgap was reversed. Rollback target: Vercel deployment `d19b2ea`. `main` is the trunk going forward.
+
+---
+
 ## 🆕 REALTIME JWT-BEFORE-JOIN FIX — branch `feat/multi-tenant` (2026-07-02)
 
-**Status: FIXED + committed + pushed + independently reviewed (LGTM ×2) + tsc/lint/build clean + E2E-verified.** Commits `1eefb04` (client.ts + realtime.ts), `67b40a4` (scenario-j test hardening), `eac5ad6` (use-organizer-session.ts). NOT merged/deployed to prod (cutover still gated on user go).
+**Status: FIXED + committed + reviewed (LGTM ×2) + tsc/lint/build clean + E2E-verified + ✅ MERGED to `main` (`f3aae17`) + DEPLOYED to prod** (see the cutover note at the end of this entry). Commits `1eefb04` (client.ts + realtime.ts), `67b40a4` (scenario-j test hardening), `eac5ad6` (use-organizer-session.ts).
 
 **Bug (long-standing #76, pre-existing on `main`, NOT a cutover regression):** Supabase Realtime binds a channel's `postgres_changes` RLS row-filter to the socket's JWT **at channel-join time**; a later `setAuth()` does not re-bind an already-joined channel. `@supabase/ssr` hydrates the persisted cookie session asynchronously (`INITIAL_SESSION`), which fires _after_ hook effects synchronously call `.subscribe()` → channels joined as `anon` → under the new club-scoped RLS (`is_session_club_member`/`is_session_organizer`), anon matched **zero rows** → drafted→on_deck / cancel updates never reached the player's browser (e2e scenario-j J-B/J-C; UX-only, refresh recovered). An earlier `INITIAL_SESSION → setAuth` attempt (`743eb10`, superseded) lost the same race — it fired too late.
 
