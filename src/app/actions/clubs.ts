@@ -138,35 +138,57 @@ export async function acceptClubInvite(token: string): Promise<AcceptInviteResul
 
   const db = createServiceClient();
 
-  const { data: invite } = await db
+  const { data: invite, error: inviteErr } = await db
     .from("club_invites")
     .select("id, club_id, role, consumed_at, expires_at")
     .eq("token", cleaned)
     .maybeSingle();
 
+  // A transient lookup error must not read as an invalid token (a dead-end for a
+  // retryable condition) — surface a retryable message instead.
+  if (inviteErr) return { success: false, message: "Something went wrong. Please try again." };
   if (!invite) return { success: false, message: "This invite link is not valid." };
   if (invite.consumed_at) return { success: false, message: "This invite has already been used." };
   if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now()) {
     return { success: false, message: "This invite has expired." };
   }
 
-  const { data: club } = await db
+  const { data: club, error: clubErr } = await db
     .from("clubs")
     .select("slug")
     .eq("id", invite.club_id)
     .maybeSingle();
+  if (clubErr) return { success: false, message: "Something went wrong. Please try again." };
   if (!club) return { success: false, message: "That club no longer exists." };
 
-  // Join, handling the three membership states explicitly. A blind
+  // Consume the one-time token FIRST, as the atomic gate. The conditional
+  // `UPDATE ... WHERE consumed_at IS NULL` is row-locked, so under concurrent
+  // redemption (same link pasted into many tabs) exactly ONE caller wins — only
+  // the winner proceeds to grant membership. This closes the multi-redeem race
+  // where several users (some as admins) could join off a single one-time link.
+  // Fails closed: if the membership grant below errors, the token is spent and a
+  // fresh invite is needed — safer than over-seating the club.
+  const { data: consumed, error: consumeErr } = await db
+    .from("club_invites")
+    .update({ consumed_by: user.id, consumed_at: new Date().toISOString() })
+    .eq("id", invite.id)
+    .is("consumed_at", null)
+    .select("id");
+  if (consumeErr) return { success: false, message: "Something went wrong. Please try again." };
+  if (!consumed || consumed.length === 0) {
+    return { success: false, message: "This invite has already been used." };
+  }
+
+  // Grant membership, handling the three states explicitly. A blind
   // ignoreDuplicates upsert would silently skip a soft-removed (is_active=false)
-  // row, leaving the player inactive while reporting success — the layout guard
-  // would then bounce them straight back to /clubs.
-  const { data: existing } = await db
+  // row, leaving the player inactive while reporting success.
+  const { data: existing, error: existingErr } = await db
     .from("club_members")
-    .select("id, is_active")
+    .select("id, is_active, role")
     .eq("club_id", invite.club_id)
     .eq("player_id", user.id)
     .maybeSingle();
+  if (existingErr) return { success: false, message: "Something went wrong. Please try again." };
 
   if (!existing) {
     // New member — grant the invite's role.
@@ -177,30 +199,21 @@ export async function acceptClubInvite(token: string): Promise<AcceptInviteResul
     });
     if (insErr) return { success: false, message: "Failed to join the club. Please try again." };
   } else if (!existing.is_active) {
-    // Previously removed — re-activate. Role is preserved (re-grading a member
-    // is a separate admin action), only membership is restored.
+    // Previously removed — re-activate, but CLAMP the restored role to the LESSER
+    // privilege of their prior role and the invite's grant, so a low-privilege
+    // (e.g. member) invite can never silently reinstate a removed owner/admin.
+    const priv = (r: ClubRole): number => (r === "owner" ? 2 : r === "admin" ? 1 : 0);
+    const prior = existing.role as ClubRole;
+    const inviteRole = invite.role as ClubRole;
+    const restoredRole: ClubRole = priv(prior) <= priv(inviteRole) ? prior : inviteRole;
     const { error: reErr } = await db
       .from("club_members")
-      .update({ is_active: true })
+      .update({ is_active: true, role: restoredRole })
       .eq("id", existing.id);
     if (reErr) return { success: false, message: "Failed to re-join the club. Please try again." };
   }
   // else: already an active member — no-op (don't downgrade an owner/admin who
   // re-redeems a member invite).
-
-  // Consume the token (one-time). The `is(consumed_at, null)` guard makes a
-  // double-redeem race a no-op rather than overwriting the first consumer.
-  // Membership was already granted above, so a failure here doesn't block the
-  // join — but it's logged since a silently-unconsumed token could otherwise
-  // be redeemed indefinitely.
-  const { error: consumeErr } = await db
-    .from("club_invites")
-    .update({ consumed_by: user.id, consumed_at: new Date().toISOString() })
-    .eq("id", invite.id)
-    .is("consumed_at", null);
-  if (consumeErr) {
-    console.error(`acceptClubInvite: failed to consume invite ${invite.id}:`, consumeErr);
-  }
 
   revalidatePath("/clubs");
   return { success: true, message: "You've joined the club.", slug: club.slug };
@@ -311,11 +324,18 @@ export async function removeMember(
   const { data: result, error } = await db.rpc("club_member_deactivate", {
     p_club_id: clubId,
     p_member_id: memberId,
+    p_expected_role: target.role, // re-checked under the lock (hierarchy TOCTOU)
   });
 
   if (error || !result?.success) {
     if (result?.reason === "only_owner") {
       return { success: false, message: "Can't remove the club's only owner." };
+    }
+    if (result?.reason === "role_changed") {
+      return {
+        success: false,
+        message: "That member's role just changed — refresh and try again.",
+      };
     }
     return { success: false, message: "Failed to remove member. Please try again." };
   }
@@ -419,11 +439,18 @@ export async function changeMemberRole(
     p_club_id: clubId,
     p_member_id: memberId,
     p_new_role: newRole,
+    p_expected_role: target.role, // re-checked under the lock (hierarchy TOCTOU)
   });
 
   if (error || !result?.success) {
     if (result?.reason === "only_owner") {
       return { success: false, message: "Can't demote the club's only owner." };
+    }
+    if (result?.reason === "role_changed") {
+      return {
+        success: false,
+        message: "That member's role just changed — refresh and try again.",
+      };
     }
     return { success: false, message: "Failed to change role. Please try again." };
   }

@@ -57,7 +57,15 @@ export default async function ClubJoinPage({ params, searchParams }: ClubJoinPag
       .single();
     if (profile) {
       // Returning player — enroll in the club, queue for the session, route in.
-      await ensureClubMembership(clubSlug, user.id);
+      const enroll = await ensureClubMembership(clubSlug, user.id);
+      if (!enroll.ok) {
+        // Enrollment write failed — don't strand them on a member-gated route
+        // they'd be bounced out of. Send them to their club hub instead.
+        redirect("/clubs");
+      }
+      // Announce the join on the destination ONLY when this scan actually
+      // added them (first join / reactivation) — not when already a member.
+      const joinedQs = enroll.joined ? "?joined=1" : "";
       if (validSessionId) {
         await supabase
           .from("queue_entries")
@@ -65,9 +73,9 @@ export default async function ClubJoinPage({ params, searchParams }: ClubJoinPag
             { session_id: validSessionId, player_id: user.id, status: "waiting" },
             { onConflict: "session_id,player_id", ignoreDuplicates: true }
           );
-        redirect(clubPlay(clubSlug, validSessionId));
+        redirect(clubPlay(clubSlug, validSessionId) + joinedQs);
       }
-      redirect(clubBase(clubSlug));
+      redirect(clubBase(clubSlug) + joinedQs);
     }
   }
 

@@ -100,7 +100,12 @@ export async function signInAnonymously(formData: FormData) {
       return { success: false, error: upsertError.message };
     }
 
-    if (clubSlug) await ensureClubMembership(clubSlug, existingUser.id);
+    if (clubSlug) {
+      const enroll = await ensureClubMembership(clubSlug, existingUser.id);
+      // Club vanished / membership write failed — don't redirect into a gated
+      // club route that would immediately bounce them; send them to their hub.
+      if (!enroll.ok) redirect("/clubs");
+    }
     redirect(destination);
   }
 
@@ -179,7 +184,11 @@ export async function signInAnonymously(formData: FormData) {
 
   // QR-join enrollment: a brand-new scanner becomes an active member of the
   // club, so the club route's membership gate lets them straight in.
-  if (clubSlug && data.user) await ensureClubMembership(clubSlug, data.user.id);
+  if (clubSlug && data.user) {
+    const enroll = await ensureClubMembership(clubSlug, data.user.id);
+    // Enrollment failed — avoid redirecting into a gated route that bounces.
+    if (!enroll.ok) redirect("/clubs");
+  }
   redirect(destination);
 }
 

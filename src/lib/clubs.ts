@@ -34,7 +34,10 @@ function roleRank(role: ClubRole): number {
  */
 export const getClubBySlug = cache(async (slug: string): Promise<Club | null> => {
   const db = createServiceClient();
-  const { data } = await db.from("clubs").select("*").eq("slug", slug).maybeSingle();
+  const { data, error } = await db.from("clubs").select("*").eq("slug", slug).maybeSingle();
+  // Distinguish a genuine miss (null → callers notFound()) from a transient DB
+  // error (throw → nearest error.tsx offers a retry, not a misleading 404).
+  if (error) throw new Error(`getClubBySlug(${slug}): ${error.message}`);
   return data ?? null;
 });
 
@@ -44,11 +47,12 @@ export type MyClub = { club: Club; role: ClubRole; activeSessions: number };
 export async function getMyClubs(userId: string): Promise<MyClub[]> {
   const db = createServiceClient();
 
-  const { data: memberships } = await db
+  const { data: memberships, error: mErr } = await db
     .from("club_members")
     .select("club_id, role")
     .eq("player_id", userId)
     .eq("is_active", true);
+  if (mErr) throw new Error(`getMyClubs memberships: ${mErr.message}`);
 
   if (!memberships || memberships.length === 0) return [];
 
@@ -58,10 +62,12 @@ export async function getMyClubs(userId: string): Promise<MyClub[]> {
 
   const clubIds = Array.from(roleByClub.keys());
 
-  const [{ data: clubs }, { data: activeSessions }] = await Promise.all([
+  const [{ data: clubs, error: cErr }, { data: activeSessions, error: sErr }] = await Promise.all([
     db.from("clubs").select("*").in("id", clubIds).eq("is_active", true),
     db.from("sessions").select("club_id").in("club_id", clubIds).eq("is_active", true),
   ]);
+  if (cErr) throw new Error(`getMyClubs clubs: ${cErr.message}`);
+  if (sErr) throw new Error(`getMyClubs sessions: ${sErr.message}`);
 
   const sessionCountByClub = new Map<string, number>();
   for (const { club_id } of activeSessions ?? []) {
@@ -88,12 +94,13 @@ export async function getMyClubs(userId: string): Promise<MyClub[]> {
  */
 export async function getMyActiveClubIds(userId: string): Promise<string[]> {
   const db = createServiceClient();
-  const { data } = await db
+  const { data, error } = await db
     .from("club_members")
     .select("club_id, clubs!inner(is_active)")
     .eq("player_id", userId)
     .eq("is_active", true)
     .eq("clubs.is_active", true);
+  if (error) throw new Error(`getMyActiveClubIds: ${error.message}`);
   return (data ?? []).map((m) => m.club_id);
 }
 
@@ -104,13 +111,16 @@ export async function getMyActiveClubIds(userId: string): Promise<string[]> {
 export const getClubRole = cache(
   async (userId: string, clubId: string): Promise<ClubRole | null> => {
     const db = createServiceClient();
-    const { data } = await db
+    const { data, error } = await db
       .from("club_members")
       .select("role")
       .eq("player_id", userId)
       .eq("club_id", clubId)
       .eq("is_active", true)
       .maybeSingle();
+    // A transient error must NOT read as "not a member" — that would bounce a
+    // real owner/member out of a gated route. Throw → error.tsx retry instead.
+    if (error) throw new Error(`getClubRole: ${error.message}`);
     return (data?.role as ClubRole) ?? null;
   }
 );
@@ -151,17 +161,19 @@ export async function getClubMembers(
     .select("id, player_id, role, joined_at, is_active")
     .eq("club_id", clubId);
   if (!opts?.includeInactive) query = query.eq("is_active", true);
-  const { data: members } = await query;
+  const { data: members, error: memErr } = await query;
+  if (memErr) throw new Error(`getClubMembers: ${memErr.message}`);
 
   if (!members || members.length === 0) return [];
 
-  const { data: profiles } = await db
+  const { data: profiles, error: profErr } = await db
     .from("profiles")
     .select("id, display_name")
     .in(
       "id",
       members.map((m) => m.player_id)
     );
+  if (profErr) throw new Error(`getClubMembers profiles: ${profErr.message}`);
 
   const nameById = new Map<string, string>((profiles ?? []).map((p) => [p.id, p.display_name]));
 
@@ -185,11 +197,12 @@ export async function getClubMembers(
 /** All sessions belonging to a club, newest first. */
 export async function getClubSessions(clubId: string): Promise<Session[]> {
   const db = createServiceClient();
-  const { data } = await db
+  const { data, error } = await db
     .from("sessions")
     .select("*")
     .eq("club_id", clubId)
     .order("created_at", { ascending: false });
+  if (error) throw new Error(`getClubSessions: ${error.message}`);
   return data ?? [];
 }
 
@@ -227,48 +240,68 @@ export async function requireClubMembership(
 export async function resolveSessionClubSlug(sessionId: string): Promise<string | null> {
   if (!isValidUUID(sessionId)) return null;
   const db = createServiceClient();
-  const { data: session } = await db
+  const { data: session, error: sErr } = await db
     .from("sessions")
     .select("club_id")
     .eq("id", sessionId)
     .maybeSingle();
+  if (sErr) throw new Error(`resolveSessionClubSlug session: ${sErr.message}`);
   if (!session?.club_id) return null;
-  const { data: club } = await db
+  const { data: club, error: cErr } = await db
     .from("clubs")
     .select("slug")
     .eq("id", session.club_id)
     .maybeSingle();
+  if (cErr) throw new Error(`resolveSessionClubSlug club: ${cErr.message}`);
   return club?.slug ?? null;
 }
+
+/**
+ * Result of an auto-enroll attempt.
+ *   ok     — the caller is an active member afterwards (or already was).
+ *   joined — a NEW membership was created, or a soft-removed one reactivated,
+ *            by THIS call (i.e. their membership actually changed). false when
+ *            they were already an active member. Drives the one-time
+ *            "Welcome to X" confirmation on the QR-join path.
+ */
+export type EnsureClubMembershipResult = { ok: boolean; joined: boolean };
 
 /**
  * Auto-enroll a player as an active member of the club (QR-join path).
  * Insert if missing · re-activate if soft-removed · no-op if already active —
  * never downgrades an existing owner/admin. Service-role write (bypasses RLS).
- * Returns true on success / already-member, false if the club can't be resolved.
+ * ok=false only when the club can't be resolved or the membership write fails.
  */
-export async function ensureClubMembership(clubSlug: string, userId: string): Promise<boolean> {
+export async function ensureClubMembership(
+  clubSlug: string,
+  userId: string
+): Promise<EnsureClubMembershipResult> {
   const club = await getClubBySlug(clubSlug);
-  if (!club) return false;
+  if (!club) return { ok: false, joined: false };
   const db = createServiceClient();
-  const { data: existing } = await db
+  const { data: existing, error: readErr } = await db
     .from("club_members")
     .select("id, is_active")
     .eq("club_id", club.id)
     .eq("player_id", userId)
     .maybeSingle();
+  // Called fire-and-forget from redirect flows (route handlers / server
+  // actions), so report failure via ok=false rather than throwing — a throw
+  // would abort the enclosing redirect. The QR-join guard turns ok=false into
+  // a safe /clubs fallback.
+  if (readErr) return { ok: false, joined: false };
   if (!existing) {
     const { error } = await db
       .from("club_members")
       .insert({ club_id: club.id, player_id: userId, role: "member" });
-    return !error;
+    return { ok: !error, joined: !error };
   }
   if (!existing.is_active) {
     const { error } = await db
       .from("club_members")
       .update({ is_active: true })
       .eq("id", existing.id);
-    return !error;
+    return { ok: !error, joined: !error };
   }
-  return true; // already an active member — keep their role
+  return { ok: true, joined: false }; // already an active member — keep their role
 }

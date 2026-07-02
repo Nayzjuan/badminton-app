@@ -39,9 +39,6 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
   const { data: profile } = await db.from("profiles").select("*").eq("id", user.id).single();
   if (!profile) redirect("/");
 
-  // Duplicate-name gate (L1) — return to the club-scoped player path after rename.
-  await enforceRenameGate(profile, clubPlay(clubSlug, sessionId));
-
   const club = await getClubBySlug(clubSlug);
   if (!club) notFound();
 
@@ -54,6 +51,11 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
   if (!sessionRow) notFound();
   if (sessionRow.club_id !== club.id) notFound(); // session belongs to another club
   const session = { ...sessionRow, organizer_passcode: null };
+
+  // Duplicate-name gate (L1) — run AFTER confirming the session exists AND
+  // belongs to this club, so the post-rename return to clubPlay(...) can never
+  // land on a guaranteed notFound() (a hand-crafted /c/club-a/play/<club-b-id>).
+  await enforceRenameGate(profile, clubPlay(clubSlug, sessionId));
 
   // Session ended → Wrapped (unless the intro was already dismissed → club lobby).
   if (!session.is_active) {

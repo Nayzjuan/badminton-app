@@ -189,10 +189,11 @@ export function ClubAdminPanel({
             type="button"
             onClick={handleCreateInvite}
             disabled={creatingInvite}
+            aria-busy={creatingInvite}
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-cc-accent/55 bg-cc-accent-dim px-4 py-2.5 text-sm font-bold text-cc-accent-text transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {creatingInvite && <Loader2 className="h-4 w-4 animate-spin" />}
-            Generate invite link
+            {creatingInvite ? "Generating…" : "Generate invite link"}
           </button>
         </div>
 
@@ -203,7 +204,11 @@ export function ClubAdminPanel({
         )}
 
         {inviteLink && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-border dark:bg-muted/40">
+          <div
+            role="status"
+            aria-live="polite"
+            className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-border dark:bg-muted/40"
+          >
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-600 dark:text-muted-foreground">
               {inviteLink}
             </span>
@@ -332,17 +337,23 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
         </span>
         <div className="flex shrink-0 items-center gap-2">
           {viewerRole === "owner" && !isSelf && member.is_active ? (
-            <select
-              value={member.role}
-              disabled={pending}
-              onChange={handleRoleChange}
-              aria-label={`Change ${member.display_name}'s role`}
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-500 outline-none focus:border-cc-accent disabled:opacity-50 dark:border-border dark:bg-background dark:text-muted-foreground"
-            >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
-              <option value="owner">Owner</option>
-            </select>
+            <span className="inline-flex items-center gap-1.5">
+              <select
+                value={member.role}
+                disabled={pending}
+                onChange={handleRoleChange}
+                aria-label={`Change ${member.display_name}'s role`}
+                aria-describedby={error ? `member-${member.id}-error` : undefined}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-500 outline-none focus:border-cc-accent disabled:opacity-50 dark:border-border dark:bg-background dark:text-muted-foreground"
+              >
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+                <option value="owner">Owner</option>
+              </select>
+              {pending && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" aria-hidden="true" />
+              )}
+            </span>
           ) : (
             <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:bg-muted dark:text-muted-foreground">
               {ROLE_LABEL[member.role]}
@@ -397,7 +408,15 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
           )}
         </div>
       </div>
-      {error && <p className="text-[11px] text-red-600 dark:text-red-400">{error}</p>}
+      {error && (
+        <p
+          id={`member-${member.id}-error`}
+          role="alert"
+          className="text-[11px] text-red-600 dark:text-red-400"
+        >
+          {error}
+        </p>
+      )}
     </li>
   );
 }

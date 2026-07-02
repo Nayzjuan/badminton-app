@@ -1113,14 +1113,21 @@ export type Database = {
       // removeMember / changeMemberRole. service_role-only; actor
       // authorization stays in src/app/actions/clubs.ts.
       club_member_deactivate: {
-        Args: { p_club_id: string; p_member_id: string };
-        Returns: { success: boolean; reason: "ok" | "not_found" | "only_owner" };
+        // p_expected_role (optional): the target role the app validated against;
+        // the RPC re-checks it under the advisory lock → reason 'role_changed'.
+        Args: { p_club_id: string; p_member_id: string; p_expected_role?: string | null };
+        Returns: { success: boolean; reason: "ok" | "not_found" | "only_owner" | "role_changed" };
       };
       club_member_set_role: {
-        Args: { p_club_id: string; p_member_id: string; p_new_role: string };
+        Args: {
+          p_club_id: string;
+          p_member_id: string;
+          p_new_role: string;
+          p_expected_role?: string | null;
+        };
         Returns: {
           success: boolean;
-          reason: "ok" | "no_change" | "not_found" | "only_owner" | "invalid_role";
+          reason: "ok" | "no_change" | "not_found" | "only_owner" | "invalid_role" | "role_changed";
         };
       };
     };
