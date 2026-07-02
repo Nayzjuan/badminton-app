@@ -9,7 +9,7 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue } from "@/lib/realtime";
 import { joinQueueAction, checkoutPlayer } from "@/app/actions/queue";
@@ -36,6 +36,7 @@ interface UseQueueResult {
 
 export function useQueue(sessionId: string, playerId: string): UseQueueResult {
   const router = useRouter();
+  const pathname = usePathname();
   const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -132,8 +133,10 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
     if (result.requiresRename) {
       // Flagged duplicate (L2 backstop — the page gate usually catches this
       // first). Roll back the optimistic entry and route to the rename gate.
+      // Uses the current pathname (not a hardcoded /play/[id]) so this also
+      // works from the club-namespaced /c/[clubSlug]/play/[id] route.
       setQueue(snapshot);
-      router.push(`/rename?next=${encodeURIComponent(`/play/${sessionId}`)}`);
+      router.push(`/rename?next=${encodeURIComponent(pathname ?? `/play/${sessionId}`)}`);
       return { error: result.error };
     }
 
@@ -143,7 +146,7 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
     }
 
     return {};
-  }, [sessionId, playerId, router]);
+  }, [sessionId, playerId, router, pathname]);
 
   // Leave queue.
   // Delegates to checkoutPlayer (server action) so the atomic

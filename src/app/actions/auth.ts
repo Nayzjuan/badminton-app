@@ -14,8 +14,9 @@ import type { SkillLevel } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
-import { ensureClubMembership, getClubBySlug } from "@/lib/clubs";
-import { clubPlay, clubBase } from "@/lib/club-paths";
+import { ensureClubMembership, getClubBySlug, resolveSessionClubSlug } from "@/lib/clubs";
+import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
+import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 
 // Shared friendly message for a globally-taken display name.
 const NAME_TAKEN_MESSAGE = 'Name taken. Add an initial (e.g. "Miggy L.").';
@@ -445,14 +446,18 @@ export async function reconnectPlayer(
   // Refreshing here eliminates the staleness window so the leaderboard
   // is immediately correct for the reconnected player.
   // Non-fatal: a refresh failure does not affect the reconnect itself.
-  void service.rpc("refresh_alltime_leaderboard").then(({ error }) => {
-    if (error) {
-      console.warn(
-        "[reconnectPlayer] refresh_alltime_leaderboard failed (non-fatal):",
-        error.message
-      );
-    }
-  });
+  // Debounced (shared with endMatchAction) since the RPC rebuilds across
+  // ALL clubs, not just this player's.
+  if (shouldRefreshLeaderboard()) {
+    void service.rpc("refresh_alltime_leaderboard").then(({ error }) => {
+      if (error) {
+        console.warn(
+          "[reconnectPlayer] refresh_alltime_leaderboard failed (non-fatal):",
+          error.message
+        );
+      }
+    });
+  }
 
   // Step 6: Delete old auth user (only when not an active organizer).
   // Cannot be done inside the Postgres function — auth.admin is a
@@ -569,7 +574,10 @@ export async function reconnectPlayer(
           .single();
 
         if (statsRow) {
-          wrappedUrl = `/wrapped/${entry.session_id}/${newUserId}`;
+          const clubSlug = await resolveSessionClubSlug(entry.session_id);
+          wrappedUrl = clubSlug
+            ? clubWrapped(clubSlug, entry.session_id, newUserId)
+            : `/wrapped/${entry.session_id}/${newUserId}`;
           break;
         }
       }

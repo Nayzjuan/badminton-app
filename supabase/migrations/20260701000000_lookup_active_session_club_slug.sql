@@ -13,7 +13,12 @@
 -- is then NULL (handle defensively client-side); with Phase 0 applied
 -- (sessions.club_id NOT NULL + Legacy club seeded) it is non-null in practice.
 --
--- Idempotent (DROP IF EXISTS + CREATE). BUILD ONLY — not applied to prod yet.
+-- Idempotent (DROP IF EXISTS + CREATE).
+--
+-- (Applied to prod at some point after this file was first written as
+-- "build only" — the original header/commit message were never updated to
+-- match. Ground-truth confirmed live via pg_get_functiondef on 2026-07-02:
+-- the RETURNS TABLE shape and club_slug join below match prod exactly.)
 -- ============================================================
 
 DROP FUNCTION IF EXISTS public.lookup_active_session(uuid);

@@ -17,6 +17,8 @@ import { Share2 } from "lucide-react";
 import { WrappedIntro } from "@/components/wrapped/wrapped-intro";
 import { topAwardsByRarity } from "@/lib/wrapped-awards";
 import { dismissWrappedIntro } from "@/app/actions/wrapped";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubBase } from "@/lib/club-paths";
 import { WrappedStatsCard } from "./wrapped-stats-card";
 import { WrappedAwardsFeed } from "./wrapped-awards-feed";
 import { WrappedMatchRecap } from "./wrapped-match-recap";
@@ -62,6 +64,10 @@ export function WrappedShell({
   // Guard against double-click: set true before the async action, reset on error.
   const [isDismissing, setIsDismissing] = useState(false);
   const router = useRouter();
+  // Resolves to the club slug when rendered under /c/[clubSlug]/wrapped/... and
+  // null on the root /wrapped/... route — same pathname-derived pattern as
+  // PwaNavBar's "go home" button, no prop threading needed.
+  const clubSlug = useClubSlug();
 
   // Top 6 by rarity — keeps the feed scannable on phone screens and
   // guarantees the most prestigious tier (legendary/rare) appears first
@@ -87,8 +93,8 @@ export function WrappedShell({
       setIsDismissing(false); // let player retry
       return;
     }
-    router.push("/play");
-  }, [isDismissing, sessionId, playerId, router]);
+    router.push(clubSlug ? clubBase(clubSlug) : "/play");
+  }, [isDismissing, sessionId, playerId, router, clubSlug]);
 
   return (
     <>

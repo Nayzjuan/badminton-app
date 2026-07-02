@@ -11,7 +11,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { enforceRenameGate } from "@/lib/rename-gate";
 import { getClubBySlug } from "@/lib/clubs";
-import { clubPlay, clubBase } from "@/lib/club-paths";
+import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
 import { PlayerDashboard } from "@/components/player/player-dashboard";
 import { PUBLIC_SESSION_COLUMNS } from "@/types/database";
 
@@ -67,9 +67,9 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
     if (wrappedStats?.intro_dismissed_at) {
       redirect(clubBase(clubSlug));
     }
-    // Wrapped is a public, shareable recap — it stays at the root route
-    // (like the TV board), not under the club namespace.
-    redirect(`/wrapped/${sessionId}/${user.id}`);
+    // Club-namespaced Wrapped variant (mirrors the TV board's dual-path
+    // pattern: root stays the public/shareable link, this is for in-app nav).
+    redirect(clubWrapped(clubSlug, sessionId, user.id));
   }
 
   return <PlayerDashboard profile={profile} session={session} hasGoogleLinked={hasGoogleLinked} />;

@@ -199,9 +199,11 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
         if (result.wrappedUrl) {
           router.push(result.wrappedUrl);
         } else if (result.sessionId) {
-          router.push(`/play/${result.sessionId}`);
+          router.push(
+            clubSlug ? clubPlay(clubSlug, result.sessionId) : `/play/${result.sessionId}`
+          );
         } else {
-          router.push("/play");
+          router.push(clubSlug ? clubBase(clubSlug) : "/play");
         }
       }
     });

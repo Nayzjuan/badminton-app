@@ -3,18 +3,19 @@
 // ============================================================
 // Route: /wrapped/[sessionId]/[playerId]
 //
-// Fetches the pre-computed stats row for this player from
-// session_wrapped_stats, then hands off to the WrappedShell
-// client component which orchestrates the intro + award feed.
+// The true public/shareable Wrapped link (printed QR codes, push deep-links
+// with no club context, external shares). A club-namespaced convenience
+// variant also exists at /c/[clubSlug]/wrapped/[sessionId]/[playerId] for
+// in-app navigation — see that page for the session↔club cross-check.
 //
-// If no row exists (session not yet closed, or player had 0
-// completed matches), shows a graceful loading/empty state.
+// Data-fetching is shared with the club-scoped variant via getWrappedData.
+// If no stats row exists (session not yet closed, or player had 0 completed
+// matches), that returns a graceful empty-state instead of throwing.
 // ============================================================
 
 import { notFound } from "next/navigation";
-import { createServerSupabaseClient } from "@/utils/supabase/server";
-import { createServiceClient } from "@/utils/supabase/service";
-import { WrappedShell, type WrappedStats } from "@/components/wrapped/wrapped-shell";
+import { getWrappedData } from "@/app/actions/wrapped";
+import { WrappedShell } from "@/components/wrapped/wrapped-shell";
 
 interface WrappedPageProps {
   params: Promise<{ sessionId: string; playerId: string }>;
@@ -23,86 +24,18 @@ interface WrappedPageProps {
 export default async function WrappedPage({ params }: WrappedPageProps) {
   const { sessionId, playerId } = await params;
 
-  const supabase = await createServerSupabaseClient();
+  const data = await getWrappedData(sessionId, playerId);
 
-  // ── Fetch wrapped stats row ─────────────────────────────────
-  const { data: statsRow, error: statsError } = await supabase
-    .from("session_wrapped_stats")
-    .select("*")
-    .eq("session_id", sessionId)
-    .eq("player_id", playerId)
-    .single();
-
-  // ── Fetch player profile (for display name) ─────────────────
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("display_name, skill_level")
-    .eq("id", playerId)
-    .single();
-
-  // If neither exists, the URL is genuinely invalid.
-  if (!profile) return notFound();
-
-  // ── Fetch match history via service client (bypasses RLS) ────
-  // The wrapped page is shareable — the viewer may not be authenticated
-  // as this player, so we can't rely on client-side RLS-gated queries.
-  const service = createServiceClient();
-  const { data: matchHistory } = await service
-    .from("v_match_history")
-    .select("*")
-    .eq("session_id", sessionId)
-    .eq("player_id", playerId)
-    .order("completed_at", { ascending: false });
-
-  // ── Handle no stats row (session not yet computed or 0 games) ─
-  // Show a "no stats yet" shell rather than 404.
-  if (statsError || !statsRow) {
-    const emptyStats: WrappedStats = {
-      playerName: profile.display_name,
-      games: 0,
-      wins: 0,
-      losses: 0,
-      pointsFor: 0,
-      pointsAgainst: 0,
-      pointDiff: 0,
-      winPct: 0,
-      sessionRank: null,
-      earnedAwards: [],
-      awardData: {},
-    };
-    return (
-      <WrappedShell
-        stats={emptyStats}
-        sessionId={sessionId}
-        playerId={playerId}
-        matchHistory={matchHistory ?? []}
-        introDismissed={false}
-      />
-    );
-  }
-
-  // ── Build the typed stats object ────────────────────────────
-  const stats: WrappedStats = {
-    playerName: profile.display_name,
-    games: statsRow.games_played,
-    wins: statsRow.wins,
-    losses: statsRow.losses,
-    pointsFor: statsRow.points_for,
-    pointsAgainst: statsRow.points_against,
-    pointDiff: statsRow.point_diff ?? statsRow.points_for - statsRow.points_against,
-    winPct: Number(statsRow.win_pct),
-    sessionRank: statsRow.session_rank,
-    earnedAwards: statsRow.earned_awards ?? [],
-    awardData: (statsRow.award_data as Record<string, Record<string, unknown>>) ?? {},
-  };
+  // If the profile doesn't exist, the URL is genuinely invalid.
+  if (!data.profile) return notFound();
 
   return (
     <WrappedShell
-      stats={stats}
+      stats={data.stats}
       sessionId={sessionId}
       playerId={playerId}
-      matchHistory={matchHistory ?? []}
-      introDismissed={!!statsRow.intro_dismissed_at}
+      matchHistory={data.matchHistory}
+      introDismissed={data.introDismissed}
     />
   );
 }

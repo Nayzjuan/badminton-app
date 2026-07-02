@@ -21,6 +21,7 @@ import {
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
+import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 import {
   getAuthenticatedUser,
   isSessionOrganizer,
@@ -283,10 +284,13 @@ export async function endMatchAction(
 
   // 6. Refresh the all-time leaderboard materialized view.
   //    Fire without awaiting so a slow refresh never delays the player's UI.
-  //    CONCURRENTLY means reads are never blocked during refresh.
-  void db.rpc("refresh_alltime_leaderboard").then(({ error }) => {
-    if (error) console.warn("[endMatchAction] leaderboard refresh failed:", error.message);
-  });
+  //    CONCURRENTLY means reads are never blocked during refresh. Debounced
+  //    since the RPC rebuilds across ALL clubs, not just this match's club.
+  if (shouldRefreshLeaderboard()) {
+    void db.rpc("refresh_alltime_leaderboard").then(({ error }) => {
+      if (error) console.warn("[endMatchAction] leaderboard refresh failed:", error.message);
+    });
+  }
 
   return { success: true, message: "Match completed. Players returned to queue." };
 }
