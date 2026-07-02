@@ -81,6 +81,9 @@ export type ScoringFormat = "single" | "best_of_3" | "best_of_5";
 
 export type Team = "a" | "b";
 
+/** club_members.role / club_invites.role — tenancy roles within a club */
+export type ClubRole = "owner" | "admin" | "member";
+
 // ------------------------------------------------------------
 // Table Row Types  (type aliases — NOT interfaces)
 // ------------------------------------------------------------
@@ -119,23 +122,26 @@ export type Profile = {
 };
 
 /**
- * profiles columns safe to bulk-select for players OTHER than the caller —
- * excludes `pin`. The authenticated role's column privilege on profiles no
- * longer includes `pin` (column lockdown), so a bare select("*") throws
- * `permission denied for table profiles` (42501). Use with `pin: null` when
+ * profiles columns safe to bulk-select for players OTHER than the caller
+ * (queue/match participants, teammates, opponents, etc.) — excludes `pin`.
+ * profiles RLS SELECT is broadly permissive (leaderboard.ts and the Wrapped
+ * share page both read arbitrary profiles unauthenticated by design), so the
+ * column list — not the row policy — is what keeps another player's 4-digit
+ * reconnect PIN out of the browser response. Use with `pin: null` when
  * constructing a `Profile` object so consumers keep a stable shape.
  */
 export const PUBLIC_PROFILE_COLUMNS =
   "id, display_name, skill_level, vip_tag, vip_theme, needs_rename, collided_name, flagged_at, created_at, updated_at" as const;
 
 /**
- * Every `sessions` column except `organizer_passcode` — the authenticated
- * role's column privilege no longer includes it, so a bare select("*") throws
- * `permission denied for table sessions` (42501). Use with
- * `organizer_passcode: null` when constructing a `Session` object.
+ * Every `sessions` column except `organizer_passcode` — the browser/anon-key
+ * client's column privilege was locked down to this same set (see
+ * 20260701000010_column_lockdown_fix_table_grants.sql), so a bare
+ * `select("*")` now throws `permission denied for table sessions`. Use this
+ * whenever the caller doesn't need to display the passcode itself.
  */
 export const PUBLIC_SESSION_COLUMNS =
-  "id, name, created_by, scoring, is_active, is_auto_matchmaking_on, court_time_limit_minutes, max_auto_drafts_override, auto_publish, created_at, ended_at" as const;
+  "id, name, created_by, club_id, scoring, is_active, is_auto_matchmaking_on, court_time_limit_minutes, max_auto_drafts_override, auto_publish, created_at, ended_at" as const;
 
 /** player_renames audit table — append-only record of name changes. */
 export type PlayerRename = {
@@ -154,6 +160,7 @@ export type Session = {
   id: string;
   name: string;
   created_by: string; // uuid — references profiles.id
+  club_id: string; // uuid — references clubs.id (owning tenant). NOT NULL post Phase-0 migration.
   organizer_passcode: string | null;
   scoring: ScoringFormat;
   is_active: boolean;
@@ -341,6 +348,8 @@ export type MatchHistory = {
   game_scores: GameScore[] | null;
   teammates: string[] | null;
   opponents: string[] | null;
+  /** Resolved via sessions.club_id (migration: 20260701000001_leaderboard_club_scoping). */
+  club_id: string;
 };
 
 /** v_recent_pairings view */
@@ -375,7 +384,9 @@ export type ProfileUpdate = Partial<
 >;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
-  Partial<Pick<Session, "organizer_passcode" | "scoring" | "is_auto_matchmaking_on">>;
+  // club_id optional during the Phase-0 transition (DB DEFAULT = Legacy club);
+  // becomes a required, explicitly-passed value when createSession is club-aware (Phase 2).
+  Partial<Pick<Session, "organizer_passcode" | "scoring" | "is_auto_matchmaking_on" | "club_id">>;
 
 export type SessionUpdate = Partial<
   Pick<
@@ -478,6 +489,7 @@ export type SessionWrappedStatsUpdate = Partial<
 
 /** player_rivalries table — running all-time H2H ledger between players (directional) */
 export type PlayerRivalry = {
+  club_id: string; // uuid — references clubs.id (tenant scope); part of the PK
   player_id: string;
   rival_id: string;
   wins_vs: number;
@@ -490,6 +502,7 @@ export type PlayerRivalry = {
 
 /** player_partnerships table — running all-time partnership ledger between players (directional) */
 export type PlayerPartnership = {
+  club_id: string; // uuid — references clubs.id (tenant scope); part of the PK
   player_id: string;
   partner_id: string;
   games_together: number;
@@ -531,6 +544,59 @@ export type PushSubscriptionInsert = Pick<
 export type PushSubscriptionUpdate = Partial<
   Pick<PushSubscription, "p256dh" | "auth_key" | "user_agent">
 >;
+
+// ------------------------------------------------------------
+// Multi-tenancy (Phase 0 foundation)
+// ------------------------------------------------------------
+
+/** clubs table — tenant root. slug is the URL identifier under /c/[slug]. */
+export type Club = {
+  id: string;
+  name: string;
+  slug: string;
+  created_by: string; // uuid — references profiles.id
+  is_active: boolean;
+  created_at: string;
+};
+
+export type ClubInsert = Pick<Club, "name" | "slug" | "created_by"> &
+  Partial<Pick<Club, "id" | "is_active">>;
+
+export type ClubUpdate = Partial<Pick<Club, "name" | "slug" | "is_active">>;
+
+/** club_invites table — one-time invite tokens for joining a club. */
+export type ClubInvite = {
+  id: string;
+  club_id: string;
+  token: string;
+  role: ClubRole;
+  created_by: string | null;
+  consumed_by: string | null;
+  consumed_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+export type ClubInviteInsert = Pick<ClubInvite, "club_id" | "token"> &
+  Partial<Pick<ClubInvite, "role" | "created_by" | "expires_at">>;
+
+export type ClubInviteUpdate = Partial<Pick<ClubInvite, "consumed_by" | "consumed_at">>;
+
+/** club_members table — membership + role of a player within a club. */
+export type ClubMember = {
+  id: string;
+  club_id: string;
+  player_id: string;
+  role: ClubRole;
+  is_active: boolean;
+  invited_by: string | null;
+  joined_at: string;
+};
+
+export type ClubMemberInsert = Pick<ClubMember, "club_id" | "player_id"> &
+  Partial<Pick<ClubMember, "role" | "is_active" | "invited_by">>;
+
+export type ClubMemberUpdate = Partial<Pick<ClubMember, "role" | "is_active">>;
 
 // ------------------------------------------------------------
 // Supabase Database Type
@@ -618,14 +684,14 @@ export type Database = {
       player_rivalries: {
         Row: PlayerRivalry;
         Insert: Omit<PlayerRivalry, "updated_at"> & Partial<Pick<PlayerRivalry, "updated_at">>;
-        Update: Partial<Omit<PlayerRivalry, "player_id" | "rival_id">>;
+        Update: Partial<Omit<PlayerRivalry, "club_id" | "player_id" | "rival_id">>;
         Relationships: [];
       };
       player_partnerships: {
         Row: PlayerPartnership;
         Insert: Omit<PlayerPartnership, "updated_at"> &
           Partial<Pick<PlayerPartnership, "updated_at">>;
-        Update: Partial<Omit<PlayerPartnership, "player_id" | "partner_id">>;
+        Update: Partial<Omit<PlayerPartnership, "club_id" | "player_id" | "partner_id">>;
         Relationships: [];
       };
       identity_migrations: {
@@ -639,6 +705,24 @@ export type Database = {
         Insert: Pick<PlayerRename, "player_id" | "new_name"> &
           Partial<Pick<PlayerRename, "old_name" | "reason" | "actor_user_id" | "session_id">>;
         Update: Record<string, never>; // append-only audit log
+        Relationships: [];
+      };
+      clubs: {
+        Row: Club;
+        Insert: ClubInsert;
+        Update: ClubUpdate;
+        Relationships: [];
+      };
+      club_invites: {
+        Row: ClubInvite;
+        Insert: ClubInviteInsert;
+        Update: ClubInviteUpdate;
+        Relationships: [];
+      };
+      club_members: {
+        Row: ClubMember;
+        Insert: ClubMemberInsert;
+        Update: ClubMemberUpdate;
         Relationships: [];
       };
     };
@@ -663,6 +747,7 @@ export type Database = {
         Row: {
           player_id: string;
           session_id: string;
+          club_id: string;
           display_name: string;
           games_played: number;
           wins: number;
@@ -677,6 +762,7 @@ export type Database = {
       v_alltime_leaderboard_mat: {
         Row: {
           player_id: string;
+          club_id: string;
           display_name: string;
           games_played: number;
           wins: number;
@@ -703,11 +789,11 @@ export type Database = {
         Returns: number;
       };
       get_player_streaks: {
-        Args: { p_session_id?: string | null };
+        Args: { p_session_id?: string | null; p_club_id?: string | null };
         Returns: { player_id: string; win_streak: number }[];
       };
       get_alltime_snapshot_before: {
-        Args: { p_cutoff: string };
+        Args: { p_cutoff: string; p_club_id?: string | null };
         Returns: {
           player_id: string;
           display_name: string;
@@ -723,7 +809,7 @@ export type Database = {
       // Monthly leaderboard (migration 20260626000000). Live aggregation of one
       // Manila-month slice of completed matches. SECURITY INVOKER, public-read.
       get_monthly_leaderboard: {
-        Args: { p_year: number; p_month: number };
+        Args: { p_year: number; p_month: number; p_club_id?: string | null };
         Returns: {
           player_id: string;
           display_name: string;
@@ -739,7 +825,7 @@ export type Database = {
       // Months selectable in the monthly picker — distinct Manila-months with
       // completed matches, plus the current month (always present), newest first.
       get_leaderboard_months: {
-        Args: Record<string, never>;
+        Args: { p_club_id?: string | null };
         Returns: { year: number; month: number }[];
       };
       refresh_alltime_leaderboard: {
@@ -817,12 +903,34 @@ export type Database = {
           p_team_a: string[];
           p_team_b: string[];
           p_session_id: string;
+          /** Club-scopes both the all-time and session counters — required
+           *  since matches/match_players carry no club_id of their own. */
+          p_club_id: string;
         };
         Returns: {
           alltime_a: number;
           alltime_b: number;
           session_a: number;
           session_b: number;
+        }[];
+      };
+      // Public share-link leaderboard (migration 20260702000003). SECURITY
+      // DEFINER with a mandatory p_session_id — replaces direct anon/authenticated
+      // access to v_session_leaderboard so the view can't be dumped unfiltered.
+      get_session_leaderboard_public: {
+        Args: { p_session_id: string };
+        Returns: {
+          player_id: string;
+          session_id: string;
+          club_id: string;
+          display_name: string;
+          games_played: number;
+          wins: number;
+          losses: number;
+          points_for: number;
+          points_against: number;
+          point_diff: number;
+          win_pct: number;
         }[];
       };
       // ── Wave 2 atomicity RPCs (migration 20260429000000) ────────
@@ -841,11 +949,13 @@ export type Database = {
       lookup_active_session: {
         Args: { p_session_id: string };
         /** Returns at most one row.  Empty when the session does not exist
-         *  or is no longer active.  Used by /play/join so anonymous QR-code
-         *  visitors can resolve a session without needing direct SELECT
-         *  on the underlying `sessions` table (which would expose
-         *  organizer_passcode and created_by). */
-        Returns: { id: string; name: string; is_active: boolean }[];
+         *  or is no longer active.  Used by the QR-join flow so anonymous
+         *  visitors can resolve a session (and its owning club slug) without
+         *  needing direct SELECT on the underlying `sessions` table (which
+         *  would expose organizer_passcode and created_by).
+         *  `club_slug` is null if the session's club_id has no clubs row
+         *  (defensive — non-null in practice post Phase-0). */
+        Returns: { id: string; name: string; is_active: boolean; club_slug: string | null }[];
       };
       // ── Draft-mode atomicity RPCs ─────────────────────────────────
       revert_match_to_active: {
@@ -997,6 +1107,28 @@ export type Database = {
         };
         /** UUID of the new held draft, or NULL on any TOCTOU/reservation guard (graceful slot-skip). */
         Returns: string;
+      };
+      // ── Atomic club member owner-guard (migration 20260702000000) ──
+      // Per-club advisory-lock guard against the TOCTOU race in leaveClub /
+      // removeMember / changeMemberRole. service_role-only; actor
+      // authorization stays in src/app/actions/clubs.ts.
+      club_member_deactivate: {
+        // p_expected_role (optional): the target role the app validated against;
+        // the RPC re-checks it under the advisory lock → reason 'role_changed'.
+        Args: { p_club_id: string; p_member_id: string; p_expected_role?: string | null };
+        Returns: { success: boolean; reason: "ok" | "not_found" | "only_owner" | "role_changed" };
+      };
+      club_member_set_role: {
+        Args: {
+          p_club_id: string;
+          p_member_id: string;
+          p_new_role: string;
+          p_expected_role?: string | null;
+        };
+        Returns: {
+          success: boolean;
+          reason: "ok" | "no_change" | "not_found" | "only_owner" | "invalid_role" | "role_changed";
+        };
       };
     };
     Enums: {

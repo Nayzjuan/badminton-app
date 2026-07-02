@@ -20,6 +20,7 @@ import {
 } from "@/lib/broadcast";
 import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
 import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isClubAdmin } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
 import type { ScoringFormat } from "@/types/database";
 import { scoringFormatSchema } from "@/lib/schemas/sessions";
@@ -74,6 +75,9 @@ export async function createSession(opts: {
   name: string;
   scoring: ScoringFormat;
   passcode?: string;
+  /** When set, the session is created inside this club (caller must be a club
+   *  owner/admin). When omitted, the DB DEFAULT routes it to the Legacy club. */
+  clubId?: string;
 }): Promise<CreateSessionResult> {
   // Auth gate
   const supabase = await createServerSupabaseClient();
@@ -100,6 +104,18 @@ export async function createSession(opts: {
     return { success: false, message: scoringResult.error.issues[0].message };
   }
   const scoring: ScoringFormat = scoringResult.data;
+
+  // Club scoping (multi-tenant): when a clubId is supplied the session belongs
+  // to that club and the caller must be a club owner/admin. When omitted, the
+  // sessions.club_id DB DEFAULT routes the session to the Legacy club
+  // (transition behavior until createSession is fully club-aware in Phase 2).
+  const clubId = opts.clubId?.trim();
+  if (clubId !== undefined && clubId !== "") {
+    if (!isValidUUID(clubId)) return { success: false, message: "Invalid club." };
+    if (!(await isClubAdmin(user.id, clubId))) {
+      return { success: false, message: "Only club owners and admins can create sessions." };
+    }
+  }
 
   const service = createServiceClient();
 
@@ -152,6 +168,7 @@ export async function createSession(opts: {
       created_by: user.id,
       scoring,
       organizer_passcode: finalPasscode,
+      ...(clubId ? { club_id: clubId } : {}),
     })
     .select("id")
     .single();

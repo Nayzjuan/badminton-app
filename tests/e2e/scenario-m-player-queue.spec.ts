@@ -29,7 +29,8 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession } from "../helpers/teardown";
+import { resetSandboxSession, getSandboxClubSlug } from "../helpers/teardown";
+import { clubPlay } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -42,6 +43,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
+let CLUB_SLUG: string;
 
 let organizerUserId: string;
 
@@ -49,6 +51,7 @@ let organizerUserId: string;
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
   organizerUserId = await getOrganizerUserId();
+  CLUB_SLUG = await getSandboxClubSlug();
 
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -94,7 +97,9 @@ test.describe("Player Queue — [M-1] Position number visible", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // The QueueStatus component renders the position as a hero numeral "#1".
       await expect(page.getByText("#1")).toBeVisible({ timeout: 15_000 });
@@ -124,7 +129,9 @@ test.describe("Player Queue — [M-2] Queue status UI", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // Position numeral must be visible (confirmed hero element).
       await expect(page.getByText("#1")).toBeVisible({ timeout: 15_000 });

@@ -46,14 +46,20 @@ function outcomeOf(match: MatchHistoryType) {
   return "lost";
 }
 
-function sessionLabel(session: SessionMeta): string {
+// `showClub` labels each session with its club name — only turned on when the
+// player's history actually spans more than one club, so the common
+// single-club case stays uncluttered (matches only ever belong to one club,
+// but /play deliberately shows every club a player is in — see route-9).
+function sessionLabel(session: SessionMeta, showClub: boolean): string {
   const date = new Date(session.created_at);
   const dateStr = date.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
-  return session.name ? `${session.name} · ${dateStr}` : dateStr;
+  const base = session.name ? `${session.name} · ${dateStr}` : dateStr;
+  if (showClub && session.club_name) return `${session.club_name} · ${base}`;
+  return base;
 }
 
 // ── Match card (visual clone of MatchHistory card) ─────────────
@@ -192,11 +198,11 @@ function MatchCard({
 
 // ── Session group section ──────────────────────────────────────
 
-function SessionSection({ group }: { group: SessionGroup }) {
+function SessionSection({ group, showClub }: { group: SessionGroup; showClub: boolean }) {
   const [open, setOpen] = useState(true);
   // Memoize the label — toLocaleDateString parses a Date on every call, which
   // is cheap but wasteful since the session object never changes once loaded.
-  const label = useMemo(() => sessionLabel(group.session), [group.session]);
+  const label = useMemo(() => sessionLabel(group.session, showClub), [group.session, showClub]);
   const winPct =
     group.matches.length > 0 ? Math.round((group.wins / group.matches.length) * 100) : 0;
 
@@ -308,6 +314,8 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
         name: null,
         created_at: sessionMatches[0]?.completed_at ?? new Date().toISOString(),
         ended_at: null,
+        club_id: null,
+        club_name: null,
       };
 
       return {
@@ -399,10 +407,12 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
     );
   }
 
+  const showClub = new Set(groups.map((g) => g.session.club_id).filter(Boolean)).size > 1;
+
   return (
     <div className="space-y-6">
       {groups.map((group) => (
-        <SessionSection key={group.session.id} group={group} />
+        <SessionSection key={group.session.id} group={group} showClub={showClub} />
       ))}
     </div>
   );

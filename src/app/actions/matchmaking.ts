@@ -594,7 +594,7 @@ async function runEngineInternal(
     // engine. (Draft mode stays silent until the organizer publishes.)
     if (autoPublish) {
       const rosterIds = [...proposal.teamA, ...proposal.teamB].map((p) => p.player_id);
-      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING", sessionId));
     }
 
     // Match created — 4 players locked in on-deck.
@@ -768,7 +768,7 @@ export async function promoteOnDeckMatchInternal(
   // Court call: ping every player on this match (OS-level notification for
   // backgrounded/locked phones). Fired after the response flushes so it
   // never delays or fails the promotion. pushToPlayers no-ops on empty.
-  after(() => pushToPlayers(playerIds, "COURT_CALL"));
+  after(() => pushToPlayers(playerIds, "COURT_CALL", sessionId));
 
   const { data: profiles } = await supabase
     .from("profiles")
@@ -917,7 +917,7 @@ export async function recomputeHeldReadiness(
             .select("player_id")
             .eq("match_id", held.id);
           const rosterIds = (roster ?? []).map((r) => r.player_id);
-          after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+          after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING", sessionId));
         } else if (pubResult === "HAS_LEFT_PLAYERS" || pubResult === "CONFLICT") {
           // The draft is ready (held_ready_at now stamped) but the roster turned
           // tainted between the stamp and the publish (a player left, or got

@@ -15,6 +15,10 @@ import { Spinner } from "@/components/reconnect-modal";
 interface GoogleSignInButtonProps {
   /** Internal path to return to after sign-in (defaults to /play). */
   next?: string;
+  /** Club context (from a /c/[clubSlug]/join QR): threaded through so
+   *  /auth/callback can enroll the user in the club, mirroring the
+   *  club_slug handling the anonymous sign-in flow already does. */
+  clubSlug?: string;
   /**
    * Where to render the "─── or ───" divider relative to the button.
    * "above" (default) — button is at the bottom of a form, divider separates it from the CTA above.
@@ -23,7 +27,11 @@ interface GoogleSignInButtonProps {
   dividerPosition?: "above" | "below";
 }
 
-export function GoogleSignInButton({ next, dividerPosition = "above" }: GoogleSignInButtonProps) {
+export function GoogleSignInButton({
+  next,
+  clubSlug,
+  dividerPosition = "above",
+}: GoogleSignInButtonProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -33,7 +41,7 @@ export function GoogleSignInButton({ next, dividerPosition = "above" }: GoogleSi
   function onClick() {
     setError(null);
     startTransition(async () => {
-      const result = await signInWithGoogle(next);
+      const result = await signInWithGoogle(next, clubSlug);
       if (result.success) {
         window.location.href = result.url; // full-page redirect to Google (PKCE)
       } else {

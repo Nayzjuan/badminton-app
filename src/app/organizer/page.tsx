@@ -11,6 +11,12 @@
 //   The sessions_select RLS policy intentionally allows all
 //   authenticated users to read all sessions, so this is safe.
 //
+// Club scoping: sessions ARE filtered by club_id (clubs the caller is an
+// active member of). Without this, any authenticated user would see every
+// other club's session names + live stats — the anonymous-auth reasoning
+// above only justifies skipping the created_by filter, not skipping
+// multi-tenant isolation.
+//
 // Routing logic (server-side):
 //   1+ active sessions → render session picker + demoted create/join
 //   0 active sessions  → render create + join forms prominently
@@ -18,10 +24,11 @@
 
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
-import { OrganizerEntry } from "@/components/organizer/organizer-entry";
 import { createServiceClient } from "@/utils/supabase/service";
+import { getMyActiveClubIds } from "@/lib/clubs";
+import { OrganizerEntry } from "@/components/organizer/organizer-entry";
 import type { Session } from "@/types/database";
-import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
 export type SessionWithStats = Session & {
   playerCount: number;
@@ -46,26 +53,26 @@ export default async function OrganizerPage() {
   if (!profileRow) redirect("/");
   const profile = { ...profileRow, pin: null };
 
-  // ── 1. Fetch ALL sessions (active + closed) ───────────────
-  // Column list excludes organizer_passcode (locked from the authed client).
-  const { data: allSessionsData } = await supabase
-    .from("sessions")
-    .select(PUBLIC_SESSION_COLUMNS)
-    .order("created_at", { ascending: false });
+  // ── 1. Fetch ALL sessions (active + closed) — scoped to the caller's clubs
+  const clubIds = await getMyActiveClubIds(user.id);
 
-  // Re-attach organizer_passcode ONLY for sessions this user created, via the
-  // service client — never exposes another organizer's passcode.
-  const svc = createServiceClient();
-  const { data: ownPasscodes } = await svc
-    .from("sessions")
-    .select("id, organizer_passcode")
-    .eq("created_by", user.id);
-  const passcodeById = new Map((ownPasscodes ?? []).map((s) => [s.id, s.organizer_passcode]));
-
-  const allSessions = (allSessionsData ?? []).map((s) => ({
-    ...s,
-    organizer_passcode: passcodeById.get(s.id) ?? null,
-  }));
+  // Service client — OrganizerEntry displays each active session's
+  // organizer_passcode (for the organizer to read aloud to co-organizers),
+  // and the browser/anon-key client's column privilege on sessions no
+  // longer includes that column (20260701000010_column_lockdown_fix_table_grants.sql).
+  // club_id/user scoping above is already verified, so this is the sanctioned
+  // service-role-for-secrets use case (CLAUDE.md §Database Strictness).
+  const db = createServiceClient();
+  const allSessions =
+    clubIds.length === 0
+      ? []
+      : ((
+          await db
+            .from("sessions")
+            .select("*")
+            .in("club_id", clubIds)
+            .order("created_at", { ascending: false })
+        ).data ?? []);
   const activeSessions = allSessions.filter((s) => s.is_active);
   const pastSessions = allSessions.filter((s) => !s.is_active);
 
@@ -120,11 +127,20 @@ export default async function OrganizerPage() {
     })
   );
 
+  // createSession() defaults to the "Legacy" club when no clubId is passed —
+  // fine when the caller belongs to exactly one club (unambiguous), wrong
+  // for 0 or 2+ (would silently misattribute the new session). Only thread
+  // a clubId through in the unambiguous case; OrganizerEntry disables
+  // creation otherwise and points multi-club organizers at a specific
+  // club's admin page instead.
+  const soloClubId = clubIds.length === 1 ? clubIds[0] : null;
+
   return (
     <OrganizerEntry
       profile={profile}
       activeSessions={activeWithStats}
       pastSessions={pastWithStats}
+      soloClubId={soloClubId}
     />
   );
 }

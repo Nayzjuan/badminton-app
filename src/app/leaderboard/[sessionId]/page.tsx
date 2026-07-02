@@ -12,6 +12,7 @@
 
 import { notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 
 interface PageProps {
@@ -22,8 +23,14 @@ export default async function PublicLeaderboardPage({ params }: PageProps) {
   const { sessionId } = await params;
   const supabase = await createServerSupabaseClient();
 
-  // Fetch session — required (404 on missing session)
-  const { data: session } = await supabase
+  // Service client — this route is an intentional public share link (no auth,
+  // works cross-club by design, same as the TV board and Wrapped share page).
+  // sessions_select RLS is club-scoped, which would 404 this for anyone
+  // without the caller's club membership; a single known sessionId lookup
+  // (not a browse-all query) is the sanctioned service-role-for-public-share
+  // use case (CLAUDE.md §Database Strictness).
+  const db = createServiceClient();
+  const { data: session } = await db
     .from("sessions")
     .select("id, name")
     .eq("id", sessionId)

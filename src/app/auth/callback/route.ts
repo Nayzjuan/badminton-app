@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { ensureOAuthProfile } from "@/lib/oauth-provision";
+import { ensureClubMembership } from "@/lib/clubs";
 import { safeNext } from "@/lib/safe-next";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,7 @@ export async function GET(request: Request): Promise<Response> {
   const errorCode = url.searchParams.get("error_code");
   const intent = url.searchParams.get("intent");
   const next = safeNext(url.searchParams.get("next"));
+  const clubSlug = url.searchParams.get("club");
 
   // Link collision: the OAuth email is already attached to a different user.
   // Detected via the redirect query param (NOT an inline linkIdentity error).
@@ -64,6 +66,10 @@ export async function GET(request: Request): Promise<Response> {
       name: user.user_metadata?.name ?? null,
       email: user.email ?? user.user_metadata?.email ?? null,
     });
+    // Club QR-join started this sign-in — enroll now, mirroring the club_slug
+    // handling in signInAnonymously (both new and returning users need this,
+    // since a returning user may be reconnecting from a DIFFERENT club's QR).
+    if (clubSlug) await ensureClubMembership(clubSlug, user.id);
   }
 
   // A collision left needs_rename=true; the page-level rename gate routes them

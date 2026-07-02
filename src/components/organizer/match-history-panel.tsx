@@ -9,16 +9,29 @@
 //   indicators, static MatchTimer showing game duration.
 // Cancelled matches: muted "Cancelled" banner — no scores, no
 //   timer. Players' names still visible for reference.
+//
+// Player filter: type-to-filter searchable list at the top lets
+//   the organizer narrow to a single player's matches. Filtering
+//   is 100% client-side (useMemo over already-fetched data).
+//   Selected player gets a solid cc-accent ring; their partner(s)
+//   get a dashed ring so team composition reads at a glance.
 // ============================================================
 
-import { Trophy, History, Ban } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Trophy, History, Ban, X } from "lucide-react";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import { MatchTimer } from "@/components/ui/match-timer";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import { EditMatchDialog } from "./edit-match-dialog";
 import { FixRecordSheet } from "./fix-record-sheet";
 import { MatchEventTimeline } from "./match-event-timeline";
+import { MatchHistoryPlayerFilter } from "./match-history-player-filter";
 import { useMatchHistory } from "@/hooks/use-match-history";
+import {
+  filterMatchesByPlayer,
+  derivePlayerOptions,
+  resolvePartnerIds,
+} from "@/lib/match-history-filter";
 
 interface MatchHistoryPanelProps {
   sessionId: string;
@@ -26,6 +39,34 @@ interface MatchHistoryPanelProps {
 
 export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
   const { matches, loading } = useMatchHistory(sessionId);
+
+  // Pinned selection object — name captured at select time so the chip stays
+  // correct even if the player later vanishes from playerOptions (identity merge,
+  // score revert, etc.). Never a bare id.
+  const [selected, setSelected] = useState<{ id: string; display_name: string } | null>(null);
+
+  // Option list derived only from players present in history (guarantees ≥1 result per name).
+  const playerOptions = useMemo(() => derivePlayerOptions(matches), [matches]);
+
+  // Filtered list — pure client-side, no new Supabase trip.
+  const visibleMatches = useMemo(
+    () => filterMatchesByPlayer(matches, selected?.id ?? null),
+    [matches, selected]
+  );
+
+  // Stable display number per match (newest = highest). Precomputed from the full
+  // history so a filter never renumbers, keyed by id (O(n), not O(n²) indexOf).
+  const matchNumberById = useMemo(
+    () => new Map(matches.map((m, i) => [m.id, matches.length - i])),
+    [matches]
+  );
+
+  // Selection split out so JSX value-accesses don't need non-null casts.
+  // We deliberately never auto-clear the filter when the selected player leaves
+  // every roster (e.g. a score-revert): visibleMatches goes empty and the
+  // safety-net state renders with the pinned name; the organizer clears via ✕.
+  const selectedId = selected?.id ?? null;
+  const selectedName = selected?.display_name ?? null;
 
   if (loading) {
     return (
@@ -92,9 +133,11 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
 
   const completedCount = matches.filter((m) => m.status === "completed").length;
   const cancelledCount = matches.filter((m) => m.status === "cancelled").length;
+  const isFiltered = !!selected;
 
   return (
     <div className="space-y-4">
+      {/* Header row */}
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
           Match History
@@ -111,8 +154,58 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
         </div>
       </div>
 
+      {/* Player filter — only shown when there are players in history */}
+      {playerOptions.length > 0 && (
+        <MatchHistoryPlayerFilter
+          players={playerOptions}
+          selectedId={selected?.id ?? null}
+          onSelect={setSelected}
+        />
+      )}
+
+      {/* Active-filter chip + match count */}
+      {isFiltered && (
+        <div className="flex items-center gap-3">
+          <div
+            className="flex items-center gap-1.5 rounded-full px-3 py-1
+                          bg-cc-accent-dim outline outline-1 outline-cc-accent/55
+                          text-xs font-semibold text-cc-accent-text"
+          >
+            <span>Showing {selectedName}</span>
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              aria-label="Clear player filter"
+              className="ml-0.5 rounded-full p-0.5 hover:bg-cc-accent/20 transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+          <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+            {visibleMatches.length} of {matches.length} matches
+          </span>
+        </div>
+      )}
+
+      {/* Safety-net empty state when filter active but no matches found */}
+      {isFiltered && visibleMatches.length === 0 && (
+        <div className="rounded-2xl border border-dashed border-cc-border bg-white dark:bg-card px-6 py-10 text-center">
+          <p className="text-sm font-medium text-slate-600 dark:text-foreground">
+            No matches for {selectedName} in this session yet.
+          </p>
+          <button
+            type="button"
+            onClick={() => setSelected(null)}
+            className="mt-2 text-xs text-cc-accent-text underline underline-offset-2 hover:opacity-80 transition-opacity"
+          >
+            Clear filter
+          </button>
+        </div>
+      )}
+
+      {/* Match cards */}
       <div className="space-y-3">
-        {matches.map((match, idx) => {
+        {visibleMatches.map((match) => {
           const isCancelled = match.status === "cancelled";
           const teamA = match.players.filter((p) => p.team === "a");
           const teamB = match.players.filter((p) => p.team === "b");
@@ -127,6 +220,9 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
               })
             : "";
 
+          // Highlight helpers — computed per card when a filter is active.
+          const partnerIds = selectedId ? resolvePartnerIds(match, selectedId) : [];
+
           // Cancelled match — distinct muted styling
           if (isCancelled) {
             return (
@@ -139,7 +235,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                   <div className="flex items-center gap-2">
                     <Ban className="h-3.5 w-3.5 text-slate-400 dark:text-muted-foreground" />
                     <span className="text-sm font-bold text-slate-500 dark:text-muted-foreground">
-                      Match #{matches.length - idx}
+                      Match #{matchNumberById.get(match.id)}
                     </span>
                     {match.courtName && (
                       <span className="text-xs text-slate-400 dark:text-muted-foreground">
@@ -161,20 +257,39 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                   </div>
                 </div>
 
-                {/* Players — muted since match didn't complete */}
+                {/* Players — muted since match didn't complete.
+                    Highlight rings use stronger opacity so they read through opacity-60. */}
                 <div className="px-4 py-3 opacity-60">
                   <div className="flex gap-3">
                     <div className="flex-1 rounded-xl bg-slate-50 dark:bg-muted/50 p-3 text-center">
                       <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-muted-foreground mb-2">
                         Team A
                       </p>
-                      {teamA.map((p) => (
-                        <div key={p.player_id} className="mb-1 last:mb-0">
-                          <p className="text-sm font-medium text-slate-500 dark:text-muted-foreground">
-                            {p.profile.display_name}
-                          </p>
-                        </div>
-                      ))}
+                      {teamA.map((p) => {
+                        const isSelf = isFiltered && p.player_id === selectedId;
+                        const isPartner = isFiltered && partnerIds.includes(p.player_id);
+                        return (
+                          <div key={p.player_id} className="mb-1 last:mb-0">
+                            <p
+                              className={[
+                                "text-sm font-medium rounded px-1 py-0.5 inline-block",
+                                isSelf
+                                  ? "bg-cc-accent-dim outline outline-2 outline-cc-accent text-cc-accent-text"
+                                  : isPartner
+                                    ? "outline outline-2 outline-dashed outline-cc-accent text-slate-500 dark:text-muted-foreground"
+                                    : "text-slate-500 dark:text-muted-foreground",
+                              ].join(" ")}
+                            >
+                              {p.profile.display_name}
+                            </p>
+                            {isPartner && !isSelf && (
+                              <p className="text-[10px] uppercase tracking-wider text-cc-t3 mt-0.5">
+                                partner
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                     <div className="flex items-center">
                       <span className="text-xs text-slate-300 dark:text-muted-foreground/40 font-bold">
@@ -185,13 +300,31 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                       <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-muted-foreground mb-2">
                         Team B
                       </p>
-                      {teamB.map((p) => (
-                        <div key={p.player_id} className="mb-1 last:mb-0">
-                          <p className="text-sm font-medium text-slate-500 dark:text-muted-foreground">
-                            {p.profile.display_name}
-                          </p>
-                        </div>
-                      ))}
+                      {teamB.map((p) => {
+                        const isSelf = isFiltered && p.player_id === selectedId;
+                        const isPartner = isFiltered && partnerIds.includes(p.player_id);
+                        return (
+                          <div key={p.player_id} className="mb-1 last:mb-0">
+                            <p
+                              className={[
+                                "text-sm font-medium rounded px-1 py-0.5 inline-block",
+                                isSelf
+                                  ? "bg-cc-accent-dim outline outline-2 outline-cc-accent text-cc-accent-text"
+                                  : isPartner
+                                    ? "outline outline-2 outline-dashed outline-cc-accent text-slate-500 dark:text-muted-foreground"
+                                    : "text-slate-500 dark:text-muted-foreground",
+                              ].join(" ")}
+                            >
+                              {p.profile.display_name}
+                            </p>
+                            {isPartner && !isSelf && (
+                              <p className="text-[10px] uppercase tracking-wider text-cc-t3 mt-0.5">
+                                partner
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -210,7 +343,7 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                 <div className="flex items-center gap-2">
                   <Trophy className="h-3.5 w-3.5 text-slate-400 dark:text-muted-foreground" />
                   <span className="text-sm font-bold text-slate-700 dark:text-foreground">
-                    Match #{matches.length - idx}
+                    Match #{matchNumberById.get(match.id)}
                   </span>
                   {match.courtName && (
                     <span className="text-xs text-slate-400 dark:text-muted-foreground">
@@ -288,16 +421,34 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                         </span>
                       )}
                     </div>
-                    {teamA.map((p) => (
-                      <div key={p.player_id} className="mb-1 last:mb-0">
-                        <p
-                          className={`text-sm leading-snug ${aWon ? "font-bold text-emerald-900 dark:text-emerald-300" : "font-medium text-slate-600 dark:text-foreground"}`}
-                        >
-                          {p.profile.display_name}
-                        </p>
-                        <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-                      </div>
-                    ))}
+                    {teamA.map((p) => {
+                      const isSelf = isFiltered && p.player_id === selectedId;
+                      const isPartner = isFiltered && partnerIds.includes(p.player_id);
+                      return (
+                        <div key={p.player_id} className="mb-1 last:mb-0">
+                          <p
+                            className={[
+                              "text-sm leading-snug rounded px-1 py-0.5 inline-block",
+                              isSelf
+                                ? "bg-cc-accent-dim outline outline-1 outline-cc-accent/55 text-cc-accent-text font-bold"
+                                : isPartner
+                                  ? "outline outline-1 outline-dashed outline-cc-accent/55 font-medium"
+                                  : aWon
+                                    ? "font-bold text-emerald-900 dark:text-emerald-300"
+                                    : "font-medium text-slate-600 dark:text-foreground",
+                            ].join(" ")}
+                          >
+                            {p.profile.display_name}
+                          </p>
+                          {isPartner && !isSelf && (
+                            <p className="text-[10px] uppercase tracking-wider text-cc-t3 mt-0.5">
+                              partner
+                            </p>
+                          )}
+                          <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
+                        </div>
+                      );
+                    })}
                   </div>
 
                   {/* Team B */}
@@ -315,16 +466,34 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                         </span>
                       )}
                     </div>
-                    {teamB.map((p) => (
-                      <div key={p.player_id} className="mb-1 last:mb-0">
-                        <p
-                          className={`text-sm leading-snug ${bWon ? "font-bold text-emerald-900 dark:text-emerald-300" : "font-medium text-slate-600 dark:text-foreground"}`}
-                        >
-                          {p.profile.display_name}
-                        </p>
-                        <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
-                      </div>
-                    ))}
+                    {teamB.map((p) => {
+                      const isSelf = isFiltered && p.player_id === selectedId;
+                      const isPartner = isFiltered && partnerIds.includes(p.player_id);
+                      return (
+                        <div key={p.player_id} className="mb-1 last:mb-0">
+                          <p
+                            className={[
+                              "text-sm leading-snug rounded px-1 py-0.5 inline-block",
+                              isSelf
+                                ? "bg-cc-accent-dim outline outline-1 outline-cc-accent/55 text-cc-accent-text font-bold"
+                                : isPartner
+                                  ? "outline outline-1 outline-dashed outline-cc-accent/55 font-medium"
+                                  : bWon
+                                    ? "font-bold text-emerald-900 dark:text-emerald-300"
+                                    : "font-medium text-slate-600 dark:text-foreground",
+                            ].join(" ")}
+                          >
+                            {p.profile.display_name}
+                          </p>
+                          {isPartner && !isSelf && (
+                            <p className="text-[10px] uppercase tracking-wider text-cc-t3 mt-0.5">
+                              partner
+                            </p>
+                          )}
+                          <SkillBadge level={p.profile.skill_level} className="mt-0.5" />
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -341,6 +510,13 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
           );
         })}
       </div>
+
+      {/* Legend — only shown when a filter is active and there are visible matches */}
+      {isFiltered && visibleMatches.length > 0 && (
+        <p className="text-[10px] text-muted-foreground text-center">
+          ◍ solid = selected &middot; ◌ dashed = partner
+        </p>
+      )}
     </div>
   );
 }

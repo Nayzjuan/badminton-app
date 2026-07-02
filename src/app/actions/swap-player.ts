@@ -196,7 +196,7 @@ export async function swapPlayerInMatch(
   // transitions waiting → on_deck. For an unpublished draft they go to
   // 'drafted' (still hidden), so we stay silent until publish.
   if (match.is_published) {
-    after(() => pushToPlayers([inPlayerId], "ON_DECK_WARNING"));
+    after(() => pushToPlayers([inPlayerId], "ON_DECK_WARNING", match.session_id));
   }
 
   return { success: true, message: "Swap complete." };

@@ -343,7 +343,7 @@ export async function publishMatchAction(
         .select("player_id")
         .eq("match_id", matchId);
       const rosterIds = (rosterRows ?? []).map((r) => r.player_id);
-      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING", match.session_id));
 
       // Engine hook: publishing moves this draft out of the review queue,
       // opening a slot. Refill immediately so the organizer has fresh drafts.
@@ -543,7 +543,7 @@ export async function publishAllDraftMatchesAction(
         .select("player_id")
         .in("match_id", publishedIds);
       const rosterIds = (rosterRows ?? []).map((r) => r.player_id);
-      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING"));
+      after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING", sessionId));
     }
   }
 

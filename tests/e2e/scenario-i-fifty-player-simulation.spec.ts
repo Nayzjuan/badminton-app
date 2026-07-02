@@ -43,7 +43,12 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession, softResetSandboxSession } from "../helpers/teardown";
+import {
+  resetSandboxSession,
+  softResetSandboxSession,
+  getSandboxClubSlug,
+} from "../helpers/teardown";
+import { clubOrganizer, clubJoin } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -127,6 +132,7 @@ let allPlayers: PlayerRecord[] = [];
 let currentCourtIds: string[] = [];
 
 const sessionId = process.env.TEST_SESSION_ID!;
+let CLUB_SLUG: string;
 
 // ── Vercel bypass headers ─────────────────────────────────────
 // Playwright's global `use.extraHTTPHeaders` only applies to contexts
@@ -139,7 +145,7 @@ const BYPASS_HEADERS: Record<string, string> = process.env.VERCEL_BYPASS_SECRET
 
 // ── Helper: navigate organizer to dashboard ───────────────────
 async function goToDashboard(page: import("@playwright/test").Page) {
-  await page.goto(`${process.env.TEST_BASE_URL}/organizer/${sessionId}`);
+  await page.goto(`${process.env.TEST_BASE_URL}${clubOrganizer(CLUB_SLUG, sessionId)}`);
   await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 }
 
@@ -228,6 +234,7 @@ async function seedOnDeckMatch() {
 test.beforeAll(async ({ browser }) => {
   // 1. Ensure the organizer bot account exists
   await ensureOrganizerAccount();
+  CLUB_SLUG = await getSandboxClubSlug();
 
   // 2. Create all 50 bot player accounts ONCE
   //    Sequential creation is intentional — the admin API does not
@@ -373,7 +380,7 @@ test.describe("Group 1 — Player Registration", () => {
     const page = await ctx.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
+      await page.goto(`${process.env.TEST_BASE_URL}${clubJoin(CLUB_SLUG, sessionId)}`);
 
       // Fill registration form
       await page.locator("#display_name").fill(uniqueName);
@@ -482,7 +489,7 @@ test.describe("Group 1 — Player Registration", () => {
     const page = await ctx.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
+      await page.goto(`${process.env.TEST_BASE_URL}${clubJoin(CLUB_SLUG, sessionId)}`);
 
       await page.locator("#display_name").fill(dupName);
       await page.locator("#pin").fill("1234");
@@ -528,7 +535,7 @@ test.describe("Group 1 — Player Registration", () => {
     const page = await ctx.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
+      await page.goto(`${process.env.TEST_BASE_URL}${clubJoin(CLUB_SLUG, sessionId)}`);
 
       await page.locator("#display_name").fill("E2E_NoPin_Test");
       // Intentionally leave PIN empty — do NOT fill #pin
@@ -610,7 +617,7 @@ test.describe("Group 2 — PIN Reconnect", () => {
     const page = await ctx.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
+      await page.goto(`${process.env.TEST_BASE_URL}${clubJoin(CLUB_SLUG, sessionId)}`);
 
       // Switch to the RETURNING tab — the inline reconnect form mounts in place.
       const returningTab = page.getByRole("tab", { name: /returning/i });
@@ -628,11 +635,13 @@ test.describe("Group 2 — PIN Reconnect", () => {
 
       // The reconnect flow is complex (signOut → signInAnonymously →
       // migrate_player_identity RPC → deleteUser → router.push), and in the
-      // deployed test env the post-reconnect navigation can land at /play
-      // or /play/{sessionId}.  Wait for the URL to leave the join page —
-      // any /play/* path that is not the join entry point signals success.
+      // deployed test env the post-reconnect navigation can land at /play,
+      // /play/{sessionId}, or (multi-tenant) the club-scoped
+      // /c/{slug}/play/{sessionId} the legacy route 308-redirects to.  Wait
+      // for the URL to leave the join page — any /play* path (flat or
+      // club-scoped) that is not the join entry point signals success.
       await page.waitForURL(
-        (url) => url.pathname.startsWith("/play") && !url.pathname.includes("join"),
+        (url) => /\/play(\/|$)/.test(url.pathname) && !url.pathname.includes("join"),
         { timeout: 20_000 }
       );
 
@@ -665,7 +674,7 @@ test.describe("Group 2 — PIN Reconnect", () => {
     const page = await ctx.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
+      await page.goto(`${process.env.TEST_BASE_URL}${clubJoin(CLUB_SLUG, sessionId)}`);
 
       // Switch to the RETURNING tab — inline reconnect form mounts.
       const returningTab = page.getByRole("tab", { name: /returning/i });
@@ -696,7 +705,7 @@ test.describe("Group 2 — PIN Reconnect", () => {
     const page = await ctx.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/play/join?session=${sessionId}`);
+      await page.goto(`${process.env.TEST_BASE_URL}${clubJoin(CLUB_SLUG, sessionId)}`);
 
       // Switch to the RETURNING tab — inline reconnect form mounts.
       const returningTab = page.getByRole("tab", { name: /returning/i });

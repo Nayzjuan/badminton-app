@@ -14,6 +14,9 @@ import type { SkillLevel } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
+import { ensureClubMembership, getClubBySlug, resolveSessionClubSlug } from "@/lib/clubs";
+import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
+import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 
 // Shared friendly message for a globally-taken display name.
 const NAME_TAKEN_MESSAGE = 'Name taken. Add an initial (e.g. "Miggy L.").';
@@ -32,7 +35,15 @@ export async function signInAnonymously(formData: FormData) {
   const rawPin = formData.get("pin") as string | null;
   // Optional: if joining via QR/link, redirect straight to that session.
   const sessionId = (formData.get("session_id") as string)?.trim() || null;
-  const destination = sessionId ? `/play/${sessionId}` : "/play";
+  // Optional: club context from a /c/[clubSlug]/join QR — enroll + route into the club.
+  const clubSlug = (formData.get("club_slug") as string)?.trim() || null;
+  const destination = clubSlug
+    ? sessionId
+      ? clubPlay(clubSlug, sessionId)
+      : clubBase(clubSlug)
+    : sessionId
+      ? `/play/${sessionId}`
+      : "/play";
 
   // ── Zod validation ───────────────────────────────────────
   const nameResult = displayNameSchema.safeParse(rawName ?? "");
@@ -71,7 +82,11 @@ export async function signInAnonymously(formData: FormData) {
     // RE-CREATES their missing profile here instead of a no-op update, which is
     // what breaks the profileless redirect loop. The partial UNIQUE index is the
     // authority for global name uniqueness, so a taken name surfaces as 23505.
-    const { error: upsertError } = await supabase
+    // Service client — ON CONFLICT DO UPDATE needs column-read privilege on
+    // the SET columns (including pin), which the browser/anon-key client no
+    // longer has (20260701000010_column_lockdown_fix_table_grants.sql).
+    // Sanctioned service-role-for-PINs use case (CLAUDE.md §Database Strictness).
+    const { error: upsertError } = await service
       .from("profiles")
       .upsert(
         { id: existingUser.id, display_name: displayName, skill_level: skillLevel, pin },
@@ -85,6 +100,12 @@ export async function signInAnonymously(formData: FormData) {
       return { success: false, error: upsertError.message };
     }
 
+    if (clubSlug) {
+      const enroll = await ensureClubMembership(clubSlug, existingUser.id);
+      // Club vanished / membership write failed — don't redirect into a gated
+      // club route that would immediately bounce them; send them to their hub.
+      if (!enroll.ok) redirect("/clubs");
+    }
     redirect(destination);
   }
 
@@ -100,7 +121,7 @@ export async function signInAnonymously(formData: FormData) {
     .ilike("display_name", escapeLike(displayName))
     .eq("pin", pin)
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (existingProfile) {
     return {
@@ -138,7 +159,8 @@ export async function signInAnonymously(formData: FormData) {
   // didn't propagate, fire an upsert as a safety net (with PIN).
   // Awaited so we can surface DB-level errors (e.g. 23505 unique violation).
   if (data.user) {
-    const { error: upsertError } = await supabase.from("profiles").upsert(
+    // Service client — same column-privilege reason as the upsert above.
+    const { error: upsertError } = await service.from("profiles").upsert(
       {
         id: data.user.id,
         display_name: displayName,
@@ -160,6 +182,13 @@ export async function signInAnonymously(formData: FormData) {
     }
   }
 
+  // QR-join enrollment: a brand-new scanner becomes an active member of the
+  // club, so the club route's membership gate lets them straight in.
+  if (clubSlug && data.user) {
+    const enroll = await ensureClubMembership(clubSlug, data.user.id);
+    // Enrollment failed — avoid redirecting into a gated route that bounces.
+    if (!enroll.ok) redirect("/clubs");
+  }
   redirect(destination);
 }
 
@@ -190,7 +219,11 @@ export interface ReconnectResult {
   useGoogleSignIn?: boolean;
 }
 
-export async function reconnectPlayer(playerName: string, pin: string): Promise<ReconnectResult> {
+export async function reconnectPlayer(
+  playerName: string,
+  pin: string,
+  clubSlug?: string | null
+): Promise<ReconnectResult> {
   // Validate via Zod — same rules as registration
   const nameResult = displayNameSchema.safeParse(playerName ?? "");
   if (!nameResult.success) {
@@ -204,12 +237,35 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
   }
   const service = createServiceClient();
 
-  // Find the profile by name + PIN (case-insensitive name match).
-  const { data: profiles } = await service
-    .from("profiles")
-    .select("*")
-    .ilike("display_name", escapeLike(name))
-    .eq("pin", pinResult.data);
+  // Resolve the caller's club context (set when reconnecting via a
+  // club-scoped page, e.g. /c/[clubSlug]/join) so the lookup below can be
+  // scoped to that club instead of matching across every club in the system.
+  const club = clubSlug ? await getClubBySlug(clubSlug) : null;
+
+  // Find the profile by name + PIN (case-insensitive name match). Scoped to
+  // the caller's own club when known — display_name is unique only among
+  // non-flagged profiles (a flagged duplicate keeps its old name until it
+  // renames, see dup-name.ts), and PINs are a short numeric code with
+  // limited entropy, so an unscoped global lookup could match a different
+  // player in another club who coincidentally shares both. Mirrors the
+  // sessions!inner(...) nested-join filter pattern used elsewhere in this
+  // function (Phase 1/3 queue_entries lookups below).
+  //
+  // club_members has TWO foreign keys to profiles (player_id, invited_by),
+  // so the embed must be disambiguated with the FK constraint name — a bare
+  // `club_members!inner(...)` throws PGRST201 (ambiguous relationship).
+  const { data: profiles } = club
+    ? await service
+        .from("profiles")
+        .select("*, club_members!club_members_player_id_fkey!inner(club_id)")
+        .ilike("display_name", escapeLike(name))
+        .eq("pin", pinResult.data)
+        .eq("club_members.club_id", club.id)
+    : await service
+        .from("profiles")
+        .select("*")
+        .ilike("display_name", escapeLike(name))
+        .eq("pin", pinResult.data);
 
   if (!profiles || profiles.length === 0) {
     return { success: false, error: "No match found. Check your name and PIN." };
@@ -399,14 +455,18 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
   // Refreshing here eliminates the staleness window so the leaderboard
   // is immediately correct for the reconnected player.
   // Non-fatal: a refresh failure does not affect the reconnect itself.
-  void service.rpc("refresh_alltime_leaderboard").then(({ error }) => {
-    if (error) {
-      console.warn(
-        "[reconnectPlayer] refresh_alltime_leaderboard failed (non-fatal):",
-        error.message
-      );
-    }
-  });
+  // Debounced (shared with endMatchAction) since the RPC rebuilds across
+  // ALL clubs, not just this player's.
+  if (shouldRefreshLeaderboard()) {
+    void service.rpc("refresh_alltime_leaderboard").then(({ error }) => {
+      if (error) {
+        console.warn(
+          "[reconnectPlayer] refresh_alltime_leaderboard failed (non-fatal):",
+          error.message
+        );
+      }
+    });
+  }
 
   // Step 6: Delete old auth user (only when not an active organizer).
   // Cannot be done inside the Postgres function — auth.admin is a
@@ -523,7 +583,10 @@ export async function reconnectPlayer(playerName: string, pin: string): Promise<
           .single();
 
         if (statsRow) {
-          wrappedUrl = `/wrapped/${entry.session_id}/${newUserId}`;
+          const clubSlug = await resolveSessionClubSlug(entry.session_id);
+          wrappedUrl = clubSlug
+            ? clubWrapped(clubSlug, entry.session_id, newUserId)
+            : `/wrapped/${entry.session_id}/${newUserId}`;
           break;
         }
       }

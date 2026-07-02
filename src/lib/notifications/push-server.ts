@@ -27,6 +27,8 @@ import "server-only";
 
 import webpush from "web-push";
 import { createServiceClient } from "@/utils/supabase/service";
+import { resolveSessionClubSlug } from "@/lib/clubs";
+import { clubPlay } from "@/lib/club-paths";
 
 // ── Alert types ──────────────────────────────────────────────
 
@@ -91,11 +93,16 @@ function ensureVapid() {
  * never throws — it swallows its own errors and returns counts, so it is
  * safe to call fire-and-forget from inside `after()`.
  *
+ * When `sessionId` is provided, the notification deep-links straight to
+ * that session's club-scoped `/c/<slug>/play/<sessionId>` page; otherwise
+ * (or if the session's club can't be resolved) it falls back to `/clubs`.
+ *
  * Returns `{ sent, errors }` aggregated across every device.
  */
 export async function pushToPlayers(
   userIds: string[],
-  type: NotificationType
+  type: NotificationType,
+  sessionId?: string
 ): Promise<{ sent: number; errors: number }> {
   const ids = [...new Set(userIds.filter(Boolean))];
   if (ids.length === 0) return { sent: 0, errors: 0 };
@@ -124,10 +131,25 @@ export async function pushToPlayers(
     return { sent: 0, errors: 0 };
   }
 
+  // Deep-link target — the session's own club-scoped play page when it can
+  // be resolved, otherwise the club-consistent fallback (/clubs → the
+  // player's club → session). Never let a resolution failure (e.g. a
+  // misconfigured service-role env var) break this function's own
+  // never-throws contract — fall back to /clubs instead.
+  let url = "/clubs";
+  if (sessionId) {
+    try {
+      const slug = await resolveSessionClubSlug(sessionId);
+      if (slug) url = clubPlay(slug, sessionId);
+    } catch (err) {
+      console.error("[pushToPlayers] resolveSessionClubSlug failed:", err);
+    }
+  }
+
   const payload = JSON.stringify({
     type,
     ...PAYLOADS[type],
-    data: { url: "/play" },
+    data: { url },
   });
 
   let sent = 0;

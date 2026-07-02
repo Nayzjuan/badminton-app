@@ -24,7 +24,12 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession, softResetSandboxSession } from "../helpers/teardown";
+import {
+  resetSandboxSession,
+  softResetSandboxSession,
+  getSandboxClubSlug,
+} from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -37,6 +42,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
+let CLUB_SLUG: string;
 
 const BYPASS_HEADERS: Record<string, string> = process.env.VERCEL_BYPASS_SECRET
   ? { "x-vercel-protection-bypass": process.env.VERCEL_BYPASS_SECRET }
@@ -45,6 +51,7 @@ const BYPASS_HEADERS: Record<string, string> = process.env.VERCEL_BYPASS_SECRET
 // ── One-time global setup ─────────────────────────────────────
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
+  CLUB_SLUG = await getSandboxClubSlug();
 
   clearOrganizerStorageState();
   const context = await browser.newContext({ extraHTTPHeaders: BYPASS_HEADERS });
@@ -71,7 +78,9 @@ test.describe("Session Management — [L-1] Add court", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/organizer/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubOrganizer(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // Wait for the Courts tab panel to fully mount.
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 20_000 });
@@ -113,7 +122,9 @@ test.describe("Session Management — [L-2] Auto-matchmaking toggle", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/organizer/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubOrganizer(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 20_000 });
 
       const toggleBtn = page.getByTestId("toggle-auto-matchmaking");
@@ -243,7 +254,9 @@ test.describe("Session Management — [L-3] Close session", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/organizer/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubOrganizer(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 20_000 });
 
       // Locate the "End Session" or "Close Session" button.

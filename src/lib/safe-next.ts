@@ -6,8 +6,8 @@
 // Shared by the OAuth actions, the OAuth callback, and the /rename gate.
 // ============================================================
 
-/** Returns `next` if it is a safe internal path, else the fallback (default /play). */
-export function safeNext(next: string | null | undefined, fallback = "/play"): string {
+/** Returns `next` if it is a safe internal path, else the fallback (default /clubs). */
+export function safeNext(next: string | null | undefined, fallback = "/clubs"): string {
   if (!next || !next.startsWith("/") || next.startsWith("//")) return fallback;
   return next;
 }

@@ -17,10 +17,13 @@
 import { useState, useRef, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { ChevronLeft, Home, ArrowRight, Globe } from "lucide-react";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubBase } from "@/lib/club-paths";
 
 export function PwaNavBar() {
   const pathname = usePathname();
   const router = useRouter();
+  const clubSlug = useClubSlug();
 
   // All hooks are declared unconditionally before any early return to
   // satisfy the Rules of Hooks. Conditional rendering (Wrapped suppression)
@@ -54,7 +57,9 @@ export function PwaNavBar() {
 
   // The Wrapped experience is a full-bleed immersive overlay —
   // suppress the nav bar so it doesn't compete with the animation.
-  if (pathname.startsWith("/wrapped/")) return null;
+  // `includes` (not `startsWith`) so this also catches the club-namespaced
+  // variant at /c/[clubSlug]/wrapped/...
+  if (pathname.includes("/wrapped/")) return null;
 
   // The full URL shown in the bar when not editing.
   const displayUrl = origin ? `${origin}${pathname}` : pathname;
@@ -173,7 +178,7 @@ export function PwaNavBar() {
         </button>
       ) : (
         <button
-          onClick={() => router.push("/play")}
+          onClick={() => router.push(clubSlug ? clubBase(clubSlug) : "/play")}
           aria-label="Go home"
           className="shrink-0 h-10 w-10 flex items-center justify-center
                      rounded-lg text-muted-foreground

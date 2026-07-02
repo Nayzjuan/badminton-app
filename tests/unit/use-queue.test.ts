@@ -102,10 +102,13 @@ vi.mock("@/app/actions/queue", () => ({
   checkoutPlayer: (...args: unknown[]) => mockCheckoutPlayer(...args),
 }));
 
-// useQueue now calls useRouter() (to route flagged duplicates to /rename).
+// useQueue now calls useRouter() (to route flagged duplicates to /rename) and
+// usePathname() (to build the /rename ?next= from the current path, not a
+// hardcoded /play/[id]).
 const mockRouterPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockRouterPush, refresh: vi.fn() }),
+  usePathname: () => `/play/test-session`,
 }));
 
 // ── Tests ─────────────────────────────────────────────────────

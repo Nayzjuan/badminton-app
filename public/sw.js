@@ -12,10 +12,10 @@
 //   WebSockets (wss://) are never intercepted by fetch handlers.
 // ============================================================
 
-// Bumped v1 → v2 to force clients onto the new push handler
-// (renotify for repeat court calls). skipWaiting + clients.claim
-// (below) make the new SW activate immediately.
-const CACHE_VERSION = "v2";
+// Bumped v1 → v2 (renotify for repeat court calls), then v2 → v3 to ship the
+// club-aware push/notification default URLs (/clubs). skipWaiting + clients.claim
+// (below) make the new SW activate immediately on existing installs.
+const CACHE_VERSION = "v3";
 
 const CACHE_NAMES = {
   static:   `bq-static-${CACHE_VERSION}`,     // /_next/static/* and icons
@@ -257,7 +257,7 @@ self.addEventListener("push", (event) => {
       tag,
       renotify,
       requireInteraction,
-      data: { url: data?.url ?? "/play", type, ...data },
+      data: { url: data?.url ?? "/clubs", type, ...data },
       actions: [
         { action: "open", title: "Open App" },
         { action: "dismiss", title: "Got it" },
@@ -270,7 +270,7 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   if (event.action === "dismiss") return;
 
-  const targetUrl = event.notification.data?.url ?? "/play";
+  const targetUrl = event.notification.data?.url ?? "/clubs";
 
   event.waitUntil(
     clients

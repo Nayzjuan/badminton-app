@@ -11,8 +11,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { enforceRenameGate } from "@/lib/rename-gate";
-import { SessionList } from "@/components/session-list";
+import { getMyActiveClubIds } from "@/lib/clubs";
 import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
+import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
 import { VipTag } from "@/components/ui/vip-tag";
@@ -28,8 +29,9 @@ export default async function PlayPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
-  // Get profile. Explicit column list — this picker never displays the caller's
-  // own PIN, and the authenticated role can no longer select profiles.pin.
+  // Get profile. Explicit column list — this page (session picker) never
+  // displays the player's own PIN, and the browser client's column privilege
+  // on profiles no longer includes it (20260701000010_column_lockdown_fix_table_grants.sql).
   const { data: profileRow } = await supabase
     .from("profiles")
     .select(PUBLIC_PROFILE_COLUMNS)
@@ -44,14 +46,23 @@ export default async function PlayPage() {
 
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
-  // Get active sessions. SessionList never displays organizer_passcode.
-  const { data: sessions } = await supabase
-    .from("sessions")
-    .select(PUBLIC_SESSION_COLUMNS)
-    .eq("is_active", true)
-    .order("created_at", { ascending: false });
+  // Get active sessions — scoped to clubs the player actually belongs to, so
+  // a multi-club deployment never lists another club's session names here.
+  const clubIds = await getMyActiveClubIds(user.id);
 
-  const activeSessions = (sessions ?? []).map((s) => ({ ...s, organizer_passcode: null }));
+  // SessionList doesn't display organizer_passcode — explicit column list.
+  const activeSessionRows =
+    clubIds.length === 0
+      ? []
+      : ((
+          await supabase
+            .from("sessions")
+            .select(PUBLIC_SESSION_COLUMNS)
+            .eq("is_active", true)
+            .in("club_id", clubIds)
+            .order("created_at", { ascending: false })
+        ).data ?? []);
+  const activeSessions = activeSessionRows.map((s) => ({ ...s, organizer_passcode: null }));
 
   return (
     <main className="flex min-h-screen flex-col px-4 py-6">

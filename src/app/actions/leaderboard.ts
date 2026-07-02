@@ -20,6 +20,7 @@
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { isValidUUID } from "@/lib/validate";
 import { formatMonthLabel } from "@/lib/month";
+import { getClubBySlug } from "@/lib/clubs";
 import type {
   SessionLeaderboardEntry,
   AllTimeLeaderboardEntry,
@@ -138,9 +139,7 @@ export async function getSessionLeaderboard(
     // Fetch session stats and streaks in parallel
     const [statsResult, streaksResult] = await Promise.all([
       supabase
-        .from("v_session_leaderboard")
-        .select("*")
-        .eq("session_id", sessionId)
+        .rpc("get_session_leaderboard_public", { p_session_id: sessionId })
         .gte("games_played", MIN_SESSION_GP),
       supabase.rpc("get_player_streaks", { p_session_id: sessionId }),
     ]);
@@ -211,26 +210,36 @@ export async function getSessionLeaderboard(
 //      Positive = moved up. Negative = moved down.
 //      null = new entrant (not present in previous snapshot).
 // ============================================================
-export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResult> {
+export async function getAllTimeLeaderboard(
+  clubSlug?: string | null // when set, scope the board to that club; null = all clubs
+): Promise<GetAllTimeLeaderboardResult> {
   try {
     const supabase = await createServerSupabaseClient();
+    const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - RANK_MOVEMENT_DAYS);
     const cutoffISO = cutoff.toISOString();
 
+    // Current: from materialized view (fast, pre-aggregated). Club filter is
+    // conditional — .eq('club_id', null) would wrongly match NULL rows.
+    let currentQuery = supabase
+      .from("v_alltime_leaderboard_mat")
+      .select("*")
+      .gte("games_played", MIN_ALLTIME_GP);
+    if (clubId) currentQuery = currentQuery.eq("club_id", clubId);
+
     // Fetch current mat-view, previous stats, and streaks in parallel
     const [currentResult, previousResult, streaksResult] = await Promise.all([
-      // Current: from materialized view (fast, pre-aggregated)
-      supabase.from("v_alltime_leaderboard_mat").select("*").gte("games_played", MIN_ALLTIME_GP),
+      currentQuery,
 
-      // Previous: raw aggregation on v_match_history filtered by date
+      // Previous: raw aggregation on v_match_history filtered by date (+ club).
       // We re-aggregate here rather than using the matview because the
       // matview always reflects all history — we need a point-in-time slice.
-      supabase.rpc("get_alltime_snapshot_before", { p_cutoff: cutoffISO }),
+      supabase.rpc("get_alltime_snapshot_before", { p_cutoff: cutoffISO, p_club_id: clubId }),
 
       // Cross-session streaks (no session filter = lifetime streak)
-      supabase.rpc("get_player_streaks", { p_session_id: null }),
+      supabase.rpc("get_player_streaks", { p_session_id: null, p_club_id: clubId }),
     ]);
 
     if (currentResult.error) {
@@ -310,17 +319,20 @@ export async function getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResu
 // ============================================================
 export async function getMonthlyLeaderboard(
   year: number,
-  month: number
+  month: number,
+  clubSlug?: string | null
 ): Promise<GetMonthlyLeaderboardResult> {
   if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
     return { success: false, error: "Invalid year or month." };
   }
   try {
     const supabase = await createServerSupabaseClient();
+    const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
 
     const { data, error } = await supabase.rpc("get_monthly_leaderboard", {
       p_year: year,
       p_month: month,
+      p_club_id: clubId,
     });
 
     if (error) {
@@ -371,10 +383,13 @@ export async function getMonthlyLeaderboard(
 // Months selectable in the monthly picker: distinct Manila-months with
 // completed matches, plus the current month (always present), newest first.
 // ============================================================
-export async function getLeaderboardMonths(): Promise<GetLeaderboardMonthsResult> {
+export async function getLeaderboardMonths(
+  clubSlug?: string | null
+): Promise<GetLeaderboardMonthsResult> {
   try {
     const supabase = await createServerSupabaseClient();
-    const { data, error } = await supabase.rpc("get_leaderboard_months");
+    const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
+    const { data, error } = await supabase.rpc("get_leaderboard_months", { p_club_id: clubId });
     if (error) {
       console.error("[getLeaderboardMonths] error:", error);
       return { success: false, error: error.message };
@@ -400,7 +415,8 @@ export async function getLeaderboardMonths(): Promise<GetLeaderboardMonthsResult
 export async function getPlayerMonthlyStats(
   playerId: string,
   year: number,
-  month: number
+  month: number,
+  clubSlug?: string | null
 ): Promise<GetPlayerStatsResult> {
   if (!isValidUUID(playerId)) return { success: false, error: "Invalid player ID." };
   if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
@@ -408,9 +424,11 @@ export async function getPlayerMonthlyStats(
   }
   try {
     const supabase = await createServerSupabaseClient();
+    const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
     const { data, error } = await supabase.rpc("get_monthly_leaderboard", {
       p_year: year,
       p_month: month,
+      p_club_id: clubId,
     });
     if (error) {
       console.error("[getPlayerMonthlyStats] error:", error);
@@ -454,7 +472,8 @@ export async function getPlayerMonthlyStats(
 // ============================================================
 export async function getPlayerStats(
   playerId: string,
-  sessionId: string | null // null = all-time scope
+  sessionId: string | null, // null = all-time scope
+  clubSlug?: string | null // scopes the all-time branch; session branch is club-implicit
 ): Promise<GetPlayerStatsResult> {
   if (!isValidUUID(playerId)) return { success: false, error: "Invalid player ID." };
   if (sessionId !== null && !isValidUUID(sessionId)) {
@@ -466,9 +485,7 @@ export async function getPlayerStats(
     if (sessionId) {
       // ── Session scope ────────────────────────────────────────
       const { data, error } = await supabase
-        .from("v_session_leaderboard")
-        .select("*")
-        .eq("session_id", sessionId)
+        .rpc("get_session_leaderboard_public", { p_session_id: sessionId })
         .eq("player_id", playerId)
         .maybeSingle();
 
@@ -500,30 +517,83 @@ export async function getPlayerStats(
       return { success: true, row };
     } else {
       // ── All-time scope ───────────────────────────────────────
-      const { data, error } = await supabase
+      const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
+      let allTimeQuery = supabase
         .from("v_alltime_leaderboard_mat")
         .select("*")
-        .eq("player_id", playerId)
-        .maybeSingle();
+        .eq("player_id", playerId);
+      if (clubId) allTimeQuery = allTimeQuery.eq("club_id", clubId);
+
+      if (clubId) {
+        // Club-scoped: exactly 0 or 1 matview row for this player, safe to
+        // use maybeSingle().
+        const { data, error } = await allTimeQuery.maybeSingle();
+
+        if (error) {
+          console.error("[getPlayerStats] alltime error:", error);
+          return { success: false, error: error.message };
+        }
+
+        if (!data) return { success: true, row: null }; // zero all-time games
+
+        const entry = data as AllTimeLeaderboardEntry;
+        const row: LeaderboardRow = {
+          player_id: entry.player_id,
+          display_name: entry.display_name,
+          games_played: entry.games_played,
+          wins: entry.wins,
+          losses: entry.losses,
+          points_for: entry.points_for,
+          points_against: entry.points_against,
+          point_diff: entry.point_diff,
+          win_pct: entry.win_pct,
+          rank: 0, // not on ranked board
+          win_streak: 0, // not shown in below-threshold state
+          rank_movement: null,
+          vip_tag: null, // not shown in below-threshold state
+          vip_theme: null,
+        };
+
+        return { success: true, row };
+      }
+
+      // Unscoped (legacy "all clubs" root /leaderboard): the matview is
+      // keyed by (club_id, player_id), so a player active in 2+ clubs has
+      // one row per club here. maybeSingle() would throw PGRST116 for such
+      // a player — merge all of their rows into one combined stats row
+      // instead, matching what an "all clubs" view should mean.
+      const { data, error } = await allTimeQuery;
 
       if (error) {
         console.error("[getPlayerStats] alltime error:", error);
         return { success: false, error: error.message };
       }
 
-      if (!data) return { success: true, row: null }; // zero all-time games
+      const entries = (data ?? []) as AllTimeLeaderboardEntry[];
+      if (entries.length === 0) return { success: true, row: null }; // zero all-time games
 
-      const entry = data as AllTimeLeaderboardEntry;
+      const merged = entries.reduce(
+        (acc, entry) => ({
+          games_played: acc.games_played + entry.games_played,
+          wins: acc.wins + entry.wins,
+          losses: acc.losses + entry.losses,
+          points_for: acc.points_for + entry.points_for,
+          points_against: acc.points_against + entry.points_against,
+        }),
+        { games_played: 0, wins: 0, losses: 0, points_for: 0, points_against: 0 }
+      );
+
       const row: LeaderboardRow = {
-        player_id: entry.player_id,
-        display_name: entry.display_name,
-        games_played: entry.games_played,
-        wins: entry.wins,
-        losses: entry.losses,
-        points_for: entry.points_for,
-        points_against: entry.points_against,
-        point_diff: entry.point_diff,
-        win_pct: entry.win_pct,
+        player_id: playerId,
+        display_name: entries[0].display_name,
+        games_played: merged.games_played,
+        wins: merged.wins,
+        losses: merged.losses,
+        points_for: merged.points_for,
+        points_against: merged.points_against,
+        point_diff: merged.points_for - merged.points_against,
+        win_pct:
+          merged.games_played > 0 ? Math.round((merged.wins / merged.games_played) * 1000) / 10 : 0,
         rank: 0, // not on ranked board
         win_streak: 0, // not shown in below-threshold state
         rank_movement: null,

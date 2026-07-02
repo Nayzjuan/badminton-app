@@ -54,6 +54,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 import { resetSandboxSession, seedSession } from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -103,7 +104,9 @@ test.describe("Engine Flow: Auto ON", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
 
       // Wait for the courts tab panel to finish loading
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
@@ -194,7 +197,9 @@ test.describe("Engine Flow: Auto OFF", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
 
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -249,7 +254,9 @@ test.describe("Engine Flow: Red Zone escalation", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
 
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -361,7 +368,9 @@ test.describe("Engine Flow: Soft Gate", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
 
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -456,7 +465,9 @@ test.describe("Engine Flow: Soft Gate released at pool=5", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
 
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
