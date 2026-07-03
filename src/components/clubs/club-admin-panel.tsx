@@ -287,6 +287,10 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // Staged (not-yet-committed) role change — a role change, especially → Owner,
+  // is high-stakes and irreversible, so it gets the same explicit confirm guard
+  // as Remove instead of firing on a single native-select flick (P0 safety).
+  const [pendingRole, setPendingRole] = useState<ClubRole | null>(null);
 
   const isSelf = member.player_id === viewerId;
   const manageable = !isSelf && canManage(viewerRole, member.role);
@@ -316,13 +320,26 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
     });
   }
 
-  function handleRoleChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const newRole = e.target.value as ClubRole;
+  // Stage the selection only — never mutate on `change`.
+  function handleRoleSelect(e: React.ChangeEvent<HTMLSelectElement>) {
+    const next = e.target.value as ClubRole;
+    setError(null);
+    setPendingRole(next === member.role ? null : next);
+  }
+
+  // Commit the staged role change after explicit confirmation.
+  function handleConfirmRole() {
+    if (!pendingRole || pendingRole === member.role) {
+      setPendingRole(null);
+      return;
+    }
+    const newRole = pendingRole;
     setError(null);
     startTransition(async () => {
       const result = await changeMemberRole(clubId, member.id, newRole, clubSlug);
       if (result.success) {
         onUpdate(member.id, { role: newRole });
+        setPendingRole(null);
       } else {
         setError(result.message);
       }
@@ -339,9 +356,9 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
           {viewerRole === "owner" && !isSelf && member.is_active ? (
             <span className="inline-flex items-center gap-1.5">
               <select
-                value={member.role}
+                value={pendingRole ?? member.role}
                 disabled={pending}
-                onChange={handleRoleChange}
+                onChange={handleRoleSelect}
                 aria-label={`Change ${member.display_name}'s role`}
                 aria-describedby={error ? `member-${member.id}-error` : undefined}
                 className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-500 outline-none focus:border-cc-accent disabled:opacity-50 dark:border-border dark:bg-background dark:text-muted-foreground"
@@ -350,8 +367,35 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
                 <option value="admin">Admin</option>
                 <option value="owner">Owner</option>
               </select>
-              {pending && (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" aria-hidden="true" />
+              {pendingRole && pendingRole !== member.role ? (
+                <span className="inline-flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={handleConfirmRole}
+                    disabled={pending}
+                    aria-label={`Confirm: make ${member.display_name} ${ROLE_LABEL[pendingRole]}`}
+                    className="inline-flex items-center gap-1 rounded-full bg-cc-accent px-2 py-1 text-[11px] font-bold text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:opacity-50"
+                  >
+                    {pending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      `Make ${ROLE_LABEL[pendingRole]}?`
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPendingRole(null)}
+                    disabled={pending}
+                    aria-label="Cancel role change"
+                    className="rounded-full px-2 py-1 text-[11px] font-medium text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:text-muted-foreground dark:hover:bg-muted"
+                  >
+                    No
+                  </button>
+                </span>
+              ) : (
+                pending && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" aria-hidden="true" />
+                )
               )}
             </span>
           ) : (
