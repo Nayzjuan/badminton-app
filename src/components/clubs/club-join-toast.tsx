@@ -28,6 +28,13 @@ export function ClubJoinToast({ clubName }: { clubName: string }) {
 
     toast.success(`Welcome to ${clubName}`, {
       description: "You've joined this club — its sessions are now yours to see.",
+      classNames: {
+        toast:
+          "clip-cut border border-cc-border bg-cc-bg-2 text-cc-t1 [&>[data-icon]]:text-cc-accent-text",
+        title: "font-display text-base font-bold uppercase italic tracking-tight text-cc-t1",
+        description: "mt-0.5 text-xs text-cc-t2",
+        closeButton: "clip-cut-sm border-cc-border bg-cc-bg-3 text-cc-t2 hover:text-cc-t1",
+      },
     });
 
     // Strip ?joined=1 (preserve any other params) so it announces exactly once.

@@ -22,18 +22,16 @@ export default async function JoinClubPage({
   if (!user) redirect(`/?next=${encodeURIComponent(`/clubs/join?invite=${invite ?? ""}`)}`);
 
   return (
-    <div className="min-h-dvh bg-slate-50 dark:bg-background">
+    <div className="min-h-dvh bg-cc-bg">
       <div className="mx-auto flex max-w-md flex-col px-4 py-12">
         {invite ? (
           <JoinClubPanel token={invite} />
         ) : (
-          <div className="rounded-2xl border border-slate-200 bg-white px-6 py-10 text-center dark:border-border dark:bg-card">
-            <p className="text-sm font-semibold text-slate-700 dark:text-foreground">
+          <div className="clip-cut border border-cc-border bg-cc-bg-2 px-6 py-10 text-center">
+            <p className="font-command text-sm font-semibold uppercase tracking-wide text-cc-t1">
               No invite token
             </p>
-            <p className="mt-1 text-xs text-slate-400 dark:text-muted-foreground">
-              This page needs a valid invite link.
-            </p>
+            <p className="mt-1 text-xs text-cc-t3">This page needs a valid invite link.</p>
             <Link
               href="/clubs"
               className="mt-4 inline-block text-xs font-semibold text-cc-accent-text underline underline-offset-2"

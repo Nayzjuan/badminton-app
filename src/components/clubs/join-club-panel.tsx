@@ -27,19 +27,22 @@ export function JoinClubPanel({ token }: { token: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center shadow-sm dark:border-border dark:bg-card">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-cc-accent-dim">
-        <Ticket className="h-6 w-6 text-cc-accent-text" />
+    <div className="clip-cut border border-cc-border bg-cc-bg-2 px-6 py-8 text-center">
+      <div className="clip-cut-sm mx-auto mb-4 flex h-12 w-12 items-center justify-center bg-cc-accent-dim">
+        <Ticket className="h-6 w-6 text-cc-accent-text" aria-hidden="true" />
       </div>
-      <h1 className="text-lg font-black tracking-tight text-slate-900 dark:text-foreground">
+      <h1 className="font-display text-2xl font-bold uppercase italic tracking-tight text-cc-t1">
         Join this club
       </h1>
-      <p className="mx-auto mt-1 max-w-xs text-sm text-slate-500 dark:text-muted-foreground">
+      <p className="mx-auto mt-1.5 max-w-xs text-sm text-cc-t2">
         You&apos;ve been invited. Accept to add this club to your account.
       </p>
 
       {error && (
-        <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400">
+        <p
+          role="alert"
+          className="clip-cut-sm mt-4 border border-cc-red/30 bg-cc-red-dim px-3 py-2 text-xs font-medium text-cc-red"
+        >
           {error}
         </p>
       )}
@@ -48,7 +51,7 @@ export function JoinClubPanel({ token }: { token: string }) {
         type="button"
         onClick={handleJoin}
         disabled={isPending}
-        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-cc-accent px-4 py-2.5 text-sm font-bold text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="clip-cut-sm mt-5 inline-flex w-full items-center justify-center gap-2 bg-cc-accent px-4 py-2.5 text-sm font-bold uppercase tracking-wide text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
         {isPending ? "Joining…" : "Accept invite"}

@@ -12,8 +12,8 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { requireClubMembership, getMyClubs } from "@/lib/clubs";
 import { ClubSwitcher } from "@/components/clubs/club-switcher";
+import { ClubChromeNav } from "@/components/clubs/club-chrome-nav";
 import { ClubJoinToast } from "@/components/clubs/club-join-toast";
-import { clubBase, clubAdmin, clubLeaderboard } from "@/lib/club-paths";
 
 export default async function ClubAppLayout({
   children,
@@ -31,11 +31,11 @@ export default async function ClubAppLayout({
   const multiClub = myClubs.length > 1;
 
   return (
-    <div className="min-h-dvh bg-slate-50 dark:bg-background">
+    <div className="min-h-dvh bg-cc-bg">
       <Suspense fallback={null}>
         <ClubJoinToast clubName={club.name} />
       </Suspense>
-      <header className="border-b border-slate-200 bg-white px-4 py-3 dark:border-border dark:bg-card">
+      <header className="border-b border-cc-border bg-cc-bg-2 px-4 py-3">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
             {/* Tenant switcher only when the player belongs to >1 club; otherwise
@@ -47,42 +47,21 @@ export default async function ClubAppLayout({
               />
             ) : (
               <div className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate px-2 py-1.5 font-bold text-slate-900 dark:text-foreground">
+                <span className="truncate px-2 py-1.5 font-display font-bold uppercase italic tracking-tight text-cc-t1">
                   {club.name}
                 </span>
                 {/* Not a tenant switcher (single club) — just keeps the clubs hub
                     reachable from the lobby so a lone-club owner can browse/create. */}
                 <Link
                   href="/clubs"
-                  className="shrink-0 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:text-muted-foreground dark:hover:bg-muted"
+                  className="clip-cut-sm shrink-0 px-2 py-1 font-command text-xs uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3 hover:text-cc-t1"
                 >
                   All clubs
                 </Link>
               </div>
             )}
           </div>
-          <nav className="flex items-center gap-1 text-xs font-semibold">
-            <Link
-              href={clubBase(club.slug)}
-              className="rounded-lg px-3 py-1.5 text-slate-600 transition-colors hover:bg-slate-100 dark:text-muted-foreground dark:hover:bg-muted"
-            >
-              Lobby
-            </Link>
-            <Link
-              href={clubLeaderboard(club.slug)}
-              className="rounded-lg px-3 py-1.5 text-slate-600 transition-colors hover:bg-slate-100 dark:text-muted-foreground dark:hover:bg-muted"
-            >
-              Leaderboard
-            </Link>
-            {isAdmin && (
-              <Link
-                href={clubAdmin(club.slug)}
-                className="rounded-lg px-3 py-1.5 text-slate-600 transition-colors hover:bg-slate-100 dark:text-muted-foreground dark:hover:bg-muted"
-              >
-                Admin
-              </Link>
-            )}
-          </nav>
+          <ClubChromeNav slug={club.slug} isAdmin={isAdmin} />
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-6">{children}</main>

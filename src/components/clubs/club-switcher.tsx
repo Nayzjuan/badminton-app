@@ -20,12 +20,12 @@ export function ClubSwitcher({ activeSlug, clubs }: ClubSwitcherProps) {
 
   return (
     <details className="group relative">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-2 py-1.5 font-bold text-slate-900 transition-colors hover:bg-slate-100 dark:text-foreground dark:hover:bg-muted [&::-webkit-details-marker]:hidden">
+      <summary className="clip-cut-sm flex cursor-pointer list-none items-center gap-1.5 px-2 py-1.5 font-display font-bold uppercase italic tracking-tight text-cc-t1 transition-colors hover:bg-cc-bg-3 [&::-webkit-details-marker]:hidden">
         <span className="max-w-[44vw] truncate sm:max-w-xs">{active?.name ?? "Club"}</span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180 dark:text-muted-foreground" />
+        <ChevronDown className="h-4 w-4 shrink-0 text-cc-t3 transition-transform group-open:rotate-180" />
       </summary>
 
-      <div className="absolute left-0 top-full z-30 mt-1 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg dark:border-border dark:bg-card">
+      <div className="clip-cut absolute left-0 top-full z-30 mt-1 w-64 overflow-hidden border border-cc-border bg-cc-bg-2 py-1">
         <ul className="max-h-72 overflow-y-auto">
           {clubs.map((c) => {
             const isActive = c.slug === activeSlug;
@@ -33,30 +33,28 @@ export function ClubSwitcher({ activeSlug, clubs }: ClubSwitcherProps) {
               <li key={c.slug}>
                 <Link
                   href={`/c/${c.slug}`}
-                  className="flex items-center justify-between gap-2 px-3 py-2 text-sm transition-colors hover:bg-slate-50 dark:hover:bg-muted/50"
+                  className="flex items-center justify-between gap-2 px-3 py-2 text-sm transition-colors hover:bg-cc-bg-3"
                 >
-                  <span className="min-w-0 truncate font-medium text-slate-800 dark:text-foreground">
-                    {c.name}
-                  </span>
+                  <span className="min-w-0 truncate font-medium text-cc-t1">{c.name}</span>
                   {isActive && <Check className="h-4 w-4 shrink-0 text-cc-accent-text" />}
                 </Link>
               </li>
             );
           })}
         </ul>
-        <div className="mt-1 border-t border-slate-100 pt-1 dark:border-border">
+        <div className="mt-1 border-t border-cc-border pt-1">
           <Link
             href="/clubs"
-            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50 dark:text-muted-foreground dark:hover:bg-muted/50"
+            className="flex items-center gap-2 px-3 py-2 font-command text-sm uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3"
           >
-            <LayoutGrid className="h-4 w-4" />
+            <LayoutGrid className="h-4 w-4" aria-hidden="true" />
             All clubs
           </Link>
           <Link
             href="/clubs/new"
-            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50 dark:text-muted-foreground dark:hover:bg-muted/50"
+            className="flex items-center gap-2 px-3 py-2 font-command text-sm uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-4 w-4" aria-hidden="true" />
             New club
           </Link>
         </div>

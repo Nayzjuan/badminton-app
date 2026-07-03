@@ -51,7 +51,7 @@ export function CreateClubForm() {
       <div className="space-y-1.5">
         <label
           htmlFor={nameId}
-          className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground"
+          className="block font-command text-xs font-bold uppercase tracking-wide text-cc-t2"
         >
           Club name
         </label>
@@ -63,7 +63,7 @@ export function CreateClubForm() {
           maxLength={60}
           autoFocus
           placeholder="Chillax Badminton"
-          className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30 dark:border-border dark:bg-card dark:text-foreground dark:placeholder:text-muted-foreground"
+          className="clip-cut-sm w-full border border-cc-border bg-cc-bg-2 px-3.5 py-2.5 text-sm text-cc-t1 outline-none transition-colors placeholder:text-cc-t3 focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30"
         />
       </div>
 
@@ -71,14 +71,12 @@ export function CreateClubForm() {
       <div className="space-y-1.5">
         <label
           htmlFor={slugId}
-          className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground"
+          className="block font-command text-xs font-bold uppercase tracking-wide text-cc-t2"
         >
-          Club address
+          Club link
         </label>
-        <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 focus-within:border-cc-accent focus-within:ring-2 focus-within:ring-cc-accent/30 dark:border-border dark:bg-card">
-          <span className="select-none font-mono text-sm text-slate-400 dark:text-muted-foreground">
-            /c/
-          </span>
+        <div className="clip-cut-sm flex items-center gap-1.5 border border-cc-border bg-cc-bg-2 px-3.5 py-2.5 focus-within:border-cc-accent focus-within:ring-2 focus-within:ring-cc-accent/30">
+          <span className="select-none font-mono text-sm text-cc-t3">/c/</span>
           <input
             id={slugId}
             type="text"
@@ -91,10 +89,10 @@ export function CreateClubForm() {
             spellCheck={false}
             autoCapitalize="none"
             placeholder="chillax-badminton"
-            className="w-full bg-transparent font-mono text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-foreground dark:placeholder:text-muted-foreground"
+            className="w-full bg-transparent font-mono text-sm text-cc-t1 outline-none placeholder:text-cc-t3"
           />
         </div>
-        <p className="text-[11px] text-slate-400 dark:text-muted-foreground">
+        <p className="text-[11px] text-cc-t3">
           {effectiveSlug && !slugValid
             ? "3–50 characters: lowercase letters, numbers, single hyphens."
             : "This is your club's permanent URL."}
@@ -102,7 +100,10 @@ export function CreateClubForm() {
       </div>
 
       {error && (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400">
+        <p
+          role="alert"
+          className="clip-cut-sm border border-cc-red/30 bg-cc-red-dim px-3 py-2 text-xs font-medium text-cc-red"
+        >
           {error}
         </p>
       )}
@@ -110,7 +111,7 @@ export function CreateClubForm() {
       <button
         type="submit"
         disabled={!canSubmit}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-cc-accent px-4 py-2.5 text-sm font-bold text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="clip-cut-sm inline-flex w-full items-center justify-center gap-2 bg-cc-accent px-4 py-2.5 text-sm font-bold uppercase tracking-wide text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
         {isPending ? "Creating…" : "Create club"}

@@ -9,6 +9,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Loader2, Copy, Check, Link2, Users, UserMinus } from "lucide-react";
 import {
   createClubInvite,
@@ -30,6 +31,13 @@ type AdminMember = {
 };
 
 const ROLE_LABEL: Record<ClubRole, string> = { owner: "Owner", admin: "Admin", member: "Member" };
+
+/** Role → brand color classes for the role badge / select (UI-only styling). */
+const ROLE_BADGE_CLASS: Record<ClubRole, string> = {
+  owner: "bg-command/12 text-command border border-command/40",
+  admin: "bg-cc-blue-dim text-cc-blue border border-cc-blue/40",
+  member: "bg-cc-bg-3 text-cc-t2 border border-cc-border",
+};
 
 /** Client-side mirror of the server's permission hierarchy — a UI hint only, the actions re-check authoritatively. */
 function canManage(viewerRole: ClubRole, targetRole: ClubRole): boolean {
@@ -121,17 +129,15 @@ export function ClubAdminPanel({
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-foreground">
+        <h1 className="font-display text-xl font-bold uppercase italic tracking-tight text-cc-t1">
           {clubName} · Admin
         </h1>
-        <p className="mt-0.5 font-mono text-[11px] text-slate-400 dark:text-muted-foreground">
-          /c/{clubSlug}
-        </p>
+        <p className="mt-0.5 font-mono text-[11px] text-cc-t3">/c/{clubSlug}</p>
       </div>
 
       {/* New session */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-border dark:bg-card">
-        <h2 className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
+      <section className="clip-cut border border-cc-border bg-cc-bg-2 p-5">
+        <h2 className="mb-3 font-command text-xs font-bold uppercase tracking-wide text-cc-t2">
           Start a session
         </h2>
         <form onSubmit={handleCreateSession} className="space-y-3">
@@ -142,12 +148,12 @@ export function ClubAdminPanel({
               onChange={(e) => setSessionName(e.target.value)}
               maxLength={60}
               placeholder="Friday Night Smash"
-              className="flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30 dark:border-border dark:bg-background dark:text-foreground dark:placeholder:text-muted-foreground"
+              className="clip-cut-sm flex-1 border border-cc-border bg-cc-bg-3 px-3.5 py-2.5 text-sm text-cc-t1 outline-none transition-colors placeholder:text-cc-t3 focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30"
             />
             <select
               value={scoring}
               onChange={(e) => setScoring(e.target.value as ScoringFormat)}
-              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30 dark:border-border dark:bg-background dark:text-foreground"
+              className="clip-cut-sm border border-cc-border bg-cc-bg-3 px-3 py-2.5 text-sm text-cc-t1 outline-none focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30"
             >
               <option value="single">Single game</option>
               <option value="best_of_3">Best of 3</option>
@@ -155,14 +161,14 @@ export function ClubAdminPanel({
             </select>
           </div>
           {sessionError && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400">
+            <p className="clip-cut-sm border border-cc-red/30 bg-cc-red-dim px-3 py-2 text-xs font-medium text-cc-red">
               {sessionError}
             </p>
           )}
           <button
             type="submit"
             disabled={creatingSession || !sessionName.trim()}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-cc-accent px-4 py-2.5 text-sm font-bold text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="clip-cut-sm inline-flex items-center justify-center gap-2 bg-cc-accent px-4 py-2.5 text-sm font-bold uppercase tracking-wide text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {creatingSession && <Loader2 className="h-4 w-4 animate-spin" />}
             {creatingSession ? "Creating…" : "Create session"}
@@ -171,8 +177,8 @@ export function ClubAdminPanel({
       </section>
 
       {/* Invite */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-border dark:bg-card">
-        <h2 className="mb-3 flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
+      <section className="clip-cut border border-cc-border bg-cc-bg-2 p-5">
+        <h2 className="mb-3 flex items-center gap-1.5 font-command text-xs font-bold uppercase tracking-wide text-cc-t2">
           <Link2 className="h-3.5 w-3.5" />
           Invite players
         </h2>
@@ -180,7 +186,7 @@ export function ClubAdminPanel({
           <select
             value={inviteRole}
             onChange={(e) => setInviteRole(e.target.value as ClubRole)}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30 dark:border-border dark:bg-background dark:text-foreground"
+            className="clip-cut-sm border border-cc-border bg-cc-bg-3 px-3 py-2.5 text-sm text-cc-t1 outline-none focus:border-cc-accent focus:ring-2 focus:ring-cc-accent/30"
           >
             <option value="member">As member</option>
             <option value="admin">As admin</option>
@@ -190,7 +196,7 @@ export function ClubAdminPanel({
             onClick={handleCreateInvite}
             disabled={creatingInvite}
             aria-busy={creatingInvite}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-cc-accent/55 bg-cc-accent-dim px-4 py-2.5 text-sm font-bold text-cc-accent-text transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="clip-cut-sm inline-flex items-center justify-center gap-2 border border-cc-accent/55 bg-cc-accent-dim px-4 py-2.5 text-sm font-bold uppercase tracking-wide text-cc-accent-text transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {creatingInvite && <Loader2 className="h-4 w-4 animate-spin" />}
             {creatingInvite ? "Generating…" : "Generate invite link"}
@@ -198,7 +204,7 @@ export function ClubAdminPanel({
         </div>
 
         {inviteError && (
-          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:bg-red-950/40 dark:text-red-400">
+          <p className="clip-cut-sm mt-3 border border-cc-red/30 bg-cc-red-dim px-3 py-2 text-xs font-medium text-cc-red">
             {inviteError}
           </p>
         )}
@@ -207,34 +213,34 @@ export function ClubAdminPanel({
           <div
             role="status"
             aria-live="polite"
-            className="mt-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-border dark:bg-muted/40"
+            className="clip-cut-sm mt-3 flex items-center gap-2 border border-cc-border bg-cc-bg-3 px-3 py-2"
           >
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-600 dark:text-muted-foreground">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-cc-t2">
               {inviteLink}
             </span>
             <button
               type="button"
               onClick={copyInvite}
               aria-label="Copy invite link"
-              className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-cc-accent-text transition-colors hover:bg-cc-accent/15"
+              className="clip-cut-sm inline-flex shrink-0 items-center gap-1 px-2 py-1 text-xs font-semibold text-cc-accent-text transition-colors hover:bg-cc-accent/15"
             >
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
         )}
-        <p className="mt-2 text-[11px] text-slate-400 dark:text-muted-foreground">
+        <p className="mt-2 text-[11px] text-cc-t3">
           One-time link — it stops working after someone joins with it.
         </p>
       </section>
 
       {/* Members */}
       <section>
-        <h2 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
+        <h2 className="mb-2 flex items-center gap-1.5 font-command text-xs font-bold uppercase tracking-wide text-cc-t2">
           <Users className="h-3.5 w-3.5" />
           Members ({activeMembers.length})
         </h2>
-        <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-border dark:border-border dark:bg-card">
+        <ul className="clip-cut divide-y divide-cc-border overflow-hidden border border-cc-border bg-cc-bg-2">
           {activeMembers.map((m) => (
             <MemberRow
               key={m.id}
@@ -252,10 +258,10 @@ export function ClubAdminPanel({
       {/* Removed members — restore-only */}
       {removedMembers.length > 0 && (
         <section>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400 dark:text-muted-foreground">
+          <h2 className="mb-2 font-command text-xs font-bold uppercase tracking-wide text-cc-t3">
             Removed ({removedMembers.length})
           </h2>
-          <ul className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/60 dark:divide-border dark:border-border dark:bg-muted/20">
+          <ul className="clip-cut divide-y divide-cc-border overflow-hidden border border-cc-border bg-cc-bg-3">
             {removedMembers.map((m) => (
               <MemberRow
                 key={m.id}
@@ -302,6 +308,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
       if (result.success) {
         onUpdate(member.id, { is_active: false });
         setConfirming(false);
+        toast.success(`Removed ${member.display_name}`);
       } else {
         setError(result.message);
       }
@@ -314,6 +321,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
       const result = await restoreMember(clubId, member.id, clubSlug);
       if (result.success) {
         onUpdate(member.id, { is_active: true });
+        toast.success(`Restored ${member.display_name}`);
       } else {
         setError(result.message);
       }
@@ -340,6 +348,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
       if (result.success) {
         onUpdate(member.id, { role: newRole });
         setPendingRole(null);
+        toast.success(`${member.display_name} is now ${ROLE_LABEL[newRole]}`);
       } else {
         setError(result.message);
       }
@@ -349,9 +358,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
   return (
     <li className="flex flex-col gap-1.5 px-4 py-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate font-medium text-slate-800 dark:text-foreground">
-          {member.display_name}
-        </span>
+        <span className="truncate font-medium text-cc-t1">{member.display_name}</span>
         <div className="flex shrink-0 items-center gap-2">
           {viewerRole === "owner" && !isSelf && member.is_active ? (
             <span className="inline-flex items-center gap-1.5">
@@ -361,7 +368,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
                 onChange={handleRoleSelect}
                 aria-label={`Change ${member.display_name}'s role`}
                 aria-describedby={error ? `member-${member.id}-error` : undefined}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-500 outline-none focus:border-cc-accent disabled:opacity-50 dark:border-border dark:bg-background dark:text-muted-foreground"
+                className={`clip-cut-sm px-2 py-1 text-[11px] font-bold uppercase tracking-wider outline-none focus:border-cc-accent disabled:opacity-50 ${ROLE_BADGE_CLASS[pendingRole ?? member.role]}`}
               >
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
@@ -374,7 +381,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
                     onClick={handleConfirmRole}
                     disabled={pending}
                     aria-label={`Confirm: make ${member.display_name} ${ROLE_LABEL[pendingRole]}`}
-                    className="inline-flex items-center gap-1 rounded-full bg-cc-accent px-2 py-1 text-[11px] font-bold text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:opacity-50"
+                    className="clip-cut-badge inline-flex items-center gap-1 bg-cc-accent px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-cc-btn-on-accent transition-opacity hover:opacity-90 disabled:opacity-50"
                   >
                     {pending ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
@@ -387,19 +394,21 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
                     onClick={() => setPendingRole(null)}
                     disabled={pending}
                     aria-label="Cancel role change"
-                    className="rounded-full px-2 py-1 text-[11px] font-medium text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:text-muted-foreground dark:hover:bg-muted"
+                    className="clip-cut-badge px-2 py-1 text-[11px] font-medium text-cc-t2 transition-colors hover:bg-cc-bg-3 disabled:opacity-50"
                   >
                     No
                   </button>
                 </span>
               ) : (
                 pending && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" aria-hidden="true" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-cc-t3" aria-hidden="true" />
                 )
               )}
             </span>
           ) : (
-            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:bg-muted dark:text-muted-foreground">
+            <span
+              className={`clip-cut-badge px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${ROLE_BADGE_CLASS[member.role]}`}
+            >
               {ROLE_LABEL[member.role]}
             </span>
           )}
@@ -409,7 +418,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
               type="button"
               onClick={() => setConfirming(true)}
               aria-label={`Remove ${member.display_name}`}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:text-muted-foreground dark:hover:bg-red-950/40 dark:hover:text-red-400"
+              className="clip-cut-sm flex h-8 w-8 items-center justify-center text-cc-t3 transition-colors hover:bg-cc-red-dim hover:text-cc-red"
             >
               <UserMinus className="h-3.5 w-3.5" />
             </button>
@@ -417,14 +426,12 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
 
           {manageable && member.is_active && confirming && (
             <div className="flex items-center gap-1">
-              <span className="text-[11px] font-medium text-slate-500 dark:text-muted-foreground">
-                Remove?
-              </span>
+              <span className="text-[11px] font-medium text-cc-t2">Remove?</span>
               <button
                 type="button"
                 onClick={handleRemove}
                 disabled={pending}
-                className="rounded-full bg-red-600 px-2 py-1 text-[11px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                className="clip-cut-badge bg-cc-red px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Yes"}
               </button>
@@ -432,7 +439,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
                 type="button"
                 onClick={() => setConfirming(false)}
                 disabled={pending}
-                className="rounded-full px-2 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-50 dark:text-muted-foreground dark:hover:bg-muted"
+                className="clip-cut-badge px-2 py-1 text-[11px] font-medium text-cc-t2 hover:bg-cc-bg-3 disabled:opacity-50"
               >
                 No
               </button>
@@ -444,7 +451,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
               type="button"
               onClick={handleRestore}
               disabled={pending}
-              className="inline-flex items-center gap-1 rounded-full border border-cc-accent/55 bg-cc-accent-dim px-2.5 py-1 text-[11px] font-bold text-cc-accent-text transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="clip-cut-badge inline-flex items-center gap-1 border border-cc-accent/55 bg-cc-accent-dim px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-cc-accent-text transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {pending && <Loader2 className="h-3 w-3 animate-spin" />}
               Restore
@@ -453,11 +460,7 @@ function MemberRow({ member, clubId, clubSlug, viewerRole, viewerId, onUpdate }:
         </div>
       </div>
       {error && (
-        <p
-          id={`member-${member.id}-error`}
-          role="alert"
-          className="text-[11px] text-red-600 dark:text-red-400"
-        >
+        <p id={`member-${member.id}-error`} role="alert" className="text-[11px] text-cc-red">
           {error}
         </p>
       )}

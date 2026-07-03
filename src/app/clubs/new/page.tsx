@@ -16,19 +16,19 @@ export default async function NewClubPage() {
   if (!user) redirect("/");
 
   return (
-    <div className="min-h-dvh bg-slate-50 dark:bg-background">
+    <div className="min-h-dvh bg-cc-bg">
       <div className="mx-auto max-w-md px-4 py-8">
         <Link
           href="/clubs"
-          className="mb-5 inline-flex items-center gap-1 text-xs font-semibold text-slate-500 transition-colors hover:text-slate-800 dark:text-muted-foreground dark:hover:text-foreground"
+          className="mb-5 inline-flex items-center gap-1 font-command text-xs uppercase tracking-wide text-cc-t2 transition-colors hover:text-cc-t1"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
           Your clubs
         </Link>
-        <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-foreground">
+        <h1 className="font-display text-2xl font-bold uppercase italic tracking-tight text-cc-t1">
           Create a club
         </h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-muted-foreground">
+        <p className="mt-1 text-sm text-cc-t2">
           You&apos;ll be the owner. Invite players and run sessions under your club&apos;s own
           space.
         </p>
