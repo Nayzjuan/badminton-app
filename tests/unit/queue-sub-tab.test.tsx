@@ -60,6 +60,7 @@ const mockSession: Session = {
   id: "sess-1",
   name: SESSION_NAME,
   created_by: "org-1",
+  club_id: "club-1",
   organizer_passcode: null,
   scoring: "single",
   is_active: true,

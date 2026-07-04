@@ -1,0 +1,36 @@
+-- ============================================================
+-- Corrective lockdown: club_member_deactivate / club_member_set_role
+-- ============================================================
+-- The prior migration (20260702000000) locked these two SECURITY DEFINER
+-- functions down with `REVOKE ALL ... FROM PUBLIC` + `GRANT EXECUTE ... TO
+-- service_role`, intending service_role-only access.
+--
+-- That was insufficient. Ground-truth `pg_proc.proacl` after that migration
+-- ran showed `anon` and `authenticated` STILL had direct EXECUTE grants on
+-- both functions, despite never being explicitly granted and despite PUBLIC
+-- being explicitly revoked. This project's Supabase bootstrap applies
+-- `ALTER DEFAULT PRIVILEGES` for the public schema that auto-grants EXECUTE
+-- directly to anon/authenticated/service_role on every newly created
+-- function — a grant that is independent of, and NOT retracted by, `REVOKE
+-- ALL ... FROM PUBLIC` (that only revokes the implicit PUBLIC pseudo-role
+-- grant, not separate named-role grants).
+--
+-- Net effect: for a short window, both functions — SECURITY DEFINER,
+-- bypass RLS, zero internal actor-authorization checks — were callable
+-- directly by any anon/authenticated client via /rest/v1/rpc/<fn>,
+-- bypassing the app-layer authorization in src/app/actions/clubs.ts
+-- entirely. Caught via get_advisors + a direct pg_proc.proacl query, not by
+-- the code-review agent (which only read the migration SQL text and
+-- couldn't see the resulting live ACL).
+--
+-- Fix: explicit, named-role REVOKE. This is the correct pattern for any
+-- future service_role-only function in this schema — `REVOKE ALL FROM
+-- PUBLIC` alone is NOT sufficient; anon/authenticated must be revoked by
+-- name too.
+--
+-- (Applied directly to prod via the Supabase MCP on 2026-07-02; this file
+-- persists it to local migration history to match.)
+-- ============================================================
+
+REVOKE EXECUTE ON FUNCTION public.club_member_deactivate(uuid, uuid) FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.club_member_set_role(uuid, uuid, text) FROM anon, authenticated;

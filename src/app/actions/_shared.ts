@@ -61,9 +61,13 @@ export async function getAuthenticatedUser() {
 /**
  * Returns true when `userId` is an organizer of `sessionId`.
  *
- * Accepts either:
+ * Accepts any of:
  *   • sessions.created_by === userId  (fast path — avoids a second query)
  *   • a row in session_organizers with (session_id, user_id)
+ *   • an active owner/admin club_members row for the session's own club
+ *     (C6 — club owner/admin = implicit organizer on every session in
+ *     their own club; mirrors is_session_organizer() in
+ *     20260701000014_club_admin_auto_organizer.sql)
  *
  * Uses the service-role client so the primary organizer is never
  * blocked by read-side RLS on sessions or session_organizers.
@@ -73,11 +77,12 @@ export async function isSessionOrganizer(userId: string, sessionId: string): Pro
 
   const { data: session } = await svc
     .from("sessions")
-    .select("created_by")
+    .select("created_by, club_id")
     .eq("id", sessionId)
     .maybeSingle(); // maybeSingle — deleted/invalid sessions return null, not an error
 
-  if (session?.created_by === userId) return true;
+  if (!session) return false;
+  if (session.created_by === userId) return true;
 
   const { data: membership } = await svc
     .from("session_organizers")
@@ -86,7 +91,17 @@ export async function isSessionOrganizer(userId: string, sessionId: string): Pro
     .eq("user_id", userId)
     .maybeSingle();
 
-  return !!membership;
+  if (membership) return true;
+
+  const { data: clubMembership } = await svc
+    .from("club_members")
+    .select("role")
+    .eq("club_id", session.club_id)
+    .eq("player_id", userId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  return clubMembership?.role === "owner" || clubMembership?.role === "admin";
 }
 
 /**

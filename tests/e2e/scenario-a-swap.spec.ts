@@ -30,6 +30,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 import { resetSandboxSession, seedSession } from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -92,7 +93,9 @@ test.describe("Tap-to-Swap — Happy Path", () => {
 
       // ── Steps 1–2 ───────────────────────────────────────────
       await test.step("1–2 · Navigate to dashboard and verify on-deck card", async () => {
-        await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+        await page.goto(
+          `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+        );
         // Wait for the courts tab (active by default) to load
         await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
         // The OnDeckPanel renders on the courts tab alongside ActiveCourts.
@@ -229,7 +232,9 @@ test.describe("Tap-to-Swap — Skill Mismatch Warning", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
@@ -269,7 +274,9 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
@@ -332,7 +339,9 @@ test.describe("Tap-to-Swap — Negative Paths", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Open swap sheet for Alice via v2 flow: tap → picking mode → "Pick from Bench"
@@ -376,7 +385,9 @@ test.describe("Tap-to-Swap — Undo", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`);
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
       // Perform the swap (Alice → Eve) via v2 flow

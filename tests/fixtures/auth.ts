@@ -48,46 +48,129 @@ export const ORGANIZER_STORAGE_STATE = path.resolve(
   "../../.playwright/organizer-storage-state.json"
 );
 
+// ── findUserIdByEmail ────────────────────────────────────────────
+// Paginated fallback lookup used when createUser() reports "already
+// registered" — the account exists but listUsers()'s default single
+// page (50 users) can miss it once the live table grows past that,
+// or once a prior run's teardown leaves an orphaned bot behind.
+async function findUserIdByEmail(
+  db: ReturnType<typeof getAdminClient>,
+  email: string,
+  label: string
+): Promise<string> {
+  const perPage = 1000;
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await db.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      throw new Error(`[seed] findUserIdByEmail(${label}): ${error.message}`);
+    }
+    const found = data.users.find((u) => u.email === email);
+    if (found) return found.id;
+    if (data.users.length < perPage) break; // last page reached, exhausted
+  }
+  throw new Error(
+    `[seed] findUserIdByEmail(${label}): createUser reported "already registered" but no ` +
+      `matching user was found across up to ${perPage * 20} accounts`
+  );
+}
+
+// ── findOrCreateBotUser ──────────────────────────────────────────
+// Idempotent bot creation: creates a throwaway auth user + profile,
+// or reuses the existing account if it was already created by a
+// prior run (e.g. an aborted/network-flaky run whose teardown never
+// got to delete it). Deterministic e2e bot emails otherwise collide
+// hard on "already registered" — this self-heals instead.
+export async function findOrCreateBotUser(
+  email: string,
+  displayName: string,
+  opts: { skill?: string; pin?: string; password?: string } = {}
+): Promise<string> {
+  const db = getAdminClient();
+  const { data, error } = await db.auth.admin.createUser({
+    email,
+    email_confirm: true,
+    ...(opts.password ? { password: opts.password } : {}),
+    user_metadata: { display_name: displayName },
+  });
+
+  let userId: string;
+  if (error || !data.user) {
+    const alreadyExists =
+      error?.message?.includes("already been registered") ||
+      error?.message?.includes("already exists") ||
+      error?.message?.includes("already registered");
+    if (!alreadyExists) {
+      throw new Error(`[seed] findOrCreateBotUser(${displayName}): ${error?.message}`);
+    }
+    userId = await findUserIdByEmail(db, email, displayName);
+  } else {
+    userId = data.user.id;
+  }
+
+  const { error: profileErr } = await db.from("profiles").upsert(
+    {
+      id: userId,
+      display_name: displayName,
+      skill_level: opts.skill ?? "intermediate",
+      pin: opts.pin ?? "1234",
+    },
+    { onConflict: "id" }
+  );
+  if (profileErr) {
+    throw new Error(
+      `[seed] findOrCreateBotUser(${displayName}): profile upsert failed: ${profileErr.message}`
+    );
+  }
+
+  return userId;
+}
+
 // ── ensureOrganizerAccount ─────────────────────────────────────
 // Idempotent: creates the organizer bot Supabase account if it
 // doesn't exist yet. Run once before the first test of the suite.
 export async function ensureOrganizerAccount(): Promise<string> {
   const db = getAdminClient();
 
-  // Check if the organizer already exists
-  const { data: existing } = await db.auth.admin.listUsers();
-  const found = existing?.users?.find((u) => u.email === ORGANIZER_EMAIL);
-
-  if (found) {
-    return found.id;
-  }
-
-  // Create the organizer bot account
-  const { data, error } = await db.auth.admin.createUser({
-    email: ORGANIZER_EMAIL,
+  const organizerId = await findOrCreateBotUser(ORGANIZER_EMAIL, "E2E_OrganizerBot", {
+    pin: "9999",
     password: ORGANIZER_PASSWORD,
-    email_confirm: true,
-    user_metadata: {
-      display_name: "E2E_OrganizerBot",
-    },
   });
 
-  if (error || !data.user) {
-    throw new Error(`[auth] Failed to create organizer bot: ${error?.message}`);
+  await ensureOrganizerClubMembership(db, organizerId);
+
+  return organizerId;
+}
+
+// ── ensureOrganizerClubMembership ───────────────────────────────
+// Enrolls the organizer bot in the sandbox session's club. Specs now
+// navigate directly to club-scoped routes (/c/[slug]/...), bypassing the
+// legacy root shims that used to auto-enroll via ensureClubMembership on
+// first navigation — so membership must be seeded explicitly instead.
+// No-ops during init-sandbox.ts's first-ever bootstrap run, when
+// TEST_SESSION_ID doesn't exist yet.
+async function ensureOrganizerClubMembership(
+  db: ReturnType<typeof getAdminClient>,
+  organizerId: string
+): Promise<void> {
+  const sessionId = process.env.TEST_SESSION_ID;
+  if (!sessionId) return;
+
+  const { data: session } = await db
+    .from("sessions")
+    .select("club_id")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session?.club_id) return;
+
+  const { error } = await db
+    .from("club_members")
+    .upsert(
+      { club_id: session.club_id, player_id: organizerId, role: "member" as const },
+      { onConflict: "club_id,player_id" }
+    );
+  if (error) {
+    throw new Error(`[auth] Failed to enroll organizer bot in club: ${error.message}`);
   }
-
-  // Upsert profile
-  await db.from("profiles").upsert(
-    {
-      id: data.user.id,
-      display_name: "E2E_OrganizerBot",
-      skill_level: "intermediate",
-      pin: "9999",
-    },
-    { onConflict: "id" }
-  );
-
-  return data.user.id;
 }
 
 // ── injectSupabaseCookies ──────────────────────────────────────
@@ -111,23 +194,30 @@ async function injectSupabaseCookies(
   const encoded = encodeURIComponent(sessionJson);
 
   type PlaywrightCookie = {
-    name: string; value: string; domain: string; path: string;
-    httpOnly: boolean; secure: boolean; sameSite: "Lax";
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    httpOnly: boolean;
+    secure: boolean;
+    sameSite: "Lax";
   };
 
   let cookies: PlaywrightCookie[];
 
   if (encoded.length <= MAX_CHUNK_SIZE) {
     // Fits in a single cookie — no chunking needed
-    cookies = [{
-      name: cookieName,
-      value: sessionJson,
-      domain,
-      path: "/",
-      httpOnly: false,
-      secure: true,
-      sameSite: "Lax",
-    }];
+    cookies = [
+      {
+        name: cookieName,
+        value: sessionJson,
+        domain,
+        path: "/",
+        httpOnly: false,
+        secure: true,
+        sameSite: "Lax",
+      },
+    ];
   } else {
     // Split into chunks, preserving URI-encoding boundaries.
     // Each chunk value is stored DECODED (plain text), matching how
@@ -167,10 +257,7 @@ async function injectSupabaseCookies(
 // This bypasses the anonymous login form which is incompatible with
 // the email+password organizer bot account.
 // Saves storage state for reuse on subsequent calls.
-export async function signInOrganizerBot(
-  page: Page,
-  baseURL: string
-): Promise<void> {
+export async function signInOrganizerBot(page: Page, baseURL: string): Promise<void> {
   // If we already have a saved storage state, skip sign-in entirely.
   if (fs.existsSync(ORGANIZER_STORAGE_STATE)) {
     return;
@@ -194,7 +281,14 @@ export async function signInOrganizerBot(
   }
 
   // Inject the session as @supabase/ssr cookies into the browser context
-  await injectSupabaseCookies(page, signInData.session as unknown as Record<string, unknown> & { access_token: string; refresh_token: string }, baseURL);
+  await injectSupabaseCookies(
+    page,
+    signInData.session as unknown as Record<string, unknown> & {
+      access_token: string;
+      refresh_token: string;
+    },
+    baseURL
+  );
 
   // ── Vercel Deployment Protection bypass ────────────────────
   // If Vercel Authentication is enabled, we must get past Vercel's
@@ -252,9 +346,7 @@ export function clearOrganizerStorageState(): void {
 // ── loadOrganizerContext ──────────────────────────────────────
 // Applies saved organizer storage state to a browser context so
 // every test page starts authenticated without re-signing in.
-export async function loadOrganizerContext(
-  context: BrowserContext
-): Promise<void> {
+export async function loadOrganizerContext(context: BrowserContext): Promise<void> {
   if (!fs.existsSync(ORGANIZER_STORAGE_STATE)) {
     throw new Error(
       "[auth] Organizer storage state not found.\n" +
@@ -279,9 +371,7 @@ export async function getOrganizerUserId(): Promise<string> {
   const found = existing?.users?.find((u) => u.email === ORGANIZER_EMAIL);
 
   if (!found) {
-    throw new Error(
-      "[auth] Organizer bot not found. Run ensureOrganizerAccount() first."
-    );
+    throw new Error("[auth] Organizer bot not found. Run ensureOrganizerAccount() first.");
   }
 
   return found.id;

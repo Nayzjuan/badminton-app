@@ -63,6 +63,16 @@ createServiceClient(); // uses service role key
 - `cap_saturation` — `{ affectedPlayerIds, reason }` → fires when `MAX_PARTNERSHIP_REPEATS` blocks every possible team split. Surfaces a `CapSaturationNotice` banner in the on-deck panel so the organizer knows to intervene manually.
 - `draft_cap_phase` — `{ phase: "clearing" | "generating" | "done", cap }` → drives the synchronized dashboard lockout overlay during a cap-change reset.
 
+### Realtime Subscription Auth (JWT-before-join)
+
+Supabase Realtime binds a channel's `postgres_changes` RLS row-filter to the socket's JWT **at channel-join time** — a later `setAuth()` does **not** re-bind an already-joined channel. `@supabase/ssr` hydrates a persisted cookie session asynchronously (the `INITIAL_SESSION` auth event), which fires _after_ hook effects synchronously call `.subscribe()`. So without care, channels join under the `anon` Postgres role; under the club-scoped RLS on `sessions` / `queue_entries` / `matches` / `match_players` / `courts` (`is_session_club_member` / `is_session_organizer`), `anon` matches zero rows and **no realtime events are ever delivered** — e.g. a drafted player's "Match Forming" card never flips to on-deck until a manual refresh (was e2e scenario-j J-B/J-C).
+
+**Fix (`src/utils/supabase/client.ts` + `src/lib/realtime.ts`):**
+
+- `createBrowserSupabaseClient()` eagerly runs `getSession() → realtime.setAuth(access_token)` on first call and exposes the resulting promise via **`whenRealtimeAuthReady()`**; it also re-`setAuth`s on every later auth transition (SIGNED_IN / TOKEN_REFRESHED / INITIAL_SESSION).
+- Every `postgres_changes` subscribe helper — `subscribeToTable` (courts/queue/matches), `subscribeToMatchPlayers`, `subscribeToProfiles` — and the organizer `session-settings` channel in `use-organizer-session.ts` **defer `.subscribe()` behind `whenRealtimeAuthReady()`**, guaranteeing the JWT is set before join. Cleanup uses a `cancelled` flag + null-guarded `removeChannel`, so an unmount before the deferred join leaks nothing (StrictMode-safe).
+- The Broadcast channel (`subscribeToOrganizerBroadcast`) is intentionally **not** deferred — broadcast delivery has no `postgres_changes` RLS and needs no JWT-before-join.
+
 ### Shared Server Action Helpers
 
 **File:** `src/app/actions/_shared.ts`
@@ -856,6 +866,8 @@ Default scope: the live **Session** when one is in context, else **Monthly** (cu
 
 Rank-change flash animation: `data-flash="true"` triggers `leaderboard-flash` keyframes (amber glow → transparent over 800ms).
 
+**Realtime staleness fallback (2026-07-01):** `useLeaderboard`'s `matches` realtime subscription (session/monthly scope) is paired with a `setInterval(refetch, 15_000)` polling fallback, mirroring `use-tv-board.ts`. Needed because anon/non-member viewers of the legacy `/leaderboard` pages have their realtime `postgres_changes` events silently filtered by club-scoped RLS (no error — the event just never arrives) — the poll ensures the board still catches up within 15s.
+
 ---
 
 ### 3.10 QR-Code Session Join
@@ -1161,6 +1173,42 @@ See §3.16 for the updated data layer.
 
 **Action return shape consistency:**
 All `{ error }` bare returns in `auth.ts` and `sessions.ts` now include `success: false`. The canonical shape `{ success: boolean, message?: string, error?: string }` from CLAUDE.md is now enforced across all action files.
+
+---
+
+### 3.24 Player-Specific Session History Filter (2026-06-26)
+
+**Files:** `src/lib/match-history-filter.ts` (pure helpers), `src/components/organizer/match-history-player-filter.tsx` (filter UI), `src/components/organizer/match-history-panel.tsx` (wired in).
+
+**Purpose:** Organizer-only type-to-filter search inside the existing Match History tab. Lets the organizer narrow the history view to a single player's matches for quick review. **Zero new DB tables, migrations, or server actions** — 100% client-side filtering over the already-fetched `CompletedMatch[]` from `useMatchHistory`.
+
+**Architecture:**
+
+| Layer | File | Responsibility |
+|---|---|---|
+| Pure logic | `src/lib/match-history-filter.ts` | 4 exported pure helpers: `filterMatchesByPlayer`, `derivePlayerOptions`, `resolvePartnerIds`, `selectionStillValid` |
+| Unit tests | `tests/unit/match-history-filter.test.ts` | 28 MHF-* Vitest tests covering all edge cases (null id, leave-triggered cancel, dup names, swapped-out player, empty history) |
+| Filter UI | `src/components/organizer/match-history-player-filter.tsx` | Controlled searchable list — `<input>` + `<ul>` of `<button aria-pressed>` (swap-sheet pattern, NOT a combobox) |
+| Panel integration | `src/components/organizer/match-history-panel.tsx` | Adds `selected` state, `playerOptions` + `visibleMatches` memos, reconcile effect, active-filter chip, highlight rings, safety-net empty state, legend |
+
+**Filtering mechanics:**
+- `filterMatchesByPlayer(matches, id)` — null id returns the same array reference (identity, zero re-renders); otherwise filters by roster membership.
+- `derivePlayerOptions(matches)` — deduplicates by `player_id`, alpha-sorts by `display_name`, attaches a `player_id.slice(-4)` disambiguator when two players share the same display name.
+- `resolvePartnerIds(match, id)` — returns teammate `player_id`s (same team, different id) for the selected player in a single match.
+- `selectionStillValid(matches, id)` — checks raw `matches` roster (NOT derived `playerOptions`). Used to detect stale selections after identity merges or score reverts.
+
+**Selection lifecycle:**
+- Pinned `selected: { id: string; display_name: string } | null` state — name captured at select time so the active-filter chip stays correct even if the player's profile vanishes from `playerOptions` on a realtime refetch.
+- **Conservative reconcile:** if `selectionStillValid` returns false (player gone from all rosters), the filter chip stays visible with a safety-net empty state — never auto-cleared. The organizer dismisses via ✕. This is intentional for score-revert via `FixRecordSheet` which temporarily removes a match from history.
+- **Two cancel paths handled correctly:** organizer-cancel retains all `match_players` rows (player appears in filtered history). Leave-triggered cancel deletes the leaver's row first — they do NOT appear in the match's roster.
+
+**Highlight encoding (when a filter is active):**
+- `●` Selected player: `bg-cc-accent-dim outline outline-1 outline-cc-accent/55` (solid ring, both completed and cancelled branches).
+- `○` Partner: `outline outline-1 outline-dashed outline-cc-accent/55` (dashed ring, both branches).
+- Cancelled branch: ring uses `outline-2` (heavier) because the player area is inside an `opacity-60` wrapper — thicker ring reads through the dimming.
+- Legend renders below the cards when filter is active: `◍ solid = selected · ◌ dashed = partner`.
+
+**Access control:** `MatchHistoryPlayerFilter` is rendered only inside `MatchHistoryPanel` which lives in the `src/components/organizer/` subtree. Player-facing components (`PlayerDashboard`, `match-history.tsx`) do not import anything from this subtree — organizer-only by structural exclusion, no runtime checks needed.
 
 ---
 
@@ -1814,3 +1862,368 @@ npm run build        # Production build + Pagefind indexing
 npm run watch:extract # Re-run extraction on host-app source changes
 npx tsx scripts/extract.ts  # One-shot extraction
 ```
+
+---
+
+## 11. Multi-Tenant (Clubs)
+
+> **STATUS:** Built on branch `feat/multi-tenant` (NOT merged to main, app NOT deployed). The **schema
+> is LIVE on prod** (Phase 0 applied + Legacy backfill). The full design lives in `MULTI_TENANT_PLAN.md`
+> + `MULTI_TENANT_PHASE2_PLAN.md`; this is the architecture summary.
+
+**Model.** Shared-schema multi-tenancy. New tables `clubs` / `club_members` (role `owner`/`admin`/`member`,
+`is_active` soft-offboard) / `club_invites`. Every `sessions` row (and the rivalry/partnership ledgers)
+carries a `club_id`. All pre-existing data was absorbed into a fixed **"Legacy" club** (`…0001`), and every
+existing player was backfilled as a Legacy member (`supabase/data-fixes/20260630_legacy_club_membership_backfill.sql`).
+
+**Isolation = application layer + RLS on operational tables.** `clubs` and `club_invites` are **RLS
+deny-all** (enabled, no policies), so only the service role reads them. `club_members` additionally has a
+member-scoped SELECT policy (`club_members_select`: `player_id = auth.uid() OR is_club_member(club_id)`,
+added in `20260702000002`) so the browser client can render the club roster/switcher; all writes still go
+only through the service-role server actions. Tenant isolation for these tables is enforced in code:
+`src/lib/clubs.ts` (server-only read/guard layer —
+`getClubBySlug`, `getClubRole`, `requireClubMembership`, `ensureClubMembership`, `resolveSessionClubSlug`,
+`getMyActiveClubIds`) + `src/app/actions/clubs.ts` (`createClub`, `createClubInvite`, `acceptClubInvite`).
+The *operational* tables that reference a club indirectly (`matches`, `match_players`, `queue_entries`,
+`courts`, `session_organizers`, `match_games`) additionally carry real club-scoped RLS as of the 2026-07-01
+security audit (see below) — not deny-all, but a genuine `is_session_organizer(...) OR is_<x>_club_member(...)`
+check, so a cross-club data leak is closed at the DB layer even if an app-layer guard were ever missed.
+
+**Routing.** All club surfaces live under `/c/[clubSlug]/…` (path builders in `src/lib/club-paths.ts`;
+client components self-resolve the slug from the path via `useClubSlug`). Route groups under
+`/c/[clubSlug]`: minimal root layout (resolve + 404) · `(app)` = member-gated + chrome (lobby `/c/[slug]`,
+`/admin`) · `(full)` = member-gated, no chrome (full-screen `play`/`organizer` dashboards) · **public**
+(no gate): `tv`, `join`. Each session route cross-checks `session.club_id === club.id` (404 on mismatch).
+
+**ADD-and-redirect migration.** New club routes re-use the existing PlayerDashboard / OrganizerDashboard /
+TvBoard / LoginForm. Legacy `/play/[id]` + `/organizer/[id]` became thin resolve-and-redirect shims (308 →
+`/c/<slug>/…`) that **auto-enroll** the requester (same philosophy as QR-join) so no one is stranded behind
+the gate. Public boards (`/tv/[id]`, `/leaderboard/[id]`, `/play/join`) stay at root, shareable — **and**,
+mirroring the TV board, also get a club-namespaced convenience variant for in-app nav (§11.4 for Wrapped's).
+
+**Onboarding.** QR/`/c/[slug]/join` (+ the `/play/join` back-compat shim → forwards to it): authed users
+auto-enroll + queue; fresh scanners register via `signInAnonymously` (a `club_slug` hidden field enrolls
+them post-registration). `lookup_active_session` (SECURITY DEFINER, anon-safe) returns `club_slug`.
+
+**Phase 3 — club-scoped leaderboard + Wrapped (DONE, DB live on prod).** The leaderboard now filters by
+club. DB layer (additive, backward-compatible): `v_session_leaderboard` + `v_alltime_leaderboard_mat`
+gained a `club_id` column (mat view chain, migration `20260701000001`), and the leaderboard RPCs
+(`get_alltime_snapshot_before`, `get_player_streaks`, `get_monthly_leaderboard`, `get_leaderboard_months`)
+gained an **additive `p_club_id uuid DEFAULT NULL`** (NULL = all-clubs = pre-existing behavior; monthly RPCs
+in `20260701000002`). App layer: `src/app/actions/leaderboard.ts` takes an optional `clubSlug` →
+`getClubBySlug(slug)?.id` → conditional `.eq("club_id", clubId)` on matview reads + `p_club_id: clubId` on
+RPCs; `getPlayerStats`'s all-time branch filters `club_id` **before** `.maybeSingle()` (the matview is now one
+row per player per club — an unfiltered `.maybeSingle()` would PGRST116). `useLeaderboard` reads the slug via
+`useClubSlug()` (null on root routes) and threads it through (with `clubSlug` in the fetch dep arrays so a club
+switch refetches). New member-gated route `c/[clubSlug]/(app)/leaderboard` + a Leaderboard nav link. The
+Wrapped/awards engine `compute_session_wrapped` (migration `20260701000003`, File C) club-scopes its two reads
+of `v_alltime_leaderboard_mat` (the `alltime_top3` CTE + the `amat` LEFT JOIN → `the_veteran`/`century_club`
+inputs) by resolving `v_club_id` from the session. Root/no-slug callers (public boards) pass no slug → all-clubs.
+
+### 11.1 Security audit — club-scoped RLS + credential-leak closure (2026-07-01)
+
+Follow-up audit triggered by the goal of running 2+ real, data-segregated clubs (not just one club in
+practice). Found and closed 3 gaps beyond the Phase 3 leaderboard/Wrapped scoping above:
+
+- **Operational-table RLS.** `matches`, `match_players`, `queue_entries`, `courts`, `session_organizers`,
+  `match_games` had SELECT policies with no club dimension at all (`qual: true`, or for `matches` an
+  organizer/draft-firewall check only) — any authenticated (some: even anonymous) caller could read any
+  club's live queue/match/court/organizer data. `supabase/migrations/20260701000008_club_scoped_rls.sql`
+  adds 3 `SECURITY DEFINER` SQL helpers mirroring the existing `is_session_organizer` shape —
+  `is_club_member(p_club_id)` → `is_session_club_member(p_session_id)` → `is_match_club_member(p_match_id)`
+  — and ANDs club membership into every policy, preserving the organizer bypass and the `matches`
+  draft-mode PERMISSIVE+RESTRICTIVE firewall (duplicate qual, precedent: `20260506000000_draft_mode_bugfixes.sql`)
+  exactly. Verified live via RLS impersonation inside rolled-back transactions: a real club member sees
+  full expected data, a non-member sees zero rows across all 6 tables, the session organizer is unaffected.
+- **`profiles.pin` exposure via bulk `.select("*")`.** `profiles_select` stays `qual: true` by design
+  (leaderboard + Wrapped share page read profiles unauthenticated on purpose), so RLS can't close this —
+  it's closed at the column layer instead. `PUBLIC_PROFILE_COLUMNS` (`src/types/database.ts`) is an
+  explicit 10-column safe list (no `pin`), used by the 5 client hooks that bulk-fetch other players'
+  profiles (`use-enriched-matches.ts`, `use-match-history.ts`, `use-organizer-queue.ts`,
+  `use-player-match.ts`, `use-session-data.ts`); results are reconstructed as `{ ...p, pin: null }`. Own-row
+  reads and the service-role reconnect lookup are untouched.
+- **Realtime broadcast scoping.** `profiles.pin` and `sessions.organizer_passcode` were included in the
+  `supabase_realtime` publication's replicated column set, so every UPDATE broadcast the raw secret to all
+  subscribers regardless of relevance. `20260701000006_realtime_publication_exclude_secrets.sql` restricts
+  each table's publication column list to exclude the secret column.
+
+`getMyActiveClubIds(userId)` (`src/lib/clubs.ts`) was added as a cheaper alternative to `getMyClubs` for
+pure membership-scoping, and is now used to fix `/play` and `/organizer`'s session listings (previously
+unfiltered — a multi-club user saw every club's session names): both now filter to
+`getMyActiveClubIds()`, and `/organizer` disables session creation (pointing to `/clubs` instead) whenever
+membership is ambiguous (0 or 2+ clubs) rather than silently defaulting the new session to Legacy.
+
+**Push deep-links are club-scoped.** `pushToPlayers(userIds, type, sessionId?)` (`src/lib/notifications/push-server.ts`)
+resolves the session's club via `resolveSessionClubSlug` and deep-links to `/c/<slug>/play/<sessionId>` when
+resolvable, falling back to `/clubs` otherwise (never throws — a resolution failure is swallowed). All ~9
+call sites across `actions/matchmaking.ts`, `actions/match-drafts.ts`, `actions/match-lifecycle.ts`,
+`actions/live-match-swap.ts`, `actions/swap-player.ts`, and `actions/notifications.ts`'s
+`sendPlayerNotification` now thread `sessionId` through.
+
+**Deferred:** further E2E spec path updates for `/c/[clubSlug]/...` routes (the 50-player simulation spec's
+reconnect-navigation assertion was widened to accept both the flat `/play` path and the club-scoped
+`/c/[slug]/play/[sessionId]` redirect target, but the rest of the E2E suite still asserts flat paths only).
+
+### 11.2 Identity-migration club scoping + OAuth club-scoped sign-in (2026-07-01)
+
+Two follow-on gaps from the 11.1 audit, closed the same day:
+
+- **`migrate_player_identity` rivalries/partnerships repoint.** The RPC (called from `reconnectPlayer` when a
+  guest profile is merged into a returning player's identity) now repoints `rivalries` and `partnerships` rows
+  from the old (guest) profile id to the surviving profile id, mirroring the pre-existing repoint logic already
+  applied to `matches`/`match_players`/etc. Previously these two tables were left pointing at the
+  now-orphaned guest id, silently losing head-to-head/partner history across a reconnect merge. Migration:
+  `migrate_identity_rivalries_partnerships` — confirmed live on prod via `list_migrations`.
+- **OAuth sign-in is now club-scoped end-to-end**, mirroring the anonymous sign-in flow's `club_slug` handling:
+  - `signInWithGoogle(next?, clubSlug?)` (`src/app/actions/oauth.ts`) appends `&club=${encodeURIComponent(clubSlug)}`
+    to the PKCE `redirectTo` URL when a `clubSlug` is provided (e.g. from a `/c/[slug]/join` page).
+  - `GoogleSignInButton` (`src/components/auth/google-sign-in-button.tsx`) accepts and threads a `clubSlug` prop
+    through to `signInWithGoogle`, alongside its pre-existing `next` prop.
+  - `/auth/callback` reads the `club` query param post-consent and enrolls the user via `ensureClubMembership`,
+    the same idempotent helper the anonymous flow uses.
+  - **Verified live via browser click-through**: triggering the button from `/c/legacy/join` produces a server
+    action response of `{"success":true,"url":"...&redirect_to=...%2Fauth%2Fcallback%3Fnext%3D%252Fc%252Flegacy%26club%3Dlegacy..."}`
+    — the decoded `redirect_to` is `/auth/callback?next=/c/legacy&club=legacy`, confirming the club is threaded
+    through the full PKCE round trip.
+- **`isSessionOrganizer` (C6) auto-organizer fallback** (`src/app/actions/_shared.ts`): beyond `created_by` and
+  explicit `session_organizers` membership, a user is also treated as the session's organizer if they hold an
+  active (`is_active=true`) `club_members` row with `role IN ('owner','admin')` for the session's club. Mirrored
+  at the DB level by migration `club_admin_auto_organizer` (confirmed live on prod) so RLS-enforced writes agree
+  with the app-layer check.
+- **`reconnectPlayer` profile lookup is club-scoped when a `clubSlug` is passed**: joins
+  `club_members!club_members_player_id_fkey!inner(club_id)` (explicit constraint name needed because
+  `club_members` has two FKs to `profiles`) and filters `club_members.club_id = club.id`, so reconnecting inside
+  a specific club only matches that club's members instead of any player display-name/PIN match app-wide.
+- **Leaderboard club scoping**: `/leaderboard` (lobby picker) scopes its session list via
+  `getMyActiveClubIds(user.id)` (auth is best-effort — never redirects logged-out users, just shows an empty
+  picker). `/leaderboard/[sessionId]` (the public share link) intentionally keeps using `createServiceClient()`
+  to bypass the club-scoped `sessions_select` RLS policy for a single known-sessionId lookup — the sanctioned
+  service-role-for-public-share pattern, same as the TV board and Wrapped share page. Backed by migration
+  `scope_sessions_select` (confirmed live on prod).
+
+All of the above was independently reviewed by three separate code-review agent passes (all clean/LGTM) and
+personally re-verified by direct file reads against the review reports before being marked done — no
+discrepancies found.
+
+### 11.3 Leave-club / member-management (2026-07-01)
+
+**Permission model.** `src/app/actions/clubs.ts` gains `leaveClub`, `removeMember`, `restoreMember`,
+`changeMemberRole` (`MemberActionResult = { success: boolean; message?: string }`):
+- `removeMember`/`restoreMember`: actor must be `owner` OR `admin`; both reject self-action ("Use the Leave
+  club option to remove yourself"); both gate via `canManageTarget(actorRole, targetRole)` — admins may only
+  manage plain members, never another admin or the owner. `removeMember` additionally blocks removing the
+  club's only owner via the atomic `club_member_deactivate` RPC (see below). `restoreMember` intentionally mirrors `removeMember`'s
+  permission shape (an admin-visible "Restore" control on a removed plain member is correct by design, not a
+  bug).
+- `changeMemberRole`: strictly `owner`-only; the same last-active-owner guard applies to demotions of the
+  sole owner.
+- `leaveClub`: self-service, any role; blocked with "You're the only owner — promote someone else to owner
+  before leaving" when the caller is the club's sole active owner.
+
+**UI.** `src/components/clubs/club-admin-panel.tsx` (admin/owner panel: role `<select>` + remove/restore
+per-row, hidden for the actor's own row and for rows the actor can't manage) and
+`src/components/clubs/club-list.tsx` (`/clubs` roster: inline Leave with a Yes/No confirm, not a modal).
+
+**Live-verified end-to-end in prod** (fixture club `qa-member-test-club`, three real anonymous PIN accounts —
+QA Owner/Admin/Member Test): admin blocked from acting on the owner and on itself; admin remove→restore cycle
+on a plain member; owner promote→demote of an admin via `changeMemberRole`; owner's own row shows no manage
+controls; owner's self-leave correctly rejected (sole-owner guard); member's genuine self-service leave
+succeeds. All fixtures (profiles, `auth.users`, `club_members`, `club_invites`, the test club) deleted after
+verification.
+
+**`migrate_player_identity` — two more FK gaps found and fixed via live-testing this feature.** Every time a
+new multi-tenant table gets a FK to `profiles.id`, it must be retrofitted into this function's non-fatal
+repoint blocks, or the function's final `DELETE FROM profiles WHERE id = p_old_user_id` hard-fails on
+reconnect for any player who touched that table. Found two more instances (beyond the pre-existing
+`matches`/`match_players`/rivalries/partnerships coverage):
+- `club_invites.created_by` / `club_invites.consumed_by` — surfaced when reconnecting as an admin who had
+  redeemed a club invite. Fixed by migration `20260701000016_migrate_identity_club_invites.sql`.
+- `clubs.created_by` / `club_members.invited_by` — surfaced when reconnecting as the club's original creator
+  (`clubs_created_by_fkey` violation). `club_members.invited_by` was found via a full audit (query
+  `information_schema.table_constraints`/`key_column_usage`/`constraint_column_usage` filtered to
+  `ccu.table_name = 'profiles' AND ccu.column_name = 'id'`, enumerating all 14 FK columns referencing
+  `profiles(id)`) rather than triggered live, but is the same bug class. Fixed by migration
+  `20260701000017_migrate_identity_clubs_invited_by.sql`.
+Both columns are blind two-row `UPDATE ... WHERE col = p_old_user_id` (safe: neither carries a uniqueness
+constraint, unlike `club_members.player_id`/rivalries/partnerships which need merge-then-dedupe). Both
+migrations applied to prod and live-verified (reconnect succeeds; old profile deleted; FK columns correctly
+repointed to the new profile id).
+
+**Two small hardening fixes found by an automated review pass on this feature:**
+- `acceptClubInvite` (`src/app/actions/clubs.ts`) now captures and logs the error result of the invite-consume
+  `UPDATE` instead of firing-and-forgetting it — purely additive observability, no behavior change (membership
+  is already granted earlier in the function, so a consume failure stays non-fatal by design).
+- `getMyClubs` (`src/lib/clubs.ts`) had an N+1 query — one `sessions` active-count query per club. Replaced with
+  a single batched `sessions.club_id` query grouped in-memory into a `Map<clubId, count>`, run in parallel with
+  the `clubs` query. Live-verified with 2 clubs under one profile (one with 0 sessions, one with 2) to prove the
+  `Map` groups by `club_id` correctly rather than summing globally — `/clubs` showed no badge on the 0-session
+  club and "2 live" on the other.
+A third flagged item — `removeMember`'s admin-panel local-state update being "optimistic" — was investigated and
+found to be a false positive: `club-admin-panel.tsx`'s `handleRemove` only updates local state inside
+`if (result.success)`, strictly after the server action resolves.
+
+**Both follow-ups from this feature's initial ship are now fixed (2026-07-02):**
+- **`revalidatePath` scope gap** — `leaveClub` now takes a `clubSlug` param (threaded from `club-list.tsx`'s
+  `club.slug`) and revalidates `/c/${clubSlug}` (layout) and `/c/${clubSlug}/admin` in addition to `/clubs`,
+  matching the scope already used by `removeMember`/`restoreMember`/`changeMemberRole`.
+- **`countActiveOwners` TOCTOU race** — the check-then-act pattern (`countActiveOwners(clubId) <= 1` SELECT,
+  then a separate UPDATE) let two concurrent last-owner actions both pass the guard and leave a club with zero
+  active owners. Fixed with migration `20260702000000_club_member_atomic_owner_guard.sql`, which adds two
+  `SECURITY DEFINER` RPCs: `club_member_deactivate(p_club_id, p_member_id)` and
+  `club_member_set_role(p_club_id, p_member_id, p_new_role)`. Both take `pg_advisory_xact_lock(hashtextextended(p_club_id::text, 0))`
+  before checking + mutating in one transaction, so any concurrent call touching the same `club_id` fully
+  serializes. Both return `jsonb` (`{success, reason}`, reasons: `ok` / `not_found` / `only_owner` /
+  `invalid_role` / `no_change`) — matching this schema's existing `jsonb`-returning atomic-RPC convention
+  (`join_queue`, `publish_match`, etc.) rather than `RETURNS TABLE`. `leaveClub`, `removeMember`,
+  `changeMemberRole` now call these RPCs instead of the old check-then-UPDATE; `restoreMember` is untouched
+  (reactivating a member can never reduce the owner count, so it stays an unguarded direct UPDATE). The
+  now-fully-dead `countActiveOwners` export was removed from `src/lib/clubs.ts`.
+  - **Grant-lockdown gotcha (found live, in prod, via `get_advisors` + a `pg_proc.proacl` ground-truth
+    check — NOT caught by the code-review agent, which only read the migration's SQL text):**
+    `REVOKE ALL ON FUNCTION ... FROM PUBLIC` + `GRANT EXECUTE ... TO service_role` is **not sufficient** to
+    lock a function to `service_role`-only in this project. This Supabase project's schema-level default
+    privileges auto-grant `EXECUTE` directly to `anon` and `authenticated` (in addition to `service_role`) on
+    every newly created function in `public` — a grant that is independent of, and NOT retracted by,
+    `REVOKE ... FROM PUBLIC` (that only revokes the implicit `PUBLIC` pseudo-role grant, not separate named-role
+    grants). The original migration left both RPCs callable directly by `anon`/`authenticated` via
+    `/rest/v1/rpc/<fn>` for a short window in prod — a real privilege-escalation hole, since these functions
+    are `SECURITY DEFINER`, bypass RLS, and do zero actor-authorization checks internally. Fixed immediately
+    with a corrective migration, `20260702000001_club_member_atomic_owner_guard_lockdown.sql`:
+    `REVOKE EXECUTE ON FUNCTION ... FROM anon, authenticated;` (explicit, named-role revoke) for both
+    functions. Re-verified via `pg_proc.proacl`: both now show only `postgres`/`service_role`. **Rule for any
+    future service_role-only function in this schema: always follow `REVOKE ALL FROM PUBLIC` with an explicit
+    `REVOKE EXECUTE ... FROM anon, authenticated` — the PUBLIC revoke alone is not enough.** (Also: `get_advisors`
+    security-lint coverage for this class of issue is incomplete — it didn't flag the pre-existing
+    `migrate_player_identity`, which has the same anon/authenticated exposure in its `proacl`; ground-truth
+    `pg_proc.proacl` queries are the reliable check, not the advisor alone.)
+  - **Functional live-verification (disposable fixtures, zero residue after)**: a 3-member fixture club (2
+    owners + 1 plain member) proved all branches — `not_found` (bogus member id), `invalid_role` (bogus role
+    string), `no_change` (role set to its current value), a normal deactivate and a normal demote both
+    succeeding while ≥2 owners exist, both `club_member_deactivate` and `club_member_set_role` correctly
+    returning `only_owner` once only one owner remained, and — after promoting a second owner back — both
+    operations succeeding again. Confirms the advisory-lock guard behaves correctly across the full state
+    space, not just the happy path.
+  - **Pre-existing, out-of-scope finding (not fixed this pass):** `migrate_player_identity` is exposed to
+    `anon`/`authenticated` in `pg_proc.proacl` (same class of issue as above) — but it turns out to be
+    `SECURITY INVOKER`, not `SECURITY DEFINER` as previously assumed, so the RLS-bypass severity is lower
+    (it runs with the caller's own privileges, not the definer's). Worth auditing separately; left untouched
+    here since it's out of scope for the owner-guard fix.
+
+### 11.4 Club-scoped Wrapped route (2026-07-02)
+
+**Gap closed.** `MULTI_TENANT_PHASE2_PLAN.md` (step 4 + its redirect-map table) always planned
+`/c/[clubSlug]/wrapped/[sessionId]/[playerId]` alongside the TV/Leaderboard club variants, but it was never
+built — a dead `clubWrapped()` path builder existed in `src/lib/club-paths.ts` with zero call sites, and every
+redirect into Wrapped (session-end, organizer `session_closed` broadcast, offline-reconnect, a misleading code
+comment claiming Wrapped "stays root-only like the TV board") pointed at the flat root path only. Root TV does
+**not** stay root-only either — it already has both variants — so the comment's premise was false; this was a
+real implementation gap, not a documented deviation.
+
+**Fix — dual-path, same pattern as TV/Leaderboard.** New `src/app/actions/wrapped.ts::getWrappedData(sessionId,
+playerId)` is a shared server-action data-fetcher (mirrors `getTvData`), always using the service-role client
+since Wrapped is a public/shareable recap and the viewer may not be authenticated as the player at all. New
+route `src/app/c/[clubSlug]/wrapped/[sessionId]/[playerId]/page.tsx` mirrors the TV club-route structure:
+resolves the club via `getClubBySlug` (404 if missing), calls `getWrappedData`, 404s if the profile is missing
+or if `sessionClubId !== club.id`. The root `/wrapped/[sessionId]/[playerId]` page now just calls the same
+`getWrappedData` instead of inline queries. Every redirect site was updated to prefer the club-scoped path
+when a club slug is resolvable, falling back to root otherwise: the club play-page's session-end redirect,
+`WrappedShell`'s "Done" button (via `useClubSlug()`, same pathname-derived pattern as `PwaNavBar`),
+`useOrganizerBroadcast`'s `session_closed` redirect (via a new `clubSlugRef`, following the hook's existing
+`playerIdRef`/`routerRef` ref-stability pattern so the realtime subscription never re-registers on a slug
+change), and `reconnectPlayer`'s offline-Wrapped redirect (via `resolveSessionClubSlug`). `PwaNavBar`'s
+Wrapped-suppression check widened from `pathname.startsWith("/wrapped/")` to `.includes("/wrapped/")` to also
+catch the club-namespaced variant.
+
+**Side-effect bugfix, not just a refactor.** The original root page fetched `session_wrapped_stats` via the
+RLS-scoped client; that table's RLS only grants SELECT to the row's own player or a session organizer
+(`20260423000000_session_wrapped_stats.sql`), so any third party opening someone else's shared Wrapped link
+previously got silently bounced to the empty-stats fallback despite a real stats row existing. `getWrappedData`'s
+always-service-role fetch fixes this as a side effect.
+
+**Verified:** `tsc`/`build`/lint clean; independent review verdict **Minor issues, non-blocking** (the stats
+RLS behavior change above, called out explicitly so it isn't mistaken for a silent regression; the
+`.single()`→`.maybeSingle()` swap confirmed semantically equivalent for the not-found branches). Live-clicked
+through both routes against a real prod session (`bcf19499…`, Legacy club): intro overlay + real awards feed
+render correctly on both `/wrapped/...` and `/c/legacy/wrapped/...`; nav bar stays suppressed on both; the
+"Done" button issues `GET /c/legacy` (confirmed via dev-server request log) on the club route vs `/play` on
+root — both then bounce to `/` only because the test session wasn't authenticated (the membership gate doing
+its job, not a Wrapped bug). The organizer-broadcast and offline-reconnect redirect sites were verified by
+code reading + successful build only, not clicked through live (both require a live session-close/reconnect
+event to trigger).
+
+### 11.5 Hardened SECURITY DEFINER views (2026-07-02)
+
+**Gap closed.** Supabase's security advisor flagged 5 views as `SECURITY DEFINER` (owner-privilege,
+RLS-bypassing regardless of caller): `v_match_history`, `v_session_leaderboard`, `v_recent_pairings`,
+`v_queue_with_wait_time`, `v_queue_full_with_wait_time`. The real risk wasn't the intentionally-public
+single-session leaderboard share link — it was that anyone could query these views directly via PostgREST
+with **zero filter** and dump every club's complete match history/leaderboard in one request, since RLS on
+the underlying base tables never applies to a `SECURITY DEFINER` view.
+
+**Fix — split by actual consumer.** `supabase/migrations/20260702000003_harden_security_definer_views.sql`:
+- `v_recent_pairings`, `v_queue_with_wait_time`, `v_queue_full_with_wait_time` → `ALTER VIEW ... SET
+  (security_invoker = true)`. Zero risk: every consumer is either a service-role client
+  (`matchmaking-db.ts`, `matchmaking.ts::runEngineInternal`) or an RLS-scoped browser client already gated
+  by club membership before it ever queries (`use-organizer-queue.ts`, behind `(full)/layout.tsx`'s
+  `requireClubMembership()`). `v_recent_pairings` has zero call sites at all today.
+- `v_match_history`, `v_session_leaderboard` → kept `SECURITY DEFINER` (the public share-link page needs the
+  RLS bypass for genuinely logged-out visitors) but `REVOKE SELECT ... FROM anon, authenticated`, closing
+  direct-dump access. Added `get_session_leaderboard_public(p_session_id uuid)` — a new `SECURITY DEFINER`
+  RPC with a mandatory scoping param, mirroring the existing `is_club_member`/`is_session_club_member`
+  pattern (a parameter can't be omitted the way a `.eq()` filter on a raw view can be).
+  `src/app/actions/leaderboard.ts`'s two `v_session_leaderboard` call sites
+  (`getSessionLeaderboard`/`getPlayerStats`) now call this RPC instead of `.from(...)`; `get_session_leaderboard_public`'s type added to `src/types/database.ts`'s `Functions` section.
+
+**Side-effect bugfix, caught by re-review, not just a refactor.** `v_match_history` itself needed no
+replacement RPC — its only two call sites (`src/app/actions/history.ts`'s `getMatchHistory`/
+`getAllSessionsHistory`) were assumed service-role like `wrapped.ts`'s call site, but they actually used the
+RLS-scoped `createServerSupabaseClient()`. The grant revoke above broke both in prod immediately (caught by
+an independent review pass, not the original build). Fixed by switching both to `createServiceClient()`,
+matching `wrapped.ts`'s existing pattern — safe because both functions already gate on `playerId ===
+user.id` before querying.
+
+**Verified:** `tsc`/lint/build clean. `get_advisors` (security) re-run post-fix — all 5
+`security_definer_view` findings gone. Live-verified `/leaderboard/[sessionId]` still renders full real data
+for a genuinely logged-out browser session via the new RPC. Live-verified the dump vector is closed:
+`set role anon; select * from v_session_leaderboard` and `set role authenticated; select * from
+v_match_history` both now return `permission denied`. Independent review: first pass caught the
+`history.ts` regression (Needs fixes); re-review after the fix returned **LGTM**.
+
+**Known follow-up, not yet actioned (needs a scope decision, not a technical blocker):**
+`v_alltime_leaderboard_mat` (materialized view) grants full privileges to `anon`/`authenticated` via
+`pg_class.relacl` (inherited default privileges, same pattern noted in §11.3) and contains `club_id`-tagged
+rows spanning every club. `getAllTimeLeaderboard()` (`leaderboard.ts`) applies `.eq("club_id", clubId)`
+client-side only when a `clubSlug` is passed — the legacy root `/leaderboard` route intentionally passes
+none, showing an all-clubs combined board by design (pre-multi-tenant behavior, kept for backward compat).
+Whether an all-clubs public leaderboard should still exist post-multi-tenant is a product decision, not
+purely a security bug — flagged for the user rather than silently changed. Materialized views also can't
+carry RLS policies in Postgres, so if the decision is "club-scoped only," the fix mirrors this section's
+pattern: revoke direct grants, add a mandatory-`p_club_id` RPC (`get_alltime_snapshot_before` already
+exists as the point-in-time-slice sibling and could serve as the exact style template).
+
+### 11.6 Task #56 resolved — `search_path` hardening + remaining advisory triage (2026-07-02)
+
+**Decision (user):** keep `v_alltime_leaderboard_mat`/legacy all-clubs `/leaderboard` behavior as-is — established,
+intentional, no fix needed. `rls_enabled_no_policy` on `club_invites`/`clubs`/`player_renames` already accepted as
+deny-all-by-design (no action). `auth_leaked_password_protection` (HaveIBeenPwned check) is a Supabase Auth
+dashboard toggle, not reachable via migration/SQL — left as a manual to-do for the user, not chased further.
+
+**Fixed — `function_search_path_mutable` (20 functions):** `supabase/migrations/20260702000004_pin_search_path_hardening.sql`,
+applied to prod. `ALTER FUNCTION ... SET search_path = public, pg_temp` on all 20 flagged functions (`is_club_member`,
+`is_session_club_member`, `is_session_organizer`, `elevate_to_organizer`, `get_h2h_record`,
+`compute_session_wrapped`, `migrate_player_identity`, `refresh_alltime_leaderboard`,
+`refresh_cross_session_stats`, `get_alltime_snapshot_before`, `get_player_streaks`, `rejoin_queue`,
+`toggle_auto_matchmaking`, `handle_new_session`, `set_updated_at`, `skill_level_to_int`,
+`clear_all_unpublished_drafts`, `touch_push_subscription_updated_at`, `_fix_record_partnership_delta`,
+`is_match_club_member`) — a pure config-parameter pin via `ALTER FUNCTION`, no `CREATE OR REPLACE`, zero risk of
+logic drift since function bodies are untouched.
+
+**Verified:** `pg_proc.proconfig` confirms `search_path=public, pg_temp` on all 20 live. `get_advisors` re-run —
+`function_search_path_mutable` finding count now 0. Functional smoke: `skill_level_to_int`/`is_club_member`
+still execute correctly post-change. Independent review: confirmed zero overloaded function names in `public`
+(so no `ALTER FUNCTION` call could have targeted the wrong overload), diffed all 20 signatures 1:1 against
+`pg_get_function_identity_arguments` on prod, checked every function body for unqualified cross-schema references
+(none found — all `auth.*` calls are schema-qualified, everything else is `pg_catalog`/`public`). Verdict: **LGTM**.
+
+**Task #56 is now fully closed** — every item from the original advisory triage is either fixed, already accepted
+by design, or explicitly deferred to the user with a clear reason (dashboard-only setting).

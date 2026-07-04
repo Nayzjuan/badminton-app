@@ -1,0 +1,32 @@
+-- ============================================================
+-- Column-level lockdown: profiles.pin, sessions.organizer_passcode
+-- ============================================================
+-- 20260701000006 excluded these two secret columns from the realtime
+-- publication, but its own comment flagged the deeper gap it didn't
+-- close: profiles has no RLS at all, and sessions_select is
+-- intentionally `USING (true)` (session metadata must stay broadly
+-- readable so any authenticated user can browse session names) — so
+-- neither RLS nor the realtime fix stops a direct PostgREST
+-- `.select("pin")` / `.select("organizer_passcode")` from any
+-- authenticated (or anon) client.
+--
+-- Verified live via RLS impersonation (SET LOCAL request.jwt.claims)
+-- during the multi-tenant isolation proof: an authenticated user with
+-- zero relationship to a club could read another club's session
+-- organizer_passcode, and another player's profiles.pin, via a plain
+-- `select id, pin from profiles where id = ...` — both isolation
+-- guarantees the app depends on were being violated at the base
+-- table's column-privilege level (RLS restricts rows, not columns).
+--
+-- Every legitimate read of these two columns already goes through
+-- createServiceClient() (service_role, bypasses RLS + column grants) —
+-- see src/app/actions/profile.ts, src/lib/oauth-provision.ts,
+-- src/app/actions/auth.ts, src/app/actions/sessions.ts. No browser
+-- client ever selects them directly (PUBLIC_PROFILE_COLUMNS already
+-- excludes `pin` — src/types/database.ts). So revoking column-level
+-- SELECT from anon/authenticated is safe: it removes a capability
+-- nothing legitimate uses, while service_role keeps full access.
+-- ============================================================
+
+revoke select (pin) on public.profiles from authenticated, anon;
+revoke select (organizer_passcode) on public.sessions from authenticated, anon;

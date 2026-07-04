@@ -19,10 +19,14 @@ import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
 import { SKILL_LEVELS } from "@/types/database";
 import { Spinner } from "./reconnect-modal";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
+import { clubPlay, clubBase } from "@/lib/club-paths";
 
 interface LoginFormProps {
   /** If provided, the user will be redirected to /play/[sessionId] after login. */
   sessionId?: string;
+  /** Club context (from a /c/[clubSlug]/join QR): the new player is auto-enrolled
+   *  in the club and routed to the club-scoped session. */
+  clubSlug?: string;
 }
 
 type LoginMode = "new" | "returning";
@@ -125,7 +129,7 @@ function ErrorBanner({ error, onDismiss }: { error: string; onDismiss: () => voi
 // Main LoginForm
 // ─────────────────────────────────────────────────────────────
 
-export function LoginForm({ sessionId }: LoginFormProps = {}) {
+export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
   const router = useRouter();
 
   // ── Mode toggle ───────────────────────────────────────────
@@ -187,7 +191,7 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
       return;
     }
     startReconnectTransition(async () => {
-      const result = await reconnectPlayer(reconnectName.trim(), reconnectPin);
+      const result = await reconnectPlayer(reconnectName.trim(), reconnectPin, clubSlug);
       if (!result.success) {
         setReconnectError(result.error ?? "Reconnect failed. Check your name and PIN.");
         if (result.useGoogleSignIn) setGoogleHint(true);
@@ -195,9 +199,11 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
         if (result.wrappedUrl) {
           router.push(result.wrappedUrl);
         } else if (result.sessionId) {
-          router.push(`/play/${result.sessionId}`);
+          router.push(
+            clubSlug ? clubPlay(clubSlug, result.sessionId) : `/play/${result.sessionId}`
+          );
         } else {
-          router.push("/play");
+          router.push(clubSlug ? clubBase(clubSlug) : "/play");
         }
       }
     });
@@ -236,7 +242,16 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
       {/* ── Google sign-in — top of form, optional fast path ── */}
       {/* Outlined (not filled) — signals convenient shortcut, not mandatory primary action */}
       <GoogleSignInButton
-        next={sessionId ? `/play/${sessionId}` : "/play"}
+        next={
+          clubSlug
+            ? sessionId
+              ? clubPlay(clubSlug, sessionId)
+              : clubBase(clubSlug)
+            : sessionId
+              ? `/play/${sessionId}`
+              : "/play"
+        }
+        clubSlug={clubSlug}
         dividerPosition="below"
       />
 
@@ -479,6 +494,8 @@ export function LoginForm({ sessionId }: LoginFormProps = {}) {
 
           {/* Hidden session_id — routes redirect to /play/[id] after login */}
           {sessionId && <input type="hidden" name="session_id" value={sessionId} />}
+          {/* Hidden club_slug — QR join: enroll in the club + route to /c/[slug]/play/[id] */}
+          {clubSlug && <input type="hidden" name="club_slug" value={clubSlug} />}
 
           {/* ── Error ─────────────────────────────────────────── */}
           {newError && <ErrorBanner error={newError} onDismiss={() => setNewError(null)} />}

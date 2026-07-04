@@ -52,10 +52,21 @@ export async function getH2HRecord(
     if (!queueRow) return null; // not a member of this session
   }
 
+  // Resolve the session's club so the RPC can scope both all-time and
+  // session counters to it — matches/match_players carry no club_id of
+  // their own, so this is the only club boundary available.
+  const { data: sessionRow } = await db
+    .from("sessions")
+    .select("club_id")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!sessionRow) return null;
+
   const { data, error } = await supabase.rpc("get_h2h_record", {
     p_team_a: teamAIds,
     p_team_b: teamBIds,
     p_session_id: sessionId,
+    p_club_id: sessionRow.club_id,
   });
 
   if (error || !data) return null;

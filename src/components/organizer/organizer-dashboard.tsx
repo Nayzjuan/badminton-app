@@ -43,6 +43,8 @@ import {
 } from "lucide-react";
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubBase, clubOrganizer, clubTv } from "@/lib/club-paths";
 import type { Profile, Session } from "@/types/database";
 import { DASHBOARD_GRID_SIZE_PX, TOAST_DISMISS_MS } from "@/lib/constants";
 
@@ -66,6 +68,8 @@ export function OrganizerDashboard({
   // router is used for inline navigation in the session switcher JSX.
   // Session close navigation lives inside useOrganizerDashboard.
   const router = useRouter();
+  // Active club slug when rendered under /c/[clubSlug]/… ; null on legacy routes.
+  const clubSlug = useClubSlug();
 
   const {
     session: liveSession,
@@ -219,7 +223,7 @@ export function OrganizerDashboard({
           {/* ── Row 1: back link + mobile controls ── */}
           <div className="mb-2 flex items-center justify-between">
             <button
-              onClick={() => router.push("/organizer")}
+              onClick={() => router.push(clubSlug ? clubBase(clubSlug) : "/organizer")}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-cc-t3
                          hover:text-cc-t1 hover:bg-cc-bg-3 transition-colors -ml-1 px-3 py-2
                          min-h-[44px] rounded"
@@ -339,7 +343,7 @@ export function OrganizerDashboard({
                     >
                       {/* TV View */}
                       <a
-                        href={`/tv/${session.id}`}
+                        href={clubSlug ? clubTv(clubSlug, session.id) : `/tv/${session.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={() => setMoreMenuOpen(false)}
@@ -432,7 +436,9 @@ export function OrganizerDashboard({
                           key={s.id}
                           onClick={() => {
                             setSwitcherOpen(false);
-                            router.push(`/organizer/${s.id}`);
+                            router.push(
+                              clubSlug ? clubOrganizer(clubSlug, s.id) : `/organizer/${s.id}`
+                            );
                           }}
                           className="flex items-center gap-3 w-full px-3 py-2.5 text-left
                                      hover:bg-cc-bg-3 transition-colors"
@@ -458,7 +464,7 @@ export function OrganizerDashboard({
                       <button
                         onClick={() => {
                           setSwitcherOpen(false);
-                          router.push("/organizer");
+                          router.push(clubSlug ? clubBase(clubSlug) : "/organizer");
                         }}
                         className="flex items-center gap-2 w-full text-xs font-medium
                                    text-cc-accent hover:text-cc-accent/80 transition-colors py-1"
@@ -630,7 +636,7 @@ export function OrganizerDashboard({
 
                 {/* TV View */}
                 <a
-                  href={`/tv/${session.id}`}
+                  href={clubSlug ? clubTv(clubSlug, session.id) : `/tv/${session.id}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 clip-cut-sm border border-cc-border

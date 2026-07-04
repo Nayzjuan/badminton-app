@@ -26,7 +26,8 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession } from "../helpers/teardown";
+import { resetSandboxSession, getSandboxClubSlug } from "../helpers/teardown";
+import { clubPlay } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -39,10 +40,12 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const SESSION_ID = process.env.TEST_SESSION_ID!;
 const BASE_URL = process.env.TEST_BASE_URL!;
+let CLUB_SLUG: string;
 
 // ── One-time setup ────────────────────────────────────────────
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
+  CLUB_SLUG = await getSandboxClubSlug();
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
@@ -133,7 +136,7 @@ async function seedDraftedState(organizerUserId: string) {
       status: "pending",
       is_published: false,
       is_mixed_level: false,
-      origin: "auto",
+      created_method: "auto",
     })
     .select("id")
     .single();
@@ -170,12 +173,15 @@ test("J-A: drafted player sees Match Forming card and pulsing QueueStatus indica
     const organizerUserId = await getOrganizerUserId();
     await seedDraftedState(organizerUserId);
 
-    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+    await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
     // ── Primary messaging card ───────────────────────────────
     // Use exact: true to disambiguate from the QueueStatus "Match forming"
     // span (same text, different casing). Two elements match case-insensitive.
-    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({ timeout: 8000 });
+    // 15s tolerates a cold Vercel serverless load on the run's first navigation.
+    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
 
     await expect(page.getByText("Hang tight", { exact: false })).toBeVisible();
 
@@ -214,12 +220,13 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
     const organizerUserId = await getOrganizerUserId();
     await seedDraftedState(organizerUserId);
 
-    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+    await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
     // Confirm drafted state is showing first (exact: true avoids strict-mode
-    // violation with the QueueStatus "Match forming" span)
+    // violation with the QueueStatus "Match forming" span). 15s tolerates a
+    // cold Vercel serverless page load on the first navigation of the run.
     await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
-      timeout: 8000,
+      timeout: 15_000,
     });
 
     // Simulate organizer publishing: flip matches.is_published AND
@@ -242,14 +249,26 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       .eq("session_id", SESSION_ID)
       .eq("player_id", organizerUserId);
 
-    // "Match Forming" card should disappear
+    // "Match Forming" card should disappear once the drafted→on_deck
+    // queue_entries UPDATE arrives over Realtime. Delivery is prompt now that
+    // the browser client sets the Realtime JWT *before* joining channels (see
+    // whenRealtimeAuthReady in src/utils/supabase/client.ts) — previously the
+    // channel joined as `anon` and club-scoped RLS silently dropped the event.
+    // Timeout stays generous to tolerate preview cold-start under full-suite
+    // load, matching the file's 20s convention for realtime-dependent asserts.
     await expect(page.getByText("Match Forming", { exact: true })).not.toBeVisible({
-      timeout: 8000,
+      timeout: 20_000,
     });
 
-    // MatchAlert renders with role="alert" AND a specific heading — assert both
-    // so the test fails if the overlay mounts empty rather than passing silently.
-    await expect(page.getByRole("alert")).toBeVisible({ timeout: 20_000 });
+    // MatchAlert renders the on-deck overlay with role="alert" AND a specific
+    // heading — assert both so the test fails if the overlay mounts empty
+    // rather than passing silently. Scope to the overlay's accessible name
+    // (aria-label "You're on deck …") because useMatchAlerts also fires a
+    // sonner toast that carries role="alert", so a bare getByRole("alert")
+    // matches two elements (strict-mode violation).
+    await expect(page.getByRole("alert", { name: /on deck/i })).toBeVisible({
+      timeout: 20_000,
+    });
     // "Heads Up" is the heading for a pending (on-deck) match in MatchAlert
     await expect(page.getByRole("heading", { name: /heads up/i })).toBeVisible({
       timeout: 5_000,
@@ -272,11 +291,12 @@ test("J-C: cancelling a draft returns player to normal waiting state with positi
     const organizerUserId = await getOrganizerUserId();
     await seedDraftedState(organizerUserId);
 
-    await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+    await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
-    // Confirm drafted state (exact: true avoids strict-mode violation)
+    // Confirm drafted state (exact: true avoids strict-mode violation).
+    // 15s tolerates a cold Vercel serverless page load.
     await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
-      timeout: 8000,
+      timeout: 15_000,
     });
 
     // Simulate cancel: restore player to waiting
@@ -287,9 +307,11 @@ test("J-C: cancelling a draft returns player to normal waiting state with positi
       .eq("session_id", SESSION_ID)
       .eq("player_id", organizerUserId);
 
-    // "Match Forming" card should disappear
+    // "Match Forming" card should disappear once the cancel (status→waiting)
+    // UPDATE arrives over Realtime. Same JWT-before-join rationale as J-B above
+    // (see whenRealtimeAuthReady in src/utils/supabase/client.ts).
     await expect(page.getByText("Match Forming", { exact: true })).not.toBeVisible({
-      timeout: 8000,
+      timeout: 20_000,
     });
 
     // Player should now see their queue position (#1 in the large number span,

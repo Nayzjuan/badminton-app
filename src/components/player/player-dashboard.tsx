@@ -33,6 +33,8 @@ import { useMatchAlerts } from "@/hooks/use-match-alerts";
 import { NotificationEnrollment } from "@/components/notifications/notification-enrollment";
 import { InstallPrompt } from "@/components/notifications/install-prompt";
 import { GoogleLinkButton } from "@/components/auth/google-link-button";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubBase, clubPlay } from "@/lib/club-paths";
 import { MatchAlert } from "./match-alert";
 import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
@@ -73,6 +75,7 @@ const TABS: { key: Tab; label: string; icon: typeof User }[] = [
 
 export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDashboardProps) {
   const router = useRouter();
+  const clubSlug = useClubSlug(); // active club when under /c/[clubSlug]/…, else null
   const [activeTab, setActiveTab] = useState<Tab>("status");
   const [pinVisible, setPinVisible] = useState(false);
   const [checkingOut, setCheckingOut] = useState(false);
@@ -103,7 +106,7 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
   async function handleCheckout() {
     setCheckingOut(true);
     await checkoutPlayer(session.id);
-    router.push("/play");
+    router.push(clubSlug ? clubBase(clubSlug) : "/play");
   }
 
   const {
@@ -289,7 +292,9 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
                         </div>
                       ) : (
                         <div className="px-3 py-2.5 border-b border-border">
-                          <GoogleLinkButton next={`/play/${session.id}`} />
+                          <GoogleLinkButton
+                            next={clubSlug ? clubPlay(clubSlug, session.id) : `/play/${session.id}`}
+                          />
                         </div>
                       )}
 

@@ -17,6 +17,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubJoin } from "@/lib/club-paths";
 
 interface ShareSessionDialogProps {
   sessionId: string;
@@ -34,16 +36,20 @@ export function ShareSessionDialog({
   onOpenChange,
 }: ShareSessionDialogProps) {
   const isControlled = open !== undefined;
+  const clubSlug = useClubSlug();
   const [joinUrl, setJoinUrl] = useState("");
   const [copied, setCopied] = useState(false);
   // Tracks the "copied" reset timer so we can cancel it if the component
   // unmounts before the 2-second window expires (prevents setState on unmounted component).
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Build URL client-side so window.location.origin is available.
+  // Build URL client-side so window.location.origin is available. On a club
+  // route the QR points at /c/[slug]/join; otherwise the legacy /play/join shim
+  // (which forwards to the club join) keeps older surfaces working.
   useEffect(() => {
-    setJoinUrl(`${window.location.origin}/play/join?session=${sessionId}`);
-  }, [sessionId]);
+    const path = clubSlug ? clubJoin(clubSlug, sessionId) : `/play/join?session=${sessionId}`;
+    setJoinUrl(`${window.location.origin}${path}`);
+  }, [sessionId, clubSlug]);
 
   // Clear the copied reset timer on unmount.
   useEffect(() => {

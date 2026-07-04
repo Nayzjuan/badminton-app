@@ -10,6 +10,7 @@ import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
 import { createUnknownProfile } from "@/lib/utils";
 import type { Match, MatchPlayer, Profile } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
 export type CompletedMatch = Match & {
   players: (MatchPlayer & { profile: Profile })[];
@@ -57,8 +58,11 @@ export function useMatchHistory(sessionId: string) {
     const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
     let profileMap = new Map<string, Profile>();
     if (playerIds.length > 0) {
-      const { data: profiles } = await supabase.from("profiles").select("*").in("id", playerIds);
-      profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select(PUBLIC_PROFILE_COLUMNS)
+        .in("id", playerIds);
+      profileMap = new Map((profiles ?? []).map((p) => [p.id, { ...p, pin: null }]));
     }
 
     // Fetch court names.

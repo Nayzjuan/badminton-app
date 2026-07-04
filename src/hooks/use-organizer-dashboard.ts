@@ -40,6 +40,8 @@ import {
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastDraftCapPhase } from "@/lib/broadcast";
 import { joinQueueAction } from "@/app/actions/queue";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubBase } from "@/lib/club-paths";
 import type { CapPhase } from "@/hooks/use-organizer-session";
 
 // ── Types ────────────────────────────────────────────────────
@@ -138,6 +140,7 @@ export function useOrganizerDashboard({
   externalCapPhase = null,
 }: UseOrganizerDashboardParams): UseOrganizerDashboardResult {
   const router = useRouter();
+  const clubSlug = useClubSlug();
   const isClosed = !sessionIsActive;
 
   // ── Tab navigation ────────────────────────────────────────
@@ -234,7 +237,7 @@ export function useOrganizerDashboard({
     try {
       const result = await closeSession(sessionId);
       if (result.success) {
-        router.push("/organizer");
+        router.push(clubSlug ? clubBase(clubSlug) : "/organizer");
       } else {
         toast.error(result.message ?? "Failed to close session.");
       }
@@ -244,7 +247,7 @@ export function useOrganizerDashboard({
     } finally {
       setClosing(false);
     }
-  }, [sessionId, router]);
+  }, [sessionId, router, clubSlug]);
 
   const handleToggleAuto = useCallback(async () => {
     setTogglingAuto(true);

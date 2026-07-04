@@ -14,6 +14,7 @@ import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
 import { getUpcomingHeldDraft, type UpcomingHeldDraft } from "@/app/actions/upcoming-match";
 import type { Match, Court, Profile, Team } from "@/types/database";
+import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
 interface PlayerMatchInfo {
   match: Match;
@@ -171,11 +172,14 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
 
     // Fetch profiles for all players.
     const playerIds = allPlayers.map((p) => p.player_id);
-    const { data: profiles } = await supabase.from("profiles").select("*").in("id", playerIds);
+    const { data: profiles } = await supabase
+      .from("profiles")
+      .select(PUBLIC_PROFILE_COLUMNS)
+      .in("id", playerIds);
 
     if (mySeq !== fetchMyMatchSeq.current) return;
 
-    const profileMap = new Map((profiles ?? []).map((p) => [p.id, p]));
+    const profileMap = new Map((profiles ?? []).map((p) => [p.id, { ...p, pin: null }]));
 
     const teammates: Profile[] = [];
     const opponents: Profile[] = [];

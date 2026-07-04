@@ -25,6 +25,7 @@ import { useOrganizerDashboard } from "@/hooks/use-organizer-dashboard";
 const mockRouter = { push: vi.fn() };
 vi.mock("next/navigation", () => ({
   useRouter: () => mockRouter,
+  usePathname: () => "/organizer",
 }));
 
 // ── Mock sonner ───────────────────────────────────────────────

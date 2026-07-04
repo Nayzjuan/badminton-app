@@ -59,6 +59,7 @@ import dotenv from "dotenv";
 import path from "path";
 
 import { resetSandboxSession, seedSession } from "../helpers/teardown";
+import { clubOrganizer } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -136,7 +137,7 @@ test.describe("Engine Diversity — [H-1] Anti-repeat with abundant pool", () =>
 
     try {
       await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
       );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -150,17 +151,19 @@ test.describe("Engine Diversity — [H-1] Anti-repeat with abundant pool", () =>
 
       // ── Wait for the engine to populate at least one pending match ──
       const db = adminDb();
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", seeded.sessionId)
-            .eq("status", "pending");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", seeded.sessionId)
+              .eq("status", "pending");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
+        )
+        .toBeGreaterThan(0);
 
       // ── Fetch the FIRST on-deck match (oldest by created_at) ──
       // Note: engine-created matches leave `sort_order` NULL (only the
@@ -198,9 +201,7 @@ test.describe("Engine Diversity — [H-1] Anti-repeat with abundant pool", () =>
       // more of those players (that's the diversity threshold).
       // Tier-1 swap or fresh-anchor selection should keep the
       // overlap to ≤ 2.
-      const overlapCount = playerIds.filter((id) =>
-        completedRosterIds.has(id)
-      ).length;
+      const overlapCount = playerIds.filter((id) => completedRosterIds.has(id)).length;
 
       expect(
         overlapCount,
@@ -255,10 +256,7 @@ test.describe("Engine Diversity — [H-2] Forced repeat triggers rotatedDraft", 
     const completedTeamB = (completedMps ?? [])
       .filter((p) => p.team === "b")
       .map((p) => p.player_id);
-    const completedPartnership = partnershipPair(
-      completedTeamA,
-      completedTeamB
-    );
+    const completedPartnership = partnershipPair(completedTeamA, completedTeamB);
 
     const context = await browser.newContext({
       storageState: ORGANIZER_STORAGE_STATE,
@@ -267,7 +265,7 @@ test.describe("Engine Diversity — [H-2] Forced repeat triggers rotatedDraft", 
 
     try {
       await page.goto(
-        `${process.env.TEST_BASE_URL}/organizer/${seeded.sessionId}`
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
       );
       await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
 
@@ -277,17 +275,19 @@ test.describe("Engine Diversity — [H-2] Forced repeat triggers rotatedDraft", 
       await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
 
       // ── Wait for the rotated repeat match to materialise ────
-      await expect.poll(
-        async () => {
-          const { data } = await db
-            .from("matches")
-            .select("id")
-            .eq("session_id", seeded.sessionId)
-            .eq("status", "pending");
-          return data?.length ?? 0;
-        },
-        { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
-      ).toBeGreaterThan(0);
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", seeded.sessionId)
+              .eq("status", "pending");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
+        )
+        .toBeGreaterThan(0);
 
       // ── Fetch the new pending match ─────────────────────────
       // Pool of 4 → engine fills exactly 1 slot before exhausting the
@@ -310,12 +310,8 @@ test.describe("Engine Diversity — [H-2] Forced repeat triggers rotatedDraft", 
         .select("player_id, team")
         .eq("match_id", pendingMatchId);
 
-      const pendingTeamA = (pendingMps ?? [])
-        .filter((p) => p.team === "a")
-        .map((p) => p.player_id);
-      const pendingTeamB = (pendingMps ?? [])
-        .filter((p) => p.team === "b")
-        .map((p) => p.player_id);
+      const pendingTeamA = (pendingMps ?? []).filter((p) => p.team === "a").map((p) => p.player_id);
+      const pendingTeamB = (pendingMps ?? []).filter((p) => p.team === "b").map((p) => p.player_id);
 
       // ── Roster identity: same 4 players ─────────────────────
       // With only 4 eligible players, the pool is exhausted —

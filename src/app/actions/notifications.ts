@@ -24,7 +24,8 @@ export type { NotificationType };
  */
 export async function sendPlayerNotification(
   userId: string,
-  type: NotificationType
+  type: NotificationType,
+  sessionId?: string
 ): Promise<{ sent: number; errors: number }> {
-  return pushToPlayers([userId], type);
+  return pushToPlayers([userId], type, sessionId);
 }

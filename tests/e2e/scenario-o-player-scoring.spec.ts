@@ -37,12 +37,14 @@ import { adminDb } from "../helpers/admin-db";
 import dotenv from "dotenv";
 import path from "path";
 
-import { resetSandboxSession } from "../helpers/teardown";
+import { resetSandboxSession, getSandboxClubSlug } from "../helpers/teardown";
+import { clubPlay } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
   getOrganizerUserId,
   ORGANIZER_STORAGE_STATE,
+  findOrCreateBotUser,
 } from "../fixtures/auth";
 
 dotenv.config({ path: path.resolve(__dirname, "../../.env.test") });
@@ -50,6 +52,7 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env.local"), override: fal
 
 const BASE_URL = process.env.TEST_BASE_URL!;
 const SESSION_ID = process.env.TEST_SESSION_ID!;
+let CLUB_SLUG: string;
 
 let organizerUserId: string;
 
@@ -57,6 +60,7 @@ let organizerUserId: string;
 test.beforeAll(async ({ browser }) => {
   await ensureOrganizerAccount();
   organizerUserId = await getOrganizerUserId();
+  CLUB_SLUG = await getSandboxClubSlug();
 
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -72,22 +76,11 @@ test.beforeEach(async () => {
 });
 
 // ── Helper: create a throwaway bot user + profile ─────────────
+// Idempotent via findOrCreateBotUser — self-heals if a prior run's
+// teardown left this deterministic email's bot account orphaned.
 async function createBot(displayName: string): Promise<{ userId: string }> {
-  const db = adminDb();
-  const { data, error } = await db.auth.admin.createUser({
-    email: `${displayName.toLowerCase().replace(/\s/g, "-")}@playwright.local`,
-    email_confirm: true,
-  });
-  if (error || !data.user) {
-    throw new Error(`[seed] createBot(${displayName}): ${error?.message}`);
-  }
-  const userId = data.user.id;
-  await db
-    .from("profiles")
-    .upsert(
-      { id: userId, display_name: displayName, skill_level: "intermediate", pin: "1234" },
-      { onConflict: "id" }
-    );
+  const email = `${displayName.toLowerCase().replace(/\s/g, "-")}@playwright.local`;
+  const userId = await findOrCreateBotUser(email, displayName);
   return { userId };
 }
 
@@ -184,7 +177,9 @@ test.describe("Player Scoring — [O-1] Score input form is visible", () => {
     const page = await context.newPage();
 
     try {
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`, {
+        waitUntil: "networkidle",
+      });
 
       // The ScoreInputCard header reads "Submit Final Score".
       // Give the dashboard time to fetch the in_progress match via usePlayerMatch.
@@ -216,7 +211,7 @@ test.describe("Player Scoring — [O-2] Score submission", () => {
     try {
       // Don't use waitUntil:"networkidle" — Supabase realtime connections keep
       // the network busy indefinitely and can cause the navigation to hang.
-      await page.goto(`${BASE_URL}/play/${SESSION_ID}`);
+      await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
       // Wait for the score input card to appear.
       await expect(page.getByText(/submit final score/i).first()).toBeVisible({ timeout: 20_000 });

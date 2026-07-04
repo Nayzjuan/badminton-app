@@ -26,12 +26,19 @@ function oauthEnabled(): boolean {
   return process.env.NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED === "true";
 }
 
-/** Begin a fresh "Continue with Google" sign-in. */
-export async function signInWithGoogle(next?: string): Promise<OAuthStart> {
+/**
+ * Begin a fresh "Continue with Google" sign-in.
+ *
+ * `clubSlug` — set when the sign-in was started from a /c/[clubSlug] context
+ * (e.g. a QR-join page) so /auth/callback can enroll the user in that club,
+ * mirroring the club_slug threading signInAnonymously already does.
+ */
+export async function signInWithGoogle(next?: string, clubSlug?: string): Promise<OAuthStart> {
   if (!oauthEnabled()) return { success: false, error: "Google sign-in is not enabled." };
 
   const supabase = await createServerSupabaseClient();
-  const redirectTo = `${siteUrl()}/auth/callback?next=${encodeURIComponent(safeNext(next))}`;
+  let redirectTo = `${siteUrl()}/auth/callback?next=${encodeURIComponent(safeNext(next))}`;
+  if (clubSlug) redirectTo += `&club=${encodeURIComponent(clubSlug)}`;
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",

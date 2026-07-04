@@ -18,6 +18,7 @@ export interface TvSession {
   id: string;
   name: string;
   is_active: boolean;
+  club_id: string | null; // owning club — used by the club-namespaced TV route's cross-check
 }
 
 /** Flat, enriched match record ready for TV rendering */
@@ -49,7 +50,7 @@ export async function getTvData(sessionId: string): Promise<{
   // Fetch session info
   const { data: session } = await supabase
     .from("sessions")
-    .select("id, name, is_active")
+    .select("id, name, is_active, club_id")
     .eq("id", sessionId)
     .single();
 
@@ -68,15 +69,10 @@ export async function getTvData(sessionId: string): Promise<{
   const matchIds = matches.map((m) => m.id);
 
   // Court names
-  const courtIds = [
-    ...new Set(matches.map((m) => m.court_id).filter(Boolean)),
-  ] as string[];
+  const courtIds = [...new Set(matches.map((m) => m.court_id).filter(Boolean))] as string[];
   let courtMap = new Map<string, string>();
   if (courtIds.length) {
-    const { data: courts } = await supabase
-      .from("courts")
-      .select("id, name")
-      .in("id", courtIds);
+    const { data: courts } = await supabase.from("courts").select("id, name").in("id", courtIds);
     courtMap = new Map((courts ?? []).map((c) => [c.id, c.name]));
   }
 
@@ -87,12 +83,15 @@ export async function getTvData(sessionId: string): Promise<{
     .in("match_id", matchIds);
 
   // Player profiles
-  const playerIds = [
-    ...new Set((matchPlayers ?? []).map((mp) => mp.player_id)),
-  ];
+  const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
   let profileMap = new Map<
     string,
-    { display_name: string; skill_level: SkillLevel; vip_tag: string | null; vip_theme: string | null }
+    {
+      display_name: string;
+      skill_level: SkillLevel;
+      vip_tag: string | null;
+      vip_theme: string | null;
+    }
   >();
   if (playerIds.length) {
     const { data: profiles } = await supabase
@@ -124,10 +123,8 @@ export async function getTvData(sessionId: string): Promise<{
       .filter((mp) => mp.match_id === match.id)
       .map((mp) => ({
         player_id: mp.player_id,
-        display_name:
-          profileMap.get(mp.player_id)?.display_name ?? "Unknown",
-        skill_level:
-          profileMap.get(mp.player_id)?.skill_level ?? "beginner",
+        display_name: profileMap.get(mp.player_id)?.display_name ?? "Unknown",
+        skill_level: profileMap.get(mp.player_id)?.skill_level ?? "beginner",
         vip_tag: profileMap.get(mp.player_id)?.vip_tag ?? null,
         vip_theme: profileMap.get(mp.player_id)?.vip_theme ?? null,
         team: mp.team as "a" | "b",

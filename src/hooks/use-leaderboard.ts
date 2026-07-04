@@ -34,6 +34,7 @@ import {
   getPlayerMonthlyStats,
 } from "@/app/actions/leaderboard";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { useClubSlug } from "@/hooks/use-club-slug";
 import { subscribeToMatches } from "@/lib/realtime";
 import { getCurrentManilaMonth, isCurrentManilaMonth, type YearMonth } from "@/lib/month";
 import type { LeaderboardRow, LeaderboardMonth } from "@/types/leaderboard";
@@ -132,6 +133,9 @@ export function useLeaderboard({
 }: UseLeaderboardParams): UseLeaderboardResult {
   // Default tab: the live session when one is in context, else the current
   // month (the lobby's headline view — O-1).
+  // Active club slug when rendered under /c/[clubSlug]/… ; null on the global
+  // /leaderboard (→ all-clubs = today's behavior). Session board is club-implicit.
+  const clubSlug = useClubSlug();
   const [scopeTab, setScopeTab] = useState<ScopeTab>(initialSessionId ? "session" : "monthly");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId ?? null);
   const [activeSessionName, setActiveSessionName] = useState<string | undefined>(
@@ -208,7 +212,7 @@ export function useLeaderboard({
     const seq = ++fetchAllTimeSeq.current;
     setAlltimeLoading(true);
     setError(null);
-    const result = await getAllTimeLeaderboard();
+    const result = await getAllTimeLeaderboard(clubSlug);
     if (seq !== fetchAllTimeSeq.current) return;
     setAlltimeLoading(false);
     setAlltimeFetched(true);
@@ -217,7 +221,7 @@ export function useLeaderboard({
     } else {
       setError(result.error);
     }
-  }, []);
+  }, [clubSlug]);
 
   // ── Fetch: monthly leaderboard ────────────────────────────
   // Re-memoizes on activeMonth, so switching months refetches; the seq guard
@@ -226,7 +230,7 @@ export function useLeaderboard({
     const seq = ++fetchMonthlySeq.current;
     setMonthlyLoading(true);
     setError(null);
-    const result = await getMonthlyLeaderboard(activeMonth.year, activeMonth.month);
+    const result = await getMonthlyLeaderboard(activeMonth.year, activeMonth.month, clubSlug);
     if (seq !== fetchMonthlySeq.current) return;
     setMonthlyLoading(false);
     if (result.success) {
@@ -235,7 +239,7 @@ export function useLeaderboard({
     } else {
       setError(result.error);
     }
-  }, [activeMonth, flashNewEntrants]);
+  }, [activeMonth, flashNewEntrants, clubSlug]);
 
   // ── Initial load ──────────────────────────────────────────
   // Re-triggers when activeSessionId changes (fetchSession re-memoizes).
@@ -265,7 +269,7 @@ export function useLeaderboard({
   useEffect(() => {
     if (scopeTab !== "monthly" || monthsFetched) return;
     let cancelled = false;
-    getLeaderboardMonths().then((result) => {
+    getLeaderboardMonths(clubSlug).then((result) => {
       if (cancelled) return;
       setMonthsFetched(true);
       if (result.success) setAvailableMonths(result.months);
@@ -273,7 +277,7 @@ export function useLeaderboard({
     return () => {
       cancelled = true;
     };
-  }, [scopeTab, monthsFetched]);
+  }, [scopeTab, monthsFetched, clubSlug]);
 
   // ── Fetch hero card stats ─────────────────────────────────
   // Extracted as a stable callback so the realtime subscription can
@@ -289,11 +293,15 @@ export function useLeaderboard({
     setMyStatsLoading(true);
     const result =
       scopeTab === "monthly"
-        ? await getPlayerMonthlyStats(currentUserId, activeMonth.year, activeMonth.month)
-        : await getPlayerStats(currentUserId, scopeTab === "session" ? activeSessionId! : null);
+        ? await getPlayerMonthlyStats(currentUserId, activeMonth.year, activeMonth.month, clubSlug)
+        : await getPlayerStats(
+            currentUserId,
+            scopeTab === "session" ? activeSessionId! : null,
+            clubSlug
+          );
     setMyStatsLoading(false);
     if (result.success) setMyStats(result.row);
-  }, [currentUserId, scopeTab, activeSessionId, activeMonth]);
+  }, [currentUserId, scopeTab, activeSessionId, activeMonth, clubSlug]);
 
   // Initial load + reload on scope/session change.
   useEffect(() => {
@@ -353,8 +361,14 @@ export function useLeaderboard({
       }, 500);
     };
     const unsubscribe = subscribeToMatches(supabase, activeSessionId!, refetch, "leaderboard");
+    // Polling fallback — 15 s interval ensures the board never goes stale even
+    // when anon/non-member viewers have RLS policies that filter realtime
+    // `matches` events before they reach the client (mirrors the same
+    // fallback in use-tv-board.ts).
+    const poll = setInterval(refetch, 15_000);
     return () => {
       if (debounce) clearTimeout(debounce);
+      clearInterval(poll);
       unsubscribe();
     };
   }, [scopeTab, activeSessionId, activeMonth]);
