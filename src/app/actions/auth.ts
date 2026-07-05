@@ -187,8 +187,9 @@ export async function signInAnonymously(formData: FormData) {
   // club, so the club route's membership gate lets them straight in.
   if (clubSlug && data.user) {
     const enroll = await ensureClubMembership(clubSlug, data.user.id);
-    // Enrollment failed — avoid redirecting into a gated route that bounces.
-    if (!enroll.ok) redirect("/clubs");
+    // Enrollment failed — send them to their own player context (/play resolves
+    // their club or the join-via-QR screen), not the owner-only /clubs hub.
+    if (!enroll.ok) redirect("/play");
   }
   redirect(destination);
 }

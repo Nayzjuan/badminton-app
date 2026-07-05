@@ -60,8 +60,9 @@ export default async function ClubJoinPage({ params, searchParams }: ClubJoinPag
       const enroll = await ensureClubMembership(clubSlug, user.id);
       if (!enroll.ok) {
         // Enrollment write failed — don't strand them on a member-gated route
-        // they'd be bounced out of. Send them to their club hub instead.
-        redirect("/clubs");
+        // they'd be bounced out of. Send them to their own player context
+        // (/play resolves their club or the join-via-QR screen), not /clubs.
+        redirect("/play");
       }
       // Announce the join on the destination ONLY when this scan actually
       // added them (first join / reactivation) — not when already a member.

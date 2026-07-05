@@ -24,13 +24,15 @@ SET search_path = public
 STABLE
 AS $$
   SELECT COALESCE(
-    -- Club of the most recently-attended session (by session date).
+    -- Club of the most recently-attended session — ordered by when the PLAYER
+    -- joined the queue (q.joined_at), which is faithful to "last attended" even
+    -- if an older-created session was attended more recently.
     (SELECT c.slug
        FROM public.queue_entries q
        JOIN public.sessions s ON s.id = q.session_id
        JOIN public.clubs c    ON c.id = s.club_id
       WHERE q.player_id = p_user_id AND c.is_active
-      ORDER BY s.created_at DESC
+      ORDER BY q.joined_at DESC
       LIMIT 1),
     -- Fallback: most recently-joined active club.
     (SELECT c.slug

@@ -228,7 +228,8 @@ export async function getClubSessions(clubId: string): Promise<Session[]> {
  * success. Used by the /c/[clubSlug] gated route-group layouts.
  *   - unauthenticated → redirect("/")
  *   - unknown slug    → notFound()
- *   - non-member      → redirect("/clubs")
+ *   - non-member      → redirect("/play")  (their own club context, not the
+ *                       platform-owner-only /clubs hub)
  */
 export async function requireClubMembership(
   clubSlug: string

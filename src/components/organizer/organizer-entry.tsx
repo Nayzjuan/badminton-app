@@ -481,12 +481,11 @@ function CreateSessionForm({
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
       {disabled && (
         <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-          You&apos;re in multiple clubs (or none yet) — create sessions from a specific club&apos;s
-          Admin page instead. Go to{" "}
-          <Link href="/clubs" className="font-semibold underline hover:text-amber-900">
-            /clubs
+          Create sessions from your club&apos;s Admin page instead. Head to{" "}
+          <Link href="/play" className="font-semibold underline hover:text-amber-900">
+            your sessions
           </Link>{" "}
-          and pick one.
+          and open your club.
         </p>
       )}
       <div className="space-y-1.5">
