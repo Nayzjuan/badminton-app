@@ -14,7 +14,8 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { History } from "lucide-react";
+import Link from "next/link";
+import { History, Sparkles } from "lucide-react";
 import { getAllSessionsHistory } from "@/app/actions/history";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
 import type { SessionMeta } from "@/app/actions/history";
@@ -198,7 +199,18 @@ function MatchCard({
 
 // ── Session group section ──────────────────────────────────────
 
-function SessionSection({ group, showClub }: { group: SessionGroup; showClub: boolean }) {
+function SessionSection({
+  group,
+  showClub,
+  playerId,
+  hasWrapped,
+}: {
+  group: SessionGroup;
+  showClub: boolean;
+  playerId: string;
+  /** True when a computed Wrapped recap exists for this player + session. */
+  hasWrapped: boolean;
+}) {
   const [open, setOpen] = useState(true);
   // Memoize the label — toLocaleDateString parses a Date on every call, which
   // is cheap but wasteful since the session object never changes once loaded.
@@ -208,12 +220,14 @@ function SessionSection({ group, showClub }: { group: SessionGroup; showClub: bo
 
   return (
     <div className="space-y-3">
-      {/* Session header — acts as a toggle */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-3 text-left"
-      >
-        <div className="flex items-center gap-2 min-w-0">
+      {/* Session header row. The label + chevron toggle the section; the
+          Wrapped chip is a sibling link (an anchor can't nest inside the
+          toggle button), visible even while the section is collapsed. */}
+      <div className="flex items-center justify-between gap-3">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
           {/* Collapse indicator */}
           <span
             className="text-muted-foreground transition-transform duration-200"
@@ -222,10 +236,27 @@ function SessionSection({ group, showClub }: { group: SessionGroup; showClub: bo
             ▶
           </span>
           <span className="text-sm font-bold text-foreground truncate">{label}</span>
-        </div>
+        </button>
 
-        {/* Session W/L pill */}
         <div className="flex items-center gap-2 shrink-0">
+          {/* Wrapped recap entry — only when a recap was computed for this
+              player. ?recap=1 tells the Wrapped page to skip the celebratory
+              intro overlay and go straight to the recap. */}
+          {hasWrapped && (
+            <Link
+              href={`/wrapped/${group.session.id}/${playerId}?recap=1`}
+              aria-label={`View Session Wrapped for ${label}`}
+              className="inline-flex items-center gap-1 rounded-full border border-amber-300/70 bg-amber-50
+                px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-700 transition-colors
+                hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300
+                dark:hover:bg-amber-500/20"
+            >
+              <Sparkles className="h-3 w-3" aria-hidden="true" />
+              Wrapped
+            </Link>
+          )}
+
+          {/* Session W/L summary */}
           <span className="text-[10px] font-bold text-muted-foreground">
             {group.matches.length}G
           </span>
@@ -246,7 +277,7 @@ function SessionSection({ group, showClub }: { group: SessionGroup; showClub: bo
             {winPct}%
           </span>
         </div>
-      </button>
+      </div>
 
       {/* Match cards */}
       {open && (
@@ -264,6 +295,7 @@ function SessionSection({ group, showClub }: { group: SessionGroup; showClub: bo
 
 export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
   const [groups, setGroups] = useState<SessionGroup[]>([]);
+  const [wrappedSet, setWrappedSet] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -278,6 +310,7 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
     }
 
     const { matches, sessions } = result;
+    setWrappedSet(new Set(result.wrappedSessionIds));
 
     if (matches.length === 0) {
       setLoading(false);
@@ -412,7 +445,13 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
   return (
     <div className="space-y-6">
       {groups.map((group) => (
-        <SessionSection key={group.session.id} group={group} showClub={showClub} />
+        <SessionSection
+          key={group.session.id}
+          group={group}
+          showClub={showClub}
+          playerId={playerId}
+          hasWrapped={wrappedSet.has(group.session.id)}
+        />
       ))}
     </div>
   );

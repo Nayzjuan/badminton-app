@@ -5,6 +5,41 @@
 
 ---
 
+## 🆕 REVISIT PAST SESSION WRAPPED — history-list entry point (2026-07-04)
+
+**Status: BUILT on `claude/pull-latest-main-EpwqL`. NOT deployed.** tsc clean · eslint (changed files) clean · `next build` clean. Independent review: **LGTM**. Planned via `/impeccable shape` (product register); shape brief confirmed by user.
+
+**Problem:** the Wrapped recap (`/wrapped/[sessionId]/[playerId]`) was only reachable transiently — session-close broadcast redirect, 48h reconnect window (`auth.ts` `wrappedUrl`), or a raw link. No persistent/browsable way to revisit a past session's recap even though `session_wrapped_stats` persists.
+
+**Fix (4 files, no schema change, reuses the existing recap page):**
+- **`src/app/actions/history.ts`** — `getAllSessionsHistory` now also returns `wrappedSessionIds: string[]` (sessions where this player has a `session_wrapped_stats` row). One extra service-role query, scoped `.eq(player_id).in(session_id, sessionIds)` AFTER the existing `playerId !== user.id` ownership gate. Early `matches.length===0` return updated to include `wrappedSessionIds: []`.
+- **`src/components/player/all-sessions-history.tsx`** — each past-session group header shows a **`✦ Wrapped`** chip (amber, echoing the recap identity) linking to `/wrapped/[sessionId]/[playerId]?recap=1`. Only rendered when `hasWrapped` (session in the set). Header **restructured**: outer flex `div` holds the toggle `<button>` (chevron+label, `flex-1`) and a sibling group (chip `<Link>` + W/L pills) — the anchor can't nest inside the toggle button. Chip visible even while collapsed. `wrappedSet` state lazy-init `() => new Set()`, rebuilt each fetch.
+- **`src/app/wrapped/[sessionId]/[playerId]/page.tsx`** + **club-scoped `/c/[clubSlug]/wrapped/...`** — read `searchParams.recap`; pass `introDismissed={data.introDismissed || recap === "1"}`. `?recap=1` skips the celebratory intro overlay (revisit = reference, not re-celebration). No DB write on load (`dismissWrappedIntro` still only fires on Done/Back).
+
+**Decisions (user-approved via shape):** entry on each past-session card · skip intro on revisit · all sessions with a recap, across clubs. **Back nav** already handled by WrappedShell's Done/"Back to Lobby" → `/play`. **Route** uses root `/wrapped/...` (works regardless of club in the current hybrid routing; switch to club-scoped in Phase 2). **Deferred:** club-lobby past-sessions list mirror (kept to `/play` for now); "recap soon" state for a just-closed still-computing session (omitted for cleanliness).
+
+---
+
+## 🆕 PLAYER "UPCOMING RESERVED" STRIP — held-draft heads-up (2026-06-27)
+
+**Status: BUILT on `claude/pull-latest-main-EpwqL`. NOT committed, NOT deployed.** tsc clean · eslint (changed files) clean · `next build` clean. Independent review gate: **LGTM**. Built via `/impeccable` (product register, PRODUCT.md amber-on-navy on-deck semantic).
+
+**Problem:** When a player is the still-playing "pulled body" of a cross-court **held draft**, they're in TWO `match_players` rows at once (in_progress source + pending held draft). `usePlayerMatch` correctly shows the in_progress match (held draft is `is_published=false`, firewalled), so the player had **zero signal** they're already booked for the next game.
+
+**Fix (4 files):** keep the active-match screen as the hero, add a compact non-covering strip pinned **above Leave Queue** inside the `in_progress` overlay.
+- **NEW `src/app/actions/upcoming-match.ts`** — `getUpcomingHeldDraft(sessionId)`: service-role, scoped to `user.id` only (no roster leak, firewall stays intact for all other drafts). Detects `status='pending' AND is_held=true AND pulled_player_ids @> [user.id]` via `.contains()`. Returns `{ reserved, ready }` (`ready` = `held_ready_at` stamped). `{success}` union, never throws.
+- **`src/hooks/use-player-match.ts`** — returns `upcomingHeld`. Fetched inside `fetchMyMatch` only when resolved match is `in_progress`; seq-guarded after the await; `setUpcomingHeld(null)` on all null-match early returns + non-in_progress branch.
+- **`src/components/player/match-alert.tsx`** — `upcomingReserved?: {ready} | null` prop + `UpcomingReservedStrip` (amber `CalendarClock`, "Next match reserved" → "Up right after this" when ready, pulsing dot on ready). Bottom region restructured so strip + Leave Queue share the `mt-auto` anchor; null `upcomingReserved` = original layout exactly.
+- **`src/components/player/player-dashboard.tsx`** — passes `upcomingReserved` only when `status==='in_progress' && upcomingHeld?.reserved`.
+
+**Realtime caveat (accepted):** the held draft (unpublished) does NOT push realtime to the player (firewall), so the strip appears on the next `fetchMyMatch` trigger (own-match realtime event / visibility refresh), not instantly on held-draft creation. Eventual-consistency within seconds; acceptable for a heads-up.
+
+**⚠ STILL OPEN (separate bug, not addressed here):** if a held draft is **published while its pulled body is still on court** (reachable in DRAFT mode via Publish All / manual publish — `publish_all_drafts` / `publish_match` have no `is_held` guard, unlike `clear_all_unpublished_drafts`), `usePlayerMatch`'s `created_at DESC limit 1` flips the overlay from in_progress → on-deck mid-game, masking the live match + score input. Fix surface: add `AND is_held IS NOT TRUE` (or "source still in_progress") guard to the publish RPCs, and/or make `use-player-match.ts` prefer `in_progress` over `pending` instead of newest-by-created_at.
+
+**Verify on device:** pull a playing player into a held draft → confirm they keep the COURT screen + see the amber "Next match reserved" strip above Leave Queue; when the held draft's source frees, strip flips to "Up right after this". Sandbox route `/sandbox/player-alert` exists for visual checks.
+
+---
+
 > **📍 CURRENT STATUS (2026-07-02): MULTI-TENANT IS SHIPPED.** `feat/multi-tenant` was merged → `main` (`f3aae17`) and deployed to prod (club **CHILLAX**, slug `legacy`, ~163 active members). **Every "NOT yet committed" / "gated on user go" note in the entries below is now HISTORICAL** — all that work is committed to `main` and live. Prod DB matches the code; the leaderboard/history view-grant stopgap was reversed. Rollback target: Vercel deployment `d19b2ea`. `main` is the trunk going forward.
 
 ---
@@ -357,6 +392,18 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 - Integration suite `manual-and-swap.test.ts` migrated to new model (assertions flipped: swapped-manual → manual_modified) but needs a LIVE-DB run to confirm (not in unit CI).
 - Session provenance summary action built (`getSessionProvenance`) but not yet surfaced in a dashboard component.
 - `match_origin` ENUM type intentionally retained (vestigial; p_origin params). Future cleanup: retype p_origin→text, then `DROP TYPE`.
+
+---
+
+## 🆕 MY HISTORY — HOOKS VIOLATION FIX (2026-06-13)
+
+**Status: COMPLETE ✅** — Review gate: **LGTM**. Commit `d6080bc`.
+
+### Root cause
+`src/components/player/match-history.tsx`: `useMemo` for W/D/L stats was placed AFTER three conditional early returns (`if (loading)`, `if (fetchError)`, `if (history.length === 0)`). React's Rules of Hooks require all hooks to be called unconditionally in the same order every render. On the first render `loading=true` so the useMemo was skipped; on the next render (after data loads) it was called — hook count changed → React threw → global error boundary (`error.tsx`) showed "Unexpected Error" for any player with match history.
+
+### Fix
+Moved the `useMemo` before all early returns. Hook logic is unchanged; it just runs on every render (cheaply returns zeros when `history` is empty).
 
 ---
 

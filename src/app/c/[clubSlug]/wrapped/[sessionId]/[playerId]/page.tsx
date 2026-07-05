@@ -17,10 +17,13 @@ import { WrappedShell } from "@/components/wrapped/wrapped-shell";
 
 interface PageProps {
   params: Promise<{ clubSlug: string; sessionId: string; playerId: string }>;
+  searchParams: Promise<{ recap?: string }>;
 }
 
-export default async function ClubWrappedPage({ params }: PageProps) {
+export default async function ClubWrappedPage({ params, searchParams }: PageProps) {
   const { clubSlug, sessionId, playerId } = await params;
+  // ?recap=1 = revisit from session history — skip the intro, go to the recap.
+  const { recap } = await searchParams;
 
   const club = await getClubBySlug(clubSlug);
   if (!club) notFound();
@@ -35,7 +38,7 @@ export default async function ClubWrappedPage({ params }: PageProps) {
       sessionId={sessionId}
       playerId={playerId}
       matchHistory={data.matchHistory}
-      introDismissed={data.introDismissed}
+      introDismissed={data.introDismissed || recap === "1"}
     />
   );
 }

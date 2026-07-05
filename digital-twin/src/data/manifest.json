@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-06-07T04:13:27.538Z",
+  "_lastExtracted": "2026-06-13T07:37:41.928Z",
   "tables": [
     {
       "name": "profiles",
@@ -42,6 +42,24 @@
           "type": "string",
           "nullable": true,
           "note": "VIP theme key that controls the visual treatment (neon/holo). Must match a key in VIP_THEMES from @/lib/vip-config."
+        },
+        {
+          "name": "needs_rename",
+          "type": "boolean",
+          "nullable": false,
+          "note": "Duplicate-name resolution (Scope A). true = this profile is a flagged duplicate that must be renamed at the next login/join before proceeding."
+        },
+        {
+          "name": "collided_name",
+          "type": "string",
+          "nullable": true,
+          "note": "The exact display_name this profile collided on. Persisted so R1 (\"cannot reuse the duplicated name\") holds even after the canonical sibling is merged/renamed away. null when not flagged."
+        },
+        {
+          "name": "flagged_at",
+          "type": "string",
+          "nullable": true,
+          "note": "When the duplicate flag was set. null when not flagged."
         },
         {
           "name": "created_at",
@@ -758,6 +776,61 @@
           "note": ""
         }
       ]
+    },
+    {
+      "name": "player_renames",
+      "typeName": "PlayerRename",
+      "desc": "player_renames audit table — append-only record of name changes.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "old_name",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "new_name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "reason",
+          "type": "\"duplicate_flag\" | \"organizer_manual\" | \"self_reconnect\" | \"data_fix_merge\"",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "actor_user_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
     }
   ],
   "views": [
@@ -1234,6 +1307,23 @@
         {
           "name": "—",
           "type": "Record<string, never>",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "rename_player_identity",
+      "returns": "{ success: boolean; new_name?: string; error?: \"profile_not_found\" | \"reused_dup_name\" | \"name_taken\"; }",
+      "args": [
+        {
+          "name": "p_user_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_new_name",
+          "type": "string",
           "optional": false
         }
       ],
@@ -1815,7 +1905,12 @@
     {
       "name": "ANTI_REPEAT_LOOKBACK",
       "value": 5,
-      "desc": "Number of recent matches to check for anti-repeat logic."
+      "desc": "Number of recent matches to check for anti-repeat logic (overlap map)."
+    },
+    {
+      "name": "ROSTER_LOOKBACK_COUNT",
+      "value": 10,
+      "desc": "How many recent match rosters to fetch for diversity-violation checks. Larger than ANTI_REPEAT_LOOKBACK so getEffectiveLookback can scale up for large sessions (16+ eligible players → lookback=7) without being capped by the fetch window."
     },
     {
       "name": "FALLBACK_WAIT_MINUTES",
@@ -1824,18 +1919,33 @@
     },
     {
       "name": "CRITICAL_WAIT_MINUTES",
+      "value": 20,
+      "desc": "Red Zone threshold — wait time in minutes at which a player enters the urgency tier. Red Zone score = 1000 + waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES), guaranteeing it exceeds any Normal-queue score while still preferring fewer-games players when waits are similar. Set to 20 min (was 25) so the Red Zone triggers sooner, reducing the window in which a long-waiting player competes as \"normal priority.\" The Hard Wait Cap (25 min) fires 5 min after Red Zone entry and gives the absolute-override floor that guarantees service."
+    },
+    {
+      "name": "HARD_WAIT_CAP_MINUTES",
       "value": 25,
-      "desc": "Red Zone threshold — wait time in minutes at which a player's priority overrides their game debt entirely. Score = 1000 + waitMinutes so they always anchor the next match regardless of how many games they've played."
+      "desc": "Hard Wait Cap — after a player has been waiting this many minutes AND has fewer than HARD_CAP_GAMES_CEILING games, their priority score jumps to HARD_CAP_SCORE_FLOOR + (extraWait × 10), absolutely overriding both Normal-queue and Red Zone players. Design intent: no eligible player should wait more than HARD_WAIT_CAP_MINUTES + max(courtDuration) ≈ 25 + 22 = 47 min. In practice the engine delivers 36–43 min max across all tested scenarios. Progressive scoring (not flat) means the longest-waiting cap-eligible player always leads — preventing flat-score ties that would otherwise systematically deprioritise late-arriving players."
+    },
+    {
+      "name": "HARD_CAP_SCORE_FLOOR",
+      "value": 2000,
+      "desc": "Absolute-override score floor for Hard Wait Cap players. Scores in the Hard Cap tier = HARD_CAP_SCORE_FLOOR + (wait − HARD_WAIT_CAP_MINUTES) × 10. Must be > RED_ZONE_SCORE_FLOOR + max realistic Red Zone score to guarantee hard-cap players always outrank Red Zone players. (Max plausible Red Zone: 1000 + 60 − 0 = 1060; 2000 >> 1060 ✓)"
+    },
+    {
+      "name": "HARD_CAP_GAMES_CEILING",
+      "value": 5,
+      "desc": "Game count ceiling for Hard Wait Cap eligibility. A player with games_played ≥ this value cannot use the hard cap override — they compete via normal / Red Zone scoring only. Set to the typical session target (5 games for a 4-hour session with standard court/player ratios). This prevents players who have already reached their fair share from claiming the absolute-override and crowding out players who haven't yet hit the target. Derivation: targetGames = round(courts × sessionMin / avgGameMin × 4 / players) 31p / 3c / 240 min → round(4.65) = 5 18p / 2c / 240 min → round(5.08) = 5 50p / 5c / 240 min → round(4.80) = 5"
     },
     {
       "name": "GAME_PENALTY_MINUTES",
-      "value": 12,
-      "desc": "Game penalty applied in normal-queue priority scoring. Each game played subtracts this many \"virtual minutes\" from the player's effective wait time, so frequent players yield the queue to fresher ones. priorityScore = waitMinutes - (gamesPlayed * GAME_PENALTY_MINUTES)"
+      "value": 8,
+      "desc": "Game penalty applied in normal-queue priority scoring (no floor — scores can go negative). Each game played subtracts this many \"virtual minutes\" from the player's effective wait time, so frequent players yield the queue to fresher ones. Formula: priorityScore = waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES) Red Zone:       1000 + waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES) Calibration: set ≈ half the average game cycle (~20 min / 2 = 10 min). At 8 min, a player with 1 extra game has a ~8-min disadvantage vs a lower-games player at equal wait — they catch up after ~8 more minutes of waiting. This keeps max wait under ~40 min while still differentiating game counts. (Higher values improve equity but increase wait time for early-burst players.)"
     },
     {
       "name": "RED_ZONE_SCORE_FLOOR",
       "value": 1000,
-      "desc": "Sentinel score floor for Red Zone players. Any player with priorityScore >= RED_ZONE_SCORE_FLOOR is in the Red Zone, meaning their urgency overrides game debt entirely. Score formula: 1000 + waitMinutes (always > any Normal-queue score)."
+      "desc": "Sentinel score floor for Red Zone players. Any player with priorityScore >= RED_ZONE_SCORE_FLOOR is in the Red Zone, meaning their urgency overrides normal-queue ordering — but game debt still applies within the Red Zone so fewer-games players are preferred. Score formula: 1000 + waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES). The +1000 ensures all Red Zone scores outrank any Normal-queue score."
     },
     {
       "name": "GATE_POOL_THRESHOLD",
@@ -1881,6 +1991,16 @@
       "name": "MAX_PARTNERSHIP_REPEATS",
       "value": 2,
       "desc": "Hard cap on the number of times two players may appear on the same team within a single session. Once a pair reaches this count they are excluded from every team-assignment path (snakeDraft / rotatedDraft). No waivers — Red Zone urgency, last-resort fallback, and tier isolation do NOT bypass this cap. If no valid team split exists, the slot returns no-match and a saturation signal fires so the organizer can intervene. Manual organizer assignment is the only bypass."
+    },
+    {
+      "name": "MAX_OPPONENT_REPEATS",
+      "value": 3,
+      "desc": "Soft cap on the number of times two players may face each other as opponents (cross-net) within a single session. Enforced in snakeDraft / rotatedDraft as a PREFERENCE (soft), not a hard block: the engine first tries team splits where no cross-net pair is at this cap. If all splits have at least one capped opponent pair, the cap is relaxed and the best available split is used — preventing stalls. This is a soft cap to avoid conflicts with the hard partnership cap: in small sessions the same players necessarily face each other often."
+    },
+    {
+      "name": "MIN_REST_MINUTES",
+      "value": 18,
+      "desc": "Minimum minutes a returning player must wait before they can be drafted again. Guards against 0-minute back-to-back play. Applies to players with games_played > 0. First-time players (games_played = 0) are always eligible regardless of wait time. Fallback: if applying this filter would leave fewer than PLAYERS_PER_MATCH waiting players, the filter is waived so the session can still form a match (handles very small sessions or returning bursts)."
     },
     {
       "name": "CROSS_COURT_REST_FALLBACK_MINUTES",
@@ -2023,11 +2143,20 @@
     },
     {
       "file": "matchmaking.ts",
-      "functions": ["callNextMatch", "runEngineForSession", "promoteOnDeckMatchInternal"]
+      "functions": [
+        "callNextMatch",
+        "runEngineForSession",
+        "promoteOnDeckMatchInternal",
+        "recomputeHeldReadiness"
+      ]
     },
     {
       "file": "notifications.ts",
       "functions": ["sendPlayerNotification"]
+    },
+    {
+      "file": "oauth.ts",
+      "functions": ["signInWithGoogle", "linkWithGoogle"]
     },
     {
       "file": "profile.ts",
@@ -2041,6 +2170,10 @@
         "joinQueueAction",
         "removePlayerFromQueue"
       ]
+    },
+    {
+      "file": "rename.ts",
+      "functions": ["checkNameAvailable", "renamePlayer"]
     },
     {
       "file": "sessions.ts",
@@ -3004,6 +3137,39 @@
       "functions": ["create_held_cross_court_match"],
       "policies": [],
       "lines": 184
+    },
+    {
+      "file": "20260608000000_duplicate_name_resolution.sql",
+      "date": "2026-06-08",
+      "ts": "20260608000000",
+      "title": "Migration: Duplicate-name resolution — schema + RPCs",
+      "kinds": ["column", "index", "rpc", "table"],
+      "tables": ["player_renames", "profiles"],
+      "functions": ["migrate_player_identity", "rename_player_identity"],
+      "policies": [],
+      "lines": 265
+    },
+    {
+      "file": "20260608000001_profiles_unique_name_index.sql",
+      "date": "2026-06-08",
+      "ts": "20260608000001",
+      "title": "Migration: profiles — partial UNIQUE index on normalized name",
+      "kinds": ["index"],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 30
+    },
+    {
+      "file": "20260608000002_harden_handle_new_user_oauth.sql",
+      "date": "2026-06-08",
+      "ts": "20260608000002",
+      "title": "Migration: harden handle_new_user() for OAuth / metadata-less inserts",
+      "kinds": ["rpc", "trigger"],
+      "tables": [],
+      "functions": ["handle_new_user"],
+      "policies": [],
+      "lines": 67
     }
   ],
   "rlsPolicies": [
@@ -3401,137 +3567,7 @@
     }
   ],
   "rlsCapturedAt": "2026-06-05",
-  "coverage": {
-    "totals": {
-      "lines": 976,
-      "hit": 861,
-      "pct": 88.2,
-      "files": 14
-    },
-    "dirs": [
-      {
-        "dir": "src/app/actions",
-        "lines": 183,
-        "hit": 162,
-        "files": 2,
-        "pct": 88.5
-      },
-      {
-        "dir": "src/hooks",
-        "lines": 605,
-        "hit": 573,
-        "files": 10,
-        "pct": 94.7
-      },
-      {
-        "dir": "src/lib",
-        "lines": 188,
-        "hit": 126,
-        "files": 2,
-        "pct": 67
-      }
-    ],
-    "files": [
-      {
-        "file": "src/app/actions/fix-player-record.ts",
-        "lines": 41,
-        "hit": 40,
-        "pct": 97.6,
-        "fnPct": 75
-      },
-      {
-        "file": "src/app/actions/matchmaking.ts",
-        "lines": 142,
-        "hit": 122,
-        "pct": 85.9,
-        "fnPct": 92.9
-      },
-      {
-        "file": "src/hooks/use-enriched-matches.ts",
-        "lines": 42,
-        "hit": 36,
-        "pct": 85.7,
-        "fnPct": 90
-      },
-      {
-        "file": "src/hooks/use-fix-record.ts",
-        "lines": 44,
-        "hit": 44,
-        "pct": 100,
-        "fnPct": 100
-      },
-      {
-        "file": "src/hooks/use-leaderboard.ts",
-        "lines": 111,
-        "hit": 105,
-        "pct": 94.6,
-        "fnPct": 87
-      },
-      {
-        "file": "src/hooks/use-match-alerts.ts",
-        "lines": 75,
-        "hit": 74,
-        "pct": 98.7,
-        "fnPct": 92.3
-      },
-      {
-        "file": "src/hooks/use-match-history.ts",
-        "lines": 36,
-        "hit": 36,
-        "pct": 100,
-        "fnPct": 100
-      },
-      {
-        "file": "src/hooks/use-organizer-dashboard.ts",
-        "lines": 92,
-        "hit": 79,
-        "pct": 85.9,
-        "fnPct": 86.7
-      },
-      {
-        "file": "src/hooks/use-player-match.ts",
-        "lines": 65,
-        "hit": 64,
-        "pct": 98.5,
-        "fnPct": 91.7
-      },
-      {
-        "file": "src/hooks/use-queue.ts",
-        "lines": 50,
-        "hit": 48,
-        "pct": 96,
-        "fnPct": 89.5
-      },
-      {
-        "file": "src/hooks/use-score-form.ts",
-        "lines": 21,
-        "hit": 21,
-        "pct": 100,
-        "fnPct": 100
-      },
-      {
-        "file": "src/hooks/use-swap-state.ts",
-        "lines": 69,
-        "hit": 66,
-        "pct": 95.7,
-        "fnPct": 94.4
-      },
-      {
-        "file": "src/lib/matchmaking-core.ts",
-        "lines": 184,
-        "hit": 122,
-        "pct": 66.3,
-        "fnPct": 80
-      },
-      {
-        "file": "src/lib/score-input.ts",
-        "lines": 4,
-        "hit": 4,
-        "pct": 100,
-        "fnPct": 100
-      }
-    ]
-  },
+  "coverage": null,
   "schemaDrift": {
     "capturedAt": "2026-06-05",
     "ok": false,
@@ -3540,6 +3576,11 @@
         "table": "matches",
         "dbOnly": [],
         "codeOnly": ["pulled_player_ids", "pulled_from_match_id", "held_ready_at", "is_held"]
+      },
+      {
+        "table": "profiles",
+        "dbOnly": [],
+        "codeOnly": ["needs_rename", "collided_name", "flagged_at"]
       }
     ],
     "columnNullabilityDrift": [],
@@ -3563,7 +3604,7 @@
         "set_updated_at",
         "touch_push_subscription_updated_at"
       ],
-      "codeOnly": ["create_held_cross_court_match"]
+      "codeOnly": ["create_held_cross_court_match", "rename_player_identity"]
     },
     "views": {
       "dbOnly": [],
@@ -3571,7 +3612,7 @@
     },
     "tables": {
       "dbOnly": [],
-      "codeOnly": []
+      "codeOnly": ["player_renames"]
     }
   },
   "actionDetails": [
@@ -3600,7 +3641,7 @@
       "name": "signInAnonymously",
       "signature": "signInAnonymously(formData: FormData)",
       "auth": ["createServiceClient"],
-      "tables": ["profiles", "queue_entries"],
+      "tables": ["profiles"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3946,9 +3987,39 @@
       "pushes": true
     },
     {
+      "file": "matchmaking.ts",
+      "name": "recomputeHeldReadiness",
+      "signature": "recomputeHeldReadiness( supabase: ReturnType<typeof createServiceClient>, sessionId: string ): Promise<void>",
+      "auth": [],
+      "tables": ["match_players", "matches"],
+      "rpcs": ["clear_on_deck_match_atomic"],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
       "file": "notifications.ts",
       "name": "sendPlayerNotification",
       "signature": "sendPlayerNotification( userId: string, type: NotificationType ): Promise<",
+      "auth": [],
+      "tables": [],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "oauth.ts",
+      "name": "signInWithGoogle",
+      "signature": "signInWithGoogle(next?: string): Promise<OAuthStart>",
+      "auth": [],
+      "tables": [],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "oauth.ts",
+      "name": "linkWithGoogle",
+      "signature": "linkWithGoogle(next?: string): Promise<OAuthStart>",
       "auth": [],
       "tables": [],
       "rpcs": [],
@@ -4020,7 +4091,7 @@
       "name": "joinQueueAction",
       "signature": "joinQueueAction(sessionId: string): Promise<JoinQueueResult>",
       "auth": ["createServiceClient"],
-      "tables": [],
+      "tables": ["profiles"],
       "rpcs": ["join_queue"],
       "broadcasts": [],
       "pushes": false
@@ -4033,6 +4104,26 @@
       "tables": ["match_players", "queue_entries"],
       "rpcs": ["remove_player_from_queue_organizer"],
       "broadcasts": ["broadcastOrganizerIntervention"],
+      "pushes": false
+    },
+    {
+      "file": "rename.ts",
+      "name": "checkNameAvailable",
+      "signature": "checkNameAvailable(rawName: string): Promise<NameCheckResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": ["profiles"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "rename.ts",
+      "name": "renamePlayer",
+      "signature": "renamePlayer(rawName: string): Promise<RenameResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": [],
+      "rpcs": ["rename_player_identity"],
+      "broadcasts": [],
       "pushes": false
     },
     {

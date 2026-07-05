@@ -92,6 +92,14 @@ export type AllSessionsHistoryResult = {
   success: true;
   matches: MatchHistory[];
   sessions: SessionMeta[];
+  /**
+   * Session IDs for which this player has a computed Session Wrapped recap
+   * (a `session_wrapped_stats` row exists). Drives the "View Wrapped"
+   * affordance per session group — only sessions in this set get the chip.
+   * A recap is only computed on session close, so this naturally excludes
+   * still-active or uncomputed sessions.
+   */
+  wrappedSessionIds: string[];
 };
 
 /**
@@ -127,7 +135,8 @@ export async function getAllSessionsHistory(
     .order("completed_at", { ascending: false });
 
   if (matchError) return { success: false, error: "Failed to load match history." };
-  if (!matches || matches.length === 0) return { success: true, matches: [], sessions: [] };
+  if (!matches || matches.length === 0)
+    return { success: true, matches: [], sessions: [], wrappedSessionIds: [] };
 
   // Collect unique session IDs in newest-first order.
   const sessionIds: string[] = [];
@@ -164,9 +173,21 @@ export async function getAllSessionsHistory(
     club_name: s.club_id ? (clubNameById.get(s.club_id) ?? null) : null,
   }));
 
+  // Which of these sessions have a computed Wrapped recap for this player.
+  // Scoped to the caller's own id (ownership already gated above) and to the
+  // sessions in view. session_wrapped_stats has no anon/authenticated grant,
+  // so this goes through the service-role client like the queries above.
+  const { data: wrappedRows } = await db
+    .from("session_wrapped_stats")
+    .select("session_id")
+    .eq("player_id", playerId)
+    .in("session_id", sessionIds);
+  const wrappedSessionIds = (wrappedRows ?? []).map((r) => r.session_id);
+
   return {
     success: true,
     matches,
     sessions: sessionMetas,
+    wrappedSessionIds,
   };
 }
