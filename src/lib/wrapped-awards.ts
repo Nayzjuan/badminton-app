@@ -213,7 +213,7 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "deuce_magnet",
     emoji: "🎭",
     title: "Deuce Magnet",
-    subtitle: "{deuce_games} of your games went to 20-20. Drama follows you everywhere.",
+    subtitle: "{deuce_games} of your games went to 30-30. Drama follows you everywhere.",
     rarity: "uncommon",
   },
 
