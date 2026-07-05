@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { getUpcomingHeldDraft, type UpcomingHeldDraft } from "@/app/actions/upcoming-match";
 import type { Match, Court, Profile, Team } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
@@ -36,6 +37,14 @@ interface PlayerMatchInfo {
 interface UsePlayerMatchResult {
   /** The player's current/upcoming match, or null if none. */
   currentMatch: PlayerMatchInfo | null;
+  /**
+   * Set when the player is the still-playing "pulled body" of a pending
+   * held cross-court draft, i.e. they have a match reserved for right after
+   * the one they're playing now. null when there's no reservation.
+   * The held draft itself is firewalled from the client, so this is resolved
+   * via a service-role server action scoped to the caller's own id.
+   */
+  upcomingHeld: UpcomingHeldDraft | null;
   /** Whether data is loading. */
   loading: boolean;
   /** Manually re-fetch match data (used by useVisibilityRefresh). */
@@ -44,6 +53,7 @@ interface UsePlayerMatchResult {
 
 export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMatchResult {
   const [currentMatch, setCurrentMatch] = useState<PlayerMatchInfo | null>(null);
+  const [upcomingHeld, setUpcomingHeld] = useState<UpcomingHeldDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
@@ -76,6 +86,7 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
 
     if (!myAssignments || myAssignments.length === 0) {
       setCurrentMatch(null);
+      setUpcomingHeld(null);
       setLoading(false);
       return;
     }
@@ -97,6 +108,7 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
 
     if (!matches || matches.length === 0) {
       setCurrentMatch(null);
+      setUpcomingHeld(null);
       setLoading(false);
       return;
     }
@@ -153,6 +165,7 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
 
     if (!allPlayers) {
       setCurrentMatch(null);
+      setUpcomingHeld(null);
       setLoading(false);
       return;
     }
@@ -191,6 +204,19 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
       totalOnDeck,
     });
     setLoading(false);
+
+    // ── Upcoming held-draft reservation ──────────────────────
+    // Only relevant while actually on court: the held draft that
+    // reserves this player is firewalled from the client (it's an
+    // unpublished is_held match), so resolve it via a server action
+    // scoped to this player's own id. When not in_progress, clear it.
+    if (match.status === "in_progress") {
+      const res = await getUpcomingHeldDraft(sessionId);
+      if (mySeq !== fetchMyMatchSeq.current) return;
+      setUpcomingHeld(res.success ? res.upcoming : null);
+    } else {
+      setUpcomingHeld(null);
+    }
   }, [supabase, sessionId, playerId]);
 
   // Initial fetch + real-time subscriptions.
@@ -212,5 +238,5 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
     };
   }, [supabase, sessionId, fetchMyMatch]);
 
-  return { currentMatch, loading, refresh: fetchMyMatch };
+  return { currentMatch, upcomingHeld, loading, refresh: fetchMyMatch };
 }
