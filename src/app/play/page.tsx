@@ -11,7 +11,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { enforceRenameGate } from "@/lib/rename-gate";
-import { getMyActiveClubIds } from "@/lib/clubs";
+import { getPrimaryClubSlug, getClubBySlug } from "@/lib/clubs";
 import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
 import { SessionList } from "@/components/session-list";
 import { SignOutButton } from "@/components/sign-out-button";
@@ -46,9 +46,15 @@ export default async function PlayPage() {
 
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
-  // Get active sessions — scoped to clubs the player actually belongs to, so
-  // a multi-club deployment never lists another club's session names here.
-  const clubIds = await getMyActiveClubIds(user.id);
+  // Resolve the player's PRIMARY club — the club of their last-attended session
+  // (falling back to their last-joined club). No club → they registered via the
+  // plain link with no QR; route them to the join-via-QR screen rather than an
+  // empty picker. For a multi-club player this scopes the picker to the club
+  // they last actively used, not every club at once.
+  const primaryClubSlug = await getPrimaryClubSlug(user.id);
+  if (!primaryClubSlug) redirect("/welcome");
+  const primaryClub = await getClubBySlug(primaryClubSlug);
+  const clubIds = primaryClub ? [primaryClub.id] : [];
 
   // SessionList doesn't display organizer_passcode — explicit column list.
   const activeSessionRows =

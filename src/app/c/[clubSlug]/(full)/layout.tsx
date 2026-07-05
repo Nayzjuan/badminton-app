@@ -11,6 +11,7 @@
 
 import { Suspense } from "react";
 import { requireClubMembership, getMyClubs, getMyActiveClubIds } from "@/lib/clubs";
+import { isPlatformOwner } from "@/lib/platform";
 import { ClubSwitcher } from "@/components/clubs/club-switcher";
 import { ClubJoinToast } from "@/components/clubs/club-join-toast";
 
@@ -36,6 +37,7 @@ export default async function ClubFullLayout({
           <ClubSwitcher
             activeSlug={club.slug}
             clubs={myClubs.map((c) => ({ slug: c.club.slug, name: c.club.name, role: c.role }))}
+            isPlatformOwner={isPlatformOwner(userId)}
           />
         </div>
       )}

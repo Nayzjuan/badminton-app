@@ -13,9 +13,12 @@ import type { ClubRole } from "@/types/database";
 interface ClubSwitcherProps {
   activeSlug: string;
   clubs: Array<{ slug: string; name: string; role: ClubRole }>;
+  /** Platform owners get the "All clubs" / "New club" cross-club actions;
+   *  everyone else can only switch between the clubs they already belong to. */
+  isPlatformOwner?: boolean;
 }
 
-export function ClubSwitcher({ activeSlug, clubs }: ClubSwitcherProps) {
+export function ClubSwitcher({ activeSlug, clubs, isPlatformOwner = false }: ClubSwitcherProps) {
   const active = clubs.find((c) => c.slug === activeSlug);
 
   return (
@@ -42,22 +45,24 @@ export function ClubSwitcher({ activeSlug, clubs }: ClubSwitcherProps) {
             );
           })}
         </ul>
-        <div className="mt-1 border-t border-cc-border pt-1">
-          <Link
-            href="/clubs"
-            className="flex items-center gap-2 px-3 py-2 font-command text-sm uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3"
-          >
-            <LayoutGrid className="h-4 w-4" aria-hidden="true" />
-            All clubs
-          </Link>
-          <Link
-            href="/clubs/new"
-            className="flex items-center gap-2 px-3 py-2 font-command text-sm uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3"
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New club
-          </Link>
-        </div>
+        {isPlatformOwner && (
+          <div className="mt-1 border-t border-cc-border pt-1">
+            <Link
+              href="/clubs"
+              className="flex items-center gap-2 px-3 py-2 font-command text-sm uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3"
+            >
+              <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+              All clubs
+            </Link>
+            <Link
+              href="/clubs/new"
+              className="flex items-center gap-2 px-3 py-2 font-command text-sm uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              New club
+            </Link>
+          </div>
+        )}
       </div>
     </details>
   );

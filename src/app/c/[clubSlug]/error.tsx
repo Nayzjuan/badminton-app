@@ -46,10 +46,10 @@ export default function ClubError({
           Try again
         </button>
         <Link
-          href="/clubs"
+          href="/play"
           className="rounded-lg border border-border px-5 py-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-muted"
         >
-          All clubs
+          Back to sessions
         </Link>
       </div>
     </div>

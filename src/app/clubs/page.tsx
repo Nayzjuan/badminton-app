@@ -11,6 +11,7 @@ import { redirect } from "next/navigation";
 import { Plus, Users } from "lucide-react";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { getMyClubs } from "@/lib/clubs";
+import { isPlatformOwner } from "@/lib/platform";
 import { ClubList } from "@/components/clubs/club-list";
 
 export default async function ClubsHomePage() {
@@ -19,6 +20,11 @@ export default async function ClubsHomePage() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
+
+  // The cross-club hub is platform-owner-only. Everyone else is scoped to their
+  // own club — send them to the session picker (which resolves their club or the
+  // join-via-QR screen). Blocks non-owners even if they type the URL directly.
+  if (!isPlatformOwner(user.id)) redirect("/play");
 
   const clubs = await getMyClubs(user.id);
 

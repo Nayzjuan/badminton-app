@@ -11,6 +11,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { requireClubMembership, getMyClubs } from "@/lib/clubs";
+import { isPlatformOwner } from "@/lib/platform";
 import { ClubSwitcher } from "@/components/clubs/club-switcher";
 import { ClubChromeNav } from "@/components/clubs/club-chrome-nav";
 import { ClubJoinToast } from "@/components/clubs/club-join-toast";
@@ -26,6 +27,9 @@ export default async function ClubAppLayout({
 
   const { userId, club, role } = await requireClubMembership(clubSlug);
   const isAdmin = role === "owner" || role === "admin";
+  // Only the platform owner gets cross-club affordances (switch to / browse /
+  // create other clubs). Everyone else is scoped to this club.
+  const isOwner = isPlatformOwner(userId);
   const myClubs = await getMyClubs(userId);
 
   const multiClub = myClubs.length > 1;
@@ -44,20 +48,24 @@ export default async function ClubAppLayout({
               <ClubSwitcher
                 activeSlug={club.slug}
                 clubs={myClubs.map((c) => ({ slug: c.club.slug, name: c.club.name, role: c.role }))}
+                isPlatformOwner={isOwner}
               />
             ) : (
               <div className="flex min-w-0 items-center gap-1.5">
                 <span className="truncate px-2 py-1.5 font-display font-bold uppercase italic tracking-tight text-cc-t1">
                   {club.name}
                 </span>
-                {/* Not a tenant switcher (single club) — just keeps the clubs hub
-                    reachable from the lobby so a lone-club owner can browse/create. */}
-                <Link
-                  href="/clubs"
-                  className="clip-cut-sm shrink-0 px-2 py-1 font-command text-xs uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3 hover:text-cc-t1"
-                >
-                  All clubs
-                </Link>
+                {/* The clubs hub is platform-owner-only — the "All clubs" link is
+                    shown only to the owner, so a regular member never sees a
+                    cross-club affordance (and it wouldn't work for them anyway). */}
+                {isOwner && (
+                  <Link
+                    href="/clubs"
+                    className="clip-cut-sm shrink-0 px-2 py-1 font-command text-xs uppercase tracking-wide text-cc-t2 transition-colors hover:bg-cc-bg-3 hover:text-cc-t1"
+                  >
+                    All clubs
+                  </Link>
+                )}
               </div>
             )}
           </div>

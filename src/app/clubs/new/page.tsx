@@ -6,6 +6,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { isPlatformOwner } from "@/lib/platform";
 import { CreateClubForm } from "@/components/clubs/create-club-form";
 
 export default async function NewClubPage() {
@@ -14,6 +15,10 @@ export default async function NewClubPage() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
+
+  // Creating a club is platform-owner-only (defense in depth with the createClub
+  // server-action gate). Non-owners are bounced to their own club context.
+  if (!isPlatformOwner(user.id)) redirect("/play");
 
   return (
     <div className="min-h-dvh bg-cc-bg">

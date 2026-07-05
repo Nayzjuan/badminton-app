@@ -17,15 +17,16 @@ interface JoinShimProps {
 
 export default async function JoinShim({ searchParams }: JoinShimProps) {
   const { session: sessionId } = await searchParams;
-  if (!sessionId) redirect("/clubs");
+  if (!sessionId) redirect("/play");
 
   const supabase = await createServerSupabaseClient();
   const { data: lookup } = await supabase.rpc("lookup_active_session", { p_session_id: sessionId });
   const session = lookup?.[0] ?? null;
 
-  // Bad / inactive / club-less session → the multi-club home.
+  // Bad / inactive / club-less session → the player's own context (which
+  // resolves their club or the join-via-QR screen). Not /clubs (owner-only).
   if (!session || !session.is_active || !session.club_slug) {
-    redirect("/clubs");
+    redirect("/play");
   }
 
   redirect(clubJoin(session.club_slug, sessionId));

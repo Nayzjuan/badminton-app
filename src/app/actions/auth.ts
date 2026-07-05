@@ -102,9 +102,10 @@ export async function signInAnonymously(formData: FormData) {
 
     if (clubSlug) {
       const enroll = await ensureClubMembership(clubSlug, existingUser.id);
-      // Club vanished / membership write failed — don't redirect into a gated
-      // club route that would immediately bounce them; send them to their hub.
-      if (!enroll.ok) redirect("/clubs");
+      // Club vanished / membership write failed — send them to their own player
+      // context (/play resolves their club, or the join-via-QR screen), not a
+      // gated club route that would bounce them.
+      if (!enroll.ok) redirect("/play");
     }
     redirect(destination);
   }

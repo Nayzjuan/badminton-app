@@ -16,6 +16,7 @@ import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/utils/supabase/service";
 import { getAuthenticatedUser } from "@/app/actions/_shared";
 import { isClubAdmin, getClubRole } from "@/lib/clubs";
+import { isPlatformOwner } from "@/lib/platform";
 import { isValidUUID } from "@/lib/validate";
 import { slugifyClubName, isValidClubSlug } from "@/lib/club-slug";
 import type { ClubRole } from "@/types/database";
@@ -33,6 +34,14 @@ export type CreateClubResult = { success: boolean; message: string; slug?: strin
 export async function createClub(opts: { name: string; slug?: string }): Promise<CreateClubResult> {
   const user = await getAuthenticatedUser();
   if (!user) return { success: false, message: "Not authenticated." };
+
+  // Club creation is a platform-owner privilege — everyone else is scoped to
+  // the club(s) they belong to (joined via QR/invite). Server-side gate: the
+  // UI also hides the entry points, but this is the enforcement that can't be
+  // bypassed by hitting the action directly.
+  if (!isPlatformOwner(user.id)) {
+    return { success: false, message: "Only the platform owner can create clubs." };
+  }
 
   const name = opts.name.trim();
   if (!name) return { success: false, message: "Club name is required." };

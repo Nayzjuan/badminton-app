@@ -898,6 +898,12 @@ export type Database = {
         Args: { p_session_id: string };
         Returns: void;
       };
+      /** Slug of the club a player should land in cold (last session attended →
+       *  last joined → null). SECURITY DEFINER; service-role only. */
+      get_primary_club_slug: {
+        Args: { p_user_id: string };
+        Returns: string | null;
+      };
       get_h2h_record: {
         Args: {
           p_team_a: string[];

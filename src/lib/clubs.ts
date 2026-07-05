@@ -105,6 +105,22 @@ export async function getMyActiveClubIds(userId: string): Promise<string[]> {
 }
 
 /**
+ * The club a returning player should land in when they open the app cold (no
+ * QR / no active session): the club of their MOST RECENTLY ATTENDED session,
+ * falling back to their most recently JOINED active club, or `null` if they
+ * belong to no club (→ the caller routes them to the join-via-QR screen).
+ *
+ * Resolved in one SECURITY-DEFINER RPC (get_primary_club_slug) so the ordering
+ * by session recency happens in SQL, not across supabase-js foreign tables.
+ */
+export async function getPrimaryClubSlug(userId: string): Promise<string | null> {
+  const db = createServiceClient();
+  const { data, error } = await db.rpc("get_primary_club_slug", { p_user_id: userId });
+  if (error) throw new Error(`getPrimaryClubSlug: ${error.message}`);
+  return (data as string | null) ?? null;
+}
+
+/**
  * The player's role in a club, or null if not an active member.
  * Cached per-request: the /c/[clubSlug] layout and page both resolve role.
  */
@@ -227,7 +243,10 @@ export async function requireClubMembership(
   if (!club) notFound();
 
   const role = await getClubRole(user.id, club.id);
-  if (!role) redirect("/clubs");
+  // Not a member of THIS club → send them to their own player context (/play
+  // resolves their primary club, or the join-via-QR screen). Not /clubs — that
+  // is the platform-owner-only hub.
+  if (!role) redirect("/play");
 
   return { userId: user.id, club, role };
 }
