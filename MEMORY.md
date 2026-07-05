@@ -5,6 +5,22 @@
 
 ---
 
+## 🆕 PLATFORM-OWNER MODEL + CLUB-SCOPED LANDING — SHIPPED (main `1bd4769`, 2026-07-05)
+
+**Status: DEPLOYED to prod + verified live.** tsc/lint/build clean · review gate **Minor issues** (all 5 fixed) · E2E preview green (5 load-flakes + 1 test-data bug fixed: I-2a) · prod-verified (non-owner org-bot probe: `/clubs`→307→`/play`, `/clubs/new`→307→`/play`, `/play`→200, `/welcome`→307→`/play`; zero runtime errors).
+
+**What:** only the **platform owner** may create/see clubs; everyone else is scoped to the club(s) they belong to and never sees `/clubs`.
+
+- `src/lib/platform.ts` `isPlatformOwner()` — env `PLATFORM_OWNER_IDS` (server-only) + baked fallback `86222a8f…` (MIGGY / miggy.0107@gmail.com). `createClub` + `/clubs` + `/clubs/new` gated; club-switcher/(app)-layout cross-club links owner-only.
+- `getPrimaryClubSlug()` → RPC `get_primary_club_slug` (migration `20260705000000`): club of the player's **last-attended session** (`q.joined_at DESC`), else last-joined club, else NULL. `/play` scopes the picker to this primary club; NULL → new `/welcome` join-via-QR screen. QR registrants enrolled + routed to their session (never see /welcome).
+- **Blanket `handle_new_user` auto-enroll RETIRED** — new plain-link registrants have no club → `/welcome`. Existing members untouched.
+- **Roster bootstrap (prod):** MIGGY admin→**owner**; Jake L owner→admin; Stelle stays admin.
+- Non-owner-facing `/clubs` redirects/links repointed to `/play` (requireClubMembership, play/join, auth enroll-fail, club error.tsx, PWA manifest `start_url`).
+
+**Real-user safety:** all 167 members resolve to a club (nobody stranded on /welcome); `migrate_player_identity` repoints `club_members` so reconnects keep membership; single-club members' experience unchanged.
+
+---
+
 ## 🆕 REVISIT PAST SESSION WRAPPED — history-list entry point (2026-07-04)
 
 **Status: BUILT on `claude/pull-latest-main-EpwqL`. NOT deployed.** tsc clean · eslint (changed files) clean · `next build` clean. Independent review: **LGTM**. Planned via `/impeccable shape` (product register); shape brief confirmed by user.
