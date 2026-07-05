@@ -613,6 +613,25 @@ test.describe("Group 2 — PIN Reconnect", () => {
       { onConflict: "session_id,player_id" }
     );
 
+    // Enroll the reconnect tester in the session's club. A real player with a
+    // queue entry is ALWAYS a club member (they joined via the club QR, which
+    // enrolls them). The club-scoped reconnect lookup requires membership
+    // (club_members!inner), and the blanket auto-enroll into the club was
+    // retired 2026-07-05, so the membership must be seeded explicitly now.
+    const { data: reconSession } = await db
+      .from("sessions")
+      .select("club_id")
+      .eq("id", sessionId)
+      .maybeSingle();
+    if (reconSession?.club_id) {
+      await db
+        .from("club_members")
+        .upsert(
+          { club_id: reconSession.club_id, player_id: reconUserId, role: "member" as const },
+          { onConflict: "club_id,player_id" }
+        );
+    }
+
     const ctx = await browser.newContext({ extraHTTPHeaders: BYPASS_HEADERS });
     const page = await ctx.newPage();
 
@@ -662,6 +681,7 @@ test.describe("Group 2 — PIN Reconnect", () => {
         .eq("display_name", reconName);
       for (const p of lingering ?? []) {
         await db.from("queue_entries").delete().eq("player_id", p.id);
+        await db.from("club_members").delete().eq("player_id", p.id);
         await db.auth.admin.deleteUser(p.id).catch(() => undefined);
       }
       await db.auth.admin.deleteUser(reconUserId).catch(() => undefined);
