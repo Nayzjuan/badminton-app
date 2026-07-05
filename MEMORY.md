@@ -5,6 +5,21 @@
 
 ---
 
+## 🆕 REVISIT PAST SESSION WRAPPED — history-list entry point (2026-07-04)
+
+**Status: BUILT on `claude/pull-latest-main-EpwqL`. NOT deployed.** tsc clean · eslint (changed files) clean · `next build` clean. Independent review: **LGTM**. Planned via `/impeccable shape` (product register); shape brief confirmed by user.
+
+**Problem:** the Wrapped recap (`/wrapped/[sessionId]/[playerId]`) was only reachable transiently — session-close broadcast redirect, 48h reconnect window (`auth.ts` `wrappedUrl`), or a raw link. No persistent/browsable way to revisit a past session's recap even though `session_wrapped_stats` persists.
+
+**Fix (4 files, no schema change, reuses the existing recap page):**
+- **`src/app/actions/history.ts`** — `getAllSessionsHistory` now also returns `wrappedSessionIds: string[]` (sessions where this player has a `session_wrapped_stats` row). One extra service-role query, scoped `.eq(player_id).in(session_id, sessionIds)` AFTER the existing `playerId !== user.id` ownership gate. Early `matches.length===0` return updated to include `wrappedSessionIds: []`.
+- **`src/components/player/all-sessions-history.tsx`** — each past-session group header shows a **`✦ Wrapped`** chip (amber, echoing the recap identity) linking to `/wrapped/[sessionId]/[playerId]?recap=1`. Only rendered when `hasWrapped` (session in the set). Header **restructured**: outer flex `div` holds the toggle `<button>` (chevron+label, `flex-1`) and a sibling group (chip `<Link>` + W/L pills) — the anchor can't nest inside the toggle button. Chip visible even while collapsed. `wrappedSet` state lazy-init `() => new Set()`, rebuilt each fetch.
+- **`src/app/wrapped/[sessionId]/[playerId]/page.tsx`** + **club-scoped `/c/[clubSlug]/wrapped/...`** — read `searchParams.recap`; pass `introDismissed={data.introDismissed || recap === "1"}`. `?recap=1` skips the celebratory intro overlay (revisit = reference, not re-celebration). No DB write on load (`dismissWrappedIntro` still only fires on Done/Back).
+
+**Decisions (user-approved via shape):** entry on each past-session card · skip intro on revisit · all sessions with a recap, across clubs. **Back nav** already handled by WrappedShell's Done/"Back to Lobby" → `/play`. **Route** uses root `/wrapped/...` (works regardless of club in the current hybrid routing; switch to club-scoped in Phase 2). **Deferred:** club-lobby past-sessions list mirror (kept to `/play` for now); "recap soon" state for a just-closed still-computing session (omitted for cleanliness).
+
+---
+
 ## 🆕 PLAYER "UPCOMING RESERVED" STRIP — held-draft heads-up (2026-06-27)
 
 **Status: BUILT on `claude/pull-latest-main-EpwqL`. NOT committed, NOT deployed.** tsc clean · eslint (changed files) clean · `next build` clean. Independent review gate: **LGTM**. Built via `/impeccable` (product register, PRODUCT.md amber-on-navy on-deck semantic).

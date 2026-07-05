@@ -19,10 +19,15 @@ import { WrappedShell } from "@/components/wrapped/wrapped-shell";
 
 interface WrappedPageProps {
   params: Promise<{ sessionId: string; playerId: string }>;
+  searchParams: Promise<{ recap?: string }>;
 }
 
-export default async function WrappedPage({ params }: WrappedPageProps) {
+export default async function WrappedPage({ params, searchParams }: WrappedPageProps) {
   const { sessionId, playerId } = await params;
+  // ?recap=1 = the player reached this from their session history (a revisit),
+  // so skip the celebratory intro overlay and go straight to the recap. The
+  // one-time close-broadcast entry (no flag) still plays the intro.
+  const { recap } = await searchParams;
 
   const data = await getWrappedData(sessionId, playerId);
 
@@ -35,7 +40,7 @@ export default async function WrappedPage({ params }: WrappedPageProps) {
       sessionId={sessionId}
       playerId={playerId}
       matchHistory={data.matchHistory}
-      introDismissed={data.introDismissed}
+      introDismissed={data.introDismissed || recap === "1"}
     />
   );
 }
