@@ -208,8 +208,31 @@ export const MAX_PARTNERSHIP_REPEATS = 2;
  *
  * This is a soft cap to avoid conflicts with the hard partnership cap:
  * in small sessions the same players necessarily face each other often.
+ *
+ * Lowered 3 → 2 (2026-07 diversity pass): the engine now prefers splits where
+ * no cross-net pair has already met twice, so a given pair only faces off a
+ * third time when the pool genuinely leaves no alternative. Affects round 3+
+ * team-splitting (in round 2 no pair has met more than once, so the cap does
+ * not bite — round-2 opponent freshness is driven by OVERLAP_WEIGHT_OPPONENT
+ * in buildOverlapMap instead). Still soft, so small sessions never stall.
  */
-export const MAX_OPPONENT_REPEATS = 3;
+export const MAX_OPPONENT_REPEATS = 2;
+
+/**
+ * Familiarity weights applied by buildOverlapMap per prior in-session
+ * encounter with the anchor, consumed by scoreCandidates (weight × the overlap
+ * multiplier) to push already-encountered players down the candidate order.
+ *
+ * TEAMMATE (same side) and OPPONENT (cross-net) are now weighted EQUALLY (both
+ * 2) — raised from the old 2/1 split as part of the 2026-07 diversity pass so
+ * that re-FACING someone from round 1 is avoided as strongly as re-PARTNERING
+ * them. This is the primary lever for round-2 opponent diversity: it fires on
+ * a single prior meeting (unlike MAX_OPPONENT_REPEATS, which only bites on a
+ * 2nd meeting). Soft signal only — reorders candidates, never hard-blocks;
+ * skill windows and the partnership cap are enforced separately.
+ */
+export const OVERLAP_WEIGHT_TEAMMATE = 2;
+export const OVERLAP_WEIGHT_OPPONENT = 2;
 
 /**
  * Minimum minutes a returning player must wait before they can be
@@ -224,14 +247,11 @@ export const MAX_OPPONENT_REPEATS = 3;
  */
 export const MIN_REST_MINUTES = 18;
 
-// ── Early-session diversity (fresh-first + cold-start seeding) ────────────────
-// Two mechanisms that improve roster diversity in the first rounds of a session,
-// motivated by the 2026-07 early-round-diversity investigation: (1) real sessions
+// ── Early-session diversity (fresh-first rule) ────────────────────────────────
+// Motivated by the 2026-07 early-round-diversity investigation: real sessions
 // showed early second-round matches recycling just-played "alumni" while
 // fewer-games players were present, because candidate scoring had no notion of
-// games-played disparity; (2) at t=0 the engine is blind to ALL history (its
-// diversity inputs are session-scoped), so round 1 mechanically re-creates
-// habitual pairings from join order week after week.
+// games-played disparity.
 
 /**
  * scoreCandidates penalty per game a candidate is AHEAD of the pool minimum
@@ -249,27 +269,6 @@ export const GAMES_AHEAD_PENALTY = 10_000;
  * fresher-but-not-urgent candidate.
  */
 export const GAMES_AHEAD_PENALTY_RED_ZONE = 100;
-
-/**
- * Cold-start overlap seeding (round-1 diversity): when an anchor has ZERO
- * session history, their all-time club partnership counts (player_partnerships)
- * are converted into synthetic overlap weights so habitual partners don't
- * default together in round 1.
- *
- *   seedWeight = min(HISTORY_SEED_CAP, floor(games_together / HISTORY_SEED_DIVISOR))
- *
- * Calibrated against the live ledger (2026-07-05: 452 pairs — 86% have
- * games_together=1, 12% =2, tail at 3–4; the per-session partnership cap keeps
- * all-time counts low). Divisor 2 / cap 2: one-off pairs (1 game, the vast
- * majority) get no penalty; repeat pairs (2–3 games) weigh as 1 overlap;
- * habitual pairs (4+) cap at 2. Applied ONLY while the anchor's live session
- * overlap map is empty — after their first session match, real session data
- * replaces the seed entirely. Never blocks: it is a soft candidate-ordering
- * signal, and the session partnership cap (MAX_PARTNERSHIP_REPEATS) still
- * allows the pair to team up when chosen.
- */
-export const HISTORY_SEED_DIVISOR = 2;
-export const HISTORY_SEED_CAP = 2;
 
 // ── Cross-Court Diversity Drafting (held drafts) ──────────────────────────────
 // See CROSS_COURT_DRAFTING_PLAN.md. The engine may pre-build an on-deck "held"

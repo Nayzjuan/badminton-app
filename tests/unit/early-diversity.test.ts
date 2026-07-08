@@ -1,26 +1,21 @@
 // ============================================================
 // Early-session diversity — unit tests
 // ============================================================
-// Covers the three pure mechanisms added by the first-round
+// Covers the pure mechanisms added by the first-round / early-session
 // diversity work (2026-07):
 //
 //   ED-SC  scoreCandidates fresh-first rule (games-ahead penalty)
-//   ED-SEED seedColdStartOverlap (all-time partnership seeding)
+//   ED-OPP opponent-diversity weighting (round-2 re-facing lever)
 //   ED-RN  deriveReuseNotice (organizer-facing equity signal)
 // ============================================================
 
 import { describe, expect, it } from "vitest";
-import {
-  runAlgorithm,
-  scoreCandidates,
-  seedColdStartOverlap,
-  type ScoredPlayer,
-} from "@/lib/matchmaking-core";
+import { runAlgorithm, scoreCandidates, type ScoredPlayer } from "@/lib/matchmaking-core";
 import { deriveReuseNotice, type ReuseQueueRow } from "@/lib/derive-reuse-notice";
 import {
   GAMES_AHEAD_PENALTY,
-  HISTORY_SEED_CAP,
-  HISTORY_SEED_DIVISOR,
+  OVERLAP_WEIGHT_OPPONENT,
+  OVERLAP_WEIGHT_TEAMMATE,
   RED_ZONE_SCORE_FLOOR,
 } from "@/lib/constants";
 
@@ -143,32 +138,47 @@ describe("scoreCandidates — fresh-first (games-ahead penalty)", () => {
   });
 });
 
-// ── ED-SEED: seedColdStartOverlap ──────────────────────────────
+// ── ED-OPP: opponent-diversity weighting (round-2 lever) ───────
+// buildOverlapMap (DB layer) contributes OVERLAP_WEIGHT_TEAMMATE per same-team
+// meeting and OVERLAP_WEIGHT_OPPONENT per cross-net meeting; scoreCandidates
+// then multiplies the resulting overlap by the overlap unit. These tests pin
+// the round-2 behaviour at the pure layer using the real constants.
 
-describe("seedColdStartOverlap", () => {
-  it("ED-SEED1: returns the live map untouched when it has ANY session data", () => {
-    const live = new Map([["partner", 3]]);
-    const historical = new Map([["habitual", 30]]);
-    const out = seedColdStartOverlap(live, historical);
-    expect(out).toBe(live); // same reference — untouched
-    expect(out.has("habitual")).toBe(false);
-  });
-
-  it("ED-SEED2: seeds capped weights from all-time games when live map is empty", () => {
-    const historical = new Map([
-      ["casual", HISTORY_SEED_DIVISOR - 1], // below divisor → 0 → dropped
-      ["regular", HISTORY_SEED_DIVISOR], // exactly divisor → 1
-      ["habitual", HISTORY_SEED_DIVISOR * 5], // way above → capped
+describe("opponent-diversity weighting", () => {
+  it("ED-OPP1: a round-1 opponent is deprioritised as strongly as a round-1 teammate", () => {
+    // With teammate/opponent weights equal, an ex-opponent and an ex-teammate
+    // carry the same overlap penalty; both sit behind a fresh candidate.
+    const overlap = new Map([
+      ["exTeam", OVERLAP_WEIGHT_TEAMMATE],
+      ["exOpp", OVERLAP_WEIGHT_OPPONENT],
     ]);
-    const out = seedColdStartOverlap(new Map(), historical);
-    expect(out.has("casual")).toBe(false);
-    expect(out.get("regular")).toBe(1);
-    expect(out.get("habitual")).toBe(HISTORY_SEED_CAP);
+    const scored = scoreCandidates(
+      [
+        player("exTeam", { games: 1, priority: 5 }),
+        player("exOpp", { games: 1, priority: 5 }),
+        player("fresh", { games: 1, priority: 5 }),
+      ],
+      overlap,
+      1
+    );
+    expect(scored[0].candidate.player_id).toBe("fresh"); // never-encountered → front
+    const t = scored.find((s) => s.candidate.player_id === "exTeam")!;
+    const o = scored.find((s) => s.candidate.player_id === "exOpp")!;
+    expect(o.score).toBe(t.score); // re-facing penalised exactly as hard as re-teaming
+    expect(OVERLAP_WEIGHT_OPPONENT).toBe(OVERLAP_WEIGHT_TEAMMATE); // intent tripwire
   });
 
-  it("ED-SEED3: empty history → empty seeded map (round 1 of a brand-new club)", () => {
-    const out = seedColdStartOverlap(new Map(), new Map());
-    expect(out.size).toBe(0);
+  it("ED-OPP2: a fresh candidate outranks a higher-priority round-1 opponent", () => {
+    // The exact round-2 scenario: someone you faced in round 1 is next in line
+    // (rested longer, higher priority) — but re-facing avoidance still wins.
+    const overlap = new Map([["exOpp", OVERLAP_WEIGHT_OPPONENT]]);
+    const scored = scoreCandidates(
+      [player("exOpp", { games: 1, priority: 30 }), player("fresh", { games: 1, priority: 4 })],
+      overlap,
+      1
+    );
+    // exOpp: -30 + 2×10_000 = 19_970 · fresh: -4 → fresh first despite lower priority.
+    expect(scored[0].candidate.player_id).toBe("fresh");
   });
 });
 

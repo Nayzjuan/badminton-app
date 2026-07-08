@@ -26,6 +26,8 @@ import {
   COMMITTED_MATCH_STATUSES,
   MATCH_REST_GAP_MINUTES,
   MIN_REST_MINUTES,
+  OVERLAP_WEIGHT_OPPONENT,
+  OVERLAP_WEIGHT_TEAMMATE,
   PLAYERS_PER_MATCH,
   ROSTER_LOOKBACK_COUNT,
 } from "@/lib/constants";
@@ -263,9 +265,11 @@ export async function fetchPartnershipCounts(
 // each co-player is to the anchor across recent matches in this
 // session. Used by scoreCandidates to apply anti-repeat penalties.
 //
-// Team-aware weighting:
-//   Teammate appearance  → weight += 2  (same side; stronger familiarity)
-//   Opponent appearance  → weight += 1  (opposing; weaker familiarity)
+// Team-aware weighting (OVERLAP_WEIGHT_TEAMMATE / OVERLAP_WEIGHT_OPPONENT):
+//   Teammate appearance  → weight += 2  (same side)
+//   Opponent appearance  → weight += 2  (cross-net; equal to teammate as of the
+//                          2026-07 diversity pass — re-facing avoided as hard
+//                          as re-partnering, the primary round-2 opponent lever)
 //
 // Implementation: 3-step join to avoid relying on v_recent_pairings
 // (which lacks team data and only tracks completed matches).
@@ -349,57 +353,11 @@ export async function buildOverlapMap(
     const anchorTeam = anchorTeamByMatch.get(row.match_id);
     if (anchorTeam === undefined) continue;
     // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
-    // Teammate (same team) is weighted 2×; opponent 1×.
-    const weight = row.team === anchorTeam ? 2 : 1;
+    const weight = row.team === anchorTeam ? OVERLAP_WEIGHT_TEAMMATE : OVERLAP_WEIGHT_OPPONENT;
     overlapMap.set(row.player_id, (overlapMap.get(row.player_id) ?? 0) + weight);
   }
 
   return overlapMap;
-}
-
-// ─────────────────────────────────────────────────────────────
-// fetchHistoricalPartnerWeights
-// ─────────────────────────────────────────────────────────────
-// Returns Map<partner_id, games_together> for the anchor from the
-// all-time, club-scoped player_partnerships ledger (maintained by
-// refresh_cross_session_stats at session close — so during a live
-// session it reflects PRIOR sessions only, never tonight's).
-//
-// Feeds seedColdStartOverlap (matchmaking-core.ts): when the anchor
-// has zero session history, these counts become mild synthetic
-// overlap weights so round 1 doesn't mechanically re-create habitual
-// pairings from join order. Called lazily — only when the anchor's
-// live overlap map came back empty — so it adds no cost to normal
-// mid-session engine ticks.
-//
-// Failures degrade to an empty map (seeding is an enhancement, never
-// a blocker for match formation).
-
-export async function fetchHistoricalPartnerWeights(
-  supabase: DbClient,
-  clubId: string,
-  anchorPlayerId: string
-): Promise<Map<string, number>> {
-  const weights = new Map<string, number>();
-
-  const { data: rows, error } = await supabase
-    .from("player_partnerships")
-    .select("partner_id, games_together")
-    .eq("club_id", clubId)
-    .eq("player_id", anchorPlayerId);
-
-  if (error) {
-    console.warn(
-      "[matchmaking-db] fetchHistoricalPartnerWeights: query failed (seeding skipped):",
-      error.message
-    );
-    return weights;
-  }
-
-  for (const row of rows ?? []) {
-    weights.set(row.partner_id, row.games_together);
-  }
-  return weights;
 }
 
 // ─────────────────────────────────────────────────────────────

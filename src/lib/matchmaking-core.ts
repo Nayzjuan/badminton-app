@@ -25,8 +25,6 @@ import {
   HARD_CAP_GAMES_CEILING,
   HARD_CAP_SCORE_FLOOR,
   HARD_WAIT_CAP_MINUTES,
-  HISTORY_SEED_CAP,
-  HISTORY_SEED_DIVISOR,
   MAX_AUTO_DRAFTS,
   MAX_AUTO_DRAFTS_LARGE,
   MAX_AUTO_DRAFTS_XLARGE,
@@ -412,37 +410,6 @@ export function scoreCandidates(
       };
     })
     .sort((a, b) => a.score - b.score);
-}
-
-// ─────────────────────────────────────────────────────────────
-// EXPORT: seedColdStartOverlap
-// ─────────────────────────────────────────────────────────────
-// Round-1 diversity: converts an anchor's ALL-TIME club partnership
-// counts into synthetic overlap weights, applied ONLY while the
-// anchor's live session overlap map is empty (i.e. they have zero
-// session history — the exact window where the engine is otherwise
-// blind and round-1 pairings fall out of pure join order).
-//
-//   seedWeight = min(HISTORY_SEED_CAP, floor(gamesTogether / HISTORY_SEED_DIVISOR))
-//
-// Once the anchor has ANY session overlap data, the map is returned
-// untouched — live data always replaces the historical seed. Soft
-// signal only: it re-orders candidates via scoreCandidates, never
-// excludes anyone (the session partnership cap is separate and
-// unaffected).
-
-export function seedColdStartOverlap(
-  overlapMap: Map<string, number>,
-  historicalGamesTogether: Map<string, number>
-): Map<string, number> {
-  if (overlapMap.size > 0) return overlapMap;
-
-  const seeded = new Map<string, number>();
-  for (const [playerId, games] of historicalGamesTogether) {
-    const weight = Math.min(HISTORY_SEED_CAP, Math.floor(games / HISTORY_SEED_DIVISOR));
-    if (weight > 0) seeded.set(playerId, weight);
-  }
-  return seeded;
 }
 
 // ─────────────────────────────────────────────────────────────

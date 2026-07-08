@@ -52,7 +52,6 @@ import {
   shouldAutoPublishMatch,
   runAlgorithm,
   scoreAndSortPool,
-  seedColdStartOverlap,
   isHeldMatchReady,
   isPullEligible,
   type ScoredPlayer,
@@ -61,7 +60,6 @@ import {
   fetchActivePool,
   fetchRecentRosters,
   fetchPartnershipCounts,
-  fetchHistoricalPartnerWeights,
   buildOverlapMap,
   executeMatch,
   fetchPullablePlayers,
@@ -353,7 +351,7 @@ async function runEngineInternal(
       .eq("is_published", false),
     supabase
       .from("sessions")
-      .select("max_auto_drafts_override, auto_publish, club_id")
+      .select("max_auto_drafts_override, auto_publish")
       .eq("id", sessionId)
       .single(),
   ]);
@@ -452,9 +450,6 @@ async function runEngineInternal(
     }
   }
 
-  // Owning club — used by the cold-start overlap seeding below.
-  const clubId = sessionRow?.club_id ?? null;
-
   for (let i = 0; i < slotsAvailable; i++) {
     // Pool diversity cap: from the 2nd slot onwards.
     if (!bypassGate && i > 0) {
@@ -494,24 +489,7 @@ async function runEngineInternal(
     // iterations add pairs that must be counted before the next slot's cap check.
     const { partnershipCounts, opponentCounts } = await fetchPartnershipCounts(supabase, sessionId);
     // overlapMap is per-anchor: anchor changes each slot as pool reorders.
-    let overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
-
-    // Cold-start seeding (round-1 diversity): an empty overlap map AND an
-    // anchor with zero completed session games means genuine cold start —
-    // exactly the window where round-1 pairings would otherwise fall out of
-    // pure join order and re-create habitual pairings week after week. Seed
-    // mild synthetic weights from the anchor's all-time club partnership
-    // counts; live session data replaces the seed the moment it exists.
-    // The games_played === 0 guard matters: buildOverlapMap also returns an
-    // empty map on its error paths (and can for >200-lifetime-match anchors,
-    // whose unordered LIMIT 200 fetch may miss tonight's rows) — without the
-    // guard, a mid-session anchor would get historical seeds injected where
-    // the contract is "no penalty". Lazy: the extra query fires only in this
-    // window, never on normal mid-session ticks.
-    if (overlapMap.size === 0 && clubId && pool[0].games_played === 0) {
-      const historical = await fetchHistoricalPartnerWeights(supabase, clubId, pool[0].player_id);
-      overlapMap = seedColdStartOverlap(overlapMap, historical);
-    }
+    const overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
     const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters, opponentCounts);
