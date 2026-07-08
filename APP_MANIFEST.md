@@ -361,12 +361,15 @@ The 30 min max-wait target is a physics impossibility with 20–22 min courts (m
 #### Candidate Scoring (`scoreCandidates`)
 
 ```
-Normal candidate:   candidateScore = -priorityScore + overlapCount × 10,000
-Red Zone candidate: candidateScore = -priorityScore + overlapCount × 100
+Normal candidate:   candidateScore = -priorityScore + overlapCount × 10,000 + gamesAhead × GAMES_AHEAD_PENALTY (10,000)
+Red Zone candidate: candidateScore = -priorityScore + overlapCount × 100    + gamesAhead × GAMES_AHEAD_PENALTY_RED_ZONE (100)
   (Red Zone = priorityScore ≥ RED_ZONE_SCORE_FLOOR — includes Hard Cap tier since 2000 ≫ 1000)
+  gamesAhead = max(0, games_played − poolMinGames)   [fresh-first rule, 2026-07]
 ```
 
 Sorted ascending (lowest score = highest priority). Red Zone overlap penalty is capped at 100× so a Red Zone player with 1 recent overlap still beats a Normal player with 0.
+
+**Fresh-first rule (early-session diversity):** `poolMinGames` = min `games_played` across the WAITING pool (pulled bodies excluded — their mid-game count reads one low). Each candidate is penalised one overlap-unit-equivalent per game above that minimum, so the freshest waiting cohort fills rosters first whenever the skill window allows. Pulled bodies are exempt from the term entirely (their ordering stays governed by `priorityScore = -1`, C-3). Zero effect when all games are equal (e.g. t=0) — behaviour is bit-identical to before. Red Zone urgency still wins (100× variant).
 
 #### Group Assembly (`buildCombinationGroup`) — N-choose-3 Combination Search
 
@@ -398,7 +401,7 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
   1. Fetch all `match_players` rows for the anchor (limit 200)
   2. Filter to this session's recent matches (`completed`, `in_progress`, **`pending`** — Fix 2: sees live pairings, not just finished games)
   3. Fetch all co-players + teams → build weighted overlap map: **teammate appearances = 2×, opponent appearances = 1×** (Fix 3: same-side repetition penalised more than cross-side)
-- `fetchRecentRosters(sessionId)` — fetches last `ROSTER_LOOKBACK_COUNT` (10) match rosters as arrays of player IDs. Pre-fetched **once per `runEngineInternal` run** and passed down to each `runAlgorithm` call to avoid redundant DB queries per slot. Includes `completed`, `in_progress`, and `pending` matches.
+- `fetchRecentRosters(sessionId)` — fetches last `ROSTER_LOOKBACK_COUNT` (10) match rosters as arrays of player IDs. Fetched **per slot** inside `runEngineInternal`'s fill loop (2026-07 intra-burst fix — previously once per run, which left `isDiversityViolation` blind to sibling drafts committed by earlier slots of the same burst). Includes `completed`, `in_progress`, and `pending` matches.
 - `isDiversityViolation(playerIds, recentRosters)` — flags true if ≥3 of the proposed 4 players appeared together in any single recent match roster.
 - `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → **7**) to prevent small-tier starvation. The 16+ tier was increased from 5 to 7 now that `fetchRecentRosters` fetches 10 matches (sufficient headroom).
 - `fetchPartnershipCounts(sessionId)` — now returns **`{ partnershipCounts, opponentCounts }`** (both maps built in one pass over the same DB data; zero extra DB calls). `opponentCounts` = cross-net (opponent) pair counts, used by snakeDraft/rotatedDraft as a soft preference.
@@ -421,6 +424,9 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches used by `buildOverlapMap` for familiarity weighting (count-based)                                                                                                                                                                                                                                                                   |
 | `ROSTER_LOOKBACK_COUNT`        | 10    | Recent match rosters fetched by `fetchRecentRosters` for diversity-violation checks (larger than `ANTI_REPEAT_LOOKBACK` so `getEffectiveLookback` can scale up for large sessions)                                                                                                                                                                 |
 | `MIN_REST_MINUTES`             | 18    | Minimum wait minutes before a returning player (games_played > 0) can be drafted again. Prevents 0-min back-to-back. Falls back to unfiltered pool if fewer than `PLAYERS_PER_MATCH` survive the filter.                                                                                                                                           |
+| `GAMES_AHEAD_PENALTY`          | 10,000 | Fresh-first rule: scoreCandidates penalty per game a candidate is above the waiting-pool minimum (= 1 overlap unit). Pulled bodies exempt.                                                                       |
+| `GAMES_AHEAD_PENALTY_RED_ZONE` | 100   | Red Zone variant of the fresh-first penalty (capped small, like the overlap cap, so urgency always outranks freshness).                                                                                             |
+| `HISTORY_SEED_DIVISOR` / `HISTORY_SEED_CAP` | 2 / 2 | Cold-start seeding: when an anchor has zero session history (empty overlap map AND `games_played=0`), all-time club `player_partnerships.games_together` seeds synthetic overlap weights `min(cap, floor(games/divisor))` — 1-game pairs get 0, 2–3 → 1, 4+ → 2 (calibrated to the live ledger 2026-07-05). Round-1 pairings stop re-creating habitual pairs from join order. |
 | `GATE_POOL_THRESHOLD`          | 4     | Pool size that triggers cross-court mixing deferral                                                                                                                                                                                                                                                                                                |
 | `GATE_HOLD_MINUTES`            | 8     | Minutes before gate auto-releases                                                                                                                                                                                                                                                                                                                  |
 | `MIN_FREE_POOL_FOR_ON_DECK`    | 4     | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards)                                                                                                                                                                                                                                      |
@@ -470,7 +476,7 @@ Published on-deck matches do **not** count against the cap — they are already 
 3. Soft gate check (skipped when bypassGate=true):
      if pool ≤ GATE_POOL_THRESHOLD AND activeCourts > 0
         AND maxWait < GATE_HOLD_MINUTES AND no Red Zone player → defer (return early)
-4. Pre-fetch recentRosters once (Fix 2: completed + in_progress + pending)
+4. Per slot: re-fetch recentRosters (sees sibling drafts from earlier slots of this burst; completed + in_progress + pending)
 5. For each slot in [0, slotsAvailable):
    a. Pool diversity cap (slots 1+): skip if estimatedWaiting < PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK
    b. runAlgorithm(anchor):
@@ -538,6 +544,7 @@ New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (
 - **Clear**: Organizer can discard a single on-deck match via `clearOnDeckMatch`; players return to `waiting`. Broadcast fires so affected players see a toast.
 - **Reorder**: On-deck matches can be drag-reordered. `reorderOnDeckMatches` bulk-updates `sort_order` on all affected matches.
 - **Cap Saturation Notice**: `CapSaturationNotice` banner appears when the engine's `cap_saturation` broadcast fires, alerting the organizer that `MAX_PARTNERSHIP_REPEATS` has been hit and manual assignment is needed.
+- **Reuse badge (equity signal, 2026-07)**: draft cards show an amber `N fresher waiting` chip (`ReuseBadge` in `sortable-card.tsx`, fed by `deriveReuseNotice` in `src/lib/derive-reuse-notice.ts` via a new `queue` prop) when the draft seats players with more games than the waiting-pool minimum while an equal-or-larger fresher cohort waits. Purely informational — publish is never blocked. Drafts only; skill-window-blind and held-draft pulled bodies are skipped by design (soft signal).
 
 ---
 

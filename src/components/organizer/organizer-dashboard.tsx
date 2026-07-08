@@ -857,6 +857,7 @@ export function OrganizerDashboard({
                 autoPublishIsOn={autoPublish}
                 waitingCount={waitingCount}
                 hasNewDraft={hasNewDraft}
+                queue={queue}
               />
 
               <ActiveCourts

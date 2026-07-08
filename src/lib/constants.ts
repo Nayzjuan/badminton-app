@@ -224,6 +224,53 @@ export const MAX_OPPONENT_REPEATS = 3;
  */
 export const MIN_REST_MINUTES = 18;
 
+// ── Early-session diversity (fresh-first + cold-start seeding) ────────────────
+// Two mechanisms that improve roster diversity in the first rounds of a session,
+// motivated by the 2026-07 early-round-diversity investigation: (1) real sessions
+// showed early second-round matches recycling just-played "alumni" while
+// fewer-games players were present, because candidate scoring had no notion of
+// games-played disparity; (2) at t=0 the engine is blind to ALL history (its
+// diversity inputs are session-scoped), so round 1 mechanically re-creates
+// habitual pairings from join order week after week.
+
+/**
+ * scoreCandidates penalty per game a candidate is AHEAD of the pool minimum
+ * (fresh-first rule). Same magnitude as one overlap unit (10_000) so a
+ * candidate one game ahead of the freshest waiting players ranks behind them
+ * — effectively "draw from the freshest cohort first" whenever the skill
+ * window allows, without ever hard-blocking (skill compatibility and Red Zone
+ * urgency still win). Zero effect when every candidate has equal games.
+ */
+export const GAMES_AHEAD_PENALTY = 10_000;
+
+/**
+ * Red Zone variant of GAMES_AHEAD_PENALTY — capped small (like the 100×
+ * overlap cap) so an urgent long-waiting player is never displaced by a
+ * fresher-but-not-urgent candidate.
+ */
+export const GAMES_AHEAD_PENALTY_RED_ZONE = 100;
+
+/**
+ * Cold-start overlap seeding (round-1 diversity): when an anchor has ZERO
+ * session history, their all-time club partnership counts (player_partnerships)
+ * are converted into synthetic overlap weights so habitual partners don't
+ * default together in round 1.
+ *
+ *   seedWeight = min(HISTORY_SEED_CAP, floor(games_together / HISTORY_SEED_DIVISOR))
+ *
+ * Calibrated against the live ledger (2026-07-05: 452 pairs — 86% have
+ * games_together=1, 12% =2, tail at 3–4; the per-session partnership cap keeps
+ * all-time counts low). Divisor 2 / cap 2: one-off pairs (1 game, the vast
+ * majority) get no penalty; repeat pairs (2–3 games) weigh as 1 overlap;
+ * habitual pairs (4+) cap at 2. Applied ONLY while the anchor's live session
+ * overlap map is empty — after their first session match, real session data
+ * replaces the seed entirely. Never blocks: it is a soft candidate-ordering
+ * signal, and the session partnership cap (MAX_PARTNERSHIP_REPEATS) still
+ * allows the pair to team up when chosen.
+ */
+export const HISTORY_SEED_DIVISOR = 2;
+export const HISTORY_SEED_CAP = 2;
+
 // ── Cross-Court Diversity Drafting (held drafts) ──────────────────────────────
 // See CROSS_COURT_DRAFTING_PLAN.md. The engine may pre-build an on-deck "held"
 // draft of 3 waiting players + 1 player still PLAYING on another court, to force

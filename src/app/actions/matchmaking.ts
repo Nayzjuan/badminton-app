@@ -52,6 +52,7 @@ import {
   shouldAutoPublishMatch,
   runAlgorithm,
   scoreAndSortPool,
+  seedColdStartOverlap,
   isHeldMatchReady,
   isPullEligible,
   type ScoredPlayer,
@@ -60,6 +61,7 @@ import {
   fetchActivePool,
   fetchRecentRosters,
   fetchPartnershipCounts,
+  fetchHistoricalPartnerWeights,
   buildOverlapMap,
   executeMatch,
   fetchPullablePlayers,
@@ -351,7 +353,7 @@ async function runEngineInternal(
       .eq("is_published", false),
     supabase
       .from("sessions")
-      .select("max_auto_drafts_override, auto_publish")
+      .select("max_auto_drafts_override, auto_publish, club_id")
       .eq("id", sessionId)
       .single(),
   ]);
@@ -450,10 +452,8 @@ async function runEngineInternal(
     }
   }
 
-  // Pre-fetch recent rosters once for the entire fill loop.
-  // Stable snapshot: pending matches don't change ownership mid-run and
-  // the process-level guard prevents concurrent engine runs per session.
-  const recentRosters = await fetchRecentRosters(supabase, sessionId);
+  // Owning club — used by the cold-start overlap seeding below.
+  const clubId = sessionRow?.club_id ?? null;
 
   for (let i = 0; i < slotsAvailable; i++) {
     // Pool diversity cap: from the 2nd slot onwards.
@@ -467,6 +467,14 @@ async function runEngineInternal(
         break;
       }
     }
+
+    // Recent rosters are re-fetched PER SLOT (not once per run) so the
+    // isDiversityViolation check sees sibling drafts committed by earlier
+    // slots of THIS SAME burst. With the old pre-loop snapshot, slot 3 was
+    // blind to the rosters slots 1–2 had just drafted — the one diversity
+    // input that wasn't live within a burst (partnership counts and the
+    // overlap map already re-fetch per slot below).
+    const recentRosters = await fetchRecentRosters(supabase, sessionId);
 
     // ── Per-slot: fetch pool (changes as players are drafted) ────
     const rawPool = await fetchActivePool(supabase, sessionId);
@@ -486,7 +494,24 @@ async function runEngineInternal(
     // iterations add pairs that must be counted before the next slot's cap check.
     const { partnershipCounts, opponentCounts } = await fetchPartnershipCounts(supabase, sessionId);
     // overlapMap is per-anchor: anchor changes each slot as pool reorders.
-    const overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
+    let overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
+
+    // Cold-start seeding (round-1 diversity): an empty overlap map AND an
+    // anchor with zero completed session games means genuine cold start —
+    // exactly the window where round-1 pairings would otherwise fall out of
+    // pure join order and re-create habitual pairings week after week. Seed
+    // mild synthetic weights from the anchor's all-time club partnership
+    // counts; live session data replaces the seed the moment it exists.
+    // The games_played === 0 guard matters: buildOverlapMap also returns an
+    // empty map on its error paths (and can for >200-lifetime-match anchors,
+    // whose unordered LIMIT 200 fetch may miss tonight's rows) — without the
+    // guard, a mid-session anchor would get historical seeds injected where
+    // the contract is "no penalty". Lazy: the extra query fires only in this
+    // window, never on normal mid-session ticks.
+    if (overlapMap.size === 0 && clubId && pool[0].games_played === 0) {
+      const historical = await fetchHistoricalPartnerWeights(supabase, clubId, pool[0].player_id);
+      overlapMap = seedColdStartOverlap(overlapMap, historical);
+    }
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
     const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters, opponentCounts);

@@ -105,8 +105,9 @@ export async function fetchActivePool(
 // already finished. This prevents the engine from forming the
 // same pairing "again" just because the first game is still live.
 //
-// Pre-fetched once per runEngineInternal run (stable snapshot);
-// passed to each runAlgorithm call rather than re-fetched per slot.
+// Fetched PER SLOT inside runEngineInternal's fill loop (not once per
+// run) so the diversity-violation check also sees sibling drafts
+// committed by earlier slots of the same burst.
 
 export async function fetchRecentRosters(
   supabase: DbClient,
@@ -354,6 +355,51 @@ export async function buildOverlapMap(
   }
 
   return overlapMap;
+}
+
+// ─────────────────────────────────────────────────────────────
+// fetchHistoricalPartnerWeights
+// ─────────────────────────────────────────────────────────────
+// Returns Map<partner_id, games_together> for the anchor from the
+// all-time, club-scoped player_partnerships ledger (maintained by
+// refresh_cross_session_stats at session close — so during a live
+// session it reflects PRIOR sessions only, never tonight's).
+//
+// Feeds seedColdStartOverlap (matchmaking-core.ts): when the anchor
+// has zero session history, these counts become mild synthetic
+// overlap weights so round 1 doesn't mechanically re-create habitual
+// pairings from join order. Called lazily — only when the anchor's
+// live overlap map came back empty — so it adds no cost to normal
+// mid-session engine ticks.
+//
+// Failures degrade to an empty map (seeding is an enhancement, never
+// a blocker for match formation).
+
+export async function fetchHistoricalPartnerWeights(
+  supabase: DbClient,
+  clubId: string,
+  anchorPlayerId: string
+): Promise<Map<string, number>> {
+  const weights = new Map<string, number>();
+
+  const { data: rows, error } = await supabase
+    .from("player_partnerships")
+    .select("partner_id, games_together")
+    .eq("club_id", clubId)
+    .eq("player_id", anchorPlayerId);
+
+  if (error) {
+    console.warn(
+      "[matchmaking-db] fetchHistoricalPartnerWeights: query failed (seeding skipped):",
+      error.message
+    );
+    return weights;
+  }
+
+  for (const row of rows ?? []) {
+    weights.set(row.partner_id, row.games_together);
+  }
+  return weights;
 }
 
 // ─────────────────────────────────────────────────────────────
