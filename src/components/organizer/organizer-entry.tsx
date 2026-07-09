@@ -26,8 +26,20 @@ import {
 } from "lucide-react";
 import { createSession, joinAsCoOrganizer } from "@/app/actions/sessions";
 import { SignOutButton } from "@/components/sign-out-button";
-import type { Profile, ScoringFormat } from "@/types/database";
-import type { SessionWithStats } from "@/app/organizer/page";
+import { useClubSlug } from "@/hooks/use-club-slug";
+import { clubOrganizer } from "@/lib/club-paths";
+import type { Profile, ScoringFormat, Session } from "@/types/database";
+
+/**
+ * A session enriched with live counts for the organizer hub cards. Defined here
+ * (the consumer) rather than in a page route so both the club-scoped landing
+ * (/c/[slug]/organizer) and the legacy /organizer redirect shim can share it.
+ */
+export type SessionWithStats = Session & {
+  playerCount: number;
+  courtCount: number;
+  matchCount: number;
+};
 
 interface OrganizerEntryProps {
   profile: Profile;
@@ -72,6 +84,14 @@ export function OrganizerEntry({
   soloClubId,
 }: OrganizerEntryProps) {
   const router = useRouter();
+  // Active club slug when rendered under /c/[clubSlug]/organizer. Lets session
+  // navigation go straight to the club-scoped dashboard instead of bouncing
+  // through the /organizer/[id] redirect shim. Null on the legacy route.
+  const clubSlug = useClubSlug();
+  const openSession = (sessionId: string | undefined) => {
+    if (!sessionId) return; // create/join returns an optional id — no-op if absent
+    router.push(clubSlug ? clubOrganizer(clubSlug, sessionId) : `/organizer/${sessionId}`);
+  };
 
   // Create session state
   const [sessionName, setSessionName] = useState("");
@@ -115,7 +135,7 @@ export function OrganizerEntry({
       return;
     }
 
-    router.push(`/organizer/${result.sessionId}`);
+    openSession(result.sessionId);
   }
 
   async function handleJoinAsOrganizer() {
@@ -131,7 +151,7 @@ export function OrganizerEntry({
       return;
     }
 
-    router.push(`/organizer/${result.sessionId}`);
+    openSession(result.sessionId);
   }
 
   const hasSessions = activeSessions.length > 0;
@@ -176,7 +196,7 @@ export function OrganizerEntry({
               {activeSessions.map((s) => (
                 <button
                   key={s.id}
-                  onClick={() => router.push(`/organizer/${s.id}`)}
+                  onClick={() => openSession(s.id)}
                   className="group relative flex flex-col rounded-2xl border border-slate-200
                              bg-white p-5 text-left shadow-sm
                              transition-all duration-200
@@ -378,7 +398,7 @@ export function OrganizerEntry({
                 {pastSessions.map((s) => (
                   <button
                     key={s.id}
-                    onClick={() => router.push(`/organizer/${s.id}`)}
+                    onClick={() => openSession(s.id)}
                     className="group flex items-center gap-4 w-full rounded-xl border border-slate-100
                                bg-slate-50/80 px-4 py-3 text-left
                                transition-all duration-150
