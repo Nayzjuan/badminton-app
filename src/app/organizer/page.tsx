@@ -127,8 +127,8 @@ export default async function OrganizerPage() {
     })
   );
 
-  // createSession() defaults to the "Legacy" club when no clubId is passed —
-  // fine when the caller belongs to exactly one club (unambiguous), wrong
+  // createSession() defaults to the default club (CHILLAX) when no clubId is
+  // passed — fine when the caller belongs to exactly one club (unambiguous), wrong
   // for 0 or 2+ (would silently misattribute the new session). Only thread
   // a clubId through in the unambiguous case; OrganizerEntry disables
   // creation otherwise and points multi-club organizers at a specific
