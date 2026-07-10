@@ -5,6 +5,19 @@
 
 ---
 
+## 🆕 CLUB SLUG RENAME `legacy` → `chillax` — SHIPPED (main `c7f42f7`, PR #17, 2026-07-10)
+
+**Status: DEPLOYED to prod + live** (Vercel `dpl_2Be9…` READY, prod alias `badminton-app-dusky-six.vercel.app`). tsc clean · Vercel build clean. External curl-verify not possible from the sandbox (agent proxy denies outbound to the Vercel host — 403 at the proxy, not the app).
+
+**What:** the founding "absorb all existing sessions" club (**CHILLAX**, id `00000000-…-0001`) was seeded with slug `legacy`; renamed so its URLs read `/c/chillax/...`.
+
+- **DB (prod, applied directly):** `UPDATE clubs SET slug='chillax' WHERE slug='legacy'`. Club is referenced by **UUID** everywhere (sessions, members, matchmaking) — no other data touched. `slug` is UNIQUE; `chillax` was unused.
+- **`next.config.ts` `async redirects()`:** permanent `/c/legacy/:path* → /c/chillax/:path*` so pre-rename bookmarks, live-session QR codes, and push deep-links keep resolving.
+
+**Safety:** `'legacy'` is NOT hardcoded in any runtime path (only comments in `share-session-dialog.tsx` / `clubs.ts`, and historical migrations) — every route resolves the slug dynamically from the DB. Realtime channels key on session UUID (not slug), so the live session at rename time was unaffected; in-app nav switched to the new slug immediately. Only gap was hard refreshes of already-open `/c/legacy/...` tabs during the ~1-min deploy window, closed by the redirect.
+
+---
+
 ## 🆕 PLATFORM-OWNER MODEL + CLUB-SCOPED LANDING — SHIPPED (main `1bd4769`, 2026-07-05)
 
 **Status: DEPLOYED to prod + verified live.** tsc/lint/build clean · review gate **Minor issues** (all 5 fixed) · E2E preview green (5 load-flakes + 1 test-data bug fixed: I-2a) · prod-verified (non-owner org-bot probe: `/clubs`→307→`/play`, `/clubs/new`→307→`/play`, `/play`→200, `/welcome`→307→`/play`; zero runtime errors).
