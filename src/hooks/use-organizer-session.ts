@@ -15,6 +15,7 @@
 // ============================================================
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { SupabaseClient, RealtimeChannel } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
@@ -25,8 +26,22 @@ import type {
   AutoPublishToggledPayload,
   CapSaturationPayload,
   DraftCapPhasePayload,
+  OrganizerInterventionPayload,
 } from "@/lib/broadcast";
 import type { Session } from "@/types/database";
+
+// Organizer-facing copy for a co-organizer's intervention. Distinct from the
+// player-side messages in useOrganizerBroadcast — these tell the OTHER
+// organizer what a co-organizer just did, so a cleared/cancelled match doesn't
+// silently vanish from their board. {actor} is filled from the payload.
+const CO_ORGANIZER_INTERVENTION_COPY: Record<
+  OrganizerInterventionPayload["type"],
+  (actor: string) => string
+> = {
+  on_deck_cleared: (actor) => `${actor} cleared an on-deck match.`,
+  match_cancelled: (actor) => `${actor} cancelled a match.`,
+  active_roster_changed: (actor) => `${actor} changed a court lineup.`,
+};
 
 // Total number of table channels tracked for the realtimeConnected indicator.
 // courts(1) + queue_entries(1) + matches(1) + match_players(1) + profiles(1) = 5
@@ -47,7 +62,9 @@ export type CapPhase = "clearing" | "generating" | null;
 export function useOrganizerSession(
   sessionId: string,
   initialSession: Session,
-  supabase: SupabaseClient<Database>
+  supabase: SupabaseClient<Database>,
+  /** The viewing organizer's own id — used to suppress their own intervention toast. */
+  currentUserId: string
 ): {
   liveSession: Session;
   setSession: React.Dispatch<React.SetStateAction<Session>>;
@@ -68,6 +85,13 @@ export function useOrganizerSession(
 
   // Monotonic sequence counter for session refresh — guards against stale polls.
   const fetchSessionSeq = useRef(0);
+
+  // Stable ref so the broadcast callback reads the current id without
+  // re-registering the channel (the subscription effect deps stay minimal).
+  const currentUserIdRef = useRef(currentUserId);
+  useEffect(() => {
+    currentUserIdRef.current = currentUserId;
+  });
 
   // ── Session refresh ───────────────────────────────────────────
   // Lightweight poll/reconnect handler. Uses server action (getSessionForOrganizer)
@@ -149,7 +173,20 @@ export function useOrganizerSession(
 
     // Auto-matchmaking toggle sync via Broadcast (bypasses RLS).
     const unsubBroadcast = subscribeToOrganizerBroadcast(supabase, sessionId, {
-      onIntervention: () => {},
+      // A co-organizer cleared/cancelled a match. The board already drops the
+      // card (Postgres row-delete event), but silently — this toast explains
+      // WHO did WHAT so it isn't a mysterious disappearance. Only fires when an
+      // actor is attached (clear/cancel) and it wasn't THIS organizer.
+      onIntervention: (payload: OrganizerInterventionPayload) => {
+        const actorId = payload.actorId;
+        if (!actorId || actorId === currentUserIdRef.current) return;
+        const copy = CO_ORGANIZER_INTERVENTION_COPY[payload.type];
+        if (!copy) return;
+        toast.info(copy(payload.actorName ?? "A co-organizer"), {
+          duration: 5_000,
+          closeButton: true,
+        });
+      },
       onAutoMatchmakingToggled: (payload: AutoMatchmakingToggledPayload) => {
         // Invalidate any in-flight fetchSession poll (F3 fix).
         ++fetchSessionSeq.current;

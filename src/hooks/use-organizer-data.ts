@@ -114,7 +114,10 @@ export interface UseOrganizerDataResult {
  */
 export function useOrganizerData(
   sessionId: string,
-  initialSession: Session
+  initialSession: Session,
+  /** The viewing organizer's own id — threaded to useOrganizerSession so a
+   *  co-organizer's clear/cancel toast is suppressed on the actor's own screen. */
+  currentUserId: string
 ): UseOrganizerDataResult {
   // Single Supabase client shared across all sub-hooks.
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -129,7 +132,7 @@ export function useOrganizerData(
     dismissCapSaturation,
     handleChannelStatus,
     externalCapPhase,
-  } = useOrganizerSession(sessionId, initialSession, supabase);
+  } = useOrganizerSession(sessionId, initialSession, supabase, currentUserId);
 
   // ── Courts sub-hook ───────────────────────────────────────────
   // Needs setSession for the updateTimeLimit optimistic update.

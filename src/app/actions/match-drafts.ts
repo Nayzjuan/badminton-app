@@ -18,6 +18,7 @@ import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import {
+  getActorContext,
   getAuthenticatedUser,
   isSessionOrganizer,
   type MatchActionResult,
@@ -136,12 +137,18 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
     return { success: false, message: `Failed to clear match: ${msg}` };
   }
 
-  // 3. Notify affected players via Realtime Broadcast. Their on-deck
-  //    banner will disappear (via Postgres change events) and this
-  //    broadcast ensures they see a friendly explanation toast rather
-  //    than a confusing silent state change.
+  // 3. Notify affected players AND co-organizers via Realtime Broadcast. The
+  //    match row is deleted, so every organizer's board drops the card via
+  //    Postgres change events — the broadcast turns that silent disappearance
+  //    into an explanatory toast (players: "your match was rescheduled";
+  //    co-organizers: "{actor} cleared an on-deck match"). The acting
+  //    organizer passes their own id so their client suppresses the self-toast.
   if (playerIds.length > 0) {
-    await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", playerIds);
+    const actor = await getActorContext(user.id);
+    await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", playerIds, {
+      id: user.id,
+      name: actor.name,
+    });
   }
 
   // 4. Engine hook: a slot just opened up — refill on-deck if toggle is ON.

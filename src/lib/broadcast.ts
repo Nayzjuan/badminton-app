@@ -26,6 +26,16 @@ export type OrganizerInterventionType =
 export interface OrganizerInterventionPayload {
   type: OrganizerInterventionType;
   affectedPlayerIds: string[];
+  /**
+   * The organizer who performed the action. Lets OTHER organizers show a
+   * "{name} cleared a match" toast (so a co-organizer's action doesn't just
+   * silently vanish from their board), while the actor's own client skips its
+   * own toast by matching this id. Optional for backward compatibility — the
+   * player-side listener ignores it, and callers that omit it produce no
+   * organizer-side toast.
+   */
+  actorId?: string | null;
+  actorName?: string | null;
 }
 
 // ── Internal REST helper ──────────────────────────────────────
@@ -199,18 +209,30 @@ export async function broadcastDraftCapPhase(
 }
 
 /**
- * Notify all players in a session that the organizer has
- * intervened (cleared an On Deck match or cancelled an
- * In-Progress match). Clients filter by their own player ID.
+ * Notify a session's clients that an organizer has intervened (cleared an On
+ * Deck match or cancelled an In-Progress match). Players filter by their own
+ * player ID for an explanatory toast; other organizers show a "{actor} did X"
+ * toast so the change isn't a silent disappearance on their board.
+ *
+ * Pass `actor` on clear/cancel so co-organizers get the notice and the acting
+ * organizer's own client can suppress its self-toast. Omit it (e.g. batch
+ * cap-reset clears, which already drive their own co-organizer overlay) to
+ * notify only players.
  */
 export async function broadcastOrganizerIntervention(
   sessionId: string,
   type: OrganizerInterventionType,
-  affectedPlayerIds: string[]
+  affectedPlayerIds: string[],
+  actor?: { id: string | null; name: string | null }
 ): Promise<void> {
   if (affectedPlayerIds.length === 0) return;
 
-  const payload: OrganizerInterventionPayload = { type, affectedPlayerIds };
+  const payload: OrganizerInterventionPayload = {
+    type,
+    affectedPlayerIds,
+    actorId: actor?.id ?? null,
+    actorName: actor?.name ?? null,
+  };
 
   await postBroadcast(`realtime:session-events:${sessionId}`, "organizer_intervention", payload);
 }
