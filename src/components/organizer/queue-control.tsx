@@ -15,6 +15,7 @@ import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { VipTag } from "@/components/ui/vip-tag";
 import { SKILL_LEVELS } from "@/types/database";
+import { QueueSkillGroups } from "@/components/organizer/queue-skill-groups";
 import {
   updatePlayerSkill,
   getPlayerPin,
@@ -67,6 +68,8 @@ export function QueueControl({
   onJoinQueue,
 }: QueueControlProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Which queue lens is showing. Always opens on "list"; not persisted.
+  const [view, setView] = useState<"list" | "skill">("list");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [joiningQueue, setJoiningQueue] = useState(false);
@@ -308,42 +311,92 @@ export function QueueControl({
           <p className="text-muted-foreground">Queue is empty. Waiting for players to join.</p>
         </div>
       ) : (
-        <div className="rounded-xl border border-border overflow-hidden">
-          {/* overflow-x-auto lets the table scroll horizontally on narrow viewports
-              instead of squishing the 8 columns into unreadable widths. */}
-          <div className="overflow-x-auto -mx-px">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="bg-muted/50 border-b border-border">
-                  <th className="px-4 py-3 text-left w-12"></th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">#</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Player</th>
-                  <th className="px-4 py-3 text-left font-medium text-muted-foreground">Skill</th>
-                  <th className="px-4 py-3 text-right font-medium text-muted-foreground">Wait</th>
-                  <th className="px-4 py-3 text-right font-medium text-muted-foreground">Games</th>
-                  <th className="px-4 py-3 text-center font-medium text-muted-foreground hidden lg:table-cell">
-                    PIN
-                  </th>
-                  <th className="px-4 py-3 text-right font-medium text-muted-foreground w-16"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedQueue.map((entry, index) => {
-                  const isSelected = selected.has(entry.player_id);
-                  const isFull = selected.size >= REQUIRED_PLAYERS;
-                  const waitMin = Math.floor(entry.wait_minutes);
-                  const isPaused = entry.is_paused;
-                  // on_deck / drafted rows are visible but not selectable for manual matches.
-                  const isLocked = entry.status === "on_deck" || entry.status === "drafted";
+        <>
+          {/* View toggle — flat List vs grouped By Skill. Shared selection +
+              handlers, so switching lenses never loses an in-progress pick. */}
+          <div className="flex items-center gap-3">
+            <div
+              className="clip-cut-sm inline-flex gap-1 border border-cc-border bg-cc-bg-2 p-1"
+              role="group"
+              aria-label="Queue view"
+            >
+              {(["list", "skill"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  aria-pressed={view === v}
+                  className={`clip-cut-badge min-h-[44px] px-4 py-2 font-command text-[10px] uppercase tracking-[0.12em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cc-accent ${
+                    view === v
+                      ? "border border-cc-accent/45 bg-cc-accent-dim text-cc-accent"
+                      : "border border-transparent text-cc-t3 hover:text-cc-t1"
+                  }`}
+                >
+                  {v === "list" ? "List" : "By Skill"}
+                </button>
+              ))}
+            </div>
+          </div>
 
-                  return (
-                    <tr
-                      key={entry.id}
-                      tabIndex={isPaused || isLocked ? -1 : 0}
-                      role="row"
-                      aria-selected={isSelected}
-                      aria-disabled={isPaused || isLocked ? "true" : undefined}
-                      className={`border-b border-border last:border-b-0 transition-colors
+          {view === "skill" ? (
+            <QueueSkillGroups
+              queue={queue}
+              profiles={profiles}
+              selected={selected}
+              onToggleSelect={togglePlayer}
+              isFull={selected.size >= REQUIRED_PLAYERS}
+              onSkillChange={handleSkillChange}
+              updatingSkill={updatingSkill}
+              onPausePlayer={handlePausePlayer}
+              pausingPlayers={pausingPlayers}
+              onRemoveFromQueue={handleRemoveFromQueue}
+              removingPlayer={removingPlayer}
+            />
+          ) : (
+            <div className="rounded-xl border border-border overflow-hidden">
+              {/* overflow-x-auto lets the table scroll horizontally on narrow viewports
+                  instead of squishing the 8 columns into unreadable widths. */}
+              <div className="overflow-x-auto -mx-px">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead>
+                    <tr className="bg-muted/50 border-b border-border">
+                      <th className="px-4 py-3 text-left w-12"></th>
+                      <th className="px-4 py-3 text-left font-medium text-muted-foreground">#</th>
+                      <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                        Player
+                      </th>
+                      <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                        Skill
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium text-muted-foreground">
+                        Wait
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium text-muted-foreground">
+                        Games
+                      </th>
+                      <th className="px-4 py-3 text-center font-medium text-muted-foreground hidden lg:table-cell">
+                        PIN
+                      </th>
+                      <th className="px-4 py-3 text-right font-medium text-muted-foreground w-16"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedQueue.map((entry, index) => {
+                      const isSelected = selected.has(entry.player_id);
+                      const isFull = selected.size >= REQUIRED_PLAYERS;
+                      const waitMin = Math.floor(entry.wait_minutes);
+                      const isPaused = entry.is_paused;
+                      // on_deck / drafted rows are visible but not selectable for manual matches.
+                      const isLocked = entry.status === "on_deck" || entry.status === "drafted";
+
+                      return (
+                        <tr
+                          key={entry.id}
+                          tabIndex={isPaused || isLocked ? -1 : 0}
+                          role="row"
+                          aria-selected={isSelected}
+                          aria-disabled={isPaused || isLocked ? "true" : undefined}
+                          className={`border-b border-border last:border-b-0 transition-colors
                                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset
                                 ${
                                   isLocked
@@ -357,52 +410,52 @@ export function QueueControl({
                                         : "hover:bg-muted/30 cursor-pointer"
                                 }
                                 ${!isPaused && !isLocked && entry.is_bottleneck ? "!bg-red-50 dark:!bg-red-950/25" : ""}`}
-                      onClick={() => !isPaused && !isLocked && togglePlayer(entry.player_id)}
-                      onKeyDown={(e) => {
-                        if (!isPaused && !isLocked && (e.key === " " || e.key === "Enter")) {
-                          e.preventDefault();
-                          togglePlayer(entry.player_id);
-                        }
-                      }}
-                    >
-                      {/* Checkbox — omitted for locked rows (on_deck / drafted) */}
-                      <td className="px-4 py-3">
-                        {isLocked ? null : (
-                          /*
-                           * Hit-area container: z-10 ensures this cell sits above any
-                           * adjacent td overflow; stopPropagation here is the PRIMARY
-                           * isolation point that prevents clicks from reaching the <tr>
-                           * onClick and causing a double-toggle.
-                           */
-                          <div
-                            className="relative z-10 flex items-center justify-center"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <label
-                              htmlFor={`select-${entry.player_id}`}
-                              className="relative flex h-5 w-5 cursor-pointer"
-                            >
-                              <input
-                                id={`select-${entry.player_id}`}
-                                type="checkbox"
-                                className="sr-only"
-                                checked={isSelected}
-                                disabled={!isSelected && isFull}
-                                onChange={() => togglePlayer(entry.player_id)}
-                                /*
-                                 * Belt-and-suspenders: the outer div already stops the
-                                 * original click, but the browser fires a second synthetic
-                                 * click directly on this input (label → input activation).
-                                 * Stopping it here prevents that synthetic click from
-                                 * bubbling past this cell and reaching the <tr>.
-                                 */
-                                onClick={(e) => e.stopPropagation()}
-                                aria-label={`Select ${entry.display_name}`}
-                              />
-                              {/* Visual checkbox — aria-hidden so the native input owns semantics */}
+                          onClick={() => !isPaused && !isLocked && togglePlayer(entry.player_id)}
+                          onKeyDown={(e) => {
+                            if (!isPaused && !isLocked && (e.key === " " || e.key === "Enter")) {
+                              e.preventDefault();
+                              togglePlayer(entry.player_id);
+                            }
+                          }}
+                        >
+                          {/* Checkbox — omitted for locked rows (on_deck / drafted) */}
+                          <td className="px-4 py-3">
+                            {isLocked ? null : (
+                              /*
+                               * Hit-area container: z-10 ensures this cell sits above any
+                               * adjacent td overflow; stopPropagation here is the PRIMARY
+                               * isolation point that prevents clicks from reaching the <tr>
+                               * onClick and causing a double-toggle.
+                               */
                               <div
-                                aria-hidden="true"
-                                className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
+                                className="relative z-10 flex items-center justify-center"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <label
+                                  htmlFor={`select-${entry.player_id}`}
+                                  className="relative flex h-5 w-5 cursor-pointer"
+                                >
+                                  <input
+                                    id={`select-${entry.player_id}`}
+                                    type="checkbox"
+                                    className="sr-only"
+                                    checked={isSelected}
+                                    disabled={!isSelected && isFull}
+                                    onChange={() => togglePlayer(entry.player_id)}
+                                    /*
+                                     * Belt-and-suspenders: the outer div already stops the
+                                     * original click, but the browser fires a second synthetic
+                                     * click directly on this input (label → input activation).
+                                     * Stopping it here prevents that synthetic click from
+                                     * bubbling past this cell and reaching the <tr>.
+                                     */
+                                    onClick={(e) => e.stopPropagation()}
+                                    aria-label={`Select ${entry.display_name}`}
+                                  />
+                                  {/* Visual checkbox — aria-hidden so the native input owns semantics */}
+                                  <div
+                                    aria-hidden="true"
+                                    className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
                                           ${
                                             isSelected
                                               ? "bg-emerald-600 border-emerald-600"
@@ -410,345 +463,355 @@ export function QueueControl({
                                                 ? "border-muted bg-muted/50 cursor-not-allowed"
                                                 : "border-border hover:border-primary"
                                           }`}
-                              >
-                                {isSelected && (
-                                  <svg
-                                    className="h-3 w-3 text-white"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                    strokeWidth={3}
                                   >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      d="M5 13l4 4L19 7"
-                                    />
-                                  </svg>
-                                )}
+                                    {isSelected && (
+                                      <svg
+                                        className="h-3 w-3 text-white"
+                                        fill="none"
+                                        viewBox="0 0 24 24"
+                                        stroke="currentColor"
+                                        strokeWidth={3}
+                                      >
+                                        <path
+                                          strokeLinecap="round"
+                                          strokeLinejoin="round"
+                                          d="M5 13l4 4L19 7"
+                                        />
+                                      </svg>
+                                    )}
+                                  </div>
+                                </label>
                               </div>
-                            </label>
-                          </div>
-                        )}
-                      </td>
-                      {/* Position */}
-                      <td className="px-4 py-3 text-muted-foreground">{index + 1}</td>
-                      {/* Name */}
-                      <td className="px-4 py-3 font-medium">
-                        <span className="flex items-center gap-2">
-                          {entry.display_name}
-                          {(() => {
-                            const p = profiles?.get(entry.player_id);
-                            return p?.vip_tag && p?.vip_theme ? (
-                              <VipTag tag={p.vip_tag} theme={p.vip_theme} />
-                            ) : null;
-                          })()}
-                          {entry.status === "on_deck" && (
-                            <span
-                              className="rounded-full bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5
+                            )}
+                          </td>
+                          {/* Position */}
+                          <td className="px-4 py-3 text-muted-foreground">{index + 1}</td>
+                          {/* Name */}
+                          <td className="px-4 py-3 font-medium">
+                            <span className="flex items-center gap-2">
+                              {entry.display_name}
+                              {(() => {
+                                const p = profiles?.get(entry.player_id);
+                                return p?.vip_tag && p?.vip_theme ? (
+                                  <VipTag tag={p.vip_tag} theme={p.vip_theme} />
+                                ) : null;
+                              })()}
+                              {entry.status === "on_deck" && (
+                                <span
+                                  className="rounded-full bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5
                                          text-[10px] font-bold uppercase tracking-wide
                                          text-amber-700 dark:text-amber-300"
-                            >
-                              On Deck
-                            </span>
-                          )}
-                          {entry.status === "drafted" && (
-                            <span
-                              className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
+                                >
+                                  On Deck
+                                </span>
+                              )}
+                              {entry.status === "drafted" && (
+                                <span
+                                  className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
                                          text-[10px] font-bold uppercase tracking-wide
                                          text-slate-500 dark:text-slate-400"
-                            >
-                              Drafted
-                            </span>
-                          )}
-                          {isPaused && (
-                            <span
-                              className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
+                                >
+                                  Drafted
+                                </span>
+                              )}
+                              {isPaused && (
+                                <span
+                                  className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
                                          text-[10px] font-bold uppercase tracking-wide
                                          text-slate-500 dark:text-slate-400"
-                            >
-                              Paused
+                                >
+                                  Paused
+                                </span>
+                              )}
                             </span>
-                          )}
-                        </span>
-                      </td>
-                      {/* Skill — editable dropdown */}
-                      <td className="px-4 py-3">
-                        <select
-                          value={entry.skill_level}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            handleSkillChange(entry.player_id, e.target.value as SkillLevel);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          disabled={updatingSkill === entry.player_id}
-                          className={`rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs
+                          </td>
+                          {/* Skill — editable dropdown */}
+                          <td className="px-4 py-3">
+                            <select
+                              value={entry.skill_level}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleSkillChange(entry.player_id, e.target.value as SkillLevel);
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              disabled={updatingSkill === entry.player_id}
+                              className={`rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs
                                     font-medium text-slate-700 cursor-pointer
                                     dark:border-border dark:bg-input dark:text-foreground
                                     focus:outline-none focus:ring-2 focus:ring-ring
                                     disabled:opacity-50 disabled:cursor-wait
                                     ${updatingSkill === entry.player_id ? "animate-pulse" : ""}`}
-                        >
-                          {SKILL_LEVELS.map((sl) => (
-                            <option key={sl.value} value={sl.value}>
-                              {sl.label}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      {/* Wait time */}
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        <span
-                          className={
-                            entry.is_bottleneck ? "text-red-600 dark:text-red-400 font-bold" : ""
-                          }
-                        >
-                          {waitMin}m
-                        </span>
-                      </td>
-                      {/* Games */}
-                      <td className="px-4 py-3 text-right tabular-nums">{entry.games_played}</td>
-                      {/* PIN — hidden on narrow viewports, visible lg+ */}
-                      <td
-                        className="px-4 py-3 text-center hidden lg:table-cell"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="flex items-center justify-center gap-1">
-                          {loadingPin === entry.player_id ? (
-                            <span className="text-xs text-muted-foreground animate-pulse">...</span>
-                          ) : editingPinFor === entry.player_id ? (
-                            /* ── Inline PIN edit input ─────────────────── */
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="flex items-center gap-1">
-                                <input
-                                  aria-label="New PIN"
-                                  type="text"
-                                  inputMode="numeric"
-                                  maxLength={4}
-                                  value={editPinDraft}
-                                  onChange={(e) => {
-                                    setEditPinDraft(e.target.value);
-                                    setEditPinError(null);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter")
-                                      void handleEditPinSubmit(entry.player_id);
-                                    if (e.key === "Escape") handleEditPinCancel();
-                                  }}
-                                  autoFocus
-                                  className="w-14 text-center font-mono text-xs border border-border
+                            >
+                              {SKILL_LEVELS.map((sl) => (
+                                <option key={sl.value} value={sl.value}>
+                                  {sl.label}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          {/* Wait time */}
+                          <td className="px-4 py-3 text-right tabular-nums">
+                            <span
+                              className={
+                                entry.is_bottleneck
+                                  ? "text-red-600 dark:text-red-400 font-bold"
+                                  : ""
+                              }
+                            >
+                              {waitMin}m
+                            </span>
+                          </td>
+                          {/* Games */}
+                          <td className="px-4 py-3 text-right tabular-nums">
+                            {entry.games_played}
+                          </td>
+                          {/* PIN — hidden on narrow viewports, visible lg+ */}
+                          <td
+                            className="px-4 py-3 text-center hidden lg:table-cell"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-center gap-1">
+                              {loadingPin === entry.player_id ? (
+                                <span className="text-xs text-muted-foreground animate-pulse">
+                                  ...
+                                </span>
+                              ) : editingPinFor === entry.player_id ? (
+                                /* ── Inline PIN edit input ─────────────────── */
+                                <div className="flex flex-col items-center gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      aria-label="New PIN"
+                                      type="text"
+                                      inputMode="numeric"
+                                      maxLength={4}
+                                      value={editPinDraft}
+                                      onChange={(e) => {
+                                        setEditPinDraft(e.target.value);
+                                        setEditPinError(null);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter")
+                                          void handleEditPinSubmit(entry.player_id);
+                                        if (e.key === "Escape") handleEditPinCancel();
+                                      }}
+                                      autoFocus
+                                      className="w-14 text-center font-mono text-xs border border-border
                                              rounded px-1 py-0.5 bg-background focus:outline-none
                                              focus:ring-1 focus:ring-ring"
-                                />
-                                <button
-                                  onClick={() => void handleEditPinSubmit(entry.player_id)}
-                                  aria-label="Save PIN"
-                                  className="min-w-[32px] min-h-[32px] flex items-center justify-center
+                                    />
+                                    <button
+                                      onClick={() => void handleEditPinSubmit(entry.player_id)}
+                                      aria-label="Save PIN"
+                                      className="min-w-[32px] min-h-[32px] flex items-center justify-center
                                              text-emerald-600 hover:text-emerald-700 transition-colors rounded"
-                                >
-                                  ✓
-                                </button>
-                                <button
-                                  onClick={handleEditPinCancel}
-                                  aria-label="Cancel PIN edit"
-                                  className="min-w-[32px] min-h-[32px] flex items-center justify-center
+                                    >
+                                      ✓
+                                    </button>
+                                    <button
+                                      onClick={handleEditPinCancel}
+                                      aria-label="Cancel PIN edit"
+                                      className="min-w-[32px] min-h-[32px] flex items-center justify-center
                                              text-muted-foreground hover:text-foreground transition-colors rounded"
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                              {editPinError && (
-                                <p className="text-[10px] text-destructive">{editPinError}</p>
-                              )}
-                            </div>
-                          ) : visiblePins.has(entry.player_id) ? (
-                            <>
-                              <span className="font-mono text-xs font-medium">
-                                {visiblePins.get(entry.player_id)}
-                              </span>
-                              <button
-                                onClick={() => handleRevealPin(entry.player_id)}
-                                className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                  {editPinError && (
+                                    <p className="text-[10px] text-destructive">{editPinError}</p>
+                                  )}
+                                </div>
+                              ) : visiblePins.has(entry.player_id) ? (
+                                <>
+                                  <span className="font-mono text-xs font-medium">
+                                    {visiblePins.get(entry.player_id)}
+                                  </span>
+                                  <button
+                                    onClick={() => handleRevealPin(entry.player_id)}
+                                    className="min-w-[44px] min-h-[44px] flex items-center justify-center
                                          text-muted-foreground hover:text-foreground transition-colors
                                          rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                title="Hide PIN"
-                                aria-label="Hide PIN"
-                              >
-                                <svg
-                                  className="h-3.5 w-3.5"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                  strokeWidth={2}
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
-                                  />
-                                </svg>
-                              </button>
-                              <button
-                                onClick={() => handleResetPin(entry.player_id)}
-                                className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                    title="Hide PIN"
+                                    aria-label="Hide PIN"
+                                  >
+                                    <svg
+                                      className="h-3.5 w-3.5"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                      strokeWidth={2}
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"
+                                      />
+                                    </svg>
+                                  </button>
+                                  <button
+                                    onClick={() => handleResetPin(entry.player_id)}
+                                    className="min-w-[44px] min-h-[44px] flex items-center justify-center
                                          text-muted-foreground hover:text-amber-600 transition-colors
                                          rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                title="Reset PIN"
-                                aria-label="Reset PIN"
-                              >
-                                <svg
-                                  className="h-3.5 w-3.5"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                  strokeWidth={2}
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                                  />
-                                </svg>
-                              </button>
-                              {/* Edit PIN — opens inline input */}
-                              <button
-                                onClick={() => handleEditPin(entry.player_id)}
-                                className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                    title="Reset PIN"
+                                    aria-label="Reset PIN"
+                                  >
+                                    <svg
+                                      className="h-3.5 w-3.5"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                      strokeWidth={2}
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                                      />
+                                    </svg>
+                                  </button>
+                                  {/* Edit PIN — opens inline input */}
+                                  <button
+                                    onClick={() => handleEditPin(entry.player_id)}
+                                    className="min-w-[44px] min-h-[44px] flex items-center justify-center
                                          text-muted-foreground hover:text-blue-600 transition-colors
                                          rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                title="Edit PIN"
-                                aria-label="Edit PIN"
-                              >
-                                <svg
-                                  className="h-3.5 w-3.5"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                  strokeWidth={2}
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                                  />
-                                </svg>
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => handleRevealPin(entry.player_id)}
-                              className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                                    title="Edit PIN"
+                                    aria-label="Edit PIN"
+                                  >
+                                    <svg
+                                      className="h-3.5 w-3.5"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                      stroke="currentColor"
+                                      strokeWidth={2}
+                                    >
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                                      />
+                                    </svg>
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  onClick={() => handleRevealPin(entry.player_id)}
+                                  className="min-w-[44px] min-h-[44px] flex items-center justify-center
                                        text-muted-foreground hover:text-foreground transition-colors
                                        rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              title="Reveal PIN"
-                              aria-label="Reveal PIN"
-                            >
-                              <svg
-                                className="h-3.5 w-3.5"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                                strokeWidth={2}
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                                />
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                                />
-                              </svg>
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      {/* Pause + Checkout actions */}
-                      <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-0.5">
-                          {/* ── Pause / Resume toggle ────────────────────────────
+                                  title="Reveal PIN"
+                                  aria-label="Reveal PIN"
+                                >
+                                  <svg
+                                    className="h-3.5 w-3.5"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                    />
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                                    />
+                                  </svg>
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                          {/* Pause + Checkout actions */}
+                          <td className="px-2 py-3" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-0.5">
+                              {/* ── Pause / Resume toggle ────────────────────────────
                             Soft-pause: player stays visible but is removed from
                             matchmaking eligibility. joined_at + games_played are
                             never touched — queue position is fully preserved.
                             No confirmation dialog needed — it's instantly reversible. */}
-                          <button
-                            onClick={() => handlePausePlayer(entry.player_id, !isPaused)}
-                            disabled={pausingPlayers.has(entry.player_id)}
-                            className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                              <button
+                                onClick={() => handlePausePlayer(entry.player_id, !isPaused)}
+                                disabled={pausingPlayers.has(entry.player_id)}
+                                className="min-w-[44px] min-h-[44px] flex items-center justify-center
                                      transition-colors rounded
                                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
                                      text-muted-foreground hover:text-amber-500
                                      disabled:opacity-50 disabled:cursor-not-allowed"
-                            title={
-                              isPaused
-                                ? `Resume ${entry.display_name}`
-                                : `Pause ${entry.display_name}`
-                            }
-                            aria-label={
-                              isPaused
-                                ? `Resume ${entry.display_name}`
-                                : `Pause ${entry.display_name}`
-                            }
-                          >
-                            {isPaused ? (
-                              <PlayCircle className="h-3.5 w-3.5 text-emerald-500" />
-                            ) : (
-                              <PauseCircle className="h-3.5 w-3.5" />
-                            )}
-                          </button>
+                                title={
+                                  isPaused
+                                    ? `Resume ${entry.display_name}`
+                                    : `Pause ${entry.display_name}`
+                                }
+                                aria-label={
+                                  isPaused
+                                    ? `Resume ${entry.display_name}`
+                                    : `Pause ${entry.display_name}`
+                                }
+                              >
+                                {isPaused ? (
+                                  <PlayCircle className="h-3.5 w-3.5 text-emerald-500" />
+                                ) : (
+                                  <PauseCircle className="h-3.5 w-3.5" />
+                                )}
+                              </button>
 
-                          {/* ── Checkout (permanent) — hidden for on_deck/drafted rows.
+                              {/* ── Checkout (permanent) — hidden for on_deck/drafted rows.
                               Cancel the on-deck match first before checking out. */}
-                          {!isLocked && (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <button
-                                  className="min-w-[44px] min-h-[44px] flex items-center justify-center
+                              {!isLocked && (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <button
+                                      className="min-w-[44px] min-h-[44px] flex items-center justify-center
                                          text-muted-foreground hover:text-red-600 transition-colors
                                          rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                  title="Checkout — player has left the gym"
-                                  aria-label={`Checkout ${entry.display_name}`}
-                                >
-                                  <LogOut className="h-3.5 w-3.5" />
-                                </button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>
-                                    Checkout {entry.display_name}?
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    This will remove them from the queue. If they are currently in a
-                                    match, the match will not be affected. They can rejoin later
-                                    using their name and PIN.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => handleRemoveFromQueue(entry.player_id)}
-                                    disabled={removingPlayer === entry.player_id}
-                                    className="bg-red-600 hover:bg-red-700 focus:ring-red-600
+                                      title="Checkout — player has left the gym"
+                                      aria-label={`Checkout ${entry.display_name}`}
+                                    >
+                                      <LogOut className="h-3.5 w-3.5" />
+                                    </button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>
+                                        Checkout {entry.display_name}?
+                                      </AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        This will remove them from the queue. If they are currently
+                                        in a match, the match will not be affected. They can rejoin
+                                        later using their name and PIN.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => handleRemoveFromQueue(entry.player_id)}
+                                        disabled={removingPlayer === entry.player_id}
+                                        className="bg-red-600 hover:bg-red-700 focus:ring-red-600
                                                disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    {removingPlayer === entry.player_id ? "Removing…" : "Checkout"}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {/* /overflow-x-auto */}
-        </div>
+                                      >
+                                        {removingPlayer === entry.player_id
+                                          ? "Removing…"
+                                          : "Checkout"}
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {/* /overflow-x-auto */}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

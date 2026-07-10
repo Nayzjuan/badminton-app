@@ -952,6 +952,23 @@ Does not affect `games_played`. Does not change `queue_status`.
 
 ---
 
+### 3.14b Queue — List / By-Skill view toggle
+
+**Files:** `src/components/organizer/queue-control.tsx` (owns state + the toggle), `src/components/organizer/queue-skill-groups.tsx` (the grouped lens)
+
+The Queue & Match Control tab renders one of two lenses over the same queue data, chosen by a `List / By Skill` segmented control at the top of the panel. State is local to `QueueControl` (`view: "list" | "skill"`), **defaults to `"list"`, and is not persisted** (every mount opens on List).
+
+- **List** — the existing flat table (unchanged): all queue rows (waiting + on_deck + drafted), sorted by `status_priority` with paused sinking to the bottom; manual-match select-4, inline skill edit, PIN management, pause, checkout.
+- **By Skill** (`QueueSkillGroups`) — **waiting players only** (`status === "waiting"`, so on_deck/drafted are excluded), grouped into skill-tier bands ordered **Advanced → Beginner** (derived from `SKILL_LEVELS` numeric desc). Within each tier, rows are sorted **longest-wait-first**, with paused players sunk to the bottom of their tier. **Empty tiers are hidden.** The top non-paused row per tier is flagged "Longest waiting" (amber wait number); bottleneck rows go red. Tier identity is the `SKILL_META` dot hue; all other chrome uses `cc-*` tokens + clip-cut geometry.
+
+**Shared state, not a fork:** both lenses read the same `selected` set and call the same `QueueControl` handlers (`togglePlayer`, `handleSkillChange`, `handlePausePlayer`, `handleRemoveFromQueue`), so a manual-match selection survives switching views and feeds the same match bar. Checkout is offered on every waiting row in By-Skill (parity with List; locked rows never appear here).
+
+**Responsive:** viewport breakpoints (not container queries). Below `sm` each row is a two-line stack (name + hero wait on top; a 44px-tall tappable skill chip + games below); at/above `sm` it expands to a single row (checkbox · name · skill dropdown · games · wait · actions). Wait time and actions are always visible.
+
+**Accessibility:** the row is a plain `<div onClick>` (mouse convenience) with **no** widget role — the real nested `<input type="checkbox">` is the accessible, keyboard-operable selection control (avoids an ARIA nested-interactive violation and a duplicate tab stop). All tap targets ≥44px; focus rings use `ring-inset` so the clip-cut chamfer doesn't clip them.
+
+---
+
 ### 3.15 Player Self-Scoring
 
 **File:** `src/app/actions/match-lifecycle.ts`, `src/components/player/match-alert.tsx`
@@ -1612,7 +1629,8 @@ src/
       active-courts.tsx          # Court cards, TeamsGrid, ScoreModal trigger, CourtTimeAlert
       on-deck-panel.tsx          # Pending match cards, swap flow, publish controls, H2HStrip
       score-modal.tsx            # Score entry dialog (single / best-of-3 / best-of-5)
-      queue-control.tsx          # Player queue table, manual match creation, pause, dnd-kit
+      queue-control.tsx          # Player queue table, manual match creation, pause, dnd-kit; List/By-Skill view toggle
+      queue-skill-groups.tsx     # "By Skill" queue lens — waiting players grouped by tier (Adv→Beg), longest-wait-first
       wait-time-monitor.tsx      # Bottleneck monitor (wait ≥ BOTTLENECK_THRESHOLD_MINUTES)
       match-history-panel.tsx    # Completed match history with edit/undo score + Fix Player Record trigger
       fix-record-sheet.tsx       # Historical roster correction Sheet — amber accent, 2-step flow (pick out → pick in)

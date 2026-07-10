@@ -5,6 +5,22 @@
 
 ---
 
+## 🆕 QUEUE — "BY SKILL" VIEW (organizer) — BUILT on `chore/club-slug-chillax`, 2026-07-10
+
+**Status: BUILT + validated, NOT yet merged.** tsc/eslint/`next build` clean. Planned via `/impeccable shape` (brief user-approved) + mock ([artifact](https://claude.ai/code/artifact/56b5d902-7078-4824-9f0d-35e6a3423a7b)). Review gate: adversarial multi-dimension Workflow (4 finders × independent verify) → 8 confirmed findings, **all fixed**, re-review **PASS / no regressions**.
+
+**What:** a `List / By Skill` segmented toggle on the Queue & Match Control tab. By-Skill groups **waiting-only** players into tiers **Advanced→Beginner** (empty tiers hidden), **longest-wait-first** within a tier, paused sunk to bottom, top non-paused row flagged "Longest waiting". Fully interactive (shares `QueueControl` selection + handlers): select-4, inline skill edit, pause, checkout.
+
+**Files:** NEW `src/components/organizer/queue-skill-groups.tsx`; MODIFIED `src/components/organizer/queue-control.tsx` (view state `"list"|"skill"`, default **list**, not persisted; existing flat table byte-unchanged inside the `list` branch).
+
+**User decisions:** in-panel toggle (not a new tab) · fully interactive · waiting-only, hide empty tiers · Advanced→Beginner · mobile skill = compact tappable chip · longest-emphasis per-tier · always open on List.
+
+**Design/a11y notes (from review fixes):** row is a plain `<div onClick>` with NO widget role — the nested `<input type=checkbox>` is the accessible selection control (avoids ARIA nested-interactive + duplicate tab stop + keydown-swallow). Tap targets ≥44px (toggle, mobile skill chip). Focus rings use `ring-inset` (clip-cut chamfer would otherwise clip them). Tier hue = `SKILL_META` dot; chrome = `cc-*` tokens. Responsive via viewport `sm:` breakpoints (stacked <sm, single-row ≥sm).
+
+**Next:** commit + push `chore/club-slug-chillax`; open PR / merge on user's go.
+
+---
+
 ## 🆕 CLUB SLUG RENAME `legacy` → `chillax` — SHIPPED (main `c7f42f7`, PR #17, 2026-07-10)
 
 **Status: DEPLOYED to prod + live** (Vercel `dpl_2Be9…` READY, prod alias `badminton-app-dusky-six.vercel.app`). tsc clean · Vercel build clean. External curl-verify not possible from the sandbox (agent proxy denies outbound to the Vercel host — 403 at the proxy, not the app).
