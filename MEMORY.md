@@ -5,6 +5,18 @@
 
 ---
 
+## 🆕 PLAYER-VIEW "KICKED OUT OF QUEUE" TRANSITION FLASH — FIXED on `fix/player-queue-transition-flash`, 2026-07-11
+
+**Status: BUILT + validated + reviewed (LGTM).** tsc/eslint/`next build` clean. Reported: Jason's player view briefly looked like he got kicked out of the queue / dropped to last, then got the "you have a match" alert.
+
+**Root cause:** the player "My Status" view is driven by two INDEPENDENT realtime hooks — `useQueue` (queue_entries channel → `myEntry.status`) and `usePlayerMatch` (matches/match_players channels → `currentMatch`/`hasActiveMatch`). On a match assignment the queue row flips `waiting→on_deck` a beat before `usePlayerMatch` loads the published match. `QueueSubTab` (my-status-tab.tsx) had branches for `paused`/`drafted`/`waiting` but **not `on_deck`/`playing`**, so during that window the player fell through to the "Ready to play?" not-in-queue join screen (position numeral gone → reads as "kicked out / back of line"), then the MatchAlert overlay slid up. Happened on EVERY assignment, not just the cleared-match incident.
+
+**Fix (1 line, `my-status-tab.tsx`):** broadened the holding-card branch from `myEntry?.status === "drafted"` to `myEntry && myEntry.status !== "waiting"` — so drafted/on_deck/playing all show the stable "Match Forming" card. Path is now `#position → Match Forming → You have a match`, no join-screen flash. Order-safe (paused checked first; waiting after; genuinely-not-in-queue still hits the CTA). For a stable on_deck/playing row `hasActiveMatch` is true → MatchAlert overlay + `MyStatusTab` returns null, so the holding card is only ever a sub-second bridge.
+
+**Known minor (accepted):** the "Match Forming" copy is slightly off for the sub-second `playing` bridge right after a match completes (queue row lingers at `playing` a beat while `currentMatch` clears). Strictly better than the old join-screen flash; not worth per-status copy branching.
+
+---
+
 ## 🆕 QUEUE — "BY SKILL" VIEW (organizer) — BUILT on `chore/club-slug-chillax`, 2026-07-10
 
 **Status: BUILT + validated, NOT yet merged.** tsc/eslint/`next build` clean. Planned via `/impeccable shape` (brief user-approved) + mock ([artifact](https://claude.ai/code/artifact/56b5d902-7078-4824-9f0d-35e6a3423a7b)). Review gate: adversarial multi-dimension Workflow (4 finders × independent verify) → 8 confirmed findings, **all fixed**, re-review **PASS / no regressions**.
