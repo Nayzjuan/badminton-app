@@ -40,6 +40,7 @@ import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
+import { logMatchEvent } from "@/lib/match-event-log";
 
 // ── Checkout ──────────────────────────────────────────────────
 // Marks the calling player's queue_entries row as "left" for a
@@ -161,10 +162,13 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   // The RPC atomically removes the player from draft match_players and
   // cancels the draft if it falls below 4 players.
   const svc = createServiceClient();
-  const { error: cleanupError } = await svc.rpc("checkout_player_cleanup_drafts", {
-    p_session_id: sessionId,
-    p_player_id: user.id,
-  });
+  const { data: cleanupData, error: cleanupError } = await svc.rpc(
+    "checkout_player_cleanup_drafts",
+    {
+      p_session_id: sessionId,
+      p_player_id: user.id,
+    }
+  );
 
   if (cleanupError) {
     if (isRpcNotFound(cleanupError)) {
@@ -210,6 +214,26 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
       console.error("[checkoutPlayer] draft cleanup error:", cleanupError.message);
       // Non-fatal: checkout itself succeeded.
     }
+  }
+
+  // Audit: log a 'cancelled' event for each draft the checkout tore down.
+  // The RPC soft-cancels (status='cancelled'), so the match row survives and
+  // its FK is intact. actorId is null → actor_type 'system' (an automatic
+  // consequence of the leaver); the trigger player is recorded in the payload.
+  // Best-effort — logMatchEvent never throws.
+  const cancelledMatchIds = (cleanupData ?? [])
+    .map((r) => r.cancelled_match_id)
+    .filter((id): id is string => Boolean(id));
+  for (const mid of cancelledMatchIds) {
+    await logMatchEvent({
+      matchId: mid,
+      sessionId,
+      eventType: "cancelled",
+      phase: "draft",
+      actorId: null,
+      actorName: null,
+      payload: { reason: "checkout_below_min", trigger_player_id: user.id },
+    });
   }
 
   // Engine hook: the player left, which may have cancelled one or more
