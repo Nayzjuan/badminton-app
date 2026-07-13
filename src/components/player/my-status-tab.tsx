@@ -188,12 +188,21 @@ function QueueSubTab({
     );
   }
 
-  // ── Match forming — drafted by organizer ──────────────────────
-  // Player is assigned to a pending match that is not yet published.
-  // The organizer is reviewing / finalising the line-up before revealing
-  // it to players. Show a holding card rather than falling through to the
-  // "Ready to play?" empty state.
-  if (isInQueue && myEntry?.status === "drafted") {
+  // ── In a match pipeline — drafted / on-deck / (transient) playing ──
+  // The player has been pulled out of "waiting" into a match: drafted
+  // (unpublished, organizer still reviewing), on_deck (published, awaiting a
+  // court), or the brief window where the queue row has flipped to "playing"
+  // but the match data hasn't yet loaded into the full-screen MatchAlert
+  // overlay. Show a stable holding card for all of these.
+  //
+  // WITHOUT covering on_deck/playing here, they fall through to the
+  // "Ready to play?" join screen below: the queue channel (useQueue) flips the
+  // status a beat before the match channel (usePlayerMatch) loads the match,
+  // so hasActiveMatch is briefly false. The position numeral vanishes and the
+  // screen reads as "kicked out of the queue / back to the bottom", moments
+  // before the "you have a match" alert appears. (paused handled above;
+  // waiting handled below; genuinely-not-in-queue falls through to the CTA.)
+  if (isInQueue && myEntry && myEntry.status !== "waiting") {
     return (
       <div className="flex flex-col items-center">
         <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
