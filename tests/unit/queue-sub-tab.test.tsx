@@ -13,9 +13,9 @@
 //
 //   QST-1  Not in queue → shows "Ready to play?" / "Join Queue" CTA
 //   QST-2  Waiting → shows QueueStatus position numeral
-//   QST-3  On deck (status="on_deck") → falls to "Ready to play?" via
-//          QueueSubTab (has no on_deck branch; on_deck players have
-//          hasActiveMatch=true so MyStatusTab returns null above)
+//   QST-3  On deck (status="on_deck") without an active match → shows the
+//          "Match Forming" holding card (PR #20: on_deck/playing no longer
+//          fall through to the "Ready to play?" join screen)
 //   QST-4  Drafted → shows "Match Forming" heading (exact, title case)
 //   QST-5  Drafted → shows "Hang tight" body copy
 //   QST-6  Drafted → shows lowercase "Match forming" indicator span
@@ -149,17 +149,22 @@ describe("QueueSubTab — Component Smoke Tests", () => {
   });
 
   // ── QST-3 ─────────────────────────────────────────────────────
-  it("QST-3: on_deck without active match falls to Ready to play (QueueSubTab has no on_deck branch)", () => {
-    // on_deck is handled by the MatchAlert overlay in the parent (hasActiveMatch=true).
-    // If somehow hasActiveMatch=false with on_deck status, it falls to "Ready to play?"
+  it("QST-3: on_deck without active match shows the 'Match Forming' holding card (not the join screen)", () => {
+    // A stable on_deck row has hasActiveMatch=true, so the parent shows the
+    // MatchAlert overlay and MyStatusTab returns null. But during the brief
+    // window where useQueue has flipped the row to on_deck a beat before
+    // usePlayerMatch loads the match, QueueSubTab renders with an on_deck entry.
+    // It must show the "Match Forming" holding card — NOT fall through to the
+    // "Ready to play?" join screen (the "kicked out" flash fixed in PR #20).
     renderQueueSubTab({
       isInQueue: true,
       myEntry: makeEntry("on_deck"),
       myPosition: null,
     });
 
-    // Falls through to the default "Ready to play?" branch
-    expect(screen.getByText(/ready/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Match Forming" })).toBeInTheDocument();
+    // Must NOT show the not-in-queue join CTA.
+    expect(screen.queryByRole("button", { name: /join queue/i })).not.toBeInTheDocument();
   });
 
   // ── QST-4 ─────────────────────────────────────────────────────
@@ -339,7 +344,9 @@ describe("QueueSubTab — Component Smoke Tests", () => {
   it("QST-16: queueLoading=true shows loading indicator, not the empty-state CTA", () => {
     renderQueueSubTab({ queueLoading: true });
 
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    // Loading is now a content-shaped skeleton (role="status" + aria-busy +
+    // aria-label), not visible "Loading..." text.
+    expect(screen.getByRole("status", { name: /loading your status/i })).toBeInTheDocument();
     // Must NOT show the "Ready to play?" CTA during loading
     expect(screen.queryByText(/ready to play/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /join queue/i })).not.toBeInTheDocument();

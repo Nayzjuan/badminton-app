@@ -162,6 +162,23 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
   // slot and are waiting for their match to publish.
   const totalWaiting = queue.filter((q) => q.status === "waiting" || q.status === "drafted").length;
 
+  // Court-call auto-focus: when the player is pulled into a match
+  // (hasActiveMatch false→true) while browsing another tab, jump to My Status so
+  // the full-screen "Heads Up" / court-call takeover isn't missed — it's scoped
+  // to the status tabpanel, so from Live Courts / Waitlist / Leaderboard they'd
+  // otherwise only get the header dot + audio beep and could miss the call.
+  const prevHasActiveMatchRef = useRef(hasActiveMatch);
+  useEffect(() => {
+    if (!prevHasActiveMatchRef.current && hasActiveMatch) {
+      // Reacting to an external (realtime) state edge — a rare once-per-call
+      // tab switch, not a render-loop. Same sanctioned pattern as the realtime
+      // hooks (use-queue / use-player-match) that setState from an effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveTab("status");
+    }
+    prevHasActiveMatchRef.current = hasActiveMatch;
+  }, [hasActiveMatch]);
+
   // Header dot colour.
   const dotColor = hasActiveMatch
     ? currentMatch?.match.status === "in_progress"

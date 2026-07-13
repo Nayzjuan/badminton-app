@@ -26,6 +26,8 @@ import {
   COMMITTED_MATCH_STATUSES,
   MATCH_REST_GAP_MINUTES,
   MIN_REST_MINUTES,
+  OVERLAP_WEIGHT_OPPONENT,
+  OVERLAP_WEIGHT_TEAMMATE,
   PLAYERS_PER_MATCH,
   ROSTER_LOOKBACK_COUNT,
 } from "@/lib/constants";
@@ -105,8 +107,9 @@ export async function fetchActivePool(
 // already finished. This prevents the engine from forming the
 // same pairing "again" just because the first game is still live.
 //
-// Pre-fetched once per runEngineInternal run (stable snapshot);
-// passed to each runAlgorithm call rather than re-fetched per slot.
+// Fetched PER SLOT inside runEngineInternal's fill loop (not once per
+// run) so the diversity-violation check also sees sibling drafts
+// committed by earlier slots of the same burst.
 
 export async function fetchRecentRosters(
   supabase: DbClient,
@@ -262,9 +265,11 @@ export async function fetchPartnershipCounts(
 // each co-player is to the anchor across recent matches in this
 // session. Used by scoreCandidates to apply anti-repeat penalties.
 //
-// Team-aware weighting:
-//   Teammate appearance  → weight += 2  (same side; stronger familiarity)
-//   Opponent appearance  → weight += 1  (opposing; weaker familiarity)
+// Team-aware weighting (OVERLAP_WEIGHT_TEAMMATE / OVERLAP_WEIGHT_OPPONENT):
+//   Teammate appearance  → weight += 2  (same side)
+//   Opponent appearance  → weight += 2  (cross-net; equal to teammate as of the
+//                          2026-07 diversity pass — re-facing avoided as hard
+//                          as re-partnering, the primary round-2 opponent lever)
 //
 // Implementation: 3-step join to avoid relying on v_recent_pairings
 // (which lacks team data and only tracks completed matches).
@@ -348,8 +353,7 @@ export async function buildOverlapMap(
     const anchorTeam = anchorTeamByMatch.get(row.match_id);
     if (anchorTeam === undefined) continue;
     // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
-    // Teammate (same team) is weighted 2×; opponent 1×.
-    const weight = row.team === anchorTeam ? 2 : 1;
+    const weight = row.team === anchorTeam ? OVERLAP_WEIGHT_TEAMMATE : OVERLAP_WEIGHT_OPPONENT;
     overlapMap.set(row.player_id, (overlapMap.get(row.player_id) ?? 0) + weight);
   }
 

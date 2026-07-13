@@ -10,6 +10,7 @@
 import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { getClubBySlug } from "@/lib/clubs";
+import { clubBase } from "@/lib/club-paths";
 import { OrganizerDashboard } from "@/components/organizer/organizer-dashboard";
 import { PUBLIC_PROFILE_COLUMNS, PUBLIC_SESSION_COLUMNS } from "@/types/database";
 
@@ -49,6 +50,18 @@ export default async function ClubOrganizerDashboardPage({ params }: PageProps) 
   if (!sessionRow) notFound();
   if (sessionRow.club_id !== club.id) notFound(); // session belongs to another club
   const session = { ...sessionRow, organizer_passcode: null };
+
+  // Ended session → no live command center. The organizer dashboard is a LIVE
+  // control surface (call matches, toggle matchmaking, manage courts, publish
+  // drafts); rendering it for a closed session shows a stale board that looks
+  // active — an organizer (or any club member who taps a "Past Sessions" card,
+  // which links here via the /organizer legacy shim) would see a closed session
+  // as if it were still joinable. Redirect to the club lobby, mirroring the
+  // player dashboard's own !is_active guard. (A read-only past-session recap
+  // could replace this bounce later.)
+  if (!session.is_active) {
+    redirect(clubBase(clubSlug));
+  }
 
   // Session switcher — only OTHER active sessions in THIS club (slug stays put).
   const { data: otherSessionsData } = await supabase

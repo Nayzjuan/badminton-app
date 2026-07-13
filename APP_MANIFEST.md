@@ -361,12 +361,15 @@ The 30 min max-wait target is a physics impossibility with 20–22 min courts (m
 #### Candidate Scoring (`scoreCandidates`)
 
 ```
-Normal candidate:   candidateScore = -priorityScore + overlapCount × 10,000
-Red Zone candidate: candidateScore = -priorityScore + overlapCount × 100
+Normal candidate:   candidateScore = -priorityScore + overlapCount × 10,000 + gamesAhead × GAMES_AHEAD_PENALTY (10,000)
+Red Zone candidate: candidateScore = -priorityScore + overlapCount × 100    + gamesAhead × GAMES_AHEAD_PENALTY_RED_ZONE (100)
   (Red Zone = priorityScore ≥ RED_ZONE_SCORE_FLOOR — includes Hard Cap tier since 2000 ≫ 1000)
+  gamesAhead = max(0, games_played − poolMinGames)   [fresh-first rule, 2026-07]
 ```
 
 Sorted ascending (lowest score = highest priority). Red Zone overlap penalty is capped at 100× so a Red Zone player with 1 recent overlap still beats a Normal player with 0.
+
+**Fresh-first rule (early-session diversity):** `poolMinGames` = min `games_played` across the WAITING pool (pulled bodies excluded — their mid-game count reads one low). Each candidate is penalised one overlap-unit-equivalent per game above that minimum, so the freshest waiting cohort fills rosters first whenever the skill window allows. Pulled bodies are exempt from the term entirely (their ordering stays governed by `priorityScore = -1`, C-3). Zero effect when all games are equal (e.g. t=0) — behaviour is bit-identical to before. Red Zone urgency still wins (100× variant).
 
 #### Group Assembly (`buildCombinationGroup`) — N-choose-3 Combination Search
 
@@ -394,11 +397,11 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 
 #### Anti-Repeat / Diversity Logic
 
-- `buildOverlapMap(anchorId)` — called per-tick (once per anchor per engine slot), anchor-specific. **No longer uses `v_recent_pairings`.** Does a 3-step manual join:
+- `buildOverlapMap(anchorId)` — called per-tick (once per anchor per engine slot), anchor-specific. **No longer uses `v_recent_pairings`.** Teammate/opponent overlap weights are now **equal** (`OVERLAP_WEIGHT_TEAMMATE = OVERLAP_WEIGHT_OPPONENT = 2`, raised from 2/1 in the 2026-07 diversity pass so re-facing is avoided as hard as re-partnering — the primary round-2 opponent lever). Does a 3-step manual join:
   1. Fetch all `match_players` rows for the anchor (limit 200)
   2. Filter to this session's recent matches (`completed`, `in_progress`, **`pending`** — Fix 2: sees live pairings, not just finished games)
-  3. Fetch all co-players + teams → build weighted overlap map: **teammate appearances = 2×, opponent appearances = 1×** (Fix 3: same-side repetition penalised more than cross-side)
-- `fetchRecentRosters(sessionId)` — fetches last `ROSTER_LOOKBACK_COUNT` (10) match rosters as arrays of player IDs. Pre-fetched **once per `runEngineInternal` run** and passed down to each `runAlgorithm` call to avoid redundant DB queries per slot. Includes `completed`, `in_progress`, and `pending` matches.
+  3. Fetch all co-players + teams → build weighted overlap map: **teammate = opponent = 2×** (equal as of 2026-07 — was 2×/1×; re-facing a round-1 opponent now deprioritised as strongly as re-teaming a round-1 partner)
+- `fetchRecentRosters(sessionId)` — fetches last `ROSTER_LOOKBACK_COUNT` (10) match rosters as arrays of player IDs. Fetched **per slot** inside `runEngineInternal`'s fill loop (2026-07 intra-burst fix — previously once per run, which left `isDiversityViolation` blind to sibling drafts committed by earlier slots of the same burst). Includes `completed`, `in_progress`, and `pending` matches.
 - `isDiversityViolation(playerIds, recentRosters)` — flags true if ≥3 of the proposed 4 players appeared together in any single recent match roster.
 - `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → **7**) to prevent small-tier starvation. The 16+ tier was increased from 5 to 7 now that `fetchRecentRosters` fetches 10 matches (sufficient headroom).
 - `fetchPartnershipCounts(sessionId)` — now returns **`{ partnershipCounts, opponentCounts }`** (both maps built in one pass over the same DB data; zero extra DB calls). `opponentCounts` = cross-net (opponent) pair counts, used by snakeDraft/rotatedDraft as a soft preference.
@@ -421,6 +424,8 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches used by `buildOverlapMap` for familiarity weighting (count-based)                                                                                                                                                                                                                                                                   |
 | `ROSTER_LOOKBACK_COUNT`        | 10    | Recent match rosters fetched by `fetchRecentRosters` for diversity-violation checks (larger than `ANTI_REPEAT_LOOKBACK` so `getEffectiveLookback` can scale up for large sessions)                                                                                                                                                                 |
 | `MIN_REST_MINUTES`             | 18    | Minimum wait minutes before a returning player (games_played > 0) can be drafted again. Prevents 0-min back-to-back. Falls back to unfiltered pool if fewer than `PLAYERS_PER_MATCH` survive the filter.                                                                                                                                           |
+| `GAMES_AHEAD_PENALTY`          | 10,000 | Fresh-first rule: scoreCandidates penalty per game a candidate is above the waiting-pool minimum (= 1 overlap unit). Pulled bodies exempt.                                                                       |
+| `GAMES_AHEAD_PENALTY_RED_ZONE` | 100   | Red Zone variant of the fresh-first penalty (capped small, like the overlap cap, so urgency always outranks freshness).                                                                                             |
 | `GATE_POOL_THRESHOLD`          | 4     | Pool size that triggers cross-court mixing deferral                                                                                                                                                                                                                                                                                                |
 | `GATE_HOLD_MINUTES`            | 8     | Minutes before gate auto-releases                                                                                                                                                                                                                                                                                                                  |
 | `MIN_FREE_POOL_FOR_ON_DECK`    | 4     | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards)                                                                                                                                                                                                                                      |
@@ -430,7 +435,7 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `DRAFT_CAP_LARGE_THRESHOLD`    | 25    | Waiting player count at which the cap upgrades from 3 → 5.                                                                                                                                                         |
 | `DRAFT_CAP_XLARGE_THRESHOLD`   | 30    | Waiting player count at which the cap upgrades from 5 → 6.                                                                                                                                                         |
 | `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                              |
-| `MAX_OPPONENT_REPEATS`         | 3     | **Soft** cap on cross-net (opponent) appearances per session pair. Preference only — snakeDraft/rotatedDraft try to avoid it but degrade gracefully (never a stall).                                                |
+| `MAX_OPPONENT_REPEATS`         | 2     | **Soft** cap on cross-net (opponent) appearances per session pair (lowered 3→2, 2026-07). Preference only — snakeDraft/rotatedDraft try to avoid it but degrade gracefully (never a stall). Bites round 3+ (in round 2 no pair has met >once); round-2 opponent freshness is driven by the equal overlap weight above. |
 | `MAX_BADMINTON_SCORE`          | 31    | Maximum valid score per game. Enforced server-side via `scoreSchema` in `src/lib/schemas/match.ts` (canonical) and client-side in `use-score-form.ts` + `use-edit-match.ts`. **Draws (equal scores) rejected at both layers** via `.refine()` on the schema and explicit `a === b` guard in hooks. |
 
 #### Engine Capacity (`runEngineInternal`) — Dynamic Draft Cap
@@ -470,7 +475,7 @@ Published on-deck matches do **not** count against the cap — they are already 
 3. Soft gate check (skipped when bypassGate=true):
      if pool ≤ GATE_POOL_THRESHOLD AND activeCourts > 0
         AND maxWait < GATE_HOLD_MINUTES AND no Red Zone player → defer (return early)
-4. Pre-fetch recentRosters once (Fix 2: completed + in_progress + pending)
+4. Per slot: re-fetch recentRosters (sees sibling drafts from earlier slots of this burst; completed + in_progress + pending)
 5. For each slot in [0, slotsAvailable):
    a. Pool diversity cap (slots 1+): skip if estimatedWaiting < PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK
    b. runAlgorithm(anchor):
@@ -538,6 +543,7 @@ New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (
 - **Clear**: Organizer can discard a single on-deck match via `clearOnDeckMatch`; players return to `waiting`. Broadcast fires so affected players see a toast.
 - **Reorder**: On-deck matches can be drag-reordered. `reorderOnDeckMatches` bulk-updates `sort_order` on all affected matches. The panel holds a local `orderedMatches` state seeded from props; the prop-sync effect resolves incoming realtime `matches` against local state in three branches — (1) id-set changed → adopt server order; (2) same id-set **and** this client's own reorder is still round-tripping (`pendingReorderRef`) → merge field updates but keep the optimistic order; (3) same id-set, no local reorder pending → adopt the server's `sort_order` (this re-syncs a **co-organizer's** reorder, which arrives as the same id-set in a new order). `handleDragEnd` is async: it sets `pendingReorderRef` before the await, reverts to the pre-drag order on `{error}`, and clears the ref in `finally` (a hung/failed action never freezes re-sync). `isDraggingRef` still suppresses all prop-sync mid-drag.
 - **Cap Saturation Notice**: `CapSaturationNotice` banner appears when the engine's `cap_saturation` broadcast fires, alerting the organizer that `MAX_PARTNERSHIP_REPEATS` has been hit and manual assignment is needed.
+- **Reuse badge (equity signal, 2026-07)**: draft cards show an amber `N fresher waiting` chip (`ReuseBadge` in `sortable-card.tsx`, fed by `deriveReuseNotice` in `src/lib/derive-reuse-notice.ts` via a new `queue` prop) when the draft seats players with more games than the waiting-pool minimum while an equal-or-larger fresher cohort waits. Purely informational — publish is never blocked. Drafts only; skill-window-blind and held-draft pulled bodies are skipped by design (soft signal).
 
 ---
 
@@ -949,6 +955,23 @@ Organizer can soft-pause any player in the queue. Paused players:
 - Displayed with a distinct visual indicator (muted / dimmed row + pause icon)
 
 Does not affect `games_played`. Does not change `queue_status`.
+
+---
+
+### 3.14b Queue — List / By-Skill view toggle
+
+**Files:** `src/components/organizer/queue-control.tsx` (owns state + the toggle), `src/components/organizer/queue-skill-groups.tsx` (the grouped lens)
+
+The Queue & Match Control tab renders one of two lenses over the same queue data, chosen by a `List / By Skill` segmented control at the top of the panel. State is local to `QueueControl` (`view: "list" | "skill"`), **defaults to `"list"`, and is not persisted** (every mount opens on List).
+
+- **List** — the existing flat table (unchanged): all queue rows (waiting + on_deck + drafted), sorted by `status_priority` with paused sinking to the bottom; manual-match select-4, inline skill edit, PIN management, pause, checkout.
+- **By Skill** (`QueueSkillGroups`) — **waiting players only** (`status === "waiting"`, so on_deck/drafted are excluded), grouped into skill-tier bands ordered **Advanced → Beginner** (derived from `SKILL_LEVELS` numeric desc). Within each tier, rows are sorted **longest-wait-first**, with paused players sunk to the bottom of their tier. **Empty tiers are hidden.** The top non-paused row per tier is flagged "Longest waiting" (amber wait number); bottleneck rows go red. Tier identity is the `SKILL_META` dot hue; all other chrome uses `cc-*` tokens + clip-cut geometry.
+
+**Shared state, not a fork:** both lenses read the same `selected` set and call the same `QueueControl` handlers (`togglePlayer`, `handleSkillChange`, `handlePausePlayer`, `handleRemoveFromQueue`), so a manual-match selection survives switching views and feeds the same match bar. Checkout is offered on every waiting row in By-Skill (parity with List; locked rows never appear here).
+
+**Responsive:** viewport breakpoints (not container queries). Below `sm` each row is a two-line stack (name + hero wait on top; a 44px-tall tappable skill chip + games below); at/above `sm` it expands to a single row (checkbox · name · skill dropdown · games · wait · actions). Wait time and actions are always visible.
+
+**Accessibility:** the row is a plain `<div onClick>` (mouse convenience) with **no** widget role — the real nested `<input type="checkbox">` is the accessible, keyboard-operable selection control (avoids an ARIA nested-interactive violation and a duplicate tab stop). All tap targets ≥44px; focus rings use `ring-inset` so the clip-cut chamfer doesn't clip them.
 
 ---
 
@@ -1612,7 +1635,8 @@ src/
       active-courts.tsx          # Court cards, TeamsGrid, ScoreModal trigger, CourtTimeAlert
       on-deck-panel.tsx          # Pending match cards, swap flow, publish controls, H2HStrip
       score-modal.tsx            # Score entry dialog (single / best-of-3 / best-of-5)
-      queue-control.tsx          # Player queue table, manual match creation, pause, dnd-kit
+      queue-control.tsx          # Player queue table, manual match creation, pause, dnd-kit; List/By-Skill view toggle
+      queue-skill-groups.tsx     # "By Skill" queue lens — waiting players grouped by tier (Adv→Beg), longest-wait-first
       wait-time-monitor.tsx      # Bottleneck monitor (wait ≥ BOTTLENECK_THRESHOLD_MINUTES)
       match-history-panel.tsx    # Completed match history with edit/undo score + Fix Player Record trigger
       fix-record-sheet.tsx       # Historical roster correction Sheet — amber accent, 2-step flow (pick out → pick in)

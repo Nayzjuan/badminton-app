@@ -28,7 +28,8 @@
 // Per-slot query order inside runEngineInternal:
 //   Promise.all (after courts): v_queue_with_wait_time [0], matches draft count [1]
 //   soft gate (if triggered):   matches in_progress count
-//   fetchRecentRosters (once):  matches (+ match_players if non-empty)
+//   fetchRecentRosters (PER SLOT, at the top of each loop iteration):
+//                               matches (+ match_players if non-empty)
 //   fetchActivePool:            v_queue_with_wait_time, queue_entries
 //   fetchPartnershipCounts:     matches (+ match_players if non-empty)
 //   buildOverlapMap:            match_players, matches, match_players (if non-empty)

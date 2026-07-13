@@ -92,6 +92,16 @@ vi.mock("@/lib/realtime", () => ({
   },
 }));
 
+// ── Mock: next/navigation ─────────────────────────────────────
+// useLeaderboard now calls useVisibilityRefresh (→ useRouter) for the
+// foreground re-sync, and useClubSlug (→ usePathname). Same mock shape as
+// use-queue.test.ts.
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+  usePathname: () => "/leaderboard",
+}));
+
 // ── Helpers ───────────────────────────────────────────────────
 
 const mockGetSessionLeaderboard = getSessionLeaderboard as ReturnType<typeof vi.fn>;

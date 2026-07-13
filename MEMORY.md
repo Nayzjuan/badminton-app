@@ -5,7 +5,7 @@
 
 ---
 
-## 🆕 MATCHALERT TRANSITIONS + A11y — branch `feat/match-alert-transitions-a11y` (2026-07-13) — NOT on main
+## 🆕 MATCHALERT TRANSITIONS + A11y — branch `feat/match-alert-transitions-a11y` (2026-07-13)
 
 **Status: MERGED to main via PR (user go: "create the PR then merge"). tsc / eslint / `next build` clean. Review gate: LGTM ×2 (2 cosmetic notes).** Motion **verified via Web-Animations-API timeline scrubbing** of the real rendered layers (pause + step `currentTime`, sample computed opacity/transform) — the workaround for both browser panes reporting `visibilityState="hidden"` (rAF + CSS animation clocks frozen; wall-clock playback unobservable). Scrub caught + fixed a real bug: the original crossfade faded BOTH layers → combined coverage dipped to ~54% at t=150ms (~46% background bleed, a mid-dissolve flicker). Fix: outgoing layer stays fully opaque beneath; only the incoming fades in (`ma-fade-in`); `ma-fade-out` keyframe removed. Verified post-fix: outgoing op=1.00 across the full timeline, incoming 0→0.32→1.00; exit `ma-slide-out` op 1→0.68→0 + translateY 0→51px (=8% of frame), layer unmounts, region gone. Remaining untested (accepted): subjective device feel + actual screen-reader audio.
 
@@ -22,7 +22,7 @@
 
 ## 🆕 PLAYER-UI POLISH PASS + /critique FIXES (2026-07-13) — SHIPPED to main (`d419221`)
 
-**Status: BUILT on `main` working tree (uncommitted). tsc / eslint / `next build` all clean. Review gate: LGTM (3 minor non-blocking notes below).** Two-part task: (1) finish the deferred cosmetic/staleness polish; (2) run `/critique` on recent player+club UI and fix caught issues.
+**Status: COMMITTED to main as `d419221`. tsc / eslint / `next build` all clean. Review gate: LGTM (3 minor non-blocking notes below).** Two-part task: (1) finish the deferred cosmetic/staleness polish; (2) run `/critique` on recent player+club UI and fix caught issues. **Completes the player-side items of the 2026-07-11 entry's "Deferred (audit backlog)" list below** (History+Leaderboard visibility refresh, on-deck drag re-sync, match-history seq guard, skeletons, enter animations, Leave-Queue pending); the MatchAlert crossfade+exit landed separately via `feat/match-alert-transitions-a11y`.
 
 **Polish pass (5 shipped · 1 already-done · 1 non-existent · 1 deferred):**
 - **Foreground re-sync (visibilitychange).** `all-sessions-history.tsx` → `useVisibilityRefresh(fetchAll)` + a `fetchSeqRef` monotonic guard (was fetch-once-on-mount, no realtime → went stale after backgrounding on the standalone `/play` page). `use-leaderboard.ts` → hook-level `useVisibilityRefresh(() => { handleRefresh(); fetchMyStatsRef.current() })`; the existing 15 s poll + `matches` realtime only cover live-session/current-month and never fire instantly on unlock, so this also covers all-time/past-months + every standalone leaderboard mount. Each board fetch is seq-guarded → poll/visibility overlap is safe.
@@ -39,7 +39,104 @@
 
 **Review-gate minor notes:** boolean `pendingReorderRef` (vs counter); `fetchMyStats` itself not seq-guarded (pre-existing, benign); double `useVisibilityRefresh` `router.refresh()` on unlock (idempotent + 5 s-throttled).
 
-**Next:** commit (awaiting user go); optional follow-ups above; branch cleanup still pending (the merged resync/source branches).
+**Next:** optional follow-ups above; branch cleanup still pending (the merged resync/source branches).
+
+---
+
+## 🆕 UI TRANSITIONS + REALTIME FRESHNESS PASS — 2026-07-11
+
+**Status: BUILT + validated (tsc/eslint/build clean, 669 tests green) + reviewed LGTM.** From a player+organizer audit for transition-race flashes, auto-refresh/staleness gaps, and pop-in smoothness. Four high-value fixes shipped:
+
+1. **Player match-END flash (A)** — `my-status-tab.tsx`. PR #20's "any non-waiting → Match Forming" rule also fired on the way OUT of a match (queue row reads `playing` a beat before the match hook clears), so a just-finished player briefly saw "you've been selected". Split the branch: `drafted`/`on_deck` → "Match Forming" (pre-match); `playing` (transient, hasActiveMatch=false) → neutral "Wrapping up…". A genuinely-playing player still gets the MatchAlert overlay (never this card).
+2. **Player court-call auto-focus (C)** — `player-dashboard.tsx`. Effect switches `activeTab` to "status" on `hasActiveMatch` false→true, so a court call isn't missed from Live Courts/Waitlist/Leaderboard (the takeover is scoped to the status tabpanel).
+3. **Organizer visibility + reconnect re-sync (2.1, headline)** — `use-organizer-data.ts`. The organizer never adopted `useVisibilityRefresh` (player-only), so courts/queue/matches/on-deck showed pre-sleep state after tablet sleep/tab-switch/socket blip (Supabase doesn't replay missed events). Now re-fetches all three slices on tab-wake AND on the `realtimeConnected` false→true edge.
+4. **Organizer wait-time tick (2.2)** — `use-organizer-data.ts`. `wait_minutes`/`is_bottleneck` (from `v_queue_full_with_wait_time`) only recomputed on queue mutations, so the Monitor froze during quiet waiting. Added a 45s visible-only `fetchQueue` poll.
+
+**Deferred (audit backlog — polish, lower churn):** player History+Leaderboard not in the visibility-refresh path (stale after backgrounding until next match event); co-organizer per-table refetch coalescing (sub-second count flicker); on-deck drag-drop re-sync after a co-org clear; draft-ready toast debounce on transient 0-refetch; match-history seq guard; initial-load skeletons; card/row enter animations; inline Leave-Queue pending state; MatchAlert enter/exit + pending→in_progress crossfade.
+
+---
+
+## 🆕 CLUB-SCOPED /organizer REDIRECT — RESYNCED to main, 2026-07-11 (orig. `feat/club-scoped-organizer-landing`)
+
+**Status: cherry-picked onto main, validated (tsc/lint/build clean, 669 tests green), review-gated.** Was built + reviewed earlier, never merged; user opted to merge now.
+
+**What:** `/organizer` is now a **redirect shim** → resolves the caller's organizing club via `getPrimaryClubSlug` (club of most-recent session, same resolver `/play` uses) and 308s to `clubOrganizer(slug)` = `/c/[slug]/organizer`; no club → `/welcome`. NEW `src/app/c/[clubSlug]/(full)/organizer/page.tsx` renders the `OrganizerEntry` hub **scoped to ONE club** (sessions `.eq(club_id)`, creation attaches to that club via `soloClubId=club.id`), member-gated by the `(full)` layout. `SessionWithStats` type moved from `@/app/organizer/page` into `organizer-entry.tsx` (the shim no longer defines it). No redirect loop (target renders, never bounces back). Completes the organizer slice of the club-routing migration; with one club today it resolves to `/c/chillax/organizer`.
+
+**Merge note:** only conflict was `/organizer/page.tsx` (main's full-render vs the shim) — resolved by taking the shim. `organizer-entry.tsx` merged clean.
+
+---
+
+## 🆕 EARLY-ROUND MATCHMAKING DIVERSITY — RESYNCED to main, 2026-07-11 (orig. `feat/first-round-diversity`)
+
+**Status: MERGED — cherry-picked onto current main, all 669 unit tests green.** Originally built + reviewed in an earlier session but never merged; resurrected here (2 commits, net +515 lines). Verified genuinely absent from main before merging (main only had `MAX_OPPONENT_REPEATS=3`).
+
+**What (net effect after the R2 drop):**
+- **Fresh-first rule** — `scoreCandidates` penalises candidates per game above the waiting-pool minimum (`GAMES_AHEAD_PENALTY=10_000`; Red-Zone variant `=100` so urgency always wins). Stops early round-2 matches from recycling just-played alumni.
+- **Opponent diversity** — `buildOverlapMap` opponent weight raised to equal teammate weight via named `OVERLAP_WEIGHT_TEAMMATE = OVERLAP_WEIGHT_OPPONENT = 2`; re-facing a round-1 opponent is now deprioritised as strongly as re-partnering (fires on a single prior meeting → drives round-2 opponent freshness). `MAX_OPPONENT_REPEATS` tightened 3 → 2.
+- **`derive-reuse-notice.ts`** (new) + reuse badge on `sortable-card.tsx` — surfaces when a draft reuses a recent partner/opponent.
+- **R2 (all-time cold-start seeding) was DROPPED** per user decision — it only influenced round 1 off a weak all-time signal, orthogonal to the round-2 goal. `fetchHistoricalPartnerWeights`/`seedColdStartOverlap`/`HISTORY_SEED_*` removed.
+- Files: `matchmaking-core.ts`, `matchmaking-db.ts`, `constants.ts`, `matchmaking.ts`, `on-deck-panel.tsx`, `sortable-card.tsx`, `derive-reuse-notice.ts` (new), `early-diversity.test.ts` (new, 256 lines).
+
+**Also fixed here (stale test left red by PR #20):** `queue-sub-tab.test.tsx` QST-3 asserted the pre-#20 behavior (on_deck → "Ready to play?"); updated to assert the "Match Forming" holding card. Main's suite was red on this before; now green. (Lesson: run `npm run test:unit`, not just tsc/lint/build, for UI-behavior changes.)
+
+---
+
+## 🆕 AUDIT TRAIL ON CLEAR/CANCEL PATHS — FIXED on `fix/clear-cancel-audit-trail`, 2026-07-11
+
+**Status: BUILT + validated + reviewed (LGTM).** tsc/eslint/`next build` clean. Closes the forensics gap from the "Jason's match disappeared" incident: clears/cancels hard-DELETE matches and previously wrote NO `match_events`, so "who cleared this?" was unanswerable (confirmed on the 07/09 session: 0 clear/cancel events, only 7 orphaned `created` rows).
+
+**What:** wired the three previously-silent leaver paths to log a `cancelled` `match_event` via the existing best-effort `logMatchEvent` helper (the code's own §14.E-1 TODO). **No migration** — `event_type` is `text`, `'cancelled'` already allowed, and `record_match_event` already exists.
+
+- **`clearOnDeckMatch`** (single on-deck Clear — the Jason path): logs `cancelled` w/ actor (organizer) + roster snapshot + `created_method` + `is_published`, `payload.reason='on_deck_cleared'`.
+- **`clearAllUnpublishedDrafts`** (batch cap-reset / close): one event per swept draft; TS pre-fetch filter mirrors the RPC exactly (`pending` + `is_published=false` + `is_held IS NOT TRUE`); `reason='batch_clear_unpublished'`.
+- **`checkoutPlayer`** (departing player drops a draft <4): logs each returned `cancelled_match_id`; `actorId=null`→`actor_type='system'`, `payload={reason:'checkout_below_min', trigger_player_id}`.
+
+**Files:** `src/app/actions/match-drafts.ts` (+`fetchRosterSnapshots` helper), `src/app/actions/queue.ts`, `src/lib/match-event-log.ts` (doc), `src/types/database.ts` (corrected stale `checkout_player_cleanup_drafts` Returns `void`→`{cancelled_match_id}[]`).
+
+**Design notes:** delete paths log BEFORE the delete (FK valid at insert; `ON DELETE SET NULL` preserves `match_id_snapshot` — same as `created` events). Best-effort (never blocks the action). **Known caveat:** logging-before-delete means a domain error / lost race after the log leaves a false `cancelled` row — narrow window, unavoidable for FK validity, acceptable per §14.E-2. The RPC-not-found fallback loops (dead code in prod) are intentionally un-audited.
+
+**Still pending (separate):** stop `clear_all_unpublished_drafts` from wiping *manual* unpublished drafts (no `created_method` filter) — the batch-clear footgun.
+
+---
+
+## 🆕 PLAYER-VIEW "KICKED OUT OF QUEUE" TRANSITION FLASH — FIXED on `fix/player-queue-transition-flash`, 2026-07-11
+
+**Status: BUILT + validated + reviewed (LGTM).** tsc/eslint/`next build` clean. Reported: Jason's player view briefly looked like he got kicked out of the queue / dropped to last, then got the "you have a match" alert.
+
+**Root cause:** the player "My Status" view is driven by two INDEPENDENT realtime hooks — `useQueue` (queue_entries channel → `myEntry.status`) and `usePlayerMatch` (matches/match_players channels → `currentMatch`/`hasActiveMatch`). On a match assignment the queue row flips `waiting→on_deck` a beat before `usePlayerMatch` loads the published match. `QueueSubTab` (my-status-tab.tsx) had branches for `paused`/`drafted`/`waiting` but **not `on_deck`/`playing`**, so during that window the player fell through to the "Ready to play?" not-in-queue join screen (position numeral gone → reads as "kicked out / back of line"), then the MatchAlert overlay slid up. Happened on EVERY assignment, not just the cleared-match incident.
+
+**Fix (1 line, `my-status-tab.tsx`):** broadened the holding-card branch from `myEntry?.status === "drafted"` to `myEntry && myEntry.status !== "waiting"` — so drafted/on_deck/playing all show the stable "Match Forming" card. Path is now `#position → Match Forming → You have a match`, no join-screen flash. Order-safe (paused checked first; waiting after; genuinely-not-in-queue still hits the CTA). For a stable on_deck/playing row `hasActiveMatch` is true → MatchAlert overlay + `MyStatusTab` returns null, so the holding card is only ever a sub-second bridge.
+
+**Known minor (accepted):** the "Match Forming" copy is slightly off for the sub-second `playing` bridge right after a match completes (queue row lingers at `playing` a beat while `currentMatch` clears). Strictly better than the old join-screen flash; not worth per-status copy branching.
+
+---
+
+## 🆕 QUEUE — "BY SKILL" VIEW (organizer) — BUILT on `chore/club-slug-chillax`, 2026-07-10
+
+**Status: BUILT + validated, NOT yet merged.** tsc/eslint/`next build` clean. Planned via `/impeccable shape` (brief user-approved) + mock ([artifact](https://claude.ai/code/artifact/56b5d902-7078-4824-9f0d-35e6a3423a7b)). Review gate: adversarial multi-dimension Workflow (4 finders × independent verify) → 8 confirmed findings, **all fixed**, re-review **PASS / no regressions**.
+
+**What:** a `List / By Skill` segmented toggle on the Queue & Match Control tab. By-Skill groups **waiting-only** players into tiers **Advanced→Beginner** (empty tiers hidden), **longest-wait-first** within a tier, paused sunk to bottom, top non-paused row flagged "Longest waiting". Fully interactive (shares `QueueControl` selection + handlers): select-4, inline skill edit, pause, checkout.
+
+**Files:** NEW `src/components/organizer/queue-skill-groups.tsx`; MODIFIED `src/components/organizer/queue-control.tsx` (view state `"list"|"skill"`, default **list**, not persisted; existing flat table byte-unchanged inside the `list` branch).
+
+**User decisions:** in-panel toggle (not a new tab) · fully interactive · waiting-only, hide empty tiers · Advanced→Beginner · mobile skill = compact tappable chip · longest-emphasis per-tier · always open on List.
+
+**Design/a11y notes (from review fixes):** row is a plain `<div onClick>` with NO widget role — the nested `<input type=checkbox>` is the accessible selection control (avoids ARIA nested-interactive + duplicate tab stop + keydown-swallow). Tap targets ≥44px (toggle, mobile skill chip). Focus rings use `ring-inset` (clip-cut chamfer would otherwise clip them). Tier hue = `SKILL_META` dot; chrome = `cc-*` tokens. Responsive via viewport `sm:` breakpoints (stacked <sm, single-row ≥sm).
+
+**Next:** commit + push `chore/club-slug-chillax`; open PR / merge on user's go.
+
+---
+
+## 🆕 CLUB SLUG RENAME `legacy` → `chillax` — SHIPPED (main `c7f42f7`, PR #17, 2026-07-10)
+
+**Status: DEPLOYED to prod + live** (Vercel `dpl_2Be9…` READY, prod alias `badminton-app-dusky-six.vercel.app`). tsc clean · Vercel build clean. External curl-verify not possible from the sandbox (agent proxy denies outbound to the Vercel host — 403 at the proxy, not the app).
+
+**What:** the founding "absorb all existing sessions" club (**CHILLAX**, id `00000000-…-0001`) was seeded with slug `legacy`; renamed so its URLs read `/c/chillax/...`.
+
+- **DB (prod, applied directly):** `UPDATE clubs SET slug='chillax' WHERE slug='legacy'`. Club is referenced by **UUID** everywhere (sessions, members, matchmaking) — no other data touched. `slug` is UNIQUE; `chillax` was unused.
+- **`next.config.ts` `async redirects()`:** permanent `/c/legacy/:path* → /c/chillax/:path*` so pre-rename bookmarks, live-session QR codes, and push deep-links keep resolving.
+
+**Safety:** `'legacy'` is NOT hardcoded in any runtime path (only comments in `share-session-dialog.tsx` / `clubs.ts`, and historical migrations) — every route resolves the slug dynamically from the DB. Realtime channels key on session UUID (not slug), so the live session at rename time was unaffected; in-app nav switched to the new slug immediately. Only gap was hard refreshes of already-open `/c/legacy/...` tabs during the ~1-min deploy window, closed by the redirect.
 
 ---
 
