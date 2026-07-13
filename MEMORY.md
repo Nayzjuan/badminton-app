@@ -5,6 +5,29 @@
 
 ---
 
+## 🆕 PLAYER-UI POLISH PASS + /critique FIXES (2026-07-13) — BUILT, NOT COMMITTED
+
+**Status: BUILT on `main` working tree (uncommitted). tsc / eslint / `next build` all clean. Review gate: LGTM (3 minor non-blocking notes below).** Two-part task: (1) finish the deferred cosmetic/staleness polish; (2) run `/critique` on recent player+club UI and fix caught issues.
+
+**Polish pass (5 shipped · 1 already-done · 1 non-existent · 1 deferred):**
+- **Foreground re-sync (visibilitychange).** `all-sessions-history.tsx` → `useVisibilityRefresh(fetchAll)` + a `fetchSeqRef` monotonic guard (was fetch-once-on-mount, no realtime → went stale after backgrounding on the standalone `/play` page). `use-leaderboard.ts` → hook-level `useVisibilityRefresh(() => { handleRefresh(); fetchMyStatsRef.current() })`; the existing 15 s poll + `matches` realtime only cover live-session/current-month and never fire instantly on unlock, so this also covers all-time/past-months + every standalone leaderboard mount. Each board fetch is seq-guarded → poll/visibility overlap is safe.
+- **On-deck drag re-sync (REAL bug fix).** `on-deck-panel.tsx`: the prop-sync effect's "same id-set → keep local order" branch permanently discarded a co-organizer's reorder (same matches, new order) and never reverted a failed self-reorder. Added `pendingReorderRef` gating a 3rd branch — same-set + not-pending → `setOrderedMatches(matches)` (adopt server order). `handleDragEnd` is now `async`, sets the ref **before** the await, reverts to the pre-drag order on `result.error`, clears in `finally`. Boolean (not counter) → a rare, self-healing revert-flicker if two drags overlap one round-trip; strictly better than the prior permanent divergence.
+- **Initial-load skeletons.** `my-status-tab` / `live-courts-tab` / `waitlist-tab` replaced bare "Loading…" text with `animate-pulse` skeletons shaped like the real content (+ `role="status"` + `aria-busy`). On-background shapes use `bg-slate-200 dark:bg-muted` (bare `bg-muted` washed out on the pale light canvas, Δ0.03 L). Waitlist skeleton header sized to the real ●LIVE/Lineup+count so the list doesn't jump. `loading` is one-shot (true only at mount) → skeletons never re-flash on realtime refetch.
+- **Card enter animation.** `animate-in fade-in slide-in-from-bottom-2 duration-300` on Live-Courts `CourtMatchCard` only. Stable `match.id` keys → no replay on realtime refetch (verified; reduced-motion covered globally). Waitlist row enter-anim was added then **removed** after critique (dense, tab-switch-revisited board + bright "you"-row shimmer on every visit fought athletic-precision / position-is-identity).
+- **Leave-Queue inline pending** — already shipped ("Leaving…" + disabled). No-op.
+- **Co-organizer count-flicker coalescing** — NO SUCH FEATURE (exhaustive search: no organizer-count UI anywhere). Skipped as net-new, not polish.
+- **MatchAlert enter/exit crossfade — DEFERRED.** Enter slide exists. Exit needs a deferred-unmount presence wrapper caching the last match + its interactive/realtime ScoreInputCard during the fade → hazard on the critical live-scoring overlay. Related critique catch: the tuned 380 ms in_progress slide is **dead** on the normal pending→in_progress path (component never re-keyed); a `key={status}` remount would revive it but flashes amber→dark-bg→rising-navy on the primary dark theme. Both bundled as a follow-up needing device testing.
+
+**/critique (impeccable) results.** Deterministic detector CLEAN (`[]`) on changed player+club TSX. Two independent LLM design reviews vs. the Chillax sporty-HUD brand. **Fixed now** (all low-risk class/contrast/safety/parity): pending amber overlay missing `overflow-y-auto` (Leave Queue clipped off-screen on short phones — control accessibility); Leave-Queue amber-tone `text-red-700→red-950`; reserved-strip detail dropped `/70` (light ~3:1→AA); join-screen eyebrow `text-amber-600→700`; skeleton light-mode visibility; "you"-row dim labels `/0.65→/0.82`.
+
+**Flagged for user (design-intent / needs SR or device testing — NOT changed blind):** indigo "you" row (off the emerald/amber/teal palette + inconsistent with the leaderboard's amber "you"; an AI-indigo tell, though white text is 6.8:1); match-alert `role="alert"`→region+`role=status` live-region + focus management + pending announcement; waitlist positional opacity-fade AA (deliberate hierarchy vs. contrast); cc-t3 club token ~3:1 (systemic); sub-44 px tap targets on club admin/list; missing error state on the 3 prop-driven player tabs (fall through to "empty" on fetch fail).
+
+**Review-gate minor notes:** boolean `pendingReorderRef` (vs counter); `fetchMyStats` itself not seq-guarded (pre-existing, benign); double `useVisibilityRefresh` `router.refresh()` on unlock (idempotent + 5 s-throttled).
+
+**Next:** commit (awaiting user go); optional follow-ups above; branch cleanup still pending (the merged resync/source branches).
+
+---
+
 ## 🆕 PLATFORM-OWNER MODEL + CLUB-SCOPED LANDING — SHIPPED (main `1bd4769`, 2026-07-05)
 
 **Status: DEPLOYED to prod + verified live.** tsc/lint/build clean · review gate **Minor issues** (all 5 fixed) · E2E preview green (5 load-flakes + 1 test-data bug fixed: I-2a) · prod-verified (non-owner org-bot probe: `/clubs`→307→`/play`, `/clubs/new`→307→`/play`, `/play`→200, `/welcome`→307→`/play`; zero runtime errors).

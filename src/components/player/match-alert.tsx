@@ -313,7 +313,7 @@ export function MatchAlert({
     <div
       role="alert"
       aria-label="You're on deck — a court is opening soon"
-      className="absolute inset-0 z-30 flex flex-col"
+      className="absolute inset-0 z-30 flex flex-col overflow-y-auto"
       style={{
         backgroundColor: "oklch(0.78 0.17 62)",
         transform: visible ? "translateY(0)" : "translateY(100%)",
@@ -412,7 +412,7 @@ function UpcomingReservedStrip({ ready }: { ready: boolean }) {
         <p className="text-[11px] font-extrabold uppercase tracking-[0.12em] text-amber-700 dark:text-amber-300">
           {heading}
         </p>
-        <p className="mt-0.5 text-[11px] leading-snug text-amber-700/70 dark:text-amber-300/70">
+        <p className="mt-0.5 text-[11px] leading-snug text-amber-700 dark:text-amber-300">
           {detail}
         </p>
       </div>
@@ -456,7 +456,7 @@ function LeaveQueueButton({
         disabled:opacity-50 disabled:cursor-not-allowed
         ${
           tone === "amber"
-            ? "border border-amber-900/30 bg-amber-900/10 text-red-700 hover:bg-amber-900/15"
+            ? "border border-amber-900/30 bg-amber-900/10 text-red-950 hover:bg-amber-900/15"
             : "border border-border dark:border-slate-700/60 bg-destructive/5 dark:bg-slate-900/40 text-destructive dark:text-red-400 hover:bg-destructive/10 dark:hover:bg-slate-800/50"
         }`}
     >

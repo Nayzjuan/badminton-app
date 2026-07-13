@@ -68,8 +68,16 @@ export function MyStatusTab({
   }
 
   // ── Loading ─────────────────────────────────────────────────
+  // Skeleton shaped like the real content below (sub-tab bar + QueueStatus
+  // card) so the first paint doesn't jump. `loading` is set true once on
+  // mount and never re-enters, so this renders exactly once — no flicker.
   if (queueLoading || matchLoading) {
-    return <div className="py-16 text-center text-sm text-muted-foreground">Loading...</div>;
+    return (
+      <div className="space-y-5" role="status" aria-busy="true" aria-label="Loading your status">
+        <div className="h-11 rounded-xl bg-slate-200 dark:bg-muted animate-pulse" />
+        <div className="h-52 rounded-2xl bg-slate-200 dark:bg-muted animate-pulse" />
+      </div>
+    );
   }
 
   return (

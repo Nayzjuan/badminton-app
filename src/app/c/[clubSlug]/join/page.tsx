@@ -85,7 +85,7 @@ export default async function ClubJoinPage({ params, searchParams }: ClubJoinPag
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12">
       <div className="mb-8 w-full max-w-sm sm:max-w-md">
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center dark:border-amber-800/50 dark:bg-amber-950/20">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-600 dark:text-amber-400">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400">
             {sessionName ? "Joining Session" : "Joining Club"}
           </p>
           <h1 className="text-xl font-black tracking-tight text-foreground">

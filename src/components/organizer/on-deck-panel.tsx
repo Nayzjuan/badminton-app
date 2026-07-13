@@ -217,6 +217,11 @@ function OnDeckPanelInner({
 
   // Suppress real-time prop updates during an active drag.
   const isDraggingRef = useRef(false);
+  // True only while THIS client's own reorder is round-tripping to the server.
+  // Gates the "same id-set → keep local order" branch below so it protects an
+  // in-flight optimistic reorder but does NOT permanently discard a
+  // co-organizer's reorder (which arrives as the same id-set in a new order).
+  const pendingReorderRef = useRef(false);
   const [orderedMatches, setOrderedMatches] = useState<EnrichedMatch[]>(matches);
 
   useEffect(() => {
@@ -240,8 +245,17 @@ function OnDeckPanelInner({
       // Clear any stale Publish All error — the draft set has changed so
       // the previous failure no longer applies to the new batch.
       setPublishAllError(null);
-    } else {
+    } else if (pendingReorderRef.current) {
+      // Our own reorder is still in flight — keep the optimistic order but
+      // merge in any field updates (is_published flip, player swap) so those
+      // aren't lost while the sort_order write round-trips.
       setOrderedMatches((prev) => prev.map((old) => matches.find((m) => m.id === old.id) ?? old));
+    } else {
+      // Same id-set, no local reorder pending → adopt the server's order.
+      // `matches` is already sort_order-ordered AND field-fresh, so this
+      // re-syncs a co-organizer's reorder that the merge branch above would
+      // otherwise silently discard indefinitely.
+      setOrderedMatches(matches);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches]);
@@ -263,7 +277,7 @@ function OnDeckPanelInner({
     setActiveId(active.id as string);
   }
 
-  function handleDragEnd({ active, over }: DragEndEvent) {
+  async function handleDragEnd({ active, over }: DragEndEvent) {
     isDraggingRef.current = false;
     setActiveId(null);
 
@@ -273,9 +287,23 @@ function OnDeckPanelInner({
     const newIndex = orderedMatches.findIndex((m) => m.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
 
+    const prevOrder = orderedMatches;
     const reordered = arrayMove(orderedMatches, oldIndex, newIndex);
     setOrderedMatches(reordered);
-    onReorderMatches(reordered.map((m) => m.id));
+    // Hold the optimistic order against incoming realtime refetches until the
+    // server write resolves (set BEFORE the await so no refetch slips through).
+    pendingReorderRef.current = true;
+    try {
+      const result = await onReorderMatches(reordered.map((m) => m.id));
+      if (result.error) {
+        // Server rejected/partially failed the reorder — revert to the
+        // pre-drag order, matching how handleClear/handlePublish revert.
+        setOrderedMatches(prevOrder);
+      }
+    } finally {
+      // Always clear — a thrown or hung action must never freeze re-sync.
+      pendingReorderRef.current = false;
+    }
   }
 
   function handleDragCancel() {

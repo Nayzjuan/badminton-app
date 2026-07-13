@@ -536,7 +536,7 @@ New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (
 - **Swap flow**: Long-press / click a player pill → opens `SwapSheet` → pick a bench player → calls `swapPlayerInMatch` server action.
 - **Cross-match swap (Tap-to-Swap v2)**: Click a player in match A, then a player in match B → calls `swapMatchPlayers` RPC (atomic two-match swap). This replaces the original bench-only swap with direct match-player swapping.
 - **Clear**: Organizer can discard a single on-deck match via `clearOnDeckMatch`; players return to `waiting`. Broadcast fires so affected players see a toast.
-- **Reorder**: On-deck matches can be drag-reordered. `reorderOnDeckMatches` bulk-updates `sort_order` on all affected matches.
+- **Reorder**: On-deck matches can be drag-reordered. `reorderOnDeckMatches` bulk-updates `sort_order` on all affected matches. The panel holds a local `orderedMatches` state seeded from props; the prop-sync effect resolves incoming realtime `matches` against local state in three branches — (1) id-set changed → adopt server order; (2) same id-set **and** this client's own reorder is still round-tripping (`pendingReorderRef`) → merge field updates but keep the optimistic order; (3) same id-set, no local reorder pending → adopt the server's `sort_order` (this re-syncs a **co-organizer's** reorder, which arrives as the same id-set in a new order). `handleDragEnd` is async: it sets `pendingReorderRef` before the await, reverts to the pre-drag order on `{error}`, and clears the ref in `finally` (a hung/failed action never freezes re-sync). `isDraggingRef` still suppresses all prop-sync mid-drag.
 - **Cap Saturation Notice**: `CapSaturationNotice` banner appears when the engine's `cap_saturation` broadcast fires, alerting the organizer that `MAX_PARTNERSHIP_REPEATS` has been hit and manual assignment is needed.
 
 ---
@@ -1416,7 +1416,7 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 
 **Monotonic sequence counter (`fetchActiveMatchesSeq`, `fetchQueueSeq`):** Each fetch call increments a counter; only the highest-sequence result is applied. Discards stale concurrent responses from race conditions.
 
-**Page visibility refresh:** `use-visibility-refresh.ts` — triggers a data refresh when the tab regains focus (handles mobile app-switch scenarios where Realtime may have missed events).
+**Page visibility refresh:** `use-visibility-refresh.ts` — triggers a data refresh when the tab regains focus (handles mobile app-switch scenarios where Realtime may have missed events). Wired in `player-dashboard.tsx` (queue/match/session), and (2026-07-13) also in `all-sessions-history.tsx` (the standalone `/play` history has no realtime — `fetchAll` gained a `fetchSeqRef` guard for the now-concurrent fetch path) and hook-level in `use-leaderboard.ts` (refetches the active board + `fetchMyStats`; the 15 s poll + `matches` realtime there only cover a live session / current month, so this is the only freshness path for all-time / past-month boards and the only *immediate* refetch on unlock). Double-firing `router.refresh()` on the player leaderboard tab (dashboard + hook instances) is idempotent + 5 s-throttled.
 
 ---
 

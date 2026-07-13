@@ -27,7 +27,27 @@ export function LiveCourtsTab({
   myPlayerId,
 }: LiveCourtsTabProps) {
   if (loading) {
-    return <div className="py-16 text-center text-sm text-muted-foreground">Loading courts...</div>;
+    // Two card-shaped skeletons matching CourtMatchCard's header + roster grid.
+    // `loading` flips true→false once per mount, so this shows only on first load.
+    return (
+      <div className="space-y-4" role="status" aria-busy="true" aria-label="Loading courts">
+        {[0, 1].map((i) => (
+          <div
+            key={i}
+            className="rounded-2xl overflow-hidden border border-border bg-card shadow-sm"
+          >
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+              <div className="h-3 w-24 rounded-full bg-muted animate-pulse" />
+              <div className="h-4 w-20 rounded-full bg-muted animate-pulse" />
+            </div>
+            <div className="grid grid-cols-2 gap-4 p-4">
+              <div className="h-16 rounded-xl bg-muted animate-pulse" />
+              <div className="h-16 rounded-xl bg-muted animate-pulse" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   }
 
   const hasNothing = inProgressMatches.length === 0 && onDeckMatches.length === 0;
@@ -147,13 +167,16 @@ function CourtMatchCard({
   return (
     <div
       className={
+        // Enter animation plays only on true DOM insertion (first load, a
+        // genuinely new card, or a tab-switch remount) — stable `match.id`
+        // keys mean realtime refetches move/patch nodes without replaying it.
         isOnDeck
-          ? "rounded-2xl overflow-hidden shadow-sm border border-amber-100 dark:border-amber-500/20 bg-card"
+          ? "rounded-2xl overflow-hidden shadow-sm border border-amber-100 dark:border-amber-500/20 bg-card animate-in fade-in slide-in-from-bottom-2 duration-300"
           : // bg-card: oklch(1 0 0) light / oklch(0.11 0.016 238) dark — matches original
             // dark value (0.11 ≈ old hardcoded 0.10) while being white in light mode.
             // borderColor: transparent (in style) lets the emerald ring-shadow be the
             // sole border, avoiding a double-border with Tailwind's `border` class.
-            "rounded-2xl overflow-hidden shadow-sm border bg-card"
+            "rounded-2xl overflow-hidden shadow-sm border bg-card animate-in fade-in slide-in-from-bottom-2 duration-300"
       }
       style={
         isOnDeck

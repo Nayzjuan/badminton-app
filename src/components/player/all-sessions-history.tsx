@@ -13,10 +13,11 @@
 // No real-time subscription — lobby view is read-only recap.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { History, Sparkles } from "lucide-react";
 import { getAllSessionsHistory } from "@/app/actions/history";
+import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
 import type { MatchHistory as MatchHistoryType } from "@/types/database";
 import type { SessionMeta } from "@/app/actions/history";
 
@@ -299,9 +300,15 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
+  // Monotonic guard — a foreground-visibility refetch can now race the initial
+  // (or a previous) fetch. Drop any response that a newer fetch has superseded.
+  const fetchSeqRef = useRef(0);
+
   const fetchAll = useCallback(async () => {
+    const seq = ++fetchSeqRef.current;
     setFetchError(null);
     const result = await getAllSessionsHistory(playerId);
+    if (seq !== fetchSeqRef.current) return; // stale — a newer fetch is in flight
 
     if (!result.success) {
       setFetchError("Failed to load match history. Please refresh.");
@@ -371,6 +378,11 @@ export function AllSessionsHistory({ playerId }: AllSessionsHistoryProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAll();
   }, [fetchAll]);
+
+  // Re-fetch when the tab returns to the foreground (phone unlock / tab
+  // restore). This is a standalone /play page with no realtime subscription,
+  // so without this the history silently goes stale after backgrounding.
+  useVisibilityRefresh(fetchAll);
 
   if (loading) {
     return (

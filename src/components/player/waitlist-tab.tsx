@@ -4,7 +4,7 @@
 // WaitlistTab — Live Standings Board
 // ============================================================
 // Sporty scoreboard: zero-padded Barlow Condensed rank nums,
-// "you" row in electric indigo canvas, JetBrains Mono GP stats,
+// "you" row in amber canvas, JetBrains Mono GP stats,
 // BEG/INT/ADV abbreviations. One clean ordered list — no zone
 // labels. Rank colour fades with position for visual hierarchy.
 //
@@ -30,21 +30,56 @@ const SKILL_ABBREV: Record<SkillLevel, string> = {
   advanced: "ADV",
 };
 
-// Electric indigo — the "you are here" colour.
-// Fixed OKLCH so it renders identically in light and dark modes.
-// White text (oklch 0.97) on oklch(0.55 L) ≈ 5:1 contrast.
-const YOU_BG = "oklch(0.55 0.24 270)";
-const YOU_TEXT = "oklch(0.97 0.008 270)";
-const YOU_TEXT_DIM = "oklch(0.97 0.008 270 / 0.65)";
-const YOU_RANK = "oklch(0.86 0.14 270)";
+// Amber — the app-wide "you are here" colour. Matches the leaderboard's amber
+// YouStrip and the MatchAlert on-deck canvas so "amber = you" reads the same
+// everywhere. A bright amber fill (fixed OKLCH, identical in both themes) with
+// dark warm text keeps the "you" row the boldest thing in the ranked list, and
+// clearly distinct from the light-tint (`bg-amber-50/60`) on-deck rows.
+// Dark text (L≈0.24) on the bright amber canvas (L≈0.78) ≈ 7:1.
+const YOU_BG = "oklch(0.78 0.17 62)";
+const YOU_TEXT = "oklch(0.24 0.05 62)";
+const YOU_TEXT_DIM = "oklch(0.24 0.05 62 / 0.72)";
+const YOU_RANK = "oklch(0.32 0.10 62)";
 
 export function WaitlistTab({ waitlist, myPlayerId, loading }: WaitlistTabProps) {
   if (loading) {
+    // Skeleton shaped like the "Lineup" board header + ranked rows (same
+    // 56px/1fr/auto grid). Renders once per mount — `loading` never re-enters.
     return (
-      <div className="py-16 text-center">
-        <p className="font-mono text-[11px] uppercase tracking-[0.20em] text-muted-foreground">
-          Loading…
-        </p>
+      <div role="status" aria-busy="true" aria-label="Loading lineup">
+        {/* Header block sized to match the real "● LIVE / Lineup" + count so
+            the ranked list below doesn't shove down when data lands. */}
+        <div className="flex items-end justify-between pb-3 border-b-[2px] border-foreground/15">
+          <div>
+            <div className="mb-2 h-2.5 w-14 rounded-full bg-slate-200 dark:bg-muted animate-pulse" />
+            <div className="h-12 w-40 rounded-lg bg-slate-200 dark:bg-muted animate-pulse" />
+          </div>
+          <div className="flex flex-col items-end">
+            <div className="h-12 w-14 rounded-lg bg-slate-200 dark:bg-muted animate-pulse" />
+            <div className="mt-1.5 h-2 w-10 rounded-full bg-slate-200 dark:bg-muted animate-pulse" />
+          </div>
+        </div>
+        <div className="mt-1">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="grid items-center py-3 border-b border-border/50"
+              style={{
+                gridTemplateColumns: "56px 1fr auto",
+                gap: "0 10px",
+                paddingLeft: "4px",
+                paddingRight: "4px",
+              }}
+            >
+              <div className="h-7 w-8 rounded bg-slate-200 dark:bg-muted animate-pulse" />
+              <div className="space-y-1.5">
+                <div className="h-4 w-32 rounded-full bg-slate-200 dark:bg-muted animate-pulse" />
+                <div className="h-2.5 w-10 rounded-full bg-slate-200 dark:bg-muted animate-pulse" />
+              </div>
+              <div className="h-6 w-8 rounded bg-slate-200 dark:bg-muted animate-pulse ml-auto" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -145,7 +180,7 @@ function WaitlistRow({
   const isTop = position <= 4;
   const isOnDeck = entry.status === "on_deck";
 
-  // ── "You" row — electric indigo canvas ───────────────────
+  // ── "You" row — amber canvas (app-wide "you" hue) ─────────
   if (isMe) {
     return (
       <div
@@ -191,7 +226,7 @@ function WaitlistRow({
               You
             </span>
             {isOnDeck && (
-              <span className="shrink-0 rounded-full bg-amber-400/30 px-2 py-0.5 font-mono text-[9px] font-extrabold uppercase tracking-[0.18em] text-amber-200">
+              <span className="shrink-0 rounded-full bg-amber-900/15 px-2 py-0.5 font-mono text-[9px] font-extrabold uppercase tracking-[0.18em] text-amber-950 ring-1 ring-amber-900/25">
                 On Deck
               </span>
             )}

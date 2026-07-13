@@ -35,6 +35,7 @@ import {
 } from "@/app/actions/leaderboard";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { useClubSlug } from "@/hooks/use-club-slug";
+import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
 import { subscribeToMatches } from "@/lib/realtime";
 import { getCurrentManilaMonth, isCurrentManilaMonth, type YearMonth } from "@/lib/month";
 import type { LeaderboardRow, LeaderboardMonth } from "@/types/leaderboard";
@@ -399,6 +400,16 @@ export function useLeaderboard({
     else if (scopeTab === "monthly") fetchMonthly();
     else if (scopeTab === "alltime") fetchAllTime();
   }, [scopeTab, activeSessionId, fetchSession, fetchMonthly, fetchAllTime]);
+
+  // Re-fetch the active board + hero stats the instant the tab returns to the
+  // foreground (phone unlock / tab restore). The realtime + 15 s poll above
+  // only cover a live session / current month and never fire immediately on
+  // unlock; this covers every board (incl. all-time / past months) at once.
+  // Each fetch is seq-guarded, so overlapping with the poll is safe.
+  useVisibilityRefresh(() => {
+    handleRefresh();
+    fetchMyStatsRef.current();
+  });
 
   // ── Derived state ─────────────────────────────────────────
 
