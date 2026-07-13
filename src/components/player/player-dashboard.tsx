@@ -35,7 +35,7 @@ import { InstallPrompt } from "@/components/notifications/install-prompt";
 import { GoogleLinkButton } from "@/components/auth/google-link-button";
 import { useClubSlug } from "@/hooks/use-club-slug";
 import { clubBase, clubPlay } from "@/lib/club-paths";
-import { MatchAlert } from "./match-alert";
+import { MatchAlertPresence } from "./match-alert";
 import { LiveCourtsTab } from "./live-courts-tab";
 import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
@@ -397,35 +397,38 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
               <div role="tabpanel" id="tabpanel-status" aria-labelledby="tab-status">
                 {/* MatchAlert full-screen overlay — scoped to the status tabpanel
                 so switching tabs (Live Courts / Waitlist / Leaderboard)
-                actually reveals the other tabs' content. Only mounts when
-                the player has an active assignment so the slide-up triggers. */}
-                {hasActiveMatch && currentMatch && (
-                  <MatchAlert
-                    matchStatus={currentMatch.match.status as "pending" | "in_progress"}
-                    court={currentMatch.court}
-                    myDisplayName={profile.display_name}
-                    mySkillLevel={profile.skill_level}
-                    teammates={currentMatch.teammates}
-                    opponents={currentMatch.opponents}
-                    isMixedLevel={currentMatch.match.is_mixed_level}
-                    onDeckPosition={currentMatch.onDeckPosition}
-                    totalOnDeck={currentMatch.totalOnDeck}
-                    onLeaveQueue={leaveQueue}
-                    upcomingReserved={
-                      currentMatch.match.status === "in_progress" && upcomingHeld?.reserved
-                        ? { ready: upcomingHeld.ready }
-                        : null
-                    }
-                    scoreSlot={
-                      currentMatch.match.status === "in_progress" ? (
-                        <ScoreInputCard
-                          matchId={currentMatch.match.id}
-                          myTeam={currentMatch.myTeam}
-                        />
-                      ) : null
-                    }
-                  />
-                )}
+                actually reveals the other tabs' content. MatchAlertPresence
+                stays mounted (active=null when idle) so it can animate the
+                enter slide, the pending↔in_progress crossfade, and the exit. */}
+                <MatchAlertPresence
+                  active={
+                    hasActiveMatch && currentMatch
+                      ? {
+                          matchStatus: currentMatch.match.status as "pending" | "in_progress",
+                          court: currentMatch.court,
+                          myDisplayName: profile.display_name,
+                          mySkillLevel: profile.skill_level,
+                          teammates: currentMatch.teammates,
+                          opponents: currentMatch.opponents,
+                          isMixedLevel: currentMatch.match.is_mixed_level,
+                          onDeckPosition: currentMatch.onDeckPosition,
+                          totalOnDeck: currentMatch.totalOnDeck,
+                          onLeaveQueue: leaveQueue,
+                          upcomingReserved:
+                            currentMatch.match.status === "in_progress" && upcomingHeld?.reserved
+                              ? { ready: upcomingHeld.ready }
+                              : null,
+                          scoreSlot:
+                            currentMatch.match.status === "in_progress" ? (
+                              <ScoreInputCard
+                                matchId={currentMatch.match.id}
+                                myTeam={currentMatch.myTeam}
+                              />
+                            ) : null,
+                        }
+                      : null
+                  }
+                />
                 <MyStatusTab
                   profile={profile}
                   session={session}

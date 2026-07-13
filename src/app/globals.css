@@ -412,6 +412,38 @@
     }
   }
 
+  /* ── Match alert presence — crossfade + exit layer animations ──
+     Explicit from/to keyframes (not tailwindcss-animate's from-only
+     `enter`/`exit`) so the layers reliably settle at their end opacity
+     regardless of fill-mode. Reduced motion is handled by the global
+     block above (duration → ~0ms), so these simply snap. */
+  @keyframes ma-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes ma-fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes ma-slide-out {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(8%);
+    }
+  }
+
   /* ════════════════════════════════════════════════════════
      New design utilities — cut-corner clip-path, command teal
      ════════════════════════════════════════════════════════ */

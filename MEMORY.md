@@ -5,7 +5,22 @@
 
 ---
 
-## 🆕 PLAYER-UI POLISH PASS + /critique FIXES (2026-07-13) — BUILT, NOT COMMITTED
+## 🆕 MATCHALERT TRANSITIONS + A11y — branch `feat/match-alert-transitions-a11y` (2026-07-13) — NOT on main
+
+**Status: BUILT on branch (off main `d419221`), NOT merged. tsc / eslint / `next build` clean. Review gate: LGTM (2 cosmetic notes).** Structurally browser-verified; **visual motion NOT verifiable in the headless MCP pane** (`document.visibilityState="hidden"` → rAF + CSS animations frozen at their `from` value), so **on-device + screen-reader sign-off is still needed before merge.** Done per the user's "do it next" on the deferred MatchAlert crossfade + the /critique a11y findings.
+
+**What (`src/components/player/match-alert.tsx` + `player-dashboard.tsx` + `globals.css`):**
+- **New `MatchAlertPresence` wrapper** owns the overlay lifecycle so transitions animate instead of hard-cutting: none→active = slide-up (MatchAlert's own); **pending↔in_progress = crossfade dissolve** (outgoing `ma-fade-out` beneath, incoming `ma-fade-in` on top → fixes the amber→navy dark-theme flash; the tuned 380ms in_progress slide never fired on the normal path before); active→none = **`ma-slide-out` fade+slide-down exit** (delivers the long-deferred exit animation). `MatchAlert` gained an `animate` prop (false → render in place, for outgoing layers). New globals.css keyframes `ma-fade-in/out` + `ma-slide-out` are explicit from/to — tailwindcss-animate's from-only `enter`/`exit` left the persistent layer stuck at opacity 0.
+- **State machine:** "adjust state during render" guard (`incomingKey !== committed.key`) — converges (no loop), StrictMode-safe, reads only state (not refs) during render; `committed` snapshots the outgoing props, the current layer renders live from `active`. Exit timer `setTimeout(setExiting(null))` keyed on `[exiting]`, `CROSSFADE_MS=320`/`EXIT_MS=340`.
+- **A11y (/critique):** `role="alert"`→`role="region"` on both overlays (alert re-announced the whole roster on every child update) + one visually-hidden `role="status" aria-live="polite"` announcing state once per change; **focus** enters the overlay on appear + restores on match-end (synchronous `.focus()` — a rAF version was left cancelled by StrictMode's double-invoke); **Leave Queue** `disabled`→`aria-disabled` + `if(pending)return` guard + `aria-live` so "Leaving…" is announced without losing focus.
+
+**Verified in the hidden pane:** transition fires once per change (no loop), exit timer removes the outgoing layer, focus enters+restores, correct region labels + per-state announcement text; all 3 keyframes seek-to-end correctly (fade-in→1, fade-out→0, slide-out→0+translateY). Temp harness `sandbox/match-alert-presence` used then deleted. **Not verified:** actual slide/crossfade/exit motion (headless).
+
+**Next:** on-device + SR check → merge to main. Cosmetic gate notes: amber "you" contrast comment says ≈7:1 (really ~6:1, still AA); `aria-live` on the focused Leave button may double-announce on some SRs.
+
+---
+
+## 🆕 PLAYER-UI POLISH PASS + /critique FIXES (2026-07-13) — SHIPPED to main (`d419221`)
 
 **Status: BUILT on `main` working tree (uncommitted). tsc / eslint / `next build` all clean. Review gate: LGTM (3 minor non-blocking notes below).** Two-part task: (1) finish the deferred cosmetic/staleness polish; (2) run `/critique` on recent player+club UI and fix caught issues.
 
