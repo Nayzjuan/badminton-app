@@ -5,6 +5,24 @@
 
 ---
 
+## 🆕 AUDIT TRAIL ON CLEAR/CANCEL PATHS — FIXED on `fix/clear-cancel-audit-trail`, 2026-07-11
+
+**Status: BUILT + validated + reviewed (LGTM).** tsc/eslint/`next build` clean. Closes the forensics gap from the "Jason's match disappeared" incident: clears/cancels hard-DELETE matches and previously wrote NO `match_events`, so "who cleared this?" was unanswerable (confirmed on the 07/09 session: 0 clear/cancel events, only 7 orphaned `created` rows).
+
+**What:** wired the three previously-silent leaver paths to log a `cancelled` `match_event` via the existing best-effort `logMatchEvent` helper (the code's own §14.E-1 TODO). **No migration** — `event_type` is `text`, `'cancelled'` already allowed, and `record_match_event` already exists.
+
+- **`clearOnDeckMatch`** (single on-deck Clear — the Jason path): logs `cancelled` w/ actor (organizer) + roster snapshot + `created_method` + `is_published`, `payload.reason='on_deck_cleared'`.
+- **`clearAllUnpublishedDrafts`** (batch cap-reset / close): one event per swept draft; TS pre-fetch filter mirrors the RPC exactly (`pending` + `is_published=false` + `is_held IS NOT TRUE`); `reason='batch_clear_unpublished'`.
+- **`checkoutPlayer`** (departing player drops a draft <4): logs each returned `cancelled_match_id`; `actorId=null`→`actor_type='system'`, `payload={reason:'checkout_below_min', trigger_player_id}`.
+
+**Files:** `src/app/actions/match-drafts.ts` (+`fetchRosterSnapshots` helper), `src/app/actions/queue.ts`, `src/lib/match-event-log.ts` (doc), `src/types/database.ts` (corrected stale `checkout_player_cleanup_drafts` Returns `void`→`{cancelled_match_id}[]`).
+
+**Design notes:** delete paths log BEFORE the delete (FK valid at insert; `ON DELETE SET NULL` preserves `match_id_snapshot` — same as `created` events). Best-effort (never blocks the action). **Known caveat:** logging-before-delete means a domain error / lost race after the log leaves a false `cancelled` row — narrow window, unavoidable for FK validity, acceptable per §14.E-2. The RPC-not-found fallback loops (dead code in prod) are intentionally un-audited.
+
+**Still pending (separate):** stop `clear_all_unpublished_drafts` from wiping *manual* unpublished drafts (no `created_method` filter) — the batch-clear footgun.
+
+---
+
 ## 🆕 PLAYER-VIEW "KICKED OUT OF QUEUE" TRANSITION FLASH — FIXED on `fix/player-queue-transition-flash`, 2026-07-11
 
 **Status: BUILT + validated + reviewed (LGTM).** tsc/eslint/`next build` clean. Reported: Jason's player view briefly looked like he got kicked out of the queue / dropped to last, then got the "you have a match" alert.

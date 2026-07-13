@@ -995,7 +995,10 @@ export type Database = {
       };
       checkout_player_cleanup_drafts: {
         Args: { p_session_id: string; p_player_id: string };
-        Returns: void;
+        // Returns the drafts it cancelled (dropped below 4 players). Was
+        // typed `void` here but the DB function is RETURNS TABLE(cancelled_match_id uuid);
+        // corrected so checkoutPlayer can audit each cancelled draft.
+        Returns: { cancelled_match_id: string }[];
       };
       // ── Match provenance audit (migration 20260617000000) ──
       // Standalone calls (best-effort lifecycle events) compute seq WITHOUT the

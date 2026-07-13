@@ -7,13 +7,15 @@ import "server-only";
 // from the server action by calling record_match_event directly.
 //
 // CURRENTLY WIRED via this helper: score_edit + revert (updateMatchDetails),
-// cancelled (cancelMatchAction).
-// DEFERRED (plumbed in the type/DB but NOT yet emitted): player_left + cancelled
-// from the draft-cleanup leaver paths (checkout_player_cleanup_drafts,
-// remove_player_from_queue_organizer, clear_* ) and published. Those paths
-// always CANCEL the affected draft (excluded from the completed-match metric),
-// so the analytics impact is zero; the trail entry is the only gap. See
-// MEMORY.md + plan §14.E-1.
+// cancelled (cancelMatchAction), and cancelled from the draft-clear + checkout
+// leaver paths — clearOnDeckMatch (single on-deck Clear), clearAllUnpublishedDrafts
+// (batch cap-reset / close), and checkoutPlayer (a departing player dropping a
+// draft below 4). Those three log 'cancelled' with a payload.reason so the trail
+// answers "who cleared/cancelled this match?" (the delete paths log BEFORE the
+// row is removed, so the FK is valid and ON DELETE SET NULL preserves the snapshot).
+// DEFERRED (plumbed in the type/DB but NOT yet emitted): player_left from the
+// leaver paths, cancelled from remove_player_from_queue_organizer, and published.
+// See MEMORY.md + plan §14.E-1.
 //
 // These are deliberately BEST-EFFORT (plan §14 decision E-2):
 //   • computed seq is NOT under the match row lock (tiny gap/collision risk),

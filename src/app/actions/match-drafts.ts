@@ -24,6 +24,43 @@ import {
   type MatchActionResult,
 } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
+import { logMatchEvent } from "@/lib/match-event-log";
+
+/**
+ * Roster snapshot for audit payloads — [{ team, player_id, player_name }],
+ * keyed by match_id. player_name is captured durably (survives a later profile
+ * merge/rename), mirroring the shape of the 'created' event payload. Two bulk
+ * queries — no N+1.
+ */
+async function fetchRosterSnapshots(
+  db: ReturnType<typeof createServiceClient>,
+  matchIds: string[]
+): Promise<Map<string, Array<{ team: string; player_id: string; player_name: string }>>> {
+  const map = new Map<string, Array<{ team: string; player_id: string; player_name: string }>>();
+  if (matchIds.length === 0) return map;
+
+  const { data: mps } = await db
+    .from("match_players")
+    .select("match_id, team, player_id")
+    .in("match_id", matchIds);
+  const rows = mps ?? [];
+  if (rows.length === 0) return map;
+
+  const playerIds = [...new Set(rows.map((r) => r.player_id))];
+  const { data: profs } = await db.from("profiles").select("id, display_name").in("id", playerIds);
+  const nameMap = new Map((profs ?? []).map((p) => [p.id, p.display_name]));
+
+  for (const r of rows) {
+    const list = map.get(r.match_id) ?? [];
+    list.push({
+      team: r.team,
+      player_id: r.player_id,
+      player_name: nameMap.get(r.player_id) ?? "Unknown",
+    });
+    map.set(r.match_id, list);
+  }
+  return map;
+}
 
 // ============================================================
 // clearOnDeckMatch
@@ -50,7 +87,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   // 1. Fetch and validate the match.
   const { data: match, error: matchFetchError } = await db
     .from("matches")
-    .select("id, session_id, status")
+    .select("id, session_id, status, is_published, created_method")
     .eq("id", matchId)
     .single();
 
@@ -70,6 +107,28 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
       message: `Cannot clear a match with status "${match.status}". Only pending on-deck matches can be cleared.`,
     };
   }
+
+  // Audit: record the clear BEFORE the RPC deletes the match, so the event's
+  // match_id FK is still valid at insert time (ON DELETE SET NULL then nulls
+  // match_id while match_id_snapshot preserves it). Best-effort — logMatchEvent
+  // never throws, so it can't block the clear. This is the trail that answers
+  // "who cleared this match?" for a single on-deck Clear.
+  const clearActor = await getActorContext(user.id);
+  const clearRoster = await fetchRosterSnapshots(db, [matchId]);
+  await logMatchEvent({
+    matchId,
+    sessionId: match.session_id,
+    eventType: "cancelled",
+    phase: "draft",
+    actorId: clearActor.id,
+    actorName: clearActor.name,
+    payload: {
+      reason: "on_deck_cleared",
+      created_method: match.created_method,
+      is_published: match.is_published,
+      roster: clearRoster.get(matchId) ?? [],
+    },
+  });
 
   // 2. Atomic clear via RPC (migration 20260512200001).
   //    The RPC locks the match row, restores players to 'waiting' (skipping
@@ -144,10 +203,9 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   //    co-organizers: "{actor} cleared an on-deck match"). The acting
   //    organizer passes their own id so their client suppresses the self-toast.
   if (playerIds.length > 0) {
-    const actor = await getActorContext(user.id);
     await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", playerIds, {
       id: user.id,
-      name: actor.name,
+      name: clearActor.name,
     });
   }
 
@@ -211,6 +269,42 @@ export async function clearAllUnpublishedDrafts(sessionId: string): Promise<Clea
   }
 
   const db = createServiceClient();
+
+  // Audit: capture the drafts + rosters and log a 'cancelled' event per match
+  // BEFORE the RPC deletes them (best-effort). Filter mirrors the RPC exactly
+  // (pending + unpublished + not-held) so the audit set matches what's swept.
+  const { data: draftRows } = await db
+    .from("matches")
+    .select("id, created_method")
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_published", false)
+    .not("is_held", "is", true);
+  const draftMatches = draftRows ?? [];
+  if (draftMatches.length > 0) {
+    const batchActor = await getActorContext(user.id);
+    const batchRoster = await fetchRosterSnapshots(
+      db,
+      draftMatches.map((m) => m.id)
+    );
+    await Promise.all(
+      draftMatches.map((m) =>
+        logMatchEvent({
+          matchId: m.id,
+          sessionId,
+          eventType: "cancelled",
+          phase: "draft",
+          actorId: batchActor.id,
+          actorName: batchActor.name,
+          payload: {
+            reason: "batch_clear_unpublished",
+            created_method: m.created_method,
+            roster: batchRoster.get(m.id) ?? [],
+          },
+        })
+      )
+    );
+  }
 
   // Single atomic RPC — clears all drafts and returns player IDs in one transaction.
   const { data: playerIds, error } = await db.rpc("clear_all_unpublished_drafts", {
