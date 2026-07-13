@@ -100,7 +100,7 @@ export function OrganizerDashboard({
     capSaturation,
     dismissCapSaturation,
     externalCapPhase,
-  } = useOrganizerData(session.id, session);
+  } = useOrganizerData(session.id, session, profile.id);
 
   const {
     swapContext,
@@ -857,6 +857,7 @@ export function OrganizerDashboard({
                 autoPublishIsOn={autoPublish}
                 waitingCount={waitingCount}
                 hasNewDraft={hasNewDraft}
+                queue={queue}
               />
 
               <ActiveCourts

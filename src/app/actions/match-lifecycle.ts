@@ -619,10 +619,15 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   // 5. Refill on-deck pool (engine exits silently if toggle is OFF).
   await runEngineForSession(match.session_id);
 
-  // 6. Notify affected players via Realtime Broadcast so their dashboards
-  //    show a friendly explanation instead of a silent state change.
+  // 6. Notify affected players AND co-organizers via Realtime Broadcast so
+  //    dashboards show a friendly explanation instead of a silent state change.
+  //    cancelActor (computed above for the audit log) also lets co-organizers
+  //    see "{actor} cancelled a match" while the actor's client skips its own.
   if (playerIds.length > 0) {
-    await broadcastOrganizerIntervention(match.session_id, "match_cancelled", playerIds);
+    await broadcastOrganizerIntervention(match.session_id, "match_cancelled", playerIds, {
+      id: cancelActor.id,
+      name: cancelActor.name,
+    });
   }
 
   return { success: true, message: "Match cancelled. Players returned to queue." };

@@ -450,11 +450,6 @@ async function runEngineInternal(
     }
   }
 
-  // Pre-fetch recent rosters once for the entire fill loop.
-  // Stable snapshot: pending matches don't change ownership mid-run and
-  // the process-level guard prevents concurrent engine runs per session.
-  const recentRosters = await fetchRecentRosters(supabase, sessionId);
-
   for (let i = 0; i < slotsAvailable; i++) {
     // Pool diversity cap: from the 2nd slot onwards.
     if (!bypassGate && i > 0) {
@@ -467,6 +462,14 @@ async function runEngineInternal(
         break;
       }
     }
+
+    // Recent rosters are re-fetched PER SLOT (not once per run) so the
+    // isDiversityViolation check sees sibling drafts committed by earlier
+    // slots of THIS SAME burst. With the old pre-loop snapshot, slot 3 was
+    // blind to the rosters slots 1–2 had just drafted — the one diversity
+    // input that wasn't live within a burst (partnership counts and the
+    // overlap map already re-fetch per slot below).
+    const recentRosters = await fetchRecentRosters(supabase, sessionId);
 
     // ── Per-slot: fetch pool (changes as players are drafted) ────
     const rawPool = await fetchActivePool(supabase, sessionId);

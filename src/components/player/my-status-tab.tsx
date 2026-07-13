@@ -196,12 +196,16 @@ function QueueSubTab({
     );
   }
 
-  // ── Match forming — drafted by organizer ──────────────────────
-  // Player is assigned to a pending match that is not yet published.
-  // The organizer is reviewing / finalising the line-up before revealing
-  // it to players. Show a holding card rather than falling through to the
-  // "Ready to play?" empty state.
-  if (isInQueue && myEntry?.status === "drafted") {
+  // ── Pre-match pipeline — drafted / on-deck ──────────────────────────
+  // The player has been pulled out of "waiting" into a match they haven't
+  // started: drafted (unpublished, organizer still reviewing) or on_deck
+  // (published, awaiting a court). Also covers the brief window where the queue
+  // channel (useQueue) flips the row to on_deck a beat before the match channel
+  // (usePlayerMatch) loads it (hasActiveMatch still false). Show a stable
+  // "Match Forming" card so it never falls through to the "Ready to play?" join
+  // screen — the "kicked out" flash (PR #20). (paused handled above; playing +
+  // waiting below; genuinely-not-in-queue falls through to the CTA.)
+  if (isInQueue && myEntry && (myEntry.status === "drafted" || myEntry.status === "on_deck")) {
     return (
       <div className="flex flex-col items-center">
         <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
@@ -225,6 +229,31 @@ function QueueSubTab({
         >
           Leave Queue
         </button>
+      </div>
+    );
+  }
+
+  // ── Post-match transient — "playing" but the match already cleared ──
+  // A player finishing a game: usePlayerMatch clears currentMatch (matches
+  // channel) a beat before useQueue flips the row playing→waiting. During that
+  // window the row still reads "playing" with hasActiveMatch=false. Show a
+  // neutral "Wrapping up" bridge — NOT "Match Forming" (they just finished a
+  // game; they weren't selected for anything). It settles to their queue
+  // position the instant the queue channel catches up. This is the reverse of
+  // the PR #20 flash; without it, the old "any non-waiting → Match Forming"
+  // rule made a just-finished player briefly see "you've been selected".
+  if (isInQueue && myEntry?.status === "playing") {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+        <h2
+          className="text-3xl font-extrabold leading-tight text-foreground"
+          style={{ letterSpacing: "-0.02em" }}
+        >
+          Wrapping up…
+        </h2>
+        <p className="mt-3 text-sm text-muted-foreground">
+          Finishing your match — back to the queue in a moment.
+        </p>
       </div>
     );
   }

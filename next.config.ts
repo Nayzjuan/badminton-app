@@ -91,6 +91,24 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
+  // ── Legacy club-slug alias ────────────────────────────────────────────────
+  // The founding "absorb all existing sessions" club (CHILLAX) was originally
+  // seeded with the slug "legacy". It was renamed to "chillax", but old links
+  // still point at /c/legacy/... — bookmarks, live-session QR codes, and push
+  // deep-links minted before the rename. This permanent redirect keeps every
+  // one of those resolving. Realtime survives independently (channels key on
+  // session UUID, not slug), so a mid-session rename only affects hard refreshes
+  // of /c/legacy/... URLs, which this covers.
+  async redirects() {
+    return [
+      {
+        source: "/c/legacy/:path*",
+        destination: "/c/chillax/:path*",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
