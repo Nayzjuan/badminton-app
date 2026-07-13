@@ -505,8 +505,9 @@ function LeaveQueueButton({
 // the overlay simply appears / disappears instantly.
 // ============================================================
 
-// Slightly longer than the 300ms CSS animations so the outgoing layer is
-// unmounted only after its fade / slide-out has finished.
+// Slightly longer than the 300ms CSS animations. CROSSFADE_MS waits for the
+// INCOMING layer's fade-in to finish before unmounting the (fully opaque)
+// outgoing layer beneath it; EXIT_MS waits for the outgoing slide-out itself.
 const CROSSFADE_MS = 320;
 const EXIT_MS = 340;
 
@@ -615,20 +616,24 @@ function CurrentLayer({ props, entrance }: { props: MatchAlertProps; entrance: L
   );
 }
 
-// Outgoing layer. Already on screen; animate it out (fade for a crossfade,
-// fade + slide-down for a full exit) then the parent timer unmounts it. Inert
-// while leaving so stale controls (e.g. the ScoreInputCard) can't be touched.
+// Outgoing layer. Already on screen; inert while leaving so stale controls
+// (e.g. the ScoreInputCard) can't be touched; the parent timer unmounts it.
+//   mode "fade"  (crossfade): stays FULLY OPAQUE beneath while the incoming
+//     layer fades in on top — fading both would dip combined coverage mid-
+//     dissolve (~46% background bleed at t=150ms, timeline-verified) and read
+//     as a flicker. Once the incoming hits opacity 1 the unmount is invisible.
+//   mode "slide" (exit to nothing): fades + slides down, revealing the tab
+//     content beneath — there the reveal is the point.
 function ExitingLayer({ props, mode }: { props: MatchAlertProps; mode: ExitMode }) {
   return (
     <div
       aria-hidden="true"
       className="pointer-events-none absolute inset-0"
-      style={{
-        animation:
-          mode === "slide"
-            ? "ma-slide-out 300ms cubic-bezier(0.4, 0, 1, 1) forwards"
-            : "ma-fade-out 300ms ease-out forwards",
-      }}
+      style={
+        mode === "slide"
+          ? { animation: "ma-slide-out 300ms cubic-bezier(0.4, 0, 1, 1) forwards" }
+          : undefined
+      }
     >
       <MatchAlert {...props} animate={false} />
     </div>

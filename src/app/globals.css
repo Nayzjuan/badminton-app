@@ -416,21 +416,16 @@
      Explicit from/to keyframes (not tailwindcss-animate's from-only
      `enter`/`exit`) so the layers reliably settle at their end opacity
      regardless of fill-mode. Reduced motion is handled by the global
-     block above (duration → ~0ms), so these simply snap. */
+     block above (duration → ~0ms), so these simply snap.
+     Crossfade fades ONLY the incoming layer in (ma-fade-in) over a
+     fully-opaque outgoing layer — fading both dips combined coverage
+     mid-dissolve and bleeds the background through. */
   @keyframes ma-fade-in {
     from {
       opacity: 0;
     }
     to {
       opacity: 1;
-    }
-  }
-  @keyframes ma-fade-out {
-    from {
-      opacity: 1;
-    }
-    to {
-      opacity: 0;
     }
   }
   @keyframes ma-slide-out {
