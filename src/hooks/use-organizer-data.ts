@@ -25,6 +25,12 @@ import { useOrganizerSession } from "@/hooks/use-organizer-session";
 import { useOrganizerCourts } from "@/hooks/use-organizer-courts";
 import { useOrganizerQueue } from "@/hooks/use-organizer-queue";
 import { useOrganizerMatches } from "@/hooks/use-organizer-matches";
+import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
+
+/** How often to re-poll the queue so wait-time minutes / bottleneck flags keep
+ *  advancing during quiet stretches with no queue mutations (the Monitor's whole
+ *  reason to exist). Visible-tab only. */
+const WAIT_TIME_POLL_MS = 45_000;
 
 // EnrichedMatch type is imported from use-enriched-matches.ts.
 // Re-export so existing consumers don't need to update their imports.
@@ -244,6 +250,45 @@ export function useOrganizerData(
   // before any realtime events fire (subscriptions are also in useEffect).
   useEffect(() => {
     fetchQueueRef.current = fetchQueue;
+  }, [fetchQueue]);
+
+  // ── Freshness: visibility + reconnect re-sync (headline fix) ──────────
+  // The four table sub-hooks only update on live realtime events, which Supabase
+  // does NOT replay after the WebSocket was suspended (tablet sleep, tab switch,
+  // network blip). Without this, a co-organizer's board shows pre-sleep state
+  // until some new event happens to fire per table. The player side already does
+  // this; the organizer side never adopted it. Re-fetch every live slice on
+  // tab-wake (throttled 5s by the hook) AND on the realtime false→true edge.
+  useVisibilityRefresh(() => {
+    void fetchCourts();
+    void fetchQueue();
+    void fetchActiveMatches();
+  });
+
+  const prevRealtimeConnectedRef = useRef(realtimeConnected);
+  useEffect(() => {
+    if (!prevRealtimeConnectedRef.current && realtimeConnected) {
+      // Socket just reconnected — pull the slices it may have missed.
+      void fetchCourts();
+      void fetchQueue();
+      void fetchActiveMatches();
+    }
+    prevRealtimeConnectedRef.current = realtimeConnected;
+  }, [realtimeConnected, fetchCourts, fetchQueue, fetchActiveMatches]);
+
+  // ── Wait-time ticker ──────────────────────────────────────────────────
+  // wait_minutes / is_bottleneck come from the v_queue_full_with_wait_time view
+  // and only recompute when fetchQueue runs — which is otherwise driven purely
+  // by queue mutations. During a quiet session (people standing around waiting,
+  // no mutations) the Monitor would freeze and never escalate a bottleneck.
+  // Low-frequency poll while visible keeps the minutes advancing.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void fetchQueue();
+      }
+    }, WAIT_TIME_POLL_MS);
+    return () => clearInterval(id);
   }, [fetchQueue]);
 
   const loading = courtsLoading || queueLoading || matchesLoading;

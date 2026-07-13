@@ -5,6 +5,19 @@
 
 ---
 
+## 🆕 UI TRANSITIONS + REALTIME FRESHNESS PASS — 2026-07-11
+
+**Status: BUILT + validated (tsc/eslint/build clean, 669 tests green) + reviewed LGTM.** From a player+organizer audit for transition-race flashes, auto-refresh/staleness gaps, and pop-in smoothness. Four high-value fixes shipped:
+
+1. **Player match-END flash (A)** — `my-status-tab.tsx`. PR #20's "any non-waiting → Match Forming" rule also fired on the way OUT of a match (queue row reads `playing` a beat before the match hook clears), so a just-finished player briefly saw "you've been selected". Split the branch: `drafted`/`on_deck` → "Match Forming" (pre-match); `playing` (transient, hasActiveMatch=false) → neutral "Wrapping up…". A genuinely-playing player still gets the MatchAlert overlay (never this card).
+2. **Player court-call auto-focus (C)** — `player-dashboard.tsx`. Effect switches `activeTab` to "status" on `hasActiveMatch` false→true, so a court call isn't missed from Live Courts/Waitlist/Leaderboard (the takeover is scoped to the status tabpanel).
+3. **Organizer visibility + reconnect re-sync (2.1, headline)** — `use-organizer-data.ts`. The organizer never adopted `useVisibilityRefresh` (player-only), so courts/queue/matches/on-deck showed pre-sleep state after tablet sleep/tab-switch/socket blip (Supabase doesn't replay missed events). Now re-fetches all three slices on tab-wake AND on the `realtimeConnected` false→true edge.
+4. **Organizer wait-time tick (2.2)** — `use-organizer-data.ts`. `wait_minutes`/`is_bottleneck` (from `v_queue_full_with_wait_time`) only recomputed on queue mutations, so the Monitor froze during quiet waiting. Added a 45s visible-only `fetchQueue` poll.
+
+**Deferred (audit backlog — polish, lower churn):** player History+Leaderboard not in the visibility-refresh path (stale after backgrounding until next match event); co-organizer per-table refetch coalescing (sub-second count flicker); on-deck drag-drop re-sync after a co-org clear; draft-ready toast debounce on transient 0-refetch; match-history seq guard; initial-load skeletons; card/row enter animations; inline Leave-Queue pending state; MatchAlert enter/exit + pending→in_progress crossfade.
+
+---
+
 ## 🆕 CLUB-SCOPED /organizer REDIRECT — RESYNCED to main, 2026-07-11 (orig. `feat/club-scoped-organizer-landing`)
 
 **Status: cherry-picked onto main, validated (tsc/lint/build clean, 669 tests green), review-gated.** Was built + reviewed earlier, never merged; user opted to merge now.
