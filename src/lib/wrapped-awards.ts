@@ -213,7 +213,7 @@ export const AWARD_META: Record<string, AwardMeta> = {
     slug: "deuce_magnet",
     emoji: "🎭",
     title: "Deuce Magnet",
-    subtitle: "{deuce_games} of your games went to 20-20. Drama follows you everywhere.",
+    subtitle: "{deuce_games} of your games went to 30-30. Drama follows you everywhere.",
     rarity: "uncommon",
   },
 
@@ -397,6 +397,16 @@ export const AWARD_META: Record<string, AwardMeta> = {
     emoji: "💯",
     title: "Century Club",
     subtitle: "{alltime_games} all-time games. Built different. Welcome to the 100 club.",
+    rarity: "legendary",
+  },
+  // One-time, club-wide honor — only ever held by whoever was the FIRST
+  // player in the club to ever reach 100 all-time games. Distinct from
+  // century_club (which every player earns on crossing 100, every time).
+  first_to_100: {
+    slug: "first_to_100",
+    emoji: "🥇",
+    title: "First to 100",
+    subtitle: "The first player in the club to ever reach 100 all-time games. History remembers.",
     rarity: "legendary",
   },
   night_cap: {

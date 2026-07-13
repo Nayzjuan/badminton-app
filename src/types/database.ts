@@ -598,6 +598,25 @@ export type ClubMemberInsert = Pick<ClubMember, "club_id" | "player_id"> &
 
 export type ClubMemberUpdate = Partial<Pick<ClubMember, "role" | "is_active">>;
 
+/**
+ * club_milestones — append-only ledger of one-time, club-wide "firsts"
+ * (currently just 'first_to_100_games'). UNIQUE (club_id, milestone) is the
+ * concurrency-safety mechanism: claiming one is a single atomic
+ * `INSERT ... ON CONFLICT DO NOTHING` inside compute_session_wrapped().
+ * RLS is enabled with zero policies (deny-all to anon/authenticated;
+ * service-role bypasses) — the app never reads this table directly; it's
+ * consumed purely inside the RPC and surfaced to players via
+ * session_wrapped_stats.
+ */
+export type ClubMilestone = {
+  id: string;
+  club_id: string;
+  milestone: string;
+  player_id: string;
+  session_id: string | null;
+  achieved_at: string;
+};
+
 // ------------------------------------------------------------
 // Supabase Database Type
 // (Required shape for createClient<Database>)
@@ -723,6 +742,13 @@ export type Database = {
         Row: ClubMember;
         Insert: ClubMemberInsert;
         Update: ClubMemberUpdate;
+        Relationships: [];
+      };
+      club_milestones: {
+        Row: ClubMilestone;
+        Insert: Pick<ClubMilestone, "club_id" | "milestone" | "player_id"> &
+          Partial<Pick<ClubMilestone, "session_id" | "achieved_at">>;
+        Update: Record<string, never>; // append-only ledger, no updates
         Relationships: [];
       };
     };
