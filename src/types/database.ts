@@ -384,7 +384,7 @@ export type ProfileUpdate = Partial<
 >;
 
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
-  // club_id optional during the Phase-0 transition (DB DEFAULT = Legacy club);
+  // club_id optional during the Phase-0 transition (DB DEFAULT = default club, CHILLAX);
   // becomes a required, explicitly-passed value when createSession is club-aware (Phase 2).
   Partial<Pick<Session, "organizer_passcode" | "scoring" | "is_auto_matchmaking_on" | "club_id">>;
 

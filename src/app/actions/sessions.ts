@@ -76,7 +76,7 @@ export async function createSession(opts: {
   scoring: ScoringFormat;
   passcode?: string;
   /** When set, the session is created inside this club (caller must be a club
-   *  owner/admin). When omitted, the DB DEFAULT routes it to the Legacy club. */
+   *  owner/admin). When omitted, the DB DEFAULT routes it to the default club (CHILLAX). */
   clubId?: string;
 }): Promise<CreateSessionResult> {
   // Auth gate
@@ -107,8 +107,9 @@ export async function createSession(opts: {
 
   // Club scoping (multi-tenant): when a clubId is supplied the session belongs
   // to that club and the caller must be a club owner/admin. When omitted, the
-  // sessions.club_id DB DEFAULT routes the session to the Legacy club
-  // (transition behavior until createSession is fully club-aware in Phase 2).
+  // sessions.club_id DB DEFAULT routes the session to the default club (CHILLAX,
+  // the founding club that absorbed all pre-multi-tenant sessions —
+  // transition behavior until createSession is fully club-aware in Phase 2).
   const clubId = opts.clubId?.trim();
   if (clubId !== undefined && clubId !== "") {
     if (!isValidUUID(clubId)) return { success: false, message: "Invalid club." };
