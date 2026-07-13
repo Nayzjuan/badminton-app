@@ -18,7 +18,7 @@
 //   in_progress — 380ms, sharp expo-out (snap to action)
 // ============================================================
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, CalendarClock } from "lucide-react";
 import type { Court, Profile, SkillLevel } from "@/types/database";
@@ -48,6 +48,12 @@ interface MatchAlertProps {
    * wording once the reserved match is next to take a court.
    */
   upcomingReserved?: { ready: boolean } | null;
+  /**
+   * When false, the overlay renders in place with no enter-slide — used by
+   * MatchAlertPresence for the outgoing / crossfade layer that is already
+   * on screen and about to animate out. Defaults to true (fresh slide-up).
+   */
+  animate?: boolean;
 }
 
 // ── Skill tier map — 3 tiers for quick scanning ──────────────
@@ -211,13 +217,17 @@ export function MatchAlert({
   onLeaveQueue,
   scoreSlot,
   upcomingReserved = null,
+  animate = true,
 }: MatchAlertProps) {
   const me = { name: myDisplayName, skill: mySkillLevel };
 
   // Slide-up animation — trigger on mount via state flip.
   // Two rAF IDs must both be cancellable from effect cleanup.
-  const [visible, setVisible] = useState(false);
+  // When `animate` is false the overlay starts already in place (the
+  // presence wrapper is animating this layer out, not in).
+  const [visible, setVisible] = useState(!animate);
   useEffect(() => {
+    if (!animate) return;
     let r2 = 0;
     const r1 = requestAnimationFrame(() => {
       r2 = requestAnimationFrame(() => setVisible(true));
@@ -226,13 +236,13 @@ export function MatchAlert({
       cancelAnimationFrame(r1);
       cancelAnimationFrame(r2);
     };
-  }, []);
+  }, [animate]);
 
   // ── In Progress — snappy (380ms), action-immediate ──────────
   if (matchStatus === "in_progress") {
     return (
       <div
-        role="alert"
+        role="region"
         aria-label={`Match starting${court ? ` — head to ${court.name}` : ""}`}
         className="absolute inset-0 z-30 flex flex-col overflow-y-auto bg-background"
         style={{
@@ -311,7 +321,7 @@ export function MatchAlert({
 
   return (
     <div
-      role="alert"
+      role="region"
       aria-label="You're on deck — a court is opening soon"
       className="absolute inset-0 z-30 flex flex-col overflow-y-auto"
       style={{
@@ -438,10 +448,15 @@ function LeaveQueueButton({
 }) {
   const [pending, setPending] = useState(false);
   return (
+    // aria-disabled (not `disabled`) keeps the button in the tab/focus order
+    // while pending, so the "Leaving…" label change is announced via aria-live
+    // instead of silently swallowed by a disabled control losing focus.
     <button
       type="button"
-      disabled={pending}
+      aria-disabled={pending}
+      aria-live="polite"
       onClick={async () => {
+        if (pending) return;
         setPending(true);
         try {
           const result = await onClick();
@@ -453,7 +468,7 @@ function LeaveQueueButton({
         }
       }}
       className={`w-full rounded-2xl px-4 py-3 text-sm font-semibold transition-colors
-        disabled:opacity-50 disabled:cursor-not-allowed
+        ${pending ? "opacity-50 cursor-not-allowed" : ""}
         ${
           tone === "amber"
             ? "border border-amber-900/30 bg-amber-900/10 text-red-950 hover:bg-amber-900/15"
@@ -462,5 +477,165 @@ function LeaveQueueButton({
     >
       {pending ? "Leaving…" : "Leave Queue"}
     </button>
+  );
+}
+
+// ── MatchAlertPresence — enter / crossfade / exit orchestration ────
+// ============================================================
+// Owns the mount/unmount lifecycle of the full-screen MatchAlert so
+// transitions animate instead of hard-cutting:
+//
+//   • none → active         → fresh slide-up (MatchAlert's own enter)
+//   • pending ↔ in_progress → crossfade dissolve: the outgoing canvas
+//                             fades out while the incoming one fades in
+//                             in place, so the primary dark theme never
+//                             flashes the background between amber↔navy
+//   • active → none         → fade + slide-down exit, then unmount
+//
+// The outgoing layer is inert (aria-hidden + pointer-events:none) so its
+// stale controls (e.g. the in_progress ScoreInputCard) can't be touched
+// during the exit. Focus moves into the overlay when it appears and is
+// restored to the prior element when it leaves. A single polite live
+// region announces the state once per change — the overlay container is
+// a plain role="region", not an assertive alert that would re-read the
+// whole roster on every child update.
+//
+// Reduced motion: every transition is an inline (non-!important) style,
+// so the global prefers-reduced-motion block collapses them to ~0ms and
+// the overlay simply appears / disappears instantly.
+// ============================================================
+
+// Slightly longer than the 300ms CSS animations. CROSSFADE_MS waits for the
+// INCOMING layer's fade-in to finish before unmounting the (fully opaque)
+// outgoing layer beneath it; EXIT_MS waits for the outgoing slide-out itself.
+const CROSSFADE_MS = 320;
+const EXIT_MS = 340;
+
+type LayerEntrance = "slide" | "fade";
+type ExitMode = "fade" | "slide";
+
+export function MatchAlertPresence({ active }: { active: MatchAlertProps | null }) {
+  const incomingKey = active ? active.matchStatus : null;
+  const isActive = active !== null;
+
+  const [exiting, setExiting] = useState<{
+    key: string;
+    props: MatchAlertProps;
+    mode: ExitMode;
+  } | null>(null);
+  const [entrance, setEntrance] = useState<LayerEntrance>("slide");
+  // Last committed {status key, props}. Held in state (not a ref) so it can be
+  // read during render to supply the outgoing layer; only rewritten on an
+  // actual status change, so its props are the last-status snapshot to fade out.
+  const [committed, setCommitted] = useState<{
+    key: string | null;
+    props: MatchAlertProps | null;
+  }>({ key: incomingKey, props: active });
+
+  // Detect a status transition during render — the supported "adjust state
+  // when a prop changes" pattern. Guarded so it converges (no loop); the
+  // re-render happens before paint, so there is no intermediate flash.
+  if (incomingKey !== committed.key) {
+    const outgoingKey = committed.key;
+    const outgoingProps = committed.props;
+    if (outgoingKey && outgoingProps) {
+      // fade = crossfade to a new status; slide = full exit to nothing.
+      setExiting({
+        key: `${outgoingKey}-exit`,
+        props: outgoingProps,
+        mode: active ? "fade" : "slide",
+      });
+    }
+    // Fresh appearance (from none) slides up; a status swap fades in place.
+    setEntrance(outgoingKey ? "fade" : "slide");
+    setCommitted({ key: incomingKey, props: active });
+  }
+
+  // Unmount the outgoing layer once its animation has run.
+  useEffect(() => {
+    if (!exiting) return;
+    const ms = exiting.mode === "slide" ? EXIT_MS : CROSSFADE_MS;
+    const t = setTimeout(() => setExiting(null), ms);
+    return () => clearTimeout(t);
+  }, [exiting]);
+
+  // ── Focus management ──────────────────────────────────────────
+  // While the overlay is active, move focus into it (remembering what had
+  // focus) and restore that on cleanup — i.e. when the match ends or the
+  // component unmounts. Keying the whole lifecycle on `isActive` (rather than
+  // a mutable "was active" ref) keeps it StrictMode-safe: a re-invoked effect
+  // simply re-schedules the focus instead of leaving it cancelled.
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!isActive) return;
+    // The overlay is committed to the DOM before effects run, so a synchronous
+    // focus is reliable — and, unlike a rAF, isn't left cancelled by a
+    // StrictMode double-invoke.
+    const prevFocused = document.activeElement as HTMLElement | null;
+    rootRef.current?.focus();
+    return () => {
+      prevFocused?.focus?.();
+    };
+  }, [isActive]);
+
+  if (!active && !exiting) return null;
+
+  const announcement = active
+    ? active.matchStatus === "in_progress"
+      ? `Match starting. Head to ${active.court?.name ?? "your court"}.`
+      : "You're on deck. A court is opening soon."
+    : "";
+
+  return (
+    <div ref={rootRef} tabIndex={-1} className="absolute inset-0 z-30 outline-none">
+      {/* Outgoing first so the incoming layer stacks above it. */}
+      {exiting && <ExitingLayer key={exiting.key} props={exiting.props} mode={exiting.mode} />}
+      {active && <CurrentLayer key={incomingKey ?? "active"} props={active} entrance={entrance} />}
+      <span className="sr-only" role="status" aria-live="polite">
+        {announcement}
+      </span>
+    </div>
+  );
+}
+
+// Incoming layer. A fresh appearance lets MatchAlert run its own slide-up; a
+// status swap renders it in place and fades the layer in over the outgoing
+// canvas (a clean amber↔navy dissolve, no dark-theme background flash).
+function CurrentLayer({ props, entrance }: { props: MatchAlertProps; entrance: LayerEntrance }) {
+  // "slide": MatchAlert runs its own slide-up enter (fresh appearance).
+  // "fade": render in place and dissolve the layer in over the outgoing one.
+  //         Rendered above the outgoing layer, so the dissolve reads as
+  //         amber → navy with no dark background flash between them.
+  return (
+    <div
+      className="absolute inset-0"
+      style={entrance === "fade" ? { animation: "ma-fade-in 300ms ease-in" } : undefined}
+    >
+      <MatchAlert {...props} animate={entrance === "slide"} />
+    </div>
+  );
+}
+
+// Outgoing layer. Already on screen; inert while leaving so stale controls
+// (e.g. the ScoreInputCard) can't be touched; the parent timer unmounts it.
+//   mode "fade"  (crossfade): stays FULLY OPAQUE beneath while the incoming
+//     layer fades in on top — fading both would dip combined coverage mid-
+//     dissolve (~46% background bleed at t=150ms, timeline-verified) and read
+//     as a flicker. Once the incoming hits opacity 1 the unmount is invisible.
+//   mode "slide" (exit to nothing): fades + slides down, revealing the tab
+//     content beneath — there the reveal is the point.
+function ExitingLayer({ props, mode }: { props: MatchAlertProps; mode: ExitMode }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0"
+      style={
+        mode === "slide"
+          ? { animation: "ma-slide-out 300ms cubic-bezier(0.4, 0, 1, 1) forwards" }
+          : undefined
+      }
+    >
+      <MatchAlert {...props} animate={false} />
+    </div>
   );
 }

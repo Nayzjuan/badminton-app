@@ -5,6 +5,21 @@
 
 ---
 
+## 🆕 MATCHALERT TRANSITIONS + A11y — branch `feat/match-alert-transitions-a11y` (2026-07-13)
+
+**Status: MERGED to main via PR (user go: "create the PR then merge"). tsc / eslint / `next build` clean. Review gate: LGTM ×2 (2 cosmetic notes).** Motion **verified via Web-Animations-API timeline scrubbing** of the real rendered layers (pause + step `currentTime`, sample computed opacity/transform) — the workaround for both browser panes reporting `visibilityState="hidden"` (rAF + CSS animation clocks frozen; wall-clock playback unobservable). Scrub caught + fixed a real bug: the original crossfade faded BOTH layers → combined coverage dipped to ~54% at t=150ms (~46% background bleed, a mid-dissolve flicker). Fix: outgoing layer stays fully opaque beneath; only the incoming fades in (`ma-fade-in`); `ma-fade-out` keyframe removed. Verified post-fix: outgoing op=1.00 across the full timeline, incoming 0→0.32→1.00; exit `ma-slide-out` op 1→0.68→0 + translateY 0→51px (=8% of frame), layer unmounts, region gone. Remaining untested (accepted): subjective device feel + actual screen-reader audio.
+
+**What (`src/components/player/match-alert.tsx` + `player-dashboard.tsx` + `globals.css`):**
+- **New `MatchAlertPresence` wrapper** owns the overlay lifecycle so transitions animate instead of hard-cutting: none→active = slide-up (MatchAlert's own); **pending↔in_progress = crossfade dissolve** (outgoing stays FULLY OPAQUE beneath; only the incoming fades in via `ma-fade-in` on top → fixes the amber→navy dark-theme flash; the tuned 380ms in_progress slide never fired on the normal path before); active→none = **`ma-slide-out` fade+slide-down exit** (delivers the long-deferred exit animation). `MatchAlert` gained an `animate` prop (false → render in place, for outgoing layers). New globals.css keyframes `ma-fade-in` + `ma-slide-out` are explicit from/to — tailwindcss-animate's from-only `enter`/`exit` left the persistent layer stuck at opacity 0.
+- **State machine:** "adjust state during render" guard (`incomingKey !== committed.key`) — converges (no loop), StrictMode-safe, reads only state (not refs) during render; `committed` snapshots the outgoing props, the current layer renders live from `active`. Exit timer `setTimeout(setExiting(null))` keyed on `[exiting]`, `CROSSFADE_MS=320`/`EXIT_MS=340`.
+- **A11y (/critique):** `role="alert"`→`role="region"` on both overlays (alert re-announced the whole roster on every child update) + one visually-hidden `role="status" aria-live="polite"` announcing state once per change; **focus** enters the overlay on appear + restores on match-end (synchronous `.focus()` — a rAF version was left cancelled by StrictMode's double-invoke); **Leave Queue** `disabled`→`aria-disabled` + `if(pending)return` guard + `aria-live` so "Leaving…" is announced without losing focus.
+
+**Verified in the hidden pane:** transition fires once per change (no loop), exit timer removes the outgoing layer, focus enters+restores, correct region labels + per-state announcement text; all 3 keyframes seek-to-end correctly (fade-in→1, fade-out→0, slide-out→0+translateY). Temp harness `sandbox/match-alert-presence` used then deleted. **Not verified:** actual slide/crossfade/exit motion (headless).
+
+**Next:** on-device + SR check → merge to main. Cosmetic gate notes: amber "you" contrast comment says ≈7:1 (really ~6:1, still AA); `aria-live` on the focused Leave button may double-announce on some SRs.
+
+---
+
 ## 🆕 PLAYER-UI POLISH PASS + /critique FIXES (2026-07-13) — SHIPPED to main (`d419221`)
 
 **Status: COMMITTED to main as `d419221`. tsc / eslint / `next build` all clean. Review gate: LGTM (3 minor non-blocking notes below).** Two-part task: (1) finish the deferred cosmetic/staleness polish; (2) run `/critique` on recent player+club UI and fix caught issues. **Completes the player-side items of the 2026-07-11 entry's "Deferred (audit backlog)" list below** (History+Leaderboard visibility refresh, on-deck drag re-sync, match-history seq guard, skeletons, enter animations, Leave-Queue pending); the MatchAlert crossfade+exit landed separately via `feat/match-alert-transitions-a11y`.
