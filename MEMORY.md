@@ -5,6 +5,16 @@
 
 ---
 
+## 🆕 CLUB-SCOPED /organizer REDIRECT — RESYNCED to main, 2026-07-11 (orig. `feat/club-scoped-organizer-landing`)
+
+**Status: cherry-picked onto main, validated (tsc/lint/build clean, 669 tests green), review-gated.** Was built + reviewed earlier, never merged; user opted to merge now.
+
+**What:** `/organizer` is now a **redirect shim** → resolves the caller's organizing club via `getPrimaryClubSlug` (club of most-recent session, same resolver `/play` uses) and 308s to `clubOrganizer(slug)` = `/c/[slug]/organizer`; no club → `/welcome`. NEW `src/app/c/[clubSlug]/(full)/organizer/page.tsx` renders the `OrganizerEntry` hub **scoped to ONE club** (sessions `.eq(club_id)`, creation attaches to that club via `soloClubId=club.id`), member-gated by the `(full)` layout. `SessionWithStats` type moved from `@/app/organizer/page` into `organizer-entry.tsx` (the shim no longer defines it). No redirect loop (target renders, never bounces back). Completes the organizer slice of the club-routing migration; with one club today it resolves to `/c/chillax/organizer`.
+
+**Merge note:** only conflict was `/organizer/page.tsx` (main's full-render vs the shim) — resolved by taking the shim. `organizer-entry.tsx` merged clean.
+
+---
+
 ## 🆕 EARLY-ROUND MATCHMAKING DIVERSITY — RESYNCED to main, 2026-07-11 (orig. `feat/first-round-diversity`)
 
 **Status: MERGED — cherry-picked onto current main, all 669 unit tests green.** Originally built + reviewed in an earlier session but never merged; resurrected here (2 commits, net +515 lines). Verified genuinely absent from main before merging (main only had `MAX_OPPONENT_REPEATS=3`).
