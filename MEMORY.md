@@ -5,6 +5,21 @@
 
 ---
 
+## 🆕 EARLY-ROUND MATCHMAKING DIVERSITY — RESYNCED to main, 2026-07-11 (orig. `feat/first-round-diversity`)
+
+**Status: MERGED — cherry-picked onto current main, all 669 unit tests green.** Originally built + reviewed in an earlier session but never merged; resurrected here (2 commits, net +515 lines). Verified genuinely absent from main before merging (main only had `MAX_OPPONENT_REPEATS=3`).
+
+**What (net effect after the R2 drop):**
+- **Fresh-first rule** — `scoreCandidates` penalises candidates per game above the waiting-pool minimum (`GAMES_AHEAD_PENALTY=10_000`; Red-Zone variant `=100` so urgency always wins). Stops early round-2 matches from recycling just-played alumni.
+- **Opponent diversity** — `buildOverlapMap` opponent weight raised to equal teammate weight via named `OVERLAP_WEIGHT_TEAMMATE = OVERLAP_WEIGHT_OPPONENT = 2`; re-facing a round-1 opponent is now deprioritised as strongly as re-partnering (fires on a single prior meeting → drives round-2 opponent freshness). `MAX_OPPONENT_REPEATS` tightened 3 → 2.
+- **`derive-reuse-notice.ts`** (new) + reuse badge on `sortable-card.tsx` — surfaces when a draft reuses a recent partner/opponent.
+- **R2 (all-time cold-start seeding) was DROPPED** per user decision — it only influenced round 1 off a weak all-time signal, orthogonal to the round-2 goal. `fetchHistoricalPartnerWeights`/`seedColdStartOverlap`/`HISTORY_SEED_*` removed.
+- Files: `matchmaking-core.ts`, `matchmaking-db.ts`, `constants.ts`, `matchmaking.ts`, `on-deck-panel.tsx`, `sortable-card.tsx`, `derive-reuse-notice.ts` (new), `early-diversity.test.ts` (new, 256 lines).
+
+**Also fixed here (stale test left red by PR #20):** `queue-sub-tab.test.tsx` QST-3 asserted the pre-#20 behavior (on_deck → "Ready to play?"); updated to assert the "Match Forming" holding card. Main's suite was red on this before; now green. (Lesson: run `npm run test:unit`, not just tsc/lint/build, for UI-behavior changes.)
+
+---
+
 ## 🆕 AUDIT TRAIL ON CLEAR/CANCEL PATHS — FIXED on `fix/clear-cancel-audit-trail`, 2026-07-11
 
 **Status: BUILT + validated + reviewed (LGTM).** tsc/eslint/`next build` clean. Closes the forensics gap from the "Jason's match disappeared" incident: clears/cancels hard-DELETE matches and previously wrote NO `match_events`, so "who cleared this?" was unanswerable (confirmed on the 07/09 session: 0 clear/cancel events, only 7 orphaned `created` rows).

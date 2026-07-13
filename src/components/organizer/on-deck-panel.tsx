@@ -50,6 +50,7 @@ import {
 } from "@dnd-kit/sortable";
 import { Clock, EyeOff, PauseCircle } from "lucide-react";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
+import { deriveReuseNotice, type ReuseQueueRow } from "@/lib/derive-reuse-notice";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import type { SkillLevel } from "@/types/database";
 import { SortableCard, OverlayCard, CapSaturationNotice } from "./sortable-card";
@@ -187,6 +188,12 @@ interface OnDeckPanelProps {
    * fresh draft was just generated.
    */
   hasNewDraft?: boolean;
+  /**
+   * Live queue rows (any status) — feeds deriveReuseNotice so draft cards can
+   * flag rosters that reuse played players while fresher players wait
+   * (early-session diversity, organizer-facing signal).
+   */
+  queue?: ReuseQueueRow[];
 }
 
 // ── Main panel ────────────────────────────────────────────────
@@ -205,6 +212,7 @@ function OnDeckPanelInner({
   autoPublishIsOn = false,
   waitingCount,
   hasNewDraft,
+  queue,
 }: OnDeckPanelProps) {
   const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
@@ -356,6 +364,25 @@ function OnDeckPanelInner({
     [orderedMatches, optimisticPublishedIds]
   );
   const draftCount = draftMatches.length;
+
+  // Per-draft equity signal: which drafts seat played players while an
+  // equal-or-larger fresher cohort waits. Memoised — recomputes only when
+  // the draft set or queue rows change. Drafts only: published matches
+  // already passed the review gate, and the decision point is Publish.
+  const reuseNotices = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof deriveReuseNotice>>();
+    if (!queue || queue.length === 0) return map;
+    for (const match of draftMatches) {
+      map.set(
+        match.id,
+        deriveReuseNotice(
+          match.players.map((p) => p.player_id),
+          queue
+        )
+      );
+    }
+    return map;
+  }, [draftMatches, queue]);
 
   // Draft cap notice: visible when all draft slots are full, auto-matchmaking
   // is ON, and there are enough players waiting — explains to the organizer
@@ -528,6 +555,7 @@ function OnDeckPanelInner({
                     isOptimisticPublished={optimisticPublishedIds.has(match.id)}
                     error={errors[match.id]}
                     swapContext={swapContext}
+                    reuseNotice={reuseNotices.get(match.id) ?? null}
                     onClear={handleClear}
                     onPublish={handlePublish}
                     onPlayerTap={onPlayerTap}

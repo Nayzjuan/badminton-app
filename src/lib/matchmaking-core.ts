@@ -20,6 +20,8 @@ import {
   DRAFT_CAP_XLARGE_THRESHOLD,
   FALLBACK_WAIT_MINUTES,
   GAME_PENALTY_MINUTES,
+  GAMES_AHEAD_PENALTY,
+  GAMES_AHEAD_PENALTY_RED_ZONE,
   HARD_CAP_GAMES_CEILING,
   HARD_CAP_SCORE_FLOOR,
   HARD_WAIT_CAP_MINUTES,
@@ -356,7 +358,9 @@ export function isDiversityViolation(playerIds: string[], recentRosters: string[
 //
 // Formula:
 //   Normal candidate:   score = -priorityScore + overlapCount × 10_000
+//                               + gamesAhead × GAMES_AHEAD_PENALTY
 //   Red Zone candidate: score = -priorityScore + overlapCount × 100
+//                               + gamesAhead × GAMES_AHEAD_PENALTY_RED_ZONE
 //
 // Red Zone candidates (priorityScore ≥ 1000) have their overlap
 // penalty capped at 100× instead of 10_000×. This guarantees that
@@ -367,10 +371,21 @@ export function isDiversityViolation(playerIds: string[], recentRosters: string[
 //
 // The 10_000× multiplier is preserved for Normal candidates so
 // anti-repeat logic still works as designed for non-urgent matches.
+//
+// Fresh-first rule (early-session diversity): when `poolMinGames` is
+// supplied, each candidate is additionally penalised per game they are
+// AHEAD of the pool minimum. Post-round-1 this pushes never-played (or
+// least-played) waiting players to the front of the candidate order, so
+// buildCombinationGroup — which takes the first skill-valid triple —
+// naturally drafts the freshest cohort instead of recycling just-played
+// alumni. Red Zone candidates use the small capped variant so urgency
+// still outranks freshness. Omitting poolMinGames (or a pool where all
+// games are equal, e.g. t=0) leaves behaviour exactly as before.
 
 export function scoreCandidates(
   candidates: ScoredPlayer[],
-  overlapMap: Map<string, number>
+  overlapMap: Map<string, number>,
+  poolMinGames?: number
 ): ScoredCandidate[] {
   return candidates
     .map((c) => {
@@ -378,9 +393,20 @@ export function scoreCandidates(
       // Red Zone: cap overlap penalty so urgency always wins.
       const isRedZone = c.priorityScore >= RED_ZONE_SCORE_FLOOR;
       const overlapPenalty = isRedZone ? overlap * 100 : overlap * 10_000;
+      // Fresh-first: penalise games above the pool minimum (never negative —
+      // a candidate below the supplied minimum simply gets no penalty).
+      // Pulled bodies are exempt: their ordering is governed entirely by
+      // priorityScore -1 (C-3 — last-resort filler, always sorts behind
+      // waiting players), and their mid-game games_played reads one low,
+      // which would otherwise let them jump ahead of equally-fresh waiters.
+      const gamesAhead =
+        poolMinGames === undefined || c.isPulled ? 0 : Math.max(0, c.games_played - poolMinGames);
+      const gamesAheadPenalty = isRedZone
+        ? gamesAhead * GAMES_AHEAD_PENALTY_RED_ZONE
+        : gamesAhead * GAMES_AHEAD_PENALTY;
       return {
         candidate: c,
-        score: -c.priorityScore + overlapPenalty,
+        score: -c.priorityScore + overlapPenalty + gamesAheadPenalty,
       };
     })
     .sort((a, b) => a.score - b.score);
@@ -736,6 +762,18 @@ export function runAlgorithm(
   const anchorWaitMinutes = anchor.wait_minutes ?? 0;
   const anchorIsRedZone = anchor.priorityScore >= RED_ZONE_SCORE_FLOOR;
 
+  // Fresh-first baseline: the fewest games played by any WAITING player in
+  // the pool. scoreCandidates penalises candidates per game ABOVE this
+  // minimum so the freshest waiting cohort is drafted first (see
+  // GAMES_AHEAD_PENALTY). Pulled (still-playing) bodies are excluded from
+  // the baseline: their games_played reads one low mid-game (it increments
+  // only at completion), which would drop the baseline and penalise every
+  // genuinely-fresh waiting candidate in the cross-court augmented run.
+  const poolMinGames = pool.reduce(
+    (min, p) => (p.isPulled ? min : Math.min(min, p.games_played)),
+    Infinity
+  );
+
   if (process.env.DEBUG_MATCHMAKING === "true") {
     console.log(
       `[matchmaking] anchor=${anchor.display_name} skill=${anchorSkill} ` +
@@ -804,7 +842,7 @@ export function runAlgorithm(
       );
     }
 
-    const scored = scoreCandidates(eligible, overlapMap);
+    const scored = scoreCandidates(eligible, overlapMap, poolMinGames);
     const group = buildCombinationGroup(anchor, scored, maxVariance);
 
     if (group.length === 3) {
@@ -877,7 +915,7 @@ export function runAlgorithm(
             );
 
             if (widerEligible.length > 0) {
-              const widerScored = scoreCandidates(widerEligible, overlapMap);
+              const widerScored = scoreCandidates(widerEligible, overlapMap, poolMinGames);
               for (const { candidate } of widerScored) {
                 const swapGroup = [...fixedTwo, candidate];
                 if (!isGroupValid([anchor, ...swapGroup], SKILL_VARIANCE_MAX)) continue;
@@ -991,7 +1029,7 @@ export function runAlgorithm(
         `[matchmaking] LAST-RESORT FALLBACK — anchor waited ${anchorWaitMinutes.toFixed(1)}min > ${FALLBACK_WAIT_MINUTES}min`
       );
     }
-    const scoredFallback = scoreCandidates(candidates, overlapMap);
+    const scoredFallback = scoreCandidates(candidates, overlapMap, poolMinGames);
     // Cross-court (N-1): keep at most one pulled body even in the last-resort path.
     const fallbackGroup = limitPulledToOne(scoredFallback.map((s) => s.candidate)).slice(0, 3);
 

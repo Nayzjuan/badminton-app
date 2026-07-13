@@ -13,11 +13,12 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertTriangle, CheckCircle, Clock, GripVertical, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, GripVertical, Trash2, Users, X } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
 import { H2HStrip } from "@/components/organizer/h2h-strip";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
+import type { ReuseNotice } from "@/lib/derive-reuse-notice";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import { CRITICAL_WAIT_MINUTES, MAX_PARTNERSHIP_REPEATS } from "@/lib/constants";
 import type { SwapContext } from "./on-deck-panel";
@@ -160,6 +161,31 @@ function HeldBadge({ match }: { match: EnrichedMatch }) {
   );
 }
 
+// ── ReuseBadge ────────────────────────────────────────────────
+// Equity signal (early-session diversity): this draft seats players
+// who are ahead on games while an equal-or-larger cohort of fresher
+// players is waiting. Amber = attention in the command-center
+// vocabulary. Icon + text (never colour-only — a11y). The organizer
+// can still publish — this is a visibility aid, not a block.
+function ReuseBadge({ notice }: { notice: ReuseNotice | null | undefined }) {
+  if (!notice) return null;
+  return (
+    <span
+      role="status"
+      aria-label={
+        `${notice.overMinCount} player${notice.overMinCount !== 1 ? "s" : ""} in this draft ` +
+        `played more games than ${notice.fresherWaiting} fresher waiting player${notice.fresherWaiting !== 1 ? "s" : ""}`
+      }
+      className="clip-cut-badge border px-2 py-0.5 inline-flex items-center gap-1
+                 font-command text-[9px] uppercase tracking-[0.10em]
+                 bg-cc-amber-dim border-cc-amber/40 text-cc-amber"
+    >
+      <Users className="h-2.5 w-2.5 shrink-0" />
+      {notice.fresherWaiting} fresher waiting
+    </span>
+  );
+}
+
 // ── SortableCard ─────────────────────────────────────────────
 // ALL dnd-kit wiring lives here — no prop drilling, no child
 // component boundaries for refs or listeners.
@@ -175,6 +201,11 @@ interface SortableCardProps {
   isOptimisticPublished: boolean;
   error?: string;
   swapContext: SwapContext | null;
+  /**
+   * Non-null when this draft reuses played players while fresher players
+   * wait (deriveReuseNotice). Renders the amber ReuseBadge in the header.
+   */
+  reuseNotice?: ReuseNotice | null;
   onClear: (id: string) => void;
   onPublish: (id: string) => void;
   onPlayerTap: (ctx: Omit<SwapContext, "mode">) => void;
@@ -189,6 +220,7 @@ export function SortableCard({
   isOptimisticPublished,
   error,
   swapContext,
+  reuseNotice = null,
   onClear,
   onPublish,
   onPlayerTap,
@@ -319,6 +351,7 @@ export function SortableCard({
               )}
               <MatchOriginTag classification={match.final_classification} />
               <HeldBadge match={match} />
+              <ReuseBadge notice={reuseNotice} />
             </div>
             <span
               className={[

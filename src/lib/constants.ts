@@ -208,8 +208,31 @@ export const MAX_PARTNERSHIP_REPEATS = 2;
  *
  * This is a soft cap to avoid conflicts with the hard partnership cap:
  * in small sessions the same players necessarily face each other often.
+ *
+ * Lowered 3 → 2 (2026-07 diversity pass): the engine now prefers splits where
+ * no cross-net pair has already met twice, so a given pair only faces off a
+ * third time when the pool genuinely leaves no alternative. Affects round 3+
+ * team-splitting (in round 2 no pair has met more than once, so the cap does
+ * not bite — round-2 opponent freshness is driven by OVERLAP_WEIGHT_OPPONENT
+ * in buildOverlapMap instead). Still soft, so small sessions never stall.
  */
-export const MAX_OPPONENT_REPEATS = 3;
+export const MAX_OPPONENT_REPEATS = 2;
+
+/**
+ * Familiarity weights applied by buildOverlapMap per prior in-session
+ * encounter with the anchor, consumed by scoreCandidates (weight × the overlap
+ * multiplier) to push already-encountered players down the candidate order.
+ *
+ * TEAMMATE (same side) and OPPONENT (cross-net) are now weighted EQUALLY (both
+ * 2) — raised from the old 2/1 split as part of the 2026-07 diversity pass so
+ * that re-FACING someone from round 1 is avoided as strongly as re-PARTNERING
+ * them. This is the primary lever for round-2 opponent diversity: it fires on
+ * a single prior meeting (unlike MAX_OPPONENT_REPEATS, which only bites on a
+ * 2nd meeting). Soft signal only — reorders candidates, never hard-blocks;
+ * skill windows and the partnership cap are enforced separately.
+ */
+export const OVERLAP_WEIGHT_TEAMMATE = 2;
+export const OVERLAP_WEIGHT_OPPONENT = 2;
 
 /**
  * Minimum minutes a returning player must wait before they can be
@@ -223,6 +246,29 @@ export const MAX_OPPONENT_REPEATS = 3;
  * match (handles very small sessions or returning bursts).
  */
 export const MIN_REST_MINUTES = 18;
+
+// ── Early-session diversity (fresh-first rule) ────────────────────────────────
+// Motivated by the 2026-07 early-round-diversity investigation: real sessions
+// showed early second-round matches recycling just-played "alumni" while
+// fewer-games players were present, because candidate scoring had no notion of
+// games-played disparity.
+
+/**
+ * scoreCandidates penalty per game a candidate is AHEAD of the pool minimum
+ * (fresh-first rule). Same magnitude as one overlap unit (10_000) so a
+ * candidate one game ahead of the freshest waiting players ranks behind them
+ * — effectively "draw from the freshest cohort first" whenever the skill
+ * window allows, without ever hard-blocking (skill compatibility and Red Zone
+ * urgency still win). Zero effect when every candidate has equal games.
+ */
+export const GAMES_AHEAD_PENALTY = 10_000;
+
+/**
+ * Red Zone variant of GAMES_AHEAD_PENALTY — capped small (like the 100×
+ * overlap cap) so an urgent long-waiting player is never displaced by a
+ * fresher-but-not-urgent candidate.
+ */
+export const GAMES_AHEAD_PENALTY_RED_ZONE = 100;
 
 // ── Cross-Court Diversity Drafting (held drafts) ──────────────────────────────
 // See CROSS_COURT_DRAFTING_PLAN.md. The engine may pre-build an on-deck "held"
