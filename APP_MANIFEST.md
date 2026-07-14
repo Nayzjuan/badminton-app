@@ -56,12 +56,12 @@ createServiceClient(); // uses service role key
 
 `src/lib/broadcast.ts` — Server-side REST broadcast helpers (no WebSocket opened from the server). Sends ephemeral messages to topic `"realtime:session-events:{sessionId}"`. Event types:
 
-- `organizer_intervention` — `{ type: "on_deck_cleared" | "match_cancelled", affectedPlayerIds }` → triggers player-side toast via `useOrganizerBroadcast`.
+- `organizer_intervention` — `{ type: "on_deck_cleared" | "match_cancelled" | "active_roster_changed", affectedPlayerIds, actorId?, actorName? }` → player-side toast via `useOrganizerBroadcast` (players filter by their own id). `clearOnDeckMatch` + `cancelMatchAction` attach the acting organizer (PR #19): `useOrganizerSession.onIntervention` then toasts co-organizers ("{actor} cleared an on-deck match"), skipping the actor's own client (`actorId === currentUserId`) and any actor-less broadcast (batch cap-reset clears + roster swaps, which repaint in place and need no notice).
 - `session_closed` — redirects all connected players to `/wrapped/{sessionId}/{playerId}`.
 - `auto_matchmaking_toggled` — `{ isOn: boolean }` → syncs auto-matchmaking state to all co-organizers (bypasses the sessions RLS SELECT policy that would silently drop postgres_changes for non-creator organizers).
 - `auto_publish_toggled` — `{ isOn: boolean }` → syncs auto-publish mode state to all co-organizers (same RLS-bypass rationale). Handled in `use-organizer-session.ts`; `auto_publish` is also excluded from the postgres_changes apply so it never double-syncs.
-- `cap_saturation` — `{ affectedPlayerIds, reason }` → fires when `MAX_PARTNERSHIP_REPEATS` blocks every possible team split. Surfaces a `CapSaturationNotice` banner in the on-deck panel so the organizer knows to intervene manually.
-- `draft_cap_phase` — `{ phase: "clearing" | "generating" | "done", cap }` → drives the synchronized dashboard lockout overlay during a cap-change reset.
+- `cap_saturation` — `{ type: "general" | "red_zone", anchorPlayerId, anchorPlayerName }` → fires when the partner-repeat cap (not player shortage) blocks every possible team split for the anchor player; `red_zone` once the anchor has crossed `RED_ZONE_SCORE_FLOOR` (waited ≥ `CRITICAL_WAIT_MINUTES`). Handled in `use-organizer-session.ts` → surfaces the `CapSaturationNotice` banner in the on-deck panel so the organizer knows to intervene manually.
+- `draft_cap_phase` — `{ phase: "clearing" | "generating" | "done", override }` (`override: number | null`, null = Dynamic) → drives the synchronized dashboard lockout overlay during a cap-change reset; `done` is also emitted on failure so co-organizer screens never stay locked.
 
 ### Realtime Subscription Auth (JWT-before-join)
 
@@ -258,6 +258,19 @@ Append-only audit log. Records every old → new UUID reconnect (anonymous re-au
 
 All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web Push call fails silently.
 
+#### `club_milestones`
+
+One-time club-wide "firsts" ledger (migration `20260704000001`). Append-only; RLS enabled with **zero policies** (deny-all) — written/read exclusively inside `compute_session_wrapped()` via service role. `UNIQUE (club_id, milestone)` makes claiming atomic (`INSERT … ON CONFLICT DO NOTHING`), so two near-simultaneous session closes in the same club can never both win. Backfilled at migration time with the true historical first-to-100 crossing per club, reconstructed from completed-match history.
+
+| Column        | Type                         | Notes                                                   |
+| ------------- | ---------------------------- | ------------------------------------------------------- |
+| `id`          | `uuid` PK                    |                                                         |
+| `club_id`     | `uuid → clubs.id`            | `UNIQUE (club_id, milestone)`                           |
+| `milestone`   | `text`                       | Currently only `first_to_100_games`                     |
+| `player_id`   | `uuid → profiles.id`         |                                                         |
+| `session_id`  | `uuid → sessions.id \| null` | ON DELETE SET NULL — milestone survives session pruning |
+| `achieved_at` | `timestamptz`                |                                                         |
+
 ---
 
 ### Enums
@@ -301,7 +314,7 @@ All three of `endpoint`, `p256dh`, and `auth_key` must be non-empty or the Web P
 | `swap_player_in_match(...)`                             | Atomic bench→on-deck swap; recomputes `is_mixed_level`                                                                                                                                                                                                                                                                               |
 | `swap_match_players(...)`                               | Cross-match atomic swap between two on-deck matches                                                                                                                                                                                                                                                                                  |
 | `create_match_with_players(...)`                        | Atomic match + match_players insert; `RETURNS uuid`. Returns **`NULL`** (not an error) when a TOCTOU guard detects a concurrent commit — `{ data: null, error: null }` from Supabase JS = graceful slot-skip. RPC evolution: `20260421000000` → `20260506000000` (Draft Mode `p_is_published`) → `20260507000000` (3 TOCTOU guards). |
-| `compute_session_wrapped(p_session_id)`                 | Computes and upserts all `session_wrapped_stats` for a session                                                                                                                                                                                                                                                                       |
+| `compute_session_wrapped(p_session_id)`                 | Computes and upserts all `session_wrapped_stats` for a session. Redefined by `20260704000000` (deuce_magnet threshold 20-20 → 30-30 — scoring is sudden-death to 31, so 30-30 is the real drama point) and `20260704000001` (awards one-time `first_to_100` via an atomic `club_milestones` claim; only the claim-winner ever gets the slug). |
 | `get_h2h_record(p_team_a, p_team_b, p_session_id)`      | Head-to-head wins for exact 2v2 team pairing (all-time + tonight)                                                                                                                                                                                                                                                                    |
 | `toggle_auto_matchmaking(p_session_id)`                 | Atomic toggle; returns new boolean value                                                                                                                                                                                                                                                                                             |
 | `auto_publish_match(p_match_id, p_session_id)`          | **Auto-publish mode** (migration `20260623000001`). `publish_match` minus the organizer gate — service-role-only (grants revoked from anon/authenticated, `20260623000002`). Used by `recomputeHeldReadiness` to publish a held draft the instant it becomes ready. Keeps the `HAS_LEFT_PLAYERS`/`CONFLICT` guards; sets `is_published=true` and transitions roster `drafted`/`waiting` → `on_deck`. Returns `SUCCESS` \| `HAS_LEFT_PLAYERS` \| `CONFLICT` \| `NOT_PENDING` \| `ALREADY_PUBLISHED` \| `NOT_FOUND`. |
@@ -422,6 +435,8 @@ Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3
 | `RED_ZONE_SCORE_FLOOR`         | 1000  | Sentinel — any score ≥ this = Red Zone (used by scoreCandidates + runAlgorithm; note heavy game debt can push a Red Zone formula result below 1000)                                                                                                                                                                                                                                                                                                             |
 | `BOTTLENECK_THRESHOLD_MINUTES` | 20    | Wait-time monitor flag threshold                                                                                                                                                                                                                                                                                                                   |
 | `ANTI_REPEAT_LOOKBACK`         | 5     | Recent matches used by `buildOverlapMap` for familiarity weighting (count-based)                                                                                                                                                                                                                                                                   |
+| `OVERLAP_WEIGHT_TEAMMATE`      | 2     | `buildOverlapMap` weight per same-team co-appearance with the anchor in recent matches.                                                                                                                                                                                                                                                            |
+| `OVERLAP_WEIGHT_OPPONENT`      | 2     | `buildOverlapMap` weight per cross-net co-appearance (raised 1→2 in the 2026-07 diversity pass — re-facing avoided as hard as re-partnering). Fires on a single prior meeting, so it is the primary round-2 opponent-freshness lever (`MAX_OPPONENT_REPEATS` only bites round 3+).                                                                     |
 | `ROSTER_LOOKBACK_COUNT`        | 10    | Recent match rosters fetched by `fetchRecentRosters` for diversity-violation checks (larger than `ANTI_REPEAT_LOOKBACK` so `getEffectiveLookback` can scale up for large sessions)                                                                                                                                                                 |
 | `MIN_REST_MINUTES`             | 18    | Minimum wait minutes before a returning player (games_played > 0) can be drafted again. Prevents 0-min back-to-back. Falls back to unfiltered pool if fewer than `PLAYERS_PER_MATCH` survive the filter.                                                                                                                                           |
 | `GAMES_AHEAD_PENALTY`          | 10,000 | Fresh-first rule: scoreCandidates penalty per game a candidate is above the waiting-pool minimum (= 1 overlap unit). Pulled bodies exempt.                                                                       |
@@ -534,7 +549,7 @@ New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (
 **File:** `src/components/organizer/on-deck-panel.tsx`
 
 - Displays `status = "pending"` matches (no `court_id`).
-- Engine auto-generates up to `MAX_AUTO_DRAFTS` (3) total pending matches. Formula: `slotsAvailable = max(0, 3 − totalPending)` where `totalPending` counts ALL pending rows (published + unpublished) atomically.
+- Engine auto-generates drafts up to the **dynamic draft cap** (`getDynamicDraftCap(waitingCount)` → 3 / 5 / 6 for `<25` / `25–29` / `≥30` waiting; organizer `max_auto_drafts_override` applies as a ceiling). Formula: `slotsAvailable = max(0, effectiveCap − draftCount)` where `draftCount` counts **unpublished** (`is_published=false`) pending rows only — published on-deck matches never block fresh drafts. (Auto-publish mode instead counts published-or-held pending rows; see §3.5.) Full details: "Engine Capacity — Dynamic Draft Cap" in §3.1.
 - Each card shows team A vs team B with skill badges, `is_mixed_level` indicator, and H2H strip.
 - **Draft Mode**: All engine-generated matches start as `is_published = false` (drafts, hidden from players and TV). The organizer must explicitly publish (single: `publishMatchAction`) or publish-all (`publishAllDraftMatchesAction`) before players see them. The draft approval banner shows `"N on-deck matches waiting for approval"` and the section label reads `"Drafts — hidden from players"`.
 - **Engine trigger on publish**: `publishMatchAction` (both RPC and fallback paths) and `publishAllDraftMatchesAction` (both RPC and fallback) call `runEngineForSession` after a successful publish, immediately refilling the draft review queue. This prevents the organizer from seeing 0 drafts after publishing all — the engine proactively generates the next batch.
@@ -628,7 +643,7 @@ Draft Mode is a **publish gate** for auto-generated on-deck matches.
 Auto-Publish Mode is the **per-session opposite** of Draft Mode: when ON, the engine skips the manual publish gate entirely and matches go **straight to On Deck**. The whole pipeline downstream of publish is already automatic (`endMatchAction → promoteOnDeckMatchInternal → COURT_CALL`), so this single flag flips the only remaining manual step. Migrations `20260623000000` (column) + `20260623000001` (RPC) + `20260623000002` (grants).
 
 - **Engine output (the critical cluster, `runEngineInternal`):** `runEngineInternal` reads `auto_publish` alongside `max_auto_drafts_override` (one `sessions` fetch). `executeMatch` is called with `autoPublish`, so `create_match_with_players` receives `p_is_published = true` and atomically promotes the roster to `on_deck`. The engine then fires `ON_DECK_WARNING` itself via `after()` (the publish action that normally fires it is bypassed).
-- **Cap re-interpretation (D2):** the same `max_auto_drafts_override` cap means "max published matches to keep On Deck" in auto mode. Because there are no unpublished drafts, the cap-count query re-counts `is_published = true` pending matches (an extra count query that runs **only** in auto mode). Held-but-not-ready drafts (`is_published=false`) stay hidden and don't count. UI chip label swaps `MAX` → `DECK`.
+- **Cap re-interpretation (D2):** the same `max_auto_drafts_override` cap means "max published matches to keep On Deck" in auto mode. Because there are no unpublished review drafts, the cap-count query re-counts pending matches that are `is_published = true` **or `is_held = true`** (an extra count query that runs **only** in auto mode). Held-but-not-ready drafts stay hidden from players but DO count against the cap — they auto-publish at readiness, so counting them prevents the engine over-generating and overshooting the cap when several publish at once. UI chip label swaps `MAX` → `DECK`.
 - **Held cross-court drafts publish at READINESS, not creation (D12):** held drafts are still born `is_published=false` (the pulled body may be mid-game). When `recomputeHeldReadiness` stamps `held_ready_at` and `auto_publish` is ON, it calls `auto_publish_match` (service-role RPC) to publish that one draft and ping all four players — so a still-playing player is never pinged or shown on-deck early.
 - **Ghost-player guard (`promoteOnDeckMatchInternal`):** before promoting, the function skips and clears any ready match whose roster contains a `left` player (auto-published matches reach On Deck without organizer review, so this is the safety net that the manual publish path provided).
 - **Toggle (`toggleAutoPublish`):** ON flip — persist `auto_publish=true`, then (only while Auto-Matchmaking is ON) clear unpublished drafts and re-run the engine so it refills On Deck immediately (D3/D8); a confirm dialog warns when drafts will be cleared (D9). OFF flip — persist only; live On-Deck matches are committed and left untouched (D4). The toggle is disabled in the header while Auto-Matchmaking is OFF (D11, the engine can't run). State syncs to co-organizers via the `auto_publish_toggled` broadcast. In auto mode the On-Deck panel hides the drafts section, the divider, and the Publish-All banner.
@@ -701,13 +716,13 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 **Award Metadata** (`src/lib/wrapped-awards.ts`):
 
-- `AWARD_META: Record<string, AwardMeta>` — maps every slug to `{ emoji, title, subtitle, rarity }`. **60 total awards** across 8 categories (51 session-only + 9 cross-session added in migrations `20260510000000–02`).
+- `AWARD_META: Record<string, AwardMeta>` — maps every slug to `{ emoji, title, subtitle, rarity }`. **63 total awards** across 12 categories (54 session-only + 9 cross-session added in migrations `20260510000000–02`; `first_to_100` added in `20260704000001`).
 - Subtitle templates use `{value}` tokens replaced at render time from `award_data` jsonb.
 - `renderSubtitle(meta, awardData)` handles token replacement.
 - `sortAwardsByRarity(slugs)` — orders rarest-first for display (legendary → rare → uncommon → common).
 - `topAwardsByRarity(slugs, n=6)` — display cap helper used by `WrappedShell` to render at most 6 awards on the player's Wrapped page; the header copy switches to "Top 6 of N Awards" when there are more.
 
-**Award catalogue (60 awards):**
+**Award catalogue (63 awards):**
 
 | Category                | Awards                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -719,9 +734,9 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 | Resilience              | grinds → never_say_die, sunset_surge, fast_starter                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Nemesis / H2H           | my_nemesis ★, kryptonite ★, the_rematch, redemption_arc ★, friendly_fire                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Social / Partner        | social_butterfly, loyal_partner ★, mixed_master                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Score-based Flavor      | close_call_survivor, heartbreaker, deuce_magnet                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Score-based Flavor      | close_call_survivor, heartbreaker, deuce_magnet (30-30 tie — raised from 20-20 in `20260704000000`; scoring is sudden-death to 31)                                                                                                                                                                                                                                                                                                                                                       |
 | Comedic / Personality   | participation_trophy, the_punching_bag, scoreboard_decorator, benchwarmer, the_warmup_act, own_worst_enemy, just_getting_started (fallback)                                                                                                                                                                                                                                                                                                                                             |
-| Special / Milestone     | century_club, the_veteran, night_cap, early_bird, skill_slayer, double_trouble                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Special / Milestone     | century_club, the_veteran, night_cap, early_bird, skill_slayer, double_trouble, **first_to_100** (one-time club-wide: only the historically FIRST player in the club to reach 100 all-time games; claimed atomically via `club_milestones`, `20260704000001`)                                                                                                                                                                                                                              |
 | **Cross-session (NEW)** | **momentum** (ended last session on streak ≥3, won first tonight), **consistent_dominator** (70%+ in 2 of 3 sessions), **bounced_back** (sub-50% → 50%+), **nemesis_slayer** (beat all-time nemesis), **settled_the_score** (flipped negative H2H), **the_dynasty** (5+ wins, 70%+ all-time vs same rival), **serial_rivals** (3+ sessions vs same rival), **soulmates** (20+ games with same partner across sessions), **winning_formula** (60%+ win rate with same partner, 6+ games) |
 
 (★ = enhanced with cross-session context in award_data)
@@ -735,6 +750,8 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 - Tier replacement: `the_warmup_act` removes `participation_trophy` before adding itself — a player who qualifies for warmup_act (0 wins, ≥3 games, avg loss margin ≥6) was otherwise receiving both awards simultaneously (migration `20260509`).
 - `sniper` was rebanded from "≥5 pt margin" to "5–7 pt margin" so it does not overlap with the new `heartless` (≥8 pt margin) award.
 - **Threshold tweaks (migration `20260509000000`):** `the_closer` requires `games_played >= 3` (was 2); `friendly_fire` requires `friendly_fire_overlap >= 2` (was 1, fired for ~80% of players in small sessions).
+- **Deuce threshold tweak (migration `20260704000000`):** `deuce_magnet` now requires games reaching **30-30** (was 20-20) — scoring is sudden-death up to `MAX_BADMINTON_SCORE=31` with no win-by-2, so 20-20 is a routine mid-game state; 30-30 is the real next-point-wins moment. Applied as a verified scoped text substitution on the live `compute_session_wrapped` body (aborts unless the 20-20 pattern occurs exactly twice). Subtitle in `wrapped-awards.ts` updated to say 30-30.
+- **First to 100 (migration `20260704000001`):** `first_to_100` (legendary) — one-time, club-scoped honor for the FIRST player in a club to ever reach 100 all-time games; exactly one holder per club, forever (vs `century_club`, which every player earns each session after crossing 100). Backed by the new `club_milestones` table (§2 — append-only, deny-all RLS, service-role only). Claim runs in the RPC only when a player *crosses* 100 tonight (`alltime_games>=100 AND alltime_games-games_played<100`): SELECT existing holder → atomic `INSERT ... ON CONFLICT (club_id,milestone) DO NOTHING RETURNING` — race-safe across concurrent session closes, idempotent across recomputes. Ledger milestone key is `first_to_100_games`; award slug is `first_to_100`. Migration backfilled the true historical first crossing per club from cumulative completed-match history.
 
 **Archetype Cards**: Players receive a personality archetype (e.g. "The Grinder", "The Sniper") based on their session stats pattern.
 
@@ -915,6 +932,7 @@ Public read-only scoreboard for display on a wall-mounted screen. Uses the servi
 Hybrid notification system — **server-triggered** Web Push + client-side in-app audio. Two independent channels:
 
 - **In-app audio (client):** `use-match-alerts.ts` watches the player's Realtime status transitions and plays `playWarningBeep` / `playCourtCall` from `audio.ts`. Low-latency feedback while the app is OPEN. **It no longer fires push** — that moved server-side.
+- **In-app court-call auto-focus (client, PR #26):** `player-dashboard.tsx` switches to the My Status tab on the `hasActiveMatch` false→true edge (`prevHasActiveMatchRef`) — the full-screen MatchAlert takeover is scoped to the Status tabpanel, so a player browsing Live Courts / Waitlist / Leaderboard would otherwise only get the header dot + audio beep and could miss the call.
 - **Web Push (server) — the background channel:** `pushToPlayers(userIds, type)` in `push-server.ts` is the single source of truth. Invoked via Next.js `after(() => pushToPlayers(...))` from every server action that transitions a player's queue status, so the push reaches a **backgrounded/locked phone** regardless of whether the app is open.
 
 **Why server-side:** the old design called `sendPlayerNotification` from the client hook on a Realtime event. A locked/backgrounded phone suspends the websocket, so the event — and the push — never fired. Moving the trigger server-side fixes this; removing the client push also prevents double-notification.
@@ -999,9 +1017,9 @@ Both components call server actions for data. `match-history.tsx` retains the br
 
 ### 3.17 Stateless Organizer Auth / Session Auto-Discovery
 
-**File:** `src/components/organizer/organizer-entry.tsx`, `src/app/organizer/page.tsx`
+**Files:** `src/components/organizer/organizer-entry.tsx`, `src/app/c/[clubSlug]/(full)/organizer/page.tsx` (hub), `src/app/organizer/page.tsx` (legacy redirect shim)
 
-Organizers do not need a persistent account. The organizer landing page auto-discovers all sessions where the authenticated user is either `created_by` or in `session_organizers`. Additional organizers join via passcode (`elevate_to_organizer` RPC). The `organizer-entry.tsx` component handles the passcode gate UI.
+Organizers do not need a persistent account. The organizer hub lives at `/c/[clubSlug]/organizer` (member-gated by the `(full)` layout) and lists ALL of that club's sessions, active + past (`sessions.club_id = club.id`, service client — the hub shows each active session's `organizer_passcode`, which the anon client's column grants exclude). It is deliberately NOT filtered by `created_by`/`session_organizers`: anonymous auth means one physical organizer accumulates several user IDs, so an ownership filter would hide their own sessions. Session creation always attaches to the URL club (`soloClubId = club.id`); `openSession` navigates club-aware (club path when a slug is in context) and no-ops on an absent id. Legacy `/organizer` is a redirect shim: `getPrimaryClubSlug(user.id)` → 308 `/c/<slug>/organizer`, no club → `/welcome` (§11.7). `SessionWithStats` is exported from `organizer-entry.tsx` (the consumer) so both routes share it. Additional organizers join via passcode (`elevate_to_organizer` RPC); `organizer-entry.tsx` handles the passcode gate UI.
 
 ---
 
@@ -1050,6 +1068,8 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 **Purpose:** Surfaces players who have been waiting too long AND confirms long-waiting players are being served after manual assignment.
 
 **Data source:** The organizer queue data (from `v_queue_full_with_wait_time`), filtered in-component to `status === 'waiting' || status === 'on_deck'`.
+
+**Freshness (PR #26):** `wait_minutes` / `is_bottleneck` are computed by the view at query time — they only advance when `fetchQueue` runs, which is otherwise purely mutation-driven. `use-organizer-data.ts` therefore re-polls the queue every **45 s while the tab is visible** (`WAIT_TIME_POLL_MS`) so the minutes keep ticking and bottlenecks escalate during quiet stretches with no queue mutations.
 
 **Visual treatment:**
 - `waiting` players with `is_bottleneck = true` (wait ≥ 20 min): red border, "NEEDS ATTENTION" label.
@@ -1144,7 +1164,7 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 
 ### 3.23a Match Provenance & Modification Audit (2026-06-17)
 
-**Branch `feat/match-provenance-audit` — built, not yet applied/merged.** Replaces the flat `matches.origin` enum with an auditable 3-layer model so every match's birth + every roster change is known.
+**Merged to `main` 2026-06-17 (`98e7f6e`); both migrations applied to prod (`match_provenance_audit` + `drop_match_origin` — live, `match_events` accumulating real rows).** Replaces the flat `matches.origin` enum with an auditable 3-layer model so every match's birth + every roster change is known.
 
 **Files:** `src/lib/match-provenance.ts` (pure logic), `src/lib/match-event-log.ts` (best-effort), `src/app/actions/match-events.ts` (reads), `src/components/organizer/match-event-timeline.tsx` (UI), migrations `20260617000000` (additive) + `20260617000001` (origin drop).
 
@@ -1165,7 +1185,7 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 
 **Backfill:** birth method is recovered exactly for all existing matches (sticky rule: `origin='modified'` ⇒ born auto; `is_held` ⇒ held), so "% auto vs manual vs held" is accurate retroactively. `manual_modified` is unrecoverable for history (accurate only going forward); legacy modified rows get `modification_count=1` floor.
 
-**⚠ Migrations NOT applied to prod** (apply order: mig1 → deploy app → mig2). Deferred best-effort items: `player_left`/`published` events on leaver/clear/publish paths (zero metric impact — those matches cancel). See MEMORY.md + `MATCH_PROVENANCE_AUDIT_PLAN.md`.
+**Clear/cancel/leaver audit trail (PR #22 `dad594f`, 2026-07-13):** the three previously-silent delete paths now log a best-effort `cancelled` event via `logMatchEvent` — `clearOnDeckMatch` (actor + roster snapshot + `created_method`/`is_published`, `reason:'on_deck_cleared'`), `clearAllUnpublishedDrafts` (one event per swept draft; TS pre-fetch mirrors the RPC filter exactly: pending + unpublished + not-held; `reason:'batch_clear_unpublished'`), `checkoutPlayer` (one event per `cancelled_match_id` from the cleanup RPC; `actorId:null` → `actor_type='system'`; `payload:{reason:'checkout_below_min', trigger_player_id}`). Delete paths log BEFORE the delete so the FK is valid at insert (`ON DELETE SET NULL` + `match_id_snapshot` preserve the trail); a domain error after the log can leave a false `cancelled` row (narrow, accepted per §14.E-2); the PGRST202 fallback loops are intentionally un-audited. No migration — `event_type` is text, `record_match_event` already live. **Still deferred:** `published` events on the publish paths (zero metric impact). See MEMORY.md + `MATCH_PROVENANCE_AUDIT_PLAN.md`.
 
 ---
 
@@ -1314,7 +1334,7 @@ All organizer views consume a separate `cc-*` namespace — surfaces, borders, a
 Six-region asymmetric podium layout — readable at arm's length. Regions: (1) Header — Barlow Condensed `clamp(34px,11vw,52px)` italic "LEADERBOARD" + amber player count; (2) YOU strip — amber gradient tint row; (3) Podium — `[#2 left][#1 center+taller with ghost watermark + lightning bolt][#3 right]` using `clamp` rank numerals; (4) Column header grid `34px 1fr 30px 64px 52px 26px`; (5) Tail rows 4-N. Replaces the old `LeaderboardTable` for all three variants (player-panel, organizer-panel, standalone).
 
 **`WaitlistTab` — sporty scoreboard** (`src/components/player/waitlist-tab.tsx`)
-Live standings board aesthetic (F1 timing screen). Zero-padded Barlow Condensed italic rank numbers (`01`, `02`…). JetBrains Mono GP stats column. BEG/INT/ADV text abbreviations — no pill badges. "You" row renders on electric indigo canvas `oklch(0.55 0.24 270)` with white text. Top-4 positions colored `text-primary` (emerald), tail fades to `text-muted-foreground/35`. Dividers only between rows (no zone labels). Updates in real-time via Supabase subscription.
+Live standings board aesthetic (F1 timing screen). Zero-padded Barlow Condensed italic rank numbers (`01`, `02`…). JetBrains Mono GP stats column. BEG/INT/ADV text abbreviations — no pill badges. "You" row renders on the app-wide amber "you are here" canvas (`YOU_BG = oklch(0.78 0.17 62)`, fixed OKLCH identical in both themes — matches the leaderboard's amber YOU strip and the MatchAlert on-deck canvas; recolored from electric indigo in the 2026-07-13 polish pass to kill an off-palette AI-indigo tell) with dark warm text `oklch(0.24 0.05 62)` (≈6:1); its On Deck badge flips to dark-on-amber (`bg-amber-900/15 text-amber-950 ring-amber-900/25`), while other on-deck rows keep the light amber tint (`bg-amber-50/60 dark:bg-amber-950/20`). Top-4 positions colored `text-primary` (emerald), tail fades to `text-muted-foreground/35`. Dividers only between rows (no zone labels). Updates in real-time via Supabase subscription.
 
 ---
 
@@ -1323,7 +1343,7 @@ Live standings board aesthetic (F1 timing screen). Zero-padded Barlow Condensed 
 | Color                 | Meaning                                       | Never use for anything else |
 | --------------------- | --------------------------------------------- | --------------------------- |
 | Emerald               | Available / success / confirmed               |                             |
-| Amber                 | Pending / warning / mixed-level               |                             |
+| Amber                 | Pending / warning / mixed-level / on-deck / "you are here" (waitlist you-row `YOU_BG oklch(0.78 0.17 62)`, leaderboard YOU strip, MatchAlert on-deck canvas) |                             |
 | Red / Destructive     | Danger / cancel / remove                      |                             |
 | Slate / Muted         | Neutral / secondary text                      |                             |
 | Sky                   | Team A identity (on court cards)              |                             |
@@ -1388,6 +1408,8 @@ These are hard bans — never reintroduce:
 - **State changes:** `transition-colors duration-200` — always, on every interactive element.
 - **Show/hide:** Fade + slide via Tailwind animation utilities or Radix's built-in transitions. Never instant.
 - **Score / leaderboard flash:** `data-flash="true"` attribute → `leaderboard-flash` keyframes (amber glow to transparent, 800ms).
+- **Card entrance (player Live Courts):** `CourtMatchCard` only — `animate-in fade-in slide-in-from-bottom-2 duration-300` (tailwindcss-animate). Stable `match.id` keys mean it plays only on true DOM insertion (first load, a genuinely new card, tab-switch remount); realtime refetches move/patch nodes without replaying it.
+- **MatchAlert enter/crossfade/exit (`MatchAlertPresence`, `match-alert.tsx`):** none→active = component-owned slide-up (inline `transform` transition — pending 550ms soft expo-out, in_progress 380ms sharp expo-out); `pending ↔ in_progress` = crossfade dissolve where **only the incoming layer animates** (`ma-fade-in` 300ms) stacked over a fully-opaque outgoing layer (fading both dips combined coverage mid-dissolve and bleeds the background through); active→none = `ma-slide-out` 300ms (fade + 8% slide-down) revealing the tab content. Keyframes in `globals.css` use explicit from/to (tailwindcss-animate's from-only `enter`/`exit` left the persistent layer stuck at opacity 0). The outgoing layer unmounts on timers slightly past the CSS (`CROSSFADE_MS` 320 / `EXIT_MS` 340). All inline non-`!important` styles → the reduced-motion block below snaps them.
 - **Session Wrapped intro:** 9-layer CSS animation sequence — all using `transform` + `opacity` only (except the `wi-word` color flash which is intentional). See `globals.css` for keyframe definitions.
 - **VIP shimmer:** `vip-holo-shimmer` keyframes animating `background-position` — light mode only.
 - **Reduced motion:** `@media (prefers-reduced-motion: reduce)` collapses all durations to `0.01ms` globally — zero exceptions.
@@ -1404,7 +1426,13 @@ Follow the `match-history-panel.tsx` pattern: centered icon in `rounded-full bg-
 Always wrapped in `AlertDialog` with explicit cancel + confirm. The only exception is cancel-match which uses a two-step inline confirmation (to avoid modal on a time-sensitive courtside action).
 
 **Loading states:**
-`disabled:opacity-50 disabled:cursor-not-allowed` on every interactive element — no exceptions.
+`disabled:opacity-50 disabled:cursor-not-allowed` on every interactive element. One deliberate exception: MatchAlert's Leave Queue button uses `aria-disabled` + a click guard instead of `disabled` — a truly disabled control drops out of the focus order, so the "Leaving…" label change would never be announced; `aria-disabled` keeps focus on it while `aria-live="polite"` reads the change (visual opacity/cursor classes applied conditionally).
+
+**Initial-load skeletons (player tabs, 2026-07-13):**
+`my-status-tab.tsx`, `live-courts-tab.tsx`, `waitlist-tab.tsx` render content-shaped skeletons on first load — never bare "Loading…" text. Wrapper: `role="status" aria-busy="true" aria-label="Loading …"`. Blocks: `bg-slate-200 dark:bg-muted animate-pulse` (the explicit slate keeps them visible on the pale light canvas where bare `bg-muted` washed out; plain `bg-muted` is fine where the skeleton sits inside a bordered `bg-card` shell, as in live-courts). Skeletons mirror the real layout (waitlist reproduces the board header + `56px 1fr auto` row grid) so the list doesn't jump when data lands; `loading` flips true→false once per mount, so they render exactly once — no flicker on realtime refetches.
+
+**Full-screen overlay presence (`MatchAlertPresence`, `match-alert.tsx`):**
+The match takeover is presence-managed, not conditionally mounted: `player-dashboard.tsx` renders `<MatchAlertPresence active={…|null}>` unconditionally inside the status tabpanel so state changes animate (see §4.7); the committed-key state machine adjusts state during render (guarded, converges, StrictMode-safe). A11y contract: overlay containers are `role="region"` + descriptive `aria-label` — **never** `role="alert"`, which would re-announce the entire roster on every child update; one visually-hidden `role="status"` `aria-live="polite"` span announces each state change exactly once. Focus moves into the overlay on appear (`tabIndex={-1}` root, synchronous focus in an `isActive`-keyed effect) and restores to the previously-focused element on exit. The outgoing crossfade/exit layer is inert (`aria-hidden` + `pointer-events-none`) so its stale controls (e.g. the in_progress ScoreInputCard) can't be touched mid-transition. (E2E note: `getByRole("region", { name: /on deck|match starting/i })` — see scenario-e/j.)
 
 **Skill badge (`src/components/ui/skill-badge.tsx`):**
 
@@ -1431,7 +1459,7 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 4. `match_players` — roster changes (swap, manual assignment)
 5. `profiles` — skill override / display name changes (triggers queue + match re-fetch)
 
-**Non-health ancillary:** 6. `session-settings:{sessionId}` — sessions table UPDATE filtered to this session. Handles `court_time_limit_minutes` changes. **Intentionally excludes `is_auto_matchmaking_on`** — sessions RLS SELECT only grants access to the session creator, so co-organizer postgres_changes events are silently dropped. The toggle is synced via broadcast instead. 7. `session-events:{sessionId}` (broadcast) — ephemeral server-to-client messages: `organizer_intervention`, `session_closed`, `auto_matchmaking_toggled`, `cap_saturation`. Handled by `useOrganizerBroadcast` (player side) and inline in `useOrganizerData` (organizer side).
+**Non-health ancillary:** 6. `session-settings:{sessionId}` — sessions table UPDATE filtered to this session. Handles `court_time_limit_minutes` changes. **Intentionally excludes `is_auto_matchmaking_on`** — sessions RLS SELECT only grants access to the session creator, so co-organizer postgres_changes events are silently dropped. The toggle is synced via broadcast instead. 7. `session-events:{sessionId}` (broadcast) — ephemeral server-to-client messages: `organizer_intervention`, `session_closed`, `auto_matchmaking_toggled`, `auto_publish_toggled`, `cap_saturation`, `draft_cap_phase`. Handled by `useOrganizerBroadcast` (player side) and `useOrganizerSession` (organizer side — toggle/cap sync + the co-organizer "{actor} cleared a match" intervention toast).
 
 **Ref-based callback pattern:** All fetch functions stored in refs (`fetchCourtsRef`, `fetchQueueRef`, etc.). Subscriptions capture the ref, not the function value. This prevents the `useEffect` that wires subscriptions from re-running on every state update — channels stay stable.
 
@@ -1440,6 +1468,8 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 **Monotonic sequence counter (`fetchActiveMatchesSeq`, `fetchQueueSeq`):** Each fetch call increments a counter; only the highest-sequence result is applied. Discards stale concurrent responses from race conditions.
 
 **Page visibility refresh:** `use-visibility-refresh.ts` — triggers a data refresh when the tab regains focus (handles mobile app-switch scenarios where Realtime may have missed events). Wired in `player-dashboard.tsx` (queue/match/session), and (2026-07-13) also in `all-sessions-history.tsx` (the standalone `/play` history has no realtime — `fetchAll` gained a `fetchSeqRef` guard for the now-concurrent fetch path) and hook-level in `use-leaderboard.ts` (refetches the active board + `fetchMyStats`; the 15 s poll + `matches` realtime there only cover a live session / current month, so this is the only freshness path for all-time / past-month boards and the only *immediate* refetch on unlock). Double-firing `router.refresh()` on the player leaderboard tab (dashboard + hook instances) is idempotent + 5 s-throttled.
+
+**Organizer freshness (PR #26, 2026-07-13):** `useOrganizerData` now wires `useVisibilityRefresh` too — re-fetches courts + queue + active matches on tab-wake (5 s-throttled by the hook) **and** on the `realtimeConnected` false→true edge (`prevRealtimeConnectedRef`), since Supabase does not replay postgres_changes missed while the socket was suspended (tablet sleep / tab switch / network blip). Separately, a **45 s visible-tab-only queue poll** (`WAIT_TIME_POLL_MS`) keeps `wait_minutes` / `is_bottleneck` advancing (§3.20).
 
 ---
 
@@ -1498,6 +1528,7 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `matchmaking-core.test.ts`      | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation` — regression suite |
 | `matchmaking-engine.test.ts`    | Full engine flow integration (mocked DB), anti-repeat, Red Zone, partner cap                                                                |
+| `early-diversity.test.ts`       | Early-session diversity (ED-SC / ED-OPP / ED-RN) — `scoreCandidates` fresh-first `GAMES_AHEAD_PENALTY`, opponent-vs-teammate overlap weighting (`OVERLAP_WEIGHT_OPPONENT` / `_TEAMMATE`), `deriveReuseNotice` equity thresholds |
 | `session-simulation.test.ts`    | Multi-round session simulations — 30-player load, diversity saturation                                                                      |
 | `queue-actions.test.ts`         | Queue join/leave/rejoin guards, ghost re-queue prevention                                                                                   |
 | `match-origin-tracking.test.ts` | `origin` enum transitions — `auto` → `modified`, stickiness of `manual`                                                                     |
@@ -1517,7 +1548,7 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | B — Engine flows       | `scenario-b-engine-flows.spec.ts`              | Auto-matchmaking ON→draft approval banner; draft NOT appearing for soft gate; Red Zone mixed-level draft       |
 | C — Tap-to-Swap v2     | `scenario-c-tap-to-swap-v2.spec.ts`            | Cross-match direct player swap, 11 test cases                                                                  |
 | D — Wrapped dismiss    | `scenario-d-session-wrapped-dismiss.spec.ts`   | Intro overlay dismiss, `intro_dismissed_at` persisted                                                          |
-| E — Match alert UI     | `scenario-e-match-alert-ui.spec.ts`            | Player match alert card rendering with VIP tags                                                                |
+| E — Match alert UI     | `scenario-e-match-alert-ui.spec.ts`            | MatchAlert overlay: on-deck copy/position, in-progress court heading, VIP tag. Locators use `role="region"` (`/on deck/`, `/match starting/`) per the 2026-07-13 a11y pass |
 | F — Court time alert   | `scenario-f-court-time-alert.spec.ts`          | Timer warning when court exceeds `court_time_limit_minutes`                                                    |
 | G — H2H records        | `scenario-g-h2h-records.spec.ts`               | H2H strip appears after first meeting, counts correctly                                                        |
 | H — Diversity          | `scenario-h-diversity.spec.ts`                 | Anti-repeat enforcement, rotated draft cycling                                                                 |
@@ -1597,8 +1628,13 @@ src/
       [sessionId]/page.tsx       # Session leaderboard
 
     organizer/
-      page.tsx                   # Organizer landing — session auto-discovery
-      [sessionId]/page.tsx       # Organizer dashboard route
+      page.tsx                   # Legacy shim — resolves primary club, 308 → /c/[clubSlug]/organizer (no club → /welcome)
+      [sessionId]/page.tsx       # Legacy shim — resolves session's club, 308 → /c/[clubSlug]/organizer/[sessionId]
+
+    c/[clubSlug]/                # Club-namespaced routes (§11) — root layout resolves slug + 404s; (full)/(app) layouts member-gate.
+                                 #   Mirrors the flat routes above (play/organizer/tv/wrapped/leaderboard/admin/join).
+      (full)/organizer/page.tsx  # Club organizer HUB — lists/creates THIS club's sessions (renders OrganizerEntry, soloClubId=club.id)
+      (full)/organizer/[sessionId]/page.tsx # Club organizer dashboard — 404s unless session.club_id===club.id; closed session → club lobby
 
     play/
       page.tsx                   # Player lobby — session list
@@ -1649,19 +1685,19 @@ src/
       dashboard-cards-preview.tsx # Sandbox preview component
       dev-tools.tsx              # Dev tools panel — env-gated (development only)
       court-card.tsx             # CourtCard — extracted from active-courts.tsx
-      sortable-card.tsx          # SortableCard, OverlayCard, CapSaturationNotice — from on-deck-panel.tsx
+      sortable-card.tsx          # SortableCard, OverlayCard, CapSaturationNotice, HeldBadge, ReuseBadge — from on-deck-panel.tsx
       edit-match-dialog.tsx      # Score correction + revert-to-active — extracted from match-history-panel.tsx
 
     player/
       player-dashboard.tsx       # Player view shell (My Status, Live Courts, Waitlist tabs)
-      match-alert.tsx            # "Your match is ready" notification card with VIP tags
+      match-alert.tsx            # Full-screen match takeover (pending amber / in_progress navy) + MatchAlertPresence (enter/crossfade/exit orchestration, focus + live-region a11y)
       on-deck-alert.tsx          # "You're up next" on-deck position card
       queue-toggle.tsx           # Join/leave queue button
       queue-status.tsx           # Queue position + wait time display
       live-courts-tab.tsx        # Live courts view for players
       waitlist-tab.tsx           # Waitlist tab showing all waiting players
       match-history.tsx          # Player's in-session match history
-      all-sessions-history.tsx   # Cross-session match history (bottom sheet)
+      all-sessions-history.tsx   # Cross-session match history on the /play lobby (grouped by session; foreground re-sync + fetchSeq guard)
       player-match-alert-preview.tsx # Sandbox preview component
       score-input-card.tsx       # Player score submission card — uses useScoreForm
       my-status-tab.tsx          # MyStatusTab + QueueSubTab — extracted from player-dashboard.tsx
@@ -1706,7 +1742,7 @@ src/
     theme-provider.tsx           # next-themes ThemeProvider wrapper
 
   hooks/
-    use-organizer-data.ts        # Thin composer over 4 sub-hooks — public API unchanged
+    use-organizer-data.ts        # Composer over 4 sub-hooks + freshness layer (tab-wake/reconnect re-sync, 45s wait-time poll); takes currentUserId (co-organizer toast suppression)
     use-organizer-courts.ts      # Court state, courtsRef, court CRUD + updateTimeLimit
     use-organizer-queue.ts       # Queue state, profiles, pause/remove, realtime subs
     use-organizer-matches.ts     # Match enrichment, all match + swap actions, realtime subs
@@ -1728,6 +1764,11 @@ src/
     matchmaking-core.ts          # Pure: computePriorityScore, scoreCandidates, buildCombinationGroup,
                                  #   snakeDraft, rotatedDraft, isDiversityViolation, getEffectiveLookback
     constants.ts                 # All numeric thresholds + SKILL_META (single source of truth for all 6 skill levels)
+    matchmaking-db.ts            # DB-facing engine layer — pool fetch, overlap map, fetchPullablePlayers, executeHeldMatch
+    derive-reuse-notice.ts       # Pure: deriveReuseNotice — draft-card "N fresher waiting" equity chip (§3.5 Reuse badge)
+    match-provenance.ts          # Pure origin/provenance transitions (auto/manual/held; _modified stickiness)
+    match-event-log.ts           # Best-effort match_events writer (creation, publish, swaps, cleared/cancelled)
+    cross-court/derive-held-state.ts # Pure held-draft readiness derivation (§3.1 cross-court drafting)
     vip-config.ts                # VIP_THEMES record — 10 presets, neon + holo configs
     wrapped-awards.ts            # AWARD_META record — all award slugs with emoji/title/subtitle/rarity
     broadcast.ts                 # Server-side REST broadcast helpers (fire-and-forget)
@@ -1754,6 +1795,7 @@ tests/
   unit/
     matchmaking-core.test.ts     # Pure function regression (priority, scoring, group assembly)
     matchmaking-engine.test.ts   # Full engine flow with mocked DB
+    early-diversity.test.ts      # Fresh-first scoring (ED-SC), equal opponent-weight tripwire (ED-OPP), deriveReuseNotice (ED-RN)
     session-simulation.test.ts   # Multi-round simulations (30-player, diversity saturation)
     queue-actions.test.ts        # Queue join/leave/ghost-requeue guards
     match-origin-tracking.test.ts # origin enum transitions and stickiness
@@ -1769,7 +1811,8 @@ tests/
     scenario-f-court-time-alert.spec.ts # Court time warning
     scenario-g-h2h-records.spec.ts # H2H strip after first meeting
     scenario-h-diversity.spec.ts # Anti-repeat + rotated draft
-    scenario-i-thirty-player-simulation.spec.ts # 30-player load simulation
+    scenario-i-fifty-player-simulation.spec.ts # 50-player sim (E2E_ bots, Groups 1-11, concurrent courts)
+    scenario-j-drafted-status.spec.ts # "Match Forming" card, drafted→on_deck realtime transition
     scenario-k-auth-login.spec.ts        # Login, reconnect modal
     scenario-l-session-management.spec.ts # Create session, add courts, toggle auto-matchmaking
     scenario-m-player-queue.spec.ts       # Join queue, see position number
@@ -1790,8 +1833,9 @@ scripts/
 backups/
   run_backup.py                  # Stdlib-only Supabase backup — run anytime with python3
 
-supabase/migrations/             # Chronological Postgres migrations (20260417 → 20260509)
+supabase/migrations/             # Chronological Postgres migrations (20260417 → 20260705)
 
+next.config.ts                   # Security headers (CSP/HSTS/XFO, all routes) + permanent /c/legacy → /c/chillax redirect
 MEMORY.md                        # Architectural index (dense LLM reference — read before coding)
 APP_MANIFEST.md                  # This file — the living document
 ```
@@ -1823,9 +1867,10 @@ APP_MANIFEST.md                  # This file — the living document
 21. **`sessions.ts` not `session.ts`** — the actions file is `sessions.ts` (plural). Don't create a `session.ts` duplicate.
 22. **`is_auto_matchmaking_on` excluded from postgres_changes** — sessions RLS SELECT only grants access to the row creator. Co-organizers would never receive the UPDATE event. This field is synced exclusively via the `auto_matchmaking_toggled` broadcast. Never try to sync it through the sessions postgres_changes channel.
 23. **On-deck match actions are in `match-drafts.ts`, not `matchmaking.ts`** — `clearOnDeckMatch`, `reorderOnDeckMatches`, `publishMatchAction`, and `publishAllDraftMatchesAction` all live in `src/app/actions/match-drafts.ts`. Match lifecycle actions (`submitMatchScore`, `endMatchAction`, `cancelMatchAction`, `updateMatchDetails`, `createManualMatchAction`) live in `src/app/actions/match-lifecycle.ts`. Only the engine logic (`callNextMatch`, `runEngineForSession`) lives in `matchmaking.ts`. The original `match.ts` was split into `match-lifecycle.ts` + `match-drafts.ts` during the Chunks A–D refactoring.
-24. **`MAX_AUTO_DRAFTS` replaces the old capacity formula** — `MAX_ON_DECK_MATCHES` and `ON_DECK_LOOKAHEAD` are no longer imported by `matchmaking.ts` (still in `constants.ts` for `simulate-engine.ts`). The live engine uses `slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending)` where `totalPending` is a single atomic query counting **all** `pending` matches (published + unpublished). Do not add a separate published/draft count query — that reintroduces the race window.
+24. **Draft capacity is a DYNAMIC cap, not the flat `MAX_AUTO_DRAFTS`** — `MAX_ON_DECK_MATCHES` / `ON_DECK_LOOKAHEAD` are no longer imported by `matchmaking.ts`. The live engine uses `slotsAvailable = max(0, getDynamicDraftCap(waitingCount) − draftCount)` where the cap is 3 / 5 / 6 by waiting-pool size (organizer `max_auto_drafts_override` is a ceiling), and `draftCount` counts **only `is_published=false`** pending rows in draft mode (published on-deck matches never block fresh drafts). Auto-publish mode instead counts `is_published=true OR is_held=true` pending rows (§3.5). Keep it a single atomic count per mode — do not reintroduce a second racing query.
 25. **`create_match_with_players` returns `NULL` on TOCTOU conflict** — `{ data: null, error: null }` from the Supabase JS client means a DB guard fired, not a hard error. Always check `rpcError` and `!matchId` **separately**: `rpcError` = DB error (fail loudly); `!matchId` with no error = graceful slot-skip (log warning, continue). If the RPC is ever changed from `RETURNS uuid` to `RETURNS SETOF uuid`, the `!matchId` detection breaks silently.
 26. **`engineRunningFor` Set is process-local only** — it prevents double-runs within a single Node.js process (e.g. two simultaneous queue joins), but is completely ineffective in Vercel serverless where each request may land on a different worker. Cross-process serialization is enforced exclusively by the DB-level TOCTOU guards inside `create_match_with_players` (migration `20260507000000`).
+27. **Player "My Status" is driven by two independent realtime hooks that flip on different beats** — `useQueue` (queue_entries → `myEntry.status`) and `usePlayerMatch` (matches/match_players → `hasActiveMatch`). `QueueSubTab` (`my-status-tab.tsx`) bridges both transient windows: `drafted` / `on_deck` → "Match Forming" holding card (assignment: the queue row flips before the match loads — prevents the "kicked out" join-screen flash, PR #20); `playing` with `hasActiveMatch = false` → neutral "Wrapping up…" card (match end: `currentMatch` clears a beat before the row flips back to `waiting`, PR #26). Never re-broaden to "any non-waiting → Match Forming": that made a just-finished player briefly see "you've been selected". A genuinely-playing player never sees either card — the MatchAlert overlay takes over.
 
 ---
 
@@ -1897,8 +1942,9 @@ npx tsx scripts/extract.ts  # One-shot extraction
 
 **Model.** Shared-schema multi-tenancy. New tables `clubs` / `club_members` (role `owner`/`admin`/`member`,
 `is_active` soft-offboard) / `club_invites`. Every `sessions` row (and the rivalry/partnership ledgers)
-carries a `club_id`. All pre-existing data was absorbed into a fixed **"Legacy" club** (`…0001`), and every
-existing player was backfilled as a Legacy member (`supabase/data-fixes/20260630_legacy_club_membership_backfill.sql`).
+carries a `club_id`. All pre-existing data was absorbed into a fixed **default club, CHILLAX** (`…0001`; seeded
+with slug `legacy`, renamed to `chillax` 2026-07-10 — see the slug-rename note under Routing), and every existing
+player was backfilled as a member (`supabase/data-fixes/20260630_legacy_club_membership_backfill.sql`).
 
 **Isolation = application layer + RLS on operational tables.** `clubs` and `club_invites` are **RLS
 deny-all** (enabled, no policies), so only the service role reads them. `club_members` additionally has a
@@ -1917,13 +1963,22 @@ check, so a cross-club data leak is closed at the DB layer even if an app-layer 
 client components self-resolve the slug from the path via `useClubSlug`). Route groups under
 `/c/[clubSlug]`: minimal root layout (resolve + 404) · `(app)` = member-gated + chrome (lobby `/c/[slug]`,
 `/admin`) · `(full)` = member-gated, no chrome (full-screen `play`/`organizer` dashboards) · **public**
-(no gate): `tv`, `join`. Each session route cross-checks `session.club_id === club.id` (404 on mismatch).
+(no gate): `tv`, `join`. Each session route cross-checks `session.club_id === club.id` (404 on mismatch). The organizer session route additionally bounces a **closed** session (`!session.is_active`) to the club lobby (`clubBase(slug)`, PR #16) — the command center is a live-only control surface, mirroring the player dashboard's own `!is_active` guard.
 
 **ADD-and-redirect migration.** New club routes re-use the existing PlayerDashboard / OrganizerDashboard /
 TvBoard / LoginForm. Legacy `/play/[id]` + `/organizer/[id]` became thin resolve-and-redirect shims (308 →
 `/c/<slug>/…`) that **auto-enroll** the requester (same philosophy as QR-join) so no one is stranded behind
 the gate. Public boards (`/tv/[id]`, `/leaderboard/[id]`, `/play/join`) stay at root, shareable — **and**,
 mirroring the TV board, also get a club-namespaced convenience variant for in-app nav (§11.4 for Wrapped's).
+
+**Club-slug rename `legacy` → `chillax` (2026-07-10, PR #17).** The founding club (CHILLAX, `…0001`) was
+originally seeded with the slug `legacy`; the slug was renamed in the prod DB (`UPDATE clubs SET slug='chillax'`)
+and a **permanent redirect** in `next.config.ts` (`redirects()`: `/c/legacy/:path*` → `/c/chillax/:path*`,
+`permanent: true`) keeps every pre-rename bookmark, live-session QR code, and push deep-link resolving. Realtime
+survives a slug rename independently (channels key on session UUID, not slug), so a mid-session rename only affects
+hard refreshes of `/c/legacy/...` URLs, which the redirect covers. Stale "Legacy club" code comments were renamed
+to "default club (CHILLAX)" in PR #21; the remaining `legacy` identifiers in code denote the pre-club routing layer
+(the `/play/[id]` / `/organizer/[id]` shims), not the CHILLAX club.
 
 **Onboarding.** QR/`/c/[slug]/join` (+ the `/play/join` back-compat shim → forwards to it): authed users
 auto-enroll + queue; fresh scanners register via `signInAnonymously` (a `club_slug` hidden field enrolls
@@ -1972,10 +2027,11 @@ practice). Found and closed 3 gaps beyond the Phase 3 leaderboard/Wrapped scopin
   each table's publication column list to exclude the secret column.
 
 `getMyActiveClubIds(userId)` (`src/lib/clubs.ts`) was added as a cheaper alternative to `getMyClubs` for
-pure membership-scoping, and is now used to fix `/play` and `/organizer`'s session listings (previously
-unfiltered — a multi-club user saw every club's session names): both now filter to
-`getMyActiveClubIds()`, and `/organizer` disables session creation (pointing to `/clubs` instead) whenever
-membership is ambiguous (0 or 2+ clubs) rather than silently defaulting the new session to Legacy.
+pure membership-scoping, and was first used to fix `/play` and `/organizer`'s session listings (previously
+unfiltered — a multi-club user saw every club's session names). **Superseded since:** `/play` now scopes to the
+single primary club via `getPrimaryClubSlug` (§11.7), and `/organizer` is a redirect shim whose club-scoped hub
+lists/creates only the URL club's sessions (§3.17) — creation is never ambiguous, so the old 0-or-2+-clubs
+create-disable is gone. `getMyActiveClubIds` remains in use by `/leaderboard` and the `(full)` layout's club switcher.
 
 **Push deep-links are club-scoped.** `pushToPlayers(userIds, type, sessionId?)` (`src/lib/notifications/push-server.ts`)
 resolves the session's club via `resolveSessionClubSlug` and deep-links to `/c/<slug>/play/<sessionId>` when
@@ -2167,7 +2223,9 @@ always-service-role fetch fixes this as a side effect.
 **Verified:** `tsc`/`build`/lint clean; independent review verdict **Minor issues, non-blocking** (the stats
 RLS behavior change above, called out explicitly so it isn't mistaken for a silent regression; the
 `.single()`→`.maybeSingle()` swap confirmed semantically equivalent for the not-found branches). Live-clicked
-through both routes against a real prod session (`bcf19499…`, Legacy club): intro overlay + real awards feed
+through both routes against a real prod session (`bcf19499…`, CHILLAX club — slug `legacy` at the time, now
+`chillax`; the `/c/legacy/...` URLs below are the literal ones exercised then, and still resolve via the permanent
+redirect): intro overlay + real awards feed
 render correctly on both `/wrapped/...` and `/c/legacy/wrapped/...`; nav bar stays suppressed on both; the
 "Done" button issues `GET /c/legacy` (confirmed via dev-server request log) on the club route vs `/play` on
 root — both then bounce to `/` only because the test session wasn't authenticated (the membership gate doing
@@ -2267,7 +2325,11 @@ Two privilege tiers, introduced once real onboarding replaced the single-club st
   (`queue_entries` ordered by `q.joined_at DESC`), else their last-joined active club, else `NULL`. `/play` scopes
   the session picker to this one club (a multi-club player sees the club they last used); `NULL` → the new
   **`/welcome`** join-via-QR screen ("ask your organizer for the QR"). `/welcome` redirects back to `/play` if the
-  user actually has a club, so the two converge with no loop.
+  user actually has a club, so the two converge with no loop. **`/organizer` (PR #25, 2026-07-13)** is the same
+  shape — a pure redirect shim using the same resolver (`getPrimaryClubSlug` → 308 `/c/<slug>/organizer`, no club →
+  `/welcome`), with the hub itself moved to `/c/[clubSlug]/(full)/organizer` (member-gated; sessions listed +
+  created strictly for the URL club, `soloClubId = club.id`; multi-club organizers switch via the in-club switcher).
+  See §3.17.
 - **Onboarding:** a QR/invite registrant is enrolled (`ensureClubMembership`) and routed straight to their session
   as before — they never see `/welcome`. The blanket `handle_new_user` auto-enroll into the Legacy/CHILLAX club was
   **retired** (migration `20260705000000`), so a plain-link registrant has no club and lands on `/welcome`. Existing
