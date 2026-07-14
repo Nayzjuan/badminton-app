@@ -275,8 +275,10 @@ test.describe("MatchAlert — [A] On-deck base layout", () => {
         waitUntil: "networkidle",
       });
 
-      // Wait for the on-deck alert to appear (role=alert is added by our fix)
-      const card = page.getByRole("alert").first();
+      // Wait for the on-deck overlay — a labelled role="region" since the
+      // a11y pass (8c33e9a); role="alert" was dropped because an assertive
+      // alert re-announced the whole roster on every child update.
+      const card = page.getByRole("region", { name: /on deck/i });
       await expect(card).toBeVisible({ timeout: 12_000 });
 
       // Primary heading copy
@@ -344,8 +346,9 @@ test.describe("MatchAlert — [C] In-progress card shows court name", () => {
         waitUntil: "networkidle",
       });
 
-      // role=alert is set on the in-progress card too
-      const card = page.getByRole("alert").first();
+      // The in-progress overlay is also a labelled role="region" (a11y pass):
+      // aria-label "Match starting — head to {court}".
+      const card = page.getByRole("region", { name: /match starting/i });
       await expect(card).toBeVisible({ timeout: 12_000 });
 
       // Court name in heading
@@ -356,11 +359,10 @@ test.describe("MatchAlert — [C] In-progress card shows court name", () => {
       // Eyebrow copy
       await expect(page.getByText(/active court/i)).toBeVisible({ timeout: 5_000 });
 
-      // Team labels still present — scoped to the alert card to avoid
+      // Team labels still present — scoped to the overlay region to avoid
       // other "Your Team" labels that may appear in sibling UI (e.g. ScoreInputCard)
-      const inProgressCard = page.getByRole("alert").first();
-      await expect(inProgressCard.getByText("Your Team", { exact: true }).first()).toBeVisible();
-      await expect(inProgressCard.getByText("Opponents", { exact: true }).first()).toBeVisible();
+      await expect(card.getByText("Your Team", { exact: true }).first()).toBeVisible();
+      await expect(card.getByText("Opponents", { exact: true }).first()).toBeVisible();
     } finally {
       await context.close();
     }
@@ -386,8 +388,10 @@ test.describe("MatchAlert — [D] VIP tag visible on organizer row", () => {
         waitUntil: "networkidle",
       });
 
-      // Wait for the card to be visible
-      await expect(page.getByRole("alert").first()).toBeVisible({ timeout: 12_000 });
+      // Wait for the on-deck overlay region to be visible
+      await expect(page.getByRole("region", { name: /on deck/i })).toBeVisible({
+        timeout: 12_000,
+      });
 
       // MVP tag should be in the DOM.
       // VipTag renders 2 spans per instance (dark/light mode), and the player

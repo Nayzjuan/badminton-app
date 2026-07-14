@@ -260,13 +260,13 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       timeout: 20_000,
     });
 
-    // MatchAlert renders the on-deck overlay with role="alert" AND a specific
-    // heading — assert both so the test fails if the overlay mounts empty
-    // rather than passing silently. Scope to the overlay's accessible name
-    // (aria-label "You're on deck …") because useMatchAlerts also fires a
-    // sonner toast that carries role="alert", so a bare getByRole("alert")
-    // matches two elements (strict-mode violation).
-    await expect(page.getByRole("alert", { name: /on deck/i })).toBeVisible({
+    // MatchAlert renders the on-deck overlay as a labelled role="region"
+    // (the a11y pass 8c33e9a replaced role="alert", which re-announced the
+    // whole roster on every child update; a separate sr-only role="status"
+    // node now announces the state once). Assert the region AND its heading
+    // so the test fails if the overlay mounts empty rather than passing
+    // silently. Name-scoping also keeps this disjoint from sonner toasts.
+    await expect(page.getByRole("region", { name: /on deck/i })).toBeVisible({
       timeout: 20_000,
     });
     // "Heads Up" is the heading for a pending (on-deck) match in MatchAlert

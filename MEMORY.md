@@ -5,6 +5,14 @@
 
 ---
 
+## 🆕 E2E SPECS RE-ALIGNED TO role="region" + E2E TARGET REPOINTED (2026-07-14)
+
+**Status: DONE, verified live.** The a11y pass below (merged as `8c33e9a`, PR #27) changed the MatchAlert overlays from `role="alert"` → `role="region"` (labels "You're on deck — …" / "Match starting — head to {court}"), which broke the Playwright locators. Fixed `scenario-e-match-alert-ui.spec.ts` (4 sites) and `scenario-j-drafted-status.spec.ts` (1 site) to `getByRole("region", { name: /on deck|match starting/i })`; scenario-i's `[role='alert']` is the login-form error (still an alert, untouched). Runs vs the live deployment serving `8c33e9a`: **scenario-e 4/4 · scenario-j 3/3**. Review gate: LGTM.
+
+**⚠ Two gitignored-config fixes future sessions can't see in git:** (1) `.env.test` `TEST_BASE_URL` pointed at the dead July-5 platform-owner branch preview — repointed to the stable main alias `https://badminton-app-git-main-nayzjuans-projects.vercel.app` (always tracks main's latest deployment; backup at `.env.test.bak-20260714`). (2) `.playwright/organizer-storage-state.json` caches host-scoped Supabase cookies and `signInOrganizerBot` **skips sign-in whenever the file exists** (tests/fixtures/auth.ts:262) — after ANY base-URL change, delete that file or every authed e2e lands on the login screen.
+
+---
+
 ## 🆕 MATCHALERT TRANSITIONS + A11y — branch `feat/match-alert-transitions-a11y` (2026-07-13)
 
 **Status: MERGED to main via PR (user go: "create the PR then merge"). tsc / eslint / `next build` clean. Review gate: LGTM ×2 (2 cosmetic notes).** Motion **verified via Web-Animations-API timeline scrubbing** of the real rendered layers (pause + step `currentTime`, sample computed opacity/transform) — the workaround for both browser panes reporting `visibilityState="hidden"` (rAF + CSS animation clocks frozen; wall-clock playback unobservable). Scrub caught + fixed a real bug: the original crossfade faded BOTH layers → combined coverage dipped to ~54% at t=150ms (~46% background bleed, a mid-dissolve flicker). Fix: outgoing layer stays fully opaque beneath; only the incoming fades in (`ma-fade-in`); `ma-fade-out` keyframe removed. Verified post-fix: outgoing op=1.00 across the full timeline, incoming 0→0.32→1.00; exit `ma-slide-out` op 1→0.68→0 + translateY 0→51px (=8% of frame), layer unmounts, region gone. Remaining untested (accepted): subjective device feel + actual screen-reader audio.
