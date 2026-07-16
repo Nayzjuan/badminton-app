@@ -66,6 +66,20 @@ const SEND_OPTIONS: Record<NotificationType, SendOpts> = {
 
 let vapidConfigured = false;
 
+/**
+ * web-push requires the VAPID keys as URL-safe base64 WITHOUT padding — its
+ * validatePublicKey rejects "+", "/", and "=". Env values are sometimes stored
+ * as STANDARD base64 (a trailing "=" on the 65-byte public key), which throws
+ *   "Vapid public key must be a URL safe Base 64 (without '=')"
+ * and silently kills every push notification. Normalise both keys to url-safe
+ * form so the SAME key works regardless of how it was pasted — no key
+ * regeneration, so existing device subscriptions stay valid. A key that is
+ * already url-safe is unchanged (nothing to replace).
+ */
+function toUrlSafeBase64(key: string): string {
+  return key.trim().replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 function ensureVapid() {
   if (vapidConfigured) return;
 
@@ -81,7 +95,7 @@ function ensureVapid() {
     );
   }
 
-  webpush.setVapidDetails(mailto, publicKey, privateKey);
+  webpush.setVapidDetails(mailto, toUrlSafeBase64(publicKey), toUrlSafeBase64(privateKey));
   vapidConfigured = true;
 }
 
