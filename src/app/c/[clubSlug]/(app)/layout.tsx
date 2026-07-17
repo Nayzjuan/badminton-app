@@ -10,7 +10,7 @@
 
 import { Suspense } from "react";
 import Link from "next/link";
-import { requireClubMembership, getMyClubs } from "@/lib/clubs";
+import { requireClubMembership, getMyClubs, getMyActiveClubIds } from "@/lib/clubs";
 import { isPlatformOwner } from "@/lib/platform";
 import { ClubSwitcher } from "@/components/clubs/club-switcher";
 import { ClubChromeNav } from "@/components/clubs/club-chrome-nav";
@@ -30,9 +30,12 @@ export default async function ClubAppLayout({
   // Only the platform owner gets cross-club affordances (switch to / browse /
   // create other clubs). Everyone else is scoped to this club.
   const isOwner = isPlatformOwner(userId);
-  const myClubs = await getMyClubs(userId);
-
-  const multiClub = myClubs.length > 1;
+  // Count-first (mirrors the (full) layout): only the club switcher needs the
+  // full rows, and only when the member belongs to >1 club — which is rare.
+  // Was an unconditional 3-query getMyClubs on every (app) navigation.
+  const clubIds = await getMyActiveClubIds(userId);
+  const multiClub = clubIds.length > 1;
+  const myClubs = multiClub ? await getMyClubs(userId) : [];
 
   return (
     <div className="min-h-dvh bg-cc-bg">

@@ -738,28 +738,28 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     }
   }
 
-  // ── 1. Cancel any lingering pending / in_progress matches ────
-  // Direct filtered UPDATE — skipping the SELECT avoids the gap
-  // where new matches could be inserted between SELECT and UPDATE.
-  const { count: cancelledCount } = await supabase
-    .from("matches")
-    .update({ status: "cancelled" as const }, { count: "exact" })
-    .eq("session_id", sessionId)
-    .in("status", ["pending", "in_progress"]);
-
-  // ── 2. Remove all remaining queue entries ───────────────────
-  // Mark everyone as "left" so their history is preserved.
-  await supabase
-    .from("queue_entries")
-    .update({ status: "left" as const })
-    .eq("session_id", sessionId)
-    .in("status", ["waiting", "drafted", "on_deck", "playing"]);
-
-  // ── 3. Reset courts to closed ──────────────────────────────
-  await supabase
-    .from("courts")
-    .update({ status: "closed" as const })
-    .eq("session_id", sessionId);
+  // ── 1–3. Independent cleanups (different tables, no interdependency) run
+  //         in parallel: cancel lingering matches, mark queue entries "left"
+  //         (preserving history), and close courts. Direct filtered UPDATEs —
+  //         skipping the SELECTs avoids the gap where new rows could be
+  //         inserted between SELECT and UPDATE. 3 serial round trips → 1.
+  const [cancelResult] = await Promise.all([
+    supabase
+      .from("matches")
+      .update({ status: "cancelled" as const }, { count: "exact" })
+      .eq("session_id", sessionId)
+      .in("status", ["pending", "in_progress"]),
+    supabase
+      .from("queue_entries")
+      .update({ status: "left" as const })
+      .eq("session_id", sessionId)
+      .in("status", ["waiting", "drafted", "on_deck", "playing"]),
+    supabase
+      .from("courts")
+      .update({ status: "closed" as const })
+      .eq("session_id", sessionId),
+  ]);
+  const cancelledCount = cancelResult.count;
 
   // ── 4. Mark session as inactive ────────────────────────────
   const { error: updateError } = await supabase

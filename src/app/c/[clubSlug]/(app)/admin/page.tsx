@@ -7,16 +7,15 @@
 
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
-import { getClubBySlug, getClubRole, getClubMembers } from "@/lib/clubs";
+import { getClubBySlug, getClubRole, getClubMembers, getRequestUser } from "@/lib/clubs";
 import { ClubAdminPanel } from "@/components/clubs/club-admin-panel";
 
 export default async function ClubAdminPage({ params }: { params: Promise<{ clubSlug: string }> }) {
   const { clubSlug } = await params;
 
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Deduped with the (app) layout's requireClubMembership() getUser via cache().
+  const user = await getRequestUser();
   if (!user) redirect("/");
 
   const club = await getClubBySlug(clubSlug);

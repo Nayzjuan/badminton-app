@@ -10,7 +10,7 @@ import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { enforceRenameGate } from "@/lib/rename-gate";
-import { getClubBySlug } from "@/lib/clubs";
+import { getClubBySlug, getRequestUser } from "@/lib/clubs";
 import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
 import { PlayerDashboard } from "@/components/player/player-dashboard";
 import { PUBLIC_SESSION_COLUMNS } from "@/types/database";
@@ -23,9 +23,8 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
   const { clubSlug, sessionId } = await params;
   const supabase = await createServerSupabaseClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Deduped with the (full) layout's requireClubMembership() getUser via cache().
+  const user = await getRequestUser();
   if (!user) redirect("/");
 
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;

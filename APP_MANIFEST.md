@@ -88,6 +88,14 @@ Two helpers used by all organizer-gated server actions to avoid reimplementing t
 
 ## 2. Database Schema & State
 
+> **DB Optimization Pass — 2026-07-17 (migrations `20260717165546`→`20260717190000`).** A full audit-driven pass shipped these behavioral/infrastructure changes:
+> - **RLS is now consolidated + initplan-hoisted.** SECURITY-DEFINER helpers `session_access_level(session_id)` (returns `'organizer'|'member'|null` in one probe) and `has_match_access(match_id)` back the sessions/matches/match_players/match_games policies; every policy's `auth.uid()`/`auth.role()` is wrapped as `(select auth.uid())` so it evaluates once per statement, not per row. Duplicate PERMISSIVE twins were dropped.
+> - **New set-based RPCs** (replace per-row loops): `requeue_finished_players(session, player_ids, drafted_ids)` (atomic `games_played+1` + status, used by endMatch), `reorder_on_deck_matches(session, match_ids)` (one UPDATE…FROM unnest WITH ORDINALITY, used by drag-reorder), `count_completed_matches_by_session(session_ids[])` (GROUP BY counts for the organizer hub — cap-safe), `get_h2h_record` (now pre-filters to matches containing all 4 players).
+> - **Leaderboard:** `refresh_alltime_leaderboard()` is globally debounced via `pg_try_advisory_xact_lock` + a `leaderboard_refresh_state` gate (≥30s); `get_session_leaderboard_public` and `get_monthly_leaderboard` now project `vip_tag`/`vip_theme` (no separate `buildVipMap` query on those hot paths — all-time still uses the live map). `v_match_history` no longer bakes an `ORDER BY`.
+> - **Realtime:** `supabase_realtime` publication trimmed to `courts, match_players, matches, profiles, queue_entries, sessions` (dropped `session_organizers`, `match_games` — zero subscribers). Subscription refetch bursts are collapsed by a shared 200ms trailing-edge debounce (`src/lib/trailing-debounce.ts`, `REALTIME_REFETCH_DEBOUNCE_MS`); `use-match-history` also gates refetch on status relevance (note: `matches` is REPLICA IDENTITY DEFAULT, so `payload.old.status` is unavailable — the gate keys on `payload.new.status`).
+>
+> Four structural items were deferred with execution-ready designs (see `MEMORY.md`): engine per-slot diversity 9→3, `compute_session_wrapped` CTE hoist, the page-level realtime channel-owner refactor, and `match_players.session_id` denormalization (the last two need human live-testing).
+
 ### Tables
 
 #### `profiles`

@@ -117,10 +117,21 @@ export async function pushToPlayers(
   // Service client — RLS blocks reading other users' subscriptions.
   const supabase = createServiceClient();
 
-  const { data: subscriptions, error } = await supabase
-    .from("push_subscriptions")
-    .select("endpoint, p256dh, auth_key")
-    .in("user_id", ids);
+  // Subscription fetch and slug resolution are independent — run in parallel
+  // (was two serial hops before any web-push send).
+  const [subsRes, slug] = await Promise.all([
+    supabase.from("push_subscriptions").select("endpoint, p256dh, auth_key").in("user_id", ids),
+    sessionId
+      ? // Never let a resolution failure break this function's never-throws
+        // contract — fall back to the /clubs deep link instead.
+        resolveSessionClubSlug(sessionId).catch((err) => {
+          console.error("[pushToPlayers] resolveSessionClubSlug failed:", err);
+          return null;
+        })
+      : Promise.resolve(null),
+  ]);
+
+  const { data: subscriptions, error } = subsRes;
 
   if (error) {
     console.error("[pushToPlayers] DB read error:", error);
@@ -131,20 +142,9 @@ export async function pushToPlayers(
     return { sent: 0, errors: 0 };
   }
 
-  // Deep-link target — the session's own club-scoped play page when it can
-  // be resolved, otherwise the club-consistent fallback (/clubs → the
-  // player's club → session). Never let a resolution failure (e.g. a
-  // misconfigured service-role env var) break this function's own
-  // never-throws contract — fall back to /clubs instead.
-  let url = "/clubs";
-  if (sessionId) {
-    try {
-      const slug = await resolveSessionClubSlug(sessionId);
-      if (slug) url = clubPlay(slug, sessionId);
-    } catch (err) {
-      console.error("[pushToPlayers] resolveSessionClubSlug failed:", err);
-    }
-  }
+  // Deep-link target — the session's own club-scoped play page when resolvable,
+  // otherwise the club-consistent fallback (/clubs → the player's club).
+  const url = slug && sessionId ? clubPlay(slug, sessionId) : "/clubs";
 
   const payload = JSON.stringify({
     type,

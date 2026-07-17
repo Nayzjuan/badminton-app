@@ -878,18 +878,19 @@ describe("callNextMatch", () => {
       // user client only used for toggle-check sessions; promotion succeeds → never reached
     ]);
     const serviceMock = makeMockClient([
-      { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [MOCK_MATCH], error: null }, // [1] matches fetch → pending non-empty
-      { data: [], error: null }, // [2] match_players (left-guard roster) → empty
-      { count: 0, data: null, error: null }, // [3] queue_entries left-count → none left
-      { data: { id: "match-1" }, error: null }, // [4] matches update (CAS)
-      { data: null, error: null }, // [5] courts update
-      { data: [], error: null }, // [6] profiles → empty (no player ids)
-      { data: { is_auto_matchmaking_on: true }, error: null }, // [7] runEngineForSession toggle → ON
-      { data: [{ id: "c1" }], error: null }, // [8] runEngineInternal: courts
-      { data: [], error: null }, // [9] runEngineInternal: v_queue (Promise.all[0])
-      { count: 3, data: null, error: null }, // [10] runEngineInternal: matches draft count=3 (Promise.all[1])
-      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [11] sessions (Promise.all[2])
+      { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions (created_by → true)
+      { data: null, error: null }, // [1] isSessionOrganizer: session_organizers (parallel co-org probe)
+      { data: [MOCK_MATCH], error: null }, // [2] matches fetch → pending non-empty
+      { data: [], error: null }, // [3] match_players (left-guard roster) → empty
+      { count: 0, data: null, error: null }, // [4] queue_entries left-count → none left
+      { data: { id: "match-1" }, error: null }, // [5] matches update (CAS)
+      { data: null, error: null }, // [6] courts update
+      { data: [], error: null }, // [7] profiles → empty (no player ids)
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [8] runEngineForSession toggle → ON
+      { data: [{ id: "c1" }], error: null }, // [9] runEngineInternal: courts
+      { data: [], error: null }, // [10] runEngineInternal: v_queue (Promise.all[0])
+      { count: 3, data: null, error: null }, // [11] runEngineInternal: matches draft count=3 (Promise.all[1])
+      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [12] sessions (Promise.all[2])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -915,30 +916,31 @@ describe("callNextMatch", () => {
       // user client → no from() calls when promotion succeeds
     ]);
     const serviceMock = makeMockClient([
-      { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [MOCK_MATCH], error: null }, // [1] matches fetch → pending non-empty
-      { data: [], error: null }, // [2] match_players (left-guard roster) → empty
-      { count: 0, data: null, error: null }, // [3] queue_entries left-count → none left
-      { data: { id: "match-1" }, error: null }, // [4] matches update (CAS)
-      { data: null, error: null }, // [5] courts update
-      { data: [], error: null }, // [6] profiles → empty
-      { data: { is_auto_matchmaking_on: true }, error: null }, // [7] sessions → toggle ON
-      { data: [{ id: "c1" }], error: null }, // [8] courts → engine proceeds
-      { data: [], error: null }, // [9] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 3, data: null, error: null }, // [10] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
-      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [11] sessions (Promise.all[2])
+      { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions (created_by → true)
+      { data: null, error: null }, // [1] isSessionOrganizer: session_organizers (parallel co-org probe)
+      { data: [MOCK_MATCH], error: null }, // [2] matches fetch → pending non-empty
+      { data: [], error: null }, // [3] match_players (left-guard roster) → empty
+      { count: 0, data: null, error: null }, // [4] queue_entries left-count → none left
+      { data: { id: "match-1" }, error: null }, // [5] matches update (CAS)
+      { data: null, error: null }, // [6] courts update
+      { data: [], error: null }, // [7] profiles → empty
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [8] sessions → toggle ON
+      { data: [{ id: "c1" }], error: null }, // [9] courts → engine proceeds
+      { data: [], error: null }, // [10] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 3, data: null, error: null }, // [11] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [12] sessions (Promise.all[2])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     await callNextMatch(SESSION_ID, COURT_ID);
 
-    // [7] must be "sessions" — confirms runEngineForSession (not runEngineInternal) was called.
-    // (The left-player guard adds match_players + queue_entries inside promote, so the
-    //  toggle check now lands at index 7.)
-    expect(serviceMock.queriedTables[7]).toBe("sessions");
+    // [8] must be "sessions" — confirms runEngineForSession (not runEngineInternal) was called.
+    // (isSessionOrganizer adds sessions + session_organizers, and the left-player guard adds
+    //  match_players + queue_entries inside promote, so the toggle check now lands at index 8.)
+    expect(serviceMock.queriedTables[8]).toBe("sessions");
     // Post-promotion sequence: sessions (toggle) → courts → v_queue → matches → sessions (override).
-    const postPromotionTables = serviceMock.queriedTables.slice(7);
+    const postPromotionTables = serviceMock.queriedTables.slice(8);
     expect(postPromotionTables).toEqual([
       "sessions",
       "courts",
@@ -955,10 +957,11 @@ describe("callNextMatch", () => {
     // so co-organizers (blocked by sessions RLS SELECT) also get the correct value.
     const mock = makeMockClient([]);
     const serviceMock = makeMockClient([
-      { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [], error: null }, // [1] matches fetch → empty
-      { count: 0, data: null, error: null }, // [2] draft-blocking check → 0 drafts
-      { data: { is_auto_matchmaking_on: false }, error: null }, // [3] toggle check → OFF
+      { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions (created_by → true)
+      { data: null, error: null }, // [1] isSessionOrganizer: session_organizers (parallel co-org probe)
+      { data: [], error: null }, // [2] matches fetch → empty
+      { count: 0, data: null, error: null }, // [3] draft-blocking check → 0 drafts
+      { data: { is_auto_matchmaking_on: false }, error: null }, // [4] toggle check → OFF
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -978,17 +981,17 @@ describe("callNextMatch", () => {
     // callNextMatch propagates hasDraftsBlocking:true
     const mock = makeMockClient([]);
     const serviceMock = makeMockClient([
-      { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [], error: null }, // [1] promote 1: no published pending
-      { count: 2, data: null, error: null }, // [2] promote 1: 2 drafts → hasDraftsBlocking
-      { data: { is_auto_matchmaking_on: true }, error: null }, // [3] toggle check → ON
-      { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
-      { data: [], error: null }, // [5] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 2, data: null, error: null }, // [6] runEngine: matches draft count=2 → slotsAvailable=1 (Promise.all[1])
-      { data: { max_auto_drafts_override: null }, error: null }, // [7] runEngine: sessions override (Promise.all[2])
-      { data: [], error: null }, // [8] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [9] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
-      { data: [], error: null }, // [10] fetchActivePool: queue_entries paused → []
+      { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions (created_by → true)
+      { data: null, error: null }, // [1] isSessionOrganizer: session_organizers (parallel co-org probe)
+      { data: [], error: null }, // [2] promote 1: no published pending
+      { count: 2, data: null, error: null }, // [3] promote 1: 2 drafts → hasDraftsBlocking
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [4] toggle check → ON
+      { data: [{ id: "c1" }], error: null }, // [5] runEngine: courts
+      { data: [], error: null }, // [6] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 2, data: null, error: null }, // [7] runEngine: matches draft count=2 → slotsAvailable=1 (Promise.all[1])
+      { data: { max_auto_drafts_override: null }, error: null }, // [8] runEngine: sessions override (Promise.all[2])
+      { data: [], error: null }, // [9] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [10] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
       { data: [], error: null }, // [11] promote 2: no published pending
       { count: 2, data: null, error: null }, // [12] promote 2: 2 drafts → hasDraftsBlocking
     ]);
@@ -1012,17 +1015,17 @@ describe("callNextMatch", () => {
     // hasDraftsBlocking=false → "not enough players"
     const mock = makeMockClient([]);
     const serviceMock = makeMockClient([
-      { data: { created_by: "test-user" }, error: null }, // [0] sessions auth gate
-      { data: [], error: null }, // [1] promote 1: no pending
-      { count: 0, data: null, error: null }, // [2] promote 1: 0 drafts
-      { data: { is_auto_matchmaking_on: true }, error: null }, // [3] toggle check → ON
-      { data: [{ id: "c1" }], error: null }, // [4] runEngine: courts
-      { data: [], error: null }, // [5] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 0, data: null, error: null }, // [6] runEngine: matches draft count=0 → slotsAvailable=3 (Promise.all[1])
-      { data: { max_auto_drafts_override: null }, error: null }, // [7] runEngine: sessions override (Promise.all[2])
-      { data: [], error: null }, // [8] runEngine: fetchRecentRosters → []
-      { data: [], error: null }, // [9] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
-      { data: [], error: null }, // [10] fetchActivePool: queue_entries paused → []
+      { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions (created_by → true)
+      { data: null, error: null }, // [1] isSessionOrganizer: session_organizers (parallel co-org probe)
+      { data: [], error: null }, // [2] promote 1: no pending
+      { count: 0, data: null, error: null }, // [3] promote 1: 0 drafts
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [4] toggle check → ON
+      { data: [{ id: "c1" }], error: null }, // [5] runEngine: courts
+      { data: [], error: null }, // [6] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
+      { count: 0, data: null, error: null }, // [7] runEngine: matches draft count=0 → slotsAvailable=3 (Promise.all[1])
+      { data: { max_auto_drafts_override: null }, error: null }, // [8] runEngine: sessions override (Promise.all[2])
+      { data: [], error: null }, // [9] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [10] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
       { data: [], error: null }, // [11] promote 2: still no pending
       { count: 0, data: null, error: null }, // [12] promote 2: 0 drafts
     ]);

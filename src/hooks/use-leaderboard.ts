@@ -280,6 +280,19 @@ export function useLeaderboard({
     };
   }, [scopeTab, monthsFetched, clubSlug]);
 
+  // Mirror the latest board rows into refs so fetchMyStats can read them
+  // without widening its dependency list (which would churn the realtime
+  // subscription effect below). Synced via effect (refs are written after
+  // commit, current before any handler/timer/effect calls fetchMyStats).
+  const sessionRowsRef = useRef(sessionRows);
+  const monthlyRowsRef = useRef(monthlyRows);
+  const alltimeRowsRef = useRef(alltimeRows);
+  useEffect(() => {
+    sessionRowsRef.current = sessionRows;
+    monthlyRowsRef.current = monthlyRows;
+    alltimeRowsRef.current = alltimeRows;
+  }, [sessionRows, monthlyRows, alltimeRows]);
+
   // ── Fetch hero card stats ─────────────────────────────────
   // Extracted as a stable callback so the realtime subscription can
   // also trigger it. Without this, a match completing while the player
@@ -291,6 +304,28 @@ export function useLeaderboard({
       setMyStats(null);
       return;
     }
+
+    // Perf (#4 — DB audit): the hero card renders `myRow ?? myStats`, where
+    // myRow is the player's row from the already-fetched board (real rank).
+    // With MIN_SESSION_GP / MIN_MONTH_GP = 1, any player with ≥1 game is
+    // already on that board, so re-running the full-board aggregation RPC
+    // (get_session_leaderboard_public / get_monthly_leaderboard) purely to
+    // pluck one row is wasted work — it doubled the heaviest read per 15 s
+    // tick. Reuse the board row and skip the RPC; only players ABSENT from the
+    // board (0 games → below-threshold hero state) need the fallback lookup.
+    const boardRows =
+      scopeTab === "session"
+        ? sessionRowsRef.current
+        : scopeTab === "monthly"
+          ? monthlyRowsRef.current
+          : alltimeRowsRef.current;
+    const onBoard = boardRows.find((r) => r.player_id === currentUserId);
+    if (onBoard) {
+      setMyStatsLoading(false);
+      setMyStats(onBoard);
+      return;
+    }
+
     setMyStatsLoading(true);
     const result =
       scopeTab === "monthly"

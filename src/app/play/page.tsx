@@ -29,14 +29,20 @@ export default async function PlayPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/");
 
-  // Get profile. Explicit column list — this page (session picker) never
-  // displays the player's own PIN, and the browser client's column privilege
-  // on profiles no longer includes it (20260701000010_column_lockdown_fix_table_grants.sql).
-  const { data: profileRow } = await supabase
-    .from("profiles")
-    .select(PUBLIC_PROFILE_COLUMNS)
-    .eq("id", user.id)
-    .single();
+  // Get profile + resolve the primary club in parallel — both depend only on
+  // user.id (was two serial hops). Explicit column list — this page (session
+  // picker) never displays the player's own PIN, and the browser client's
+  // column privilege on profiles no longer includes it
+  // (20260701000010_column_lockdown_fix_table_grants.sql).
+  //
+  // primaryClubSlug = the club of their last-attended session (falling back to
+  // last-joined). No club → they registered via the plain link with no QR;
+  // route them to the join-via-QR screen. For a multi-club player this scopes
+  // the picker to the club they last actively used, not every club at once.
+  const [{ data: profileRow }, primaryClubSlug] = await Promise.all([
+    supabase.from("profiles").select(PUBLIC_PROFILE_COLUMNS).eq("id", user.id).single(),
+    getPrimaryClubSlug(user.id),
+  ]);
 
   if (!profileRow) redirect("/");
   const profile = { ...profileRow, pin: null };
@@ -46,12 +52,6 @@ export default async function PlayPage() {
 
   const hasGoogleLinked = user.identities?.some((id) => id.provider === "google") ?? false;
 
-  // Resolve the player's PRIMARY club — the club of their last-attended session
-  // (falling back to their last-joined club). No club → they registered via the
-  // plain link with no QR; route them to the join-via-QR screen rather than an
-  // empty picker. For a multi-club player this scopes the picker to the club
-  // they last actively used, not every club at once.
-  const primaryClubSlug = await getPrimaryClubSlug(user.id);
   if (!primaryClubSlug) redirect("/welcome");
   const primaryClub = await getClubBySlug(primaryClubSlug);
   const clubIds = primaryClub ? [primaryClub.id] : [];

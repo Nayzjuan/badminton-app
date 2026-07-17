@@ -11,7 +11,6 @@
 // ============================================================
 
 import { after } from "next/server";
-import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import {
   promoteOnDeckMatchInternal,
@@ -36,12 +35,14 @@ import { logMatchEvent } from "@/lib/match-event-log";
 // ============================================================
 // Called from the player's dashboard. Validates that the
 // calling user is actually in the match before delegating
-// to the shared endMatchAction logic.
+// to the shared endMatchInternal core.
 // ============================================================
 
 /**
  * Player-facing score submission. Verifies the calling user is a participant
- * in the match before delegating to `endMatchAction`.
+ * in the match, then delegates to the shared `endMatchInternal` core with
+ * `participantVerified=true` — which skips the duplicate GoTrue lookup and the
+ * organizer-probe the old delegation-to-endMatchAction path incurred.
  *
  * The participant check prevents any authenticated user from ending a match
  * they're not in. Callers should not pass matchId from untrusted input without
@@ -52,18 +53,29 @@ export async function submitMatchScore(
   teamAScore: number,
   teamBScore: number
 ): Promise<MatchActionResult> {
+  if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
+
+  // Server-side score bounds — client validation is UI-only and trivially
+  // bypassed by a direct POST to the action endpoint.
+  const scoreResult = scoreSchema.safeParse({ teamAScore, teamBScore });
+  if (!scoreResult.success) {
+    return { success: false, message: scoreResult.error.issues[0].message };
+  }
+  const { teamAScore: safeA, teamBScore: safeB } = scoreResult.data;
+
   // Identify the calling player.
   const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
 
-  const supabase = await createServerSupabaseClient();
-
   // Verify this player is in the match (prevents spoofed submissions).
-  // Use .maybeSingle() — .single() throws if 0 rows, which would surface
-  // as a confusing error instead of the "not a player" message.
-  const { data: mySlot } = await supabase
+  // Service client + explicit player_id filter confirms ONLY the caller's own
+  // participation (no RLS leak) and reuses this client for the write path.
+  // .maybeSingle() — .single() throws on 0 rows, which would mask the
+  // "not a player" message with a confusing coercion error.
+  const db = createServiceClient();
+  const { data: mySlot } = await db
     .from("match_players")
     .select("id")
     .eq("match_id", matchId)
@@ -74,9 +86,8 @@ export async function submitMatchScore(
     return { success: false, message: "You are not a player in this match." };
   }
 
-  // Delegate to the shared action which handles scoring, court release,
-  // re-queueing, auto-fill, and on-deck refill.
-  return endMatchAction(matchId, teamAScore, teamBScore);
+  // Participation verified → shared core skips the organizer-OR-player gate.
+  return endMatchInternal(db, matchId, safeA, safeB, user, true);
 }
 
 // ============================================================
@@ -109,14 +120,34 @@ export async function endMatchAction(
   }
   const { teamAScore: safeA, teamBScore: safeB } = scoreResult.data;
 
-  const db = createServiceClient();
-
   // P0-3: Require authentication.
   const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
   }
 
+  // Organizer-facing entry: participation is NOT pre-verified, so the shared
+  // core runs the organizer-OR-player authorization gate.
+  const db = createServiceClient();
+  return endMatchInternal(db, matchId, safeA, safeB, user, false);
+}
+
+// ============================================================
+// endMatchInternal — shared match-completion core
+// ============================================================
+// Both public entries funnel here after authenticating the GoTrue user and
+// validating scores. `participantVerified` lets submitMatchScore skip the
+// organizer-OR-player gate (it already proved the caller is in the match),
+// removing a duplicate getAuthenticatedUser() + the 2-3-query organizer probe
+// on the player score-submit path.
+async function endMatchInternal(
+  db: ReturnType<typeof createServiceClient>,
+  matchId: string,
+  safeA: number,
+  safeB: number,
+  user: { id: string },
+  participantVerified: boolean
+): Promise<MatchActionResult> {
   // 1. Fetch the match (via service client — guarantees read succeeds
   //    regardless of any read-side RLS policy).
   const { data: match, error: matchFetchError } = await db
@@ -134,24 +165,27 @@ export async function endMatchAction(
   }
 
   // 1b. JS-level authorization: organizer OR player in this match.
-  //    Run both checks in parallel to avoid serial round-trips.
-  //    isSessionOrganizer checks sessions.created_by FIRST (fast path),
-  //    then falls back to session_organizers membership.
-  const [isOrg, playerSlot] = await Promise.all([
-    isSessionOrganizer(user.id, match.session_id),
-    db
-      .from("match_players")
-      .select("id")
-      .eq("match_id", matchId)
-      .eq("player_id", user.id)
-      .maybeSingle(),
-  ]);
+  //    Skipped when the caller (submitMatchScore) already verified the player
+  //    is in this match. Otherwise run both checks in parallel to avoid serial
+  //    round-trips — isSessionOrganizer checks sessions.created_by FIRST (fast
+  //    path), then falls back to session_organizers membership.
+  if (!participantVerified) {
+    const [isOrg, playerSlot] = await Promise.all([
+      isSessionOrganizer(user.id, match.session_id),
+      db
+        .from("match_players")
+        .select("id")
+        .eq("match_id", matchId)
+        .eq("player_id", user.id)
+        .maybeSingle(),
+    ]);
 
-  if (!isOrg && !playerSlot.data) {
-    return {
-      success: false,
-      message: "Not authorized. You must be a session organizer or a player in this match.",
-    };
+    if (!isOrg && !playerSlot.data) {
+      return {
+        success: false,
+        message: "Not authorized. You must be a session organizer or a player in this match.",
+      };
+    }
   }
 
   // 2. P0-1: Atomic UPDATE — only succeeds if status is still "in_progress".
@@ -206,7 +240,6 @@ export async function endMatchAction(
   //    their match was in_progress would be silently re-added to the
   //    queue every time the match ended — creating ghost "waiting"
   //    entries for people who physically left the gym.
-  const now = new Date().toISOString();
   if (matchPlayers && matchPlayers.length > 0) {
     // Ghost-availability fix (R3-1): a finishing player who is the pulled body of
     // a PENDING held draft must be re-reserved as 'drafted', NOT 'waiting' —
@@ -231,33 +264,20 @@ export async function endMatchAction(
         .filter((id) => finishingIds.includes(id)) // safety: only flag IDs that are actually finishing
     );
 
-    await Promise.all(
-      matchPlayers.map(async (mp) => {
-        const { data: entry } = await db
-          .from("queue_entries")
-          .select("games_played")
-          .eq("session_id", match.session_id)
-          .eq("player_id", mp.player_id)
-          .neq("status", "left") // skip players who already left
-          .maybeSingle();
-
-        // entry is null when the player's status is "left" — skip them.
-        if (!entry) return;
-
-        const updatedGames = (entry.games_played ?? 0) + 1;
-
-        return db
-          .from("queue_entries")
-          .update({
-            status: reservedAsHeld.has(mp.player_id) ? ("drafted" as const) : ("waiting" as const),
-            games_played: updatedGames,
-            joined_at: now,
-          })
-          .eq("session_id", match.session_id)
-          .eq("player_id", mp.player_id)
-          .neq("status", "left"); // double-guard against race condition
-      })
-    );
+    // Single atomic requeue (replaces a per-player SELECT+UPDATE loop whose JS
+    // read-modify-write of games_played could lose a concurrent increment):
+    // increment games_played, stamp joined_at, and set status (drafted for a
+    // re-reserved held body, else waiting) in one statement. The `status <>
+    // 'left'` predicate in the RPC reproduces the maybeSingle-null skip.
+    const draftedIds = finishingIds.filter((id) => reservedAsHeld.has(id));
+    const { error: requeueError } = await db.rpc("requeue_finished_players", {
+      p_session_id: match.session_id,
+      p_player_ids: finishingIds,
+      p_drafted_ids: draftedIds,
+    });
+    if (requeueError) {
+      console.error("[endMatch] requeue_finished_players failed:", requeueError);
+    }
   }
 
   // 5. PIPELINE: promote oldest on-deck match to the freed court.

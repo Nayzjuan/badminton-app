@@ -28,6 +28,22 @@ function roleRank(role: ClubRole): number {
 }
 
 /**
+ * Request-scoped cached auth user. `auth.getUser()` revalidates the JWT against
+ * the Auth server over HTTPS on EVERY call, so a layout + its page (+ nested
+ * gate helpers) each paid a separate GoTrue round trip. React `cache()` dedupes
+ * them to ONE validation per RSC render. Scope is a single render pass, so there
+ * is no cross-request staleness. Server actions keep calling `getUser()`
+ * directly (each action POST is its own request; caching there changes nothing).
+ */
+export const getRequestUser = cache(async () => {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user;
+});
+
+/**
  * Resolve a club by its URL slug. Wrapped in React `cache` so the
  * /c/[clubSlug] layout and the page beneath it share a single query per request.
  * Returns null on miss (callers `notFound()`).
@@ -234,10 +250,7 @@ export async function getClubSessions(clubId: string): Promise<Session[]> {
 export async function requireClubMembership(
   clubSlug: string
 ): Promise<{ userId: string; club: Club; role: ClubRole }> {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getRequestUser();
   if (!user) redirect("/");
 
   const club = await getClubBySlug(clubSlug);
@@ -260,19 +273,16 @@ export async function requireClubMembership(
 export async function resolveSessionClubSlug(sessionId: string): Promise<string | null> {
   if (!isValidUUID(sessionId)) return null;
   const db = createServiceClient();
-  const { data: session, error: sErr } = await db
+  // One embedded round trip (was sessions → clubs, two serial hops). Runs on
+  // every push send + the legacy redirect shims + reconnect.
+  const { data, error } = await db
     .from("sessions")
-    .select("club_id")
+    .select("club_id, clubs(slug)")
     .eq("id", sessionId)
     .maybeSingle();
-  if (sErr) throw new Error(`resolveSessionClubSlug session: ${sErr.message}`);
-  if (!session?.club_id) return null;
-  const { data: club, error: cErr } = await db
-    .from("clubs")
-    .select("slug")
-    .eq("id", session.club_id)
-    .maybeSingle();
-  if (cErr) throw new Error(`resolveSessionClubSlug club: ${cErr.message}`);
+  if (error) throw new Error(`resolveSessionClubSlug: ${error.message}`);
+  if (!data?.club_id) return null;
+  const club = data.clubs as unknown as { slug: string } | null;
   return club?.slug ?? null;
 }
 

@@ -103,8 +103,23 @@ export function useOrganizerQueue(
     }
   }, [supabase, sessionId]);
 
+  // Refetch player profiles only when the SET of queued players changes.
+  // Reorders and wait-time ticks produce a new queue array with the SAME
+  // membership; keying the fetch on queue identity refetched profiles on every
+  // such tick. playerIdsKey is a value-typed (string) effect dependency, so the
+  // effect only re-runs on a real membership change; the live ids are read from
+  // a ref to keep fetchQueueProfiles itself stable across reorders.
+  const playerIdsKey = queue
+    .map((q) => q.player_id)
+    .sort()
+    .join(",");
+  const queueIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    queueIdsRef.current = queue.map((q) => q.player_id);
+  }, [queue]);
+
   const fetchQueueProfiles = useCallback(async () => {
-    const playerIds = queue.map((q) => q.player_id);
+    const playerIds = queueIdsRef.current;
     if (playerIds.length === 0) return;
     const { data } = await supabase
       .from("profiles")
@@ -117,7 +132,7 @@ export function useOrganizerQueue(
         return next;
       });
     }
-  }, [supabase, queue]);
+  }, [supabase]);
 
   // ── Initial load ──────────────────────────────────────────────
   useEffect(() => {
@@ -125,9 +140,18 @@ export function useOrganizerQueue(
     fetchQueue().then(() => setLoading(false));
   }, [fetchQueue]);
 
+  // Refetch profiles on membership change (playerIdsKey), not every reorder.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchQueueProfiles();
+  }, [fetchQueueProfiles, playerIdsKey]);
+
+  // Stable ref so the profiles subscription can also refresh the profiles map on
+  // VIP/skill edits — the membership-keyed effect above won't fire when only a
+  // player's fields changed (their id stayed in the set).
+  const fetchQueueProfilesRef = useRef(fetchQueueProfiles);
+  useEffect(() => {
+    fetchQueueProfilesRef.current = fetchQueueProfiles;
   }, [fetchQueueProfiles]);
 
   // ── Stable refs for subscriptions ────────────────────────────
@@ -146,13 +170,16 @@ export function useOrganizerQueue(
       onChannelStatusQueue
     );
 
-    // Profile changes (e.g. skill override) → re-fetch queue (view includes
-    // skill_level from profiles) and optionally active matches (embedded profiles).
+    // Profile changes (e.g. skill/VIP override) → re-fetch the queue (view
+    // includes skill_level) AND the profiles map (holds vip_tag/vip_theme) so
+    // field edits on players still in the queue stay fresh, then optionally
+    // active matches (embedded profiles).
     const unsubProfiles = subscribeToProfiles(
       supabase,
       sessionId,
       () => {
         fetchQueueRef.current();
+        fetchQueueProfilesRef.current();
         onProfileChange?.();
       },
       undefined,

@@ -10,7 +10,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { getClubBySlug } from "@/lib/clubs";
+import { getClubBySlug, getRequestUser } from "@/lib/clubs";
 import { OrganizerEntry, type SessionWithStats } from "@/components/organizer/organizer-entry";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
@@ -22,9 +22,8 @@ export default async function ClubOrganizerHubPage({ params }: PageProps) {
   const { clubSlug } = await params;
   const supabase = await createServerSupabaseClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Deduped with the (full) layout's requireClubMembership() getUser via cache().
+  const user = await getRequestUser();
   if (!user) redirect("/");
 
   const { data: profileRow } = await supabase
@@ -57,54 +56,63 @@ export default async function ClubOrganizerHubPage({ params }: PageProps) {
   const activeSessions = allSessions.filter((s) => s.is_active);
   const pastSessions = allSessions.filter((s) => !s.is_active);
 
-  // ── Enrich active sessions with live counts ───────────────────
-  const activeWithStats: SessionWithStats[] = await Promise.all(
-    activeSessions.map(async (session) => {
-      const [{ count: playerCount }, { count: courtCount }, { count: matchCount }] =
-        await Promise.all([
-          supabase
-            .from("queue_entries")
-            .select("id", { count: "exact", head: true })
-            .eq("session_id", session.id)
-            .in("status", ["waiting", "drafted", "on_deck", "playing"]),
-          supabase
-            .from("courts")
-            .select("id", { count: "exact", head: true })
-            .eq("session_id", session.id)
-            .neq("status", "closed"),
-          supabase
-            .from("matches")
-            .select("id", { count: "exact", head: true })
-            .eq("session_id", session.id)
-            .eq("status", "completed"),
-        ]);
+  // ── Enrich sessions with live counts ──────────────────────────
+  // Was one count query per session (queue + courts + matches for each active
+  // session, matches for each past session) — up to ~200 round trips on a club
+  // with many past sessions. Replaced with 3 bulk fetches grouped in memory.
+  // Same user-context client + filters, so per-row RLS scoping is unchanged.
+  const activeIds = activeSessions.map((s) => s.id);
+  const allIds = allSessions.map((s) => s.id);
 
-      return {
-        ...session,
-        playerCount: playerCount ?? 0,
-        courtCount: courtCount ?? 0,
-        matchCount: matchCount ?? 0,
-      };
-    })
+  const countBy = <T extends { session_id: string }>(rows: T[] | null): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) m.set(r.session_id, (m.get(r.session_id) ?? 0) + 1);
+    return m;
+  };
+
+  const [completedCounts, queueRows, courtRows] = await Promise.all([
+    // Completed matches are unbounded over a club's lifetime, so count them with
+    // a GROUP BY RPC — the payload is one row PER SESSION (cap-safe at any
+    // history size), not one row per match. queue/courts are active-session
+    // scoped and naturally small, so a plain row fetch + JS group is fine there.
+    allIds.length
+      ? supabase.rpc("count_completed_matches_by_session", { p_session_ids: allIds })
+      : Promise.resolve({ data: [] as { session_id: string; cnt: number }[] }),
+    activeIds.length
+      ? supabase
+          .from("queue_entries")
+          .select("session_id")
+          .in("session_id", activeIds)
+          .in("status", ["waiting", "drafted", "on_deck", "playing"])
+      : Promise.resolve({ data: [] as { session_id: string }[] }),
+    activeIds.length
+      ? supabase
+          .from("courts")
+          .select("session_id")
+          .in("session_id", activeIds)
+          .neq("status", "closed")
+      : Promise.resolve({ data: [] as { session_id: string }[] }),
+  ]);
+
+  const matchCounts = new Map<string, number>(
+    (completedCounts.data ?? []).map((r) => [r.session_id, Number(r.cnt)])
   );
+  const playerCounts = countBy(queueRows.data);
+  const courtCounts = countBy(courtRows.data);
 
-  // ── Enrich past sessions with completed match count ───────────
-  const pastWithStats: SessionWithStats[] = await Promise.all(
-    pastSessions.map(async (session) => {
-      const { count: matchCount } = await supabase
-        .from("matches")
-        .select("id", { count: "exact", head: true })
-        .eq("session_id", session.id)
-        .eq("status", "completed");
+  const activeWithStats: SessionWithStats[] = activeSessions.map((session) => ({
+    ...session,
+    playerCount: playerCounts.get(session.id) ?? 0,
+    courtCount: courtCounts.get(session.id) ?? 0,
+    matchCount: matchCounts.get(session.id) ?? 0,
+  }));
 
-      return {
-        ...session,
-        playerCount: 0,
-        courtCount: 0,
-        matchCount: matchCount ?? 0,
-      };
-    })
-  );
+  const pastWithStats: SessionWithStats[] = pastSessions.map((session) => ({
+    ...session,
+    playerCount: 0,
+    courtCount: 0,
+    matchCount: matchCounts.get(session.id) ?? 0,
+  }));
 
   // Unambiguous: creation attaches to THIS club (the one in the URL).
   return (

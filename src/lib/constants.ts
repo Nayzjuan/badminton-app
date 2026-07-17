@@ -341,6 +341,18 @@ export const COURT_ALERT_CRITICAL_OFFSET_MINUTES = 10;
 /** ms interval for recomputing the court alert tier. Minute-level granularity is sufficient. */
 export const COURT_ALERT_RECOMPUTE_INTERVAL_MS = 30_000;
 
+// ── Realtime refetch debounce ─────────────────────────────────────────────────
+
+/**
+ * Trailing-edge debounce (ms) for realtime-subscription refetches. A single
+ * engine action (e.g. a draft) writes ~9 rows that fan into multiple
+ * postgres_changes events; without a debounce each event fires a full refetch
+ * pipeline. Collapsing a burst into one trailing refetch cuts refetch storms
+ * ~5× per device. Small enough to stay visually instant. The per-fetch-target
+ * fetchSeq guards still discard any stale response that lands out of order.
+ */
+export const REALTIME_REFETCH_DEBOUNCE_MS = 200;
+
 // ── Score validation ──────────────────────────────────────────────────────────
 
 /** Maximum valid score in a single badminton game (standard 21-point, but we allow up to 31 for deuce scenarios). */

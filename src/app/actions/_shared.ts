@@ -75,23 +75,24 @@ export async function getAuthenticatedUser() {
 export async function isSessionOrganizer(userId: string, sessionId: string): Promise<boolean> {
   const svc = createServiceClient();
 
-  const { data: session } = await svc
-    .from("sessions")
-    .select("created_by, club_id")
-    .eq("id", sessionId)
-    .maybeSingle(); // maybeSingle — deleted/invalid sessions return null, not an error
+  // sessions + session_organizers both depend only on the args → fetch in
+  // parallel (was 3 strictly-sequential round trips on the core mutation loop).
+  // Semantics unchanged: created_by OR session_organizers OR active owner/admin
+  // club_members of the session's club.
+  const [sessionRes, membershipRes] = await Promise.all([
+    svc.from("sessions").select("created_by, club_id").eq("id", sessionId).maybeSingle(),
+    svc
+      .from("session_organizers")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("user_id", userId)
+      .maybeSingle(),
+  ]);
 
+  const session = sessionRes.data; // deleted/invalid sessions return null, not an error
   if (!session) return false;
   if (session.created_by === userId) return true;
-
-  const { data: membership } = await svc
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", sessionId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (membership) return true;
+  if (membershipRes.data) return true;
 
   const { data: clubMembership } = await svc
     .from("club_members")

@@ -28,6 +28,8 @@ import {
 } from "@/lib/realtime";
 import type { Court, Profile, QueueEntry } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
+import { trailingDebounce } from "@/lib/trailing-debounce";
+import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -103,9 +105,11 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const fetchWaitlist = useCallback(async () => {
     const mySeq = ++fetchWaitlistSeq.current;
 
-    const { data: entries, error: entriesError } = await supabase
+    // Single embedded fetch: queue_entries + each player's public profile via the
+    // player_id → profiles FK (was two round trips — entries, then profiles).
+    const { data: rows, error } = await supabase
       .from("queue_entries")
-      .select("*")
+      .select(`*, profile:profiles(${PUBLIC_PROFILE_COLUMNS})`)
       .eq("session_id", sessionId)
       .in("status", ["waiting", "on_deck"])
       .order("games_played", { ascending: true })
@@ -113,35 +117,21 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
 
     if (mySeq !== fetchWaitlistSeq.current) return;
 
-    if (entriesError) {
-      console.error("[useSessionData] fetchWaitlist queue_entries error:", entriesError.message);
+    if (error) {
+      console.error("[useSessionData] fetchWaitlist error:", error.message);
       return; // preserve stale waitlist
     }
 
-    if (!entries || entries.length === 0) {
-      setWaitlist([]);
-      return;
-    }
-
-    const playerIds = entries.map((e) => e.player_id);
-    const { data: profiles, error: profilesError } = await supabase
-      .from("profiles")
-      .select(PUBLIC_PROFILE_COLUMNS)
-      .in("id", playerIds);
-
-    if (mySeq !== fetchWaitlistSeq.current) return;
-
-    if (profilesError) {
-      console.error("[useSessionData] fetchWaitlist profiles error:", profilesError.message);
-      return; // preserve stale waitlist
-    }
-
-    const profileMap = new Map((profiles ?? []).map((p) => [p.id, { ...p, pin: null }]));
+    // The embedded profile omits the locked-down `pin` column (PUBLIC_PROFILE_COLUMNS);
+    // re-add it as null so the row matches the Profile shape, mirroring the old join.
+    const entries = (rows ?? []) as unknown as Array<
+      QueueEntry & { profile: Omit<Profile, "pin"> | null }
+    >;
 
     const enriched: QueueEntryWithProfile[] = entries
-      .map((entry) => ({
+      .map(({ profile, ...entry }) => ({
         ...entry,
-        profile: profileMap.get(entry.player_id) ?? createUnknownProfile(entry.player_id),
+        profile: profile ? { ...profile, pin: null } : createUnknownProfile(entry.player_id),
       }))
       // Pin on_deck rows to the top; preserve games_played/joined_at order within each tier.
       .sort((a, b) => {
@@ -182,23 +172,43 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     // Use a unique channel prefix so these subscriptions don't collide
     // with the ones in useQueue and usePlayerMatch on the same page.
     const prefix = "session-data";
+    // One trailing-edge debouncer PER fetch target so an engine burst (matches
+    // UPDATE + ~8 match_players rows) collapses into a single fetchActiveMatches
+    // instead of ~9. The ref-callback stability pattern + fetchSeq guards stay.
+    const courtsDeb = trailingDebounce(
+      () => fetchCourtsRef.current(),
+      REALTIME_REFETCH_DEBOUNCE_MS
+    );
+    const waitlistDeb = trailingDebounce(
+      () => fetchWaitlistRef.current(),
+      REALTIME_REFETCH_DEBOUNCE_MS
+    );
+    const matchesDeb = trailingDebounce(
+      () => fetchActiveMatchesRef.current(),
+      REALTIME_REFETCH_DEBOUNCE_MS
+    );
     const unsubs = [
-      subscribeToCourts(supabase, sessionId, () => fetchCourtsRef.current(), prefix),
-      subscribeToQueue(supabase, sessionId, () => fetchWaitlistRef.current(), prefix),
-      subscribeToMatches(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
-      subscribeToMatchPlayers(supabase, sessionId, () => fetchActiveMatchesRef.current(), prefix),
+      subscribeToCourts(supabase, sessionId, courtsDeb.run, prefix),
+      subscribeToQueue(supabase, sessionId, waitlistDeb.run, prefix),
+      subscribeToMatches(supabase, sessionId, matchesDeb.run, prefix),
+      subscribeToMatchPlayers(supabase, sessionId, matchesDeb.run, prefix),
       // Profile changes → re-fetch waitlist (skill badges) and active matches (player profiles).
       subscribeToProfiles(
         supabase,
         sessionId,
         () => {
-          fetchWaitlistRef.current();
-          fetchActiveMatchesRef.current();
+          waitlistDeb.run();
+          matchesDeb.run();
         },
         prefix
       ),
     ];
-    return () => unsubs.forEach((u) => u());
+    return () => {
+      courtsDeb.cancel();
+      waitlistDeb.cancel();
+      matchesDeb.cancel();
+      unsubs.forEach((u) => u());
+    };
   }, [supabase, sessionId]);
 
   // ── Derived splits ────────────────────────────────────────

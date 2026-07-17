@@ -846,6 +846,8 @@ export type Database = {
           points_against: number;
           point_diff: number;
           win_pct: number;
+          vip_tag: string | null;
+          vip_theme: string | null;
         }[];
       };
       // Months selectable in the monthly picker — distinct Manila-months with
@@ -856,6 +858,20 @@ export type Database = {
       };
       refresh_alltime_leaderboard: {
         Args: Record<string, never>;
+        Returns: void;
+      };
+      requeue_finished_players: {
+        Args: { p_session_id: string; p_player_ids: string[]; p_drafted_ids: string[] };
+        Returns: void;
+      };
+      // Per-session completed-match counts via GROUP BY (cap-safe: one row per
+      // session, not per match). Used by the organizer hub.
+      count_completed_matches_by_session: {
+        Args: { p_session_ids: string[] };
+        Returns: { session_id: string; cnt: number }[];
+      };
+      reorder_on_deck_matches: {
+        Args: { p_session_id: string; p_match_ids: string[] };
         Returns: void;
       };
       rename_player_identity: {
@@ -963,6 +979,8 @@ export type Database = {
           points_against: number;
           point_diff: number;
           win_pct: number;
+          vip_tag: string | null;
+          vip_theme: string | null;
         }[];
       };
       // ── Wave 2 atomicity RPCs (migration 20260429000000) ────────
