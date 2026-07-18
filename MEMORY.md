@@ -5,6 +5,14 @@
 
 ---
 
+## 🆕 first_to_100 AWARD FIX + PAST-SESSION RECAP — 2026-07-18 — ✅ SHIPPED (prod-applied + verified)
+
+**The bug (user-reported):** the `first_to_100` ("First to 100", legendary Wrapped award — only ever the FIRST player in a club to reach 100 all-time games) was given to Kevin DC (the 3rd CHILLAX player to hit 100, same day) instead of Stelle (the true first, 2026-07-04). Two players ended up with it. **Root cause = the audit's C2 bug manifesting:** Stelle reconnected (identity merge) with the PRE-fix `migrate_player_identity`, which didn't repoint `club_milestones`, so deleting her old profile cascade-deleted her milestone row; the empty slot was re-claimed by the next crosser. **Fixes (2 migrations, prod-applied + verified):** `20260718150042_repair_first_to_100_misattribution` (generic, reconstruction-based data repair: ledger→true first, revoke wrong wraps) + `20260718150312_harden_first_to_100_claim` (anchor-validated text-sub into `compute_session_wrapped` — an empty slot now reconstructs the true first from match history instead of handing it to the next crosser; self-healing). Verified live: Stelle's 2nd same-day reconnect (14:40, post-C2-fix) correctly REPOINTED the milestone — the C2 fix works. Gotcha: players can have fragmented identities across multiple profile ids via repeated reconnects.
+
+**Past-session recap (user-requested):** `organizer/[sessionId]` used to `redirect(clubBase)` for ended sessions, so tapping a "Past Sessions" card was a dead-end. Now it renders a read-only `SessionRecap` (`src/components/organizer/session-recap.tsx`) — header + the reused client `MatchHistoryPanel` showing the session's completed/cancelled matches. tsc/lint/build clean, 670 unit tests pass. (Legacy `/organizer/[sessionId]` is just a 308 shim → covered transitively.)
+
+---
+
 ## 🆕 DB OPTIMIZATION AUDIT — 2026-07-17 — ✅ EXECUTED (majority shipped + prod-verified; 4 structural items deferred with designs)
 
 **Full report: `DB_OPTIMIZATION_AUDIT.md` (repo root, untracked).** 8-domain multi-agent audit of all 342 DB call sites + every RPC/view/policy vs live prod evidence. 65 findings. User go: "execute all as a whole." **All 11 migrations applied to prod (`usxftpexoimletqmrggb`) + individually verified; all code validated (tsc 0 / lint 0 / build clean / 670 unit tests); two review gates passed (1 real defect found + fixed).**
