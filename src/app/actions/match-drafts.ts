@@ -113,8 +113,11 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   // match_id while match_id_snapshot preserves it). Best-effort — logMatchEvent
   // never throws, so it can't block the clear. This is the trail that answers
   // "who cleared this match?" for a single on-deck Clear.
-  const clearActor = await getActorContext(user.id);
-  const clearRoster = await fetchRosterSnapshots(db, [matchId]);
+  // Actor context and roster snapshot are independent → fetch in parallel.
+  const [clearActor, clearRoster] = await Promise.all([
+    getActorContext(user.id),
+    fetchRosterSnapshots(db, [matchId]),
+  ]);
   await logMatchEvent({
     matchId,
     sessionId: match.session_id,
@@ -282,11 +285,14 @@ export async function clearAllUnpublishedDrafts(sessionId: string): Promise<Clea
     .not("is_held", "is", true);
   const draftMatches = draftRows ?? [];
   if (draftMatches.length > 0) {
-    const batchActor = await getActorContext(user.id);
-    const batchRoster = await fetchRosterSnapshots(
-      db,
-      draftMatches.map((m) => m.id)
-    );
+    // Actor context and roster snapshots are independent → fetch in parallel.
+    const [batchActor, batchRoster] = await Promise.all([
+      getActorContext(user.id),
+      fetchRosterSnapshots(
+        db,
+        draftMatches.map((m) => m.id)
+      ),
+    ]);
     await Promise.all(
       draftMatches.map((m) =>
         logMatchEvent({
@@ -369,22 +375,14 @@ export async function reorderOnDeckMatches(
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) return { success: false, message: "Forbidden" };
 
-  // Build individual updates — Supabase JS client doesn't support
-  // bulk UPDATE with per-row values, so we fire them concurrently.
-  // Use service client so the primary organizer's writes are never
-  // silently dropped by write-side RLS on the matches table.
-  const updates = orderedMatchIds.map((id, index) =>
-    db
-      .from("matches")
-      .update({ sort_order: index })
-      .eq("id", id)
-      .eq("session_id", sessionId)
-      .eq("status", "pending")
-  );
-
-  const results = await Promise.all(updates);
-  const firstError = results.find((r) => r.error);
-  if (firstError?.error) {
+  // One set-based UPDATE (was one UPDATE per match): the RPC assigns
+  // sort_order = array position (0-based), scoped to this session's pending
+  // matches — identical semantics to the old per-row loop.
+  const { error } = await db.rpc("reorder_on_deck_matches", {
+    p_session_id: sessionId,
+    p_match_ids: orderedMatchIds,
+  });
+  if (error) {
     return { success: false, message: "Failed to save order." };
   }
 

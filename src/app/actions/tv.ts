@@ -47,88 +47,61 @@ export async function getTvData(sessionId: string): Promise<{
   if (!isValidUUID(sessionId)) return { session: null, matches: [] };
   const supabase = createServiceClient();
 
-  // Fetch session info
-  const { data: session } = await supabase
-    .from("sessions")
-    .select("id, name, is_active, club_id")
-    .eq("id", sessionId)
-    .single();
+  // Was 5 sequential round trips (session → matches → courts → match_players →
+  // profiles). Now 2 parallel: session + one embedded matches query. Draft-mode
+  // firewall filter is preserved verbatim on the top-level matches select.
+  type TvMatchRow = {
+    id: string;
+    status: string;
+    court_id: string | null;
+    is_mixed_level: boolean;
+    created_at: string;
+    started_at: string | null;
+    courts: { name: string } | null;
+    match_players: {
+      player_id: string;
+      team: string;
+      profiles: {
+        display_name: string;
+        skill_level: string;
+        vip_tag: string | null;
+        vip_theme: string | null;
+      } | null;
+    }[];
+  };
 
+  const [sessionRes, matchesRes] = await Promise.all([
+    supabase.from("sessions").select("id, name, is_active, club_id").eq("id", sessionId).single(),
+    supabase
+      .from("matches")
+      .select(
+        "id, status, court_id, is_mixed_level, created_at, started_at, courts(name), match_players(player_id, team, profiles(display_name, skill_level, vip_tag, vip_theme))"
+      )
+      .eq("session_id", sessionId)
+      .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)"),
+  ]);
+
+  const session = sessionRes.data;
   if (!session) return { session: null, matches: [] };
 
-  // Fetch active matches (in_progress = on a court, pending = on deck)
-  // Draft Mode firewall: pending matches are only shown when is_published=true.
-  const { data: matches } = await supabase
-    .from("matches")
-    .select("id, status, court_id, is_mixed_level, created_at, started_at")
-    .eq("session_id", sessionId)
-    .or("status.eq.in_progress,and(status.eq.pending,is_published.eq.true)");
+  const rows = (matchesRes.data ?? []) as unknown as TvMatchRow[];
 
-  if (!matches?.length) return { session, matches: [] };
-
-  const matchIds = matches.map((m) => m.id);
-
-  // Court names
-  const courtIds = [...new Set(matches.map((m) => m.court_id).filter(Boolean))] as string[];
-  let courtMap = new Map<string, string>();
-  if (courtIds.length) {
-    const { data: courts } = await supabase.from("courts").select("id, name").in("id", courtIds);
-    courtMap = new Map((courts ?? []).map((c) => [c.id, c.name]));
-  }
-
-  // Match players
-  const { data: matchPlayers } = await supabase
-    .from("match_players")
-    .select("match_id, player_id, team")
-    .in("match_id", matchIds);
-
-  // Player profiles
-  const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
-  let profileMap = new Map<
-    string,
-    {
-      display_name: string;
-      skill_level: SkillLevel;
-      vip_tag: string | null;
-      vip_theme: string | null;
-    }
-  >();
-  if (playerIds.length) {
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, display_name, skill_level, vip_tag, vip_theme")
-      .in("id", playerIds);
-    profileMap = new Map(
-      (profiles ?? []).map((p) => [
-        p.id,
-        {
-          display_name: p.display_name,
-          skill_level: p.skill_level as SkillLevel,
-          vip_tag: p.vip_tag ?? null,
-          vip_theme: p.vip_theme ?? null,
-        },
-      ])
-    );
-  }
-
-  const enriched: TvMatch[] = matches.map((match) => ({
+  const enriched: TvMatch[] = rows.map((match) => ({
     id: match.id,
     status: match.status as "in_progress" | "pending",
     court_id: match.court_id,
-    court_name: match.court_id ? (courtMap.get(match.court_id) ?? null) : null,
+    court_name: match.courts?.name ?? null,
     is_mixed_level: match.is_mixed_level,
     created_at: match.created_at,
     started_at: match.started_at ?? null,
-    players: (matchPlayers ?? [])
-      .filter((mp) => mp.match_id === match.id)
-      .map((mp) => ({
-        player_id: mp.player_id,
-        display_name: profileMap.get(mp.player_id)?.display_name ?? "Unknown",
-        skill_level: profileMap.get(mp.player_id)?.skill_level ?? "beginner",
-        vip_tag: profileMap.get(mp.player_id)?.vip_tag ?? null,
-        vip_theme: profileMap.get(mp.player_id)?.vip_theme ?? null,
-        team: mp.team as "a" | "b",
-      })),
+    players: (match.match_players ?? []).map((mp) => ({
+      player_id: mp.player_id,
+      display_name: mp.profiles?.display_name ?? "Unknown",
+      skill_level: (mp.profiles?.skill_level ?? "beginner") as SkillLevel,
+      vip_tag: mp.profiles?.vip_tag ?? null,
+      vip_theme: mp.profiles?.vip_theme ?? null,
+      team: mp.team as "a" | "b",
+    })),
   }));
 
   return { session, matches: enriched };

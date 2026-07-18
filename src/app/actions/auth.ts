@@ -311,8 +311,12 @@ export async function reconnectPlayer(
         .from("match_players")
         .select("matches!inner(session_id, status)")
         .eq("player_id", profile.id)
+        // C3: filter to a LIVE match in SQL. Without this, .limit(1) returned an
+        // arbitrary historical match, so a player actually in a pending/in_progress
+        // match was almost never detected here and fell through to Phase 3.
+        .in("matches.status", ["pending", "in_progress"])
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (activeMatch && activeMatch.matches) {
         const match = activeMatch.matches as unknown as { session_id: string; status: string };
@@ -568,29 +572,30 @@ export async function reconnectPlayer(
       .order("joined_at", { ascending: false })
       .limit(10);
 
-    if (recentEntry) {
-      for (const entry of recentEntry) {
-        const sess = entry.sessions as unknown as {
-          is_active: boolean;
-          ended_at: string | null;
-        };
-        if (sess.is_active || !sess.ended_at || sess.ended_at < cutoff) continue;
+    // Closed-within-window sessions, newest-first (recentEntry is joined_at-desc).
+    const eligibleSessionIds = (recentEntry ?? [])
+      .filter((entry) => {
+        const sess = entry.sessions as unknown as { is_active: boolean; ended_at: string | null };
+        return !sess.is_active && sess.ended_at !== null && sess.ended_at >= cutoff;
+      })
+      .map((entry) => entry.session_id);
 
-        // Check that Wrapped stats actually exist for this player in this session.
-        const { data: statsRow } = await service
-          .from("session_wrapped_stats")
-          .select("session_id")
-          .eq("session_id", entry.session_id)
-          .eq("player_id", newUserId)
-          .single();
+    if (eligibleSessionIds.length > 0) {
+      // One membership query instead of a per-candidate single-row loop; pick the
+      // newest eligible session that actually has Wrapped stats.
+      const { data: wrappedRows } = await service
+        .from("session_wrapped_stats")
+        .select("session_id")
+        .eq("player_id", newUserId)
+        .in("session_id", eligibleSessionIds);
+      const wrappedSet = new Set((wrappedRows ?? []).map((r) => r.session_id));
 
-        if (statsRow) {
-          const clubSlug = await resolveSessionClubSlug(entry.session_id);
-          wrappedUrl = clubSlug
-            ? clubWrapped(clubSlug, entry.session_id, newUserId)
-            : `/wrapped/${entry.session_id}/${newUserId}`;
-          break;
-        }
+      const chosen = eligibleSessionIds.find((id) => wrappedSet.has(id));
+      if (chosen) {
+        const clubSlug = await resolveSessionClubSlug(chosen);
+        wrappedUrl = clubSlug
+          ? clubWrapped(clubSlug, chosen, newUserId)
+          : `/wrapped/${chosen}/${newUserId}`;
       }
     }
   }

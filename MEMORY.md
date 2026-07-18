@@ -5,6 +5,22 @@
 
 ---
 
+## 🆕 DB OPTIMIZATION AUDIT — 2026-07-17 — ✅ EXECUTED (majority shipped + prod-verified; 4 structural items deferred with designs)
+
+**Full report: `DB_OPTIMIZATION_AUDIT.md` (repo root, untracked).** 8-domain multi-agent audit of all 342 DB call sites + every RPC/view/policy vs live prod evidence. 65 findings. User go: "execute all as a whole." **All 11 migrations applied to prod (`usxftpexoimletqmrggb`) + individually verified; all code validated (tsc 0 / lint 0 / build clean / 670 unit tests); two review gates passed (1 real defect found + fixed).**
+
+**Local migrations `20260717165546`→`20260717190000` (renamed to match prod-recorded versions).**
+
+**✅ Correctness bugs (all prod-verified):** C1 `create_match_with_players` drafted branch restored + `publish_match`/`publish_all_drafts` predicates widened to `IN ('drafted','waiting')`; C2 `migrate_player_identity` now repoints `club_milestones` before the profile delete; C3 `reconnectPlayer` probe gained `.in("matches.status",["pending","in_progress"])`.
+
+**✅ Headline prod costs (the audit's top-3):** (1) realtime WAL — dropped `session_organizers`+`match_games` from `supabase_realtime` (0 subscribers) + 200ms trailing-edge refetch debounce (`src/lib/trailing-debounce.ts`) in use-session-data/use-player-match/use-match-history (use-match-alerts intentionally excluded — payload-driven, not refetch); (2) `refresh_alltime_leaderboard` storm — in-function advisory-lock + `leaderboard_refresh_state` 30s gate (M1); (3) RLS seq-scans — `session_access_level()`/`has_match_access()` consolidation + dup-policy drops (M2) + **all 25 policies `(select auth.uid())` initplan-wrapped**.
+
+**✅ Also shipped:** M1 index pack; M3a dead/redundant index drops; M3b `requeue_finished_players`+`reorder_on_deck_matches` set-based RPCs; submit-path `endMatchInternal` (dedup auth); leaderboard double-compute removed (hero reuses board row); VIP folded into session+monthly RPCs; TV 5→2, `isSessionOrganizer` parallelized, organizer counts→GROUP BY RPC `count_completed_matches_by_session` (fixes a review cap-undercount flag), `fetchActivePool` dead paused-query removed, `closeSession` parallelized; lows: `v_match_history` ORDER BY dropped, `get_h2h_record` prefilter (**0/716 equivalence-verified**), waitlist embedded fetch, history/play/clear-path parallelize, queue `after()` ×4, reconnect batch, use-match-history status-gate (**+ regression test** — must include `in_progress` to catch revert-to-active, since `matches` is REPLICA IDENTITY DEFAULT so `payload.old.status` is unavailable), use-organizer-queue membership-key.
+
+**⏸ DEFERRED (4 items, execution-ready designs in workflow output `wa6ffz6k1.output`):** `#7` engine per-slot diversity 9→3 (needs 8 engine-test remaps + deriver equivalence tests); `compute_session_wrapped` CTE hoist (44KB fn, rare session-close path, load-bearing award order); `#2` page-level realtime channel-owner + `match_players.session_id` denormalization — **both `autonomous=False`: require human 2-device live smoke + the filtered-subscription DELETE/replica-identity trap.** **Deliberate won't-do:** RESTRICTIVE draft-firewall merge (defense-in-depth kept); autopub-double-count / loop-per-match-push (rare auto-publish path); promote-per-candidate-left-check (no common-case win); fix-record inline MV refresh (rare admin path).
+
+---
+
 ## 🆕 E2E SPECS RE-ALIGNED TO role="region" + E2E TARGET REPOINTED (2026-07-14)
 
 **Status: DONE, verified live.** The a11y pass below (merged as `8c33e9a`, PR #27) changed the MatchAlert overlays from `role="alert"` → `role="region"` (labels "You're on deck — …" / "Match starting — head to {court}"), which broke the Playwright locators. Fixed `scenario-e-match-alert-ui.spec.ts` (4 sites) and `scenario-j-drafted-status.spec.ts` (1 site) to `getByRole("region", { name: /on deck|match starting/i })`; scenario-i's `[role='alert']` is the login-form error (still an alert, untouched). Runs vs the live deployment serving `8c33e9a`: **scenario-e 4/4 · scenario-j 3/3**. Review gate: LGTM.

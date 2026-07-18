@@ -166,12 +166,8 @@ export async function getSessionLeaderboard(
     const sorted = sortLeaderboard(rawStats, SESSION_CONFIDENCE_K);
     const ranked = assignRanks(sorted, SESSION_CONFIDENCE_K);
 
-    // Batch-fetch VIP fields for all qualified players
-    const vipMap = await buildVipMap(
-      supabase,
-      ranked.map((r) => r.player_id)
-    );
-
+    // VIP fields are folded into get_session_leaderboard_public (2026-07 DB
+    // audit) — no separate buildVipMap round trip per board fetch.
     const rows: LeaderboardRow[] = ranked.map((entry) => ({
       player_id: entry.player_id,
       display_name: entry.display_name,
@@ -185,8 +181,8 @@ export async function getSessionLeaderboard(
       rank: entry.rank,
       win_streak: streakMap.get(entry.player_id) ?? 0,
       rank_movement: null, // session tab never shows rank movement
-      vip_tag: vipMap.get(entry.player_id)?.vip_tag ?? null,
-      vip_theme: vipMap.get(entry.player_id)?.vip_theme ?? null,
+      vip_tag: entry.vip_tag ?? null,
+      vip_theme: entry.vip_theme ?? null,
     }));
 
     return { success: true, rows };
@@ -347,11 +343,7 @@ export async function getMonthlyLeaderboard(
     const sorted = sortLeaderboard(rawStats, MONTH_CONFIDENCE_K);
     const ranked = assignRanks(sorted, MONTH_CONFIDENCE_K);
 
-    const vipMap = await buildVipMap(
-      supabase,
-      ranked.map((r) => r.player_id)
-    );
-
+    // VIP fields folded into get_monthly_leaderboard (2026-07 DB audit).
     const rows: LeaderboardRow[] = ranked.map((entry) => ({
       player_id: entry.player_id,
       display_name: entry.display_name,
@@ -365,8 +357,8 @@ export async function getMonthlyLeaderboard(
       rank: entry.rank,
       win_streak: 0, // O-2: monthly omits win-streak
       rank_movement: null, // monthly omits Δ
-      vip_tag: vipMap.get(entry.player_id)?.vip_tag ?? null,
-      vip_theme: vipMap.get(entry.player_id)?.vip_theme ?? null,
+      vip_tag: entry.vip_tag ?? null,
+      vip_theme: entry.vip_theme ?? null,
     }));
 
     return { success: true, rows };

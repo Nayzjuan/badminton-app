@@ -20,13 +20,14 @@ import { MIN_REST_MINUTES, PLAYERS_PER_MATCH } from "@/lib/constants";
 
 // ── Mock factory ─────────────────────────────────────────────
 // Creates a minimal Supabase mock that returns `poolRows` for the
-// v_queue_with_wait_time query and `pausedRows` for the queue_entries
-// paused query. Both queries are chainable (select / eq / order) and
-// thenable (await-able at the end of the chain).
+// v_queue_with_wait_time query. The chain is chainable (select / eq /
+// order) and thenable (await-able at the end of the chain). Paused
+// exclusion now reads is_paused off the pool rows themselves, so there
+// is no longer a supplemental queue_entries query to mock.
 
 type AnyRow = Record<string, unknown>;
 
-function makeSupabaseMock(poolRows: AnyRow[], pausedRows: AnyRow[] = []) {
+function makeSupabaseMock(poolRows: AnyRow[]) {
   function makeChain(result: { data: AnyRow[]; error: null }) {
     const chain: Record<string, unknown> = {};
     const self = () => chain;
@@ -44,11 +45,7 @@ function makeSupabaseMock(poolRows: AnyRow[], pausedRows: AnyRow[] = []) {
   }
 
   return {
-    from: vi.fn((table: string) => {
-      if (table === "v_queue_with_wait_time") return makeChain({ data: poolRows, error: null });
-      // queue_entries paused filter
-      return makeChain({ data: pausedRows, error: null });
-    }),
+    from: vi.fn(() => makeChain({ data: poolRows, error: null })),
   };
 }
 
@@ -63,6 +60,7 @@ function makeRow(id: string, gamesPlayed: number, waitMinutes: number): AnyRow {
     skill_level: "intermediate",
     skill_level_int: 3,
     is_bottleneck: false,
+    is_paused: false,
     status: "waiting",
     session_id: "sess-1",
     joined_at: new Date().toISOString(),
@@ -131,16 +129,15 @@ describe("fetchActivePool — rest filter", () => {
   });
 
   it("RF-5: paused players are excluded before the rest filter is applied", async () => {
-    // "paused" is rested (wait≥MIN_REST) but in the paused set → excluded entirely.
+    // "paused" is rested (wait≥MIN_REST) but flagged is_paused → excluded entirely.
     const rows = [
       makeRow("a", 0, 0),
       makeRow("b", 1, MIN_REST_MINUTES),
       makeRow("c", 0, 0),
       makeRow("d", 0, 0),
-      makeRow("paused", 2, MIN_REST_MINUTES + 5),
+      { ...makeRow("paused", 2, MIN_REST_MINUTES + 5), is_paused: true },
     ];
-    const pausedRows = [{ player_id: "paused" }];
-    const supabase = makeSupabaseMock(rows, pausedRows) as any;
+    const supabase = makeSupabaseMock(rows) as any;
     const pool = await fetchActivePool(supabase, SESSION_ID);
     expect(pool.map((p) => p.player_id)).not.toContain("paused");
     expect(pool).toHaveLength(4);

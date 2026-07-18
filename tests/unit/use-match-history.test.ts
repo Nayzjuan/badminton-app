@@ -207,9 +207,11 @@ describe("useMatchHistory", () => {
     });
 
     it("calls fetchHistory when realtime fires", async () => {
-      // subscribeToMatches passes a typed payload to its callback, but the
-      // hook calls it without arguments (the payload is unused). Cast to any
-      // so we can capture and invoke it in tests without the full type.
+      // subscribeToMatches passes a typed postgres_changes payload to its
+      // callback. The hook now GATES on relevance — it only refetches when a
+      // row enters/leaves the completed|cancelled set (or on DELETE) — so the
+      // simulated event must carry a completed/cancelled status. Cast to any so
+      // we can capture and invoke it in tests without the full payload type.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let realtimeCallback: ((...args: any[]) => void) | null = null;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -256,12 +258,74 @@ describe("useMatchHistory", () => {
       const { result } = renderHook(() => useMatchHistory(SESSION_ID));
       await waitFor(() => expect(result.current.matches.length).toBe(1));
 
-      // Simulate realtime event — second fetch returns 2 matches.
+      // Simulate a relevant realtime event (a match completing) — second fetch
+      // returns 2 matches. The hook's status gate requires completed/cancelled.
       await act(async () => {
-        realtimeCallback?.();
+        realtimeCallback?.({ eventType: "UPDATE", new: { status: "completed" }, old: {} });
       });
 
       // If realtime wiring is broken, this stays at 1 and the test fails.
+      await waitFor(() => expect(result.current.matches.length).toBe(2));
+    });
+
+    it("gates on status: skips draft churn ('pending'), refetches on revert-to-active ('in_progress')", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let realtimeCallback: ((...args: any[]) => void) | null = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked(subscribeToMatches).mockImplementation((_: any, __: any, cb: any) => {
+        realtimeCallback = cb;
+        return vi.fn();
+      });
+
+      let matchFetchCount = 0;
+      const match2 = { ...completedMatch, id: "match-2" };
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue({
+        from: (table: string) => {
+          const chain: Record<string, unknown> = {
+            select: () => chain,
+            eq: () => chain,
+            in: () => chain,
+            order: () => chain,
+            then: (resolve: (v: { data: unknown; error: null }) => void) => {
+              if (table === "matches") {
+                matchFetchCount++;
+                resolve({
+                  data: matchFetchCount === 1 ? [completedMatch] : [completedMatch, match2],
+                  error: null,
+                });
+              } else if (table === "match_players") {
+                resolve({
+                  data: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }],
+                  error: null,
+                });
+              } else if (table === "profiles") {
+                resolve({ data: [knownProfile], error: null });
+              } else {
+                resolve({ data: [{ id: COURT_ID, name: "Court X" }], error: null });
+              }
+            },
+          };
+          return chain;
+        },
+      } as unknown as ReturnType<typeof createBrowserSupabaseClient>);
+
+      const { result } = renderHook(() => useMatchHistory(SESSION_ID));
+      await waitFor(() => expect(result.current.matches.length).toBe(1));
+
+      // Draft churn: a new draft (status 'pending') must NOT trigger a refetch.
+      await act(async () => {
+        realtimeCallback?.({ eventType: "INSERT", new: { status: "pending" }, old: {} });
+      });
+      // Wait past the debounce window; the list must stay at 1 (no refetch).
+      await new Promise((r) => setTimeout(r, 300));
+      expect(result.current.matches.length).toBe(1);
+
+      // Revert-to-active (completed → in_progress): new.status is in_progress and
+      // old.status is unavailable (matches is REPLICA IDENTITY DEFAULT), so the
+      // gate must treat in_progress as relevant and refetch.
+      await act(async () => {
+        realtimeCallback?.({ eventType: "UPDATE", new: { status: "in_progress" }, old: {} });
+      });
       await waitFor(() => expect(result.current.matches.length).toBe(2));
     });
   });

@@ -27,6 +27,8 @@ export type SessionLeaderboardEntry = {
   points_against: number;
   point_diff: number;
   win_pct: number; // e.g. 71.4
+  vip_tag: string | null; // folded into the RPC (2026-07 DB audit) — no separate buildVipMap query
+  vip_theme: string | null;
 };
 
 /** Row returned by v_alltime_leaderboard_mat */
@@ -54,6 +56,8 @@ export type MonthlyLeaderboardEntry = {
   points_against: number;
   point_diff: number;
   win_pct: number; // e.g. 71.4
+  vip_tag: string | null; // folded into the RPC (2026-07 DB audit)
+  vip_theme: string | null;
 };
 
 /** A selectable month in the Monthly leaderboard picker.

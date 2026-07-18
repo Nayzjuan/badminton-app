@@ -71,18 +71,11 @@ export async function fetchActivePool(
     return [];
   }
 
-  // v_queue_with_wait_time does not expose is_paused, so we do a
-  // supplemental query on queue_entries and filter in memory.
+  // v_queue_with_wait_time DOES expose is_paused (verified in the view def and
+  // the QueueWithWaitTime type), so filter in memory — the old supplemental
+  // queue_entries query was dead weight (one extra round trip per pool fetch).
   // Paused players are strictly invisible to the matchmaking engine.
-  const { data: pausedRows } = await supabase
-    .from("queue_entries")
-    .select("player_id")
-    .eq("session_id", sessionId)
-    .eq("status", "waiting")
-    .eq("is_paused", true);
-
-  const pausedSet = new Set((pausedRows ?? []).map((r) => r.player_id));
-  const active = (rawPool ?? []).filter((p) => !pausedSet.has(p.player_id));
+  const active = (rawPool ?? []).filter((p) => !p.is_paused);
 
   // Minimum rest filter: exclude players who just finished a game and haven't
   // rested long enough. wait_minutes reflects time since re-entering the queue.

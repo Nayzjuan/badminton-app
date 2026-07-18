@@ -12,6 +12,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { trailingDebounce } from "@/lib/trailing-debounce";
+import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
 import { getUpcomingHeldDraft, type UpcomingHeldDraft } from "@/app/actions/upcoming-match";
 import type { Match, Court, Profile, Team } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
@@ -222,17 +224,17 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
   // Initial fetch + real-time subscriptions.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchMyMatch();
+    fetchMyMatch(); // initial load stays immediate
 
-    const unsubMatches = subscribeToMatches(supabase, sessionId, () => {
-      fetchMyMatch();
-    });
-
-    const unsubPlayers = subscribeToMatchPlayers(supabase, sessionId, () => {
-      fetchMyMatch();
-    });
+    // Both streams target the same fetch → one shared trailing debouncer, so an
+    // engine burst (matches UPDATE + ~8 match_players rows) collapses into a
+    // single fetchMyMatch. The internal fetchSeq guard still drops stale results.
+    const matchDeb = trailingDebounce(() => fetchMyMatch(), REALTIME_REFETCH_DEBOUNCE_MS);
+    const unsubMatches = subscribeToMatches(supabase, sessionId, matchDeb.run);
+    const unsubPlayers = subscribeToMatchPlayers(supabase, sessionId, matchDeb.run);
 
     return () => {
+      matchDeb.cancel();
       unsubMatches();
       unsubPlayers();
     };

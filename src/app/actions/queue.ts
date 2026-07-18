@@ -121,7 +121,12 @@ export async function togglePlayerPause(
   // Pausing does not need a trigger — the engine excludes paused players
   // anyway, so no new slots open when a player pauses.
   if (!isPaused) {
-    await runEngineForSession(sessionId);
+    // after(): respond before draft regeneration (mirrors the join path).
+    after(() =>
+      runEngineForSession(sessionId).catch((err) =>
+        console.error("[engine] after() unhandled failure:", err)
+      )
+    );
   }
 
   return { success: true };
@@ -237,9 +242,13 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   }
 
   // Engine hook: the player left, which may have cancelled one or more
-  // draft matches (freeing other players back to 'waiting'). Run the
-  // engine so those freed slots are immediately refilled.
-  await runEngineForSession(sessionId);
+  // draft matches (freeing other players back to 'waiting'). Refill those
+  // freed slots after the response is sent (mirrors the join path).
+  after(() =>
+    runEngineForSession(sessionId).catch((err) =>
+      console.error("[engine] after() unhandled failure:", err)
+    )
+  );
 
   return { success: true };
 }
@@ -415,8 +424,12 @@ export async function removePlayerFromQueue(
       }
     }
     // Engine hook: kicking a player may have cancelled a draft (freed other
-    // players back to 'waiting'). Refill the draft slot immediately.
-    await runEngineForSession(sessionId);
+    // players back to 'waiting'). Refill the freed slot after responding.
+    after(() =>
+      runEngineForSession(sessionId).catch((err) =>
+        console.error("[engine] after() unhandled failure:", err)
+      )
+    );
     return { success: true };
   }
 
@@ -441,8 +454,12 @@ export async function removePlayerFromQueue(
     return { success: false, error: error.message };
   }
 
-  // Engine hook: player removed — any freed draft slots should be refilled.
-  await runEngineForSession(sessionId);
+  // Engine hook: player removed — refill any freed draft slots after responding.
+  after(() =>
+    runEngineForSession(sessionId).catch((err) =>
+      console.error("[engine] after() unhandled failure:", err)
+    )
+  );
   return { success: true };
 }
 

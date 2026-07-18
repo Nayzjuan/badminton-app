@@ -148,10 +148,21 @@ export async function getAllSessionsHistory(
     }
   }
 
-  const { data: sessions } = await supabase
-    .from("sessions")
-    .select("id, name, created_at, ended_at, club_id")
-    .in("id", sessionIds);
+  // sessions (step 2) and the Wrapped-recap lookup (step 4) both depend only on
+  // sessionIds, so fetch them in parallel; clubs (step 3) still runs after
+  // sessions since it needs their club_ids. 4 serial round trips → 3 stages.
+  const [{ data: sessions }, { data: wrappedRows }] = await Promise.all([
+    supabase
+      .from("sessions")
+      .select("id, name, created_at, ended_at, club_id")
+      .in("id", sessionIds),
+    db
+      .from("session_wrapped_stats")
+      .select("session_id")
+      .eq("player_id", playerId)
+      .in("session_id", sessionIds),
+  ]);
+  const wrappedSessionIds = (wrappedRows ?? []).map((r) => r.session_id);
 
   // Club names — sessions RLS lets a member read their own club's sessions,
   // but `clubs` itself has no RLS policies (deny-all to anon/authenticated;
@@ -173,17 +184,7 @@ export async function getAllSessionsHistory(
     club_name: s.club_id ? (clubNameById.get(s.club_id) ?? null) : null,
   }));
 
-  // Which of these sessions have a computed Wrapped recap for this player.
-  // Scoped to the caller's own id (ownership already gated above) and to the
-  // sessions in view. session_wrapped_stats has no anon/authenticated grant,
-  // so this goes through the service-role client like the queries above.
-  const { data: wrappedRows } = await db
-    .from("session_wrapped_stats")
-    .select("session_id")
-    .eq("player_id", playerId)
-    .in("session_id", sessionIds);
-  const wrappedSessionIds = (wrappedRows ?? []).map((r) => r.session_id);
-
+  // (wrappedSessionIds was resolved above, in parallel with the sessions fetch.)
   return {
     success: true,
     matches,
