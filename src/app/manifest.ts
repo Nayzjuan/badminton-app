@@ -15,10 +15,13 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/play",
     scope: "/",
     display: "standalone",
-    // "any" allows both portrait and landscape so organizers can rotate their
-    // iPad courtside. Players on phones will still default to portrait since
-    // that is the natural phone orientation; the app adapts at any rotation.
-    orientation: "any",
+    // Orientation is intentionally OMITTED so the installed PWA follows the
+    // device's own rotation setting: it stays put when the user has their OS
+    // rotation lock ON, and rotates freely when it's OFF. Declaring
+    // `orientation: "any"` here would OVERRIDE the system rotation lock on
+    // Android (the app rotated even with portrait-lock engaged). Omitting it
+    // still lets organizers use landscape on an iPad/phone with rotation
+    // unlocked — the UI is fully responsive at any orientation either way.
     background_color: "#1D3A6F",
     theme_color: "#1D3A6F",
     categories: ["sports", "social"],
