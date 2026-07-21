@@ -1,0 +1,36 @@
+-- ============================================================
+-- Revoke queue_entries UPDATE from anon/authenticated
+-- ============================================================
+-- ⚠️  ORDERING: apply this ONLY AFTER the code change that moves
+--     checkoutPlayer and joinQueueFallback onto the service client is
+--     DEPLOYED. Both shipped in the same PR as this file.
+--
+-- WHY IT IS SPLIT OUT: this revoke first shipped inside 20260721180000 and was
+-- applied to a prod still serving the previous build. checkoutPlayer — the
+-- player-facing "Leave Session" button — issued
+--     UPDATE queue_entries SET status='left'
+-- on the USER-CONTEXT client, so every player's Leave Session began failing
+-- with 42501 and their row stayed `waiting`, leaving matchmaking free to keep
+-- drafting them. The grant was restored immediately and the revoke deferred to
+-- here. A GRANT check precedes RLS, so no policy could soften it, and the
+-- integration suite could not catch it either: tests/integration/setup.ts mocks
+-- the server client with a real SERVICE-ROLE client, so those tests exercise
+-- service_role and stayed green. That is a standing blind spot for any grant
+-- revoke touching a server action — verify such changes against the role the
+-- code actually uses, not against the suite.
+--
+-- WHAT IT CLOSES: queue_update_organizer is
+--     USING (is_session_organizer(session_id))  WITH CHECK <absent>
+-- and Postgres reuses USING as the NEW-row check when WITH CHECK is absent, so
+-- it constrains nothing about player_id. With a table-wide UPDATE grant an
+-- organizer could join their own session and PATCH their own row's player_id to
+-- a victim's — forging the queue row isPlayerInSessionScope trusts and
+-- re-opening the PIN read. (A column-level revoke would be a no-op under the
+-- table-wide grant — the trap 20260701000010 documents.)
+--
+-- SELECT and INSERT are deliberately retained: reads are used throughout the
+-- browser, and queue_insert is WITH CHECK (player_id = auth.uid()), which is
+-- correctly self-scoped.
+-- ============================================================
+
+revoke update on public.queue_entries from anon, authenticated;

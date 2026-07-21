@@ -24,11 +24,14 @@
 --   hold a table-wide UPDATE grant, so an organizer could join their own
 --   session legitimately and then PATCH their own row's player_id to the
 --   victim's id — again manufacturing the row the guard trusts.
---   Every browser-context touch of queue_entries in src/ is a SELECT; all
---   writes go through server actions on the service client, so revoking UPDATE
---   from anon/authenticated costs no legitimate path. (A column-level revoke
---   would have been a no-op while the table-wide grant stood — the same trap
---   20260701000010 documents.)
+--   The UPDATE revoke that closes this now lives in 20260721190000, NOT here.
+--   It was originally in this migration on the claim that "all writes go
+--   through server actions on the service client" — that conflated "server
+--   action" with "service client" and was FALSE: checkoutPlayer (the player
+--   Leave Session button) and joinQueueFallback both wrote via the
+--   user-context client. Applying it to a prod still running the old code
+--   broke Leave Session for every player. The revoke is therefore split out
+--   and gated on the code fix shipping first.
 --
 -- Also closed here, same class (SECURITY DEFINER + PUBLIC EXECUTE, service-role
 -- callers only):
@@ -48,8 +51,6 @@
 
 revoke execute on function public.join_queue(uuid, uuid)
   from public, anon, authenticated;
-
-revoke update on public.queue_entries from anon, authenticated;
 
 revoke execute on function public.remove_player_from_queue_organizer(uuid, uuid)
   from public, anon, authenticated;

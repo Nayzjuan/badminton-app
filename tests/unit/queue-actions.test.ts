@@ -114,6 +114,8 @@ function makeMockClient(fromResponses: MockResponse[], opts?: { needsRename?: bo
 const PGRST202 = { code: "PGRST202", message: "Function not found" };
 const mockServiceClient = {
   rpc: vi.fn().mockResolvedValue({ data: null, error: PGRST202 }),
+  // Re-pointed per test at the same builder as the user-context mock, because
+  // joinQueueFallback now performs its DB work on the service client.
   from: vi.fn(),
 };
 
@@ -132,6 +134,11 @@ describe("joinQueueAction — active-match guard", () => {
       // Step 2 would be floor query — should NOT be reached
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -147,6 +154,11 @@ describe("joinQueueAction — active-match guard", () => {
       { data: { id: "entry-2", games_played: 3, status: "playing" }, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -166,6 +178,11 @@ describe("joinQueueAction — active-match guard", () => {
       { data: null, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -182,6 +199,11 @@ describe("joinQueueAction — active-match guard", () => {
       { data: null, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
@@ -191,6 +213,11 @@ describe("joinQueueAction — active-match guard", () => {
     // needs_rename=true → gate returns immediately; no existing-row/floor/insert.
     const mock = makeMockClient([], { needsRename: true });
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -210,6 +237,11 @@ describe("joinQueueAction — active-match guard", () => {
       { data: null, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
@@ -231,6 +263,11 @@ describe("joinQueueAction — Inherited Games floor", () => {
       { data: null, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
 
@@ -248,6 +285,11 @@ describe("joinQueueAction — Inherited Games floor", () => {
       { data: null, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
@@ -261,6 +303,11 @@ describe("joinQueueAction — Inherited Games floor", () => {
       { data: null, error: { message: "connection lost" } },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBe("connection lost");
@@ -274,6 +321,11 @@ describe("joinQueueAction — Inherited Games floor", () => {
       { data: null, error: { message: "unique constraint" } },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBe("unique constraint");
@@ -294,6 +346,11 @@ describe("joinQueueAction — auth guard", () => {
       },
     };
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
+    // is revoked for anon/authenticated (20260721190000), so its reads and
+    // writes must go through service_role. Route the same builder there —
+    // the DB interaction sequence each test asserts is unchanged.
+    mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toMatch(/not authenticated/i);

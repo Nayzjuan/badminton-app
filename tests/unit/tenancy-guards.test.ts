@@ -34,7 +34,11 @@ vi.mock("@/app/actions/_shared", async (importOriginal) => {
   };
 });
 // createSession pulls these in transitively; stub so the module loads.
-vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
+// Must resolve a promise: the actions call runEngineForSession(...).catch(...)
+// inside after(), so a bare vi.fn() returning undefined throws.
+vi.mock("@/app/actions/matchmaking", () => ({
+  runEngineForSession: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/app/actions/match-drafts", () => ({ clearAllUnpublishedDrafts: vi.fn() }));
 vi.mock("@/lib/broadcast", () => ({
   broadcastSessionClosed: vi.fn(),
@@ -46,6 +50,9 @@ vi.mock("@/lib/broadcast", () => ({
 vi.mock("next/headers", () => ({
   headers: vi.fn().mockResolvedValue({ get: () => null }),
 }));
+// queue.ts schedules post-response work with after(), which also requires a
+// request scope. Run the callback inline so the action completes under test.
+vi.mock("next/server", () => ({ after: (fn: () => unknown) => fn() }));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
@@ -62,6 +69,7 @@ import {
   updatePlayerPin,
   updatePlayerSkill,
 } from "@/app/actions/profile";
+import { checkoutPlayer } from "@/app/actions/queue";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000010";
 const CLUB_ID = "00000000-0000-4000-8000-0000000000c1";
@@ -288,4 +296,37 @@ describe("TG-WIRE: profile actions enforce the scope guard", () => {
       expect(tables).not.toContain("profiles");
     });
   }
+});
+
+// ── Grant-compatibility: writes must use the role that HOLDS the grant ──
+// 20260721190000 revokes UPDATE on queue_entries from anon/authenticated. Any
+// write still issued on the user-context client fails with 42501 the moment it
+// applies. The integration suite cannot catch this — tests/integration/setup.ts
+// mocks the server client with a real SERVICE-ROLE client, so those tests
+// exercise service_role and stay green regardless. Hence a unit assertion on
+// WHICH client performs the write.
+describe("TG-GRANT: queue_entries writes use the service client", () => {
+  it("TG-GRANT-1: checkoutPlayer updates via the service client, not the user client", async () => {
+    const userCtx = {
+      ...authedAs(CALLER),
+      from: vi.fn(() => builder({ data: null, error: null })),
+    };
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(
+      userCtx as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>
+    );
+    const svc = serviceClient([{ data: null, error: null }], { data: [], error: null });
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
+    );
+
+    const r = await checkoutPlayer(SESSION_ID);
+    expect(r.success).toBe(true);
+
+    // The write went through the service role…
+    expect(svc.from).toHaveBeenCalledWith("queue_entries");
+    // …and NOT through the anon/authenticated client, which no longer holds
+    // the UPDATE grant.
+    const userTables = userCtx.from.mock.calls.map((c: unknown[]) => c[0]);
+    expect(userTables).not.toContain("queue_entries");
+  });
 });

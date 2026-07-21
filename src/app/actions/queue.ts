@@ -153,7 +153,15 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
     return { success: false, error: "Not authenticated." };
   }
 
-  const { error } = await supabase
+  // Service client for the write. The user-context client cannot UPDATE
+  // queue_entries once the anon/authenticated UPDATE grant is revoked (that
+  // grant is what let an organizer repoint a queue row's player_id at a
+  // victim). Authority is unchanged: player_id comes from auth.getUser(), and
+  // the .eq("player_id", user.id) filter still scopes the write to the caller's
+  // own row — the same shape the organizer path at removePlayerFromQueue uses.
+  const svc = createServiceClient();
+
+  const { error } = await svc
     .from("queue_entries")
     .update({ status: "left" as const })
     .eq("session_id", sessionId)
@@ -166,7 +174,6 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   // Clean up any unpublished draft matches this player is assigned to.
   // The RPC atomically removes the player from draft match_players and
   // cancels the draft if it falls below 4 players.
-  const svc = createServiceClient();
   const { data: cleanupData, error: cleanupError } = await svc.rpc(
     "checkout_player_cleanup_drafts",
     {
@@ -314,7 +321,7 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   if (rpcError) {
     if (isRpcNotFound(rpcError)) {
       // Fallback: manual non-atomic join (pre-RPC behaviour).
-      return await joinQueueFallback(supabase, sessionId, user.id);
+      return await joinQueueFallback(svc, sessionId, user.id);
     }
     console.error("[joinQueueAction] RPC error:", rpcError.message);
     return { success: false, error: rpcError.message };
@@ -467,7 +474,11 @@ export async function removePlayerFromQueue(
 // This mirrors the pre-RPC logic and carries the same benign TOCTOU caveats
 // documented in the original inline comments.
 async function joinQueueFallback(
-  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  // Service client, not the user-context one: the re-join branch UPDATEs
+  // queue_entries, and the anon/authenticated UPDATE grant is revoked. Passing
+  // the service client adds no authority — playerId is already resolved from
+  // auth.getUser() at the only call site.
+  supabase: ReturnType<typeof createServiceClient>,
   sessionId: string,
   playerId: string
 ): Promise<JoinQueueResult> {
