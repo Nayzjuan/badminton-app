@@ -40,15 +40,28 @@ const BIRDIE_WORDS = [
   "LUNGE",
 ];
 
+/** Uniform crypto-random integer in [0, max) — no modulo bias for our small maxes. */
+function randInt(max: number): number {
+  const arr = new Uint32Array(1);
+  crypto.getRandomValues(arr);
+  return arr[0] % max;
+}
+
 /**
  * Generates a random badminton-themed passcode.
- * Format: one of the BIRDIE_WORDS + a random 1-digit suffix.
- * e.g. "SMASH7", "BIRDIE3", "RALLY9"
+ * Format: one of the BIRDIE_WORDS + a 4-digit suffix, e.g. "SMASH4271".
+ *
+ * The word list is public (only 10 values), so the real entropy is the digits.
+ * The old form was WORD + ONE digit = 100 total combinations with Math.random —
+ * walkable in ~100 requests, and a co-organizer passcode grants full session
+ * rights. Now crypto-random with 4 digits = 100,000 combinations, and
+ * joinAsCoOrganizer is rate-limited (see recordAndCheckJoinRateLimit), so brute
+ * force is no longer practical. Still human-typeable (~9 chars, under the 20-cap).
  */
 function generatePasscode(): string {
-  const word = BIRDIE_WORDS[Math.floor(Math.random() * BIRDIE_WORDS.length)];
-  const digit = Math.floor(Math.random() * 10);
-  return `${word}${digit}`;
+  const word = BIRDIE_WORDS[randInt(BIRDIE_WORDS.length)];
+  const digits = String(randInt(10000)).padStart(4, "0");
+  return `${word}${digits}`;
 }
 
 // ── createSession ─────────────────────────────────────────────
@@ -105,17 +118,24 @@ export async function createSession(opts: {
   }
   const scoring: ScoringFormat = scoringResult.data;
 
-  // Club scoping (multi-tenant): when a clubId is supplied the session belongs
-  // to that club and the caller must be a club owner/admin. When omitted, the
-  // sessions.club_id DB DEFAULT routes the session to the default club (CHILLAX,
-  // the founding club that absorbed all pre-multi-tenant sessions —
-  // transition behavior until createSession is fully club-aware in Phase 2).
+  // Club scoping (multi-tenant): a session ALWAYS belongs to an explicit club,
+  // and the caller must be that club's owner/admin.
+  //
+  // clubId is REQUIRED. The old behaviour — omit clubId and let the
+  // sessions.club_id DB DEFAULT route the session into CHILLAX, skipping the
+  // admin check entirely — was a privilege-escalation primitive: any
+  // authenticated user (including an anonymous one) could self-provision a real
+  // organizer session in the founding club without being a member, which then
+  // unlocked the whole organizer server-action surface. Both real callers
+  // (club-admin-panel, organizer-entry) always pass a clubId, so requiring it
+  // costs no legitimate flow.
   const clubId = opts.clubId?.trim();
-  if (clubId !== undefined && clubId !== "") {
-    if (!isValidUUID(clubId)) return { success: false, message: "Invalid club." };
-    if (!(await isClubAdmin(user.id, clubId))) {
-      return { success: false, message: "Only club owners and admins can create sessions." };
-    }
+  if (!clubId) {
+    return { success: false, message: "A club is required to create a session." };
+  }
+  if (!isValidUUID(clubId)) return { success: false, message: "Invalid club." };
+  if (!(await isClubAdmin(user.id, clubId))) {
+    return { success: false, message: "Only club owners and admins can create sessions." };
   }
 
   const service = createServiceClient();
@@ -169,7 +189,7 @@ export async function createSession(opts: {
       created_by: user.id,
       scoring,
       organizer_passcode: finalPasscode,
-      ...(clubId ? { club_id: clubId } : {}),
+      club_id: clubId,
     })
     .select("id")
     .single();
@@ -208,19 +228,60 @@ export type JoinCoOrganizerResult = {
   sessionId?: string;
 };
 
+// ── Rate limiting for the co-organizer passcode-join brute-force surface ──
+/** Failed attempts allowed for one ACCOUNT before lockout, within the window. */
+const JOIN_MAX_FAILED_USER = 10;
+/**
+ * Failed attempts allowed for one IP before lockout, within the window.
+ *
+ * Deliberately far above the per-account limit. A badminton club is the
+ * canonical single-NAT environment — the whole venue shares one gym Wi-Fi, and
+ * mobile users share CGNAT — so a tight IP budget is a griefing DoS: a handful
+ * of co-organizers fumbling a 9-character code, or one malcontent on the venue
+ * network, would lock co-organizer join for everyone. 60/15min is still far
+ * below what brute-forcing a 100k-combination passcode needs (~17 days from a
+ * single IP) while sitting well clear of plausible venue traffic.
+ */
+const JOIN_MAX_FAILED_IP = 60;
+/** Rolling lockout window, minutes. */
+const JOIN_WINDOW_MIN = 15;
+
+/**
+ * Best-effort client IP from the proxy headers. Rate-limiting by user_id alone
+ * is defeated by rotating anonymous accounts (signInAnonymously is a live
+ * path), so we also key on IP. On Vercel `x-forwarded-for` is set by the proxy
+ * from the real connecting client rather than passed through from a
+ * user-supplied header, so the leftmost hop is not caller-controlled here.
+ * A missing header just means the IP arm doesn't bite.
+ */
+async function getClientIp(): Promise<string | null> {
+  try {
+    const { headers } = await import("next/headers");
+    const h = await headers();
+    const xff = h.get("x-forwarded-for");
+    if (xff) return xff.split(",")[0]!.trim();
+    return h.get("x-real-ip");
+  } catch {
+    // headers() throws outside a request scope (e.g. some test contexts).
+    // Degrade to the user_id arm rather than failing the join.
+    return null;
+  }
+}
+
 /**
  * Co-organizer join flow using ONLY the session passcode.
  *
- * 1. Looks up an active session whose organizer_passcode matches
- *    the supplied value (exact, case-insensitive via ILIKE).
- * 2. Inserts a session_organizers row for the caller.
- * 3. Returns the resolved UUID so the client can redirect.
+ * 1. Rate-limit the caller (by user_id and IP) — the passcode space is small
+ *    enough to be worth brute-forcing, and a hit grants full session rights.
+ * 2. Looks up an active session whose organizer_passcode matches (exact).
+ * 3. Inserts a session_organizers row for the caller.
  *
- * Security: returns the same generic error when nothing matches
- * — never reveals whether the passcode exists.
+ * Security: returns the same generic error when nothing matches — never reveals
+ * whether the passcode exists — and records every attempt for the rate limiter.
  */
 export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganizerResult> {
   const INVALID = "Invalid passcode. No active session found.";
+  const LOCKED = "Too many attempts. Please wait a few minutes and try again.";
 
   // Auth gate
   const supabase = await createServerSupabaseClient();
@@ -232,8 +293,56 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
   const normalized = passcode.trim().toUpperCase();
   if (!normalized) return { success: false, message: INVALID };
 
-  // Service client — bypass RLS so we can search all active sessions
+  // Service client — bypass RLS so we can search all active sessions and
+  // read/write the (service-role-only) attempts log.
   const service = createServiceClient();
+
+  // ── Rate-limit gate ──────────────────────────────────────────
+  // One RPC records the attempt and returns the in-window verdict in a SINGLE
+  // transaction. A read-then-write pair let concurrent serverless invocations
+  // all observe a sub-threshold count and pass together, and a swallowed insert
+  // error silently disabled the limiter. This is atomic and FAIL-CLOSED: any
+  // error denies the join rather than waving it through.
+  const ip = await getClientIp();
+  const { data: gate, error: gateErr } = await service
+    .rpc("cojoin_record_and_check", {
+      p_user_id: user.id,
+      p_ip: ip,
+      p_window_min: JOIN_WINDOW_MIN,
+      p_user_max: JOIN_MAX_FAILED_USER,
+      p_ip_max: JOIN_MAX_FAILED_IP,
+    })
+    .maybeSingle();
+
+  if (gateErr || !gate) {
+    console.error("[joinAsCoOrganizer] rate-limit check failed:", gateErr?.message);
+    return { success: false, message: LOCKED };
+  }
+  if (gate.over_user_limit || gate.over_ip_limit) {
+    // Log WHICH arm fired so support can tell shared-venue-IP exhaustion apart
+    // from a genuine per-account brute force.
+    console.warn(
+      `[joinAsCoOrganizer] locked out (user=${gate.over_user_limit} ip=${gate.over_ip_limit})`
+    );
+    return { success: false, message: LOCKED };
+  }
+
+  // The attempt above was recorded pessimistically as a failure; flip it once a
+  // passcode actually matches so legitimate joins don't burn the window.
+  const markAttemptSucceeded = async () => {
+    // Destructure the error rather than using .then(onRejected): a PostgREST
+    // builder RESOLVES with { data, error } on a DB error and only rejects on a
+    // transport throw, so a rejection handler here would be dead code — and a
+    // silently-failed flip leaves a legitimate join logged as a failure,
+    // burning one of the caller's 10-per-15-min slots with nothing in the log.
+    const { error } = await service
+      .from("co_organizer_join_attempts")
+      .update({ succeeded: true })
+      .eq("id", gate.attempt_id);
+    if (error) {
+      console.error("[joinAsCoOrganizer] attempt-log update failed:", error.message);
+    }
+  };
 
   // Exact match — ILIKE would allow SQL wildcard characters (%, _) to
   // match unintended sessions. The passcode is already normalised to
@@ -245,10 +354,14 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     .eq("organizer_passcode", normalized)
     .maybeSingle();
 
+  // The pessimistic attempt row is already logged as a failure — nothing to do.
   if (!session) return { success: false, message: INVALID };
 
-  // Prevent the primary organizer from joining their own session
+  // Prevent the primary organizer from joining their own session. The passcode
+  // was CORRECT, so clear the pessimistic failure — the limiter exists to
+  // punish wrong guesses, not an organizer typing their own code.
   if (session.created_by === user.id) {
+    await markAttemptSucceeded();
     return { success: false, message: "You are already the primary organizer of this session." };
   }
 
@@ -261,6 +374,7 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     .maybeSingle();
 
   if (existing) {
+    await markAttemptSucceeded();
     return { success: true, message: "Already a co-organizer.", sessionId: session.id };
   }
 
@@ -274,6 +388,8 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     return { success: false, message: "Failed to join session. Please try again." };
   }
 
+  // A correct passcode: clear the pessimistic failure and let the caller in.
+  await markAttemptSucceeded();
   return { success: true, message: "Joined as co-organizer.", sessionId: session.id };
 }
 

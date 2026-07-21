@@ -523,6 +523,15 @@ export type IdentityMigration = {
   migrated_at: string;
 };
 
+/** co_organizer_join_attempts table — append-only rate-limit log (service-role only) */
+export type CoOrganizerJoinAttempt = {
+  id: string;
+  user_id: string;
+  ip: string | null;
+  succeeded: boolean;
+  attempted_at: string;
+};
+
 /** push_subscriptions table */
 export type PushSubscription = {
   id: string;
@@ -719,6 +728,16 @@ export type Database = {
         Update: Record<string, never>; // append-only, no updates allowed
         Relationships: [];
       };
+      co_organizer_join_attempts: {
+        Row: CoOrganizerJoinAttempt;
+        Insert: Pick<CoOrganizerJoinAttempt, "user_id"> &
+          Partial<Pick<CoOrganizerJoinAttempt, "ip" | "succeeded">>;
+        // Only `succeeded` is mutable: the rate limiter records an attempt
+        // pessimistically as a failure, then flips this once the passcode is
+        // confirmed correct so legitimate joins don't burn the window.
+        Update: Partial<Pick<CoOrganizerJoinAttempt, "succeeded">>;
+        Relationships: [];
+      };
       player_renames: {
         Row: PlayerRename;
         Insert: Pick<PlayerRename, "player_id" | "new_name"> &
@@ -802,9 +821,20 @@ export type Database = {
       };
     };
     Functions: {
-      elevate_to_organizer: {
-        Args: { p_session_id: string; p_passcode: string };
-        Returns: boolean;
+      /**
+       * Atomic, fail-closed rate-limit gate for joinAsCoOrganizer: records the
+       * attempt and returns the in-window verdict in one transaction.
+       * Service-role only (EXECUTE revoked from PUBLIC/anon/authenticated).
+       */
+      cojoin_record_and_check: {
+        Args: {
+          p_user_id: string;
+          p_ip: string | null;
+          p_window_min: number;
+          p_user_max: number;
+          p_ip_max: number;
+        };
+        Returns: { attempt_id: string; over_user_limit: boolean; over_ip_limit: boolean }[];
       };
       rejoin_queue: {
         Args: { p_session_id: string };

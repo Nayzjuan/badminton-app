@@ -4,7 +4,7 @@
 // Use this in any "use client" component that needs to:
 //   • Read/write data from the browser
 //   • Subscribe to real-time changes
-//   • Call RPC functions (elevate_to_organizer, rejoin_queue)
+//   • Call RPC functions (rejoin_queue)
 //
 // This is a singleton — safe to call createBrowserClient()
 // multiple times; @supabase/ssr deduplicates under the hood.
