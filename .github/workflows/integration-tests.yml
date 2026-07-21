@@ -11,7 +11,7 @@
 #
 # Pinned versions (update deliberately — drift causes flakes):
 #   • Node.js: 20 LTS
-#   • Supabase CLI: 1.x (latest stable at time of writing)
+#   • Supabase CLI: pinned below (2.109.1) — see the install step
 #
 # Failure notifications:
 #   GitHub emails the pusher automatically when this fails.
@@ -52,7 +52,14 @@ jobs:
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # PINNED ON PURPOSE. This used to say `latest`, which contradicted the
+          # header above and broke the job twice: the JSON keys of
+          # `supabase status --output json` changed between 1.x and 2.x (see the
+          # next step), and resolving "latest" also hit
+          # "Failed to resolve latest Supabase CLI release: rate limit exceeded"
+          # on a shared runner. Bump this deliberately, and re-check the jq keys
+          # below when you do.
+          version: 2.109.1
 
       # ── 5. Start local Supabase ──────────────────────────────
       # Boots the full Supabase stack via Docker Compose.
@@ -69,14 +76,37 @@ jobs:
       # them to tests/integration/.env for the test runner to load.
       - name: Write integration env file
         run: |
+          set -euo pipefail
           SUPABASE_STATUS=$(supabase status --output json)
 
-          # Supabase CLI outputs keys with spaces, not underscores:
-          #   "API URL", "anon key", "service_role key", "DB URL"
-          SUPABASE_URL=$(echo "$SUPABASE_STATUS"     | jq -r '."API URL"')
-          ANON_KEY=$(echo "$SUPABASE_STATUS"          | jq -r '."anon key"')
-          SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS"  | jq -r '."service_role key"')
-          DB_URL=$(echo "$SUPABASE_STATUS"            | jq -r '."DB URL"')
+          # Accept BOTH key styles. CLI 1.x used spaced keys ("API URL",
+          # "anon key", "service_role key", "DB URL"); 2.x uses SCREAMING_SNAKE
+          # (API_URL, ANON_KEY, SERVICE_ROLE_KEY, DB_URL). Reading only the 1.x
+          # names against a 2.x CLI is what broke this job: jq returned the
+          # string "null", which was written verbatim into the env file, and the
+          # run failed 40s later inside vitest with
+          # "Failed to parse URL from null/rest/v1/" — pointing at the tests
+          # rather than at this step. `// empty` gives a blank instead of "null"
+          # so the guard below can actually catch it.
+          SUPABASE_URL=$(echo "$SUPABASE_STATUS"      | jq -r '."API URL"          // .API_URL          // empty')
+          ANON_KEY=$(echo "$SUPABASE_STATUS"          | jq -r '."anon key"         // .ANON_KEY         // empty')
+          SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS"  | jq -r '."service_role key" // .SERVICE_ROLE_KEY // empty')
+          DB_URL=$(echo "$SUPABASE_STATUS"            | jq -r '."DB URL"           // .DB_URL           // empty')
+
+          # Fail HERE, where the cause is visible, rather than handing a broken
+          # env file to the test runner. Dumping the raw status makes the next
+          # key rename a 30-second fix instead of an investigation.
+          MISSING=""
+          [ -n "$SUPABASE_URL" ]     || MISSING="$MISSING API_URL"
+          [ -n "$ANON_KEY" ]         || MISSING="$MISSING ANON_KEY"
+          [ -n "$SERVICE_ROLE_KEY" ] || MISSING="$MISSING SERVICE_ROLE_KEY"
+          [ -n "$DB_URL" ]           || MISSING="$MISSING DB_URL"
+          if [ -n "$MISSING" ]; then
+            echo "::error::supabase status did not yield:$MISSING (CLI key names changed?)"
+            echo "Raw \`supabase status --output json\`:"
+            echo "$SUPABASE_STATUS"
+            exit 1
+          fi
 
           cat > tests/integration/.env <<EOF
           NEXT_PUBLIC_SUPABASE_URL=$SUPABASE_URL
