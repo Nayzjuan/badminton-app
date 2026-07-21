@@ -42,15 +42,16 @@ import { signInAnonymously } from "@/app/actions/auth";
 const REGISTERED_NAME = "Alice";
 const REGISTERED_PIN = "4821";
 const WRONG_PIN = "0000";
-/** Held only by a FLAGGED duplicate, so the name is still up for grabs. */
+/** Held only by a FLAGGED duplicate (needs_rename = true). */
 const FLAGGED_NAME = "Bob";
+const FLAGGED_PIN = "1234";
 
 /** Sentinel returned by the stubbed auth call — reaching it means the name passed. */
 const AUTH_STUB = "AUTH_STUB_REACHED";
 
 const TABLE = [
   { id: "existing-user", display_name: REGISTERED_NAME, needs_rename: false, pin: REGISTERED_PIN },
-  { id: "flagged-user", display_name: FLAGGED_NAME, needs_rename: true, pin: "1234" },
+  { id: "flagged-user", display_name: FLAGGED_NAME, needs_rename: true, pin: FLAGGED_PIN },
 ];
 
 /** Filters applied to the current builder chain, so the fake can honour them. */
@@ -163,16 +164,36 @@ describe("RO-BLIND: right and wrong PINs are indistinguishable", () => {
   });
 });
 
-describe("RO-FLAG: closing the oracle must not narrow who can register", () => {
-  it("RO-FLAG-1: a name held only by a FLAGGED duplicate is still claimable", async () => {
-    // The partial unique index is `WHERE needs_rename = false` on purpose: a
-    // flagged duplicate keeps its name until it renames, and the name stays
-    // available to everyone else. The tempting way to blind the oracle — match
-    // every profile by name instead of by name+pin — would quietly revoke that,
-    // failing registration for a name nobody actually holds any more.
-    const r = await signInAnonymously(form(FLAGGED_NAME, WRONG_PIN));
+describe("RO-FLAG: flagged profiles still block registration", () => {
+  // Deliberate trade, pinned here so it can't drift silently.
+  //
+  // isNameTaken excludes `needs_rename = true` to mirror the partial unique
+  // index, so relying on it ALONE would let a flagged returning player register
+  // a second account under their own name — stranding their history behind a
+  // ghost profile, which is permanent data loss. The name-only pre-check in
+  // signInAnonymously exists to stop that. The cost is that a name held only by
+  // a flagged duplicate is not claimable until that duplicate renames.
+  //
+  // Both cases below must behave IDENTICALLY — that is what keeps the fix from
+  // reopening the PIN oracle.
 
-    expect(r?.error).toBe(AUTH_STUB); // got past the name gate
-    expect(r?.error).not.toMatch(/already registered/i);
+  it("RO-FLAG-1: a flagged returner with the CORRECT pin cannot mint a ghost", async () => {
+    const r = await signInAnonymously(form(FLAGGED_NAME, FLAGGED_PIN));
+
+    expect(r?.error).toMatch(/already registered/i);
+    // Never reached the sign-up call — no second account was created.
+    expect(r?.error).not.toBe(AUTH_STUB);
+  });
+
+  it("RO-FLAG-2: the wrong pin against that name is indistinguishable", async () => {
+    const right = await signInAnonymously(form(FLAGGED_NAME, FLAGGED_PIN));
+    const wrong = await signInAnonymously(form(FLAGGED_NAME, WRONG_PIN));
+    expect(right?.error).toBe(wrong?.error);
+  });
+
+  it("RO-FLAG-3: an unheld name still registers normally", async () => {
+    // Guards the obvious over-correction: blocking every name outright.
+    const r = await signInAnonymously(form("CompletelyNewPlayer", WRONG_PIN));
+    expect(r?.error).toBe(AUTH_STUB); // got past both name checks
   });
 });

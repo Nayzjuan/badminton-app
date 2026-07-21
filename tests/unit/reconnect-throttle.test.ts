@@ -18,8 +18,9 @@
 // below assert the gate fires BEFORE the oracle is consulted, which is the
 // property that actually distinguishes the two.
 //
-// IDs: RC-LOCK (lockout arms) · RC-FAIL (fail-closed) · RC-PASS (under limit)
+// IDs: RC-LOCK (denial arms) · RC-FAIL (fail-closed) · RC-PASS (under limit)
 //      RC-FLIP (a correct PIN clears the pessimistic failure)
+//      RC-SPRAY (the scope-wide arm observes, never denies)
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -98,7 +99,7 @@ const OPEN = {
     attempt_id: "a1",
     over_subject_limit: false,
     over_ip_limit: false,
-    over_global_limit: false,
+    spray_suspected: false,
   },
   error: null,
 };
@@ -115,7 +116,7 @@ describe("RC-LOCK: reconnect lockout", () => {
         attempt_id: null,
         over_subject_limit: true,
         over_ip_limit: false,
-        over_global_limit: false,
+        spray_suspected: false,
       },
       error: null,
     });
@@ -137,7 +138,7 @@ describe("RC-LOCK: reconnect lockout", () => {
         attempt_id: null,
         over_subject_limit: false,
         over_ip_limit: true,
-        over_global_limit: false,
+        spray_suspected: false,
       },
       error: null,
     });
@@ -149,34 +150,13 @@ describe("RC-LOCK: reconnect lockout", () => {
     expect(svc.from).not.toHaveBeenCalled();
   });
 
-  it("RC-LOCK-3: locks out on the scope-wide arm (horizontal spray)", async () => {
-    // One PIN tried against every name: each name costs a single attempt, so
-    // neither the per-name nor the per-IP arm ever fires. Only the global
-    // ceiling catches it.
-    const svc = serviceWith({
-      data: {
-        attempt_id: null,
-        over_subject_limit: false,
-        over_ip_limit: false,
-        over_global_limit: true,
-      },
-      error: null,
-    });
-    install(svc);
-
-    const r = await reconnectPlayer("SomeoneElse", PIN);
-    expect(r.success).toBe(false);
-    expect(r.error).toMatch(/too many attempts/i);
-    expect(svc.from).not.toHaveBeenCalled();
-  });
-
-  it("RC-LOCK-4: the lockout message does not reveal whether the name exists", async () => {
+  it("RC-LOCK-3: the lockout message does not reveal whether the name exists", async () => {
     const svc = serviceWith({
       data: {
         attempt_id: null,
         over_subject_limit: true,
         over_ip_limit: false,
-        over_global_limit: false,
+        spray_suspected: false,
       },
       error: null,
     });
@@ -186,7 +166,7 @@ describe("RC-LOCK: reconnect lockout", () => {
     expect(r.error).not.toMatch(/no match|not found|check your name/i);
   });
 
-  it("RC-LOCK-5: a blocked attempt is not itself recorded", async () => {
+  it("RC-LOCK-4: a blocked attempt is not itself recorded", async () => {
     // The limiter must not feed its own window. If a rejected attempt still
     // logged a failure, an attacker could hold a NAMED victim out of their own
     // account forever at one request per window — and for an anonymous-auth
@@ -199,7 +179,7 @@ describe("RC-LOCK: reconnect lockout", () => {
         attempt_id: null,
         over_subject_limit: true,
         over_ip_limit: false,
-        over_global_limit: false,
+        spray_suspected: false,
       },
       error: null,
     });
@@ -265,9 +245,62 @@ describe("RC-PASS: under the limit", () => {
 
     await reconnectPlayer(NAME, PIN);
 
-    // Not flipped → this attempt counts against the window. Without this the
-    // limiter would record attempts it never charges anyone for.
+    // Gate ran (this half is what keeps the assertion below non-vacuous — with
+    // no limiter at all, "nothing was flipped" is trivially true)…
+    expect(callLog).toContain("rpc:reconnect_record_and_check");
+    // …and the pessimistic failure was NOT flipped, so it counts against the
+    // window. Otherwise the limiter would record attempts it never charges for.
     expect(svc.rpc.mock.calls.map((c) => c[0])).not.toContain("auth_attempt_mark_succeeded");
+  });
+
+  it("RC-PASS-3: the gate is called with EXACTLY the SQL parameter names", async () => {
+    // The limiter fails closed, so a single renamed parameter turns into
+    // PGRST202 → every reconnect denied, for everyone. Nothing else in the
+    // suite would notice: the mocked rpc() ignores its arguments, so all the
+    // other tests keep passing while production is fully locked out. This
+    // branch changes the signature twice, which is exactly when that bites.
+    // Cross-checked against 20260721230000's CREATE FUNCTION.
+    const svc = serviceWith(OPEN);
+    install(svc);
+
+    await reconnectPlayer(NAME, PIN);
+
+    expect(svc.rpc).toHaveBeenCalledWith("reconnect_record_and_check", {
+      p_subject: "alice", // normalized: trimmed + lowercased
+      p_ip: null, // no request scope in unit tests
+      p_window_min: expect.any(Number),
+      p_subject_max: expect.any(Number),
+      p_ip_max: expect.any(Number),
+      p_spray_alert_at: expect.any(Number),
+    });
+  });
+});
+
+describe("RC-SPRAY: the scope-wide arm is advisory, never a denial", () => {
+  it("RC-SPRAY-1: spray_suspected alone does NOT block a legitimate reconnect", async () => {
+    // This arm was briefly a hard cap, which made it an unauthenticated
+    // platform-wide DoS on login: ~30 enumerable names across ~5 IPs holds it
+    // open indefinitely, and for an anonymous-auth player reconnect IS the
+    // account. It must observe and report, never deny.
+    const svc = serviceWith(
+      {
+        data: {
+          attempt_id: "a1",
+          over_subject_limit: false,
+          over_ip_limit: false,
+          spray_suspected: true,
+        },
+        error: null,
+      },
+      { data: [{ id: "old-user" }], error: null }
+    );
+    install(svc);
+
+    const r = await reconnectPlayer(NAME, PIN);
+
+    // Reached the credential check and got the normal answer for this fixture.
+    expect(r.error).not.toMatch(/too many attempts/i);
+    expect(callLog).toContain("from:profiles");
   });
 });
 

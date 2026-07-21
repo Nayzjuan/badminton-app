@@ -311,7 +311,13 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
   // attempt_id is null only on the over-limit path, which returned above.
   const attemptId = gate.attempt_id;
   const markAttemptSucceeded = async () => {
-    if (!attemptId) return;
+    if (!attemptId) {
+      // Unreachable: null only comes back on the over-limit path, which
+      // returned above. Warn rather than no-op silently — a broken contract
+      // here would quietly burn a legitimate organizer's budget.
+      console.warn("[joinAsCoOrganizer] no attempt id to flip — limiter contract changed?");
+      return;
+    }
     // Destructure the error rather than using .then(onRejected): a PostgREST
     // builder RESOLVES with { data, error } on a DB error and only rejects on a
     // transport throw, so a rejection handler here would be dead code — and a

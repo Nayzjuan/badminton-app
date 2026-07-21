@@ -856,8 +856,11 @@ export type Database = {
           p_window_min: number;
           p_subject_max: number;
           p_ip_max: number;
-          /** Scope-wide ceiling — catches horizontal spraying (one PIN, every name). */
-          p_global_max: number;
+          /**
+           * Scope-wide failure count that trips the spray alert. ADVISORY —
+           * it sets `spray_suspected` and never denies (20260721230000).
+           */
+          p_spray_alert_at: number;
         };
         Returns: {
           /**
@@ -868,7 +871,8 @@ export type Database = {
           attempt_id: string | null;
           over_subject_limit: boolean;
           over_ip_limit: boolean;
-          over_global_limit: boolean;
+          /** Detection signal for horizontal spray. NOT a denial. */
+          spray_suspected: boolean;
         }[];
       };
       /** Flips a pessimistically-logged attempt to succeeded. Service-role only. */
