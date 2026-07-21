@@ -1261,6 +1261,34 @@ All `{ error }` bare returns in `auth.ts` and `sessions.ts` now include `success
 
 **Access control:** `MatchHistoryPlayerFilter` is rendered only inside `MatchHistoryPanel` which lives in the `src/components/organizer/` subtree. Player-facing components (`PlayerDashboard`, `match-history.tsx`) do not import anything from this subtree — organizer-only by structural exclusion, no runtime checks needed.
 
+### 3.25 Repeat-Pairing Warning — manual match builder (2026-07-21)
+
+**Files:** `src/lib/repeat-pairing.ts` (pure derivers) · `src/lib/repeat-pairing-copy.ts` (all wording) · `src/app/actions/repeat-pairing.ts` (2 organizer-gated actions) · `src/hooks/use-pair-counts.ts` · `src/hooks/use-repeat-pairing.ts` · `src/components/organizer/manual-match-bar.tsx` · `repeat-pair-details.tsx` · `repeat-marker.tsx` · wired into `queue-control.tsx` + `queue-skill-groups.tsx` + `organizer-dashboard.tsx`.
+
+**Purpose:** When the organizer hand-builds a match in the Queue tab, warn — *before* creation — that a pair have already been teammates or opponents at or beyond the engine's own cap. **Strictly advisory: it never blocks, disables, or rejects creation.** Zero new tables and zero new realtime channels.
+
+**Thresholds are imported, never hard-coded:** `DEFAULT_REPEAT_THRESHOLDS = { teammate: MAX_PARTNERSHIP_REPEATS, opponent: MAX_OPPONENT_REPEATS }` (both 2). A UI threshold *above* the engine cap would stay silent on exactly the pairings the engine already refuses.
+
+**Selection is a 4-SLOT model, not a Set.** `Slots = [A1, A2, B1, B2]`. `togglePlayer` frees *that* slot on deselect and fills the *first free* slot otherwise; `handleCreateMatch` splits via `deriveTeams(slots)`. With the old insertion-ordered `Set`, deselecting pick #2 silently promoted a Team-B player into Team A, so both the team preview and the warnings lied. A derived `Set` is still passed to both row renderers, so their prop contract is unchanged.
+
+**Sticky / non-sticky split (`ManualMatchBar` vs `RepeatPairDetails`):** on a 375×667 phone a bar carrying the full warning detail leaves <3 queue rows. The sticky bar holds only the count row + reserved CTA slot + team preview + ONE `line-clamp-1` headline + a `+N more` disclosure button, hard-capped at `max-h-[min(33vh,200px)]` with **no `overflow-y-auto`** (a scroller inside a sticky element is a touch trap). Full per-pair rows, the expanded match lists, and the creation error all render *below* the bar and scroll normally.
+
+**`--cc-header-h`:** the dashboard header is `sticky top-0 z-20`, so a `top-0 z-10` bar is invisible beneath it. `organizer-dashboard.tsx` publishes the header's measured height on the dashboard root via `ResizeObserver` (height genuinely changes: `lg` flips `py-3`→`py-4`, closing a session removes a strip and 3 tabs); the bar uses `sticky top-[var(--cc-header-h,176px)] z-[15]` — above the queue's `z-10` checkbox hit-areas, below the header. Surfaces are opaque `cc-*` (the old bar was `dark:bg-amber-950/30`, 30% translucent, and rows scrolled visibly through it).
+
+**Avoidability gate — the reason this isn't noise.** Everything is suppressed unless `hasCleanAlternative()` says the organizer could plausibly have done better, and entirely while `capSaturation !== null` (that notice already tells them to override manually, so an ungated warning fires hardest when they have no choice — and on an 8-player night, on nearly every match). At a *full* selection there is no "next pick", so the gate frees the last slot into a probe and adds its occupant back to the pool; without that it degenerates to "is the bench non-empty" and the headline vanishes at the exact moment the CTA goes live.
+
+**Counts refresh without a 6th channel.** `useOrganizerSession`'s health check expects exactly `REALTIME_CHANNEL_COUNT` (5) channels — a sixth would permanently break `realtimeConnected`. Instead `useOrganizerMatches` exposes `matchesRevision`, bumped on every `matches`/`match_players` realtime event and after `callNextMatch` / `createManualMatch` / `cancelMatch` / `clearOnDeckMatch` / `swapPlayer` / `swapMatchPlayers`; `usePairCounts(sessionId, matchesRevision)` keys its refetch off it. Counts are **snapshotted when `filledCount` goes 0→1** and held until the selection clears, so engine draft churn can't re-rank the warning mid-tap. The headline is likewise pinned to the FIRST pair that tripped in an episode.
+
+**A11y contract:** the visible headline is plain markup with no live semantics; announcement is a separately, **permanently mounted** `<div role="status" aria-live="polite" class="sr-only">` written on a 500 ms trailing debounce, gated on a `selectionEpoch` bumped only by user-initiated selection changes (a counts refetch never speaks — but the first counts adoption does, or a build that outran the fetch would be inaudible). Row markers are `aria-hidden` icon + `aria-hidden` micro-label + a real `sr-only` text node, rendered **inline right after `display_name` in BOTH renderers** (the List table is `min-w-[640px]` inside `overflow-x-auto`, so a right-aligned marker is off-screen on a phone). Teammate vs opponent is carried on **icon + label** (`TEAM 3RD` / `OPP 3RD`), never hue — and the chip reads `relations[0]`'s own count, since `primaryRelation` is teammate-first while `worstCount` is the max across all relations. A legend line resolves the referent ("Team A, alongside Alice, against Bob and Carol").
+
+**Tokens:** `cc-amber` is the warning. **`cc-accent` is TEAL and already means SELECTED on this screen — never used for the warning**; it marks readiness (4 of 4) only.
+
+**Also fixed here:** at the 4-player cap unselected rows were still clickable while `togglePlayer` no-op'd (a dead tap arriving exactly when the warning says "reconsider") — rows in both lenses are now inert and `aria-disabled`, matching the checkbox that was already `disabled`; the CTA slot is reserved (`invisible`, not unmounted) from ≥1 selected so the row can't jump height on the 4th tap; `Clear` gained `min-h-[44px]`.
+
+**Tests:** `tests/unit/repeat-pairing.test.ts` (23, derivers) · `repeat-pairing-copy.test.ts` (20, wording) · `use-repeat-pairing.test.tsx` (15, episode/headline/gate/live-region) · `queue-control-repeat-pairing.test.tsx` (33, component contract incl. StrictMode convergence, sticky geometry, keyboard selection, and the "never blocks creation" invariant).
+
+---
+
 ---
 
 ## 4. UI/UX Conventions (Impeccable Standards)

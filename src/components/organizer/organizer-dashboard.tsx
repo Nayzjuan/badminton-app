@@ -80,6 +80,7 @@ export function OrganizerDashboard({
     draftMatches,
     profiles,
     loading,
+    matchesRevision,
     realtimeConnected,
     addCourt,
     updateCourtStatus,
@@ -163,6 +164,10 @@ export function OrganizerDashboard({
   // so the organizer isn't spammed when the engine generates multiple slots.
   // Initialised with the current count so a page-load with existing drafts
   // never triggers a spurious notification.
+  // Refs for the --cc-header-h ResizeObserver (see the effect below).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const headerRef = useRef<HTMLElement | null>(null);
+
   const prevDraftCountRef = useRef(draftMatches.length);
   const [hasNewDraft, setHasNewDraft] = useState(false);
   // Confirm dialog for enabling auto-publish while unreviewed drafts exist (D9).
@@ -200,6 +205,30 @@ export function OrganizerDashboard({
     };
   }, [draftMatches.length]);
 
+  // ── Publish the header height as --cc-header-h ────────────
+  // The header is `sticky top-0 z-20`, so anything else that wants to pin
+  // below it needs its live height (QueueControl's manual-match bar does).
+  // It is not a constant: crossing `lg` flips py-3 -> py-4 and stacks Row 2
+  // differently, and closing the session removes a whole strip and three
+  // tabs. ResizeObserver keeps the var honest without a resize listener.
+  // Published on the dashboard root (not documentElement) so it disappears
+  // with the tree on SPA navigation.
+  useEffect(() => {
+    const header = headerRef.current;
+    const root = rootRef.current;
+    if (!header || !root || typeof ResizeObserver === "undefined") return;
+
+    const publish = () => {
+      root.style.setProperty("--cc-header-h", `${Math.round(header.offsetHeight)}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(header);
+    return () => observer.disconnect();
+    // `loading` is a dep because the header does not exist on the loading
+    // branch — the observer has to attach on the render that mounts it.
+  }, [loading]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -210,6 +239,7 @@ export function OrganizerDashboard({
 
   return (
     <div
+      ref={rootRef}
       className={`min-h-screen ${SURFACE_BG}`}
       style={{
         backgroundImage:
@@ -218,7 +248,10 @@ export function OrganizerDashboard({
       }}
     >
       {/* Top Header */}
-      <header className={`sticky top-0 z-20 ${HEADER_BG} border-b border-cc-border`}>
+      <header
+        ref={headerRef}
+        className={`sticky top-0 z-20 ${HEADER_BG} border-b border-cc-border`}
+      >
         <div className="max-w-7xl mx-auto px-3 lg:px-6 py-3 lg:py-4">
           {/* ── Row 1: back link + mobile controls ── */}
           <div className="mb-2 flex items-center justify-between">
@@ -889,6 +922,11 @@ export function OrganizerDashboard({
               onPausePlayer={pausePlayer}
               organizerPlayerId={profile.id}
               onJoinQueue={joinQueue}
+              matchesRevision={matchesRevision}
+              /* The cap-saturation notice already tells the organizer to
+                 override manually — a repeat warning on top of it would
+                 fire hardest exactly when they have no alternative. */
+              capSaturationActive={capSaturation !== null}
             />
           )}
 

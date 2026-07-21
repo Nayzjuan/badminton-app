@@ -60,6 +60,13 @@ export interface UseOrganizerDataResult {
   profiles: Map<string, Profile>;
   loading: boolean;
   /**
+   * Monotonic counter that ticks on every `matches` / `match_players`
+   * realtime event and after each committed-match mutation. Lets consumers
+   * re-derive DB-backed state (repeat-pairing counts) without opening a
+   * sixth realtime channel — which would break `realtimeConnected`.
+   */
+  matchesRevision: number;
+  /**
    * True when all five realtime channels (courts, queue, matches,
    * match_players, profiles) have confirmed SUBSCRIBED status.
    */
@@ -192,6 +199,7 @@ export function useOrganizerData(
     publishedOnDeckMatches,
     inProgressMatches,
     loading: matchesLoading,
+    matchesRevision,
     callNextMatch,
     createManualMatch,
     endMatch,
@@ -304,6 +312,7 @@ export function useOrganizerData(
     inProgressMatches,
     profiles,
     loading,
+    matchesRevision,
     realtimeConnected,
     addCourt,
     updateCourtStatus,

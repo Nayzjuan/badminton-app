@@ -22,6 +22,9 @@
 
 import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { VipTag } from "@/components/ui/vip-tag";
+import { RepeatMarker } from "@/components/organizer/repeat-marker";
+import type { CandidateMarker } from "@/lib/repeat-pairing";
+import type { NameLookup } from "@/lib/repeat-pairing-copy";
 import { SKILL_LEVELS } from "@/types/database";
 import { SKILL_META } from "@/lib/constants";
 import {
@@ -46,6 +49,18 @@ interface QueueSkillGroupsProps {
   onToggleSelect: (playerId: string) => void;
   /** True when the selection has reached the required roster size (cap). */
   isFull: boolean;
+  /**
+   * Repeat-pairing markers keyed by player_id. Shipped in BOTH queue
+   * renderers because they share one selection — a marker visible in the
+   * List lens but not here reads as a bug, not as a lens difference.
+   */
+  markers: Map<string, CandidateMarker>;
+  /**
+   * player_id -> display name, for the marker's screen-reader text. Required
+   * alongside `markers`: making either optional lets a caller pass markers
+   * with no name lookup and silently render nothing.
+   */
+  nameOf: NameLookup;
   onSkillChange: (playerId: string, skill: SkillLevel) => void;
   updatingSkill: string | null;
   onPausePlayer: (playerId: string, isPaused: boolean) => void;
@@ -66,6 +81,8 @@ export function QueueSkillGroups({
   selected,
   onToggleSelect,
   isFull,
+  markers,
+  nameOf,
   onSkillChange,
   updatingSkill,
   onPausePlayer,
@@ -140,6 +157,8 @@ export function QueueSkillGroups({
                     profile={profiles?.get(entry.player_id)}
                     isSelected={selected.has(entry.player_id)}
                     isFull={isFull}
+                    marker={markers.get(entry.player_id)}
+                    nameOf={nameOf}
                     isLongest={isLongest}
                     onToggleSelect={onToggleSelect}
                     onSkillChange={onSkillChange}
@@ -166,6 +185,8 @@ interface PlayerRowProps {
   profile?: Profile;
   isSelected: boolean;
   isFull: boolean;
+  marker?: CandidateMarker;
+  nameOf: NameLookup;
   isLongest: boolean;
   onToggleSelect: (playerId: string) => void;
   onSkillChange: (playerId: string, skill: SkillLevel) => void;
@@ -181,6 +202,8 @@ function PlayerRow({
   profile,
   isSelected,
   isFull,
+  marker,
+  nameOf,
   isLongest,
   onToggleSelect,
   onSkillChange,
@@ -191,7 +214,11 @@ function PlayerRow({
   removing,
 }: PlayerRowProps) {
   const isPaused = entry.is_paused;
-  const selectable = !isPaused;
+  // At the 4-player cap an unselected row used to stay clickable while the
+  // parent's toggle no-op'd — a dead tap arriving exactly when the warning
+  // says "reconsider". The nested checkbox was already `disabled` in that
+  // state; the row now matches it.
+  const selectable = !isPaused && (isSelected || !isFull);
   const waitMin = Math.floor(entry.wait_minutes);
   const meta = SKILL_META[entry.skill_level];
 
@@ -206,8 +233,10 @@ function PlayerRow({
     : isSelected
       ? "cursor-pointer border-cc-accent/60 bg-cc-accent-dim"
       : entry.is_bottleneck
-        ? "cursor-pointer border-cc-red/50 bg-cc-red-dim"
-        : "cursor-pointer border-cc-border bg-cc-bg-2 hover:border-cc-border-hi";
+        ? `border-cc-red/50 bg-cc-red-dim ${selectable ? "cursor-pointer" : "cursor-default"}`
+        : `border-cc-border bg-cc-bg-2 ${
+            selectable ? "cursor-pointer hover:border-cc-border-hi" : "cursor-default"
+          }`;
 
   function toggle() {
     if (selectable) onToggleSelect(entry.player_id);
@@ -231,7 +260,7 @@ function PlayerRow({
         className="relative z-10 flex shrink-0 items-center justify-center"
         onClick={(e) => e.stopPropagation()}
       >
-        {selectable ? (
+        {!isPaused ? (
           <label
             htmlFor={`qsg-select-${entry.player_id}`}
             className="relative flex h-5 w-5 cursor-pointer"
@@ -279,6 +308,8 @@ function PlayerRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate font-medium text-cc-t1">{entry.display_name}</span>
+          {/* Inline, immediately after the name — parity with the List lens. */}
+          {marker && <RepeatMarker marker={marker} nameOf={nameOf} />}
           {profile?.vip_tag && profile?.vip_theme && (
             <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
           )}
