@@ -23,6 +23,16 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
 vi.mock("@/lib/clubs", () => ({ isClubAdmin: vi.fn() }));
+// profile.ts's own gates: keep the REAL isPlayerInSessionScope (that is what we
+// are testing) but stub the auth + organizer checks so we reach it.
+vi.mock("@/app/actions/_shared", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/app/actions/_shared")>();
+  return {
+    ...actual,
+    getAuthenticatedUser: vi.fn(),
+    isSessionOrganizer: vi.fn(),
+  };
+});
 // createSession pulls these in transitively; stub so the module loads.
 vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
 vi.mock("@/app/actions/match-drafts", () => ({ clearAllUnpublishedDrafts: vi.fn() }));
@@ -40,8 +50,18 @@ vi.mock("next/headers", () => ({
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { isClubAdmin } from "@/lib/clubs";
-import { isPlayerInSessionScope } from "@/app/actions/_shared";
+import {
+  isPlayerInSessionScope,
+  getAuthenticatedUser,
+  isSessionOrganizer,
+} from "@/app/actions/_shared";
 import { createSession, joinAsCoOrganizer } from "@/app/actions/sessions";
+import {
+  getPlayerPin,
+  resetPlayerPin,
+  updatePlayerPin,
+  updatePlayerSkill,
+} from "@/app/actions/profile";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000010";
 const CLUB_ID = "00000000-0000-4000-8000-0000000000c1";
@@ -225,4 +245,47 @@ describe("TG-RATE: joinAsCoOrganizer rate limit", () => {
     const tables = svc.from.mock.calls.map((c: unknown[]) => c[0]);
     expect(tables).toEqual(["sessions"]);
   });
+});
+
+// ── #1 WIRING: the guard is actually enforced by all four actions ──────
+// Without these, the fix for audit finding #1 is untested: the guard could be
+// correct in isolation while every call site was deleted, and the suite would
+// still be green.
+describe("TG-WIRE: profile actions enforce the scope guard", () => {
+  const outOfScope = () =>
+    serviceClient([{ data: null }]) as unknown as ReturnType<typeof createServiceClient>;
+
+  beforeEach(() => {
+    vi.mocked(getAuthenticatedUser).mockResolvedValue(
+      CALLER as unknown as Awaited<ReturnType<typeof getAuthenticatedUser>>
+    );
+    // The caller IS a legitimate organizer of the session — that is the whole
+    // point: the organizer gate passing must not be sufficient.
+    vi.mocked(isSessionOrganizer).mockResolvedValue(true);
+  });
+
+  const cases: [string, () => Promise<{ success: boolean; message: string }>][] = [
+    ["getPlayerPin", () => getPlayerPin(SESSION_ID, TARGET_ID)],
+    ["resetPlayerPin", () => resetPlayerPin(SESSION_ID, TARGET_ID)],
+    ["updatePlayerPin", () => updatePlayerPin(SESSION_ID, TARGET_ID, "4321")],
+    ["updatePlayerSkill", () => updatePlayerSkill(SESSION_ID, TARGET_ID, "intermediate")],
+  ];
+
+  for (const [name, call] of cases) {
+    it(`TG-WIRE-${name}: refuses an out-of-session target even for a real organizer`, async () => {
+      const svc = outOfScope();
+      vi.mocked(createServiceClient).mockReturnValue(svc);
+
+      const r = await call();
+
+      expect(r.success).toBe(false);
+      expect(r.message).toMatch(/not part of this session/i);
+      // The profiles table must never be touched once the guard denies —
+      // reading the PIN at all is the breach.
+      const tables = (
+        svc as unknown as { from: { mock: { calls: unknown[][] } } }
+      ).from.mock.calls.map((c) => c[0]);
+      expect(tables).not.toContain("profiles");
+    });
+  }
 });

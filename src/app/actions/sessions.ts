@@ -329,15 +329,20 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
 
   // The attempt above was recorded pessimistically as a failure; flip it once a
   // passcode actually matches so legitimate joins don't burn the window.
-  const markAttemptSucceeded = () =>
-    service
+  const markAttemptSucceeded = async () => {
+    // Destructure the error rather than using .then(onRejected): a PostgREST
+    // builder RESOLVES with { data, error } on a DB error and only rejects on a
+    // transport throw, so a rejection handler here would be dead code — and a
+    // silently-failed flip leaves a legitimate join logged as a failure,
+    // burning one of the caller's 10-per-15-min slots with nothing in the log.
+    const { error } = await service
       .from("co_organizer_join_attempts")
       .update({ succeeded: true })
-      .eq("id", gate.attempt_id)
-      .then(
-        () => undefined,
-        (err: unknown) => console.error("[joinAsCoOrganizer] attempt-log update failed:", err)
-      );
+      .eq("id", gate.attempt_id);
+    if (error) {
+      console.error("[joinAsCoOrganizer] attempt-log update failed:", error.message);
+    }
+  };
 
   // Exact match — ILIKE would allow SQL wildcard characters (%, _) to
   // match unintended sessions. The passcode is already normalised to
