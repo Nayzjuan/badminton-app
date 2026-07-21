@@ -523,10 +523,23 @@ export type IdentityMigration = {
   migrated_at: string;
 };
 
-/** co_organizer_join_attempts table — append-only rate-limit log (service-role only) */
+/**
+ * co_organizer_join_attempts table — append-only credential-guessing log used by
+ * the rate limiters (service-role only: RLS on, no policies, no grants).
+ *
+ * Despite the name it now covers two scopes (20260721210000):
+ *   scope='cojoin'    → keys on `user_id`  (caller is authenticated), subject null
+ *   scope='reconnect' → keys on `subject`  (normalized display_name being
+ *                       attacked), user_id null — the caller is anonymous and
+ *                       can mint identities freely, so a caller-keyed limit
+ *                       would be worthless.
+ * Hence both `user_id` and `subject` are nullable: exactly one is set per row.
+ */
 export type CoOrganizerJoinAttempt = {
   id: string;
-  user_id: string;
+  scope: "cojoin" | "reconnect";
+  user_id: string | null;
+  subject: string | null;
   ip: string | null;
   succeeded: boolean;
   attempted_at: string;
@@ -730,8 +743,12 @@ export type Database = {
       };
       co_organizer_join_attempts: {
         Row: CoOrganizerJoinAttempt;
-        Insert: Pick<CoOrganizerJoinAttempt, "user_id"> &
-          Partial<Pick<CoOrganizerJoinAttempt, "ip" | "succeeded">>;
+        // Nothing in the app inserts directly — the limiter RPCs own the write
+        // so the insert and the count share one transaction. `scope` has a
+        // 'cojoin' default; `user_id`/`subject` are per-scope (see the Row type).
+        Insert: Partial<
+          Pick<CoOrganizerJoinAttempt, "scope" | "user_id" | "subject" | "ip" | "succeeded">
+        >;
         // Only `succeeded` is mutable: the rate limiter records an attempt
         // pessimistically as a failure, then flips this once the passcode is
         // confirmed correct so legitimate joins don't burn the window.
@@ -839,8 +856,20 @@ export type Database = {
           p_window_min: number;
           p_subject_max: number;
           p_ip_max: number;
+          /** Scope-wide ceiling — catches horizontal spraying (one PIN, every name). */
+          p_global_max: number;
         };
-        Returns: { attempt_id: string; over_subject_limit: boolean; over_ip_limit: boolean }[];
+        Returns: {
+          /**
+           * NULL when the caller was already over a limit: an over-limit attempt
+           * is rejected WITHOUT being recorded, so the window can actually drain
+           * (20260721220000). Only read this after checking the flags below.
+           */
+          attempt_id: string | null;
+          over_subject_limit: boolean;
+          over_ip_limit: boolean;
+          over_global_limit: boolean;
+        }[];
       };
       /** Flips a pessimistically-logged attempt to succeeded. Service-role only. */
       auth_attempt_mark_succeeded: {
@@ -855,7 +884,12 @@ export type Database = {
           p_user_max: number;
           p_ip_max: number;
         };
-        Returns: { attempt_id: string; over_user_limit: boolean; over_ip_limit: boolean }[];
+        /** `attempt_id` is NULL when already over a limit — see the note above. */
+        Returns: {
+          attempt_id: string | null;
+          over_user_limit: boolean;
+          over_ip_limit: boolean;
+        }[];
       };
       rejoin_queue: {
         Args: { p_session_id: string };

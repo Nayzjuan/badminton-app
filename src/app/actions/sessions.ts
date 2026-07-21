@@ -308,7 +308,10 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
 
   // The attempt above was recorded pessimistically as a failure; flip it once a
   // passcode actually matches so legitimate joins don't burn the window.
+  // attempt_id is null only on the over-limit path, which returned above.
+  const attemptId = gate.attempt_id;
   const markAttemptSucceeded = async () => {
+    if (!attemptId) return;
     // Destructure the error rather than using .then(onRejected): a PostgREST
     // builder RESOLVES with { data, error } on a DB error and only rejects on a
     // transport throw, so a rejection handler here would be dead code — and a
@@ -317,7 +320,7 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     const { error } = await service
       .from("co_organizer_join_attempts")
       .update({ succeeded: true })
-      .eq("id", gate.attempt_id);
+      .eq("id", attemptId);
     if (error) {
       console.error("[joinAsCoOrganizer] attempt-log update failed:", error.message);
     }
