@@ -163,10 +163,19 @@ DECLARE
 BEGIN
   -- 1. service_role must be able to read every table. Its absence is what broke
   --    the integration suite: "permission denied for table profiles".
-  SELECT string_agg(t.tablename, ', ' ORDER BY t.tablename) INTO v_problem
-    FROM pg_tables t
-   WHERE t.schemaname = 'public'
-     AND NOT has_table_privilege('service_role', format('public.%I', t.tablename), 'SELECT');
+  --
+  --    Pass the OID, not a formatted name. The name form
+  --    (has_table_privilege(role, 'public.'||tablename, ...)) is a trap here:
+  --    the planner may evaluate the function BEFORE the schemaname filter, so
+  --    it resolves 'public.<name>' for tables in other schemas and dies with
+  --    `relation "public.instances" does not exist`. An OID cannot be
+  --    misresolved.
+  SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO v_problem
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE n.nspname = 'public'
+     AND c.relkind = 'r'
+     AND NOT has_table_privilege('service_role', c.oid, 'SELECT');
   IF v_problem IS NOT NULL THEN
     RAISE EXCEPTION 'service_role lacks SELECT on: %', v_problem;
   END IF;
