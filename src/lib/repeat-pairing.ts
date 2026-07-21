@@ -72,9 +72,19 @@ export type CandidateMarker = {
   playerId: string;
   /** EVERY triggered relationship — filling a B slot can hit three at once. */
   relations: MarkerRelation[];
-  /** Worst count across relations — drives single-glyph severity. */
+  /**
+   * Worst count across ALL relations. A derived convenience for ranking —
+   * NOT the chip's source. The chip reads `relations[0]` so its word and its
+   * number come from the SAME relation; pairing this field with
+   * `primaryRelation` (below) is what once rendered "TEAM 6TH" for a
+   * 3rd-time teammate who had also faced someone five times.
+   */
   worstCount: number;
-  /** teammate outranks opponent when choosing one glyph. */
+  /**
+   * `relations[0].relation` — teammate outranks opponent regardless of count.
+   * Same caveat as `worstCount`: read `relations[0]` when you need the word
+   * and the number together.
+   */
   primaryRelation: PairRelation;
 };
 

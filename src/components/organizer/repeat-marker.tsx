@@ -42,6 +42,11 @@ export function RepeatMarker({ marker, nameOf }: RepeatMarkerProps) {
   // construction — deriveCandidateMarkers sorts teammate-first, then count
   // desc — so reading its count keeps word and number self-consistent.
   const primary = marker.relations[0];
+  // deriveCandidateMarkers never emits an empty `relations` (it `continue`s
+  // first), but this is now an indexed read and the repo does not enable
+  // noUncheckedIndexedAccess — so a future producer with [] would crash the
+  // whole queue tab for an advisory chip. Render nothing instead.
+  if (!primary) return null;
   const isTeammate = primary.relation === "teammate";
   const Icon = isTeammate ? Users : Swords;
 

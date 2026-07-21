@@ -66,6 +66,9 @@ export function RepeatPairDetails({ id, sessionId, warnings, nameOf }: RepeatPai
   // poll, and `block:"nearest"` is a no-op only while the panel is already
   // visible — i.e. it would fire precisely when the organizer had scrolled
   // down the queue to find a replacement pick, yanking them back up.
+  // One ref for the single open panel: `activeKey` is one string, and a pair
+  // cannot appear twice in a selection (togglePlayer checks indexOf first and
+  // moveAcrossNet only swaps), so at most one <div> ever claims this.
   const openPanelRef = useRef<HTMLDivElement | null>(null);
   // Re-run when the fetch resolves too, not only on open: at open the body is
   // a one-line "Loading matches…" placeholder, and `block:"nearest"` on a
@@ -176,7 +179,7 @@ export function RepeatPairDetails({ id, sessionId, warnings, nameOf }: RepeatPai
               </button>
 
               {open && (
-                <div ref={open ? openPanelRef : null} className="px-3 pb-3 pl-8">
+                <div ref={openPanelRef} className="px-3 pb-3 pl-8">
                   {(!state || state.status === "loading") && (
                     <p className="text-xs text-cc-t3">Loading matches…</p>
                   )}

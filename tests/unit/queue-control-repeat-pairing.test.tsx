@@ -76,8 +76,16 @@ const QUEUE: QueueFullWithWaitTime[] = ROSTER.map(([id, name], i) =>
 
 const onCreateManualMatch = vi.fn().mockResolvedValue({});
 
-function renderQueue(props: Partial<React.ComponentProps<typeof QueueControl>> = {}) {
-  return render(
+let lastRerender: ((ui: React.ReactElement) => void) | null = null;
+
+/** Re-render the SAME mounted QueueControl with tweaked props. */
+function rerenderQueue(props: Partial<React.ComponentProps<typeof QueueControl>> = {}) {
+  if (!lastRerender) throw new Error("rerenderQueue called before renderQueue");
+  lastRerender(queueControl(props));
+}
+
+function queueControl(props: Partial<React.ComponentProps<typeof QueueControl>> = {}) {
+  return (
     <QueueControl
       sessionId={SESSION_ID}
       queue={QUEUE}
@@ -88,6 +96,12 @@ function renderQueue(props: Partial<React.ComponentProps<typeof QueueControl>> =
       {...props}
     />
   );
+}
+
+function renderQueue(props: Partial<React.ComponentProps<typeof QueueControl>> = {}) {
+  const utils = render(queueControl(props));
+  lastRerender = utils.rerender;
+  return utils;
 }
 
 /**
@@ -361,10 +375,32 @@ describe("QRP-D: disclosure", () => {
     const panel = await screen.findByTestId("repeat-pair-details");
     expect(within(panel).getByText(/advisory only/i)).toBeInTheDocument();
 
-    fireEvent.click(within(panel).getByRole("button", { name: /Alice & Bob/ }));
-    await waitFor(() =>
-      expect(vi.mocked(getPairMatches)).toHaveBeenCalledWith(SESSION_ID, "p1", "p2")
-    );
+    // happy-dom has no layout, so scrollIntoView is not implemented — spy it.
+    // Without this, deleting the whole scroll effect passes the suite.
+    const scrollSpy = vi.fn();
+    const proto = Element.prototype as unknown as { scrollIntoView?: unknown };
+    const original = proto.scrollIntoView;
+    proto.scrollIntoView = scrollSpy;
+    try {
+      fireEvent.click(within(panel).getByRole("button", { name: /Alice & Bob/ }));
+      await waitFor(() =>
+        expect(vi.mocked(getPairMatches)).toHaveBeenCalledWith(SESSION_ID, "p1", "p2")
+      );
+      // Fires on open AND once the list resolves — at open the body is just
+      // "Loading matches…", so block:"nearest" on that one-liner can leave the
+      // real list below the fold on a 375px viewport.
+      await waitFor(() => expect(scrollSpy.mock.calls.length).toBeGreaterThanOrEqual(2));
+      expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
+      const afterOpen = scrollSpy.mock.calls.length;
+
+      // A realtime re-render must NOT re-scroll: an inline ref callback would
+      // detach/re-attach every commit and yank the organizer back up.
+      rerenderQueue({ queue: [...QUEUE] });
+      await waitFor(() => expect(screen.getByTestId("repeat-pair-details")).toBeInTheDocument());
+      expect(scrollSpy.mock.calls.length).toBe(afterOpen);
+    } finally {
+      proto.scrollIntoView = original;
+    }
     expect(await within(panel).findByText(/Court 2/)).toBeInTheDocument();
     expect(within(panel).getByText(/same team/)).toBeInTheDocument();
   });
