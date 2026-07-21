@@ -232,8 +232,16 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 function PairMatchRow({ match }: { match: PairMatch }) {
-  const teamA = match.players.filter((p) => p.team === "A").map((p) => p.displayName);
-  const teamB = match.players.filter((p) => p.team === "B").map((p) => p.displayName);
+  // `match_players.team` is the lowercase `Team` enum ("a" | "b") — see
+  // src/types/database.ts:82. Normalising rather than comparing to "A"
+  // directly: filtering on the uppercase literal silently produced two EMPTY
+  // rosters and rendered a bare " vs " with no names. Caught by the live e2e
+  // (scenario-p), not by a unit test, because the unit fixture had been
+  // written to match the wrong assumption.
+  const named = (side: "a" | "b") =>
+    match.players.filter((p) => p.team?.toLowerCase() === side).map((p) => p.displayName);
+  const teamA = named("a");
+  const teamB = named("b");
   const hasScore = match.teamAScore !== null && match.teamBScore !== null;
 
   return (

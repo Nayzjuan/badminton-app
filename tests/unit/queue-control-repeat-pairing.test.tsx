@@ -356,10 +356,14 @@ describe("QRP-D: disclosure", () => {
           teamAScore: 21,
           teamBScore: 17,
           players: [
-            { playerId: "p1", displayName: "Alice", team: "A" },
-            { playerId: "p2", displayName: "Bob", team: "A" },
-            { playerId: "p3", displayName: "Carol", team: "B" },
-            { playerId: "p4", displayName: "Dave", team: "B" },
+            // Lowercase, as the DB actually stores it (Team = "a" | "b").
+            // This fixture used "A"/"B", which agreed with the component's
+            // wrong filter and hid an empty-roster bug that only the live
+            // e2e caught. A fixture invented to match the code proves nothing.
+            { playerId: "p1", displayName: "Alice", team: "a" },
+            { playerId: "p2", displayName: "Bob", team: "a" },
+            { playerId: "p3", displayName: "Carol", team: "b" },
+            { playerId: "p4", displayName: "Dave", team: "b" },
           ],
         },
       ],
@@ -403,6 +407,14 @@ describe("QRP-D: disclosure", () => {
     }
     expect(await within(panel).findByText(/Court 2/)).toBeInTheDocument();
     expect(within(panel).getByText(/same team/)).toBeInTheDocument();
+    // The roster line must actually NAME people. Filtering on the wrong team
+    // case yields two empty lists and renders a bare " vs ". Scoped to the
+    // match row — the pair button above it also reads "Alice & Bob".
+    const matchRow = within(panel)
+      .getByText(/Court 2/)
+      .closest("li")!;
+    expect(matchRow.textContent).toContain("Alice & Bob");
+    expect(matchRow.textContent).toContain("Carol & Dave");
   });
 
   it("QRP-D2: the panel folds away when the selection clears", async () => {
