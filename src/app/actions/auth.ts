@@ -136,9 +136,19 @@ export async function signInAnonymously(formData: FormData) {
   // second account, stranding their history behind a ghost. The trade is that a
   // name held only by a flagged duplicate is not claimable by someone else
   // until that duplicate renames. Accepted knowingly: stranded history is
-  // permanent data loss, while the block is transient (a flagged profile is
-  // routed to /rename on its next reconnect) and only bites in the rare case
-  // where the non-flagged holder is already gone.
+  // permanent data loss, whereas this only bites once the non-flagged holder
+  // is gone (while it exists, isNameTaken blocks the name anyway), and the
+  // remedy — "add an initial" — is what the message already tells them.
+  //
+  // Caveat worth knowing: clearing a flag is SELF-SERVE ONLY (renamePlayer
+  // derives the user from the session; there is no organizer or admin path).
+  // If that player never returns, the name stays blocked and freeing it needs
+  // a DB touch.
+  //
+  // `.limit(1)` IS LOAD-BEARING, not tidiness. A duplicate cluster legitimately
+  // has several rows sharing one raw name, and maybeSingle() ERRORS on more
+  // than one — leaving `data` undefined and this check silently failing open,
+  // i.e. minting the very ghost it exists to prevent. Pinned by RO-MULTI-1.
   const { data: nameHolder } = await service
     .from("profiles")
     .select("id")
@@ -150,11 +160,18 @@ export async function signInAnonymously(formData: FormData) {
     return { success: false, error: NAME_TAKEN_MESSAGE };
   }
 
-  // (2) Normalized-key collision among non-flagged profiles — catches variants
-  // that (1)'s raw case-insensitive compare misses ("Miggy L." vs "Miggy L").
-  // Gives a friendly message before an orphan auth user is minted; the partial
-  // UNIQUE index is the cross-instance/TOCTOU authority and the upsert below
-  // maps its 23505 to this same message.
+  // (2) Backstop for check (1), which ignores its own read error and so fails
+  // open on a transient DB blip. isNameTaken's match set is otherwise a strict
+  // SUBSET of (1)'s — same ilike, plus `needs_rename = false`, plus a narrowing
+  // normalized-key compare — so in the happy path it can never fire when (1)
+  // did not. Keep it anyway: it is cheap, and it is the fail-open cover.
+  //
+  // It does NOT widen the net. dup-name.ts pre-filters in SQL with the same raw
+  // `ilike`, so a stored name differing from the input by more than case (e.g.
+  // an internal double space) is never fetched and the JS normalize compare
+  // cannot reach it. Those variants are caught ONLY by the partial UNIQUE index
+  // at write time, whose 23505 the upsert below maps to this same message —
+  // that index, not either check here, is the TOCTOU/cross-instance authority.
   if (await isNameTaken(service, displayName)) {
     return { success: false, error: NAME_TAKEN_MESSAGE };
   }

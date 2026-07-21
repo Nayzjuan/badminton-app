@@ -45,6 +45,8 @@ const WRONG_PIN = "0000";
 /** Held only by a FLAGGED duplicate (needs_rename = true). */
 const FLAGGED_NAME = "Bob";
 const FLAGGED_PIN = "1234";
+/** Held by MORE THAN ONE row — the duplicate-cluster shape. */
+const CLUSTER_NAME = "Dupe";
 
 /** Sentinel returned by the stubbed auth call — reaching it means the name passed. */
 const AUTH_STUB = "AUTH_STUB_REACHED";
@@ -52,10 +54,15 @@ const AUTH_STUB = "AUTH_STUB_REACHED";
 const TABLE = [
   { id: "existing-user", display_name: REGISTERED_NAME, needs_rename: false, pin: REGISTERED_PIN },
   { id: "flagged-user", display_name: FLAGGED_NAME, needs_rename: true, pin: FLAGGED_PIN },
+  // A duplicate cluster: TWO rows sharing one raw name, both flagged. Both
+  // flagged on purpose — with a non-flagged sibling present, isNameTaken would
+  // mask a failure of check (1) and RO-MULTI-1 could not detect it.
+  { id: "dupe-a", display_name: CLUSTER_NAME, needs_rename: true, pin: "1111" },
+  { id: "dupe-b", display_name: CLUSTER_NAME, needs_rename: true, pin: "2222" },
 ];
 
 /** Filters applied to the current builder chain, so the fake can honour them. */
-type Filters = { pin?: string; name?: string; needsRename?: boolean };
+type Filters = { pin?: string; name?: string; needsRename?: boolean; limit?: number };
 
 /** Every `.eq()` column touched during the run — the structural assertion. */
 let eqColumns: string[] = [];
@@ -71,9 +78,14 @@ function profilesBuilder(filters: Filters) {
   const self = () => b;
 
   b["select"] = self;
-  b["limit"] = self;
   b["order"] = self;
   b["in"] = self;
+  // Honoured, NOT swallowed: `.limit()` is what keeps maybeSingle() from
+  // erroring on a duplicate cluster (see the multi-row branch below).
+  b["limit"] = (n: number) => {
+    filters.limit = n;
+    return b;
+  };
   b["ilike"] = (col: string, val: string) => {
     if (col === "display_name") filters.name = val;
     return b;
@@ -85,17 +97,36 @@ function profilesBuilder(filters: Filters) {
     return b;
   };
 
-  const rows = () =>
-    TABLE.filter((r) => {
+  const rows = () => {
+    const matched = TABLE.filter((r) => {
       if ((filters.name ?? "").toLowerCase() !== r.display_name.toLowerCase()) return false;
       if (filters.pin !== undefined && filters.pin !== r.pin) return false;
       if (filters.needsRename !== undefined && filters.needsRename !== r.needs_rename) return false;
       return true;
     });
+    return filters.limit === undefined ? matched : matched.slice(0, filters.limit);
+  };
 
   const resp = () => ({ data: rows(), error: null });
-  b["maybeSingle"] = () => Promise.resolve({ data: rows()[0] ?? null, error: null });
-  b["single"] = () => Promise.resolve({ data: rows()[0] ?? null, error: null });
+
+  /**
+   * Real PostgREST behaviour: `.maybeSingle()` on more than one row is an
+   * ERROR (PGRST116) with `data: null` — it does not quietly hand back the
+   * first. Modelling that is the whole point; a fake that returned `rows()[0]`
+   * would agree with buggy code and hide the fail-open in check (1).
+   */
+  const one = () => {
+    const r = rows();
+    if (r.length > 1) {
+      return Promise.resolve({
+        data: null,
+        error: { code: "PGRST116", message: "JSON object requested, multiple rows returned" },
+      });
+    }
+    return Promise.resolve({ data: r[0] ?? null, error: null });
+  };
+  b["maybeSingle"] = one;
+  b["single"] = one;
   b["then"] = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
     Promise.resolve(resp()).then(res, rej);
   return b;
@@ -189,6 +220,20 @@ describe("RO-FLAG: flagged profiles still block registration", () => {
     const right = await signInAnonymously(form(FLAGGED_NAME, FLAGGED_PIN));
     const wrong = await signInAnonymously(form(FLAGGED_NAME, WRONG_PIN));
     expect(right?.error).toBe(wrong?.error);
+  });
+
+  it("RO-MULTI-1: a name held by SEVERAL rows still blocks (the .limit(1) guard)", async () => {
+    // Duplicate clusters are the normal state this codebase is built around, so
+    // the name-only lookup routinely matches more than one row. maybeSingle()
+    // ERRORS on multiple rows rather than returning the first, and the call site
+    // ignores that error — so without `.limit(1)` the check silently fails open
+    // and mints exactly the ghost it was added to prevent. Nothing else covers
+    // this: isNameTaken skips flagged rows, so with an all-flagged cluster it
+    // returns false and registration would sail through.
+    const r = await signInAnonymously(form(CLUSTER_NAME, WRONG_PIN));
+
+    expect(r?.error).toMatch(/already registered/i);
+    expect(r?.error).not.toBe(AUTH_STUB);
   });
 
   it("RO-FLAG-3: an unheld name still registers normally", async () => {

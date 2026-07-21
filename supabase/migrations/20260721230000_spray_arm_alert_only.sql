@@ -32,6 +32,13 @@
 
 -- Return type changes, so replace rather than CREATE OR REPLACE. Safe: the only
 -- caller ships in this same unmerged branch (main has no limiter on reconnect).
+--
+-- The DROP works because 220000's version and this one have IDENTICAL argument
+-- TYPES (text,text,int,int,int,int) — Postgres resolves DROP FUNCTION by type,
+-- not by parameter name, so renaming p_global_max -> p_spray_alert_at replaces
+-- it rather than shadowing it. Had any argument TYPE changed, this would leave
+-- TWO overloads and PostgREST would fail the call as ambiguous. Check the type
+-- list, not the names, before reusing this pattern.
 drop function if exists public.reconnect_record_and_check(text, text, int, int, int, int);
 
 create or replace function public.reconnect_record_and_check(
