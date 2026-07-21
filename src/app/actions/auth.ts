@@ -169,9 +169,15 @@ export async function signInAnonymously(formData: FormData) {
   // It does NOT widen the net. dup-name.ts pre-filters in SQL with the same raw
   // `ilike`, so a stored name differing from the input by more than case (e.g.
   // an internal double space) is never fetched and the JS normalize compare
-  // cannot reach it. Those variants are caught ONLY by the partial UNIQUE index
-  // at write time, whose 23505 the upsert below maps to this same message —
-  // that index, not either check here, is the TOCTOU/cross-instance authority.
+  // cannot reach it. displayNameSchema collapses whitespace, so in practice only
+  // legacy or directly-written rows can be in that shape. Such variants are
+  // caught ONLY by the partial UNIQUE index at write time — that index, not
+  // either check here, is the TOCTOU/cross-instance authority. Note the two
+  // write paths surface its 23505 differently: on the safety-net upsert and the
+  // already-authed branch it maps to this same message, but on a fresh signup
+  // the trigger's INSERT fires first and its ON CONFLICT (id) does not cover
+  // this index, so the auth call itself fails and its own error is returned.
+  // Divergent wording, but name-dependent and PIN-independent — not an oracle.
   if (await isNameTaken(service, displayName)) {
     return { success: false, error: NAME_TAKEN_MESSAGE };
   }
