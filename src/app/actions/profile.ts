@@ -6,19 +6,25 @@
 // Skill override and PIN management for player profiles.
 //
 // Auth model (enforced on every action):
-//   1. getAuthenticatedUser()  — must be logged in
-//   2. isSessionOrganizer()    — must be organizer of the given
-//      session. Without this, any authenticated player could
-//      call these actions against any other player's profile
-//      using a crafted POST request (IDOR).
+//   1. getAuthenticatedUser()   — must be logged in
+//   2. isSessionOrganizer()     — CALLER must organize the given session
+//   3. isPlayerInSessionScope() — the TARGET userId must belong to that
+//      session (its queue) or its club. Gate 2 alone proves only that the
+//      caller organizes SOME session; the mutation target is a caller-supplied
+//      userId against the global profiles table, so without gate 3 an organizer
+//      of any session could read/overwrite any player's PIN — an account-
+//      takeover primitive (PIN + name drives reconnect identity migration).
 //
-// The `sessionId` parameter is required by all four actions so
-// the organizer gate can be verified before the service-role
-// write executes.
+// The `sessionId` parameter is required by all four actions so both gates can
+// be verified before the service-role read/write executes.
 // ============================================================
 
 import { createServiceClient } from "@/utils/supabase/service";
-import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
+import {
+  getAuthenticatedUser,
+  isSessionOrganizer,
+  isPlayerInSessionScope,
+} from "@/app/actions/_shared";
 import type { SkillLevel } from "@/types/database";
 
 // ── Skill Override ────────────────────────────────────────────
@@ -38,6 +44,10 @@ export async function updatePlayerSkill(
 
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
+
+  if (!(await isPlayerInSessionScope(userId, sessionId))) {
+    return { success: false, message: "Player is not part of this session." };
+  }
 
   let supabase: ReturnType<typeof createServiceClient>;
   try {
@@ -76,6 +86,10 @@ export async function getPlayerPin(sessionId: string, userId: string): Promise<P
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
 
+  if (!(await isPlayerInSessionScope(userId, sessionId))) {
+    return { success: false, message: "Player is not part of this session." };
+  }
+
   const supabase = createServiceClient();
   const { data, error } = await supabase.from("profiles").select("pin").eq("id", userId).single();
 
@@ -93,6 +107,10 @@ export async function resetPlayerPin(sessionId: string, userId: string): Promise
 
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
+
+  if (!(await isPlayerInSessionScope(userId, sessionId))) {
+    return { success: false, message: "Player is not part of this session." };
+  }
 
   // crypto.getRandomValues produces a cryptographically secure random number,
   // unlike Math.random() which is predictable given sufficient observations.
@@ -126,6 +144,10 @@ export async function updatePlayerPin(
 
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
+
+  if (!(await isPlayerInSessionScope(userId, sessionId))) {
+    return { success: false, message: "Player is not part of this session." };
+  }
 
   const supabase = createServiceClient();
   const { error } = await supabase.from("profiles").update({ pin: newPin }).eq("id", userId);

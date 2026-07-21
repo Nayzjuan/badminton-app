@@ -523,6 +523,15 @@ export type IdentityMigration = {
   migrated_at: string;
 };
 
+/** co_organizer_join_attempts table — append-only rate-limit log (service-role only) */
+export type CoOrganizerJoinAttempt = {
+  id: string;
+  user_id: string;
+  ip: string | null;
+  succeeded: boolean;
+  attempted_at: string;
+};
+
 /** push_subscriptions table */
 export type PushSubscription = {
   id: string;
@@ -717,6 +726,13 @@ export type Database = {
         Row: IdentityMigration;
         Insert: Omit<IdentityMigration, "id" | "migrated_at">;
         Update: Record<string, never>; // append-only, no updates allowed
+        Relationships: [];
+      };
+      co_organizer_join_attempts: {
+        Row: CoOrganizerJoinAttempt;
+        Insert: Pick<CoOrganizerJoinAttempt, "user_id"> &
+          Partial<Pick<CoOrganizerJoinAttempt, "ip" | "succeeded">>;
+        Update: Record<string, never>; // append-only log, no updates
         Relationships: [];
       };
       player_renames: {

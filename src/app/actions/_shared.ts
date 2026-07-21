@@ -106,6 +106,57 @@ export async function isSessionOrganizer(userId: string, sessionId: string): Pro
 }
 
 /**
+ * True when `targetUserId` is legitimately in scope for `sessionId` — i.e. the
+ * organizer-gated service-role actions (PIN read/reset, skill edit) may operate
+ * on that player.
+ *
+ * WHY THIS EXISTS: the organizer gate proves the CALLER organizes `sessionId`,
+ * but the mutation target is a caller-supplied `userId` against the GLOBAL
+ * profiles table. Without this, an organizer of ANY session (and anyone can
+ * self-provision one) could read or overwrite the PIN of ANY player in the DB —
+ * a cross-session / cross-club account-takeover primitive (PIN + name drives
+ * reconnect identity migration). "Authorize on A, operate on B" must prove A and
+ * B share scope.
+ *
+ * In scope = the target is in this session's queue (any status, incl. paused/
+ * left) OR is an active member of the session's club. Service client: the check
+ * must not itself be blocked by RLS.
+ */
+export async function isPlayerInSessionScope(
+  targetUserId: string,
+  sessionId: string
+): Promise<boolean> {
+  const svc = createServiceClient();
+
+  const { data: session } = await svc
+    .from("sessions")
+    .select("club_id")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session) return false;
+
+  const [queueRes, memberRes] = await Promise.all([
+    svc
+      .from("queue_entries")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("player_id", targetUserId)
+      .limit(1)
+      .maybeSingle(),
+    svc
+      .from("club_members")
+      .select("id")
+      .eq("club_id", session.club_id)
+      .eq("player_id", targetUserId)
+      .eq("is_active", true)
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  return !!queueRes.data || !!memberRes.data;
+}
+
+/**
  * Resolves the actor context for a match audit event: the organizer's profile
  * id (= auth user id) and their current display_name snapshot. The name is
  * looked up via the service client (the auth user carries no display_name).
