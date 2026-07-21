@@ -33,6 +33,13 @@ major_version = 17
 [db.pooler]
 enabled = false
 
+# Applied by `supabase db reset` / `supabase start`, never by `db push`.
+# supabase/seed.sql creates the bootstrap profile + default club that a
+# from-scratch database needs — see the header in that file.
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
 [realtime]
 enabled = true
 

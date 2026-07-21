@@ -31,6 +31,13 @@ import type { Database } from "@/types/database";
 const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
+/**
+ * Bootstrap profile seeded by supabase/seed.sql. It lives at the all-zeros UUID
+ * because that is the one id tests/integration/helpers/truncate.ts preserves
+ * (`.delete().neq("id", ZERO_UUID)`), so it outlives cleanup between tests.
+ */
+const BOOTSTRAP_PROFILE_ID = "00000000-0000-0000-0000-000000000000";
+
 let db: ReturnType<typeof createClient<Database>>;
 
 beforeAll(() => {
@@ -59,6 +66,12 @@ async function createTestSession(overrides: Record<string, unknown> = {}) {
       name: name ?? "Test Session",
       scoring: scoring ?? "single",
       is_auto_matchmaking_on: is_auto_matchmaking_on ?? true,
+      // sessions.created_by is NOT NULL, so omitting it fails outright. This
+      // went unnoticed because the integration suite could not run at all —
+      // the migration replay died during DB setup (see 20260722000000-3).
+      // Uses the seeded bootstrap profile (supabase/seed.sql), which is the
+      // one row truncation preserves, so it is valid for every test in the file.
+      created_by: BOOTSTRAP_PROFILE_ID,
     })
     .select("id")
     .single();

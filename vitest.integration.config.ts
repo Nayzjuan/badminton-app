@@ -73,6 +73,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Same stub the unit config uses (vitest.config.ts). `server-only` is a
+      // Next build-time guard with no Vitest resolution and is not an installed
+      // package, so any integration test that reaches a module importing it
+      // died with ERR_MODULE_NOT_FOUND. Does not affect `next build`.
+      "server-only": path.resolve(__dirname, "./tests/setup/server-only-stub.ts"),
     },
   },
 });
