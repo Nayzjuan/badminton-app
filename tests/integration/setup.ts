@@ -33,6 +33,27 @@ export const authState: { currentUserId: string | null } = {
   currentUserId: null,
 };
 
+// ── 2b. Stub next/server's after() ──────────────────────────
+// Server actions schedule fire-and-forget work with Next's after(), which
+// throws `after was called outside a request scope` when the action is invoked
+// directly rather than through a Next request — which is exactly what these
+// tests do. That single error accounted for 29 failures once the suite could
+// finally run at all.
+//
+// A no-op is the correct stub here, not a convenience: every one of the ten
+// after() call sites in src/ wraps `pushToPlayers` (verified by grep), i.e.
+// push notifications only. None of them touch the queue/match state these
+// tests assert on, so skipping them changes nothing observable — while
+// RUNNING them would fire real web-push work and add network flakiness to CI.
+// If a test ever needs push behaviour it should mock pushToPlayers directly.
+//
+// importOriginal is used so the rest of next/server (NextResponse, etc.)
+// keeps working.
+vi.mock("next/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("next/server")>();
+  return { ...actual, after: (_fn: () => unknown) => undefined };
+});
+
 // ── 3. Mock @/utils/supabase/server ─────────────────────────
 // vi.mock() is hoisted to the top of this file by Vitest's
 // transformer, so it applies before any test file imports the

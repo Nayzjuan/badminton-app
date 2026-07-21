@@ -122,6 +122,13 @@ async function truncateViaDeletes(client: ReturnType<typeof serviceClient>): Pro
   await client.from("courts").delete().neq("id", ZERO_UUID);
   await client.from("session_organizers").delete().neq("id", ZERO_UUID);
   await client.from("sessions").delete().neq("id", ZERO_UUID);
+  // Credential-guessing log for the reconnect / co-organizer rate limiters.
+  // NOT cleaning it let failed attempts accumulate across every test in the
+  // run, so tests that deliberately submit a wrong passcode eventually tripped
+  // the 10-per-window lockout and got "Too many attempts" instead of the
+  // "invalid passcode" they asserted on — a false failure whose cause is
+  // several tests upstream. Wiped before profiles: user_id references them.
+  await client.from("co_organizer_join_attempts").delete().neq("id", ZERO_UUID);
   await client.from("profiles").delete().neq("id", ZERO_UUID);
 }
 
