@@ -15,6 +15,7 @@ import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
 import { ensureClubMembership, getClubBySlug, resolveSessionClubSlug } from "@/lib/clubs";
+import { getClientIp } from "@/lib/client-ip";
 import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
 import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 
@@ -221,6 +222,19 @@ export interface ReconnectResult {
   useGoogleSignIn?: boolean;
 }
 
+// ── Reconnect rate limiting ───────────────────────────────────
+/** Failed reconnects allowed against ONE display_name before lockout. */
+const RECONNECT_MAX_FAILED_NAME = 10;
+/**
+ * Failed reconnects allowed from one IP. Deliberately loose: a badminton club
+ * is a single-NAT environment (one gym Wi-Fi, plus CGNAT on mobile), so a tight
+ * IP budget would let one person lock out reconnect for the whole venue.
+ */
+const RECONNECT_MAX_FAILED_IP = 60;
+/** Rolling lockout window, minutes. */
+const RECONNECT_WINDOW_MIN = 15;
+const RECONNECT_LOCKED = "Too many attempts. Please wait a few minutes and try again.";
+
 export async function reconnectPlayer(
   playerName: string,
   pin: string,
@@ -238,6 +252,55 @@ export async function reconnectPlayer(
     return { success: false, error: pinResult.error.issues[0].message };
   }
   const service = createServiceClient();
+
+  // ── Rate-limit gate (before the PIN is ever checked) ─────────
+  // reconnectPlayer is a credential oracle: name + PIN returns an account and
+  // then MIGRATES the caller's identity onto it. The PIN space is 9,000
+  // (src/lib/pin.ts), display names are readable to any authenticated user and
+  // are printed on the public /tv and leaderboard share pages — so without a
+  // limit an attacker picks a name and walks the space to full account
+  // takeover, needing no organizer rights at all.
+  //
+  // Keyed on the normalized display_name BEING ATTACKED rather than on the
+  // caller: the caller is anonymous here and can mint identities freely, so a
+  // caller-keyed limit would be worthless. Also keyed on IP.
+  //
+  // Atomic and FAIL-CLOSED: the RPC records the attempt and returns the verdict
+  // in one transaction, and any error denies rather than waving the caller
+  // through.
+  const subject = name.trim().toLowerCase();
+  const ip = await getClientIp();
+  const { data: gate, error: gateErr } = await service
+    .rpc("reconnect_record_and_check", {
+      p_subject: subject,
+      p_ip: ip,
+      p_window_min: RECONNECT_WINDOW_MIN,
+      p_subject_max: RECONNECT_MAX_FAILED_NAME,
+      p_ip_max: RECONNECT_MAX_FAILED_IP,
+    })
+    .maybeSingle();
+
+  if (gateErr || !gate) {
+    console.error("[reconnectPlayer] rate-limit check failed:", gateErr?.message);
+    return { success: false, error: RECONNECT_LOCKED };
+  }
+  if (gate.over_subject_limit || gate.over_ip_limit) {
+    // Log WHICH arm fired so support can tell a shared venue IP apart from a
+    // targeted guessing run against one player's name.
+    console.warn(
+      `[reconnectPlayer] locked out (name=${gate.over_subject_limit} ip=${gate.over_ip_limit})`
+    );
+    return { success: false, error: RECONNECT_LOCKED };
+  }
+
+  // The attempt is logged pessimistically as a failure; flip it once the PIN
+  // actually matches so a legitimate reconnect doesn't consume the window.
+  const markReconnectSucceeded = async () => {
+    const { error } = await service.rpc("auth_attempt_mark_succeeded", {
+      p_attempt_id: gate.attempt_id,
+    });
+    if (error) console.error("[reconnectPlayer] attempt-log update failed:", error.message);
+  };
 
   // Resolve the caller's club context (set when reconnecting via a
   // club-scoped page, e.g. /c/[clubSlug]/join) so the lookup below can be
@@ -270,8 +333,13 @@ export async function reconnectPlayer(
         .eq("pin", pinResult.data);
 
   if (!profiles || profiles.length === 0) {
+    // Wrong name/PIN: the pessimistic failure row stands and counts.
     return { success: false, error: "No match found. Check your name and PIN." };
   }
+
+  // Correct credentials — clear the pessimistic failure so a legitimate
+  // reconnect never contributes to the lockout window.
+  await markReconnectSucceeded();
 
   // Pick the best profile across all matches, in three phases:
   //

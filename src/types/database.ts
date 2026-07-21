@@ -826,6 +826,27 @@ export type Database = {
        * attempt and returns the in-window verdict in one transaction.
        * Service-role only (EXECUTE revoked from PUBLIC/anon/authenticated).
        */
+      /**
+       * Atomic, fail-closed rate-limit gate for reconnectPlayer's PIN oracle:
+       * records the attempt and returns the in-window verdict in one
+       * transaction. Keyed on the display_name being attacked (the caller is
+       * anonymous). Service-role only.
+       */
+      reconnect_record_and_check: {
+        Args: {
+          p_subject: string;
+          p_ip: string | null;
+          p_window_min: number;
+          p_subject_max: number;
+          p_ip_max: number;
+        };
+        Returns: { attempt_id: string; over_subject_limit: boolean; over_ip_limit: boolean }[];
+      };
+      /** Flips a pessimistically-logged attempt to succeeded. Service-role only. */
+      auth_attempt_mark_succeeded: {
+        Args: { p_attempt_id: string };
+        Returns: void;
+      };
       cojoin_record_and_check: {
         Args: {
           p_user_id: string;

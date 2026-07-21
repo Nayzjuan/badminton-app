@@ -22,6 +22,7 @@ import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { isClubAdmin } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
+import { getClientIp } from "@/lib/client-ip";
 import type { ScoringFormat } from "@/types/database";
 import { scoringFormatSchema } from "@/lib/schemas/sessions";
 
@@ -245,28 +246,6 @@ const JOIN_MAX_FAILED_USER = 10;
 const JOIN_MAX_FAILED_IP = 60;
 /** Rolling lockout window, minutes. */
 const JOIN_WINDOW_MIN = 15;
-
-/**
- * Best-effort client IP from the proxy headers. Rate-limiting by user_id alone
- * is defeated by rotating anonymous accounts (signInAnonymously is a live
- * path), so we also key on IP. On Vercel `x-forwarded-for` is set by the proxy
- * from the real connecting client rather than passed through from a
- * user-supplied header, so the leftmost hop is not caller-controlled here.
- * A missing header just means the IP arm doesn't bite.
- */
-async function getClientIp(): Promise<string | null> {
-  try {
-    const { headers } = await import("next/headers");
-    const h = await headers();
-    const xff = h.get("x-forwarded-for");
-    if (xff) return xff.split(",")[0]!.trim();
-    return h.get("x-real-ip");
-  } catch {
-    // headers() throws outside a request scope (e.g. some test contexts).
-    // Degrade to the user_id arm rather than failing the join.
-    return null;
-  }
-}
 
 /**
  * Co-organizer join flow using ONLY the session passcode.
