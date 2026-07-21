@@ -88,6 +88,21 @@ Two helpers used by all organizer-gated server actions to avoid reimplementing t
 
 ## 2. Database Schema & State
 
+> **⚠️ Migrations are the source of truth — as of 2026-07-22 they finally are.** Much of this database was originally built by clicking through the Supabase dashboard, and none of that was ever written into `supabase/migrations`. Because production already had those objects, nobody noticed: the migration set only ever ran against a database that already contained what it assumed. A database built from migrations alone — every Supabase **preview branch**, and `supabase db reset` — diverged badly:
+>
+> | What was missing on a from-scratch DB | Consequence |
+> | --- | --- |
+> | `courts`, `matches`, `match_players`, `queue_entries` absent from the `supabase_realtime` publication | no realtime on the four tables the app actually subscribes to |
+> | `v_recent_pairings` never created | `20260702000003` aborted with `42P01` |
+> | **RLS not enabled** on `courts`, `matches`, `match_players`, `match_games`, `queue_entries`, `profiles`, `session_organizers` | row security OFF — a table with RLS disabled ignores policies entirely |
+> | **35 of 46 RLS policies** never created | the remaining policies bore no resemblance to production |
+>
+> The visible symptom was that `Vitest Integration` had been red on `main` and every branch for some time — it was dying during DB setup (`42704`, "relation is not part of the publication"), so the suite had **not been running at all**. The invisible and worse symptom: once the replay was unblocked, that suite would have passed against a database whose security posture did not match production, proving nothing about the RLS actually deployed.
+>
+> Fixed by `20260722000000` (publication membership), `20260722000001` (`v_recent_pairings`), and `20260722000002` (RLS baseline: the 7 `ENABLE ROW LEVEL SECURITY` flags + the 35 policies). All three are **convergent, idempotent, and strict no-ops against production**, and each ends with an assertion that `RAISE`s rather than handing back a database that merely looks healthy. The unguarded `ALTER PUBLICATION … DROP TABLE`, `ALTER POLICY` and `DROP POLICY` statements in `20260701000006`, `20260717171903` and `20260717174914` are now existence-guarded so the replay cannot abort.
+>
+> **Rules going forward:** never create a table, view, policy, publication membership, or RLS flag through the dashboard — write a migration. Editing an already-applied migration is legitimate *only* to make it replay-safe (guards), never to change its effect; the CLI stores per-migration `statements`, so `supabase migration repair` reconciles the stored copy if it ever objects. And never insert a migration dated **before** ones already applied to production — the CLI applies it out of order. When a fix seems to need that, guard the earlier statement and declare the end state in a later migration instead.
+
 > **DB Optimization Pass — 2026-07-17 (migrations `20260717165546`→`20260717190000`).** A full audit-driven pass shipped these behavioral/infrastructure changes:
 > - **RLS is now consolidated + initplan-hoisted.** SECURITY-DEFINER helpers `session_access_level(session_id)` (returns `'organizer'|'member'|null` in one probe) and `has_match_access(match_id)` back the sessions/matches/match_players/match_games policies; every policy's `auth.uid()`/`auth.role()` is wrapped as `(select auth.uid())` so it evaluates once per statement, not per row. Duplicate PERMISSIVE twins were dropped.
 > - **New set-based RPCs** (replace per-row loops): `requeue_finished_players(session, player_ids, drafted_ids)` (atomic `games_played+1` + status, used by endMatch), `reorder_on_deck_matches(session, match_ids)` (one UPDATE…FROM unnest WITH ORDINALITY, used by drag-reorder), `count_completed_matches_by_session(session_ids[])` (GROUP BY counts for the organizer hub — cap-safe), `get_h2h_record` (now pre-filters to matches containing all 4 players).
