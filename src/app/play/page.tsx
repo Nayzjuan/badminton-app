@@ -65,6 +65,7 @@ export default async function PlayPage() {
             .from("sessions")
             .select(PUBLIC_SESSION_COLUMNS)
             .eq("is_active", true)
+            .eq("is_hidden", false)
             .in("club_id", clubIds)
             .order("created_at", { ascending: false })
         ).data ?? []);

@@ -249,6 +249,11 @@ async function main() {
         is_active: true,
         is_auto_matchmaking_on: false,
         scoring: "single",
+        // Keeps the sandbox out of every human-facing session list from the
+        // moment it exists — /play, the organizer hub, and the dashboard's
+        // session switcher all filter on this. The e2e suite reaches it by
+        // id, so hiding it costs the tests nothing.
+        is_hidden: true,
       })
       .select("id")
       .single();

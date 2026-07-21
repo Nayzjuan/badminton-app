@@ -51,6 +51,10 @@ export default async function ClubOrganizerHubPage({ params }: PageProps) {
         .from("sessions")
         .select("*")
         .eq("club_id", club.id)
+        // Infrastructure sessions (the E2E sandbox) are never listed: this one
+        // rendered at the TOP of the active list with its organizer_passcode
+        // on show, which is why its name had to say "DO NOT JOIN".
+        .eq("is_hidden", false)
         .order("created_at", { ascending: false })
     ).data ?? [];
   const activeSessions = allSessions.filter((s) => s.is_active);

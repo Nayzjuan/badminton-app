@@ -141,7 +141,7 @@ export const PUBLIC_PROFILE_COLUMNS =
  * whenever the caller doesn't need to display the passcode itself.
  */
 export const PUBLIC_SESSION_COLUMNS =
-  "id, name, created_by, club_id, scoring, is_active, is_auto_matchmaking_on, court_time_limit_minutes, max_auto_drafts_override, auto_publish, created_at, ended_at" as const;
+  "id, name, created_by, club_id, scoring, is_active, is_auto_matchmaking_on, court_time_limit_minutes, max_auto_drafts_override, auto_publish, is_hidden, created_at, ended_at" as const;
 
 /** player_renames audit table — append-only record of name changes. */
 export type PlayerRename = {
@@ -171,6 +171,12 @@ export type Session = {
   /** Auto-publish mode: when true, engine-generated matches skip the draft gate
    *  and go straight to On Deck (is_published=true). false = manual review. */
   auto_publish: boolean;
+  /**
+   * Infrastructure sessions (the E2E sandbox, staging) that must never appear
+   * in a human-facing session list. NOT access control — the row is still
+   * readable by id, which is how the e2e suite drives it.
+   */
+  is_hidden: boolean;
   created_at: string;
   ended_at: string | null;
 };

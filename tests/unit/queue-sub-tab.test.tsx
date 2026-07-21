@@ -68,6 +68,7 @@ const mockSession: Session = {
   court_time_limit_minutes: null,
   max_auto_drafts_override: null,
   auto_publish: false,
+  is_hidden: false,
   ended_at: null,
   created_at: "2026-01-01T00:00:00Z",
 };
