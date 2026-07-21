@@ -262,6 +262,27 @@
     }
   }
 
+  /* ── Repeat-pairing: newly-triggered pair flash ──────────
+     One-shot amber wash marking a pair that started repeating on THIS tap,
+     so the organizer's eye lands on the new information instead of
+     re-reading the whole panel. Uses --cc-amber (theme-aware, so unlike
+     leaderboard-flash it needs no .dark twin) and ends at `transparent`,
+     letting the row's own surface show through rather than pinning a colour.
+     No `forwards`: the flash is the whole point, not a resting state.
+     The global prefers-reduced-motion block below collapses it to 0.01ms. */
+  .cc-repeat-pulse {
+    animation: cc-repeat-pulse 0.8s ease-out;
+  }
+
+  @keyframes cc-repeat-pulse {
+    0% {
+      background-color: color-mix(in oklab, var(--cc-amber) 30%, transparent);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+
   /* ── Session Wrapped intro overlay ─────────────────────── */
   @keyframes wi-fade {
     from {

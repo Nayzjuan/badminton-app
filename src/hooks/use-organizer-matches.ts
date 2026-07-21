@@ -79,6 +79,15 @@ export function useOrganizerMatches(
   publishedOnDeckMatches: EnrichedMatch[];
   inProgressMatches: EnrichedMatch[];
   loading: boolean;
+  /**
+   * Monotonic counter — ticks on every `matches` / `match_players` realtime
+   * event and immediately after any mutation that adds or removes a committed
+   * match. Consumers that need to re-derive from the DB (e.g. the repeat-pairing
+   * counts) key off this instead of opening their own realtime channel:
+   * useOrganizerSession's health check expects exactly REALTIME_CHANNEL_COUNT
+   * channels, so a sixth subscription would permanently break `realtimeConnected`.
+   */
+  matchesRevision: number;
   callNextMatch: (courtId: string) => Promise<MatchmakingResult>;
   createManualMatch: (teamA: string[], teamB: string[]) => Promise<{ error?: string }>;
   endMatch: (
@@ -113,6 +122,17 @@ export function useOrganizerMatches(
     fetchActiveMatches().then(() => setLoadingState(false));
   }, [fetchActiveMatches]);
 
+  // ── Committed-match revision ──────────────────────────────────
+  // See the `matchesRevision` doc on the return type. `setMatchesRevision`
+  // is a stable dispatcher, so bumping it inside the subscription effect
+  // below does NOT touch that effect's dep array — channel stability holds.
+  const [matchesRevision, setMatchesRevision] = React.useState(0);
+  const bumpMatchesRevision = useCallback(() => setMatchesRevision((n) => n + 1), []);
+  // Async shim so the bump can join a `useAction` refresher list.
+  const bumpMatchesRevisionAsync = useCallback(async () => {
+    setMatchesRevision((n) => n + 1);
+  }, []);
+
   // ── Stable refs for subscriptions ────────────────────────────
   const fetchActiveMatchesRef = useRef(fetchActiveMatches);
   useEffect(() => {
@@ -124,14 +144,20 @@ export function useOrganizerMatches(
     const unsubMatches = subscribeToMatches(
       supabase,
       sessionId,
-      () => fetchActiveMatchesRef.current(),
+      () => {
+        bumpMatchesRevision();
+        return fetchActiveMatchesRef.current();
+      },
       undefined,
       onChannelStatusMatches
     );
     const unsubMatchPlayers = subscribeToMatchPlayers(
       supabase,
       sessionId,
-      () => fetchActiveMatchesRef.current(),
+      () => {
+        bumpMatchesRevision();
+        return fetchActiveMatchesRef.current();
+      },
       undefined,
       onChannelStatusMatchPlayers
     );
@@ -139,7 +165,13 @@ export function useOrganizerMatches(
       unsubMatches();
       unsubMatchPlayers();
     };
-  }, [supabase, sessionId, onChannelStatusMatches, onChannelStatusMatchPlayers]);
+  }, [
+    supabase,
+    sessionId,
+    onChannelStatusMatches,
+    onChannelStatusMatchPlayers,
+    bumpMatchesRevision,
+  ]);
 
   // ── Derived match lists ───────────────────────────────────────
   const onDeckMatches = useMemo(
@@ -162,9 +194,10 @@ export function useOrganizerMatches(
     async (courtId: string): Promise<MatchmakingResult> => {
       const result = await callNextMatchAction(sessionId, courtId);
       await Promise.all([fetchCourts(), fetchActiveMatches()]);
+      bumpMatchesRevision();
       return result;
     },
-    [sessionId, fetchCourts, fetchActiveMatches]
+    [sessionId, fetchCourts, fetchActiveMatches, bumpMatchesRevision]
   );
 
   const createManualMatch = useCallback(
@@ -172,9 +205,10 @@ export function useOrganizerMatches(
       const result = await createManualMatchAction(sessionId, teamA, teamB);
       if (!result.success) return { error: result.message };
       await Promise.all([fetchQueue(), fetchActiveMatches()]);
+      bumpMatchesRevision();
       return {};
     },
-    [sessionId, fetchQueue, fetchActiveMatches]
+    [sessionId, fetchQueue, fetchActiveMatches, bumpMatchesRevision]
   );
 
   const endMatch = useCallback(
@@ -187,16 +221,21 @@ export function useOrganizerMatches(
     [fetchCourts, fetchActiveMatches]
   );
 
+  // Cancel drops the match out of COMMITTED_MATCH_STATUSES, so the pair
+  // counts change — bump alongside the refetch rather than waiting for the
+  // realtime echo.
   const cancelMatch = useAction(
     cancelMatchAction,
-    [fetchCourts, fetchActiveMatches],
-    [fetchCourts, fetchActiveMatches]
+    [fetchCourts, fetchActiveMatches, bumpMatchesRevisionAsync],
+    [fetchCourts, fetchActiveMatches, bumpMatchesRevisionAsync]
   );
 
+  // Clearing an on-deck/draft match cancels it — same reasoning as above
+  // (unpublished drafts are inside COMMITTED_MATCH_STATUSES).
   const clearOnDeckMatch = useAction(
     clearOnDeckMatchAction,
-    [fetchQueue, fetchActiveMatches],
-    [fetchQueue, fetchActiveMatches]
+    [fetchQueue, fetchActiveMatches, bumpMatchesRevisionAsync],
+    [fetchQueue, fetchActiveMatches, bumpMatchesRevisionAsync]
   );
 
   const reorderOnDeckMatches = useCallback(
@@ -225,9 +264,10 @@ export function useOrganizerMatches(
     async (matchId: string, outPlayerId: string, inPlayerId: string): Promise<SwapResult> => {
       const result = await swapPlayerInMatchAction(matchId, outPlayerId, inPlayerId);
       await Promise.all([fetchQueue(), fetchActiveMatches()]);
+      bumpMatchesRevision();
       return result;
     },
-    [fetchQueue, fetchActiveMatches]
+    [fetchQueue, fetchActiveMatches, bumpMatchesRevision]
   );
 
   const swapMatchPlayers = useCallback(
@@ -240,9 +280,10 @@ export function useOrganizerMatches(
     ): Promise<SwapMatchPlayersResult> => {
       const result = await swapMatchPlayersAction(aMatchId, aPlayerId, bMatchId, bPlayerId, sId);
       await fetchActiveMatches();
+      bumpMatchesRevision();
       return result;
     },
-    [fetchActiveMatches]
+    [fetchActiveMatches, bumpMatchesRevision]
   );
 
   return {
@@ -254,6 +295,7 @@ export function useOrganizerMatches(
     publishedOnDeckMatches,
     inProgressMatches,
     loading,
+    matchesRevision,
     callNextMatch,
     createManualMatch,
     endMatch,

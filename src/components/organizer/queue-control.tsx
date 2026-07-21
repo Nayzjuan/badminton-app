@@ -7,15 +7,35 @@
 // match creation. Organizer selects exactly 4 players, picks
 // a court, and creates a custom match.
 // Skill levels are editable inline via dropdown.
+//
+// SELECTION IS FOUR POSITIONAL SLOTS — [A1, A2, B1, B2] — not an
+// insertion-ordered Set. Deselecting frees THAT slot and leaves the other
+// three on their teams; the next tap fills the first free slot. With a Set,
+// deselecting pick #2 silently promoted a Team-B player into Team A, which
+// made both the team preview and the repeat warnings lie. A derived Set is
+// still handed to the child renderers so their prop contract is unchanged.
+//
+// REPEAT-PAIRING WARNING (advisory, never blocking): when the picks would
+// re-create a pairing the engine itself has stopped making, the sticky bar
+// headlines it and the bench rows get markers. It never disables a row it
+// warns about, never disables the CTA, and never rejects creation — see
+// use-repeat-pairing.ts for the avoidability gate that keeps it quiet when
+// the organizer has no better option.
 // ============================================================
 
-import { useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { VipTag } from "@/components/ui/vip-tag";
 import { SKILL_LEVELS } from "@/types/database";
 import { QueueSkillGroups } from "@/components/organizer/queue-skill-groups";
+import { ManualMatchBar } from "@/components/organizer/manual-match-bar";
+import { RepeatPairDetails } from "@/components/organizer/repeat-pair-details";
+import { RepeatMarker, RepeatMarkerLegend } from "@/components/organizer/repeat-marker";
+import { usePairCounts } from "@/hooks/use-pair-counts";
+import { useRepeatPairing } from "@/hooks/use-repeat-pairing";
+import { deriveTeams, EMPTY_SLOTS, filledCount, type Slots } from "@/lib/repeat-pairing";
 import {
   updatePlayerSkill,
   getPlayerPin,
@@ -55,6 +75,18 @@ interface QueueControlProps {
   organizerPlayerId?: string;
   /** Called when the organizer clicks "Join Queue". */
   onJoinQueue?: () => Promise<void>;
+  /**
+   * Monotonic counter from useOrganizerData — ticks on every matches /
+   * match_players realtime event and after each committed-match mutation.
+   * Drives the repeat-pairing counts refetch WITHOUT a sixth realtime channel.
+   */
+  matchesRevision?: number;
+  /**
+   * True while the engine's partner-pair cap-saturation notice is showing.
+   * That notice already instructs the organizer to override manually, so the
+   * repeat warning is suppressed entirely for its duration.
+   */
+  capSaturationActive?: boolean;
 }
 
 export function QueueControl({
@@ -66,8 +98,14 @@ export function QueueControl({
   onPausePlayer,
   organizerPlayerId,
   onJoinQueue,
+  matchesRevision = 0,
+  capSaturationActive = false,
 }: QueueControlProps) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Four positional slots: [A1, A2, B1, B2]. null = free.
+  const [slots, setSlots] = useState<Slots>(EMPTY_SLOTS);
+  // Bumped ONLY by user-initiated selection changes, so the live region can
+  // stay silent when a background counts refetch changes the derived text.
+  const [selectionEpoch, setSelectionEpoch] = useState(0);
   // Which queue lens is showing. Always opens on "list"; not persisted.
   const [view, setView] = useState<"list" | "skill">("list");
   const [creating, setCreating] = useState(false);
@@ -76,15 +114,59 @@ export function QueueControl({
   const [pausingPlayers, setPausingPlayers] = useState<Set<string>>(new Set());
   const [removingPlayer, setRemovingPlayer] = useState<string | null>(null);
 
+  // Derived Set — QueueSkillGroups and the table rows keep their existing
+  // `selected` contract; only this component knows about slots.
+  const selected = useMemo(() => new Set(slots.filter((x): x is string => !!x)), [slots]);
+  const filled = filledCount(slots);
+  const isFull = filled >= REQUIRED_PLAYERS;
+
   function togglePlayer(playerId: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(playerId)) {
-        next.delete(playerId);
-      } else {
-        if (next.size >= REQUIRED_PLAYERS) return prev; // cap at 4
-        next.add(playerId);
+    setSelectionEpoch((n) => n + 1);
+    setSlots((prev) => {
+      const occupied = prev.indexOf(playerId);
+      if (occupied !== -1) {
+        // Free THAT slot. The other three keep their teams.
+        const next = [...prev];
+        next[occupied] = null;
+        return next;
       }
+      const free = prev.indexOf(null);
+      if (free === -1) return prev; // full — rows are non-interactive here
+      const next = [...prev];
+      next[free] = playerId;
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectionEpoch((n) => n + 1);
+    setSlots(EMPTY_SLOTS);
+  }
+
+  /**
+   * Move the player in `slotIndex` across the net. This is the REMEDY that
+   * makes a teammate warning actionable — most of them are resolved by
+   * moving one player rather than by re-picking the whole match.
+   *
+   * Prefers a free slot on the far side; otherwise swaps with the mirror
+   * slot (0<->2, 1<->3) so no one is silently dropped.
+   */
+  function moveAcrossNet(slotIndex: number) {
+    setSelectionEpoch((n) => n + 1);
+    setSlots((prev) => {
+      const player = prev[slotIndex];
+      if (!player) return prev;
+      const farSide = slotIndex < 2 ? [2, 3] : [0, 1];
+      const next = [...prev];
+      const free = farSide.find((i) => next[i] === null);
+      if (free !== undefined) {
+        next[free] = player;
+        next[slotIndex] = null;
+        return next;
+      }
+      const mirror = slotIndex < 2 ? slotIndex + 2 : slotIndex - 2;
+      next[slotIndex] = next[mirror];
+      next[mirror] = player;
       return next;
     });
   }
@@ -169,21 +251,21 @@ export function QueueControl({
   }
 
   async function handleCreateMatch() {
-    if (selected.size !== REQUIRED_PLAYERS) return;
+    if (filled !== REQUIRED_PLAYERS) return;
 
     setCreating(true);
     setError(null);
 
-    // Split into teams: first 2 selected = Team A, last 2 = Team B.
-    const playerIds = Array.from(selected);
-    const teamA = playerIds.slice(0, 2);
-    const teamB = playerIds.slice(2, 4);
+    // Teams come from the SLOTS, never from Set iteration order — the
+    // preview the organizer just read is the contract.
+    const { teamA, teamB } = deriveTeams(slots);
 
     const result = await onCreateManualMatch(teamA, teamB);
     if (result.error) {
       setError(result.error);
     } else {
-      setSelected(new Set());
+      setSlots(EMPTY_SLOTS);
+      setSelectionEpoch((n) => n + 1);
     }
     setCreating(false);
   }
@@ -226,56 +308,102 @@ export function QueueControl({
     return 0;
   });
 
+  // ── Repeat-pairing warning ──────────────────────────────────
+  const nameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of queue) map.set(entry.player_id, entry.display_name);
+    return map;
+  }, [queue]);
+  const nameOf = useMemo(
+    () => (playerId: string) => nameById.get(playerId) ?? "Unknown",
+    [nameById]
+  );
+
+  /**
+   * The pool a marker can legitimately apply to: waiting, not paused, not
+   * already selected. Excluding on_deck/drafted matters twice over — those
+   * rows aren't tappable, and including them would let `hasCleanAlternative`
+   * find a "clean" option the organizer can't actually take.
+   */
+  const candidateIds = useMemo(
+    () =>
+      queue
+        .filter((q) => q.status === "waiting" && !q.is_paused && !selected.has(q.player_id))
+        .map((q) => q.player_id),
+    [queue, selected]
+  );
+
+  const liveCounts = usePairCounts(sessionId, matchesRevision);
+  const { warnings, markers, headline, announcement, markerContext, pulsedPairKeys } =
+    useRepeatPairing({
+      slots,
+      candidateIds,
+      liveCounts,
+      selectionEpoch,
+      suppressed: capSaturationActive,
+      nameOf,
+    });
+
+  const detailsId = useId();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // Fold the disclosure when the build ends, so the next build starts from
+  // the compact bar rather than inheriting an expanded panel. Adjusted during
+  // render (converges in one pass) rather than in an effect, which would
+  // paint one frame of a stale open panel.
+  if (detailsOpen && filled === 0) setDetailsOpen(false);
+  const showDetails = detailsOpen && warnings.length > 0;
+
   return (
     <div className="space-y-5">
-      {/* Manual Match Bar */}
-      <div
-        className={`rounded-xl border-2 p-4 transition-colors ${
-          selected.size === REQUIRED_PLAYERS
-            ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-500/60"
-            : selected.size > 0
-              ? "border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-500/60"
-              : "border-border bg-card"
-        }`}
-      >
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">
-              {selected.size === 0
-                ? "Select 4 players to create a manual match"
-                : `${selected.size} of ${REQUIRED_PLAYERS} players selected`}
-            </p>
-            {selected.size > 0 && selected.size < REQUIRED_PLAYERS && (
-              <p className="text-xs text-muted-foreground">
-                Select {REQUIRED_PLAYERS - selected.size} more
-              </p>
-            )}
-          </div>
-
-          {selected.size === REQUIRED_PLAYERS && (
-            <button
-              onClick={handleCreateMatch}
-              disabled={creating}
-              className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white
-                         hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed
-                         whitespace-nowrap transition-colors"
-            >
-              {creating ? "Adding..." : "Add to On Deck"}
-            </button>
-          )}
-
-          {selected.size > 0 && (
-            <button
-              onClick={() => setSelected(new Set())}
-              className="text-xs text-muted-foreground hover:text-foreground underline"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-
-        {error && <p className="text-sm text-destructive mt-2">{error}</p>}
+      {/* ── Live region ─────────────────────────────────────────
+          PERMANENTLY MOUNTED and separate from the visible headline. A
+          live region that enters the DOM already carrying its text is
+          usually not announced, and giving the visible headline live
+          semantics would re-announce it on every unrelated re-render.
+          The text is written on a trailing debounce, gated on
+          user-initiated selection changes — see useRepeatPairing. */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {announcement}
       </div>
+
+      <ManualMatchBar
+        slots={slots}
+        requiredPlayers={REQUIRED_PLAYERS}
+        nameOf={nameOf}
+        creating={creating}
+        onCreate={handleCreateMatch}
+        onClear={clearSelection}
+        onMoveAcrossNet={moveAcrossNet}
+        headline={headline}
+        warningCount={warnings.length}
+        detailsOpen={showDetails}
+        onToggleDetails={() => setDetailsOpen((o) => !o)}
+        detailsId={detailsId}
+        // The epoch doubles as the pulse identity — see ManualMatchBar.
+        pulseToken={pulsedPairKeys.size > 0 ? selectionEpoch : 0}
+      />
+
+      {/* Creation errors live BELOW the sticky bar: the bar is height-capped
+          so it can never eat the queue, and clipping an error is worse than
+          scrolling to one. Visually this is the same spot as before — the
+          bar sits at the top of the tab. */}
+      {error && (
+        <p role="alert" className="text-sm text-cc-red">
+          {error}
+        </p>
+      )}
+
+      {/* Non-sticky half of the warning — full pair rows + the actual prior
+          matches behind each count. Scrolls normally. */}
+      {showDetails && (
+        <RepeatPairDetails
+          id={detailsId}
+          sessionId={sessionId}
+          warnings={warnings}
+          nameOf={nameOf}
+          pulsedPairKeys={pulsedPairKeys}
+        />
+      )}
 
       {/* Organizer self-join nudge ─────────────────────────────
           Shown only when: organizerPlayerId is provided AND the
@@ -338,13 +466,27 @@ export function QueueControl({
             </div>
           </div>
 
+          {/* Resolves what the row markers refer to. The relevant partner is
+              whichever slot the next tap fills, so without this line the
+              glyphs are unanchored ("a repeat with whom?"). */}
+          {markerContext && (
+            <RepeatMarkerLegend
+              team={markerContext.team}
+              partnerId={markerContext.partnerId}
+              opponentIds={markerContext.opponentIds}
+              nameOf={nameOf}
+            />
+          )}
+
           {view === "skill" ? (
             <QueueSkillGroups
               queue={queue}
               profiles={profiles}
               selected={selected}
               onToggleSelect={togglePlayer}
-              isFull={selected.size >= REQUIRED_PLAYERS}
+              isFull={isFull}
+              markers={markers}
+              nameOf={nameOf}
               onSkillChange={handleSkillChange}
               updatingSkill={updatingSkill}
               onPausePlayer={handlePausePlayer}
@@ -383,19 +525,24 @@ export function QueueControl({
                   <tbody>
                     {sortedQueue.map((entry, index) => {
                       const isSelected = selected.has(entry.player_id);
-                      const isFull = selected.size >= REQUIRED_PLAYERS;
                       const waitMin = Math.floor(entry.wait_minutes);
                       const isPaused = entry.is_paused;
                       // on_deck / drafted rows are visible but not selectable for manual matches.
                       const isLocked = entry.status === "on_deck" || entry.status === "drafted";
+                      // At 4 selected an unselected row used to stay clickable while
+                      // togglePlayer no-op'd — a dead tap landing exactly when the
+                      // warning says "reconsider". The checkbox was already disabled
+                      // in that state; the row now matches it.
+                      const isSelectable = !isPaused && !isLocked && (isSelected || !isFull);
+                      const marker = markers.get(entry.player_id);
 
                       return (
                         <tr
                           key={entry.id}
-                          tabIndex={isPaused || isLocked ? -1 : 0}
+                          tabIndex={isSelectable ? 0 : -1}
                           role="row"
                           aria-selected={isSelected}
-                          aria-disabled={isPaused || isLocked ? "true" : undefined}
+                          aria-disabled={isSelectable ? undefined : "true"}
                           className={`border-b border-border last:border-b-0 transition-colors
                                 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset
                                 ${
@@ -407,12 +554,14 @@ export function QueueControl({
                                       ? "opacity-50 bg-slate-50 dark:bg-muted/20 cursor-default"
                                       : isSelected
                                         ? "bg-emerald-50 dark:bg-emerald-950/30 cursor-pointer"
-                                        : "hover:bg-muted/30 cursor-pointer"
+                                        : isFull
+                                          ? "cursor-default"
+                                          : "hover:bg-muted/30 cursor-pointer"
                                 }
                                 ${!isPaused && !isLocked && entry.is_bottleneck ? "!bg-red-50 dark:!bg-red-950/25" : ""}`}
-                          onClick={() => !isPaused && !isLocked && togglePlayer(entry.player_id)}
+                          onClick={() => isSelectable && togglePlayer(entry.player_id)}
                           onKeyDown={(e) => {
-                            if (!isPaused && !isLocked && (e.key === " " || e.key === "Enter")) {
+                            if (isSelectable && (e.key === " " || e.key === "Enter")) {
                               e.preventDefault();
                               togglePlayer(entry.player_id);
                             }
@@ -490,6 +639,10 @@ export function QueueControl({
                           <td className="px-4 py-3 font-medium">
                             <span className="flex items-center gap-2">
                               {entry.display_name}
+                              {/* Inline, immediately after the name: this table is
+                                  min-w-[640px] inside overflow-x-auto, so a
+                                  right-aligned marker is off-screen on a phone. */}
+                              {marker && <RepeatMarker marker={marker} nameOf={nameOf} />}
                               {(() => {
                                 const p = profiles?.get(entry.player_id);
                                 return p?.vip_tag && p?.vip_theme ? (
