@@ -5,9 +5,11 @@
 // tenancy audit found: self-provision an organizer session → read/reset any
 // member's PIN → reconnect-migrate their account.
 //
-//   #1 isPlayerInSessionScope — the target of a PIN/skill action must belong
-//      to the session (its queue) or its club, not just "the caller organizes
-//      some session".
+//   #1 isPlayerInSessionScope — the target of a PIN/skill action must be in
+//      THIS session's queue, not just "the caller organizes some session".
+//      Deliberately NOT "or a member of the session's club": CHILLAX is the
+//      only club and everyone is in it, so a club arm would make the guard a
+//      no-op for every profile in the database.
 //   #2 createSession — clubId is mandatory and admin-verified; the old
 //      omit-clubId → silent CHILLAX fallback (no admin check) is gone.
 //   #3 joinAsCoOrganizer — rate-limited by user_id/IP before the passcode
@@ -75,9 +77,13 @@ function builder(resp: Resp) {
 }
 
 /** Service client whose from() hands back `responses` in call order. */
-function serviceClient(responses: Resp[]) {
+function serviceClient(responses: Resp[], rpcResp?: Resp) {
   let i = 0;
-  return { from: vi.fn(() => builder(responses[i++] ?? { data: null, error: null })) };
+  return {
+    from: vi.fn(() => builder(responses[i++] ?? { data: null, error: null })),
+    // The rate limiter is one atomic RPC (insert + count in a single txn).
+    rpc: vi.fn(() => builder(rpcResp ?? { data: null, error: null })),
+  };
 }
 
 function authedAs(user: { id: string } | null) {
@@ -88,44 +94,35 @@ beforeEach(() => vi.clearAllMocks());
 
 // ── #1 target-scope helper ────────────────────────────────────
 describe("TG-SCOPE: isPlayerInSessionScope", () => {
-  it("TG-SCOPE-1: false when the session does not exist", async () => {
+  it("TG-SCOPE-1: true when the target has a queue row for THIS session", async () => {
+    const svc = serviceClient([{ data: { id: "q1" } }]);
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
+    );
+    expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(true);
+    expect(svc.from).toHaveBeenCalledWith("queue_entries");
+  });
+
+  it("TG-SCOPE-2: false when the target has no queue row (the attack)", async () => {
     vi.mocked(createServiceClient).mockReturnValue(
       serviceClient([{ data: null }]) as unknown as ReturnType<typeof createServiceClient>
     );
     expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(false);
   });
 
-  it("TG-SCOPE-2: true when the target is in the session queue", async () => {
+  it("TG-SCOPE-3: club membership alone does NOT put a target in scope", async () => {
+    // The security property that dropping the club arm buys. With CHILLAX the
+    // only club and all ~183 profiles members of it, a club arm would return
+    // true for essentially every profile — so an organizer (including one who
+    // joined by passcode) could still read the PIN of someone who never
+    // attended their session. Only the queue lookup runs now, and it misses.
+    const svc = serviceClient([{ data: null }]);
     vi.mocked(createServiceClient).mockReturnValue(
-      serviceClient([
-        { data: { club_id: CLUB_ID } }, // session lookup
-        { data: { id: "q1" } }, // queue_entries hit
-        { data: null }, // club_members miss
-      ]) as unknown as ReturnType<typeof createServiceClient>
-    );
-    expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(true);
-  });
-
-  it("TG-SCOPE-3: true when the target is an active club member", async () => {
-    vi.mocked(createServiceClient).mockReturnValue(
-      serviceClient([
-        { data: { club_id: CLUB_ID } },
-        { data: null }, // not in queue
-        { data: { id: "m1" } }, // is a club member
-      ]) as unknown as ReturnType<typeof createServiceClient>
-    );
-    expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(true);
-  });
-
-  it("TG-SCOPE-4: false when the target is neither queued nor a member (the attack)", async () => {
-    vi.mocked(createServiceClient).mockReturnValue(
-      serviceClient([
-        { data: { club_id: CLUB_ID } },
-        { data: null },
-        { data: null },
-      ]) as unknown as ReturnType<typeof createServiceClient>
+      svc as unknown as ReturnType<typeof createServiceClient>
     );
     expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(false);
+    const tables = svc.from.mock.calls.map((c: unknown[]) => c[0]);
+    expect(tables).not.toContain("club_members");
   });
 });
 
@@ -163,12 +160,16 @@ describe("TG-CREATE: createSession club gate", () => {
 
 // ── #3 co-organizer join is rate-limited ──────────────────────
 describe("TG-RATE: joinAsCoOrganizer rate limit", () => {
-  it("TG-RATE-1: locks out after too many recent failed attempts, before any lookup", async () => {
+  beforeEach(() => {
     vi.mocked(createServerSupabaseClient).mockResolvedValue(
       authedAs(CALLER) as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>
     );
-    // First service from() call is the user-failure count → over the limit.
-    const svc = serviceClient([{ count: 99 }]);
+  });
+
+  it("TG-RATE-1: locks out when over the per-account limit, before any lookup", async () => {
+    const svc = serviceClient([], {
+      data: { attempt_id: "a1", over_user_limit: true, over_ip_limit: false },
+    });
     vi.mocked(createServiceClient).mockReturnValue(
       svc as unknown as ReturnType<typeof createServiceClient>
     );
@@ -176,21 +177,42 @@ describe("TG-RATE: joinAsCoOrganizer rate limit", () => {
     const r = await joinAsCoOrganizer("SMASH0001");
     expect(r.success).toBe(false);
     expect(r.message).toMatch(/too many attempts/i);
-    // Only the count query ran — the passcode lookup was never reached.
-    expect(svc.from).toHaveBeenCalledTimes(1);
-    expect(svc.from).toHaveBeenCalledWith("co_organizer_join_attempts");
+    // The passcode lookup must never run when locked out.
+    expect(svc.rpc).toHaveBeenCalledWith("cojoin_record_and_check", expect.any(Object));
+    expect(svc.from).not.toHaveBeenCalled();
   });
 
-  it("TG-RATE-2: a wrong passcode under the limit is recorded as a failed attempt", async () => {
-    vi.mocked(createServerSupabaseClient).mockResolvedValue(
-      authedAs(CALLER) as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>
+  it("TG-RATE-2: locks out on the IP arm too", async () => {
+    const svc = serviceClient([], {
+      data: { attempt_id: "a1", over_user_limit: false, over_ip_limit: true },
+    });
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
     );
-    // count under limit → lookup runs → no matching session → records failure.
-    const svc = serviceClient([
-      { count: 0 }, // user-failure count
-      { data: null }, // sessions lookup: no match
-      { data: null }, // insert attempt row (recordAttempt)
-    ]);
+    const r = await joinAsCoOrganizer("SMASH0001");
+    expect(r.success).toBe(false);
+    expect(r.message).toMatch(/too many attempts/i);
+    expect(svc.from).not.toHaveBeenCalled();
+  });
+
+  it("TG-RATE-3: FAILS CLOSED when the limiter itself errors", async () => {
+    // The first cut swallowed a failed attempt-log write and waved the caller
+    // through, silently disabling the limiter. An error must deny instead.
+    const svc = serviceClient([], { data: null, error: { message: "boom" } });
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
+    );
+    const r = await joinAsCoOrganizer("SMASH0001");
+    expect(r.success).toBe(false);
+    expect(r.message).toMatch(/too many attempts/i);
+    expect(svc.from).not.toHaveBeenCalled();
+  });
+
+  it("TG-RATE-4: under the limit, a wrong passcode reaches the lookup and stays logged as failed", async () => {
+    const svc = serviceClient(
+      [{ data: null }], // sessions lookup: no match
+      { data: { attempt_id: "a1", over_user_limit: false, over_ip_limit: false } }
+    );
     vi.mocked(createServiceClient).mockReturnValue(
       svc as unknown as ReturnType<typeof createServiceClient>
     );
@@ -198,12 +220,9 @@ describe("TG-RATE: joinAsCoOrganizer rate limit", () => {
     const r = await joinAsCoOrganizer("WRONG9999");
     expect(r.success).toBe(false);
     expect(r.message).toMatch(/invalid passcode/i);
-    // count → sessions → insert(attempt)
+    // The RPC already logged the attempt pessimistically as a failure, so the
+    // wrong guess must NOT be flipped to succeeded.
     const tables = svc.from.mock.calls.map((c: unknown[]) => c[0]);
-    expect(tables).toEqual([
-      "co_organizer_join_attempts",
-      "sessions",
-      "co_organizer_join_attempts",
-    ]);
+    expect(tables).toEqual(["sessions"]);
   });
 });

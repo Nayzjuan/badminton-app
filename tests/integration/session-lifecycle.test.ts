@@ -41,6 +41,26 @@ import { createSession, joinAsCoOrganizer, toggleAutoMatchmaking } from "@/app/a
 const faker = new Faker({ locale: [en] });
 faker.seed(11001);
 
+/**
+ * The founding club seeded by migration 20260630000001. createSession now
+ * REQUIRES an explicit clubId and always verifies club-admin — omitting it used
+ * to fall through to this club's DB DEFAULT with no check at all, which was the
+ * privilege-escalation primitive the security fix removed.
+ */
+const DEFAULT_CLUB_ID = "00000000-0000-0000-0000-000000000001";
+
+/** Make `userId` an owner of the default club so createSession's gate passes. */
+async function makeClubOwner(userId: string): Promise<void> {
+  const client = serviceClient();
+  const { error } = await client
+    .from("club_members")
+    .upsert(
+      { club_id: DEFAULT_CLUB_ID, player_id: userId, role: "owner", is_active: true },
+      { onConflict: "club_id,player_id" }
+    );
+  if (error) throw new Error(`[makeClubOwner] ${error.message}`);
+}
+
 afterEach(async () => {
   clearMockAuth();
   await truncateTracked();
@@ -56,9 +76,11 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-1: Explicit passcode normalised + stored ────────────
   it("K-1: createSession with an explicit passcode upper-cases and persists it", async () => {
     const me = await makeProfile({ faker });
+    await makeClubOwner(me.id); // createSession now requires club-admin
     const restore = mockAuthAs(me.id);
     try {
       const result = await createSession({
+        clubId: DEFAULT_CLUB_ID,
         name: "Friday Pickup",
         scoring: "single",
         passcode: "smash7",
@@ -87,9 +109,11 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-2: handle_new_session trigger inserts organizer row ─
   it("K-2: handle_new_session trigger inserts session_organizers row for created_by", async () => {
     const me = await makeProfile({ faker });
+    await makeClubOwner(me.id); // createSession now requires club-admin
     const restore = mockAuthAs(me.id);
     try {
       const result = await createSession({
+        clubId: DEFAULT_CLUB_ID,
         name: "Trigger Test",
         scoring: "single",
         passcode: "TRIG1",
@@ -115,12 +139,15 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-3: Duplicate active passcode rejected ───────────────
   it("K-3: createSession rejects a passcode already used by another active session", async () => {
     const userA = await makeProfile({ faker });
+    await makeClubOwner(userA.id); // createSession now requires club-admin
     const userB = await makeProfile({ faker });
+    await makeClubOwner(userB.id); // createSession now requires club-admin
 
     const restoreA = mockAuthAs(userA.id);
     let firstSessionId: string | undefined;
     try {
       const r1 = await createSession({
+        clubId: DEFAULT_CLUB_ID,
         name: "First",
         scoring: "single",
         passcode: "DUPE1",
@@ -134,6 +161,7 @@ describe("Session Lifecycle — Suite K", () => {
     const restoreB = mockAuthAs(userB.id);
     try {
       const r2 = await createSession({
+        clubId: DEFAULT_CLUB_ID,
         name: "Second",
         scoring: "single",
         passcode: "DUPE1",
@@ -162,6 +190,7 @@ describe("Session Lifecycle — Suite K", () => {
     const restore = mockAuthAs(me.id);
     try {
       const result = await createSession({
+        clubId: DEFAULT_CLUB_ID,
         name: longName,
         scoring: "single",
         passcode: "LEN001",
@@ -180,6 +209,7 @@ describe("Session Lifecycle — Suite K", () => {
     const restore = mockAuthAs(me.id);
     try {
       const result = await createSession({
+        clubId: DEFAULT_CLUB_ID,
         name: "OK name",
         scoring: "single",
         passcode: longPasscode,
@@ -195,6 +225,7 @@ describe("Session Lifecycle — Suite K", () => {
   it("K-6: createSession rejects unauthenticated callers with no DB write", async () => {
     // No mockAuthAs.
     const result = await createSession({
+      clubId: DEFAULT_CLUB_ID,
       name: "Anon",
       scoring: "single",
       passcode: "ANON1",
@@ -216,11 +247,13 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-7: Valid passcode → membership row inserted ─────────
   it("K-7: joinAsCoOrganizer with a valid passcode inserts a session_organizers row", async () => {
     const primary = await makeProfile({ faker });
+    await makeClubOwner(primary.id); // createSession now requires club-admin
     let sessionId: string | undefined;
     {
       const restore = mockAuthAs(primary.id);
       try {
         const r = await createSession({
+          clubId: DEFAULT_CLUB_ID,
           name: "Co-org Test",
           scoring: "single",
           passcode: "JOIN01",
@@ -254,11 +287,13 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-8: Idempotent — second call no-ops ──────────────────
   it("K-8: joinAsCoOrganizer is idempotent — second call does not create a duplicate row", async () => {
     const primary = await makeProfile({ faker });
+    await makeClubOwner(primary.id); // createSession now requires club-admin
     let sessionId: string | undefined;
     {
       const restore = mockAuthAs(primary.id);
       try {
         const r = await createSession({
+          clubId: DEFAULT_CLUB_ID,
           name: "Idempotent",
           scoring: "single",
           passcode: "IDEM01",
@@ -306,9 +341,11 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-10: Primary organizer cannot join their own session ─
   it("K-10: joinAsCoOrganizer rejects the primary organizer of the session", async () => {
     const primary = await makeProfile({ faker });
+    await makeClubOwner(primary.id); // createSession now requires club-admin
     const restore = mockAuthAs(primary.id);
     try {
       const r1 = await createSession({
+        clubId: DEFAULT_CLUB_ID,
         name: "Mine",
         scoring: "single",
         passcode: "MINE99",
@@ -326,11 +363,13 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-11: Closed session passcode rejected ────────────────
   it("K-11: joinAsCoOrganizer rejects a passcode that belongs to a closed session", async () => {
     const primary = await makeProfile({ faker });
+    await makeClubOwner(primary.id); // createSession now requires club-admin
     let sessionId: string | undefined;
     {
       const restore = mockAuthAs(primary.id);
       try {
         const r = await createSession({
+          clubId: DEFAULT_CLUB_ID,
           name: "Was active",
           scoring: "single",
           passcode: "CLOSED",

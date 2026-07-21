@@ -118,9 +118,23 @@ export async function isSessionOrganizer(userId: string, sessionId: string): Pro
  * reconnect identity migration). "Authorize on A, operate on B" must prove A and
  * B share scope.
  *
- * In scope = the target is in this session's queue (any status, incl. paused/
- * left) OR is an active member of the session's club. Service client: the check
- * must not itself be blocked by RLS.
+ * In scope = the target has a queue_entries row for THIS session — any status
+ * (waiting / drafted / on_deck / playing / left) and paused included, so an
+ * organizer can still manage someone who has checked out.
+ *
+ * DELIBERATELY NOT "or an active member of the session's club": CHILLAX is
+ * currently the only club and all ~183 profiles are members of it, so a club
+ * arm would return true for essentially every profile in the database and the
+ * guard would be a no-op — any organizer (including one who joined by passcode)
+ * could still read or reset the PIN of someone who never attended their
+ * session. Every real caller passes `entry.player_id` straight from the
+ * session's own queue prop, so the queue lookup alone costs no legitimate flow.
+ *
+ * The queue arm is not attacker-forgeable either: the queue_insert RLS policy
+ * is WITH CHECK (player_id = auth.uid()), so a caller cannot plant a victim in
+ * a session they control.
+ *
+ * Service client: the check must not itself be blocked by RLS.
  */
 export async function isPlayerInSessionScope(
   targetUserId: string,
@@ -128,32 +142,15 @@ export async function isPlayerInSessionScope(
 ): Promise<boolean> {
   const svc = createServiceClient();
 
-  const { data: session } = await svc
-    .from("sessions")
-    .select("club_id")
-    .eq("id", sessionId)
+  const { data } = await svc
+    .from("queue_entries")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("player_id", targetUserId)
+    .limit(1)
     .maybeSingle();
-  if (!session) return false;
 
-  const [queueRes, memberRes] = await Promise.all([
-    svc
-      .from("queue_entries")
-      .select("id")
-      .eq("session_id", sessionId)
-      .eq("player_id", targetUserId)
-      .limit(1)
-      .maybeSingle(),
-    svc
-      .from("club_members")
-      .select("id")
-      .eq("club_id", session.club_id)
-      .eq("player_id", targetUserId)
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle(),
-  ]);
-
-  return !!queueRes.data || !!memberRes.data;
+  return !!data;
 }
 
 /**

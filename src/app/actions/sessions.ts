@@ -229,23 +229,43 @@ export type JoinCoOrganizerResult = {
 };
 
 // ── Rate limiting for the co-organizer passcode-join brute-force surface ──
-/** Failed attempts allowed per identifier before lockout, within the window. */
-const JOIN_MAX_FAILED = 10;
+/** Failed attempts allowed for one ACCOUNT before lockout, within the window. */
+const JOIN_MAX_FAILED_USER = 10;
+/**
+ * Failed attempts allowed for one IP before lockout, within the window.
+ *
+ * Deliberately far above the per-account limit. A badminton club is the
+ * canonical single-NAT environment — the whole venue shares one gym Wi-Fi, and
+ * mobile users share CGNAT — so a tight IP budget is a griefing DoS: a handful
+ * of co-organizers fumbling a 9-character code, or one malcontent on the venue
+ * network, would lock co-organizer join for everyone. 60/15min is still far
+ * below what brute-forcing a 100k-combination passcode needs (~17 days from a
+ * single IP) while sitting well clear of plausible venue traffic.
+ */
+const JOIN_MAX_FAILED_IP = 60;
 /** Rolling lockout window, minutes. */
 const JOIN_WINDOW_MIN = 15;
 
 /**
- * Best-effort client IP from the proxy headers Vercel sets. Rate-limiting by
- * user_id alone is defeated by rotating anonymous accounts, so we also key on
- * IP. Missing/spoofed headers just mean the IP arm doesn't bite — the user_id
- * arm and the raised passcode entropy still apply.
+ * Best-effort client IP from the proxy headers. Rate-limiting by user_id alone
+ * is defeated by rotating anonymous accounts (signInAnonymously is a live
+ * path), so we also key on IP. On Vercel `x-forwarded-for` is set by the proxy
+ * from the real connecting client rather than passed through from a
+ * user-supplied header, so the leftmost hop is not caller-controlled here.
+ * A missing header just means the IP arm doesn't bite.
  */
 async function getClientIp(): Promise<string | null> {
-  const { headers } = await import("next/headers");
-  const h = await headers();
-  const xff = h.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]!.trim();
-  return h.get("x-real-ip");
+  try {
+    const { headers } = await import("next/headers");
+    const h = await headers();
+    const xff = h.get("x-forwarded-for");
+    if (xff) return xff.split(",")[0]!.trim();
+    return h.get("x-real-ip");
+  } catch {
+    // headers() throws outside a request scope (e.g. some test contexts).
+    // Degrade to the user_id arm rather than failing the join.
+    return null;
+  }
 }
 
 /**
@@ -278,36 +298,45 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
   const service = createServiceClient();
 
   // ── Rate-limit gate ──────────────────────────────────────────
+  // One RPC records the attempt and returns the in-window verdict in a SINGLE
+  // transaction. A read-then-write pair let concurrent serverless invocations
+  // all observe a sub-threshold count and pass together, and a swallowed insert
+  // error silently disabled the limiter. This is atomic and FAIL-CLOSED: any
+  // error denies the join rather than waving it through.
   const ip = await getClientIp();
-  const windowStart = new Date(Date.now() - JOIN_WINDOW_MIN * 60_000).toISOString();
-  // Count recent FAILED attempts for this user, and (separately) this IP.
-  const [userFails, ipFails] = await Promise.all([
-    service
-      .from("co_organizer_join_attempts")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .eq("succeeded", false)
-      .gte("attempted_at", windowStart),
-    ip
-      ? service
-          .from("co_organizer_join_attempts")
-          .select("id", { count: "exact", head: true })
-          .eq("ip", ip)
-          .eq("succeeded", false)
-          .gte("attempted_at", windowStart)
-      : Promise.resolve({ count: 0 }),
-  ]);
-  if ((userFails.count ?? 0) >= JOIN_MAX_FAILED || (ipFails.count ?? 0) >= JOIN_MAX_FAILED) {
+  const { data: gate, error: gateErr } = await service
+    .rpc("cojoin_record_and_check", {
+      p_user_id: user.id,
+      p_ip: ip,
+      p_window_min: JOIN_WINDOW_MIN,
+      p_user_max: JOIN_MAX_FAILED_USER,
+      p_ip_max: JOIN_MAX_FAILED_IP,
+    })
+    .maybeSingle();
+
+  if (gateErr || !gate) {
+    console.error("[joinAsCoOrganizer] rate-limit check failed:", gateErr?.message);
+    return { success: false, message: LOCKED };
+  }
+  if (gate.over_user_limit || gate.over_ip_limit) {
+    // Log WHICH arm fired so support can tell shared-venue-IP exhaustion apart
+    // from a genuine per-account brute force.
+    console.warn(
+      `[joinAsCoOrganizer] locked out (user=${gate.over_user_limit} ip=${gate.over_ip_limit})`
+    );
     return { success: false, message: LOCKED };
   }
 
-  const recordAttempt = (succeeded: boolean) =>
+  // The attempt above was recorded pessimistically as a failure; flip it once a
+  // passcode actually matches so legitimate joins don't burn the window.
+  const markAttemptSucceeded = () =>
     service
       .from("co_organizer_join_attempts")
-      .insert({ user_id: user.id, ip, succeeded })
+      .update({ succeeded: true })
+      .eq("id", gate.attempt_id)
       .then(
         () => undefined,
-        (err: unknown) => console.error("[joinAsCoOrganizer] attempt-log failed:", err)
+        (err: unknown) => console.error("[joinAsCoOrganizer] attempt-log update failed:", err)
       );
 
   // Exact match — ILIKE would allow SQL wildcard characters (%, _) to
@@ -320,13 +349,14 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     .eq("organizer_passcode", normalized)
     .maybeSingle();
 
-  if (!session) {
-    await recordAttempt(false);
-    return { success: false, message: INVALID };
-  }
+  // The pessimistic attempt row is already logged as a failure — nothing to do.
+  if (!session) return { success: false, message: INVALID };
 
-  // Prevent the primary organizer from joining their own session
+  // Prevent the primary organizer from joining their own session. The passcode
+  // was CORRECT, so clear the pessimistic failure — the limiter exists to
+  // punish wrong guesses, not an organizer typing their own code.
   if (session.created_by === user.id) {
+    await markAttemptSucceeded();
     return { success: false, message: "You are already the primary organizer of this session." };
   }
 
@@ -339,6 +369,7 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     .maybeSingle();
 
   if (existing) {
+    await markAttemptSucceeded();
     return { success: true, message: "Already a co-organizer.", sessionId: session.id };
   }
 
@@ -352,9 +383,8 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     return { success: false, message: "Failed to join session. Please try again." };
   }
 
-  // A correct passcode: log the success (so it doesn't count toward the
-  // failure window) and let the caller in.
-  await recordAttempt(true);
+  // A correct passcode: clear the pessimistic failure and let the caller in.
+  await markAttemptSucceeded();
   return { success: true, message: "Joined as co-organizer.", sessionId: session.id };
 }
 
