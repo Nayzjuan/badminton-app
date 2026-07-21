@@ -54,6 +54,18 @@ interface ManualMatchBarProps {
   onToggleDetails: () => void;
   /** id of the non-sticky details region this bar's button controls. */
   detailsId: string;
+  /**
+   * Non-zero when the last tap made a NEW pair start repeating; the value is
+   * that tap's selection epoch. Flashes the disclosure button, which is the
+   * only warning surface visible while the details are collapsed — otherwise
+   * a tap that adds a third repeat looks identical to one that adds none.
+   *
+   * A counter, not a boolean: the button persists across taps, and re-applying
+   * a class to a live node does not restart a CSS animation. Keying the button
+   * on this remounts it, and two pulsing taps in a row carry different epochs
+   * so the second one still replays.
+   */
+  pulseToken?: number;
 }
 
 export function ManualMatchBar({
@@ -69,6 +81,7 @@ export function ManualMatchBar({
   detailsOpen,
   onToggleDetails,
   detailsId,
+  pulseToken = 0,
 }: ManualMatchBarProps) {
   const filled = filledCount(slots);
   const isReady = filled === requiredPlayers;
@@ -166,11 +179,15 @@ export function ManualMatchBar({
             onClick={onToggleDetails}
             aria-expanded={detailsOpen}
             aria-controls={detailsId}
-            className="clip-cut-badge min-h-[44px] shrink-0 whitespace-nowrap border
+            key={pulseToken}
+            data-pulse={pulseToken > 0 ? "true" : undefined}
+            className={`clip-cut-badge min-h-[44px] shrink-0 whitespace-nowrap border
                        border-cc-amber/40 bg-cc-amber-dim px-2.5 font-command text-[9px]
                        uppercase tracking-[0.10em] text-cc-amber transition-colors duration-200
                        hover:bg-cc-amber/20 focus-visible:outline-none focus-visible:ring-2
-                       focus-visible:ring-cc-accent"
+                       focus-visible:ring-cc-accent ${
+                         pulseToken > 0 ? "cc-repeat-pulse motion-reduce:animate-none" : ""
+                       }`}
           >
             {detailsOpen ? (
               <>

@@ -861,3 +861,84 @@ describe("QRP-N: the marker chip's VISIBLE text", () => {
     expect(screen.getByTestId("repeat-marker-label").textContent).toBe("Opp 3rd");
   });
 });
+
+describe("QRP-F: the newly-triggered flash", () => {
+  const TWO_PAIRS = {
+    success: true as const,
+    data: {
+      partnerships: [
+        ["p1:p2", 2],
+        ["p3:p4", 5],
+      ] as [string, number][],
+      opponents: [] as [string, number][],
+    },
+  };
+
+  it("QRP-F1: the disclosure button flashes when a tap adds a repeat", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+    tapRow("Bob");
+
+    const btn = await screen.findByRole("button", { name: /details/i });
+    expect(btn.className).toContain("cc-repeat-pulse");
+    // Reduced motion is honoured both globally (globals.css collapses every
+    // animation to 0.01ms) and explicitly here.
+    expect(btn.className).toContain("motion-reduce:animate-none");
+  });
+
+  it("QRP-F2: a tap that adds no new repeat does not flash", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+    tapRow("Bob");
+    await waitFor(() => expect(screen.getByTestId("repeat-headline")).toBeInTheDocument());
+
+    // Eve trips nothing, so the surface must stay still.
+    tapRow("Eve");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /details/i }).className).not.toContain(
+        "cc-repeat-pulse"
+      )
+    );
+  });
+
+  it("QRP-F3: only the pair that is new flashes in the details list", async () => {
+    vi.mocked(getSessionPairCounts).mockResolvedValue(TWO_PAIRS);
+    renderQueue();
+    await countsLoaded();
+
+    tapRow("Alice");
+    tapRow("Bob");
+    fireEvent.click(await screen.findByRole("button", { name: /details/i }));
+    await screen.findByTestId("repeat-pair-details");
+
+    // Second pair trips on this tap; the first is already-seen information.
+    tapRow("Carol");
+    tapRow("Dave");
+
+    const panel = screen.getByTestId("repeat-pair-details");
+    const rowFor = (label: RegExp) =>
+      within(panel).getByRole("button", { name: label }).closest("li")!;
+    await waitFor(() => expect(rowFor(/Carol & Dave/).getAttribute("data-pulse")).toBe("true"));
+    expect(rowFor(/Alice & Bob/).getAttribute("data-pulse")).toBeNull();
+  });
+
+  it("QRP-F4: clearing the selection lets the same pair flash again next build", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+    tapRow("Bob");
+    expect((await screen.findByRole("button", { name: /details/i })).className).toContain(
+      "cc-repeat-pulse"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    tapRow("Alice");
+    tapRow("Bob");
+    // A fresh build episode — it is new information again.
+    expect((await screen.findByRole("button", { name: /details/i })).className).toContain(
+      "cc-repeat-pulse"
+    );
+  });
+});

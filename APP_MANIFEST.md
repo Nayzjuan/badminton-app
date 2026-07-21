@@ -1283,9 +1283,11 @@ All `{ error }` bare returns in `auth.ts` and `sessions.ts` now include `success
 
 **Tokens:** `cc-amber` is the warning. **`cc-accent` is TEAL and already means SELECTED on this screen — never used for the warning**; it marks readiness (4 of 4) only.
 
+**Newly-triggered pulse:** a pair that starts repeating on *this* tap gets a one-shot `cc-repeat-pulse` wash (0.8s amber→transparent, modelled on `leaderboard-flash`) on its detail row, and the collapsed disclosure button flashes too — that button is the only warning surface visible when the details are folded, so without it a tap that adds a third repeat looks identical to one that adds none. The flashed set is **episode-scoped** (a pair that trips, is deselected and trips again does not strobe) and fires on the same two triggers as the live region — a user tap or the one counts adoption — never on engine draft churn, since a flash on a background event just trains the organizer to ignore flashes. The global `prefers-reduced-motion` block collapses it, plus an explicit `motion-reduce:animate-none`.
+
 **Also fixed here:** at the 4-player cap unselected rows were still clickable while `togglePlayer` no-op'd (a dead tap arriving exactly when the warning says "reconsider") — rows in both lenses are now inert and `aria-disabled`, matching the checkbox that was already `disabled`; the CTA slot is reserved (`invisible`, not unmounted) from ≥1 selected so the row can't jump height on the 4th tap; `Clear` gained `min-h-[44px]`.
 
-**Tests:** `tests/unit/repeat-pairing.test.ts` (23, derivers) · `repeat-pairing-copy.test.ts` (20, wording) · `use-repeat-pairing.test.tsx` (15, episode/headline/gate/live-region) · `queue-control-repeat-pairing.test.tsx` (33, component contract incl. StrictMode convergence, sticky geometry, keyboard selection, and the "never blocks creation" invariant).
+**Tests:** `tests/unit/repeat-pairing.test.ts` (23, derivers) · `repeat-pairing-copy.test.ts` (20, wording) · `use-repeat-pairing.test.tsx` (25, episode/headline/gate/live-region/pulse) · `queue-control-repeat-pairing.test.tsx` (39, component contract incl. StrictMode convergence, sticky geometry, keyboard selection, and the "never blocks creation" invariant).
 
 ---
 

@@ -36,6 +36,8 @@ interface RepeatPairDetailsProps {
   /** Derived warnings, already avoidability-gated by the caller. */
   warnings: PairWarning[];
   nameOf: NameLookup;
+  /** Pairs that started repeating on the last tap — flashed once. */
+  pulsedPairKeys?: ReadonlySet<string>;
 }
 
 type MatchesState =
@@ -43,7 +45,13 @@ type MatchesState =
   | { status: "error" }
   | { status: "ok"; data: PairMatch[] };
 
-export function RepeatPairDetails({ id, sessionId, warnings, nameOf }: RepeatPairDetailsProps) {
+export function RepeatPairDetails({
+  id,
+  sessionId,
+  warnings,
+  nameOf,
+  pulsedPairKeys,
+}: RepeatPairDetailsProps) {
   const [expandedPairKey, setExpandedPairKey] = useState<string | null>(null);
   const [cache, setCache] = useState<Map<string, MatchesState>>(new Map());
 
@@ -146,8 +154,17 @@ export function RepeatPairDetails({ id, sessionId, warnings, nameOf }: RepeatPai
           const nameA = nameOf(w.playerIds[0]);
           const nameB = nameOf(w.playerIds[1]);
 
+          // No key games needed here: a pair only ever pulses on its FIRST
+          // appearance in an episode, so this <li> is mounting on the same
+          // commit and the animation plays from the class alone.
+          const pulsing = pulsedPairKeys?.has(w.pairKey) ?? false;
+
           return (
-            <li key={w.pairKey}>
+            <li
+              key={w.pairKey}
+              data-pulse={pulsing ? "true" : undefined}
+              className={pulsing ? "cc-repeat-pulse motion-reduce:animate-none" : undefined}
+            >
               <button
                 type="button"
                 onClick={() => toggle(w)}

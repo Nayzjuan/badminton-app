@@ -434,3 +434,111 @@ describe("useRepeatPairing — live region", () => {
     expect(result.current.announcement).toBe(spoken);
   });
 });
+
+describe("useRepeatPairing — one-shot pulse", () => {
+  const c = counts([
+    ["p1", "p2", 2],
+    ["p3", "p4", 5],
+  ]);
+
+  it("RPH-P1: a pair that starts repeating on this tap pulses once", () => {
+    const { result } = setup({
+      slots: ["p1", "p2", null, null],
+      candidateIds: ["p3", "p4", "p5"],
+      liveCounts: c,
+      selectionEpoch: 1,
+    });
+    expect([...result.current.pulsedPairKeys]).toEqual([pairKey("p1", "p2")]);
+  });
+
+  it("RPH-P2: an already-shown pair does not pulse again in the same episode", () => {
+    const props = {
+      ...BASE,
+      slots: ["p1", "p2", null, null] as Slots,
+      candidateIds: ["p3", "p4", "p5"],
+      liveCounts: c,
+      selectionEpoch: 1,
+    };
+    const { result, rerender } = setup(props);
+    expect(result.current.pulsedPairKeys.size).toBe(1);
+
+    // Next tap adds Carol & Dave — only THAT pair flashes; Alice & Bob, which
+    // the organizer has already seen, must not strobe again.
+    rerender({
+      ...props,
+      slots: ["p1", "p2", "p3", "p4"],
+      candidateIds: ["p5"],
+      selectionEpoch: 2,
+    });
+    expect([...result.current.pulsedPairKeys]).toEqual([pairKey("p3", "p4")]);
+  });
+
+  it("RPH-P3: a tap that adds no new repeat pulses nothing", () => {
+    const props = {
+      ...BASE,
+      slots: ["p1", "p2", null, null] as Slots,
+      candidateIds: ["p3", "p4", "p5"],
+      liveCounts: c,
+      selectionEpoch: 1,
+    };
+    const { result, rerender } = setup(props);
+    rerender({
+      ...props,
+      slots: ["p1", "p2", "p5", null],
+      candidateIds: ["p3", "p4"],
+      selectionEpoch: 2,
+    });
+    expect(result.current.pulsedPairKeys.size).toBe(0);
+  });
+
+  it("RPH-P4: the episode memory clears with the selection", () => {
+    const props = {
+      ...BASE,
+      slots: ["p1", "p2", null, null] as Slots,
+      candidateIds: ["p3", "p4", "p5"],
+      liveCounts: c,
+      selectionEpoch: 1,
+    };
+    const { result, rerender } = setup(props);
+    expect(result.current.pulsedPairKeys.size).toBe(1);
+
+    rerender({ ...props, slots: EMPTY_SLOTS, selectionEpoch: 2 });
+    expect(result.current.pulsedPairKeys.size).toBe(0);
+
+    // A fresh build re-flashes the same pair — it is new information again.
+    rerender({ ...props, selectionEpoch: 3 });
+    expect([...result.current.pulsedPairKeys]).toEqual([pairKey("p1", "p2")]);
+  });
+
+  it("RPH-P5: a background counts refetch never pulses", () => {
+    const props = {
+      ...BASE,
+      slots: ["p1", "p2", null, null] as Slots,
+      candidateIds: ["p3", "p4", "p5"],
+      liveCounts: c,
+      selectionEpoch: 1,
+    };
+    const { result, rerender } = setup(props);
+    expect(result.current.pulsedPairKeys.size).toBe(1);
+
+    // Same epoch, new counts object: engine draft churn must not flash — a
+    // flash on a background event trains the organizer to ignore flashes.
+    rerender({ ...props, liveCounts: counts([["p1", "p2", 9]]) });
+    expect([...result.current.pulsedPairKeys]).toEqual([pairKey("p1", "p2")]);
+  });
+
+  it("RPH-P6: a build that outran the counts fetch still pulses on adoption", () => {
+    const props = {
+      ...BASE,
+      slots: ["p1", "p2", null, null] as Slots,
+      candidateIds: ["p3", "p4", "p5"],
+      liveCounts: null,
+      selectionEpoch: 1,
+    };
+    const { result, rerender } = setup(props);
+    expect(result.current.pulsedPairKeys.size).toBe(0);
+
+    rerender({ ...props, liveCounts: c });
+    expect([...result.current.pulsedPairKeys]).toEqual([pairKey("p1", "p2")]);
+  });
+});

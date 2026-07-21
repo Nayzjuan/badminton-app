@@ -334,14 +334,15 @@ export function QueueControl({
   );
 
   const liveCounts = usePairCounts(sessionId, matchesRevision);
-  const { warnings, markers, headline, announcement, markerContext } = useRepeatPairing({
-    slots,
-    candidateIds,
-    liveCounts,
-    selectionEpoch,
-    suppressed: capSaturationActive,
-    nameOf,
-  });
+  const { warnings, markers, headline, announcement, markerContext, pulsedPairKeys } =
+    useRepeatPairing({
+      slots,
+      candidateIds,
+      liveCounts,
+      selectionEpoch,
+      suppressed: capSaturationActive,
+      nameOf,
+    });
 
   const detailsId = useId();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -378,6 +379,8 @@ export function QueueControl({
         detailsOpen={showDetails}
         onToggleDetails={() => setDetailsOpen((o) => !o)}
         detailsId={detailsId}
+        // The epoch doubles as the pulse identity — see ManualMatchBar.
+        pulseToken={pulsedPairKeys.size > 0 ? selectionEpoch : 0}
       />
 
       {/* Creation errors live BELOW the sticky bar: the bar is height-capped
@@ -398,6 +401,7 @@ export function QueueControl({
           sessionId={sessionId}
           warnings={warnings}
           nameOf={nameOf}
+          pulsedPairKeys={pulsedPairKeys}
         />
       )}
 

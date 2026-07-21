@@ -72,12 +72,26 @@ export type RepeatPairingState = {
   announcement: string;
   /** Referent for the markers; null when nothing is marked. */
   markerContext: MarkerContext | null;
+  /**
+   * Pairs that started repeating on the MOST RECENT user tap — the ones worth
+   * a one-shot flash. Scoped to a single build episode and never re-issued for
+   * a pair already shown in it.
+   */
+  pulsedPairKeys: ReadonlySet<string>;
 };
 
 const NO_MARKERS: Map<string, CandidateMarker> = new Map();
 const NO_WARNINGS: PairWarning[] = [];
+const NO_PULSE: ReadonlySet<string> = new Set();
 
 type Episode = { active: boolean; counts: PairCounts | null };
+
+/** `key` identifies the trigger that produced `fresh`; `shown` is episode memory. */
+type PulseState = {
+  key: string;
+  shown: ReadonlySet<string>;
+  fresh: ReadonlySet<string>;
+};
 
 export function useRepeatPairing(params: {
   slots: Slots;
@@ -217,5 +231,43 @@ export function useRepeatPairing(params: {
     return () => clearTimeout(timer);
   }, [selectionEpoch, countsAdopted]);
 
-  return { warnings, markers, headline, announcement, markerContext };
+  // ── 6. One-shot pulse for newly-triggered pairs ──────────────
+  // Scoped to ONE build episode: `shown` is the set of pairs already flashed
+  // during this build, so a pair that trips, is deselected, and trips again
+  // does not strobe. It resets when the selection clears.
+  //
+  // Fires on the same two triggers as the live region — a user tap, or the one
+  // counts-adoption transition — and on nothing else. Engine draft churn and
+  // queue refetches must not flash: a flash on a background event trains the
+  // organizer to ignore flashes.
+  //
+  // Derived during render rather than in an effect (the repo bans setState in
+  // effects) and threaded through state rather than a ref, so a StrictMode
+  // double-invoke recomputes the SAME answer from the same previous state
+  // instead of consuming `shown` on the first pass.
+  const pulseKey = buildActive ? `${selectionEpoch}:${countsAdopted}` : "idle";
+  const [pulse, setPulse] = useState<PulseState>({
+    key: "",
+    shown: NO_PULSE,
+    fresh: NO_PULSE,
+  });
+  let currentPulse = pulse;
+  if (pulse.key !== pulseKey) {
+    if (!buildActive || selectionEpoch === 0) {
+      currentPulse = { key: pulseKey, shown: NO_PULSE, fresh: NO_PULSE };
+    } else {
+      const freshKeys = warnings.filter((w) => !pulse.shown.has(w.pairKey)).map((w) => w.pairKey);
+      const shown = new Set(pulse.shown);
+      for (const w of warnings) shown.add(w.pairKey);
+      currentPulse = {
+        key: pulseKey,
+        shown,
+        fresh: freshKeys.length > 0 ? new Set(freshKeys) : NO_PULSE,
+      };
+    }
+    setPulse(currentPulse);
+  }
+  const pulsedPairKeys = currentPulse.fresh;
+
+  return { warnings, markers, headline, announcement, markerContext, pulsedPairKeys };
 }
