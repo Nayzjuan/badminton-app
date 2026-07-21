@@ -114,5 +114,25 @@ ALTER POLICY sessions_insert ON public.sessions
   WITH CHECK ((created_by = (select auth.uid())));
 
 -- ── (b) Realtime publication trim (zero-subscriber tables) ──────────────────
-ALTER PUBLICATION supabase_realtime DROP TABLE public.session_organizers;
-ALTER PUBLICATION supabase_realtime DROP TABLE public.match_games;
+-- Guarded for the same reason as 20260701000006: these tables were only ever
+-- publication members on production (added via the Supabase dashboard), so an
+-- unguarded DROP raises 42704 on any database built from migrations alone and
+-- aborts the whole replay. Dropping something already absent is the desired
+-- end state either way, so skipping is correct rather than merely tolerable.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['session_organizers', 'match_games'] LOOP
+    IF EXISTS (
+      SELECT 1 FROM pg_publication_rel pr
+        JOIN pg_publication p ON p.oid = pr.prpubid
+        JOIN pg_class c       ON c.oid = pr.prrelid
+        JOIN pg_namespace n   ON n.oid = c.relnamespace
+       WHERE p.pubname = 'supabase_realtime'
+         AND n.nspname = 'public' AND c.relname = t
+    ) THEN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime DROP TABLE public.%I', t);
+    END IF;
+  END LOOP;
+END $$;
