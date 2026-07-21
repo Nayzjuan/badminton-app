@@ -125,6 +125,27 @@ jobs:
       # global-setup also applies pending migrations, but this
       # layer ensures no cross-suite pollution from a prior run.
       # SKIP_DB_RESET=1 lets local devs skip the ~15s reset cost.
+      # ── 6b. TEMPORARY diagnostic ────────────────────────────
+      # The suite fails with "permission denied for table profiles" from a
+      # SERVICE-ROLE client, which should be impossible if the fresh database
+      # carries the same grants production has. Dump the actual grant state so
+      # the fix is based on evidence rather than a guess — grants are security
+      # surface and must mirror production exactly, not approximately.
+      # REMOVE once the grant baseline is settled.
+      - name: Diagnose grants (temporary)
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          DB_URL=$(grep '^DATABASE_URL=' tests/integration/.env | cut -d= -f2-)
+          echo "== roles =="
+          psql "$DB_URL" -c "select rolname, rolbypassrls, rolsuper from pg_roles where rolname in ('anon','authenticated','service_role','postgres','authenticator') order by rolname;"
+          echo "== table grants on profiles / sessions / courts =="
+          psql "$DB_URL" -c "select table_name, grantee, string_agg(distinct privilege_type,',' order by privilege_type) from information_schema.role_table_grants where table_schema='public' and table_name in ('profiles','sessions','courts') group by table_name, grantee order by table_name, grantee;"
+          echo "== count of public tables with NO grant to service_role =="
+          psql "$DB_URL" -c "select count(*) from pg_tables t where t.schemaname='public' and not exists (select 1 from information_schema.role_table_grants g where g.table_schema='public' and g.table_name=t.tablename and g.grantee='service_role');"
+          echo "== default privileges in public =="
+          psql "$DB_URL" -c "select pg_get_userbyid(defaclrole) as owner, defaclobjtype, defaclacl from pg_default_acl;"
+
       - name: Run integration tests
         run: |
           if [ -z "$SKIP_DB_RESET" ]; then
