@@ -1232,6 +1232,13 @@ export type Database = {
           p_actor_name?: string | null;
           p_is_undo?: boolean;
           p_reverses_event_id?: string | null;
+          /**
+           * Added by 20260723000001. Optional in the signature ONLY so the
+           * migration and the deploy can land in either order (see that file's
+           * header); every caller must pass it. When supplied, the RPC refuses a
+           * match that belongs to a different session.
+           */
+          p_session_id?: string | null;
         };
         Returns: void;
       };

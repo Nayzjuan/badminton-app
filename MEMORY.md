@@ -156,6 +156,99 @@ drift note above). `logMatchEvent` is best-effort — a logging failure never br
 
 ---
 
+## 🚨 TENANCY PR5 + #10 — RPC EXECUTE LOCKDOWN + LIVE-SWAP SESSION BINDING — 2026-07-23, branch `fix/tenancy-revoke-anon-mutating-rpcs`
+
+**Full write-up: `APP_MANIFEST.md` §3.22a.** Closes `TENANCY_AUDIT_2026-07-21.md` **#10** (which absorbed the
+old "PR5" sweep). **This is the most severe finding in the whole audit** — it is the only one that needs no
+account at all — and #10's entry in the audit was re-graded from 🟠 HIGH to 🔴 CRITICAL accordingly.
+
+### ⚠️⚠️ MERGING THE PR DOES NOT CLOSE THE HOLE
+
+Migrations in this project are **applied by hand** (there is no deploy automation; prod's stamps differ from
+the repo filenames). Merging ships only the TypeScript half. **Both `.sql` files must be run against prod
+`usxftpexoimletqmrggb`**, `20260723000000` first. Until then, anon EXECUTE is still live in production.
+
+### (a) 16 mutating SECDEF RPCs held `anon` EXECUTE — unauthenticated write, verified on prod
+
+Every server action here is `auth → authorize → service-role RPC`, so nobody ever treated the *function grant*
+as a boundary. But PostgREST exposes every function in `public` to whichever role holds EXECUTE, and Supabase's
+`ALTER DEFAULT PRIVILEGES` stamps `anon`/`authenticated` at `CREATE FUNCTION` time. Curl against prod, anon key,
+**no `Authorization` header**:
+
+```
+swap_player_in_active_match  →  400 P0001 MATCH_NOT_ACTIVE   ← the function's OWN raise = it executed
+<revoked control>            →  401 42501  permission denied
+```
+
+16 functions in that state (all volatile SECDEF non-trigger): `create_match_with_players`,
+`create_held_cross_court_match`, `swap_player_in_match`, `swap_player_in_active_match`, `swap_match_players`,
+`swap_teams_in_active_match`, `swap_active_from_ondeck`, `undo_swap_active_from_ondeck`, `revert_match_to_active`,
+`clear_on_deck_match_atomic`, `clear_all_unpublished_drafts`, `fix_record_swap_player`, `record_match_event`,
+`compute_session_wrapped`, `refresh_cross_session_stats`, `refresh_alltime_leaderboard`. SECDEF ⇒ RLS never
+applies, so this was anon executing the *privileged* path: match forgery, live-roster rewrites, wiping every
+unpublished draft, forging audit events under any actor name, rewriting player history, poisoning published stats.
+
+### (b) The live swaps authorized on `sessionId` and mutated by `matchId`
+
+#4 again, on writes. None of the four RPCs compared `matches.session_id` to `p_session_id` — that argument only
+drove `queue_entries` and the audit stamp. `swap_teams_in_active_match` didn't even take it; it read `session_id`
+back **out of the match** to label the event, so the audit trail faithfully recorded the *victim's* session while
+the authorization had been performed against the *attacker's*.
+
+### 🧨 THREE THINGS THAT WILL BITE THE NEXT PERSON
+
+1. **`grant to service_role` must come BEFORE the revoke.** On a from-scratch replay `proacl` is NULL, so
+   `revoke … from public` materialises `acldefault('f', owner)` first and strips `service_role` too. Every revoke
+   also spells out `from public, anon, authenticated` — on prod, PUBLIC-only would miss the direct stamps.
+2. **`!=` had to become `IS DISTINCT FROM` everywhere.** With `AND session_id = p_session_id` added, a mismatch
+   returns **no row**, so the status var is NULL — and `NULL != 'in_progress'` is NULL, which plpgsql treats as
+   false, so the old guard falls **through**. In `undo_swap_active_from_ondeck` that is the difference between a
+   fix and a *new* bug: it `RETURN`s instead of raising, and every later statement addresses rows by
+   client-supplied match ids. `NOT FOUND` is **not** a substitute — the two-match functions lock in id order to
+   avoid deadlock, so it refers to whichever SELECT ran last.
+3. **`DROP` + `CREATE` resets the ACL.** `swap_teams_in_active_match` needed a new param (`CREATE OR REPLACE`
+   can't add one), so it is dropped and recreated — and the default privileges re-stamp anon/authenticated on the
+   new function. `20260723000001` therefore **re-issues** its own grant/revoke pair after the CREATE, with a
+   `DO` block asserting exactly one function of that name survives (two ⇒ `PGRST203`).
+
+**Deliberately keeping their grants:** `lookup_active_session` (anon — the public join path, and it's STABLE so
+the catalog sweep doesn't see it) and the four RLS helpers `is_club_member` / `session_access_level` /
+`has_match_access` / `is_session_organizer` — **RLS policies invoke them as the calling role; revoking them takes
+the whole app down.** Trigger functions are excluded (`prorettype <> 'trigger'::regtype`): not PostgREST-callable,
+and firing a trigger doesn't re-check EXECUTE. Inner `PERFORM record_match_event(...)` calls are unaffected — a
+call from inside a SECDEF function runs as that function's owner.
+
+**`p_session_id` is `DEFAULT NULL` on purpose.** Migrations are hand-applied while Vercel auto-deploys on merge,
+so the halves land in either order; a *required* new param breaks **both** directions, appended-optional breaks
+neither. Overloads aren't viable (PostgREST answers `PGRST203`). **Follow-up owed:** once this is deployed
+everywhere, a migration making `p_session_id` NULL-rejecting.
+
+**TS layer:** `allMatchesInSession(db, sessionId, matchIds)` on all five call sites in `live-match-swap.ts`,
+returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence
+oracle. `undoLiveSwap`'s `team_swap` branch is knowingly unguarded because it *derives* `session_id` from the
+match it already read; it passes `p_session_id` so every call site supplies the arg.
+
+**Tests:** integration LMS-14…18 (per-RPC forgery, both-foreign, the realistic **mixed** own/foreign pair, and
+the silent-by-design undo asserted on *state*) · `tests/unit/live-swap-session-binding.test.ts` 14 tests where
+**every assertion checks the RPC was NOT called** (asserting on the returned message stays green with the entire
+guard deleted) · `schema-parity.test.ts` gains a catalog sweep asserting zero anon/authenticated-reachable
+volatile SECDEF non-trigger functions, plus a signature pin on the four rewritten RPCs.
+
+**Validation:** `tsc --noEmit` 0 · scoped `eslint` 0 · unit **858 passed / 1 skipped, 49 files** · integration
+**236 passed, 21 files on a real from-scratch `supabase db reset` replay** · `next build` clean · anon curl
+against the fresh local DB → `42501` · **4 SQL + 5 TS mutants, all killed**.
+
+Two harness lessons banked: the mutation runner falsely reported a SURVIVOR because its regex
+`Tests\s+…(\d+) passed` never matched vitest's `Tests 1 failed | 18 skipped (19)` (no "passed" token) — now
+`Tests[^\n]*?(\d+) failed` with a "no summary" diagnostic; and the first LMS-18 kill was **incidental** (a
+duplicate-key collision, not the state assertion), so a non-colliding forgery would have slipped through — hence
+the added non-colliding variant.
+
+**Still open after this:** PR4 (#7/#8 — private `session-events` broadcast + `profiles_select`) · #9 (LOW,
+optional) · the `p_session_id` NULL-rejecting follow-up.
+
+---
+
 ## 🔒 TENANCY PR4a — PRIVATE `session-events` BROADCAST — 2026-07-23, branch `fix/tenancy-realtime-private-broadcast`
 
 Closes finding **#7**. **Held unmerged** — see "Deploy prerequisites" below; the migration must be applied by
@@ -233,6 +326,7 @@ all** — so the baseline migration's "load-bearing for logged-out leaderboard/W
 naive shared-club `EXISTS` **would** break delegated organizers: `session_access_level` grants `'organizer'`
 via a `session_organizers` row with no `club_members` row, which is exactly how QR-invite delegation works —
 they would see a roster of blank names. The predicate needs a session-scoped arm too.
+
 
 
 ---
@@ -342,11 +436,12 @@ RPCs at `20260617000000_match_provenance_audit.sql:485`, `:556`, `:626`. Fix at 
 already exists at `fix-player-record.ts:117`. Recorded as **#10** in `TENANCY_AUDIT_2026-07-21.md`. Higher
 priority than PR4: it corrupts live state rather than leaking a read.
 
-**Still open after PR3:** **#10** (above, next) · PR4 (#7/#8 — private `session-events` broadcast +
-`profiles_select`; note `realtime.messages` has `rls=true` and **zero policies**, so the policy migration must
-land *before* any `private: true` client change, and the topic must be gated at `session_access_level(...) IS
-NOT NULL` because `player-dashboard.tsx:149` subscribes **players** to it, not just organizers) · PR5 (~24
-anon-EXECUTE SECURITY DEFINER mutators + `refresh_alltime_leaderboard`) · #9 (LOW, optional).
+**Still open after PR3:** ~~#10~~ + ~~PR5~~ — **both shipped together**, see the PR5/#10 section above (and note
+the severity was far worse than this paragraph guessed: it turned out to need no login at all) · PR4 (#7/#8 —
+private `session-events` broadcast + `profiles_select`; note `realtime.messages` has `rls=true` and **zero
+policies**, so the policy migration must land *before* any `private: true` client change, and the topic must be
+gated at `session_access_level(...) IS NOT NULL` because `player-dashboard.tsx:149` subscribes **players** to it,
+not just organizers) · #9 (LOW, optional).
 
 **Two knowingly-accepted minors from PR3:** `isQueuedInSession` duplicates `isPlayerInSessionScope` in
 `_shared` (kept local on purpose — see the publication rule above), and a user holding a `queue_entries` row

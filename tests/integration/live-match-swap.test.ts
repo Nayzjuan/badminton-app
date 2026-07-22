@@ -47,18 +47,18 @@ afterEach(async () => {
  *   organizer + session + court + 4 players + in_progress match
  * Returns all IDs needed by LMS tests.
  */
-async function setupActiveMatch() {
+async function setupActiveMatch(tag = "") {
   const db = serviceClient();
 
-  const org = await makeProfile({ faker, skill: "intermediate", displayName: "Organizer" });
+  const org = await makeProfile({ faker, skill: "intermediate", displayName: `Organizer${tag}` });
   const session = await makeSession({ faker, organizer: org.id });
   const court = await makeCourt({ sessionId: session.id, name: "Court 1", status: "in_use" });
 
   // 4 players — 2 per team
-  const a1 = await makeProfile({ faker, skill: "intermediate", displayName: "A1" });
-  const a2 = await makeProfile({ faker, skill: "intermediate", displayName: "A2" });
-  const b1 = await makeProfile({ faker, skill: "intermediate", displayName: "B1" });
-  const b2 = await makeProfile({ faker, skill: "intermediate", displayName: "B2" });
+  const a1 = await makeProfile({ faker, skill: "intermediate", displayName: `A1${tag}` });
+  const a2 = await makeProfile({ faker, skill: "intermediate", displayName: `A2${tag}` });
+  const b1 = await makeProfile({ faker, skill: "intermediate", displayName: `B1${tag}` });
+  const b2 = await makeProfile({ faker, skill: "intermediate", displayName: `B2${tag}` });
 
   // Queue entries — all in 'playing' status (they're in an active match)
   await makeQueueEntry({ sessionId: session.id, playerId: a1.id, status: "playing" });
@@ -625,5 +625,287 @@ describe("LMS-13: undo_swap_active_from_ondeck — silently aborts if match adva
     });
     // RPC returns void without raising — no error
     expect(error).toBeNull();
+  });
+});
+
+// ============================================================
+// LMS-14 … LMS-19 — cross-session binding (TENANCY_AUDIT #10)
+// ============================================================
+// Added with 20260723000001. Before that migration every one of these calls
+// SUCCEEDED and mutated the victim's live match: the RPCs looked matches up by
+// `WHERE id = p_match_id` alone, and `p_session_id` only drove the
+// `queue_entries` writes and the audit stamp. The organizer gate in
+// src/app/actions/live-match-swap.ts was therefore authorizing session A while
+// the RPC operated on session B.
+//
+// Each test is built so the binding is the ONLY thing wrong — the players are
+// really in the match, the replacement is really waiting in the caller's own
+// session, the statuses are really right. That is what makes them regression
+// tests rather than incidental failures: revert the `AND session_id =
+// p_session_id` predicate and they go green again by mutating the victim.
+// ============================================================
+
+/** A second, unrelated session with its own organizer, players and matches. */
+async function setupTwoSessions() {
+  // The tags are not cosmetic: `profiles` carries a unique index on the active
+  // display name, so two un-tagged setupActiveMatch() calls collide inside
+  // handle_new_user and surface as GoTrue's opaque "Database error creating new
+  // user" rather than as a duplicate-key error.
+  const victim = await setupActiveMatch("-V");
+  const attacker = await setupActiveMatch("-A");
+  return { victim, attacker, db: victim.db };
+}
+
+// ─────────────────────────────────────────────────────────────
+// LMS-14: swap_player_in_active_match — cross-session
+// ─────────────────────────────────────────────────────────────
+
+describe("LMS-14: swap_player_in_active_match — refuses a match from another session", () => {
+  it("raises MATCH_NOT_ACTIVE and leaves the victim's roster untouched", async () => {
+    const { db, victim, attacker } = await setupTwoSessions();
+
+    // Waiting in the ATTACKER's session, so the queue lookup would succeed.
+    const plant = await makeProfile({ faker, displayName: "Plant" });
+    await makeQueueEntry({ sessionId: attacker.session.id, playerId: plant.id, status: "waiting" });
+
+    const { error } = await db.rpc("swap_player_in_active_match", {
+      p_match_id: victim.match.id, // ← session B's match
+      p_out_player_id: victim.a1.id,
+      p_in_player_id: plant.id,
+      p_session_id: attacker.session.id, // ← authorized for session A
+      p_team: "a",
+    });
+    expect(error?.message).toContain("MATCH_NOT_ACTIVE");
+
+    // The victim's original player is still on court; the plant never got in.
+    const { data: roster } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", victim.match.id);
+    const ids = (roster ?? []).map((r) => r.player_id);
+    expect(ids).toContain(victim.a1.id);
+    expect(ids).not.toContain(plant.id);
+  });
+
+  it("still works when the session and the match agree", async () => {
+    const { db, victim } = await setupTwoSessions();
+    const plant = await makeProfile({ faker, displayName: "Legit" });
+    await makeQueueEntry({ sessionId: victim.session.id, playerId: plant.id, status: "waiting" });
+
+    const { error } = await db.rpc("swap_player_in_active_match", {
+      p_match_id: victim.match.id,
+      p_out_player_id: victim.a1.id,
+      p_in_player_id: plant.id,
+      p_session_id: victim.session.id,
+      p_team: "a",
+    });
+    expect(error).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// LMS-15: swap_teams_in_active_match — cross-session
+// ─────────────────────────────────────────────────────────────
+
+describe("LMS-15: swap_teams_in_active_match — refuses a match from another session", () => {
+  it("raises MATCH_NOT_ACTIVE and leaves the team assignments untouched", async () => {
+    const { db, victim, attacker } = await setupTwoSessions();
+
+    const { error } = await db.rpc("swap_teams_in_active_match", {
+      p_match_id: victim.match.id,
+      p_player_a_id: victim.a1.id,
+      p_player_b_id: victim.b1.id,
+      p_session_id: attacker.session.id,
+    });
+    expect(error?.message).toContain("MATCH_NOT_ACTIVE");
+
+    const { data: rows } = await db
+      .from("match_players")
+      .select("player_id, team")
+      .eq("match_id", victim.match.id);
+    const teamOf = (id: string) => (rows ?? []).find((r) => r.player_id === id)?.team;
+    expect(teamOf(victim.a1.id)).toBe("a");
+    expect(teamOf(victim.b1.id)).toBe("b");
+  });
+
+  // The parameter is DEFAULT NULL so that 20260723000001 and the deploy that
+  // starts passing it can land in either order. If someone later makes it
+  // required without checking, this is what breaks first.
+  it("keeps working when p_session_id is omitted entirely", async () => {
+    const { db, victim } = await setupTwoSessions();
+
+    const { error } = await db.rpc("swap_teams_in_active_match", {
+      p_match_id: victim.match.id,
+      p_player_a_id: victim.a1.id,
+      p_player_b_id: victim.b1.id,
+    });
+    expect(error).toBeNull();
+
+    const { data: rows } = await db
+      .from("match_players")
+      .select("player_id, team")
+      .eq("match_id", victim.match.id);
+    const teamOf = (id: string) => (rows ?? []).find((r) => r.player_id === id)?.team;
+    expect(teamOf(victim.a1.id)).toBe("b");
+    expect(teamOf(victim.b1.id)).toBe("a");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// LMS-16 / LMS-17: swap_active_from_ondeck — cross-session
+// ─────────────────────────────────────────────────────────────
+
+/** Adds a pending on-deck match to an existing session scenario. */
+async function addOnDeckMatch(sessionId: string, tag = "") {
+  const od = await makeProfile({ faker, displayName: `OnDeck${tag}` });
+  const spare = await makeProfile({ faker, displayName: `Spare${tag}` });
+  const odB1 = await makeProfile({ faker, displayName: `OdB1${tag}` });
+  const odB2 = await makeProfile({ faker, displayName: `OdB2${tag}` });
+  const fill = await makeProfile({ faker, displayName: `Fill${tag}` });
+
+  for (const p of [od, spare, odB1, odB2]) {
+    await makeQueueEntry({ sessionId, playerId: p.id, status: "on_deck" });
+  }
+  await makeQueueEntry({ sessionId, playerId: fill.id, status: "waiting" });
+
+  const match = await makeMatch({
+    sessionId,
+    teamA: [od.id, spare.id],
+    teamB: [odB1.id, odB2.id],
+    status: "pending",
+  });
+  return { match, od, fill };
+}
+
+describe("LMS-16: swap_active_from_ondeck — refuses when both matches are another session's", () => {
+  it("raises MATCH_NOT_ACTIVE and moves nobody", async () => {
+    const { db, victim, attacker } = await setupTwoSessions();
+    const vod = await addOnDeckMatch(victim.session.id, "-V");
+
+    const { error } = await db.rpc("swap_active_from_ondeck", {
+      p_active_match_id: victim.match.id,
+      p_out_player_id: victim.a1.id,
+      p_ondeck_player_id: vod.od.id,
+      p_ondeck_match_id: vod.match.id,
+      p_fill_player_id: vod.fill.id,
+      p_session_id: attacker.session.id,
+    });
+    expect(error?.message).toContain("MATCH_NOT_ACTIVE");
+
+    const { data: roster } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", victim.match.id);
+    expect((roster ?? []).map((r) => r.player_id)).toContain(victim.a1.id);
+  });
+});
+
+describe("LMS-17: swap_active_from_ondeck — refuses a MIXED pair", () => {
+  // The realistic attack: an organizer of session A, using their own real
+  // on-deck match, reaches into session B's live match to pull a player out.
+  // The active lookup binds to A and finds nothing, so the status is NULL —
+  // which is why every guard is `IS DISTINCT FROM` and not `!=`.
+  it("raises MATCH_NOT_ACTIVE when only the on-deck match belongs to the caller", async () => {
+    const { db, victim, attacker } = await setupTwoSessions();
+    const aod = await addOnDeckMatch(attacker.session.id, "-A");
+
+    const { error } = await db.rpc("swap_active_from_ondeck", {
+      p_active_match_id: victim.match.id, // session B
+      p_out_player_id: victim.a1.id,
+      p_ondeck_player_id: aod.od.id,
+      p_ondeck_match_id: aod.match.id, // session A
+      p_fill_player_id: aod.fill.id,
+      p_session_id: attacker.session.id,
+    });
+    expect(error?.message).toContain("MATCH_NOT_ACTIVE");
+
+    const { data: roster } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", victim.match.id);
+    const ids = (roster ?? []).map((r) => r.player_id);
+    expect(ids).toContain(victim.a1.id);
+    expect(ids).not.toContain(aod.od.id);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// LMS-18: undo_swap_active_from_ondeck — cross-session
+// ─────────────────────────────────────────────────────────────
+
+describe("LMS-18: undo_swap_active_from_ondeck — refuses a match from another session", () => {
+  // The one where the NULL semantics decide correctness. This RPC RETURNs
+  // instead of raising, so `error` is null either way and only the state tells
+  // you whether the guard held. Under the old `v_active_status != 'in_progress'`
+  // spelling a NULL status makes the IF condition NULL — plpgsql treats that as
+  // false — and execution falls through to the DELETE/INSERT pair, which
+  // addresses rows by the client-supplied match ids and would have succeeded.
+  it("returns without error AND without mutating the victim's roster", async () => {
+    const { db, victim, attacker } = await setupTwoSessions();
+    const vod = await addOnDeckMatch(victim.session.id, "-V");
+
+    const before = await db
+      .from("match_players")
+      .select("player_id, team")
+      .eq("match_id", victim.match.id)
+      .order("player_id");
+
+    const { error } = await db.rpc("undo_swap_active_from_ondeck", {
+      p_active_match_id: victim.match.id,
+      p_out_player_id: victim.a1.id,
+      p_ondeck_player_id: vod.od.id,
+      p_ondeck_match_id: vod.match.id,
+      p_fill_player_id: vod.fill.id,
+      p_session_id: attacker.session.id,
+      p_out_team: "a",
+      p_ondeck_team: "a",
+    });
+    expect(error).toBeNull(); // silent by design
+
+    const after = await db
+      .from("match_players")
+      .select("player_id, team")
+      .eq("match_id", victim.match.id)
+      .order("player_id");
+    expect(after.data).toEqual(before.data);
+  });
+
+  // The case above dies on a duplicate key, which is a real kill but an
+  // incidental one — it only happens because the forged arguments collide with
+  // a row already in the match. The finding is that the undo mutates SILENTLY,
+  // so here the arguments are chosen so that an unbound RPC would succeed
+  // cleanly: the player being written in is a stranger to the match, and the
+  // player being written out really is on court. Drop the session predicate and
+  // this reports error === null while a1 is quietly swapped for an outsider —
+  // it is the state assertion, not the error assertion, that fails.
+  it("does not silently replace a player when the forged ids cannot collide", async () => {
+    const { db, victim, attacker } = await setupTwoSessions();
+    const vod = await addOnDeckMatch(victim.session.id, "-V");
+    const intruder = await makeProfile({ faker, displayName: "Intruder" });
+    await makeQueueEntry({
+      sessionId: attacker.session.id,
+      playerId: intruder.id,
+      status: "waiting",
+    });
+
+    const { error } = await db.rpc("undo_swap_active_from_ondeck", {
+      p_active_match_id: victim.match.id,
+      p_out_player_id: intruder.id, // written INTO the victim's live match
+      p_ondeck_player_id: victim.a1.id, // written OUT of it
+      p_ondeck_match_id: vod.match.id,
+      p_fill_player_id: vod.od.id,
+      p_session_id: attacker.session.id,
+      p_out_team: "a",
+      p_ondeck_team: "a",
+    });
+    expect(error).toBeNull();
+
+    const { data: roster } = await db
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", victim.match.id);
+    const ids = (roster ?? []).map((r) => r.player_id);
+    expect(ids).toContain(victim.a1.id);
+    expect(ids).not.toContain(intruder.id);
   });
 });

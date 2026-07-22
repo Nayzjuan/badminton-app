@@ -1225,7 +1225,8 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 **Sheet structure:** Shadcn `Sheet` right-drawer (same pattern as `SwapSheet`). 3 labelled sections: "Switch Teams" (opposite-team only) / "On-Deck" (grouped) / "Waiting Queue" (by wait time). Empty state if no candidates exist.
 
 **Guards (server-side):**
-- `MATCH_NOT_ACTIVE` → match is no longer in_progress — close sheet
+> Every match id is also bound to the authorized session at **both** layers as of 2026-07-23 — see **§3.22a** before touching these actions or their RPCs.
+- `MATCH_NOT_ACTIVE` → match is no longer in_progress, **or does not belong to this session** — close sheet
 - `PLAYER_NOT_IN_MATCH` → player already moved — close sheet + info toast
 - `PLAYER_UNAVAILABLE` → queue player taken — keep sheet open, re-pick
 - `ONDECK_MATCH_STARTED` → on-deck match promoted mid-confirm — close sheet
@@ -1238,6 +1239,37 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 **`PlayerRowDark` changes:** `onLongPress` prop adds pointer-event handlers + keyboard fallback (Enter/Space fires immediately). `lp-hold` CSS class applied during the hold for visual feedback. Non-interactive rows restore `hover:bg-cc-border`.
 
 **Migration `20260601000000_live_match_player_swap.sql` applied to Supabase production ✅ (2026-06-01).**
+
+---
+
+### 3.22a RPC execute lockdown + live-swap session binding (2026-07-23)
+
+**Files:** `src/app/actions/live-match-swap.ts`, `src/types/database.ts`. Migrations `20260723000000` (revokes) + `20260723000001` (session binding).
+
+**Why (`TENANCY_AUDIT_2026-07-21.md` #10) — two stacked defects.**
+
+**(a) The mutating RPCs were reachable from the browser.** Every server action here is written `auth → authorize → service-role RPC`, so the function grants were never treated as a boundary. But PostgREST exposes everything in `public` to whichever role holds `EXECUTE`, and Supabase's `ALTER DEFAULT PRIVILEGES` stamps `anon` + `authenticated` EXECUTE at `CREATE FUNCTION` time. Verified against prod with nothing but the anon key and **no `Authorization` header**: `POST /rpc/swap_player_in_active_match` answered `400 P0001 MATCH_NOT_ACTIVE` — the function's own `RAISE`, i.e. execution reached the business logic and failed only because that match wasn't live. A correctly-revoked control answered `401 42501`. The catalog sweep found **16** volatile `SECURITY DEFINER` non-trigger functions in that state: `create_match_with_players`, `create_held_cross_court_match`, `swap_player_in_match`, `swap_player_in_active_match`, `swap_match_players`, `swap_teams_in_active_match`, `swap_active_from_ondeck`, `undo_swap_active_from_ondeck`, `revert_match_to_active`, `clear_on_deck_match_atomic`, `clear_all_unpublished_drafts`, `fix_record_swap_player`, `record_match_event`, `compute_session_wrapped`, `refresh_cross_session_stats`, `refresh_alltime_leaderboard`. SECDEF means RLS never applies, so this was anon executing the *privileged* path — match forgery, live-roster rewrites, draft deletion, audit-event forgery with any actor name, historical-record rewrites, stats poisoning, all with no account.
+
+**(b) The live swaps authorized on `sessionId` but mutated by `matchId`.** Each action gates on `isSessionOrganizer(user.id, sessionId)` and then calls an RPC keyed on a *separately* client-supplied `matchId`. None of the four RPCs compared `matches.session_id` to `p_session_id` — that argument drove only the `queue_entries` writes and the audit stamp. `swap_teams_in_active_match` didn't even take it: it read `session_id` back *out of the match* to label the event, so **the audit trail faithfully recorded the victim's session while the authorization had been performed against the attacker's**. Same authorize-on-A/operate-on-B shape as §3.23a's `getMatchEvents`, but on writes.
+
+**What shipped.**
+
+| Layer | Change |
+| --- | --- |
+| `20260723000000` | 16 × (`grant execute … to service_role;` **then** `revoke execute … from public, anon, authenticated;`) + `DO`-block assertions + `NOTIFY pgrst`. Grant **first**: on a from-scratch replay `proacl` is NULL, so the revoke materialises `acldefault` and would otherwise strip `service_role` too (see §3.8d and `20260722000004`). |
+| `20260723000001` | `AND session_id = p_session_id` on every match lookup in the four live-swap RPCs; `swap_teams_in_active_match` gains `p_session_id uuid DEFAULT NULL`. |
+| `live-match-swap.ts` | `allMatchesInSession(db, sessionId, matchIds)` pre-check on all five call sites, returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence oracle. |
+
+**What deliberately keeps its grants:** `lookup_active_session` (anon — the public join path) and the four RLS helpers `is_club_member` / `session_access_level` / `has_match_access` / `is_session_organizer` (anon + authenticated — **RLS policies invoke them as the calling role; revoking them takes the whole app down**). Trigger functions are excluded by `prorettype <> 'trigger'::regtype`: they aren't callable over PostgREST and firing a trigger doesn't re-check EXECUTE, so their grants are inert. Inner `PERFORM record_match_event(...)` calls are unaffected — a call from inside a SECDEF function runs as that function's owner.
+
+**Two non-obvious traps, both load-bearing:**
+
+1. **`!=` had to become `IS DISTINCT FROM`.** With `AND session_id = p_session_id` added, a mismatch yields *no row*, so the status variable is NULL — and `NULL != 'in_progress'` is NULL, which plpgsql treats as false, so the old guard falls **through**. In `undo_swap_active_from_ondeck` that is the difference between a fix and a new bug, because it `RETURN`s instead of raising and every later statement addresses rows by client-supplied match ids. `NOT FOUND` is not a substitute: the two-match functions lock in id order to avoid deadlock, so it refers to whichever `SELECT` ran last.
+2. **`DROP` + `CREATE` resets the ACL.** `swap_teams_in_active_match` needed a new parameter, which `CREATE OR REPLACE` cannot do, so it is dropped and recreated — and Supabase's default privileges re-stamp `anon`/`authenticated` on the new function. `20260723000001` therefore **re-issues** its own grant/revoke pair after the `CREATE`. A `DO` block asserts exactly one function of that name survives (two would be `PGRST203`).
+
+**Why `p_session_id` is optional.** Migrations here are applied **by hand** while Vercel auto-deploys on merge, so the two halves can land in either order. A *required* new parameter breaks both directions; appended as `DEFAULT NULL` it breaks neither, and the predicate is written `AND (p_session_id IS NULL OR session_id = p_session_id)`. Every caller passes it today — `undoLiveSwap`'s `team_swap` branch derives it from the match it already read. A follow-up migration should make it NULL-rejecting once this is deployed everywhere.
+
+**Tests:** `tests/integration/live-match-swap.test.ts` LMS-14…18 (cross-session forgery per RPC, both-foreign, the realistic **mixed** own/foreign pair, and the silent-by-design undo asserted on *state* rather than the return value — plus a non-colliding variant, because the first undo test was being killed incidentally by a duplicate-key collision); `tests/unit/live-swap-session-binding.test.ts` (14 tests, **every assertion checks the RPC was not called** — asserting on the returned message alone stays green with the whole guard deleted); `tests/integration/schema-parity.test.ts` gains a catalog sweep asserting **no** volatile non-trigger SECDEF function is anon/authenticated-reachable, plus a signature pin on the four rewritten RPCs. Validated on a real from-scratch `supabase db reset` replay (236 integration tests green) with an anon curl against the fresh DB returning `42501`; 4 SQL + 5 TS mutants, all killed.
 
 ---
 

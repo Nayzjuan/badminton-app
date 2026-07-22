@@ -4,7 +4,9 @@
 
 **No. Club/session segregation is not sound today — a logged-in user (including a throwaway anonymous account) can reach data and even take over accounts they were never granted.** The DB's RLS is well-built and its helper functions are correct, but the application layer routinely bypasses RLS with the service-role client and then authorizes on the *wrong identifier*, so the RLS boundary is defeated from above. The environment currently has exactly **one club (CHILLAX, 183 active members, 23 sessions)**, which masks every *cross-club* finding — but several holes are exploitable **right now, within that one club**, and the rest go live the instant a second club onboards.
 
-**The single most important thing to fix:** the **PIN account-takeover chain** in `src/app/actions/profile.ts`. Those four organizer actions verify that the caller organizes *some* session (the `sessionId` argument) but never verify that the *target* `userId` has anything to do with that session or its club. Combined with the ability for any authenticated user to self-provision an organizer session (`createSession` with no `clubId`), this lets anyone read or overwrite the PIN of any of the 183 real members — and since a name+PIN drives `reconnectPlayer`'s identity migration, that is full account takeover. Fix the authorize-on-A/operate-on-B decoupling first; everything else is read-only leakage by comparison.
+> **Update 2026-07-23 — the headline changed.** A finding that surfaced *after* this verdict was written (**#10**) is worse than everything below it: **16 mutating `SECURITY DEFINER` RPCs hold `EXECUTE` for `anon`**, so match creation, live-roster rewrites, draft deletion, audit-event forgery and stats recomputation are reachable over PostgREST with the public anon key and **no login at all** — verified by curl against prod. Everything else in this audit requires an account. Fix #10 first; the rest of this ordering is otherwise unchanged.
+
+**The single most important *authenticated* hole:** the **PIN account-takeover chain** in `src/app/actions/profile.ts`. Those four organizer actions verify that the caller organizes *some* session (the `sessionId` argument) but never verify that the *target* `userId` has anything to do with that session or its club. Combined with the ability for any authenticated user to self-provision an organizer session (`createSession` with no `clubId`), this lets anyone read or overwrite the PIN of any of the 183 real members — and since a name+PIN drives `reconnectPlayer`'s identity migration, that is full account takeover. Fix the authorize-on-A/operate-on-B decoupling first; everything else is read-only leakage by comparison.
 
 ---
 
@@ -98,18 +100,39 @@ Verified live grants (`pg_proc.proacl`): all three are `SECURITY DEFINER` and ho
 - WALRUS skips RLS on DELETE; with no filter, every authenticated subscriber gets a DELETE event for any `match_players` row removed platform-wide. But the table is REPLICA IDENTITY DEFAULT with PK `id` only, so the payload is just an opaque row UUID — no player, match, or team. Leak is timing/volume of teardowns, nothing identifying.
 - **Fix (optional):** Drive roster refresh off the already-subscribed `matches` stream and drop `match_players` from the realtime publication, or accept it. Low priority.
 
-### #10 — Live-match swaps authorize on `sessionId` but MUTATE by `matchId`  🟠 HIGH · cross-session WRITE TODAY
-**Files:** `src/app/actions/live-match-swap.ts:104→124`, `:206→210`, `:279→284`; RPCs in `supabase/migrations/20260617000000_match_provenance_audit.sql:485`, `:556`, `:626`
+### #10 — 16 mutating `SECURITY DEFINER` RPCs are callable with the **anon** key, and the live-swap RPCs mutate a match they never bound to the authorized session  🔴 CRITICAL · UNAUTHENTICATED WRITE TODAY
+**Files:** `src/app/actions/live-match-swap.ts:104→124`, `:206→210`, `:279→284`; RPCs in `supabase/migrations/20260617000000_match_provenance_audit.sql:485`, `:556`, `:626` (plus 13 more across the migration history)
 
-*Found 2026-07-23 during the PR3 review, not in the original sweep.* **Exactly the #4 defect, but on writes rather than reads** — and unlike #4 there is no second id to filter on, so the binding has to be added.
+*Found 2026-07-23 during the PR3 review, not in the original sweep. Originally filed as "🟠 HIGH · cross-session write by an organizer"; **the severity was raised after a live probe against prod showed no login is required at all**.*
 
-- **What breaks:** each action gates on `isSessionOrganizer(user.id, sessionId)` and then calls a `SECURITY DEFINER` RPC keyed on a *separately* client-supplied `matchId`. **Verified: none of the three RPCs ever compares `matches.session_id` to `p_session_id`.** They lock and mutate `WHERE id = p_match_id`; `p_session_id` is used only for the `queue_entries` reads/writes and the audit event, so it silently describes a *different* session from the one being mutated. The TS layer does not bind them either — `swapPlayerInActiveMatch`'s pre-read is `.eq("match_id", matchId).eq("player_id", outPlayerId)`, with no session predicate.
+There are **two independent defects stacked on the same code path**, and the first one removes the "must be an organizer" precondition from the second.
+
+**(a) The RPCs are reachable from the browser with the public anon key.** Every server action in this app is written as `auth → authorize → service-role RPC`, so the RPC grants were never treated as a boundary. But PostgREST exposes every function in `public` to whichever role holds `EXECUTE`, and Supabase's `ALTER DEFAULT PRIVILEGES` stamps `anon` + `authenticated` EXECUTE on each function at `CREATE FUNCTION` time. **Verified against prod by curl with nothing but `NEXT_PUBLIC_SUPABASE_ANON_KEY` and no `Authorization` header:**
+
+```
+POST /rest/v1/rpc/swap_player_in_active_match  →  400  {"code":"P0001","message":"MATCH_NOT_ACTIVE"}   ← reached the body
+POST /rest/v1/rpc/<control, correctly revoked>  →  401  {"code":"42501","message":"permission denied for function …"}
+```
+
+`P0001 MATCH_NOT_ACTIVE` is the function's *own* `RAISE`, i.e. execution got past the privilege check, past the row lock, and into the business logic — it failed only because the match id I supplied was not live. A real (public, from `/tv/[id]`) match id would have gone through. A catalog sweep found the same exposure on **16 volatile SECDEF functions**: `create_match_with_players`, `create_held_cross_court_match`, `swap_player_in_match`, `swap_player_in_active_match`, `swap_match_players`, `swap_teams_in_active_match`, `swap_active_from_ondeck`, `undo_swap_active_from_ondeck`, `revert_match_to_active`, `clear_on_deck_match_atomic`, `clear_all_unpublished_drafts`, `fix_record_swap_player`, `record_match_event`, `compute_session_wrapped`, `refresh_cross_session_stats`, `refresh_alltime_leaderboard`.
+
+Because they are SECURITY DEFINER they run as the owner and **RLS never applies**, so this is not "anon can do what anon may do" — it is anon executing the privileged path. With no account at all someone can create matches, rewrite live rosters, reopen completed matches, wipe every unpublished draft in the club, forge audit events with any actor name, rewrite a player's historical record, and recompute/poison published stats.
+
+**(b) The live-swap RPCs authorize on `sessionId` but mutate by `matchId`** — exactly the #4 defect, but on writes, and with no second id to filter on, so the binding has to be added. Each action gates on `isSessionOrganizer(user.id, sessionId)` and then calls an RPC keyed on a *separately* client-supplied `matchId`. **Verified: none of the three RPCs ever compares `matches.session_id` to `p_session_id`.** They lock and mutate `WHERE id = p_match_id`; `p_session_id` drives only the `queue_entries` reads/writes and the audit stamp, so it silently describes a *different* session from the one being mutated.
   - `swap_player_in_active_match` (:485) — `DELETE FROM match_players`, `INSERT`, `UPDATE matches` on the foreign match.
-  - `swap_teams_in_active_match` (:556) — **does not even take `p_session_id`**; it reads `session_id` out of the match purely to stamp the audit event. Nothing at either layer ties the match to the authorized session.
-  - `swap_active_from_ondeck` (:626) — two client-supplied match ids, both mutated, neither bound.
-- **Who / today:** any organizer of any session (including a self-provisioned one, #2) can rewrite the live roster of a match in someone else's session — pulling a player off court mid-game and substituting one of *their own* waiting players. Cross-session today within CHILLAX; cross-club at a second club. The `MATCH_NOT_ACTIVE` / `PLAYER_UNAVAILABLE` guards constrain *when* it works, not *whose* match.
-- **Why it is worse than #4:** #4 leaked an audit trail; this corrupts live match state and the derived stats, and it is not undoable by the victim organizer.
-- **Fix:** bind at both layers. In SQL, add `AND session_id = p_session_id` to the match lookup (and give `swap_teams_in_active_match` a `p_session_id` parameter) so the RPC raises rather than mutating. In TS, mirror the guard that already exists at `src/app/actions/fix-player-record.ts:117` — `if (match.session_id !== sessionId) return { success:false, … }`. Audit the other `p_match_id` RPCs for the same shape while in there.
+  - `swap_teams_in_active_match` (:556) — **does not even take `p_session_id`**; it reads `session_id` back *out of the match* purely to stamp the audit event, so the audit trail faithfully recorded the victim's session while the authorization had been performed against the attacker's.
+  - `swap_active_from_ondeck` / `undo_swap_active_from_ondeck` (:626) — two client-supplied match ids, both mutated, neither bound.
+
+  The TS layer did not bind them either — `swapPlayerInActiveMatch`'s pre-read was `.eq("match_id", matchId).eq("player_id", outPlayerId)`, with no session predicate.
+
+- **Who / today:** (a) **anyone on the internet holding the anon key**, which ships in the client bundle — no login, no organizer role, no membership. (b) additionally, any organizer of any session (including a self-provisioned one, #2) can rewrite the live roster of a match in someone else's session — pulling a player off court mid-game and substituting one of *their own* waiting players. Cross-session today within CHILLAX; cross-club at a second club. The `MATCH_NOT_ACTIVE` / `PLAYER_UNAVAILABLE` guards constrain *when* a swap works, not *whose* match it is.
+- **Why it is worse than #4:** #4 leaked an audit trail; this corrupts live match state and the derived stats, is not undoable by the victim organizer, and — via (a) — needs no account at all.
+- **Fix (SHIPPED, two migrations + a TS layer):**
+  - `20260723000000_revoke_anon_execute_on_mutating_rpcs.sql` — `grant execute … to service_role` **then** `revoke execute … from public, anon, authenticated` for all 16, with in-migration assertions. The grant must come first: on a from-scratch replay `proacl` is NULL, so the revoke materialises `acldefault` and would otherwise strip `service_role` too. `lookup_active_session` and the four RLS helper functions (`is_club_member`, `session_access_level`, `has_match_access`, `is_session_organizer`) deliberately **keep** their anon/authenticated grants — RLS policies invoke them as the calling role.
+  - `20260723000001_bind_live_swaps_to_session.sql` — `AND session_id = p_session_id` on every match lookup in the four live-swap RPCs; `swap_teams_in_active_match` gains `p_session_id uuid DEFAULT NULL` (appended last, so the migration and the Vercel deploy can land in either order). Every status guard became `IS DISTINCT FROM`, because with the new predicate a mismatch yields *no row* → a NULL status, and plpgsql treats a NULL `IF` as false — the old `!=` guards would have fallen through.
+  - `src/app/actions/live-match-swap.ts` — an `allMatchesInSession()` pre-check on all five call sites, returning `MATCH_NOT_ACTIVE` so it is indistinguishable from "does not exist" (no existence oracle).
+  - Regression coverage: 5 integration tests (LMS-14…18, incl. the mixed own-match/foreign-match pair), 14 unit tests asserting the RPC is *not called*, and two schema-parity tests — a catalog sweep asserting **no** volatile non-trigger SECDEF function is anon/authenticated-reachable, and a signature pin on the four rewritten RPCs. Validated on a real from-scratch `supabase db reset` replay (236 integration tests green) and by anon curl against the fresh DB returning `42501`. 4 SQL + 5 TS mutants, all killed.
+- **⚠ Deploying the code does NOT close this.** Migrations in this project are applied by hand; merging the PR ships only the TypeScript half. Both `.sql` files must be run against prod `usxftpexoimletqmrggb` for the hole to actually close.
 
 ---
 
@@ -126,7 +149,7 @@ Verified live grants (`pg_proc.proacl`): all three are `SECURITY DEFINER` and ho
   - *"`getH2HRecord` / `joinQueueAction` cross-club H2H"* — no cross-club data is actually returned; weak gate, overstated impact.
   - *"`getWrappedData` unauthenticated"* — accurate mechanics but it is the intentional public Wrapped-share contract (single known player+session link), not a tenancy hole.
   - *"`runEngineForSession` ungated"* — a write/integrity concern, not a data-exposure/tenancy issue.
-  - *"`compute_session_wrapped`/`refresh_alltime_leaderboard` anon-executable"* — a guard already blocks the core DoS claim; not a read-tenancy issue.
+  - *"`compute_session_wrapped`/`refresh_alltime_leaderboard` anon-executable"* — a guard already blocks the core DoS claim; not a read-tenancy issue. **⚠ Superseded by #10:** the *grant* claim was correct and turned out to be one instance of a 16-function class. Both are in the #10 revoke set.
 
 *(One item outside the app layer, already known and confirmed, belongs on the fix list: `v_alltime_leaderboard_mat` is a materialized view — RLS impossible — that is not security_invoker and holds anon+authenticated SELECT, so an unauthenticated curl returns every member's name+club_id+stats. Fix it alongside #6: revoke anon/authenticated SELECT and serve the all-time board through the service role.)*
 
@@ -134,6 +157,7 @@ Verified live grants (`pg_proc.proacl`): all three are `SECURITY DEFINER` and ho
 
 ## 4. RECOMMENDED ORDER OF WORK
 
+0. **Revoke anon EXECUTE on the 16 mutating RPCs and bind the live swaps to their session (#10).** *Added 2026-07-23; jumps the queue because it is the only finding that needs no account.* Ships as `20260723000000` + `20260723000001` plus the `allMatchesInSession` guard in `live-match-swap.ts`. **The migrations are hand-applied — merging the PR does not close the hole.**
 1. **Close the account-takeover chain (do these together, same PR):**
    - `profile.ts` (#1) — bind the target `userId` to the session/club in all four actions.
    - `createSession` (#2) — require and verify club membership; no silent CHILLAX fallback.
@@ -145,6 +169,6 @@ Verified live grants (`pg_proc.proacl`): all three are `SECURITY DEFINER` and ho
 5. **Harden realtime before club #2:** make `session-events` private + policy'd and strip names from payloads (#7); tighten `profiles_select` to shared-club visibility (#8, also fixes the query-level `USING(true)`).
 6. **Optional / low:** the `match_players` DELETE metadata leak (#9) — defer or accept.
 
-Items 1–3 and the matview/RPC revokes in item 2 are exploitable **today with the single CHILLAX club**. Items 4–5 are the gate that must be closed **before a second club is created**, or they become active cross-tenant breaches on day one of multi-club.
+Item 0 is exploitable **today by anyone, with no account**. Items 1–3 and the matview/RPC revokes in item 2 are exploitable **today with the single CHILLAX club**, but need a login. Items 4–5 are the gate that must be closed **before a second club is created**, or they become active cross-tenant breaches on day one of multi-club.
 
 Relevant files: `/Users/miggy-onb/Downloads/badminton-app/src/app/actions/profile.ts`, `/src/app/actions/sessions.ts`, `/src/app/actions/match-events.ts`, `/src/app/actions/leaderboard.ts`, `/src/app/play/[sessionId]/page.tsx`, `/src/app/organizer/[sessionId]/page.tsx`, `/src/lib/clubs.ts`, `/src/lib/realtime.ts`, `/src/app/actions/_shared.ts`, `/src/app/actions/auth.ts`.
