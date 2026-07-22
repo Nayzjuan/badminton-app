@@ -71,6 +71,7 @@ export default async function ClubOrganizerDashboardPage({ params }: PageProps) 
     .select(PUBLIC_SESSION_COLUMNS)
     .eq("is_active", true)
     .eq("club_id", club.id)
+    .eq("is_hidden", false)
     .neq("id", sessionId)
     .order("created_at", { ascending: false });
 
