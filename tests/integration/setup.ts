@@ -40,18 +40,42 @@ export const authState: { currentUserId: string | null } = {
 // tests do. That single error accounted for 29 failures once the suite could
 // finally run at all.
 //
-// A no-op is the correct stub here, not a convenience: every one of the ten
-// after() call sites in src/ wraps `pushToPlayers` (verified by grep), i.e.
-// push notifications only. None of them touch the queue/match state these
-// tests assert on, so skipping them changes nothing observable — while
-// RUNNING them would fire real web-push work and add network flakiness to CI.
-// If a test ever needs push behaviour it should mock pushToPlayers directly.
+// The stub RUNS the callback rather than dropping it. A no-op looks safer but
+// is wrong: the after() call sites are NOT all push notifications. The seven in
+// src/app/actions/queue.ts (plus fix-player-record.ts) wrap
+// `runEngineForSession`, so dropping them silently skips draft regeneration and
+// breaks any test that asserts the engine ran — Q-9 and P-9 fail exactly that
+// way against a no-op.
+//
+// Running it inline is safe for the push sites too: pushToPlayers() swallows
+// its own errors and returns {sent:0,errors:0} as soon as ensureVapid() throws,
+// which it does in CI where no VAPID keys are set. So no network work happens.
+//
+// The callback is invoked but NOT awaited — real after() does not block the
+// caller either, and `after()` returns void so no caller could await it anyway.
+// The in-flight promise is registered with the after-queue so afterEach can
+// drain it before deleting rows; without that, engine writes race the cleanup.
 //
 // importOriginal is used so the rest of next/server (NextResponse, etc.)
 // keeps working.
 vi.mock("next/server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("next/server")>();
-  return { ...actual, after: (_fn: () => unknown) => undefined };
+  const { trackAfterCallback } = await import("./helpers/after-queue");
+  return {
+    ...actual,
+    after: (fn: () => unknown) => {
+      // Invoked SYNCHRONOUSLY, not via Promise.resolve().then(fn): tests such
+      // as Q-9 and P-9 assert `toHaveBeenCalledOnce()` on the spy immediately
+      // after awaiting the action, and deferring the call to a microtask makes
+      // that assertion depend on microtask ordering rather than on the code.
+      try {
+        trackAfterCallback(Promise.resolve(fn()));
+      } catch (err) {
+        // A callback that throws synchronously must not fail the action.
+        console.error("[test after()] callback threw:", err);
+      }
+    },
+  };
 });
 
 // ── 3. Mock @/utils/supabase/server ─────────────────────────

@@ -345,20 +345,11 @@ export async function updateMatchDetails(
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
 
-  // Validate scores for the edit-only path. The revert path ignores the passed
-  // scores entirely (it writes NULL to the DB), so we only gate score-edit calls.
-  // Validating unconditionally is still safe because the client always sends 0, 0
-  // for revert — but the explicit check communicates intent clearly.
-  let safeA = 0;
-  let safeB = 0;
-  if (!revertToActive) {
-    const scoreResult = scoreSchema.safeParse({ teamAScore, teamBScore });
-    if (!scoreResult.success) {
-      return { success: false, message: scoreResult.error.issues[0].message };
-    }
-    safeA = scoreResult.data.teamAScore;
-    safeB = scoreResult.data.teamBScore;
-  }
+  // Score validation deliberately runs AFTER the organizer check below, not
+  // here. Validating first tells an unauthenticated or non-organizer caller
+  // whether their payload was well-formed before it tells them they have no
+  // business calling at all — an authorization decision must not depend on, or
+  // leak through, the shape of the request body.
 
   // All writes use the service client so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.
@@ -386,6 +377,22 @@ export async function updateMatchDetails(
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
+
+  // Validate scores for the edit-only path. The revert path ignores the passed
+  // scores entirely (it writes NULL to the DB), so we only gate score-edit calls.
+  // Validating unconditionally is still safe because the client always sends 0, 0
+  // for revert — but the explicit check communicates intent clearly.
+  let safeA = 0;
+  let safeB = 0;
+  if (!revertToActive) {
+    const scoreResult = scoreSchema.safeParse({ teamAScore, teamBScore });
+    if (!scoreResult.success) {
+      return { success: false, message: scoreResult.error.issues[0].message };
+    }
+    safeA = scoreResult.data.teamAScore;
+    safeB = scoreResult.data.teamBScore;
+  }
+
   const actor = await getActorContext(user.id);
 
   if (!revertToActive) {

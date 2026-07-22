@@ -159,10 +159,16 @@ describe("drafted queue_status", () => {
     }
   });
 
-  // ── 4. publishMatchAction guard: does NOT touch 'waiting' players ─
-  // Verifies the .eq("status","drafted") guard is respected —
-  // manually-created drafts where players stayed "waiting" are a no-op.
-  it("publishMatchAction does NOT promote 'waiting' players (guard check)", async () => {
+  // ── 4. publishMatchAction heals 'waiting' roster members ─────
+  // publish_match originally promoted only status = 'drafted', so publishing a
+  // draft whose players were never marked 'drafted' silently left them behind.
+  // 20260717165546 widened the predicate to IN ('drafted','waiting') precisely
+  // to heal those rows: everyone in a roster being published belongs on deck,
+  // and the conflict checks have already run by that point. This test pins the
+  // healing behaviour (it previously asserted the old drafted-only guard, which
+  // no integration run ever exercised — the suite could not start until the
+  // migration replay was fixed).
+  it("publishMatchAction promotes 'waiting' roster members to 'on_deck'", async () => {
     const { organizer, session, players } = await baseSetup(4);
 
     // makeMatch bypasses the RPC — players stay "waiting"
@@ -185,15 +191,15 @@ describe("drafted queue_status", () => {
     // Publish itself succeeds (it flips is_published=true on the match row)
     expect(result!.success).toBe(true);
 
-    // But queue statuses remain "waiting" — the .eq("status","drafted") guard
-    // in publishMatchAction is a no-op when players were never set to "drafted"
-    // by the RPC (i.e. the draft was manually inserted via makeMatch).
+    // ...and the roster is healed onto the deck even though makeMatch bypassed
+    // the RPC and left every player "waiting".
     const statuses = await getStatuses(
       session.id,
       players.map((p) => p.id)
     );
+    expect(statuses).toHaveLength(4);
     for (const entry of statuses) {
-      expect(entry.status).toBe("waiting");
+      expect(entry.status).toBe("on_deck");
     }
   });
 

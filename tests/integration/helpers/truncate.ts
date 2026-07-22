@@ -29,6 +29,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import { flushAfterCallbacks } from "./after-queue";
 
 /** Allowed local Supabase URL prefixes. */
 const LOCAL_URL_PREFIXES = ["http://127.0.0.1", "http://localhost", "http://0.0.0.0"];
@@ -155,6 +156,11 @@ export function trackAuthUser(userId: string): void {
  *   });
  */
 export async function truncateTracked(): Promise<void> {
+  // Drain fire-and-forget after() work first. The stub in setup.ts runs those
+  // callbacks for real (several wrap runEngineForSession), and real after() work
+  // outlives the action that scheduled it — so without this the engine can still
+  // be inserting matches while we delete the rows they reference.
+  await flushAfterCallbacks();
   const ids = [..._trackedAuthUserIds];
   _trackedAuthUserIds.length = 0; // reset before await in case of throw
   await truncateAll(ids);

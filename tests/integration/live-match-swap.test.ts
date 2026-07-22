@@ -149,10 +149,16 @@ describe("LMS-2: swap_player_in_active_match — rejects when match not in_progr
   it("raises MATCH_NOT_ACTIVE for a pending match", async () => {
     const { db, session } = await setupActiveMatch();
     const org2 = await makeProfile({ faker, skill: "intermediate" });
+    // Four DISTINCT players: match_players carries a UNIQUE (match_id,
+    // player_id), so padding a filler match by repeating one id fails the
+    // insert before the RPC under test is ever reached.
+    const pad1 = await makeProfile({ faker, skill: "intermediate" });
+    const pad2 = await makeProfile({ faker, skill: "intermediate" });
+    const pad3 = await makeProfile({ faker, skill: "intermediate" });
     const pendingMatch = await makeMatch({
       sessionId: session.id,
-      teamA: [org2.id, org2.id], // simplified — just need a pending match
-      teamB: [org2.id, org2.id],
+      teamA: [org2.id, pad1.id], // org2 on team a — the swap target
+      teamB: [pad2.id, pad3.id],
       status: "pending",
     });
     const sub = await makeProfile({ faker, skill: "intermediate" });
@@ -325,15 +331,20 @@ describe("LMS-8: swap_active_from_ondeck — atomic 3-way swap", () => {
     const onDeckPlayer = await makeProfile({ faker, displayName: "OnDeck" });
     const extra = await makeProfile({ faker, displayName: "Extra" });
     const fill = await makeProfile({ faker, displayName: "Fill" });
+    // Team B needs two DISTINCT bodies — see the note in LMS-2.
+    const odB1 = await makeProfile({ faker, displayName: "OnDeckB1" });
+    const odB2 = await makeProfile({ faker, displayName: "OnDeckB2" });
 
     await makeQueueEntry({ sessionId: session.id, playerId: onDeckPlayer.id, status: "on_deck" });
     await makeQueueEntry({ sessionId: session.id, playerId: extra.id, status: "on_deck" });
     await makeQueueEntry({ sessionId: session.id, playerId: fill.id, status: "waiting" });
+    await makeQueueEntry({ sessionId: session.id, playerId: odB1.id, status: "on_deck" });
+    await makeQueueEntry({ sessionId: session.id, playerId: odB2.id, status: "on_deck" });
 
     const onDeckMatch = await makeMatch({
       sessionId: session.id,
       teamA: [onDeckPlayer.id, extra.id],
-      teamB: [extra.id, extra.id], // simplified
+      teamB: [odB1.id, odB2.id],
       status: "pending",
       isPublished: true,
     });
@@ -457,15 +468,20 @@ describe("LMS-11: swap_active_from_ondeck — rejects when fill_player not waiti
     const odPlayer = await makeProfile({ faker });
     const extra = await makeProfile({ faker });
     const busyFill = await makeProfile({ faker });
+    // Team B needs two DISTINCT bodies — see the note in LMS-2.
+    const odB1 = await makeProfile({ faker });
+    const odB2 = await makeProfile({ faker });
 
     await makeQueueEntry({ sessionId: session.id, playerId: odPlayer.id, status: "on_deck" });
     await makeQueueEntry({ sessionId: session.id, playerId: extra.id, status: "on_deck" });
     await makeQueueEntry({ sessionId: session.id, playerId: busyFill.id, status: "on_deck" }); // NOT waiting
+    await makeQueueEntry({ sessionId: session.id, playerId: odB1.id, status: "on_deck" });
+    await makeQueueEntry({ sessionId: session.id, playerId: odB2.id, status: "on_deck" });
 
     const odMatch = await makeMatch({
       sessionId: session.id,
       teamA: [odPlayer.id, extra.id],
-      teamB: [extra.id, extra.id],
+      teamB: [odB1.id, odB2.id],
       status: "pending",
     });
 
@@ -492,15 +508,20 @@ describe("LMS-12: undo_swap_active_from_ondeck — reverses all changes atomical
     const onDeckPlayer = await makeProfile({ faker, displayName: "ODPlayer" });
     const extra = await makeProfile({ faker, displayName: "Extra" });
     const fill = await makeProfile({ faker, displayName: "Fill" });
+    // Team B needs two DISTINCT bodies — see the note in LMS-2.
+    const odB1 = await makeProfile({ faker, displayName: "ODB1" });
+    const odB2 = await makeProfile({ faker, displayName: "ODB2" });
 
     await makeQueueEntry({ sessionId: session.id, playerId: onDeckPlayer.id, status: "on_deck" });
     await makeQueueEntry({ sessionId: session.id, playerId: extra.id, status: "on_deck" });
     await makeQueueEntry({ sessionId: session.id, playerId: fill.id, status: "waiting" });
+    await makeQueueEntry({ sessionId: session.id, playerId: odB1.id, status: "on_deck" });
+    await makeQueueEntry({ sessionId: session.id, playerId: odB2.id, status: "on_deck" });
 
     const onDeckMatch = await makeMatch({
       sessionId: session.id,
       teamA: [onDeckPlayer.id, extra.id],
-      teamB: [extra.id, extra.id],
+      teamB: [odB1.id, odB2.id],
       status: "pending",
       isPublished: true,
     });
@@ -571,15 +592,20 @@ describe("LMS-13: undo_swap_active_from_ondeck — silently aborts if match adva
     const od = await makeProfile({ faker });
     const ex = await makeProfile({ faker });
     const fi = await makeProfile({ faker });
+    // Team B needs two DISTINCT bodies — see the note in LMS-2.
+    const odB1 = await makeProfile({ faker });
+    const odB2 = await makeProfile({ faker });
 
     await makeQueueEntry({ sessionId: session.id, playerId: od.id, status: "playing" });
     await makeQueueEntry({ sessionId: session.id, playerId: ex.id, status: "on_deck" });
     await makeQueueEntry({ sessionId: session.id, playerId: fi.id, status: "on_deck" });
+    await makeQueueEntry({ sessionId: session.id, playerId: odB1.id, status: "on_deck" });
+    await makeQueueEntry({ sessionId: session.id, playerId: odB2.id, status: "on_deck" });
 
     const odMatch = await makeMatch({
       sessionId: session.id,
       teamA: [od.id, ex.id],
-      teamB: [ex.id, ex.id],
+      teamB: [odB1.id, odB2.id],
       status: "pending",
     });
 
