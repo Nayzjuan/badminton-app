@@ -36,10 +36,18 @@ export async function getMatchEvents(
   if (!organizer) return { success: false, error: "Organizer access required." };
 
   const db = createServiceClient();
+  // Filter on BOTH ids. The organizer check above authorizes `sessionId`, but the
+  // read was keyed only on `matchId` — two independent arguments from the client,
+  // so an organizer of session A could pass a match id from session B and read
+  // another club's audit trail (actor names, swap history) through the service
+  // client. Binding the read to the session the caller was authorized for makes
+  // the mismatch return zero rows. `session_id_snapshot` is NOT NULL and, unlike
+  // the live FK, survives match deletion, so it holds for historical rows too.
   const { data, error } = await db
     .from("match_events")
     .select("*")
     .eq("match_id_snapshot", matchId)
+    .eq("session_id_snapshot", sessionId)
     .order("seq", { ascending: true });
 
   if (error) return { success: false, error: error.message };

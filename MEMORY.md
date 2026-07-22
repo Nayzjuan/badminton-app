@@ -5,6 +5,124 @@
 
 ---
 
+## 🔒 TENANCY PR3 — SESSION BINDING + GATED SHIM AUTO-ENROLL — 2026-07-23, branch `fix/tenancy-pr3-session-binding`
+
+Closes findings **#4** and **#5** of `TENANCY_AUDIT_2026-07-21.md`. One root cause: a **session UUID was
+treated as proof of entitlement to something wider than that session**. Application layer only, no migration.
+
+**#4 `getMatchEvents` (`src/app/actions/match-events.ts`).** The gate authorizes `sessionId`; the read was
+keyed on `matchId` only. Two independent client-supplied arguments, one of them authorized, and the read runs
+on the service client — so an organizer of session A passed a match id from session B and got another club's
+full trail. Added `.eq("session_id_snapshot", sessionId)`. Prod integrity checked before shipping: 648 events
+over 465 matches, **0 null snapshots, 0 rows where the snapshot disagrees with the live match's `session_id`**
+— the filter excludes nothing legitimate. It is a residual on the existing `(match_id_snapshot, seq)` index,
+so it costs nothing. `getSessionProvenance` was already session-keyed.
+
+**#5 the two legacy shims.** `/play/[sessionId]` and `/organizer/[sessionId]` called `ensureClubMembership`
+for *any* logged-in visitor, so a bare session UUID was a self-service membership in someone else's club.
+Now gated on a real participation signal — the organizer predicate for the organizer route, an existing
+`queue_entries` row for the player route. Both still redirect either way; the club route's own membership
+gate stays the single authority, rather than a second copy of it in a shim.
+
+**Why the service client on both.** RLS on `queue_entries` is `session_access_level(session_id) IS NOT NULL`
+— membership-derived, with **no "own row" arm** — so the *caller's own* client cannot see the very row that
+proves a non-member walk-in belongs there; same for the `sessions` / `session_organizers` rows that prove
+someone is an organizer. This is the sanctioned service-role use (an authorization check), not a data read.
+`queue_entries` has `UNIQUE (session_id, player_id)`, so `.maybeSingle()` cannot error on multiples. The
+queue lookup deliberately does **not** filter `queue_status`: `left` is still a legitimate past participant.
+
+### ⚠️ The review blocker, and the rule it taught — `"use server"` + RSC = published
+
+The first draft imported `isSessionOrganizer` from `src/app/actions/_shared.ts`, on the stated premise that
+its exports were "already public endpoints anyway, so importing changes nothing." **That premise was exactly
+backwards, and the review proved it by building both trees and diffing
+`.next/server/server-reference-manifest.json`: 70 actions → 74.** The rule:
+
+- a `"use server"` module imported by another **action** module → a plain function call, registers nothing
+  (which is why `_shared`'s exports had no manifest entry before);
+- imported by anything in the **RSC layer** (a `page.tsx`) → its exports must become passable references, so
+  Next registers **every export** as a dispatchable endpoint scoped to that route.
+
+The +4 were `getAuthenticatedUser`, `getActorContext`, `isSessionOrganizer`, `isPlayerInSessionScope` under
+`app/organizer/[sessionId]/page` — two cross-tenant oracles over a caller-supplied uuid and an
+unauthenticated uuid → display-name lookup. A tenancy fix would have widened the surface it exists to narrow.
+(Latent, not live: action ids are salted with `serverReferenceHashSalt: encryptionKey`, regenerated per build
+unless `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` is set, and this project sets it nowhere.)
+
+**Fix:** a local, non-exported `isSessionOrganizerLocal` in the page — identical predicate (`created_by` OR
+`session_organizers` OR an active owner/admin of the session's club), mirroring `isQueuedInSession` in the
+sibling `/play` shim. **Verified after the fix: back to 70 actions, zero `_shared` entries, nothing scoped to
+`app/organizer/[sessionId]/page`.** `TB-IMPORT` guards the whole `app/actions/` directory, extracted from the
+import specifiers rather than matched on the alias, so a relative path or a dynamic `import()` cannot slip
+past a guard narrower than the rule it enforces.
+
+**The rule is "do not publish tenancy predicates", NOT "never import a `"use server"` module from RSC."** The
+app does the latter deliberately in four places — `getTvData` under both `/tv` pages, `getWrappedData` under
+both Wrapped pages — and those legitimately appear in the manifest: public reads on public routes. What must
+never be published is a `(userId, sessionId) → boolean` authorization oracle or a uuid → display-name lookup.
+When one of those needs sharing, it goes in a `server-only` lib — never a `"use server"` one.
+
+**Every live entry point still passes the gate** (traced before writing the code, not after):
+`src/app/page.tsx:42` only redirects when the user *has* an active queue entry · `/play`'s picker
+(`src/app/play/page.tsx`) lists only sessions in the user's primary club, so callers are already members ·
+PIN reconnect resolves a session the player was queued in · `signInAnonymously`'s `sessionId && !clubSlug`
+branch is unreachable in practice (`<LoginForm sessionId>` renders only from `/c/[clubSlug]/join`, which
+always passes the slug). Enrollment proper belongs to `/c/[clubSlug]/join` — reached by QR, and it writes
+the queue row itself.
+
+**Tests:** `tests/unit/tenancy-session-binding.test.ts`, **19 tests** (TB-EVENTS · TB-PLAY · TB-ORG ·
+TB-IMPORT). The shim tests carry more weight than they look: **the enroll is the entire vulnerability**, and
+both pages redirect either way, so a test that only asserts the destination is green whether the hole is open
+or shut — every shim test asserts on `ensureClubMembership` having been called or not. `next/navigation`'s
+`redirect`/`notFound` are mocked to **throw**, because the real ones do; a no-op mock would let a page run
+past `notFound()` with a null slug, which the runtime never does. The per-table stub map defaults any
+un-stubbed table to "no row" — the *denying* default, so a test that forgets a step fails closed rather than
+inheriting a row. **TB-IMPORT** is a source-text guard: it reads both shim files and fails if either imports
+`@/app/actions/_shared`, so the blocker above cannot come back by way of a helpful refactor.
+
+Mutation-checked rather than trusted green — **eleven injected, eleven killed**: drop the
+`session_id_snapshot` filter → TB-EVENTS-1 · revert `/play` to `if (user)` → TB-PLAY-2 + TB-PLAY-3 · drop
+`.eq("player_id", …)` → TB-PLAY-3 · revert `/organizer` to `if (user)` → TB-ORG-2/-5/-7/-8 · drop
+`.eq("user_id", …)` from the organizer lookup → TB-ORG-5 · drop `.eq("is_active", true)` from the club-role
+lookup → TB-ORG-7 · and three separate re-publication routes, all → TB-IMPORT: the aliased `_shared` import,
+a **relative** `../../actions/_shared`, and a **dynamic** `await import("@/app/actions/sessions")` (the last
+two would have survived the round-1 regex, which is why the guard now extracts specifiers).
+
+One branch is knowingly uncovered: no fixture sets `club_members.role = "member"`, so mutating
+`role === "owner" || role === "admin"` → `!!clubMembership` survives. Traced and accepted — the mutant is
+*behaviourally equivalent* here, because a plain member of the session's own club is already `is_active`, so
+`ensureClubMembership` returns `joined:false` and writes nothing. Coverage nit, not a hole.
+
+**Validation:** `tsc --noEmit` 0 · scoped `eslint` 0 · `next build` clean · unit **844 passed / 1 skipped,
+48 files** (rebased onto `main` after PR #38, so it now carries PR2's tests too).
+
+### 🆕 Finding #10, found during this review — do it BEFORE PR4
+
+**`live-match-swap.ts` is #4 again, but on WRITES.** All three live-swap actions gate on
+`isSessionOrganizer(user.id, sessionId)` and then call a `SECURITY DEFINER` RPC keyed on a separately
+client-supplied `matchId`. **Verified in the SQL: none of the three ever compares `matches.session_id` to
+`p_session_id`** — they mutate `WHERE id = p_match_id`, and `p_session_id` only drives the `queue_entries`
+updates and the audit stamp. `swap_teams_in_active_match` does not even take `p_session_id`. So any organizer
+of any session can rewrite the live roster of a match in someone else's session, substituting one of their own
+waiting players onto a foreign court mid-game. Sites: `live-match-swap.ts:104→124`, `:206→210`, `:279→284`;
+RPCs at `20260617000000_match_provenance_audit.sql:485`, `:556`, `:626`. Fix at both layers — `AND session_id
+= p_session_id` in the match lookup (plus a new `p_session_id` arg for the teams one), and the TS guard that
+already exists at `fix-player-record.ts:117`. Recorded as **#10** in `TENANCY_AUDIT_2026-07-21.md`. Higher
+priority than PR4: it corrupts live state rather than leaking a read.
+
+**Still open after PR3:** **#10** (above, next) · PR4 (#7/#8 — private `session-events` broadcast +
+`profiles_select`; note `realtime.messages` has `rls=true` and **zero policies**, so the policy migration must
+land *before* any `private: true` client change, and the topic must be gated at `session_access_level(...) IS
+NOT NULL` because `player-dashboard.tsx:149` subscribes **players** to it, not just organizers) · PR5 (~24
+anon-EXECUTE SECURITY DEFINER mutators + `refresh_alltime_leaderboard`) · #9 (LOW, optional).
+
+**Two knowingly-accepted minors from PR3:** `isQueuedInSession` duplicates `isPlayerInSessionScope` in
+`_shared` (kept local on purpose — see the publication rule above), and a user holding a `queue_entries` row
+but no `club_members` row can bounce `/play → /play/[id] → /c/<slug>/play/[id] → /play`; theoretical in prod
+since the enroll now runs for exactly that user.
+
+---
+
 ## 🔒 TENANCY PR2 — LEADERBOARD READ LOCKDOWN — branch `fix/tenancy-pr2-lock-leaderboard-reads`
 
 **Full write-up: `APP_MANIFEST.md` §3.8d.** Closes `TENANCY_AUDIT_2026-07-21.md` **#6** + the known matview hole: `get_player_streaks` / `get_alltime_snapshot_before` were `SECURITY DEFINER` with **every parameter defaulted**, so `POST /rpc/get_player_streaks` with body `{}` and nothing but the anon key returned every player in every club; `v_alltime_leaderboard_mat` held `anon` SELECT and a matview **cannot carry RLS at all**.

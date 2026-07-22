@@ -1262,6 +1262,8 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 
 **Backfill:** birth method is recovered exactly for all existing matches (sticky rule: `origin='modified'` ⇒ born auto; `is_held` ⇒ held), so "% auto vs manual vs held" is accurate retroactively. `manual_modified` is unrecoverable for history (accurate only going forward); legacy modified rows get `modification_count=1` floor.
 
+**Reading the trail is bound to the AUTHORIZED session (PR3, tenancy audit #4).** `getMatchEvents(matchId, sessionId)` gates on `isSessionOrganizer(user.id, sessionId)` and then reads through the service client, which bypasses RLS — so the gate is the only check there is. The read was keyed on `match_id_snapshot` alone: two independent client-supplied arguments, only one of them authorized, which let an organizer of session A pass a match id from session B and pull another club's full trail (actor names, roster snapshots, swap history). It now filters on `session_id_snapshot` as well, so a mismatched pair returns zero rows instead of someone else's audit log. `session_id_snapshot` is `NOT NULL` and, unlike the live FK, survives match deletion, so historical rows are covered — verified on prod: 648 events over 465 matches, zero null snapshots and zero rows where the snapshot disagrees with the live match's `session_id`, i.e. the filter excludes nothing legitimate. `getSessionProvenance` was already session-keyed. **Tests:** `tests/unit/tenancy-session-binding.test.ts` (TB-EVENTS).
+
 **Clear/cancel/leaver audit trail (PR #22 `dad594f`, 2026-07-13):** the three previously-silent delete paths now log a best-effort `cancelled` event via `logMatchEvent` — `clearOnDeckMatch` (actor + roster snapshot + `created_method`/`is_published`, `reason:'on_deck_cleared'`), `clearAllUnpublishedDrafts` (one event per swept draft; TS pre-fetch mirrors the RPC filter exactly: pending + unpublished + not-held; `reason:'batch_clear_unpublished'`), `checkoutPlayer` (one event per `cancelled_match_id` from the cleanup RPC; `actorId:null` → `actor_type='system'`; `payload:{reason:'checkout_below_min', trigger_player_id}`). Delete paths log BEFORE the delete so the FK is valid at insert (`ON DELETE SET NULL` + `match_id_snapshot` preserve the trail); a domain error after the log can leave a false `cancelled` row (narrow, accepted per §14.E-2); the PGRST202 fallback loops are intentionally un-audited. No migration — `event_type` is text, `record_match_event` already live. **Still deferred:** `published` events on the publish paths (zero metric impact). See MEMORY.md + `MATCH_PROVENANCE_AUDIT_PLAN.md`.
 
 ---
@@ -2188,9 +2190,60 @@ client components self-resolve the slug from the path via `useClubSlug`). Route 
 
 **ADD-and-redirect migration.** New club routes re-use the existing PlayerDashboard / OrganizerDashboard /
 TvBoard / LoginForm. Legacy `/play/[id]` + `/organizer/[id]` became thin resolve-and-redirect shims (308 →
-`/c/<slug>/…`) that **auto-enroll** the requester (same philosophy as QR-join) so no one is stranded behind
-the gate. Public boards (`/tv/[id]`, `/leaderboard/[id]`, `/play/join`) stay at root, shareable — **and**,
-mirroring the TV board, also get a club-namespaced convenience variant for in-app nav (§11.4 for Wrapped's).
+`/c/<slug>/…`) that enroll the requester **only on a real participation signal** (see the gate below — they
+originally enrolled anyone, which was tenancy audit #5). Public boards
+(`/tv/[id]`, `/leaderboard/[id]`, `/play/join`) stay at root, shareable — **and**, mirroring the TV board,
+also get a club-namespaced convenience variant for in-app nav (§11.4 for Wrapped's).
+
+> **The shim auto-enroll is GATED as of PR3 (tenancy audit #5).** It originally enrolled *any* logged-in
+> visitor — "same philosophy as QR-join" — which quietly made a bare session UUID a self-service membership
+> in someone else's club: guess or be forwarded an id, load the legacy URL, and that club's roster, sessions
+> and history opened up. A session id is not a capability; the QR path has a scan, these had nothing.
+> Enrollment now requires a real participation signal, and only that one case:
+>
+> - `/organizer/[id]` → a **local** `isSessionOrganizerLocal(user.id, sessionId)` in the page — same predicate
+>   every organizer-only action already gates on (`created_by` OR `session_organizers` OR an active
+>   owner/admin of the session's club), so it admits exactly the people who could already act as organizers
+>   here. Keeps the case the enroll exists for: `joinAsCoOrganizer` writes `session_organizers` and no
+>   `club_members` row. Deliberately **not** the import of the identical `isSessionOrganizer` from
+>   `@/app/actions/_shared` — see the RSC publication rule below.
+> - `/play/[id]` → an existing `queue_entries` row for `(sessionId, user.id)`, read through the **service**
+>   client on purpose. RLS on `queue_entries` is `session_access_level(session_id) IS NOT NULL`, i.e.
+>   membership-derived, so the caller's own client cannot see the very row that proves a non-member walk-in
+>   belongs there. Keeps the case the enroll exists for: an organizer added them to the queue directly.
+>
+> Both still redirect either way — the club route's own membership gate stays the single authority on what a
+> non-participant may see, rather than a second copy of it here. Every live entry point already satisfies the
+> gate: the home-page redirect only fires when the user *has* an active queue entry, the `/play` picker is
+> already scoped to their primary club, and PIN reconnect resolves a session they were queued in.
+> Enrollment proper belongs to `/c/[clubSlug]/join`, which is reached by QR and writes the queue row itself.
+> **Tests:** `tests/unit/tenancy-session-binding.test.ts` (TB-PLAY / TB-ORG / TB-IMPORT) — the enroll *is* the
+> whole vulnerability, so a test that only asserts the redirect destination passes whether the hole is open
+> or shut.
+>
+> **⚠️ Why both gates are local functions: importing a `"use server"` module from an RSC page PUBLISHES it.**
+> A `"use server"` module imported by another *action* module is an ordinary function call and registers
+> nothing. Imported by something in the **RSC layer** — a `page.tsx`, a Server Component — its exports have to
+> become values that could be handed to a client, so Next registers **every export** of that module as a
+> dispatchable Server Action endpoint scoped to that route. Adding
+> `import { isSessionOrganizer } from "@/app/actions/_shared"` to the organizer shim was measured, by diffing
+> `.next/server/server-reference-manifest.json` across two builds, to take the app from **70 to 74** actions:
+> `getAuthenticatedUser`, `getActorContext`, `isSessionOrganizer`, `isPlayerInSessionScope`, all newly
+> reachable under `app/organizer/[sessionId]/page`. Two are cross-tenant oracles over a caller-supplied uuid
+> and one is an unauthenticated uuid → display-name lookup, so a tenancy fix would have widened the very
+> surface it exists to narrow. (Latent rather than live even then: action ids are salted with
+> `serverReferenceHashSalt: encryptionKey`, regenerated per build unless `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`
+> is set, which this project does not set — but "hard to address" is not "not exposed".) Hence a local copy in
+> each page and **TB-IMPORT**, which fails if either shim imports anything under `app/actions/` — the whole
+> directory, extracted from the specifiers rather than matched on the alias, so a relative path, a dynamic
+> `import()`, or a hop through a different action module cannot slip past a guard narrower than the rule.
+>
+> **The rule is "do not publish tenancy predicates", not "never import a `"use server"` module from RSC."**
+> The app does the latter on purpose in four places: `getTvData` under `app/tv/[sessionId]/page` and its
+> club-namespaced twin, `getWrappedData` under the two Wrapped pages. Those *are* in the manifest, and that is
+> fine — they are public reads on deliberately public routes. What must not be published is a
+> `(userId, sessionId) → boolean` authorization oracle or a uuid → display-name lookup. When a predicate of
+> that kind needs sharing, move it to a `server-only` lib — not a `"use server"` one.
 
 **Club-slug rename `legacy` → `chillax` (2026-07-10, PR #17).** The founding club (CHILLAX, `…0001`) was
 originally seeded with the slug `legacy`; the slug was renamed in the prod DB (`UPDATE clubs SET slug='chillax'`)
