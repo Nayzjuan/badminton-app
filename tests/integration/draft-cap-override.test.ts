@@ -21,7 +21,7 @@
 // Every test runs in its own transaction, rolled back on completion.
 // ============================================================
 
-import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 
@@ -30,6 +30,13 @@ import type { Database } from "@/types/database";
 
 const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+
+/**
+ * Bootstrap profile seeded by supabase/seed.sql. It lives at the all-zeros UUID
+ * because that is the one id tests/integration/helpers/truncate.ts preserves
+ * (`.delete().neq("id", ZERO_UUID)`), so it outlives cleanup between tests.
+ */
+const BOOTSTRAP_PROFILE_ID = "00000000-0000-0000-0000-000000000000";
 
 let db: ReturnType<typeof createClient<Database>>;
 
@@ -59,6 +66,12 @@ async function createTestSession(overrides: Record<string, unknown> = {}) {
       name: name ?? "Test Session",
       scoring: scoring ?? "single",
       is_auto_matchmaking_on: is_auto_matchmaking_on ?? true,
+      // sessions.created_by is NOT NULL, so omitting it fails outright. This
+      // went unnoticed because the integration suite could not run at all —
+      // the migration replay died during DB setup (see 20260722000000-3).
+      // Uses the seeded bootstrap profile (supabase/seed.sql), which is the
+      // one row truncation preserves, so it is valid for every test in the file.
+      created_by: BOOTSTRAP_PROFILE_ID,
     })
     .select("id")
     .single();
@@ -226,23 +239,6 @@ describe("DCINT-13: held cross-court drafts are excluded from the bulk clear (Fi
     try {
       // A normal unpublished draft (must be cleared) + a held draft (must survive).
       const normalId = await createDraftMatch(sessionId, false);
-      // The app only ever creates held drafts via the create_held_cross_court_match
-      // RPC, so `is_held` is not part of the typed MatchInsert surface — cast to set
-      // it directly for this DB-behavior test.
-      const heldPayload = {
-        session_id: sessionId,
-        status: "pending",
-        is_published: false,
-        is_mixed_level: false,
-        created_method: "held",
-        is_held: true,
-      };
-      const { data: heldRow } = await db
-        .from("matches")
-        .insert(heldPayload as never)
-        .select("id")
-        .single();
-      const heldId = (heldRow as { id: string } | null)?.id as string;
 
       // The held draft's pulled body is still PLAYING on its source court.
       const { userId } = await createWaitingPlayer(sessionId);
@@ -251,6 +247,32 @@ describe("DCINT-13: held cross-court drafts are excluded from the bulk clear (Fi
         .update({ status: "playing" })
         .eq("session_id", sessionId)
         .eq("player_id", userId);
+
+      // `is_held` is GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0)
+      // STORED (20260607000000), so it cannot be written directly — an insert
+      // that names it is rejected outright. Set the column it is derived from
+      // instead. The app only ever creates held drafts via the
+      // create_held_cross_court_match RPC, so neither field is on the typed
+      // MatchInsert surface; cast to set them for this DB-behaviour test.
+      const heldPayload = {
+        session_id: sessionId,
+        status: "pending",
+        is_published: false,
+        is_mixed_level: false,
+        created_method: "held",
+        pulled_player_ids: [userId],
+      };
+      const { data: heldRow, error: heldErr } = await db
+        .from("matches")
+        .insert(heldPayload as never)
+        .select("id, is_held")
+        .single();
+      // Assert rather than optional-chain: swallowing the error here is what let
+      // this test pass `undefined` into toContain() and read as a real result.
+      if (heldErr || !heldRow) throw new Error(`held draft insert failed: ${heldErr?.message}`);
+      const { id: heldId, is_held: isHeld } = heldRow as { id: string; is_held: boolean };
+      expect(isHeld).toBe(true); // the generated column actually flipped
+
       await db.from("match_players").insert({ match_id: heldId, player_id: userId, team: "a" });
 
       await db.rpc("clear_all_unpublished_drafts", { p_session_id: sessionId });

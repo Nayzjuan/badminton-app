@@ -235,6 +235,79 @@ describe("Schema Parity — Suite G", () => {
     expect(found).toBe(true);
   });
 
+  // ── Privilege parity ──────────────────────────────────────
+  // `revoke execute on function f from public, anon, authenticated` does NOT
+  // leave service_role alone. On a function whose proacl is still NULL, Postgres
+  // materialises the default ACL first — {owner=X/owner, =X/owner}, where "=X"
+  // is the grant to PUBLIC — and only then removes the named grantees. Nothing
+  // in that sequence mentions service_role, so revoking PUBLIC is the only thing
+  // standing between service_role and the function, and it takes EXECUTE with
+  // it. Production hides this: its functions were created under Supabase's
+  // ALTER DEFAULT PRIVILEGES and already carry an explicit service_role=X.
+  //
+  // 20260722000004 declares the grants that were missing, but a DO block in a
+  // migration only runs once, when that migration applies — it cannot catch the
+  // NEXT bad revoke. This test can: it re-derives the invariant from the catalog
+  // on every `supabase db reset`, so a migration added tomorrow fails here
+  // rather than in a live session. The callers are fail-closed, which is the
+  // worst way for it to surface — a permission error is indistinguishable from
+  // a genuine lockout ("Too many attempts" against an empty attempt log).
+
+  it("service_role can EXECUTE every callable function in public", async () => {
+    let offenders: string[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ sig: string }>(
+        // has_function_privilege is passed p.oid, never a name: the name form
+        // resolves through search_path and the planner may evaluate it before
+        // the predicate meant to constrain the rows.
+        //
+        // Trigger functions are excluded deliberately. They can only be invoked
+        // by the trigger machinery, which runs as the table owner, so EXECUTE
+        // for service_role is meaningless there — and revoking it from a
+        // SECURITY DEFINER trigger function is legitimate hardening that this
+        // test must not forbid. prokind is left unconstrained so a procedure or
+        // aggregate added later is covered rather than silently skipped.
+        `SELECT p.oid::regprocedure::text AS sig
+           FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public'
+            AND p.prorettype <> 'trigger'::regtype
+            AND NOT has_function_privilege('service_role', p.oid, 'EXECUTE')
+          ORDER BY 1`
+      );
+      offenders = rows.map((r) => r.sig);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("the privilege-granting primitives stay closed to anon and authenticated", async () => {
+    // The other half of the invariant above: the grants that keep service_role
+    // working must never widen the browser-reachable surface. Each of these is
+    // callable over PostgREST the moment anon or authenticated regains EXECUTE.
+    const locked = [
+      "public.cojoin_record_and_check(uuid, text, int, int, int)",
+      "public.elevate_to_organizer(uuid, text)",
+      "public.migrate_player_identity(uuid, uuid)",
+      "public.join_queue(uuid, uuid)",
+      "public.remove_player_from_queue_organizer(uuid, uuid)",
+      "public.publish_match(uuid, uuid, uuid)",
+      "public.publish_all_drafts(uuid, uuid)",
+      "public.rejoin_queue(uuid)",
+    ];
+    let leaks: string[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ sig: string; grantee: string }>(
+        `SELECT sig, grantee
+           FROM unnest($1::text[]) AS sig
+           CROSS JOIN unnest(ARRAY['anon','authenticated']) AS grantee
+          WHERE has_function_privilege(grantee, sig::regprocedure::oid, 'EXECUTE')`,
+        [locked]
+      );
+      leaks = rows.map((r) => `${r.grantee} -> ${r.sig}`);
+    });
+    expect(leaks).toEqual([]);
+  });
+
   // ── Materialized view ────────────────────────────────────
 
   it("v_alltime_leaderboard_mat materialized view exists", async () => {

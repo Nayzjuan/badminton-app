@@ -48,7 +48,19 @@
 
 -- ---- Safe to invoker: no consumer needs the RLS bypass ----
 
-ALTER VIEW public.v_recent_pairings SET (security_invoker = true);
+-- v_recent_pairings was created through the Supabase dashboard and is created
+-- by no migration, so this bare ALTER raised 42P01 on any database built from
+-- migrations alone and aborted the replay (see 20260722000001, which creates
+-- the view and applies this same setting). Skipping here is safe precisely
+-- because that migration re-applies security_invoker after creating it — the
+-- end state is identical either way. Guarded rather than reordered so no
+-- migration has to be inserted BEFORE ones already applied to production.
+DO $$
+BEGIN
+  IF to_regclass('public.v_recent_pairings') IS NOT NULL THEN
+    ALTER VIEW public.v_recent_pairings SET (security_invoker = true);
+  END IF;
+END $$;
 ALTER VIEW public.v_queue_with_wait_time SET (security_invoker = true);
 ALTER VIEW public.v_queue_full_with_wait_time SET (security_invoker = true);
 

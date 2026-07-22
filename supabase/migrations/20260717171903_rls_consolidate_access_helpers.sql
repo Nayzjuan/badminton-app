@@ -58,42 +58,84 @@ GRANT EXECUTE ON FUNCTION public.has_match_access(uuid) TO anon, authenticated, 
 
 -- ── Recreate the SELECT policy quals with the merged helpers (ALTER keeps the
 --    role + cmd + permissive/restrictive flags exactly) ───────────────────────
-ALTER POLICY courts_select ON public.courts
-  USING (public.session_access_level(session_id) IS NOT NULL);
-
-ALTER POLICY queue_select ON public.queue_entries
-  USING (public.session_access_level(session_id) IS NOT NULL);
-
-ALTER POLICY session_organizers_select ON public.session_organizers
-  USING (public.session_access_level(session_id) IS NOT NULL);
-
-ALTER POLICY matches_select ON public.matches
-  USING (
-    CASE public.session_access_level(session_id)
-      WHEN 'organizer' THEN true
-      WHEN 'member' THEN (status <> 'pending'::match_status OR is_published = true)
-      ELSE false
-    END
-  );
-
-ALTER POLICY matches_select_draft_firewall ON public.matches
-  USING (
-    CASE public.session_access_level(session_id)
-      WHEN 'organizer' THEN true
-      WHEN 'member' THEN (status <> 'pending'::match_status OR is_published = true)
-      ELSE false
-    END
-  );
-
-ALTER POLICY match_players_select ON public.match_players
-  USING (public.has_match_access(match_id));
-
-ALTER POLICY match_games_select ON public.match_games
-  USING (public.has_match_access(match_id));
-
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'courts'
+               AND policyname = 'courts_select') THEN
+    ALTER POLICY courts_select ON public.courts
+      USING (public.session_access_level(session_id) IS NOT NULL);
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'queue_entries'
+               AND policyname = 'queue_select') THEN
+    ALTER POLICY queue_select ON public.queue_entries
+      USING (public.session_access_level(session_id) IS NOT NULL);
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'session_organizers'
+               AND policyname = 'session_organizers_select') THEN
+    ALTER POLICY session_organizers_select ON public.session_organizers
+      USING (public.session_access_level(session_id) IS NOT NULL);
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'matches'
+               AND policyname = 'matches_select') THEN
+    ALTER POLICY matches_select ON public.matches
+      USING (
+        CASE public.session_access_level(session_id)
+          WHEN 'organizer' THEN true
+          WHEN 'member' THEN (status <> 'pending'::match_status OR is_published = true)
+          ELSE false
+        END
+      );
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'matches'
+               AND policyname = 'matches_select_draft_firewall') THEN
+    ALTER POLICY matches_select_draft_firewall ON public.matches
+      USING (
+        CASE public.session_access_level(session_id)
+          WHEN 'organizer' THEN true
+          WHEN 'member' THEN (status <> 'pending'::match_status OR is_published = true)
+          ELSE false
+        END
+      );
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'match_players'
+               AND policyname = 'match_players_select') THEN
+    ALTER POLICY match_players_select ON public.match_players
+      USING (public.has_match_access(match_id));
+  END IF;
+END $$;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'match_games'
+               AND policyname = 'match_games_select') THEN
+    ALTER POLICY match_games_select ON public.match_games
+      USING (public.has_match_access(match_id));
+  END IF;
+END $$;
 -- ── Drop duplicate PERMISSIVE policies (their TO-public twins subsume them for
 --    authenticated; union of policies is unchanged) ────────────────────────────
-DROP POLICY queue_entries_select ON public.queue_entries; -- == queue_select (public)
-DROP POLICY queue_entries_update ON public.queue_entries; -- ⊆ queue_update_own OR queue_update_organizer
-DROP POLICY queue_entries_insert ON public.queue_entries; -- == queue_insert (public)
-DROP POLICY profiles_update ON public.profiles;           -- == profiles_update_own (public)
+DROP POLICY IF EXISTS queue_entries_select ON public.queue_entries; -- == queue_select (public)
+DROP POLICY IF EXISTS queue_entries_update ON public.queue_entries; -- ⊆ queue_update_own OR queue_update_organizer
+DROP POLICY IF EXISTS queue_entries_insert ON public.queue_entries; -- == queue_insert (public)
+DROP POLICY IF EXISTS profiles_update ON public.profiles;           -- == profiles_update_own (public)

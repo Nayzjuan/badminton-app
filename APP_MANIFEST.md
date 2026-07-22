@@ -88,6 +88,21 @@ Two helpers used by all organizer-gated server actions to avoid reimplementing t
 
 ## 2. Database Schema & State
 
+> **⚠️ Migrations are the source of truth — as of 2026-07-22 they finally are.** Much of this database was originally built by clicking through the Supabase dashboard, and none of that was ever written into `supabase/migrations`. Because production already had those objects, nobody noticed: the migration set only ever ran against a database that already contained what it assumed. A database built from migrations alone — every Supabase **preview branch**, and `supabase db reset` — diverged badly:
+>
+> | What was missing on a from-scratch DB | Consequence |
+> | --- | --- |
+> | `courts`, `matches`, `match_players`, `queue_entries` absent from the `supabase_realtime` publication | no realtime on the four tables the app actually subscribes to |
+> | `v_recent_pairings` never created | `20260702000003` aborted with `42P01` |
+> | **RLS not enabled** on `courts`, `matches`, `match_players`, `match_games`, `queue_entries`, `profiles`, `session_organizers` | row security OFF — a table with RLS disabled ignores policies entirely |
+> | **35 of 46 RLS policies** never created | the remaining policies bore no resemblance to production |
+>
+> The visible symptom was that `Vitest Integration` had been red on `main` and every branch for some time — it was dying during DB setup (`42704`, "relation is not part of the publication"), so the suite had **not been running at all**. The invisible and worse symptom: once the replay was unblocked, that suite would have passed against a database whose security posture did not match production, proving nothing about the RLS actually deployed.
+>
+> Fixed by `20260722000000` (publication membership), `20260722000001` (`v_recent_pairings`), and `20260722000002` (RLS baseline: the 7 `ENABLE ROW LEVEL SECURITY` flags + the 35 policies). All three are **convergent, idempotent, and strict no-ops against production**, and each ends with an assertion that `RAISE`s rather than handing back a database that merely looks healthy. The unguarded `ALTER PUBLICATION … DROP TABLE`, `ALTER POLICY` and `DROP POLICY` statements in `20260701000006`, `20260717171903` and `20260717174914` are now existence-guarded so the replay cannot abort.
+>
+> **Rules going forward:** never create a table, view, policy, publication membership, or RLS flag through the dashboard — write a migration. Editing an already-applied migration is legitimate *only* to make it replay-safe (guards), never to change its effect; the CLI stores per-migration `statements`, so `supabase migration repair` reconciles the stored copy if it ever objects. And never insert a migration dated **before** ones already applied to production — the CLI applies it out of order. When a fix seems to need that, guard the earlier statement and declare the end state in a later migration instead.
+
 > **DB Optimization Pass — 2026-07-17 (migrations `20260717165546`→`20260717190000`).** A full audit-driven pass shipped these behavioral/infrastructure changes:
 > - **RLS is now consolidated + initplan-hoisted.** SECURITY-DEFINER helpers `session_access_level(session_id)` (returns `'organizer'|'member'|null` in one probe) and `has_match_access(match_id)` back the sessions/matches/match_players/match_games policies; every policy's `auth.uid()`/`auth.role()` is wrapped as `(select auth.uid())` so it evaluates once per statement, not per row. Duplicate PERMISSIVE twins were dropped.
 > - **New set-based RPCs** (replace per-row loops): `requeue_finished_players(session, player_ids, drafted_ids)` (atomic `games_played+1` + status, used by endMatch), `reorder_on_deck_matches(session, match_ids)` (one UPDATE…FROM unnest WITH ORDINALITY, used by drag-reorder), `count_completed_matches_by_session(session_ids[])` (GROUP BY counts for the organizer hub — cap-safe), `get_h2h_record` (now pre-filters to matches containing all 4 players).
@@ -1626,6 +1641,86 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `score-submission.test.ts` | F     | `endMatchAction` cascade (scores, re-queue, court freed); `cancelMatchAction` (no games_played increment); **server-side score range validation (0–31 int, rejects float/negative/over-31, rejects draws)** |
 | `session-lifecycle.test.ts`| K     | `createSession` validation; `joinAsCoOrganizer` passcode auth and idempotency                                                   |
 
+#### The migration set must replay from scratch (2026-07-22)
+
+The integration job had never once been green, because `supabase db reset`
+produced a database that did not match production. Much of production was built
+through the Supabase dashboard, so the migrations described only part of it.
+Each missing layer was hidden behind the one before it and only surfaced once
+the previous was fixed:
+
+| Layer                              | Declared by                                    | Symptom while missing                                                         |
+| ---------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| Realtime publication membership    | `20260722000000`                               | replay aborted during DB setup                                                 |
+| `v_recent_pairings`                | `20260722000001`                               | missing view                                                                   |
+| RLS baseline (7 tables, 35 policies)| `20260722000002`                              | policies simply absent                                                         |
+| Per-table/per-role grants          | `20260722000003` + `supabase/config.toml` (pg 17) | `permission denied for table profiles` from a **service-role** client       |
+| Function `EXECUTE` grants          | `20260722000004`                               | "Too many attempts" on an empty attempt log                                    |
+
+**The function-grant trap is worth knowing.** Several migrations lock a
+`SECURITY DEFINER` function down with `revoke execute ... from public, anon,
+authenticated`. On a function whose `proacl` is still NULL, Postgres
+materialises the default ACL first — `{owner=X/owner, =X/owner}`, where `=X` is
+the grant to PUBLIC — and only then removes the named grantees. Nothing in that
+sequence mentions `service_role`. Production is unaffected only because its
+functions were created while Supabase's `ALTER DEFAULT PRIVILEGES` were in
+effect and already carry an explicit `service_role=X`. On a from-scratch
+database the revoke of PUBLIC is the *only* thing between `service_role` and
+the function, and it takes `EXECUTE` with it.
+
+`joinAsCoOrganizer` is deliberately fail-closed, so a permission error on the
+limiter RPC was indistinguishable from a real lockout: legitimate co-organizers
+were refused with a rate-limit message against an empty log. `20260722000004`
+asserts the invariant at apply time — every function in `public` must be
+`EXECUTE`-able by `service_role` (already true of all 56 in production).
+
+That `DO` block runs **once**, when its own migration applies; later migrations
+always sort after it, so it cannot catch the next bad revoke. The forward-looking
+gate is `tests/integration/schema-parity.test.ts`, which re-derives both halves
+of the invariant from the catalog on every `supabase db reset`: `service_role`
+can `EXECUTE` every non-trigger function in `public`, and `anon`/`authenticated`
+still cannot execute the seven privilege-granting primitives
+(`elevate_to_organizer`, `cojoin_record_and_check`, `migrate_player_identity`,
+`join_queue`, `remove_player_from_queue_organizer`, `publish_match`,
+`publish_all_drafts`). Trigger functions are excluded on purpose — they are only
+invoked by the trigger machinery, so revoking `EXECUTE` on a `SECURITY DEFINER`
+trigger function is legitimate hardening the gate must not forbid.
+
+**Comparing ACLs:** `proacl IS NULL` means "default", which is functionally the
+same as an explicit grant to everyone, so a string diff of ACLs is all false
+positives. Compare *effective executor sets* via
+`aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))`. And always pass
+`has_table_privilege` / `has_function_privilege` an **OID**, never a name — the
+name form resolves through `search_path` and the planner may evaluate it before
+the predicate meant to constrain the rows.
+
+#### `after()` in integration tests
+
+Server actions schedule fire-and-forget work with Next's `after()`, which throws
+outside a request scope — 29 failures once the suite could run at all.
+`tests/integration/setup.ts` stubs it, and the stub **runs** the callback: the
+call sites are not all push notifications (the seven in `queue.ts` wrap
+`runEngineForSession`), so a no-op silently skips draft regeneration. Running it
+is safe for the push sites because `pushToPlayers` swallows its own errors and
+returns as soon as `ensureVapid()` throws, which it does wherever VAPID keys are
+unset.
+
+Real `after()` work outlives the action that scheduled it, so the in-flight
+promise is registered with `tests/integration/helpers/after-queue.ts` and
+`truncateTracked()` drains it before deleting rows — otherwise the engine is
+still inserting matches while cleanup removes the rows they reference.
+
+**Known limit, worth stating before someone trips over it.** Running the engine
+sites inline is safe *today* only because no test pairs an auto-matchmaking-ON
+session with a `queue.ts` action: every scheduled engine run hits the
+`is_auto_matchmaking_on = false` early return, and the two tests that assert on
+the engine mock it. The first test that calls `joinQueueAction` / `checkoutPlayer`
+/ `togglePlayerPause(false)` against an auto-ON session gets a real background
+engine run racing its assertions, and because `runEngineForSession` holds a
+module-level `engineRunningFor` set, a direct `await runEngineForSession(sameId)`
+in that test is silently skipped as already in-flight. Such a test must
+`await flushAfterCallbacks()` first.
+
 ### Test Helpers & Fixtures
 
 - `tests/helpers/teardown.ts` — `resetSandboxSession()`, `softResetSandboxSession()`, `seedSession()`, `repairSandboxState()` — sandbox lifecycle. `repairSandboxState()` is called automatically at the start of `softResetSandboxSession` (Step 0) to heal any stuck state left by a previous crashed test run — cancels orphaned matches, returns stuck players to `waiting`, frees stuck courts.
@@ -1634,7 +1729,9 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 - `tests/fixtures/seed-sandbox.ts` — **Run with `npx tsx`** — idempotently seeds all 50 E2E_ bot players + 6 courts into the live sandbox session (`TEST_SESSION_ID`). Reads `.env.test` + `.env.local`. Safe to re-run.
 - `tests/integration/factories/index.ts` — `makeProfile`, `makeSession`, `makeQueueEntry`, `makeCourt`, `makeMatch` — composable DB factories for integration tests
 - `tests/integration/helpers/mock-auth.ts` — `mockAuthAs(userId)` / `clearMockAuth()` — per-test auth identity control
-- `tests/integration/helpers/truncate.ts` — `truncateTracked()` — deletes all rows and auth users created during a test
+- `tests/integration/helpers/truncate.ts` — `truncateTracked()` — drains pending `after()` work, then deletes all rows and auth users created during a test
+- `tests/integration/helpers/after-queue.ts` — `trackAfterCallback()` / `flushAfterCallbacks()` — holds the promises from the stubbed `after()` so cleanup can wait them out. Deliberately standalone: importing `setup.ts` from `truncate.ts` would re-run its `vi.mock` registrations.
+- `supabase/seed.sql` — bootstrap auth user + profile at the all-zeros UUID (the one id `truncateTracked()` preserves) and the default club. A seed, **not** a migration: a migration that invented an organizer profile would write fake rows into production.
 
 ---
 

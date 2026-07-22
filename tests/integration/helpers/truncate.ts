@@ -29,6 +29,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import { flushAfterCallbacks } from "./after-queue";
 
 /** Allowed local Supabase URL prefixes. */
 const LOCAL_URL_PREFIXES = ["http://127.0.0.1", "http://localhost", "http://0.0.0.0"];
@@ -122,6 +123,13 @@ async function truncateViaDeletes(client: ReturnType<typeof serviceClient>): Pro
   await client.from("courts").delete().neq("id", ZERO_UUID);
   await client.from("session_organizers").delete().neq("id", ZERO_UUID);
   await client.from("sessions").delete().neq("id", ZERO_UUID);
+  // Credential-guessing log for the reconnect / co-organizer rate limiters.
+  // NOT cleaning it let failed attempts accumulate across every test in the
+  // run, so tests that deliberately submit a wrong passcode eventually tripped
+  // the 10-per-window lockout and got "Too many attempts" instead of the
+  // "invalid passcode" they asserted on — a false failure whose cause is
+  // several tests upstream. Wiped before profiles: user_id references them.
+  await client.from("co_organizer_join_attempts").delete().neq("id", ZERO_UUID);
   await client.from("profiles").delete().neq("id", ZERO_UUID);
 }
 
@@ -148,6 +156,11 @@ export function trackAuthUser(userId: string): void {
  *   });
  */
 export async function truncateTracked(): Promise<void> {
+  // Drain fire-and-forget after() work first. The stub in setup.ts runs those
+  // callbacks for real (several wrap runEngineForSession), and real after() work
+  // outlives the action that scheduled it — so without this the engine can still
+  // be inserting matches while we delete the rows they reference.
+  await flushAfterCallbacks();
   const ids = [..._trackedAuthUserIds];
   _trackedAuthUserIds.length = 0; // reset before await in case of throw
   await truncateAll(ids);

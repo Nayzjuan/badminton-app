@@ -1,0 +1,75 @@
+# ============================================================
+# Supabase local/CI project config
+# ============================================================
+# This file did not exist until 2026-07-22. `supabase start` and
+# `supabase db reset` therefore ran on whatever the CLI defaulted to, which
+# means the CI database was never a DEFINED environment: its Postgres major
+# version, and anything else not spelled out here, could change from under us
+# on any CLI bump. That is the same class of problem as the migrations that
+# did not describe the database (see 20260722000000-3) — the repo did not
+# describe the environment either.
+#
+# major_version is the one that bites hardest. Production runs Postgres 17, and
+# 17 is where the MAINTAIN privilege exists; 20260722000003 grants it because
+# production's ACLs carry it. On an older default the grants would fail or
+# silently diverge. Pin it to match production, and bump deliberately.
+# ============================================================
+
+project_id = "badminton-app"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+# Match production (17.6). See the note above before changing.
+major_version = 17
+
+[db.pooler]
+enabled = false
+
+# Applied by `supabase db reset` / `supabase start`, never by `db push`.
+# supabase/seed.sql creates the bootstrap profile + default club that a
+# from-scratch database needs — see the header in that file.
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["https://127.0.0.1:3000"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+
+# Load-bearing: every player in this app is an anonymous auth user
+# (signInAnonymously in src/app/actions/auth.ts). With this off, the local
+# stack would reject the app's primary sign-in path and integration tests
+# would exercise a database that behaves nothing like production.
+enable_anonymous_sign_ins = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
