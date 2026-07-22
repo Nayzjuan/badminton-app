@@ -15,11 +15,19 @@ import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
 import { ensureClubMembership, getClubBySlug, resolveSessionClubSlug } from "@/lib/clubs";
+import { getClientIp } from "@/lib/client-ip";
 import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
 import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 
-// Shared friendly message for a globally-taken display name.
-const NAME_TAKEN_MESSAGE = 'Name taken. Add an initial (e.g. "Miggy L.").';
+// Shared message for a display name that already exists.
+//
+// DELIBERATELY COVERS BOTH CASES — "this is your own old account" and "someone
+// else has this name" — with identical wording. Registration is an unauthenticated,
+// unthrottled endpoint, so any wording that distinguishes the two turns it into a
+// free PIN oracle (see the returning-player check below).
+const NAME_TAKEN_MESSAGE =
+  'That name is already registered. If it\'s you, use "Reconnect" below to pick up where ' +
+  'you left off — otherwise add an initial (e.g. "Miggy L.").';
 
 // Escape ILIKE special characters so a caller-supplied string is always
 // treated as a literal — never as a wildcard pattern.
@@ -110,33 +118,66 @@ export async function signInAnonymously(formData: FormData) {
     redirect(destination);
   }
 
-  // ── Returning player check (must precede the uniqueness block) ─────────────
-  // If a profile already exists with this exact name + PIN, the player is
-  // returning and should use Reconnect instead of registering fresh. This runs
-  // BEFORE the global-uniqueness check so a legitimate returning player (whose
-  // name necessarily already exists) is routed to Reconnect rather than told
-  // "name taken". Without it, they'd silently create a duplicate ghost profile.
-  const { data: existingProfile } = await service
+  // ── Name availability ─────────────────────────────────────────────────────
+  // BOTH checks below are PIN-BLIND, and that is the point. This used to open
+  // with `.ilike(name).eq("pin", pin)`, replying "Looks like you've played
+  // before!" on a hit and falling through to "Name taken" on a miss.
+  // Registration is unauthenticated and intentionally unthrottled (a club signs
+  // up a dozen walk-ins at once), so those two replies were a free PIN oracle:
+  // submit one name against all 9,000 PINs and watch for the flip. It defeated
+  // the reconnectPlayer limiter below end-to-end — recover the PIN here for
+  // nothing, then spend a single reconnect attempt. Every arm now returns the
+  // same NAME_TAKEN_MESSAGE, so a right and a wrong PIN are indistinguishable.
+  //
+  // (1) Any profile at all holding this name, flagged or not. Catches a
+  // returning player whose profile is FLAGGED — isNameTaken deliberately
+  // excludes those to mirror the partial unique index `WHERE needs_rename =
+  // false`, so without this check their registration would succeed and mint a
+  // second account, stranding their history behind a ghost. The trade is that a
+  // name held only by a flagged duplicate is not claimable by someone else
+  // until that duplicate renames. Accepted knowingly: stranded history is
+  // permanent data loss, whereas this only bites once the non-flagged holder
+  // is gone (while it exists, isNameTaken blocks the name anyway), and the
+  // remedy — "add an initial" — is what the message already tells them.
+  //
+  // Caveat worth knowing: clearing a flag is SELF-SERVE ONLY (renamePlayer
+  // derives the user from the session; there is no organizer or admin path).
+  // If that player never returns, the name stays blocked and freeing it needs
+  // a DB touch.
+  //
+  // `.limit(1)` IS LOAD-BEARING, not tidiness. A duplicate cluster legitimately
+  // has several rows sharing one raw name, and maybeSingle() ERRORS on more
+  // than one — leaving `data` undefined and this check silently failing open,
+  // i.e. minting the very ghost it exists to prevent. Pinned by RO-MULTI-1.
+  const { data: nameHolder } = await service
     .from("profiles")
     .select("id")
     .ilike("display_name", escapeLike(displayName))
-    .eq("pin", pin)
     .limit(1)
     .maybeSingle();
 
-  if (existingProfile) {
-    return {
-      success: false,
-      error:
-        'Looks like you\'ve played before! Use "Reconnect" below to pick up where you left off.',
-    };
+  if (nameHolder) {
+    return { success: false, error: NAME_TAKEN_MESSAGE };
   }
 
-  // ── Global uniqueness check (R2) ──────────────────────────────────────────
-  // The display name must be unique across ALL profiles — not merely those
-  // currently active in a queue (the previous, weaker rule). Gives a friendly
-  // message before an orphan auth user is minted; the partial UNIQUE index is
-  // the cross-instance/TOCTOU authority and the upsert below maps its 23505.
+  // (2) Backstop for check (1), which ignores its own read error and so fails
+  // open on a transient DB blip. isNameTaken's match set is otherwise a strict
+  // SUBSET of (1)'s — same ilike, plus `needs_rename = false`, plus a narrowing
+  // normalized-key compare — so in the happy path it can never fire when (1)
+  // did not. Keep it anyway: it is cheap, and it is the fail-open cover.
+  //
+  // It does NOT widen the net. dup-name.ts pre-filters in SQL with the same raw
+  // `ilike`, so a stored name differing from the input by more than case (e.g.
+  // an internal double space) is never fetched and the JS normalize compare
+  // cannot reach it. displayNameSchema collapses whitespace, so in practice only
+  // legacy or directly-written rows can be in that shape. Such variants are
+  // caught ONLY by the partial UNIQUE index at write time — that index, not
+  // either check here, is the TOCTOU/cross-instance authority. Note the two
+  // write paths surface its 23505 differently: on the safety-net upsert and the
+  // already-authed branch it maps to this same message, but on a fresh signup
+  // the trigger's INSERT fires first and its ON CONFLICT (id) does not cover
+  // this index, so the auth call itself fails and its own error is returned.
+  // Divergent wording, but name-dependent and PIN-independent — not an oracle.
   if (await isNameTaken(service, displayName)) {
     return { success: false, error: NAME_TAKEN_MESSAGE };
   }
@@ -174,10 +215,9 @@ export async function signInAnonymously(formData: FormData) {
     if (upsertError) {
       // PostgreSQL unique violation — display_name already registered
       if (upsertError.code === "23505") {
-        return {
-          success: false,
-          error: "That name is already taken! Try adding a number or your initial.",
-        };
+        // Same wording as the pre-checks — this is the TOCTOU arm of the very
+        // same "name exists" answer and must not read differently.
+        return { success: false, error: NAME_TAKEN_MESSAGE };
       }
       console.error("[auth] profile upsert safety-net failed:", upsertError);
     }
@@ -221,6 +261,30 @@ export interface ReconnectResult {
   useGoogleSignIn?: boolean;
 }
 
+// ── Reconnect rate limiting ───────────────────────────────────
+/** Failed reconnects allowed against ONE display_name before lockout. */
+const RECONNECT_MAX_FAILED_NAME = 10;
+/**
+ * Failed reconnects allowed from one IP. Deliberately loose: a badminton club
+ * is a single-NAT environment (one gym Wi-Fi, plus CGNAT on mobile), so a tight
+ * IP budget would let one person lock out reconnect for the whole venue.
+ */
+const RECONNECT_MAX_FAILED_IP = 60;
+/**
+ * Scope-wide failure count that trips a spray ALERT. Purely advisory — it is
+ * logged and never denies, so read it as monitoring, not as a limit.
+ *
+ * It started life as a hard cap and that was a mistake: a shared counter is a
+ * platform-wide kill switch on login. ~30 enumerable names across ~5 IPs at
+ * 0.33 rps holds it open indefinitely, and reconnect IS the account for an
+ * anonymous-auth player. Denial stays on the two arms with a bounded blast
+ * radius — the name under attack, and the source IP. See 20260721230000.
+ */
+const RECONNECT_SPRAY_ALERT_AT = 300;
+/** Rolling lockout window, minutes. */
+const RECONNECT_WINDOW_MIN = 15;
+const RECONNECT_LOCKED = "Too many attempts. Please wait a few minutes and try again.";
+
 export async function reconnectPlayer(
   playerName: string,
   pin: string,
@@ -238,6 +302,77 @@ export async function reconnectPlayer(
     return { success: false, error: pinResult.error.issues[0].message };
   }
   const service = createServiceClient();
+
+  // ── Rate-limit gate (before the PIN is ever checked) ─────────
+  // reconnectPlayer is a credential oracle: name + PIN returns an account and
+  // then MIGRATES the caller's identity onto it. The PIN space is 9,000
+  // (src/lib/pin.ts), display names are readable to any authenticated user and
+  // are printed on the public /tv and leaderboard share pages — so without a
+  // limit an attacker picks a name and walks the space to full account
+  // takeover, needing no organizer rights at all.
+  //
+  // Keyed on the normalized display_name BEING ATTACKED rather than on the
+  // caller: the caller is anonymous here and can mint identities freely, so a
+  // caller-keyed limit would be worthless. Also keyed on IP.
+  //
+  // Atomic and FAIL-CLOSED: the RPC records the attempt and returns the verdict
+  // in one transaction, and any error denies rather than waving the caller
+  // through. An already-over caller is denied WITHOUT recording a new row, so a
+  // sustained attack cannot keep a victim's window topped up forever (reconnect
+  // IS the account for an anonymous-auth player — there is no email reset behind
+  // it, so a self-feeding window would be a permanent account lockout).
+  const subject = name.trim().toLowerCase();
+  const ip = await getClientIp();
+  const { data: gate, error: gateErr } = await service
+    .rpc("reconnect_record_and_check", {
+      p_subject: subject,
+      p_ip: ip,
+      p_window_min: RECONNECT_WINDOW_MIN,
+      p_subject_max: RECONNECT_MAX_FAILED_NAME,
+      p_ip_max: RECONNECT_MAX_FAILED_IP,
+      p_spray_alert_at: RECONNECT_SPRAY_ALERT_AT,
+    })
+    .maybeSingle();
+
+  if (gateErr || !gate) {
+    console.error("[reconnectPlayer] rate-limit check failed:", gateErr?.message);
+    return { success: false, error: RECONNECT_LOCKED };
+  }
+  // Advisory: surfaced for monitoring, deliberately NOT a denial (see
+  // RECONNECT_SPRAY_ALERT_AT). Logged whether or not this caller is blocked.
+  if (gate.spray_suspected) {
+    console.warn(
+      "[reconnectPlayer] SPRAY SUSPECTED: scope-wide reconnect failures exceeded " +
+        `${RECONNECT_SPRAY_ALERT_AT} in ${RECONNECT_WINDOW_MIN}m. Not blocking.`
+    );
+  }
+  if (gate.over_subject_limit || gate.over_ip_limit) {
+    // Log WHICH arm fired so support can tell a shared venue IP apart from a
+    // targeted guessing run against one player's name.
+    console.warn(
+      `[reconnectPlayer] locked out (name=${gate.over_subject_limit} ip=${gate.over_ip_limit})`
+    );
+    return { success: false, error: RECONNECT_LOCKED };
+  }
+
+  // The attempt is logged pessimistically as a failure; flip it once the PIN
+  // actually matches so a legitimate reconnect doesn't consume the window.
+  // attempt_id is null only on the over-limit path, which returned above.
+  const attemptId = gate.attempt_id;
+  const markReconnectSucceeded = async () => {
+    if (!attemptId) {
+      // Unreachable: the SQL only returns a null id on the over-limit path,
+      // which returned above. Warn rather than no-op silently — if that
+      // contract ever breaks, every legitimate reconnect starts burning the
+      // caller's budget and nothing else would say so.
+      console.warn("[reconnectPlayer] no attempt id to flip — limiter contract changed?");
+      return;
+    }
+    const { error } = await service.rpc("auth_attempt_mark_succeeded", {
+      p_attempt_id: attemptId,
+    });
+    if (error) console.error("[reconnectPlayer] attempt-log update failed:", error.message);
+  };
 
   // Resolve the caller's club context (set when reconnecting via a
   // club-scoped page, e.g. /c/[clubSlug]/join) so the lookup below can be
@@ -270,8 +405,13 @@ export async function reconnectPlayer(
         .eq("pin", pinResult.data);
 
   if (!profiles || profiles.length === 0) {
+    // Wrong name/PIN: the pessimistic failure row stands and counts.
     return { success: false, error: "No match found. Check your name and PIN." };
   }
+
+  // Correct credentials — clear the pessimistic failure so a legitimate
+  // reconnect never contributes to the lockout window.
+  await markReconnectSucceeded();
 
   // Pick the best profile across all matches, in three phases:
   //

@@ -806,6 +806,27 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 ---
 
+### 3.8a Credential-guessing rate limits (2026-07-21)
+
+**Why:** `reconnectPlayer(name, pin)` returns an account and then migrates the caller's identity onto it. The PIN space is 9,000 and display names are printed on the public `/tv` and leaderboard pages — so unthrottled it is full account takeover needing **no organizer rights**. `joinAsCoOrganizer` has the same shape over a 100,000-value passcode space.
+
+**Shared log:** `co_organizer_join_attempts` — append-only, service-role only (RLS on, **no policies and no grants**). Two scopes; exactly one key column is set per row:
+
+| scope        | keyed on                                    | caller state                                  |
+| ------------ | ------------------------------------------- | --------------------------------------------- |
+| `cojoin`     | `user_id`                                   | authenticated                                 |
+| `reconnect`  | `subject` (normalized `display_name` under attack) | anonymous — a caller-keyed limit would be worthless, they can mint identities at will |
+
+**Gates:** `cojoin_record_and_check` / `reconnect_record_and_check`. Both are SECURITY DEFINER, service-role only, and **fail closed** — any RPC error or null row denies, because a limiter that fails open is worse than none (it looks like protection). Each **counts first and only records when under the limit**: an over-limit caller is rejected *without* being logged, so the window actually drains. Recording-then-counting made the window self-feeding, which against a named victim is a permanent account lockout — for an anonymous-auth player reconnect *is* the account, with no email reset behind it. Attempts are written pessimistically as failures and flipped via `auth_attempt_mark_succeeded` once credentials verify, so a legitimate join never burns the window.
+
+**Arms** (`reconnect`: 10/name, 60/IP, 15 min · `cojoin`: 10/user, 60/IP, 15 min). Every count is scope-filtered — without that predicate failed *reconnects* burned the *co-organizer* IP budget, letting ~70 anonymous attempts lock co-organizer join for a whole single-NAT venue. The IP arm is deliberately loose because a club is one gym Wi-Fi plus CGNAT; a tight cap would let one person lock out the venue.
+
+> **The scope-wide spray counter is ADVISORY — it logs `spray_suspected` and never denies.** It shipped briefly as a hard 300/15min cap and that was a mistake: a shared counter is a platform-wide kill switch on login. ~30 enumerable names across ~5 IPs at 0.33 rps holds it open indefinitely (blocked attempts aren't recorded, so rows expire one at a time and the attacker just re-fills the gap). Denial stays on the two arms with a bounded blast radius. Distributed spray therefore remains bounded only at 60 failures/IP — a knowingly accepted residual risk; the real root cause is 4-digit PIN entropy.
+
+**Tests:** `tests/unit/reconnect-throttle.test.ts` (RC-LOCK / RC-FAIL / RC-PASS / RC-SPRAY / RC-FLIP) and `tests/unit/tenancy-guards.test.ts` (TG-RATE). RC-PASS-3 asserts the **exact RPC parameter names** — the gate fails closed, so one drifted key is a silent 100% lockout that every mock-based test would otherwise sail past.
+
+---
+
 ### 3.8b Duplicate-Name Resolution (forced rename on next login)
 
 **Files:** `src/lib/normalize-name.ts`, `src/lib/dup-name.ts`, `src/lib/rename-gate.ts`, `src/app/actions/rename.ts`, `src/app/actions/auth.ts`, `src/app/actions/queue.ts`, `src/app/rename/page.tsx`, `src/components/player/rename-screen.tsx`. Migrations `20260608000000` (schema + RPCs) and `20260608000001` (unique index). One-shot data fix: `supabase/data-fixes/20260608_duplicate_name_data_fix.sql`.
@@ -828,7 +849,9 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 **`rename_player_identity(p_user_id, p_new_name)` RPC:** single transaction — server-side R1 recheck → `UPDATE display_name + needs_rename=false + collided_name=null` (the unique index arbitrates R2; 23505 → `name_taken`) → `player_renames` audit insert. SECURITY DEFINER, pinned `search_path`, granted to `service_role` only (the action derives the user id from the session — no IDOR).
 
-**Registration change:** `signInAnonymously` now enforces global uniqueness (after the returning-player name+PIN→Reconnect check). The already-authed path **upserts** (re-creating a missing profile), which — together with `/` falling through to the login form for an authed-but-profileless user — breaks the profileless redirect loop left by a merged-away ghost.
+**Registration change:** `signInAnonymously` enforces global uniqueness. The already-authed path **upserts** (re-creating a missing profile), which — together with `/` falling through to the login form for an authed-but-profileless user — breaks the profileless redirect loop left by a merged-away ghost.
+
+> **The returning-player check is PIN-blind (2026-07-21, security).** It used to be `.ilike(name).eq("pin", pin)` answering "Looks like you've played before!" on a hit vs "Name taken" on a miss. Registration is unauthenticated and deliberately unthrottled, so those two replies were a free oracle over the 9,000-value PIN space — and it bypassed the `reconnectPlayer` limiter (§3.8a) end to end: recover the PIN here for nothing, then spend one reconnect attempt. **Every "name exists" arm now returns the same `NAME_TAKEN_MESSAGE`** (pre-check, both 23505 paths), so a right and a wrong PIN are indistinguishable. Two PIN-blind checks run in order: (1) a name-only lookup across **all** profiles, then (2) `isNameTaken` (normalized key, non-flagged only). Check (1) exists because `isNameTaken` skips flagged profiles to mirror the partial index — without it a **flagged** returning player would register a second account and strand their history behind a ghost. The accepted cost: a name held *only* by a flagged duplicate is unclaimable until that duplicate renames — and clearing a flag is **self-serve only** (`renamePlayer` derives the user from the session; no organizer or admin path exists), so a player who never returns leaves that name blocked until someone touches the DB. Narrow in practice: while the non-flagged holder still exists, `isNameTaken` blocks the name anyway, and the message already tells the registrant to add an initial. Pinned by `tests/unit/registration-pin-oracle.test.ts` (RO-STRUCT / RO-BLIND / RO-FLAG).
 
 **Schema:** `profiles.needs_rename boolean NOT NULL DEFAULT false`, `collided_name text`, `flagged_at timestamptz`; partial lookup index `idx_profiles_needs_rename`; audit table `player_renames(id, player_id, old_name, new_name, reason, actor_user_id, session_id, created_at)`.
 
