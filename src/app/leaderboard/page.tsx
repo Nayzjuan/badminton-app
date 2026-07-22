@@ -4,10 +4,20 @@
 // Accessible from the lobby (/play) without an active session.
 // Server Component. Auth is best-effort — never redirects.
 //
-// Starts on the All-Time tab. "This Session" tab shows a picker
-// so the player can choose which session to inspect.
+// Starts on the Monthly tab (use-leaderboard.ts picks "session"
+// only when an initialSessionId is in context, else "monthly").
+// "This Session" tab shows a picker so the player can choose
+// which session to inspect.
 //
-// All sessions are fetched (active + past) ordered newest-first.
+// Sessions are fetched (active + past) newest-first, scoped to
+// the caller's own clubs.
+//
+// NOTE ON LOGGED-OUT VISITORS: this page renders for them, but as
+// of 20260722010001 the All-Time board is authenticated-only —
+// getAllTimeLeaderboard returns zero rows without a session, and
+// the Monthly board's invoker-rights RPCs already return nothing
+// under anon RLS. The single logged-out leaderboard surface that
+// still shows data is the share link, /leaderboard/[sessionId].
 // ============================================================
 
 import Link from "next/link";
@@ -19,7 +29,9 @@ import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 export default async function LobbyLeaderboardPage() {
   const supabase = await createServerSupabaseClient();
 
-  // Auth is best-effort — a logged-out player can still browse All-Time.
+  // Auth is best-effort — no redirect. A logged-out visitor still gets the
+  // shell (top bar, tabs, empty states) rather than a bounce to /login; every
+  // board it can reach from here is simply empty.
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -65,8 +77,9 @@ export default async function LobbyLeaderboardPage() {
            session picker, so passing sessionId={null} traps
            fetchSession on its early-return and the page is stuck
            on the empty state forever. Standalone gives the full
-           UX: All-Time tab by default, This-Session tab with
-           session picker, hero card, centered max-w-2xl layout. */}
+           UX: tab switcher (opens on Monthly here, since no
+           sessionId is in context), This-Session tab with session
+           picker, hero card, centered max-w-2xl layout. */}
       <LeaderboardPage
         sessionId={null}
         sessions={sessions ?? []}

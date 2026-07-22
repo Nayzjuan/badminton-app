@@ -145,12 +145,27 @@ export function useEnrichedMatches(
 
     // ── Phase 3b: fetch player streaks (non-fatal) ─────────────
     // win_streak = 0 for any player not in the result (no active streak).
+    //
+    // get_SESSION_player_streaks, not get_player_streaks: the latter has both
+    // parameters defaulted, so with the anon/authenticated key it returned every
+    // player in every club, and 20260722010001 locked it to the service role.
+    // The scoped sibling takes a MANDATORY session id and gates itself on
+    // session_access_level(), so a caller without access to this session gets
+    // zero rows rather than someone else's board.
+    //
+    // The error is logged rather than swallowed: this degrades to "nobody is on
+    // a streak", which is indistinguishable from a grant mistake or a request
+    // that lands before the browser client has attached its JWT.
     let streakMap = new Map<string, number>();
     if (playerIds.length > 0) {
-      const { data: streakData } = await supabase.rpc("get_player_streaks", {
-        p_session_id: sessionId,
-      });
+      const { data: streakData, error: streakError } = await supabase.rpc(
+        "get_session_player_streaks",
+        { p_session_id: sessionId }
+      );
       if (mySeq !== seqRef.current) return;
+      if (streakError) {
+        console.warn("[useEnrichedMatches] streaks unavailable (non-fatal):", streakError.message);
+      }
       streakMap = new Map((streakData ?? []).map((s) => [s.player_id, s.win_streak]));
     }
 

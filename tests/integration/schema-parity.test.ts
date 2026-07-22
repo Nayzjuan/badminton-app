@@ -308,6 +308,117 @@ describe("Schema Parity — Suite G", () => {
     expect(leaks).toEqual([]);
   });
 
+  // ── Leaderboard read surface (20260722010000 / 20260722010001) ──
+  // TENANCY_AUDIT_2026-07-21.md #6: these four functions are SECURITY DEFINER
+  // with every scoping parameter DEFAULTED, so `{}` over PostgREST returned
+  // every player in every club to a caller holding nothing but the anon key —
+  // no login, no membership, no session id. v_alltime_leaderboard_mat was the
+  // same dump one layer down: a materialized view CANNOT have RLS, so its GRANT
+  // *is* its access control, and anon held SELECT.
+  //
+  // The fix routes all four reads through the service role in
+  // src/app/actions/leaderboard.ts, where getAllTimeLeaderboard/getPlayerStats
+  // do the club-scoping in TypeScript that the database can no longer do for
+  // them. That trade is only sound while the browser-reachable grants stay
+  // revoked — hence this test rather than trust in the migration's DO block.
+
+  it("the leaderboard read functions stay closed to anon and authenticated", async () => {
+    const locked = [
+      "public.get_alltime_snapshot_before(timestamptz, uuid)",
+      "public.get_player_streaks(uuid, uuid)",
+      "public.get_session_leaderboard_public(uuid)",
+      // Not a leaderboard reader itself — the name-resolution helper the other
+      // three call. Leaving it browser-callable would have kept a
+      // uuid -> display-name oracle open across every club.
+      "public._player_name(uuid)",
+    ];
+    let leaks: string[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ sig: string; grantee: string }>(
+        `SELECT sig, grantee
+           FROM unnest($1::text[]) AS sig
+           CROSS JOIN unnest(ARRAY['anon','authenticated']) AS grantee
+          WHERE has_function_privilege(grantee, sig::regprocedure::oid, 'EXECUTE')`,
+        [locked]
+      );
+      leaks = rows.map((r) => `${r.grantee} -> ${r.sig}`);
+    });
+    expect(leaks).toEqual([]);
+  });
+
+  it("the leaderboard read relations stay closed to anon and authenticated", async () => {
+    // v_match_history and v_session_leaderboard are owner-rights views
+    // (reloptions IS NULL, i.e. no security_invoker), so they read their base
+    // tables as the owner and bypass RLS entirely; v_alltime_leaderboard_mat is
+    // a matview, which cannot carry RLS at all. For all three the GRANT is the
+    // only thing between a caller and the whole table.
+    //
+    // 20260702000007 re-granted the two views as an emergency stopgap after the
+    // 2026-07-02 cutover locked out live code. Production reversed that by hand
+    // (20260702152731) but the repo never did, so a from-scratch replay still
+    // ended with the stopgap grants in place. 20260722010001 is that reversal
+    // in tracked form; this test is what keeps it reversed.
+    const locked = [
+      "public.v_alltime_leaderboard_mat",
+      "public.v_match_history",
+      "public.v_session_leaderboard",
+    ];
+    let leaks: string[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ rel: string; grantee: string }>(
+        `SELECT rel, grantee
+           FROM unnest($1::text[]) AS rel
+           CROSS JOIN unnest(ARRAY['anon','authenticated']) AS grantee
+          WHERE has_table_privilege(grantee, rel::regclass::oid, 'SELECT')`,
+        [locked]
+      );
+      leaks = rows.map((r) => `${r.grantee} -> ${r.rel}`);
+    });
+    expect(leaks).toEqual([]);
+  });
+
+  it("get_session_player_streaks is callable by authenticated but not anon", async () => {
+    // The replacement for the one call site that legitimately needs browser
+    // access: src/hooks/use-enriched-matches.ts fetches win streaks on every
+    // court-board refresh. Losing `authenticated` here is silent — every
+    // win-streak flame reads 0 and nothing errors — so the positive half of
+    // this assertion matters as much as the negative half.
+    let grants: Record<string, boolean> = {};
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ grantee: string; can: boolean }>(
+        `SELECT grantee,
+                has_function_privilege(
+                  grantee,
+                  'public.get_session_player_streaks(uuid)'::regprocedure::oid,
+                  'EXECUTE') AS can
+           FROM unnest(ARRAY['anon','authenticated','service_role']) AS grantee`
+      );
+      grants = Object.fromEntries(rows.map((r) => [r.grantee, r.can]));
+    });
+    expect(grants).toEqual({ anon: false, authenticated: true, service_role: true });
+  });
+
+  it("get_session_player_streaks requires p_session_id — no wildcard overload", async () => {
+    // Two guarantees in one query. (a) p_session_id has no DEFAULT, so `{}` is
+    // not a legal call and the cross-club form has no browser-reachable
+    // spelling. (b) exactly one candidate answers to that argument name in
+    // public — a second overload would make PostgREST reply PGRST203
+    // "Could not choose the best candidate function" and zero every streak.
+    let matches: { sig: string; defaults: number }[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ sig: string; defaults: number }>(
+        `SELECT p.oid::regprocedure::text AS sig, p.pronargdefaults AS defaults
+           FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public'
+            AND p.proname = 'get_session_player_streaks'
+          ORDER BY 1`
+      );
+      matches = rows;
+    });
+    expect(matches).toEqual([{ sig: "get_session_player_streaks(uuid)", defaults: 0 }]);
+  });
+
   // ── Materialized view ────────────────────────────────────
 
   it("v_alltime_leaderboard_mat materialized view exists", async () => {

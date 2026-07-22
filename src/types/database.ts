@@ -909,8 +909,21 @@ export type Database = {
         Args: { lvl: SkillLevel };
         Returns: number;
       };
+      /** SERVICE ROLE ONLY as of 20260722010001. Both params default to NULL,
+       *  so `{}` returns every player in every club — that is why it lost
+       *  anon/authenticated EXECUTE. Browser callers use
+       *  get_session_player_streaks instead. */
       get_player_streaks: {
         Args: { p_session_id?: string | null; p_club_id?: string | null };
+        Returns: { player_id: string; win_streak: number }[];
+      };
+      /** Browser-callable, session-scoped half of get_player_streaks
+       *  (20260722010000). p_session_id is MANDATORY and the function gates
+       *  itself on session_access_level(), so a caller without access to the
+       *  session receives zero rows. Granted to authenticated + service_role;
+       *  never to anon. */
+      get_session_player_streaks: {
+        Args: { p_session_id: string };
         Returns: { player_id: string; win_streak: number }[];
       };
       get_alltime_snapshot_before: {

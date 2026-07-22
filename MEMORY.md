@@ -5,6 +5,58 @@
 
 ---
 
+## 🔒 TENANCY PR2 — LEADERBOARD READ LOCKDOWN — branch `fix/tenancy-pr2-lock-leaderboard-reads`
+
+**Full write-up: `APP_MANIFEST.md` §3.8d.** Closes `TENANCY_AUDIT_2026-07-21.md` **#6** + the known matview hole: `get_player_streaks` / `get_alltime_snapshot_before` were `SECURITY DEFINER` with **every parameter defaulted**, so `POST /rpc/get_player_streaks` with body `{}` and nothing but the anon key returned every player in every club; `v_alltime_leaderboard_mat` held `anon` SELECT and a matview **cannot carry RLS at all**.
+
+### ⚠️ THE APPLICATION ORDER IS NOT OPTIONAL
+
+**`20260722010000` (additive) → deploy the code → `20260722010001` (revokes).**
+
+The two halves fail in opposite directions, which is the whole reason there are two files:
+
+- revokes **before** the deploy → live code still reads those objects on the authenticated client → `42501` on the leaderboard and match-history lists. That is the 2026-07-02 outage verbatim (`20260702000007` is the emergency re-grant).
+- the new function **after** the deploy → the browser calls an RPC that does not exist → `PGRST202` → every win-streak flame reads 0 for the whole window, silently, because the call is non-fatal by design.
+
+**Neither `20260722010000`/`010001` nor `20260722000000`–`000004` are stamped on prod.** Prod's last stamp is `20260721160004`. Merging changes nothing in the database — see the migration-automation note below.
+
+### What changed
+
+| Board | Client | Scoped by |
+| --- | --- | --- |
+| Session (incl. the public share link) | **service** | the mandatory `p_session_id` — the one deliberately public surface |
+| All-time + `getPlayerStats` | **service**, behind an auth gate | `getMyActiveClubIds(user.id)`; unknown/foreign `clubSlug` → zero rows |
+| Monthly | caller's client — **untouched** | already `SECURITY INVOKER` off the base tables; revoking would *delete* working RLS scoping |
+
+New RPC **`get_session_player_streaks(p_session_id)`** replaces the browser call in `use-enriched-matches.ts`: no DEFAULT on the parameter, self-gates on `session_access_level()`. A **distinct name, not an overload** — two candidates matching `{p_session_id}` make PostgREST answer `PGRST203`.
+
+Side effects to remember: the all-time board is now **authenticated-only** (logged out ⇒ empty, not an error), and `mergeAllTimeEntries` folds a player's rows across clubs because the matview is keyed `(player_id, club_id)` and a service-role read is no longer implicitly single-club. `buildVipMap` stays on the caller's client on purpose — `profiles` has real RLS.
+
+### The grant gotcha, in both directions
+
+Every revoke says **`from public, anon, authenticated`**. `from public` alone is wrong twice over: on a from-scratch replay `proacl` is NULL, so the revoke of PUBLIC also strips `service_role` (paired explicit grants required — same trap as `20260722000004`); on prod, Supabase's `ALTER DEFAULT PRIVILEGES` stamped **direct** `anon`/`authenticated` entries at `CREATE FUNCTION` time, which a PUBLIC revoke does not touch at all. Verified on prod: every `public` function carries `anon=X/postgres,authenticated=X/postgres`.
+
+`_player_name(uuid)` is revoked too — not a leaderboard reader, but the name helper its callers use, and all 9 callers are `SECURITY DEFINER` so they reach it as owner. Leaving it open kept a platform-wide uuid → display-name oracle.
+
+**`010001` also reverses repo-side drift:** prod applied `20260702152731 revoke_leaderboard_history_view_grants_post_cutover`, which has **no counterpart in this repo**, so `db reset` still ended with `20260702000007`'s stopgap grants on `v_match_history` / `v_session_leaderboard`. The migration is a prod no-op for those two views and the tracked reversal locally. **Its commented rollback block deliberately omits them** — re-granting would open a hole prod does not have.
+
+### Validation
+
+`db reset` replays both cleanly · tsc 0 · scoped lint 0 · `next build` clean · unit **825** · integration **21 files / 226 tests** (was 219: +4 schema-parity grant assertions, +3 RLS behavioural). New coverage: `schema-parity.test.ts` re-derives the grant shape from the catalog every reset (a migration `DO` block runs once and cannot catch the *next* bad revoke); `rls-edge-cases.test.ts` reproduces the dump through a real anon client and proves the gate three ways (organizer sees rows → outsider sees none → **same outsider sees rows once given club membership**, so the empty result is the gate and not an empty seed); `use-enriched-matches.test.ts` EM-9/EM-10 pin the RPC name + argument, which the name-agnostic `rpc` mock would otherwise let drift.
+
+**`tests/unit/leaderboard-club-scope.test.ts` (13 tests) guards the half that is no longer Postgres' job.** Everything above is DB-layer; the authorization that *moved out of the database into TypeScript* needed its own gate, because deleting the block at `leaderboard.ts:290-305` broke no test. LB-AUTH ×5 = the four fail-closed denials on both entry points, LB-SCOPE ×3 = the `.in("club_id", …)` filter and the per-club RPC fan-out (`p_club_id: null` = every club in the database), LB-MERGE ×5 = the cross-club fold and the post-merge threshold. Mutation-checked: six targeted mutants (drop the club filter · unknown slug falls through to all clubs · skip the logged-out check · move the GP filter pre-merge · skip the membership check in `getPlayerStats` · collapse the fan-out to `p_club_id: null`) were each injected and **all six were killed**, so these assertions are load-bearing rather than decorative.
+
+Round-2 review caught a **seventh** mutant that survived: deleting `.in("club_id", scopeClubIds)` from the `getPlayerStats` query at `leaderboard.ts:694` left the whole suite green, because LB-SCOPE only ever exercised `getAllTimeLeaderboard`. LB-MERGE-4 now asserts that filter directly (mutant re-run → killed). Two hardening changes went in with it: `beforeEach` re-arms `getMyActiveClubIds`/`getClubBySlug` to their **denying** values, since `vi.clearAllMocks()` clears call history but not implementations and a leaked stub could hand the next test a green it did not earn; and LB-SCOPE-3 now pins **which** two RPC names were called, because a count of 4 also matches fanning one RPC out twice and silently dropping the streaks.
+
+### Two things PR2 knowingly does NOT fix
+
+1. **`get_session_leaderboard_public` — accepted residual risk, not closed.** The revoke kills the *unscoped* PostgREST dump, but any already-known session UUID still yields the full named board unauthenticated via `getSessionLeaderboard`, which runs as service_role. That is the share-link contract (`/leaderboard/[sessionId]`, same class as `/tv` and `/wrapped`) — recorded as such in `TENANCY_AUDIT_2026-07-21.md` #6 so nobody later reads "#6 closed" as "the board needs a login".
+2. **`refresh_alltime_leaderboard()` still has PUBLIC EXECUTE** (`proacl IS NULL`) and is SECURITY DEFINER, so anon can trigger `REFRESH MATERIALIZED VIEW` at will — a DoS lever, not a read leak. `20260722000004` did not cover it. Folded into PR5.
+
+**Still open from the audit:** PR3 (`getMatchEvents` session-binding + drop `ensureClubMembership` from the two legacy shims) · PR4 (private `session-events` broadcast + tighten `profiles_select`) · **PR5, new and worse than #6** — ~24 `SECURITY DEFINER` functions still hold anon EXECUTE and **8 have no internal authorization at all** (`create_match_with_players`, `create_held_cross_court_match`, `swap_player_in_active_match`, `record_match_event`, `revert_match_to_active`, `clear_all_unpublished_drafts`, `compute_session_wrapped`, `refresh_cross_session_stats`); their only required input is a session UUID, which is published in share URLs ⇒ **unauthenticated match forgery**.
+
+---
+
 ## ✅ ALL THREE OPEN PRs MERGED — 2026-07-22 — `main` at `98ac7a7`, zero PRs open
 
 Merge order was forced by the dependency: **#36 → #35 → #33**. #36 is the one that made the Integration job capable of passing at all, so the other two had to land on top of it — their CI was red only because they were based on pre-#36 `main`.

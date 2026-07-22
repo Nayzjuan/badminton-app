@@ -3,14 +3,35 @@
 // ============================================================
 // Leaderboard Server Actions
 // ============================================================
-// Public read — no auth required (mirrors /tv/[sessionId]).
+// Three boards, three different access models. Read this before changing which
+// client any of them uses (TENANCY_AUDIT_2026-07-21.md #6, PR2):
+//
+//   SESSION  — public, no auth. /leaderboard/[sessionId] is the documented
+//     share-link contract (same class as /tv and /wrapped): it needs one
+//     already-known session UUID and works logged out. Reads run on the SERVICE
+//     client because migration 20260722010001 revoked anon/authenticated from
+//     get_session_leaderboard_public — the revoke closes the *unscoped* PostgREST
+//     dump (any caller could enumerate), not this deliberate per-session surface.
+//
+//   ALL-TIME — v_alltime_leaderboard_mat is a MATERIALIZED view, so RLS is
+//     impossible on it and the GRANT was the entire access control. Once the
+//     read moves to the service client that backstop is gone, so the action
+//     authorizes in TypeScript instead: a caller must be logged in, and only
+//     ever sees clubs they are an active member of. A logged-out caller gets
+//     `rows: []`, deliberately — see src/app/leaderboard/page.tsx.
+//
+//   MONTHLY  — untouched, on the CALLER's client. get_monthly_leaderboard and
+//     get_leaderboard_months are invoker-rights over the base tables, so RLS
+//     already scopes them correctly (anon gets [] at every join). Moving them to
+//     the service role would delete working RLS and replace it with hand-written
+//     checks.
 //
 // getSessionLeaderboard(sessionId)
-//   Fetches v_session_leaderboard, merges win streaks,
+//   Fetches get_session_leaderboard_public, merges win streaks,
 //   assigns ranks with tie-breaker chain, returns enriched rows.
 //   Anti-ghost: players with < MIN_SESSION_GP are excluded.
 //
-// getAllTimeLeaderboard()
+// getAllTimeLeaderboard(clubSlug?)
 //   Fetches v_alltime_leaderboard_mat, merges win streaks,
 //   computes rank movement (current vs. 7 days ago),
 //   assigns ranks with tie-breaker chain, returns enriched rows.
@@ -18,9 +39,10 @@
 // ============================================================
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { createServiceClient } from "@/utils/supabase/service";
 import { isValidUUID } from "@/lib/validate";
 import { formatMonthLabel } from "@/lib/month";
-import { getClubBySlug } from "@/lib/clubs";
+import { getClubBySlug, getMyActiveClubIds } from "@/lib/clubs";
 import type {
   SessionLeaderboardEntry,
   AllTimeLeaderboardEntry,
@@ -107,9 +129,47 @@ function buildStreakMap(streaks: PlayerStreak[]): Map<string, number> {
   return new Map(streaks.map((s) => [s.player_id, s.win_streak]));
 }
 
+// ── All-Time Row Merger ───────────────────────────────────────
+// v_alltime_leaderboard_mat is keyed (club_id, player_id), so a player active
+// in 2+ clubs has one row per club. Both the current board and the
+// point-in-time snapshot are summed per player before they are sorted, because
+// ranking is POSITIONAL: duplicate rows would list the same player twice and
+// shift everyone below them, and in the snapshot half that corrupts every
+// rank_movement arrow on the board. Single-club scope — the only shape that
+// exists today — makes this a no-op.
+function mergeAllTimeEntries(entries: AllTimeLeaderboardEntry[]): AllTimeLeaderboardEntry[] {
+  const byPlayer = new Map<string, AllTimeLeaderboardEntry>();
+  for (const entry of entries) {
+    const prev = byPlayer.get(entry.player_id);
+    if (!prev) {
+      byPlayer.set(entry.player_id, { ...entry });
+      continue;
+    }
+    prev.games_played += entry.games_played;
+    prev.wins += entry.wins;
+    prev.losses += entry.losses;
+    prev.points_for += entry.points_for;
+    prev.points_against += entry.points_against;
+    prev.point_diff = prev.points_for - prev.points_against;
+    prev.win_pct =
+      prev.games_played > 0 ? Math.round((prev.wins / prev.games_played) * 1000) / 10 : 0;
+  }
+  return [...byPlayer.values()];
+}
+
 // ── VIP Map Builder ───────────────────────────────────────────
 // Fetches vip_tag + vip_theme from profiles for a list of player IDs.
 // Returns a Map<player_id, { vip_tag, vip_theme }>.
+//
+// Deliberately stays on the CALLER's client even though its only caller now
+// reads the board itself with the service client. It does not need the
+// escalation (profiles_select is `TO authenticated USING (true)` and the column
+// grants cover id/vip_tag/vip_theme), escalating would ADD data for logged-out
+// callers — the exact opposite of PR2's goal — and when profiles_select is
+// narrowed to shared-club visibility, a caller-client read narrows with it
+// while a service-role read would silently keep bypassing the new policy.
+// CLAUDE.md restricts the service role to bypassing RLS; there is none to
+// bypass here.
 async function buildVipMap(
   supabase: Awaited<
     ReturnType<typeof import("@/utils/supabase/server").createServerSupabaseClient>
@@ -134,14 +194,21 @@ export async function getSessionLeaderboard(
 ): Promise<GetSessionLeaderboardResult> {
   if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
   try {
-    const supabase = await createServerSupabaseClient();
+    // Service client, deliberately: 20260722010001 revoked anon/authenticated
+    // EXECUTE on both RPCs below to close the unscoped PostgREST dump. This
+    // action stays a fully public surface — it is what /leaderboard/[sessionId]
+    // renders, and it must keep working logged out — but it is now reachable
+    // only with a session UUID the caller already has, instead of by
+    // enumerating with the bundled anon key. Nothing else about the action
+    // changed.
+    const db = createServiceClient();
 
     // Fetch session stats and streaks in parallel
     const [statsResult, streaksResult] = await Promise.all([
-      supabase
+      db
         .rpc("get_session_leaderboard_public", { p_session_id: sessionId })
         .gte("games_played", MIN_SESSION_GP),
-      supabase.rpc("get_player_streaks", { p_session_id: sessionId }),
+      db.rpc("get_player_streaks", { p_session_id: sessionId }),
     ]);
 
     if (statsResult.error) {
@@ -207,35 +274,81 @@ export async function getSessionLeaderboard(
 //      null = new entrant (not present in previous snapshot).
 // ============================================================
 export async function getAllTimeLeaderboard(
-  clubSlug?: string | null // when set, scope the board to that club; null = all clubs
+  clubSlug?: string | null // when set, scope to that club; omitted = every club the caller belongs to
 ): Promise<GetAllTimeLeaderboardResult> {
   try {
     const supabase = await createServerSupabaseClient();
-    const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
+
+    // ── Authorization ────────────────────────────────────────
+    // v_alltime_leaderboard_mat is a MATERIALIZED view, so it can never carry
+    // RLS: its GRANT *was* the access control until 20260722010001 revoked the
+    // browser roles. These checks are what replaces it, and every one of them
+    // fails CLOSED — an empty board is the right answer for a caller who is
+    // logged out, belongs to no club, or names a club that is not theirs.
+    // Previously an unknown clubSlug fell through to the all-clubs board, so a
+    // typo returned strictly more data than a correct slug.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: true, rows: [] };
+
+    const myClubIds = await getMyActiveClubIds(user.id);
+    if (myClubIds.length === 0) return { success: true, rows: [] };
+
+    let scopeClubIds: string[];
+    if (clubSlug) {
+      const club = await getClubBySlug(clubSlug);
+      if (!club || !myClubIds.includes(club.id)) return { success: true, rows: [] };
+      scopeClubIds = [club.id];
+    } else {
+      scopeClubIds = myClubIds;
+    }
+
+    const db = createServiceClient();
 
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - RANK_MOVEMENT_DAYS);
     const cutoffISO = cutoff.toISOString();
 
-    // Current: from materialized view (fast, pre-aggregated). Club filter is
-    // conditional — .eq('club_id', null) would wrongly match NULL rows.
-    let currentQuery = supabase
+    // Current: from materialized view (fast, pre-aggregated), scoped to the
+    // caller's clubs.
+    //
+    // MIN_ALLTIME_GP is applied AFTER mergeAllTimeEntries, not as a .gte() here.
+    // The matview is keyed (player_id, club_id), so a player in two scoped clubs
+    // arrives as two rows; filtering per row would drop someone with 6 + 6 games
+    // who qualifies on 12, while the snapshot below — which filters post-merge —
+    // would still rank them. That mismatch is not merely a missing row: it
+    // shifts previousRankMap out from under everyone beneath them and paints a
+    // spurious ▲1 down the rest of the board.
+    const currentQuery = db
       .from("v_alltime_leaderboard_mat")
       .select("*")
-      .gte("games_played", MIN_ALLTIME_GP);
-    if (clubId) currentQuery = currentQuery.eq("club_id", clubId);
+      .in("club_id", scopeClubIds);
 
-    // Fetch current mat-view, previous stats, and streaks in parallel
-    const [currentResult, previousResult, streaksResult] = await Promise.all([
+    // Snapshot and streaks are fetched ONCE PER CLUB, never once with
+    // p_club_id = null. Both RPCs aggregate across whatever they are given and
+    // null means every club in the database, which would fold foreign-club
+    // matches into the snapshot that rank_movement is diffed against and into
+    // each player's lifetime streak. One club in scope = one call, i.e. exactly
+    // what ran before.
+    const [currentResult, previousResults, streakResults] = await Promise.all([
       currentQuery,
 
       // Previous: raw aggregation on v_match_history filtered by date (+ club).
       // We re-aggregate here rather than using the matview because the
       // matview always reflects all history — we need a point-in-time slice.
-      supabase.rpc("get_alltime_snapshot_before", { p_cutoff: cutoffISO, p_club_id: clubId }),
+      Promise.all(
+        scopeClubIds.map((id) =>
+          db.rpc("get_alltime_snapshot_before", { p_cutoff: cutoffISO, p_club_id: id })
+        )
+      ),
 
       // Cross-session streaks (no session filter = lifetime streak)
-      supabase.rpc("get_player_streaks", { p_session_id: null, p_club_id: clubId }),
+      Promise.all(
+        scopeClubIds.map((id) =>
+          db.rpc("get_player_streaks", { p_session_id: null, p_club_id: id })
+        )
+      ),
     ]);
 
     if (currentResult.error) {
@@ -243,22 +356,50 @@ export async function getAllTimeLeaderboard(
       return { success: false, error: currentResult.error.message };
     }
 
-    if (streaksResult.error) {
-      console.error("[getAllTimeLeaderboard] streaks error:", streaksResult.error);
-      return { success: false, error: streaksResult.error.message };
+    const streaksError = streakResults.find((r) => r.error)?.error;
+    if (streaksError) {
+      console.error("[getAllTimeLeaderboard] streaks error:", streaksError);
+      return { success: false, error: streaksError.message };
     }
 
-    const currentStats = (currentResult.data ?? []) as AllTimeLeaderboardEntry[];
-    const streakMap = buildStreakMap((streaksResult.data ?? []) as PlayerStreak[]);
+    const currentStats = mergeAllTimeEntries(
+      (currentResult.data ?? []) as AllTimeLeaderboardEntry[]
+    ).filter((r) => r.games_played >= MIN_ALLTIME_GP);
+
+    // A player in 2+ scoped clubs has one streak row per club; the flame shows
+    // their best active streak.
+    const streakMap = new Map<string, number>();
+    for (const streak of streakResults.flatMap((r) => (r.data ?? []) as PlayerStreak[])) {
+      streakMap.set(
+        streak.player_id,
+        Math.max(streakMap.get(streak.player_id) ?? 0, streak.win_streak)
+      );
+    }
 
     // Sort + rank current stats
     const sortedCurrent = sortLeaderboard(currentStats, ALLTIME_CONFIDENCE_K);
     const rankedCurrent = assignRanks(sortedCurrent, ALLTIME_CONFIDENCE_K);
 
-    // Build previous rank map (player_id → rank)
+    // Build previous rank map (player_id → rank).
+    //
+    // The snapshot is advisory — it only drives the Δ column, so unlike the
+    // board itself a failure here degrades rather than aborts. It is ALL-OR-
+    // NOTHING ACROSS CLUBS on purpose: ranking a partial union would silently
+    // compare today's full board against a subset of history and invent
+    // movement for every player in the clubs that did answer. An empty map
+    // renders ✦ NEW everywhere, which is visibly "no history" rather than
+    // plausible-looking wrong arrows.
     const previousRankMap = new Map<string, number>();
-    if (!previousResult.error && previousResult.data) {
-      const prevStats = previousResult.data as AllTimeLeaderboardEntry[];
+    const previousError = previousResults.find((r) => r.error)?.error;
+    if (previousError) {
+      console.warn(
+        "[getAllTimeLeaderboard] snapshot unavailable — rank movement suppressed:",
+        previousError.message
+      );
+    } else {
+      const prevStats = mergeAllTimeEntries(
+        previousResults.flatMap((r) => (r.data ?? []) as AllTimeLeaderboardEntry[])
+      );
       const filteredPrev = prevStats.filter((r) => r.games_played >= MIN_ALLTIME_GP);
       const sortedPrev = sortLeaderboard(filteredPrev, ALLTIME_CONFIDENCE_K);
       const rankedPrev = assignRanks(sortedPrev, ALLTIME_CONFIDENCE_K);
@@ -472,11 +613,15 @@ export async function getPlayerStats(
     return { success: false, error: "Invalid session ID." };
   }
   try {
-    const supabase = await createServerSupabaseClient();
+    // Both branches read objects that 20260722010001 locked to the service
+    // role. The session branch keeps the same public contract as
+    // getSessionLeaderboard; the all-time branch re-authorizes below, exactly
+    // like getAllTimeLeaderboard, because the matview cannot carry RLS.
+    const db = createServiceClient();
 
     if (sessionId) {
       // ── Session scope ────────────────────────────────────────
-      const { data, error } = await supabase
+      const { data, error } = await db
         .rpc("get_session_leaderboard_public", { p_session_id: sessionId })
         .eq("player_id", playerId)
         .maybeSingle();
@@ -509,83 +654,64 @@ export async function getPlayerStats(
       return { success: true, row };
     } else {
       // ── All-time scope ───────────────────────────────────────
-      const clubId = clubSlug ? ((await getClubBySlug(clubSlug))?.id ?? null) : null;
-      let allTimeQuery = supabase
-        .from("v_alltime_leaderboard_mat")
-        .select("*")
-        .eq("player_id", playerId);
-      if (clubId) allTimeQuery = allTimeQuery.eq("club_id", clubId);
+      // Same authorization as getAllTimeLeaderboard, for the same reason: this
+      // reads the matview, RLS can never apply to it, and the read now runs as
+      // service_role. Every denial returns `row: null`, which the hero card
+      // already renders as its zero-games state.
+      const supabase = await createServerSupabaseClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return { success: true, row: null };
 
-      if (clubId) {
-        // Club-scoped: exactly 0 or 1 matview row for this player, safe to
-        // use maybeSingle().
-        const { data, error } = await allTimeQuery.maybeSingle();
+      const myClubIds = await getMyActiveClubIds(user.id);
+      if (myClubIds.length === 0) return { success: true, row: null };
 
-        if (error) {
-          console.error("[getPlayerStats] alltime error:", error);
-          return { success: false, error: error.message };
-        }
-
-        if (!data) return { success: true, row: null }; // zero all-time games
-
-        const entry = data as AllTimeLeaderboardEntry;
-        const row: LeaderboardRow = {
-          player_id: entry.player_id,
-          display_name: entry.display_name,
-          games_played: entry.games_played,
-          wins: entry.wins,
-          losses: entry.losses,
-          points_for: entry.points_for,
-          points_against: entry.points_against,
-          point_diff: entry.point_diff,
-          win_pct: entry.win_pct,
-          rank: 0, // not on ranked board
-          win_streak: 0, // not shown in below-threshold state
-          rank_movement: null,
-          vip_tag: null, // not shown in below-threshold state
-          vip_theme: null,
-        };
-
-        return { success: true, row };
+      let scopeClubIds: string[];
+      if (clubSlug) {
+        const club = await getClubBySlug(clubSlug);
+        if (!club || !myClubIds.includes(club.id)) return { success: true, row: null };
+        scopeClubIds = [club.id];
+      } else {
+        scopeClubIds = myClubIds;
       }
 
-      // Unscoped (legacy "all clubs" root /leaderboard): the matview is
-      // keyed by (club_id, player_id), so a player active in 2+ clubs has
-      // one row per club here. maybeSingle() would throw PGRST116 for such
-      // a player — merge all of their rows into one combined stats row
-      // instead, matching what an "all clubs" view should mean.
-      const { data, error } = await allTimeQuery;
+      // The matview is keyed (club_id, player_id), so a player active in 2+ of
+      // the caller's clubs has one row per club. mergeAllTimeEntries folds them
+      // into the single combined row the hero card expects, over the same club
+      // scope and with the same summing the board uses.
+      //
+      // No MIN_ALLTIME_GP filter here, deliberately: the hero card's job is to
+      // show a player their own totals whether or not they have qualified, and
+      // its below-threshold state (handled by the caller) is what communicates
+      // the gap. So a player under the threshold sees a card and no board row —
+      // intended — but the NUMBERS on the two always match, because both sides
+      // now merge before they compare against MIN_ALLTIME_GP.
+      const { data, error } = await db
+        .from("v_alltime_leaderboard_mat")
+        .select("*")
+        .eq("player_id", playerId)
+        .in("club_id", scopeClubIds);
 
       if (error) {
         console.error("[getPlayerStats] alltime error:", error);
         return { success: false, error: error.message };
       }
 
-      const entries = (data ?? []) as AllTimeLeaderboardEntry[];
-      if (entries.length === 0) return { success: true, row: null }; // zero all-time games
+      const merged = mergeAllTimeEntries((data ?? []) as AllTimeLeaderboardEntry[]);
+      if (merged.length === 0) return { success: true, row: null }; // zero all-time games
 
-      const merged = entries.reduce(
-        (acc, entry) => ({
-          games_played: acc.games_played + entry.games_played,
-          wins: acc.wins + entry.wins,
-          losses: acc.losses + entry.losses,
-          points_for: acc.points_for + entry.points_for,
-          points_against: acc.points_against + entry.points_against,
-        }),
-        { games_played: 0, wins: 0, losses: 0, points_for: 0, points_against: 0 }
-      );
-
+      const entry = merged[0];
       const row: LeaderboardRow = {
-        player_id: playerId,
-        display_name: entries[0].display_name,
-        games_played: merged.games_played,
-        wins: merged.wins,
-        losses: merged.losses,
-        points_for: merged.points_for,
-        points_against: merged.points_against,
-        point_diff: merged.points_for - merged.points_against,
-        win_pct:
-          merged.games_played > 0 ? Math.round((merged.wins / merged.games_played) * 1000) / 10 : 0,
+        player_id: entry.player_id,
+        display_name: entry.display_name,
+        games_played: entry.games_played,
+        wins: entry.wins,
+        losses: entry.losses,
+        points_for: entry.points_for,
+        points_against: entry.points_against,
+        point_diff: entry.point_diff,
+        win_pct: entry.win_pct,
         rank: 0, // not on ranked board
         win_streak: 0, // not shown in below-threshold state
         rank_movement: null,
