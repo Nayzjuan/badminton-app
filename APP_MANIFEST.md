@@ -1703,10 +1703,15 @@ always sort after it, so it cannot catch the next bad revoke. The forward-lookin
 gate is `tests/integration/schema-parity.test.ts`, which re-derives both halves
 of the invariant from the catalog on every `supabase db reset`: `service_role`
 can `EXECUTE` every non-trigger function in `public`, and `anon`/`authenticated`
-still cannot execute the seven privilege-granting primitives
+still cannot execute the eight privilege-granting primitives
 (`elevate_to_organizer`, `cojoin_record_and_check`, `migrate_player_identity`,
 `join_queue`, `remove_player_from_queue_organizer`, `publish_match`,
-`publish_all_drafts`). Trigger functions are excluded on purpose — they are only
+`publish_all_drafts`, `rejoin_queue`). `rejoin_queue` is in the list precisely
+because `20260722000004` is also the migration that *grants* it: of the four
+grants it makes, `rejoin_queue` and `cojoin_record_and_check` are the two that
+are simultaneously lockdown targets, so they are exactly the shape where a
+typo'd `to service_role, anon` would otherwise pass unnoticed. Trigger
+functions are excluded on purpose — they are only
 invoked by the trigger machinery, so revoking `EXECUTE` on a `SECURITY DEFINER`
 trigger function is legitimate hardening the gate must not forbid.
 
@@ -1717,6 +1722,19 @@ positives. Compare *effective executor sets* via
 `has_table_privilege` / `has_function_privilege` an **OID**, never a name — the
 name form resolves through `search_path` and the planner may evaluate it before
 the predicate meant to constrain the rows.
+
+**Forward hazard: the next `CREATE TABLE` must grant `service_role` SELECT
+itself.** `20260722000003`'s first assertion is a *whole-schema* check — every
+`relkind = 'r'` in `public` must be SELECT-able by `service_role` — not a check
+over the tables it happens to enumerate. So any table added by a migration whose
+timestamp sorts before `20260722000003` aborts the replay unless that migration
+carries its own grant. Production never shows this, because Supabase's
+`ALTER DEFAULT PRIVILEGES` stamps the grant at creation time; a from-scratch
+database has no such default and the table arrives with no grants at all. It is
+the same defect as the `is_hidden` column-grant trap one level up: **columns**
+need `grant select (col)`, **tables** need `grant … to service_role`, and
+**functions** need `grant execute … to service_role` after any
+`revoke … from public`.
 
 #### `after()` in integration tests
 
