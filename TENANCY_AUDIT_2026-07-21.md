@@ -48,6 +48,16 @@
 - **Today vs later:** With one club, this means **anyone can become a CHILLAX member on demand**, collapsing the only membership boundary that exists (roster, session list, club leaderboards). The *cross-club* headline ("read a club you don't belong to") is latent until a second club exists — but the mechanism is live now.
 - **Fix:** Do not grant membership as a side effect of viewing a link. In both shims drop `ensureClubMembership` and just 308-redirect, letting `requireClubMembership` gate (non-members already bounce to `/play`). If walk-in convenience is needed, enroll only on a genuine tie (an existing `queue_entries`/`match_players` row in that session) or a token-validated `/c/[clubSlug]/join` invite — never on bare possession of a session UUID or a guessable slug.
 
+> **STATUS 2026-07-23 (PR3 — `fix/tenancy-pr3-session-binding`): #4 and #5 both CLOSED.** Application layer only, no migration.
+>
+> **#4** — `.eq("session_id_snapshot", sessionId)` added to the `getMatchEvents` read, so the id that was authorized is the id that scopes the query. `session_id_snapshot` is `NOT NULL` and survives the match's `ON DELETE SET NULL`, and it is a residual on the existing `(match_id_snapshot, seq)` index. Prod integrity verified before shipping: 648 events / 465 matches, **0 null snapshots and 0 rows where the snapshot disagrees with the live match's `session_id`** — the filter excludes nothing legitimate.
+>
+> **#5** — the enroll survives, but only for the case it exists for, gated on a real participation signal: the organizer predicate (`created_by` OR `session_organizers` OR an active owner/admin of the session's club) for `/organizer/[id]`, an existing `queue_entries` row for `/play/[id]`. Both lookups go through the service client **because that is the authorization check itself** — `queue_entries` RLS is `session_access_level(session_id) IS NOT NULL` with no "own row" arm, so the caller's own client cannot see the row that proves a non-member walk-in belongs there. Both shims still 308 either way; the club route's `requireClubMembership` stays the single authority on what a non-participant may see.
+>
+> **The review caught a blocker worth recording as a standing rule.** The first draft imported `isSessionOrganizer` from `src/app/actions/_shared.ts` on the premise that a `"use server"` module's exports are public endpoints regardless. **That is backwards.** Such a module imported by another *action* module registers nothing; imported by anything in the **RSC layer** (a `page.tsx`), every export becomes a dispatchable Server Action scoped to that route. Measured by diffing `.next/server/server-reference-manifest.json`: **70 → 74 actions**, the +4 being `getAuthenticatedUser`, `getActorContext`, `isSessionOrganizer`, `isPlayerInSessionScope` under `app/organizer/[sessionId]/page` — two cross-tenant oracles over a caller-supplied uuid and an unauthenticated uuid → display-name lookup. The fix replaced it with a local, non-exported copy (back to 70, zero `_shared` entries), and `TB-IMPORT` in `tests/unit/tenancy-session-binding.test.ts` now fails if either shim imports anything under `app/actions/`. **The rule is "do not publish tenancy predicates", not "never import a `"use server"` module from RSC"** — the app does the latter deliberately for `getTvData` and `getWrappedData`, which are public reads on public routes and legitimately appear in the manifest. What must not be published is a `(userId, sessionId) → boolean` authorization oracle or a uuid → display-name lookup; when one of those needs sharing, it belongs in a `server-only` lib.
+>
+> **Tests:** `tests/unit/tenancy-session-binding.test.ts`, 19 tests (TB-EVENTS · TB-PLAY · TB-ORG · TB-IMPORT), mutation-checked eight-for-eight. The shim tests all assert on `ensureClubMembership` having been called or not, because both pages redirect either way — a test that only asserts the destination is green whether the hole is open or shut.
+
 ### #6 — Anon-EXECUTE SECURITY DEFINER leaderboard RPCs dump named stats  🟠 HIGH (privacy) · EXPLOITABLE TODAY, unauthenticated
 **File:** `src/app/actions/leaderboard.ts` (:142, :224, :235, :238)
 
@@ -87,6 +97,19 @@ Verified live grants (`pg_proc.proacl`): all three are `SECURITY DEFINER` and ho
 
 - WALRUS skips RLS on DELETE; with no filter, every authenticated subscriber gets a DELETE event for any `match_players` row removed platform-wide. But the table is REPLICA IDENTITY DEFAULT with PK `id` only, so the payload is just an opaque row UUID — no player, match, or team. Leak is timing/volume of teardowns, nothing identifying.
 - **Fix (optional):** Drive roster refresh off the already-subscribed `matches` stream and drop `match_players` from the realtime publication, or accept it. Low priority.
+
+### #10 — Live-match swaps authorize on `sessionId` but MUTATE by `matchId`  🟠 HIGH · cross-session WRITE TODAY
+**Files:** `src/app/actions/live-match-swap.ts:104→124`, `:206→210`, `:279→284`; RPCs in `supabase/migrations/20260617000000_match_provenance_audit.sql:485`, `:556`, `:626`
+
+*Found 2026-07-23 during the PR3 review, not in the original sweep.* **Exactly the #4 defect, but on writes rather than reads** — and unlike #4 there is no second id to filter on, so the binding has to be added.
+
+- **What breaks:** each action gates on `isSessionOrganizer(user.id, sessionId)` and then calls a `SECURITY DEFINER` RPC keyed on a *separately* client-supplied `matchId`. **Verified: none of the three RPCs ever compares `matches.session_id` to `p_session_id`.** They lock and mutate `WHERE id = p_match_id`; `p_session_id` is used only for the `queue_entries` reads/writes and the audit event, so it silently describes a *different* session from the one being mutated. The TS layer does not bind them either — `swapPlayerInActiveMatch`'s pre-read is `.eq("match_id", matchId).eq("player_id", outPlayerId)`, with no session predicate.
+  - `swap_player_in_active_match` (:485) — `DELETE FROM match_players`, `INSERT`, `UPDATE matches` on the foreign match.
+  - `swap_teams_in_active_match` (:556) — **does not even take `p_session_id`**; it reads `session_id` out of the match purely to stamp the audit event. Nothing at either layer ties the match to the authorized session.
+  - `swap_active_from_ondeck` (:626) — two client-supplied match ids, both mutated, neither bound.
+- **Who / today:** any organizer of any session (including a self-provisioned one, #2) can rewrite the live roster of a match in someone else's session — pulling a player off court mid-game and substituting one of *their own* waiting players. Cross-session today within CHILLAX; cross-club at a second club. The `MATCH_NOT_ACTIVE` / `PLAYER_UNAVAILABLE` guards constrain *when* it works, not *whose* match.
+- **Why it is worse than #4:** #4 leaked an audit trail; this corrupts live match state and the derived stats, and it is not undoable by the victim organizer.
+- **Fix:** bind at both layers. In SQL, add `AND session_id = p_session_id` to the match lookup (and give `swap_teams_in_active_match` a `p_session_id` parameter) so the RPC raises rather than mutating. In TS, mirror the guard that already exists at `src/app/actions/fix-player-record.ts:117` — `if (match.session_id !== sessionId) return { success:false, … }`. Audit the other `p_match_id` RPCs for the same shape while in there.
 
 ---
 
