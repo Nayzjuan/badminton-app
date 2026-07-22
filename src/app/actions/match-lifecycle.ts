@@ -55,9 +55,11 @@ export async function submitMatchScore(
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
 
-  // Identify the calling player. Authentication is checked before the score
-  // payload is validated — see the note in updateMatchDetails; all three entry
-  // points in this file settle "may you call this at all?" first.
+  // Identify the calling player. Both authentication AND the participation
+  // check run before the score payload is validated — see the note in
+  // updateMatchDetails, which orders itself the same way. endMatchAction can
+  // only get authentication in first: its organizer-OR-player gate lives in
+  // endMatchInternal, which takes the parsed scores as arguments.
   const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
@@ -358,8 +360,10 @@ export async function updateMatchDetails(
   // business here should be told exactly that, and told it for any payload:
   // with validation first, "Not authorized" is reachable only by sending a
   // well-formed body, which makes the authorization outcome look conditional on
-  // the request shape. submitMatchScore and endMatchAction above order
-  // themselves the same way.
+  // the request shape. submitMatchScore above settles authorization the same
+  // way (auth + participation, then validate); endMatchAction gets only
+  // authentication in first, because its organizer-OR-player gate is inside
+  // endMatchInternal, which needs the parsed scores as arguments.
 
   // All writes use the service client so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.

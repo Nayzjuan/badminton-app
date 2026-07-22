@@ -292,6 +292,7 @@ describe("Schema Parity — Suite G", () => {
       "public.remove_player_from_queue_organizer(uuid, uuid)",
       "public.publish_match(uuid, uuid, uuid)",
       "public.publish_all_drafts(uuid, uuid)",
+      "public.rejoin_queue(uuid)",
     ];
     let leaks: string[] = [];
     await withTx(async (db) => {

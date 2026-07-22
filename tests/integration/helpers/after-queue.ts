@@ -44,9 +44,14 @@ export async function flushAfterCallbacks(): Promise<void> {
   // flight — i.e. the FK-violation class this helper exists to prevent, back
   // again and invisible. Say so; a silent return here reads as a clean drain.
   if (pending.size > 0) {
-    console.warn(
-      `[after-queue] drain bound exhausted with ${pending.size} callback(s) still in flight — ` +
-        `cleanup may race them`
+    // console.error, not warn: this is called from afterEach, so throwing would
+    // replace whatever real failure the test just produced with a cleanup error.
+    // The run still goes green — the trade is deliberate, but the signal has to
+    // stand out from the verbose reporter's ordinary [engine] chatter.
+    console.error(
+      `[after-queue] DRAIN BOUND EXHAUSTED — ${pending.size} callback(s) still in flight. ` +
+        `Cleanup is about to delete rows they may still be writing; expect FK violations ` +
+        `or cross-test pollution below.`
     );
   }
 }

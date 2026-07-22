@@ -105,8 +105,14 @@ END $$;
 -- space, migrate_player_identity reassigns a player's whole history (called
 -- "the highest-value function in the schema" by 20260721180000), and
 -- join_queue / remove_player_from_queue_organizer / publish_match /
--- publish_all_drafts are the queue- and draft-forgery surface closed by
--- 20260721180000.
+-- publish_all_drafts / rejoin_queue are the queue- and draft-forgery surface
+-- closed by 20260721180000.
+--
+-- rejoin_queue is here specifically because THIS migration grants it (above):
+-- of the four grants, it and cojoin_record_and_check are the two that are also
+-- lockdown targets, so they are exactly the shape where a typo'd
+-- "to service_role, anon" would otherwise go unnoticed. get_h2h_record is
+-- deliberately absent — it is authenticated-callable by design.
 DO $$
 DECLARE
   v_fn text;
@@ -118,7 +124,8 @@ BEGIN
     'public.join_queue(uuid, uuid)',
     'public.remove_player_from_queue_organizer(uuid, uuid)',
     'public.publish_match(uuid, uuid, uuid)',
-    'public.publish_all_drafts(uuid, uuid)'
+    'public.publish_all_drafts(uuid, uuid)',
+    'public.rejoin_queue(uuid)'
   ] LOOP
     IF has_function_privilege('anon', v_fn::regprocedure::oid, 'EXECUTE') THEN
       RAISE EXCEPTION 'anon regained EXECUTE on %', v_fn;
