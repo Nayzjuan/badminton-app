@@ -5,6 +5,32 @@
 
 ---
 
+## ✅ MIGRATION REPLAY / INTEGRATION CI — 2026-07-22 — SUITE GREEN FROM SCRATCH (PR #36, branch `fix/migration-replay-publication`)
+
+**Full write-up: `APP_MANIFEST.md` §7 → "The migration set must replay from scratch".**
+
+**The premise:** the Vitest Integration job had never once been green. `supabase db reset` did not reproduce production, because much of production was built through the Supabase dashboard and the migrations described only part of it. **Failure trajectory: 47 → 38 → 41 → 15 → 3 → 0.** Each layer was invisible until the one before it was fixed.
+
+**Five declaration migrations** (`20260722000000`–`4`), all no-ops against prod: realtime publication membership · `v_recent_pairings` · RLS baseline (7 tables / 35 policies) · per-table+per-role grants (+ `supabase/config.toml` pinning pg **17**; `MAINTAIN` is 17+) · **function `EXECUTE` grants**.
+
+**The one worth remembering:** `revoke execute ... from public, anon, authenticated` on a function whose `proacl` is still NULL materialises `acldefault('f', owner)` = `{owner=X/owner, =X/owner}` FIRST, then removes the named grantees. `=X` is the grant to PUBLIC. **Nothing in that sequence mentions `service_role`** — so on a from-scratch DB, revoking PUBLIC is the only thing between `service_role` and the function and it takes EXECUTE with it. Prod survives only because Supabase's `ALTER DEFAULT PRIVILEGES` stamped an explicit `service_role=X` at creation. Exactly **4** functions affected (`cojoin_record_and_check`, `elevate_to_organizer`, `rejoin_queue`, `get_h2h_record`); only the first is load-bearing, and it failed in the worst direction — `joinAsCoOrganizer` is fail-closed, so permission-denied ≡ genuine lockout and every legitimate co-organizer join was refused with **"Too many attempts" against an empty attempt log**. `20260722000004` now asserts the invariant at apply time (true of all 56 prod functions), so the next such revoke fails in CI.
+
+**PR #35 carried the identical defect** on `reconnect_record_and_check` / `auth_attempt_mark_succeeded` / its `cojoin` replace. Pre-emptively fixed on that branch as `20260721240000` — dated **before** `20260722000004` so it lands ahead of the assertion whichever PR merges first.
+
+**Other fixes:** CI env extraction used CLI-1.x jq keys against the pinned 2.x CLI (`Failed to parse URL from null/rest/v1/`) · `server-only` alias in `vitest.integration.config.ts` · `supabase/seed.sql` for the bootstrap profile/club (a **seed**, not a migration — a migration inventing an organizer would write fake rows into prod) · attempts log now truncated between tests · `after()` stubbed and **run** (see below).
+
+**8 tests that had NEVER executed were themselves wrong:** ×5 in `live-match-swap` repeated one player id in filler matches, violating `match_players (match_id, player_id)` · `DCINT-13` wrote `is_held` directly, but it is `GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0) STORED` — the insert was rejected and **the error was swallowed**, which is how `undefined` reached `toContain()` and read as a real result · `drafted-status` asserted publish leaves `waiting` players alone, but `20260717165546` deliberately widened the predicate to `IN ('drafted','waiting')` to heal exactly those rows.
+
+**One app change:** `updateMatchDetails` validated scores **before** checking authorization, so a non-organizer learned their payload was malformed before learning they had no business calling. Order is now uuid → auth → fetch → organizer → validate.
+
+**`after()` in tests:** the stub RUNS the callback. A no-op looks safer and is wrong — 7 sites in `queue.ts` + `fix-player-record.ts` wrap `runEngineForSession`, not push. In-flight promises go to `tests/integration/helpers/after-queue.ts`; `truncateTracked()` drains them before deleting rows, or the engine writes race cleanup.
+
+**Gotchas:** `proacl IS NULL` ≡ "PUBLIC has EXECUTE", so a string diff of ACLs is all false positives — compare effective executor sets via `aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))` · **never pass `has_table_privilege`/`has_function_privilege` a NAME** — the planner may evaluate it before the predicate meant to constrain the rows (this resolved `public.instances` and broke an earlier `20260722000003`) · `.maybeSingle()` **errors** on >1 row (PGRST116), it does not return the first · Next's `after()` throws outside a request scope.
+
+**Status:** local from-scratch replay green — **21 files / 217 integration tests**, 792 unit, tsc 0, build clean, scoped lint 0. PRs #33 and #35 held until #36's CI is green (user decision).
+
+---
+
 ## ✅ REPEAT-PAIRING WARNING (manual match) — 2026-07-21 — UI WIRING COMPLETE, on branch, PR open
 
 **Full architecture: `APP_MANIFEST.md` §3.25.** Advisory warning when the organizer hand-builds a match that repeats a pairing the engine itself refuses. Never blocks/disables/rejects creation.

@@ -1641,6 +1641,64 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `score-submission.test.ts` | F     | `endMatchAction` cascade (scores, re-queue, court freed); `cancelMatchAction` (no games_played increment); **server-side score range validation (0–31 int, rejects float/negative/over-31, rejects draws)** |
 | `session-lifecycle.test.ts`| K     | `createSession` validation; `joinAsCoOrganizer` passcode auth and idempotency                                                   |
 
+#### The migration set must replay from scratch (2026-07-22)
+
+The integration job had never once been green, because `supabase db reset`
+produced a database that did not match production. Much of production was built
+through the Supabase dashboard, so the migrations described only part of it.
+Each missing layer was hidden behind the one before it and only surfaced once
+the previous was fixed:
+
+| Layer                              | Declared by                                    | Symptom while missing                                                         |
+| ---------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| Realtime publication membership    | `20260722000000`                               | replay aborted during DB setup                                                 |
+| `v_recent_pairings`                | `20260722000001`                               | missing view                                                                   |
+| RLS baseline (7 tables, 35 policies)| `20260722000002`                              | policies simply absent                                                         |
+| Per-table/per-role grants          | `20260722000003` + `supabase/config.toml` (pg 17) | `permission denied for table profiles` from a **service-role** client       |
+| Function `EXECUTE` grants          | `20260722000004`                               | "Too many attempts" on an empty attempt log                                    |
+
+**The function-grant trap is worth knowing.** Several migrations lock a
+`SECURITY DEFINER` function down with `revoke execute ... from public, anon,
+authenticated`. On a function whose `proacl` is still NULL, Postgres
+materialises the default ACL first — `{owner=X/owner, =X/owner}`, where `=X` is
+the grant to PUBLIC — and only then removes the named grantees. Nothing in that
+sequence mentions `service_role`. Production is unaffected only because its
+functions were created while Supabase's `ALTER DEFAULT PRIVILEGES` were in
+effect and already carry an explicit `service_role=X`. On a from-scratch
+database the revoke of PUBLIC is the *only* thing between `service_role` and
+the function, and it takes `EXECUTE` with it.
+
+`joinAsCoOrganizer` is deliberately fail-closed, so a permission error on the
+limiter RPC was indistinguishable from a real lockout: legitimate co-organizers
+were refused with a rate-limit message against an empty log. `20260722000004`
+asserts the invariant at apply time — every function in `public` must be
+`EXECUTE`-able by `service_role` (already true of all 56 in production) — so the
+next migration that revokes without re-granting fails in CI rather than at 2am.
+
+**Comparing ACLs:** `proacl IS NULL` means "default", which is functionally the
+same as an explicit grant to everyone, so a string diff of ACLs is all false
+positives. Compare *effective executor sets* via
+`aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))`. And always pass
+`has_table_privilege` / `has_function_privilege` an **OID**, never a name — the
+name form resolves through `search_path` and the planner may evaluate it before
+the predicate meant to constrain the rows.
+
+#### `after()` in integration tests
+
+Server actions schedule fire-and-forget work with Next's `after()`, which throws
+outside a request scope — 29 failures once the suite could run at all.
+`tests/integration/setup.ts` stubs it, and the stub **runs** the callback: the
+call sites are not all push notifications (seven in `queue.ts` plus
+`fix-player-record.ts` wrap `runEngineForSession`), so a no-op silently skips
+draft regeneration. Running it is safe for the push sites because
+`pushToPlayers` swallows its own errors and returns as soon as `ensureVapid()`
+throws, which it does wherever VAPID keys are unset.
+
+Real `after()` work outlives the action that scheduled it, so the in-flight
+promise is registered with `tests/integration/helpers/after-queue.ts` and
+`truncateTracked()` drains it before deleting rows — otherwise the engine is
+still inserting matches while cleanup removes the rows they reference.
+
 ### Test Helpers & Fixtures
 
 - `tests/helpers/teardown.ts` — `resetSandboxSession()`, `softResetSandboxSession()`, `seedSession()`, `repairSandboxState()` — sandbox lifecycle. `repairSandboxState()` is called automatically at the start of `softResetSandboxSession` (Step 0) to heal any stuck state left by a previous crashed test run — cancels orphaned matches, returns stuck players to `waiting`, frees stuck courts.
@@ -1649,7 +1707,9 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 - `tests/fixtures/seed-sandbox.ts` — **Run with `npx tsx`** — idempotently seeds all 50 E2E_ bot players + 6 courts into the live sandbox session (`TEST_SESSION_ID`). Reads `.env.test` + `.env.local`. Safe to re-run.
 - `tests/integration/factories/index.ts` — `makeProfile`, `makeSession`, `makeQueueEntry`, `makeCourt`, `makeMatch` — composable DB factories for integration tests
 - `tests/integration/helpers/mock-auth.ts` — `mockAuthAs(userId)` / `clearMockAuth()` — per-test auth identity control
-- `tests/integration/helpers/truncate.ts` — `truncateTracked()` — deletes all rows and auth users created during a test
+- `tests/integration/helpers/truncate.ts` — `truncateTracked()` — drains pending `after()` work, then deletes all rows and auth users created during a test
+- `tests/integration/helpers/after-queue.ts` — `trackAfterCallback()` / `flushAfterCallbacks()` — holds the promises from the stubbed `after()` so cleanup can wait them out. Deliberately standalone: importing `setup.ts` from `truncate.ts` would re-run its `vi.mock` registrations.
+- `supabase/seed.sql` — bootstrap auth user + profile at the all-zeros UUID (the one id `truncateTracked()` preserves) and the default club. A seed, **not** a migration: a migration that invented an organizer profile would write fake rows into production.
 
 ---
 
