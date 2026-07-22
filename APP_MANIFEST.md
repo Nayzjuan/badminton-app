@@ -316,10 +316,10 @@ One-time club-wide "firsts" ledger (migration `20260704000001`). Append-only; RL
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v_queue_with_wait_time`       | Queue entries joined with profiles; computes `wait_minutes`, `is_bottleneck`, `skill_level_int`. **Filters to `status = 'waiting'` only** — this is the engine's input view and must never include non-waiting rows. |
 | `v_queue_full_with_wait_time`  | Same as above but includes `status IN ('waiting', 'drafted', 'on_deck')`. Used by the **organizer queue panel** and **player waitlist** (drafted excluded on player side). Adds `status_priority` column (on_deck=0, drafted=1, waiting=2) for PostgREST ordering. Migration: `20260520000000`. |
-| `v_match_history`              | Matches + players + scores with team arrays and `game_scores` JSON                                                                                                                                                  |
+| `v_match_history`              | Matches + players + scores with team arrays and `game_scores` JSON. **Owner-rights view — bypasses base-table RLS; the GRANT is the access control.** Service-role only (§3.8d).                                     |
 | `v_recent_pairings`            | Recent co-player pairs per player; **no longer used by `buildOverlapMap`** (replaced by 3-step manual join with team-aware weighting in `matchmaking.ts`; view still exists in DB but is not queried by the engine) |
-| `v_session_leaderboard`        | Per-session GP, W, L, Win%, PF, PA, +/-                                                                                                                                                                             |
-| `v_alltime_leaderboard_mat`    | Materialized all-time leaderboard (same columns, no session filter)                                                                                                                                                 |
+| `v_session_leaderboard`        | Per-session GP, W, L, Win%, PF, PA, +/-. Owner-rights view, **service-role only** (§3.8d).                                                                                                                           |
+| `v_alltime_leaderboard_mat`    | Materialized all-time leaderboard, keyed `(player_id, club_id)`. **A matview cannot carry RLS at all** — service-role only, club-scoped in TypeScript (§3.8d).                                                       |
 
 ---
 
@@ -330,8 +330,9 @@ One-time club-wide "firsts" ledger (migration `20260704000001`). Append-only; RL
 | `elevate_to_organizer(p_session_id, p_passcode)`        | Passcode-gated organizer promotion → inserts `session_organizers` row                                                                                                                                                                                                                                                                |
 | `rejoin_queue(p_session_id)`                            | Player self-rejoin after leaving                                                                                                                                                                                                                                                                                                     |
 | `skill_level_to_int(lvl)`                               | Enum → numeric (1–6)                                                                                                                                                                                                                                                                                                                 |
-| `get_player_streaks(p_session_id?)`                     | Win-streak per player for current session or all-time                                                                                                                                                                                                                                                                                |
-| `get_alltime_snapshot_before(p_cutoff)`                 | All-time stats as of a timestamp                                                                                                                                                                                                                                                                                                     |
+| `get_player_streaks(p_session_id?, p_club_id?)`         | Win-streak per player, session-scoped or all-time. **SERVICE ROLE ONLY** as of `20260722010001` — both params default, so `{}` dumped every club (§3.8d).                                                                                                                                                                             |
+| `get_session_player_streaks(p_session_id)`              | The browser-callable half (`20260722010000`). Mandatory session id, self-gates on `session_access_level()`. `authenticated` + `service_role`, **never `anon`**. Called by `use-enriched-matches.ts` for the court-board flames.                                                                                                        |
+| `get_alltime_snapshot_before(p_cutoff, p_club_id?)`     | All-time stats as of a timestamp. **SERVICE ROLE ONLY** as of `20260722010001` (§3.8d).                                                                                                                                                                                                                                               |
 | `get_monthly_leaderboard(p_year, p_month)`              | **Monthly board** (migration `20260626000000`). Live aggregation of one Manila-month slice of completed matches off base tables. `SECURITY INVOKER`, public-read. Boundary anchored in `Asia/Manila` via `make_timestamptz`; sargable `completed_at` range on `idx_matches_completed_at`.                                              |
 | `get_leaderboard_months()`                              | Months for the monthly picker — distinct Manila-months with completed matches + the current month (always present), newest first. `SECURITY INVOKER`, public-read.                                                                                                                                                                    |
 | `refresh_alltime_leaderboard()`                         | Refreshes the materialized view                                                                                                                                                                                                                                                                                                      |
@@ -828,6 +829,7 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 ---
 
+
 ### 3.8b Duplicate-Name Resolution (forced rename on next login)
 
 **Files:** `src/lib/normalize-name.ts`, `src/lib/dup-name.ts`, `src/lib/rename-gate.ts`, `src/app/actions/rename.ts`, `src/app/actions/auth.ts`, `src/app/actions/queue.ts`, `src/app/rename/page.tsx`, `src/components/player/rename-screen.tsx`. Migrations `20260608000000` (schema + RPCs) and `20260608000001` (unique index). One-shot data fix: `supabase/data-fixes/20260608_duplicate_name_data_fix.sql`.
@@ -920,15 +922,43 @@ Post-session awards summary — the "Spotify Wrapped" for a badminton night.
 
 ---
 
+### 3.8d Leaderboard read lockdown (2026-07-22)
+
+**Files:** `src/app/actions/leaderboard.ts`, `src/hooks/use-enriched-matches.ts`, `src/app/leaderboard/page.tsx`. Migrations `20260722010000` (additive) + `20260722010001` (revokes).
+
+**Why (`TENANCY_AUDIT_2026-07-21.md` #6):** three leaderboard RPCs were `SECURITY DEFINER` with **every scoping parameter defaulted**, so a `POST /rpc/get_player_streaks` with body `{}` — anon key, no login, no club, no session id — returned every player in every club. `get_alltime_snapshot_before` was the same shape; `get_session_leaderboard_public` needed only a session id, which is printed in share URLs. One layer down, `v_alltime_leaderboard_mat` held `anon` SELECT, and a **materialized view cannot carry RLS at all** — the GRANT *is* its access control. `v_match_history` / `v_session_leaderboard` are owner-rights views (`reloptions IS NULL`, no `security_invoker`), so they read their base tables as the owner and bypass RLS the same way.
+
+**The fix, and what it costs.** Revoking `anon` + `authenticated` moves the scoping from Postgres into TypeScript, so `src/app/actions/leaderboard.ts` now owns it explicitly:
+
+| Board                         | Client                              | Scoping                                                                                                    |
+| ----------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Session** (incl. share link) | service client                      | the mandatory `p_session_id` — this is the one deliberately public surface (`/leaderboard/[sessionId]`)       |
+| **All-time** (+ `getPlayerStats`) | service client, **after** an auth gate | `getMyActiveClubIds(user.id)`; a `clubSlug` not in that set returns zero rows, no slug means "my clubs"      |
+| **Monthly**                    | caller's client — **unchanged**      | `get_monthly_leaderboard` / `get_leaderboard_months` are `SECURITY INVOKER` off the base tables, so RLS already scopes them. Revoking them would *delete* working scoping and replace it with hand-written checks. |
+
+Consequences worth knowing: the all-time board is now **authenticated-only** (logged out ⇒ empty, not an error), and because a service-role read spans clubs, cross-club rows are folded by `mergeAllTimeEntries` — the matview is keyed `(player_id, club_id)`, so a player in two clubs previously appeared twice. `buildVipMap` deliberately **stays** on the caller's client: it reads `profiles`, which has real RLS.
+
+**The one browser-reachable replacement.** `use-enriched-matches.ts` fetches win streaks from the browser on every court-board refresh (the flame on each on-deck card). It now calls **`get_session_player_streaks(p_session_id)`** — same window body as `get_player_streaks`, but the parameter has **no DEFAULT** (so the cross-club form has no browser-reachable spelling) and it gates itself on `session_access_level(p_session_id) IS NOT NULL`, returning zero rows rather than another club's board. A distinct name, **not an overload**: PostgREST resolves overloads by argument-name set, and two candidates matching `{p_session_id}` answer `PGRST203`.
+
+**Why two migration files.** Both orderings of a single file are fatal in opposite directions — revokes before the code deploy reproduce the 2026-07-02 `42501` outage verbatim (see `20260702000007`), and the new function after the deploy means `PGRST202` and every streak flame silently reading 0. The split creates a safe order: **apply `…010000` → deploy code → apply `…010001`**.
+
+**Every revoke spells out `from public, anon, authenticated`.** Revoking `PUBLIC` alone is wrong in *both* directions here: on a from-scratch replay `proacl` is NULL so PUBLIC is the only holder and the revoke also strips `service_role` (hence the paired explicit grants — see `20260722000004`); on production Supabase's `ALTER DEFAULT PRIVILEGES` stamped **direct** `anon`/`authenticated` entries at `CREATE FUNCTION` time, which a PUBLIC revoke does not touch at all.
+
+**Tests:** `schema-parity.test.ts` re-derives the grant shape from the catalog on every `db reset` (the migrations' `DO` blocks run once and cannot catch the *next* bad revoke); `rls-edge-cases.test.ts` reproduces the audit through a real anon client and proves the `session_access_level` gate three ways (organizer sees rows → outsider sees none → same outsider sees rows once granted club membership); `use-enriched-matches.test.ts` EM-9/EM-10 pin the RPC name + argument and the degrade-to-zero path.
+
+---
+
 ### 3.9 Leaderboard
 
 **Files:** `src/components/leaderboard/`, `src/hooks/use-leaderboard.ts`, `src/app/actions/leaderboard.ts`, `src/types/leaderboard.ts`, `src/lib/month.ts`
 
 Three leaderboard scopes (3-way segmented control `[ Session · Monthly · All-Time ]` on every variant; `useLeaderboard` owns the `scopeTab`):
 
+> **Read access:** as of 2026-07-22 the Session and All-Time reads run on the **service client** and are scoped in `src/app/actions/leaderboard.ts`, not by RLS — see **§3.8d** before touching any of these queries. Monthly still runs on the caller's client and is scoped by RLS.
+
 - **Session leaderboard**: reads `v_session_leaderboard` — live stats for the current session. `MIN_SESSION_GP=1`, confidence `K=3`.
 - **Monthly leaderboard** (migration `20260626000000`): live `get_monthly_leaderboard(year, month)` RPC aggregating one **Manila-month** (`Asia/Manila`, UTC+8, `CLUB_TIMEZONE`) slice of completed matches off the base tables. Browsable via a month picker fed by `get_leaderboard_months()` (distinct Manila-months with data + the current month). `MIN_MONTH_GP=8`, confidence `K=6`, **no win-streak, no Δ column**. SECURITY INVOKER (respects the permissive `matches_select` RLS), public-read. Month boundaries computed once as `make_timestamptz(y,m,1,…,'Asia/Manila')` → sargable `completed_at` range on partial index `idx_matches_completed_at`. Default tab on the no-session lobby.
-- **All-time leaderboard**: reads `v_alltime_leaderboard_mat` (materialized view). Refreshed via `refresh_alltime_leaderboard()` RPC after each session. `MIN_ALLTIME_GP=10`, confidence `K=10`, shows the rank-movement **Δ** column (vs a 7-days-ago snapshot via `get_alltime_snapshot_before`).
+- **All-time leaderboard**: reads `v_alltime_leaderboard_mat` (materialized view). Refreshed via `refresh_alltime_leaderboard()` RPC after each session. `MIN_ALLTIME_GP=10`, confidence `K=10`, shows the rank-movement **Δ** column (vs a 7-days-ago snapshot via `get_alltime_snapshot_before`). **Authenticated-only** and scoped to the caller's own clubs (§3.8d) — logged out returns zero rows, and rows are merged across clubs because the matview is keyed `(player_id, club_id)`.
 
 Default scope: the live **Session** when one is in context, else **Monthly** (current month). Month math lives in `src/lib/month.ts` (pure: `getCurrentManilaMonth` uses `Intl` + `Asia/Manila`, never the runtime tz). All three boards render through the single `StadiumLeaderboard` component (one unified rounded "stadium" aesthetic — the leaderboard is a deliberate exception to the player/organizer `cc-*` split); `showMovement` drops the Δ column (so Session + Monthly hide it).
 

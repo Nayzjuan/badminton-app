@@ -15,6 +15,8 @@
 //   EM-6  race-condition guard — only newest fetch result applied
 //   EM-7  courtsRef used to resolve court for match
 //   EM-8  onProfilesLoaded callback invoked with correct profileMap
+//   EM-9  streaks come from get_session_player_streaks(p_session_id)
+//   EM-10 an RPC error degrades to zero streaks, board still renders
 //
 // Runs in the default node environment — this hook has no DOM
 // dependencies (no effects, no event listeners).
@@ -151,8 +153,11 @@ function buildMockClient(responses: TableResponses, queryLogs: QueryLog[]) {
       };
       return chain;
     },
-    // useEnrichedMatches calls supabase.rpc("get_player_streaks") for win-streak
-    // data. Return an empty array so all tests pass without streak data.
+    // Phase 3b calls supabase.rpc("get_session_player_streaks", { p_session_id }).
+    // Name-agnostic on purpose for the tests below that don't care about
+    // streaks; EM-9/EM-10 assert the exact name and argument, because this mock
+    // would happily answer a renamed or mis-argued RPC that PostgREST rejects
+    // with PGRST202 in the browser.
     rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
   };
 }
@@ -167,7 +172,7 @@ function renderWithCourts(
 ) {
   const client = buildMockClient(responses, queryLogs);
 
-  return renderHook(() => {
+  const rendered = renderHook(() => {
     const courtsRef = useRef<Court[]>(courts);
     return useEnrichedMatches(
       client as unknown as Parameters<typeof useEnrichedMatches>[0],
@@ -176,6 +181,10 @@ function renderWithCourts(
       options
     );
   });
+
+  // `client` is surfaced so a test can assert on the rpc mock; every existing
+  // caller destructures `{ result }` and is unaffected.
+  return { ...rendered, client };
 }
 
 // ── Tests ─────────────────────────────────────────────────────
@@ -530,5 +539,76 @@ describe("useEnrichedMatches — Unit Suite", () => {
     // Only fetch 2's result should be present.
     expect(result.current.activeMatches).toHaveLength(1);
     expect(result.current.activeMatches[0].id).toBe(MATCH_ID_2);
+  });
+
+  // ── EM-9 ───────────────────────────────────────────────────
+  it("EM-9: streaks come from get_session_player_streaks scoped to this session", async () => {
+    // A contract test, not a behaviour test. 20260722010001 revokes
+    // authenticated EXECUTE on get_player_streaks, so calling the old name from
+    // the browser now yields 42501 and every win-streak flame reads 0 — and
+    // because the failure is non-fatal by design, nothing else in the suite
+    // would notice. Pin the name and the argument.
+    const logs: QueryLog[] = [];
+    const { result, client } = renderWithCourts(
+      [],
+      { includeDrafts: true },
+      {
+        matches: [makeMatch(MATCH_ID_1, "in_progress")],
+        match_players: [makeMatchPlayer(MATCH_ID_1, PLAYER_A1, "a")],
+        profiles: [makeProfile(PLAYER_A1, "Alice")],
+      },
+      logs
+    );
+
+    (client.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: [{ player_id: PLAYER_A1, win_streak: 3 }],
+      error: null,
+    });
+
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+
+    expect(client.rpc).toHaveBeenCalledTimes(1);
+    expect(client.rpc).toHaveBeenCalledWith("get_session_player_streaks", {
+      p_session_id: SESSION_ID,
+    });
+    expect(result.current.activeMatches[0].players[0].win_streak).toBe(3);
+  });
+
+  // ── EM-10 ──────────────────────────────────────────────────
+  it("EM-10: an RPC error degrades to zero streaks instead of blanking the board", async () => {
+    // The failure mode this guards is a grant mistake or a request that lands
+    // before the browser client has attached its JWT. Matches must still
+    // render — losing the flames is acceptable, losing the on-deck panel is not.
+    const logs: QueryLog[] = [];
+    const { result, client } = renderWithCourts(
+      [],
+      { includeDrafts: true },
+      {
+        matches: [makeMatch(MATCH_ID_1, "in_progress")],
+        match_players: [makeMatchPlayer(MATCH_ID_1, PLAYER_A1, "a")],
+        profiles: [makeProfile(PLAYER_A1, "Alice")],
+      },
+      logs
+    );
+
+    (client.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: null,
+      error: { message: "permission denied for function get_session_player_streaks" },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+
+    expect(result.current.activeMatches).toHaveLength(1);
+    expect(result.current.activeMatches[0].players).toHaveLength(1);
+    expect(result.current.activeMatches[0].players[0].win_streak).toBe(0);
+    // Logged, not swallowed: "nobody is on a streak" and "the grant is broken"
+    // are otherwise indistinguishable in production.
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

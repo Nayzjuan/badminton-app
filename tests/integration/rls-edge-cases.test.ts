@@ -22,6 +22,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { makeProfile, makeSession, makeQueueEntry, makeCompletedMatch } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
+import { withTx } from "./helpers/withTx";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { closeSession } from "@/app/actions/sessions";
 import { publishMatchAction } from "@/app/actions/match-drafts";
@@ -224,5 +225,164 @@ describe("RLS Edge Cases — Suite E", () => {
       .eq("session_id", session.id);
 
     expect(count).toBe(0); // no matches — toggle was off
+  });
+
+  // ── DB Layer — leaderboard read surface (TENANCY_AUDIT_2026-07-21 #6) ──
+  // These reproduce the audit finding through the same door an attacker used:
+  // a plain `createClient(url, ANON_KEY)`, no login, no session id, no club.
+  // Before 20260722010001 each of them returned the whole platform's data.
+
+  it("anon client cannot read the leaderboard views or matview", async () => {
+    // Seeded so the two VIEWS have something to leak. The matview is NOT
+    // refreshed here, so its seed is inert — but the assertion that carries all
+    // three cases is `error !== null`, which is purely grant-dependent: these
+    // are owner-rights relations, so losing the revoke is a row dump, not an
+    // empty set. The length check is a belt-and-braces trivial pass.
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const [p1, p2, p3, p4] = await Promise.all([
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+    ]);
+    await makeCompletedMatch({
+      sessionId: session.id,
+      teamA: [p1.id, p2.id],
+      teamB: [p3.id, p4.id],
+    });
+
+    const anon = anonClient();
+    // v_match_history and v_session_leaderboard are owner-rights views and
+    // v_alltime_leaderboard_mat is a matview (which cannot carry RLS at all),
+    // so for all three the GRANT is the only access control there is. Losing it
+    // is a hard permission error, not an empty result set.
+    for (const relation of [
+      "v_match_history",
+      "v_session_leaderboard",
+      "v_alltime_leaderboard_mat",
+    ] as const) {
+      const { data, error } = await anon.from(relation).select("player_id").limit(1);
+      expect(error, `${relation} answered anon`).not.toBeNull();
+      expect(data ?? []).toHaveLength(0);
+    }
+  });
+
+  it("anon client cannot call the leaderboard RPCs", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const [p1, p2, p3, p4] = await Promise.all([
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+    ]);
+    await makeCompletedMatch({
+      sessionId: session.id,
+      teamA: [p1.id, p2.id],
+      teamB: [p3.id, p4.id],
+    });
+
+    const anon = anonClient();
+
+    // get_player_streaks has BOTH parameters defaulted, so `{}` is a legal call
+    // that used to return every player in every club. Same for
+    // get_alltime_snapshot_before. This is the exact request the audit made.
+    const streaks = await anon.rpc("get_player_streaks", {});
+    expect(streaks.error, "get_player_streaks answered anon").not.toBeNull();
+    expect(streaks.data ?? []).toHaveLength(0);
+
+    const snapshot = await anon.rpc("get_alltime_snapshot_before", {
+      p_cutoff: new Date().toISOString(),
+    });
+    expect(snapshot.error, "get_alltime_snapshot_before answered anon").not.toBeNull();
+    expect(snapshot.data ?? []).toHaveLength(0);
+
+    // Scoped, but still a full board for any session id — and session ids are
+    // published in share URLs. The share page reads it server-side now.
+    const board = await anon.rpc("get_session_leaderboard_public", {
+      p_session_id: session.id,
+    });
+    expect(board.error, "get_session_leaderboard_public answered anon").not.toBeNull();
+    expect(board.data ?? []).toHaveLength(0);
+
+    // The browser-callable replacement is authenticated-only: anon must not
+    // reach it either, even though it would gate itself if it did.
+    const scoped = await anon.rpc("get_session_player_streaks", {
+      p_session_id: session.id,
+    });
+    expect(scoped.error, "get_session_player_streaks answered anon").not.toBeNull();
+    expect(scoped.data ?? []).toHaveLength(0);
+  });
+
+  it("get_session_player_streaks gates on session_access_level, not just on the grant", async () => {
+    // The grant keeps anon out; this is the other half — an ordinary logged-in
+    // user of some OTHER club must get zero rows rather than this session's
+    // board. Asserted at the SQL layer because the integration harness mocks
+    // createServerSupabaseClient to a service-role client, so nothing driven
+    // through a server action can observe RLS or auth.uid() at all.
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const [p1, p2, p3, p4] = await Promise.all([
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+    ]);
+    // 21–15: team A wins, so p1 and p2 each carry a 1-match win streak.
+    await makeCompletedMatch({
+      sessionId: session.id,
+      teamA: [p1.id, p2.id],
+      teamB: [p3.id, p4.id],
+    });
+    const outsider = await makeProfile({ faker });
+
+    /** Calls the RPC as `authenticated` with auth.uid() = userId. */
+    async function streaksAs(userId: string): Promise<{ player_id: string }[]> {
+      return withTx(async (db) => {
+        await db.query("SET LOCAL ROLE authenticated");
+        await db.query("SELECT set_config('request.jwt.claims', $1, true)", [
+          JSON.stringify({ sub: userId, role: "authenticated" }),
+        ]);
+        const { rows } = await db.query<{ player_id: string }>(
+          "SELECT player_id FROM public.get_session_player_streaks($1)",
+          [session.id]
+        );
+        return rows;
+      });
+    }
+
+    // The organizer matches session_access_level's created_by branch.
+    const organizerRows = await streaksAs(organizer.id);
+    expect(organizerRows.map((r) => r.player_id).sort()).toEqual([p1.id, p2.id].sort());
+
+    // The outsider is neither an organizer nor an active member of the
+    // session's club, so session_access_level() is NULL and the WHERE clause
+    // matches nothing. Zero rows, not an error — the flames just don't light.
+    const outsiderRows = await streaksAs(outsider.id);
+    expect(outsiderRows).toEqual([]);
+
+    // Granting club membership flips the same caller to 'member' and the rows
+    // come back — proving the empty result above was the gate, not an empty
+    // seed or a broken join.
+    const { data: sessionRow } = await serviceClient()
+      .from("sessions")
+      .select("club_id")
+      .eq("id", session.id)
+      .single();
+    await serviceClient()
+      .from("club_members")
+      .upsert(
+        {
+          club_id: sessionRow!.club_id,
+          player_id: outsider.id,
+          role: "member" as const,
+          is_active: true,
+        },
+        { onConflict: "club_id,player_id" }
+      );
+
+    const memberRows = await streaksAs(outsider.id);
+    expect(memberRows.map((r) => r.player_id).sort()).toEqual([p1.id, p2.id].sort());
   });
 });
