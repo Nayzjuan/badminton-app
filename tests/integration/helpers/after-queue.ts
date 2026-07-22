@@ -20,7 +20,12 @@ const pending = new Set<Promise<unknown>>();
 /** Records an in-flight after() callback. Called only by the setup stub. */
 export function trackAfterCallback(p: Promise<unknown>): void {
   pending.add(p);
-  void p.finally(() => pending.delete(p));
+  // .catch() BEFORE .finally(): the promise .finally() returns is a new one, and
+  // it rejects whenever `p` does. flushAfterCallbacks() settles `p` itself, never
+  // that derivative, so a rejecting callback would surface as a process-level
+  // unhandled rejection — which Vitest reports as a run-level "Unhandled Error"
+  // with no owning test, often in a completely different file.
+  void p.catch(() => {}).finally(() => pending.delete(p));
 }
 
 /**
@@ -34,5 +39,14 @@ export async function flushAfterCallbacks(): Promise<void> {
   // Bounded so a callback that reschedules itself forever cannot hang the run.
   for (let i = 0; i < 20 && pending.size > 0; i++) {
     await Promise.allSettled([...pending]);
+  }
+  // Exhausting the bound means we are about to delete rows with work still in
+  // flight — i.e. the FK-violation class this helper exists to prevent, back
+  // again and invisible. Say so; a silent return here reads as a clean drain.
+  if (pending.size > 0) {
+    console.warn(
+      `[after-queue] drain bound exhausted with ${pending.size} callback(s) still in flight — ` +
+        `cleanup may race them`
+    );
   }
 }

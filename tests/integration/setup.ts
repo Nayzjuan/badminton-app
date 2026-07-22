@@ -42,14 +42,27 @@ export const authState: { currentUserId: string | null } = {
 //
 // The stub RUNS the callback rather than dropping it. A no-op looks safer but
 // is wrong: the after() call sites are NOT all push notifications. The seven in
-// src/app/actions/queue.ts (plus fix-player-record.ts) wrap
-// `runEngineForSession`, so dropping them silently skips draft regeneration and
-// breaks any test that asserts the engine ran — Q-9 and P-9 fail exactly that
-// way against a no-op.
+// src/app/actions/queue.ts wrap `runEngineForSession`, so dropping them silently
+// skips draft regeneration and breaks any test that asserts the engine ran — Q-9
+// and P-9 fail exactly that way against a no-op. (fix-player-record.ts:204 is a
+// third non-push site, but it wraps `compute_session_wrapped`, not the engine.)
 //
 // Running it inline is safe for the push sites too: pushToPlayers() swallows
 // its own errors and returns {sent:0,errors:0} as soon as ensureVapid() throws,
 // which it does in CI where no VAPID keys are set. So no network work happens.
+//
+// It is also safe for the ENGINE sites today, but for a reason worth stating
+// because it is not permanent: no test pairs an auto-matchmaking-ON session with
+// a queue.ts action, so every after()-scheduled engine run hits the
+// `is_auto_matchmaking_on = false` early return (matchmaking.ts:253 — the
+// "toggle is OFF, skipping" lines throughout a run), and the two tests that do
+// assert on the engine mock it. The first test that calls joinQueueAction /
+// checkoutPlayer / togglePlayerPause(false) against an auto-ON session gets a
+// real background engine run racing its assertions, with no sync point before
+// afterEach — and since runEngineForSession keeps a module-level
+// `engineRunningFor` set (matchmaking.ts:207), a direct
+// `await runEngineForSession(sameSessionId)` in that test would be skipped as
+// already in-flight. Such a test must await flushAfterCallbacks() first.
 //
 // The callback is invoked but NOT awaited — real after() does not block the
 // caller either, and `after()` returns void so no caller could await it anyway.

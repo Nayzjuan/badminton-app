@@ -1672,8 +1672,19 @@ the function, and it takes `EXECUTE` with it.
 limiter RPC was indistinguishable from a real lockout: legitimate co-organizers
 were refused with a rate-limit message against an empty log. `20260722000004`
 asserts the invariant at apply time — every function in `public` must be
-`EXECUTE`-able by `service_role` (already true of all 56 in production) — so the
-next migration that revokes without re-granting fails in CI rather than at 2am.
+`EXECUTE`-able by `service_role` (already true of all 56 in production).
+
+That `DO` block runs **once**, when its own migration applies; later migrations
+always sort after it, so it cannot catch the next bad revoke. The forward-looking
+gate is `tests/integration/schema-parity.test.ts`, which re-derives both halves
+of the invariant from the catalog on every `supabase db reset`: `service_role`
+can `EXECUTE` every non-trigger function in `public`, and `anon`/`authenticated`
+still cannot execute the seven privilege-granting primitives
+(`elevate_to_organizer`, `cojoin_record_and_check`, `migrate_player_identity`,
+`join_queue`, `remove_player_from_queue_organizer`, `publish_match`,
+`publish_all_drafts`). Trigger functions are excluded on purpose — they are only
+invoked by the trigger machinery, so revoking `EXECUTE` on a `SECURITY DEFINER`
+trigger function is legitimate hardening the gate must not forbid.
 
 **Comparing ACLs:** `proacl IS NULL` means "default", which is functionally the
 same as an explicit grant to everyone, so a string diff of ACLs is all false
@@ -1688,16 +1699,27 @@ the predicate meant to constrain the rows.
 Server actions schedule fire-and-forget work with Next's `after()`, which throws
 outside a request scope — 29 failures once the suite could run at all.
 `tests/integration/setup.ts` stubs it, and the stub **runs** the callback: the
-call sites are not all push notifications (seven in `queue.ts` plus
-`fix-player-record.ts` wrap `runEngineForSession`), so a no-op silently skips
-draft regeneration. Running it is safe for the push sites because
-`pushToPlayers` swallows its own errors and returns as soon as `ensureVapid()`
-throws, which it does wherever VAPID keys are unset.
+call sites are not all push notifications (the seven in `queue.ts` wrap
+`runEngineForSession`), so a no-op silently skips draft regeneration. Running it
+is safe for the push sites because `pushToPlayers` swallows its own errors and
+returns as soon as `ensureVapid()` throws, which it does wherever VAPID keys are
+unset.
 
 Real `after()` work outlives the action that scheduled it, so the in-flight
 promise is registered with `tests/integration/helpers/after-queue.ts` and
 `truncateTracked()` drains it before deleting rows — otherwise the engine is
 still inserting matches while cleanup removes the rows they reference.
+
+**Known limit, worth stating before someone trips over it.** Running the engine
+sites inline is safe *today* only because no test pairs an auto-matchmaking-ON
+session with a `queue.ts` action: every scheduled engine run hits the
+`is_auto_matchmaking_on = false` early return, and the two tests that assert on
+the engine mock it. The first test that calls `joinQueueAction` / `checkoutPlayer`
+/ `togglePlayerPause(false)` against an auto-ON session gets a real background
+engine run racing its assertions, and because `runEngineForSession` holds a
+module-level `engineRunningFor` set, a direct `await runEngineForSession(sameId)`
+in that test is silently skipped as already in-flight. Such a test must
+`await flushAfterCallbacks()` first.
 
 ### Test Helpers & Fixtures
 

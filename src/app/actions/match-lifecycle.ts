@@ -55,15 +55,9 @@ export async function submitMatchScore(
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
 
-  // Server-side score bounds — client validation is UI-only and trivially
-  // bypassed by a direct POST to the action endpoint.
-  const scoreResult = scoreSchema.safeParse({ teamAScore, teamBScore });
-  if (!scoreResult.success) {
-    return { success: false, message: scoreResult.error.issues[0].message };
-  }
-  const { teamAScore: safeA, teamBScore: safeB } = scoreResult.data;
-
-  // Identify the calling player.
+  // Identify the calling player. Authentication is checked before the score
+  // payload is validated — see the note in updateMatchDetails; all three entry
+  // points in this file settle "may you call this at all?" first.
   const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, message: "Not authenticated." };
@@ -85,6 +79,14 @@ export async function submitMatchScore(
   if (!mySlot) {
     return { success: false, message: "You are not a player in this match." };
   }
+
+  // Server-side score bounds — client validation is UI-only and trivially
+  // bypassed by a direct POST to the action endpoint.
+  const scoreResult = scoreSchema.safeParse({ teamAScore, teamBScore });
+  if (!scoreResult.success) {
+    return { success: false, message: scoreResult.error.issues[0].message };
+  }
+  const { teamAScore: safeA, teamBScore: safeB } = scoreResult.data;
 
   // Participation verified → shared core skips the organizer-OR-player gate.
   return endMatchInternal(db, matchId, safeA, safeB, user, true);
@@ -112,6 +114,16 @@ export async function endMatchAction(
 ): Promise<MatchActionResult> {
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
 
+  // P0-3: Require authentication. Runs before score validation — see the note
+  // in updateMatchDetails; all three entry points in this file settle "may you
+  // call this at all?" before they say anything about the payload. The
+  // organizer-OR-player gate itself lives in endMatchInternal, which needs the
+  // parsed scores as arguments, so authentication is as early as it can get here.
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return { success: false, message: "Not authenticated." };
+  }
+
   // Server-side score bounds — client validation in useScoreForm is UI-only
   // and trivially bypassed by a direct POST to the action endpoint.
   const scoreResult = scoreSchema.safeParse({ teamAScore, teamBScore });
@@ -119,12 +131,6 @@ export async function endMatchAction(
     return { success: false, message: scoreResult.error.issues[0].message };
   }
   const { teamAScore: safeA, teamBScore: safeB } = scoreResult.data;
-
-  // P0-3: Require authentication.
-  const user = await getAuthenticatedUser();
-  if (!user) {
-    return { success: false, message: "Not authenticated." };
-  }
 
   // Organizer-facing entry: participation is NOT pre-verified, so the shared
   // core runs the organizer-OR-player authorization gate.
@@ -346,10 +352,14 @@ export async function updateMatchDetails(
   if (!isValidUUID(matchId)) return { success: false, message: "Invalid match ID." };
 
   // Score validation deliberately runs AFTER the organizer check below, not
-  // here. Validating first tells an unauthenticated or non-organizer caller
-  // whether their payload was well-formed before it tells them they have no
-  // business calling at all — an authorization decision must not depend on, or
-  // leak through, the shape of the request body.
+  // here. This is about which answer the caller gets, not about secrecy — the
+  // scores are the caller's own arguments, so a validation message tells them
+  // nothing they did not already know. The point is that a caller with no
+  // business here should be told exactly that, and told it for any payload:
+  // with validation first, "Not authorized" is reachable only by sending a
+  // well-formed body, which makes the authorization outcome look conditional on
+  // the request shape. submitMatchScore and endMatchAction above order
+  // themselves the same way.
 
   // All writes use the service client so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.

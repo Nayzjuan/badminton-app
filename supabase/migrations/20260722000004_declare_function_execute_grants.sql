@@ -67,9 +67,14 @@ grant execute on function
 -- ── Assertion 1: the invariant, not just the four ───────────
 -- Every function in public is executable by service_role. Confirmed true on
 -- production (0 of 56 functions deny it), which makes it a real invariant
--- rather than a convenience — and asserting it here means the NEXT migration
--- that revokes EXECUTE from public without re-granting service_role fails at
--- apply time instead of at 2am in a live session.
+-- rather than a convenience.
+--
+-- Scope note: a DO block runs exactly once, when THIS migration applies. Later
+-- migrations always sort after it, so nothing here re-evaluates when the next
+-- one revokes EXECUTE from public without re-granting service_role. The
+-- forward-looking gate is `tests/integration/schema-parity.test.ts`, which
+-- re-checks this invariant against every `supabase db reset`; this block only
+-- proves the database is sound at the moment the declaration lands.
 --
 -- has_function_privilege is passed p.oid, never a name. The name form resolves
 -- through search_path and the planner may evaluate it before any predicate
@@ -93,18 +98,27 @@ BEGIN
 END $$;
 
 -- ── Assertion 2: the lockdowns are still locked down ────────
--- The grants above must not have widened anything. Both of these functions are
--- privilege-granting primitives reachable over PostgREST if anon or
--- authenticated ever regains EXECUTE: elevate_to_organizer hands out
--- session-organizer rights for a passcode, and cojoin_record_and_check is the
--- rate limiter that guards the same passcode space.
+-- The grants above must not have widened anything. Each of these is reachable
+-- over PostgREST the moment anon or authenticated regains EXECUTE:
+-- elevate_to_organizer hands out session-organizer rights for a passcode,
+-- cojoin_record_and_check is the rate limiter guarding that same passcode
+-- space, migrate_player_identity reassigns a player's whole history (called
+-- "the highest-value function in the schema" by 20260721180000), and
+-- join_queue / remove_player_from_queue_organizer / publish_match /
+-- publish_all_drafts are the queue- and draft-forgery surface closed by
+-- 20260721180000.
 DO $$
 DECLARE
   v_fn text;
 BEGIN
   FOREACH v_fn IN ARRAY ARRAY[
     'public.cojoin_record_and_check(uuid, text, int, int, int)',
-    'public.elevate_to_organizer(uuid, text)'
+    'public.elevate_to_organizer(uuid, text)',
+    'public.migrate_player_identity(uuid, uuid)',
+    'public.join_queue(uuid, uuid)',
+    'public.remove_player_from_queue_organizer(uuid, uuid)',
+    'public.publish_match(uuid, uuid, uuid)',
+    'public.publish_all_drafts(uuid, uuid)'
   ] LOOP
     IF has_function_privilege('anon', v_fn::regprocedure::oid, 'EXECUTE') THEN
       RAISE EXCEPTION 'anon regained EXECUTE on %', v_fn;
