@@ -1736,6 +1736,18 @@ need `grant select (col)`, **tables** need `grant … to service_role`, and
 **functions** need `grant execute … to service_role` after any
 `revoke … from public`.
 
+**Landing order matters, and it is not arbitrary.** These declarations are dated
+`20260722000000`–`4`, which puts them at the *end* of the set on purpose: every
+assertion they carry is a statement about the finished schema, so anything a
+concurrent branch adds must sort before them. Both branches that were open when
+this landed already did — `fix/hide-e2e-sandbox-session`'s `20260721101500` and
+`security/throttle-reconnect-pin`'s `20260721210000`–`240000` — and each carried
+its own grants, which is exactly what the assertions then confirmed. A future
+branch that dates a migration *after* `20260722000004` skips the assertions
+entirely and reintroduces the drift silently; the test file is the only thing
+that still catches it, which is why the gate lives there and not only in the
+migration.
+
 #### `after()` in integration tests
 
 Server actions schedule fire-and-forget work with Next's `after()`, which throws

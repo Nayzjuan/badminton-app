@@ -5,6 +5,26 @@
 
 ---
 
+## ✅ ALL THREE OPEN PRs MERGED — 2026-07-22 — `main` at `98ac7a7`, zero PRs open
+
+Merge order was forced by the dependency: **#36 → #35 → #33**. #36 is the one that made the Integration job capable of passing at all, so the other two had to land on top of it — their CI was red only because they were based on pre-#36 `main`.
+
+| PR | Branch | Merge commit | What it was |
+| --- | --- | --- | --- |
+| **#36** | `fix/migration-replay-publication` | `a6cac37` | migration set replays from scratch (see the section below) |
+| **#35** | `security/throttle-reconnect-pin` | `1d1b009` | reconnect-PIN oracle rate limit + registration bypass |
+| **#33** | `fix/hide-e2e-sandbox-session` | `98ac7a7` | `sessions.is_hidden` — infrastructure sessions off every human list |
+
+**Both rebases were re-validated from scratch, not just re-pushed.** #35's rebase was proven **content-neutral** (`git range-diff` `=` on all six commits; the only diff-level change is a uniform +23 hunk-offset in `APP_MANIFEST.md`). #33's had one conflict, in `MEMORY.md`, where #36's and #33's session blocks collided — resolved by keeping both. After **each** rebase: `npx supabase db reset` over the *combined* set, `tsc` 0, **21/21 integration files · 219/219 tests**, unit green (792 → **810** once #35's two new suites landed), `next build` clean, scoped lint 0. #33 was then rebased a **second** time onto post-#35 `main` so its final CI ran against the true merged state rather than a base that predated #35.
+
+**Ordering held, as designed.** #33's `20260721101500` and #35's `20260721210000`–`240000` all sort *ahead* of #36's `20260722000002`/`3`/`4` assertions, so the assertions see the finished schema. Nothing tripped: #35 creates **no tables** (it `ALTER`s the existing `co_organizer_join_attempts`), its two new functions are granted by its own `20260721240000`, and #36's RLS baseline is a **subset** check.
+
+**⚠️ Still true: none of this changed production.** There is no migration automation (see the #36 section). All three PRs' DB objects were already applied to prod **by hand** earlier in the session, re-verified read-only after the merges: `reconnect_record_and_check` · `auth_attempt_mark_succeeded` · `cojoin_record_and_check` · `rejoin_queue` all `service_role=true / anon=false / authenticated=false`; `co_organizer_join_attempts.scope`+`.subject` present with `user_id` nullable; `sessions.is_hidden` present; **0** tables missing `service_role` SELECT. The merges shipped **app code and repo-side declarations only**.
+
+**Next up (tenancy audit, from `TENANCY_AUDIT_2026-07-21.md`): PR2** anon stats dump (leaderboard matview + RPCs) · **PR3** session-binding `getMatchEvents` + drop `ensureClubMembership` from the `/play/[sessionId]` and `/organizer/[sessionId]` shims · **PR4** `session-events` private broadcast + tighten `profiles_select USING(true)`. Hard constraints: `lookup_active_session` **keeps** anon EXECUTE, and the RLS helper functions **keep** their grants.
+
+---
+
 ## ✅ MIGRATION REPLAY / INTEGRATION CI — 2026-07-22 — SUITE GREEN FROM SCRATCH (PR #36, branch `fix/migration-replay-publication`)
 
 **Full write-up: `APP_MANIFEST.md` §7 → "The migration set must replay from scratch".**
