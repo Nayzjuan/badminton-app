@@ -9,13 +9,16 @@ import "server-only";
 // CURRENTLY WIRED via this helper: score_edit + revert (updateMatchDetails),
 // cancelled (cancelMatchAction), and cancelled from the draft-clear + checkout
 // leaver paths — clearOnDeckMatch (single on-deck Clear), clearAllUnpublishedDrafts
-// (batch cap-reset / close), and checkoutPlayer (a departing player dropping a
-// draft below 4). Those three log 'cancelled' with a payload.reason so the trail
-// answers "who cleared/cancelled this match?" (the delete paths log BEFORE the
-// row is removed, so the FK is valid and ON DELETE SET NULL preserves the snapshot).
+// (batch cap-reset / close), checkoutPlayer (a departing player dropping a
+// draft below 4), and removePlayerFromQueue (an organizer kicking a player out
+// of the queue, which cancels any pending match they were on — the
+// remove_player_from_queue_organizer RPC soft-cancels, so the row + FK survive
+// and logging after is safe). Those log 'cancelled' with a payload.reason so the
+// trail answers "who cleared/cancelled this match?" (the delete paths log BEFORE
+// the row is removed, so the FK is valid and ON DELETE SET NULL preserves the
+// snapshot).
 // DEFERRED (plumbed in the type/DB but NOT yet emitted): player_left from the
-// leaver paths, cancelled from remove_player_from_queue_organizer, and published.
-// See MEMORY.md + plan §14.E-1.
+// leaver paths, and published. See MEMORY.md + plan §14.E-1.
 //
 // These are deliberately BEST-EFFORT (plan §14 decision E-2):
 //   • computed seq is NOT under the match row lock (tiny gap/collision risk),
