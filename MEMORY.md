@@ -47,7 +47,7 @@ SELECT → no insert, no update, `reason: "read_failed"`).
 
 ---
 
-## 🔒 TENANCY PR4b — `profiles_select` SCOPED (finding #8) — 2026-07-23, branch `fix/tenancy-scope-profiles-select`
+## 🔒 TENANCY PR4b — `profiles_select` SCOPED (finding #8) — 2026-07-24, branch `fix/tenancy-scope-profiles-select`
 
 Closes finding **#8** of `TENANCY_AUDIT_2026-07-21.md`. One migration
 (`20260723200000_scope_profiles_select_to_shared_scope.sql`), no application code.
@@ -101,7 +101,7 @@ exported) because `mockAuthAs` only fools the server actions, not Postgres. Ever
 assertion with a `not.toContain(stranger.id)` control, so a pass cannot be explained by "the policy lets
 everything through".
 
-**Status:** ✅ **PR #43 open, HELD UNMERGED** (commit `389ecf0`). Locally validated: `supabase db reset`
+**Status:** ✅ **PR #43 open, HELD UNMERGED** (rebased onto `main` @ `214ef79`; head `e34def3`). Locally validated: `supabase db reset`
 replay green with the DO block passing, 20/20 in the RLS suite, 236/236 full integration, 844 unit tests,
 tsc + eslint clean on changed files, `npm run build` green. Three review rounds — "Minor issues" ×2 (all 9
 findings fixed) then **LGTM**.
