@@ -230,9 +230,16 @@ export type OrganizerBroadcastHandlers = {
   onDraftCapPhaseChanged?: (payload: DraftCapPhasePayload) => void;
   /**
    * Optional connection-state callback, same contract as the postgres_changes
-   * subscribers. Worth passing now that the channel is private: a join can be
-   * refused for *authorization* reasons (not a member of the session's club),
-   * which surfaces here as `false` rather than as silently missing events.
+   * subscribers. It exists because this channel went private (migration
+   * 20260723100000) and can now be refused for *authorization* reasons, not
+   * only connectivity ones.
+   *
+   * No caller passes it today, and that is a considered choice rather than an
+   * oversight — see the note in use-organizer-broadcast.ts for the player side.
+   * On the organizer side it must NOT be fed to useOrganizerSession's
+   * `handleChannelStatus`: that counter asserts an exact
+   * REALTIME_CHANNEL_COUNT of *postgres_changes* channels, so adding a sixth
+   * would peg the board's "live" indicator to disconnected forever.
    */
   onStatus?: StatusHandler;
 };

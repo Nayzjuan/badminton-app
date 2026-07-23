@@ -82,7 +82,12 @@ begin
     return null;
   end if;
 
-  if p_topic !~* '^session-events:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+  -- Case-SENSITIVE on the literal prefix (`~`, not `~*`): the only topic this
+  -- app ever joins is the lowercase one built in subscribeToOrganizerBroadcast,
+  -- so `SESSION-EVENTS:<uuid>` is not a topic we mean to resolve. The hex class
+  -- stays case-insensitive because `::uuid` accepts either casing and a
+  -- hand-built uppercase UUID is still the same session.
+  if p_topic !~ '^session-events:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then
     return null;
   end if;
 
@@ -96,14 +101,28 @@ $fn$;
 comment on function public.realtime_topic_session_id(text) is
   'Extracts the session UUID from a `session-events:<uuid>` Realtime topic. Returns NULL for any other topic shape. Used by the realtime.messages RLS policy, which must never raise.';
 
--- RLS policies are evaluated as the CALLING role, so the policy on
--- realtime.messages needs this executable by anon and authenticated — the same
--- reason session_access_level() and the other five RLS helpers carry those
--- grants. service_role first, per the from-scratch replay trap documented in
+-- RLS policies are evaluated as the CALLING role, so whichever roles the policy
+-- names must be able to EXECUTE this. The policy below is `to authenticated`
+-- only, so `authenticated` is the entire requirement — deliberately NARROWER
+-- than session_access_level() and the other five RLS helpers, which must keep
+-- anon EXECUTE because they are named by anon-facing policies. This one is not.
+--
+-- The revoke is not cosmetic: `create function` grants EXECUTE to PUBLIC by
+-- default, which would publish /rest/v1/rpc/realtime_topic_session_id to every
+-- unauthenticated caller. It leaks nothing (pure IMMUTABLE string parsing,
+-- touches no data), but this migration ships alongside an audit whose whole
+-- subject is unnecessary anon EXECUTE, so it should not add a new one.
+--
+-- service_role is granted FIRST, per the from-scratch replay trap documented in
 -- 20260722000004: on a proacl-NULL function `revoke ... from public`
 -- materialises the default ACL and strips service_role along with PUBLIC.
-grant execute on function public.realtime_topic_session_id(text)
-  to service_role, anon, authenticated;
+--
+-- If a future edit ever adds an `anon` arm to the policy, add the anon grant
+-- back in the SAME migration — the policy silently returns no rows otherwise.
+grant execute on function public.realtime_topic_session_id(text) to service_role;
+revoke execute on function public.realtime_topic_session_id(text)
+  from public, anon, authenticated;
+grant execute on function public.realtime_topic_session_id(text) to authenticated;
 
 -- ── The join policy ─────────────────────────────────────────
 -- `to authenticated` covers every real user of this app: players sign in with
@@ -134,9 +153,17 @@ begin
     raise exception 'realtime_topic_session_id failed to parse a well-formed session-events topic';
   end if;
 
+  -- An uppercase UUID is still the same session, so it must parse.
+  if public.realtime_topic_session_id('session-events:' || upper(v_sid::text))
+       is distinct from v_sid then
+    raise exception 'realtime_topic_session_id rejected an upper-case session UUID';
+  end if;
+
   if public.realtime_topic_session_id('session-events:not-a-uuid') is not null
      or public.realtime_topic_session_id('courts:' || v_sid::text) is not null
      or public.realtime_topic_session_id('session-events:') is not null
+     -- The prefix is matched case-SENSITIVELY; this is not a topic we join.
+     or public.realtime_topic_session_id('SESSION-EVENTS:' || v_sid::text) is not null
      or public.realtime_topic_session_id('') is not null
      or public.realtime_topic_session_id(null) is not null then
     raise exception 'realtime_topic_session_id returned non-NULL for a topic it must reject';
@@ -152,11 +179,14 @@ begin
     raise exception 'session_events_broadcast_read policy missing from realtime.messages';
   end if;
 
+  -- `cmd` reports 'ALL' for a `for all` policy, which confers INSERT just the
+  -- same — checking only 'INSERT' would let the forgery hole back in silently.
   if exists (
     select 1 from pg_policies
-     where schemaname = 'realtime' and tablename = 'messages' and cmd = 'INSERT'
+     where schemaname = 'realtime' and tablename = 'messages'
+       and cmd in ('INSERT', 'ALL')
   ) then
-    raise exception 'an INSERT policy on realtime.messages would let browsers forge session events';
+    raise exception 'an INSERT/ALL policy on realtime.messages would let browsers forge session events';
   end if;
 
   -- The hard constraint this migration must not break: session_access_level is
@@ -164,11 +194,18 @@ begin
   -- the whole app down, and the schema-parity sweep cannot catch it because it
   -- filters provolatile = 'v' and this function is STABLE.
   if not (
-    has_function_privilege('anon',          'public.session_access_level(uuid)', 'execute')
+    has_function_privilege('anon',              'public.session_access_level(uuid)', 'execute')
     and has_function_privilege('authenticated', 'public.session_access_level(uuid)', 'execute')
-    and has_function_privilege('anon',          'public.realtime_topic_session_id(text)', 'execute')
     and has_function_privilege('authenticated', 'public.realtime_topic_session_id(text)', 'execute')
+    and has_function_privilege('service_role',  'public.realtime_topic_session_id(text)', 'execute')
   ) then
     raise exception 'RLS helper EXECUTE grants are incomplete — the broadcast policy would fail closed';
+  end if;
+
+  -- The other direction: the parser must NOT be reachable unauthenticated. This
+  -- trips if a later migration re-grants it to public (has_function_privilege
+  -- reports true for anon whenever PUBLIC holds the privilege).
+  if has_function_privilege('anon', 'public.realtime_topic_session_id(text)', 'execute') then
+    raise exception 'realtime_topic_session_id is anon-executable — revoke it from public/anon';
   end if;
 end $$;
