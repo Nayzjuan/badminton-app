@@ -20,7 +20,13 @@ import { describe, it, expect, afterEach } from "vitest";
 import { Faker, en } from "@faker-js/faker";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { makeProfile, makeSession, makeQueueEntry, makeCompletedMatch } from "./factories";
+import {
+  makeProfile,
+  makeSession,
+  makeQueueEntry,
+  makeCompletedMatch,
+  TEST_USER_PASSWORD,
+} from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { withTx } from "./helpers/withTx";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
@@ -384,5 +390,274 @@ describe("RLS Edge Cases — Suite E", () => {
 
     const memberRows = await streaksAs(outsider.id);
     expect(memberRows.map((r) => r.player_id).sort()).toEqual([p1.id, p2.id].sort());
+  });
+});
+
+// ============================================================
+// profiles_select — tenancy audit finding #8
+// ============================================================
+// `profiles_select` used to be USING (true): any signed-in user could
+// enumerate every display name, skill level and VIP tag on the platform, and
+// the unfiltered `profiles` postgres_changes subscription streamed every
+// profile UPDATE platform-wide to every connected browser.
+//
+// 20260723200000 replaces it with `id = auth.uid() OR can_read_profile(id)`.
+// These tests sign users in FOR REAL (mockAuthAs only fools the server
+// actions, not Postgres) so the assertions run against the `authenticated`
+// role with a genuine JWT, which is the only way RLS is actually exercised.
+//
+// One test per arm of the predicate. Every arm test pairs its positive
+// assertion with a `not.toContain(stranger.id)` control, so a pass cannot be
+// explained by "the policy lets everything through" — the exact bug being
+// fixed. (The last two cases — the anon RPC revoke and the own-profile read —
+// are not arm tests and need no control.)
+// ============================================================
+
+describe("profiles_select scope — finding #8", () => {
+  /**
+   * Signs a factory-made profile in for real and returns their client.
+   *
+   * makeProfile() creates the auth user with TEST_USER_PASSWORD and now
+   * returns the generated email, so this is a plain password grant — the
+   * resulting client carries a real `authenticated` JWT whose `sub` is the
+   * profile id, which is what auth.uid() reads inside the policy.
+   */
+  async function signedInAs(profile: { id: string; email: string }) {
+    const client = anonClient();
+    const { data, error } = await client.auth.signInWithPassword({
+      email: profile.email,
+      password: TEST_USER_PASSWORD,
+    });
+    if (error || data.session?.user.id !== profile.id) {
+      throw new Error(
+        `[signedInAs] could not sign in ${profile.id}: ${error?.message ?? "no session"}`
+      );
+    }
+    return client;
+  }
+
+  /** Every profile id the given user can actually SELECT. */
+  async function visibleProfileIds(profile: { id: string; email: string }): Promise<string[]> {
+    const client = await signedInAs(profile);
+    const { data, error } = await client.from("profiles").select("id");
+    if (error) throw new Error(`[visibleProfileIds] select failed: ${error.message}`);
+    return (data ?? []).map((row) => row.id).sort();
+  }
+
+  /** The club a factory session lands in (the column default). */
+  async function clubIdOf(sessionId: string): Promise<string> {
+    const { data, error } = await serviceClient()
+      .from("sessions")
+      .select("club_id")
+      .eq("id", sessionId)
+      .single();
+    if (error || !data?.club_id) {
+      throw new Error(`[clubIdOf] no club_id for ${sessionId}: ${error?.message ?? "null"}`);
+    }
+    return data.club_id;
+  }
+
+  async function addClubMember(clubId: string, playerId: string) {
+    // club_members.player_id is ON DELETE CASCADE from profiles, so these rows
+    // are cleaned up by truncateTracked() along with the auth users — the club
+    // itself is the shared bootstrap club and must survive.
+    const { error } = await serviceClient()
+      .from("club_members")
+      .upsert(
+        { club_id: clubId, player_id: playerId, role: "member" as const, is_active: true },
+        { onConflict: "club_id,player_id" }
+      );
+    if (error) throw new Error(`[addClubMember] ${error.message}`);
+  }
+
+  // ── The finding itself ──────────────────────────────────────
+
+  it("a signed-in user who shares no club or session sees only their own profile", async () => {
+    const alice = await makeProfile({ faker });
+    await makeProfile({ faker }); // a stranger, in no shared scope
+    await makeProfile({ faker }); // and another
+
+    expect(await visibleProfileIds(alice)).toEqual([alice.id]);
+  });
+
+  it("the platform-wide enumeration this closes is gone: count(*) is 1, not the table", async () => {
+    const alice = await makeProfile({ faker });
+    await Promise.all([makeProfile({ faker }), makeProfile({ faker }), makeProfile({ faker })]);
+
+    const client = await signedInAs(alice);
+    const { count, error } = await client
+      .from("profiles")
+      .select("id", { count: "exact", head: true });
+
+    expect(error).toBeNull();
+    expect(count).toBe(1);
+  });
+
+  // ── Arm 1 — shared active club ──────────────────────────────
+
+  it("arm 1: active club-mates can read each other, and only each other", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const clubId = await clubIdOf(session.id);
+
+    const alice = await makeProfile({ faker });
+    const bob = await makeProfile({ faker });
+    const stranger = await makeProfile({ faker }); // deliberately not in the club
+
+    await addClubMember(clubId, alice.id);
+    await addClubMember(clubId, bob.id);
+
+    const visible = await visibleProfileIds(alice);
+    expect(visible).toContain(bob.id);
+    expect(visible).not.toContain(stranger.id);
+  });
+
+  it("arm 1 respects is_active: a deactivated member goes dark", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const clubId = await clubIdOf(session.id);
+
+    const alice = await makeProfile({ faker });
+    const bob = await makeProfile({ faker });
+    await addClubMember(clubId, alice.id);
+    await addClubMember(clubId, bob.id);
+
+    expect(await visibleProfileIds(alice)).toContain(bob.id);
+
+    await serviceClient()
+      .from("club_members")
+      .update({ is_active: false })
+      .eq("club_id", clubId)
+      .eq("player_id", bob.id);
+
+    expect(await visibleProfileIds(alice)).not.toContain(bob.id);
+  });
+
+  // ── Arm 2 — target queued in a session I can reach ──────────
+
+  it("arm 2: an organizer sees a walk-in queued in their session who has no club membership", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const walkIn = await makeProfile({ faker });
+    const stranger = await makeProfile({ faker });
+
+    await makeQueueEntry({ sessionId: session.id, playerId: walkIn.id });
+
+    const visible = await visibleProfileIds(organizer);
+    expect(visible).toContain(walkIn.id);
+    expect(visible).not.toContain(stranger.id);
+  });
+
+  // ── Arm 3 — target played a match in a session I can reach ──
+
+  it("arm 3: players who checked out stay readable through their completed match", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const [p1, p2, p3, p4] = await Promise.all([
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+      makeProfile({ faker }),
+    ]);
+    const stranger = await makeProfile({ faker });
+
+    await Promise.all(
+      [p1, p2, p3, p4].map((p) => makeQueueEntry({ sessionId: session.id, playerId: p.id }))
+    );
+    await makeCompletedMatch({
+      sessionId: session.id,
+      teamA: [p1.id, p2.id],
+      teamB: [p3.id, p4.id],
+    });
+
+    // Checkout DELETEs the queue row (queue_delete_own / queue_delete_organizer)
+    // but leaves match_players behind. Arm 2 can no longer fire for these four;
+    // if arm 3 were missing, useMatchHistory would render blank names.
+    await serviceClient().from("queue_entries").delete().eq("session_id", session.id);
+
+    const visible = await visibleProfileIds(organizer);
+    for (const p of [p1, p2, p3, p4]) {
+      expect(visible).toContain(p.id);
+    }
+    expect(visible).not.toContain(stranger.id);
+  });
+
+  // ── Arms 4 & 5 — the people running the session ─────────────
+
+  it("arm 4: a delegated organizer is visible to the room they are running", async () => {
+    const creator = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: creator.id });
+    const clubId = await clubIdOf(session.id);
+
+    // Delegated via QR invite: a session_organizers row and nothing else — no
+    // club membership, never queued, never played.
+    const delegated = await makeProfile({ faker });
+    const { error } = await serviceClient()
+      .from("session_organizers")
+      .insert({ session_id: session.id, user_id: delegated.id });
+    expect(error).toBeNull();
+
+    // A player who can reach the session because they belong to its club.
+    const member = await makeProfile({ faker });
+    await addClubMember(clubId, member.id);
+
+    const stranger = await makeProfile({ faker });
+
+    const visible = await visibleProfileIds(member);
+    expect(visible).toContain(delegated.id);
+    expect(visible).not.toContain(stranger.id);
+  });
+
+  it("arm 5: the session creator is visible to the club even with no organizer row", async () => {
+    const creator = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: creator.id });
+    const clubId = await clubIdOf(session.id);
+
+    // Production has a session whose creator has no session_organizers row, so
+    // arm 5 is not implied by arm 4. Reproduce that state exactly.
+    await serviceClient()
+      .from("session_organizers")
+      .delete()
+      .eq("session_id", session.id)
+      .eq("user_id", creator.id);
+
+    const member = await makeProfile({ faker });
+    await addClubMember(clubId, member.id);
+
+    const stranger = await makeProfile({ faker });
+
+    const visible = await visibleProfileIds(member);
+    expect(visible).toContain(creator.id);
+    expect(visible).not.toContain(stranger.id);
+  });
+
+  // ── The helper must not become an anonymous oracle ──────────
+
+  it("can_read_profile is not callable over /rest/v1/rpc as anon", async () => {
+    const target = await makeProfile({ faker });
+
+    const { error } = await anonClient().rpc("can_read_profile", { p_profile_id: target.id });
+
+    // EXECUTE is revoked from PUBLIC/anon: PostgREST answers PGRST202 (function
+    // not exposed in the schema cache) or 42501 (permission denied) depending
+    // on cache state. Assert the code rather than merely "some error", so a
+    // typo'd argument name or a renamed function cannot keep this green while
+    // the revoke silently regresses.
+    expect(error).not.toBeNull();
+    expect(["PGRST202", "42501"]).toContain(error?.code);
+  });
+
+  it("a user can always read their own profile", async () => {
+    const alice = await makeProfile({ faker });
+    const client = await signedInAs(alice);
+
+    const { data, error } = await client
+      .from("profiles")
+      .select("id, display_name")
+      .eq("id", alice.id)
+      .single();
+
+    expect(error).toBeNull();
+    expect(data?.id).toBe(alice.id);
   });
 });

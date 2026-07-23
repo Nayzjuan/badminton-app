@@ -173,10 +173,17 @@ BEGIN
     v_created := v_created + 1;
   END IF;
 
-  -- NOTE: USING (true) is intentional and load-bearing, not an oversight. The
-  -- public leaderboard and Wrapped share pages read arbitrary profiles while
-  -- logged out. `pin` is kept out of responses by the COLUMN grants
-  -- (20260701000010) and PUBLIC_PROFILE_COLUMNS, not by this row policy.
+  -- NOTE (corrected 2026-07-23): this comment used to claim USING (true) was
+  -- "intentional and load-bearing" because the public leaderboard and Wrapped
+  -- share pages read arbitrary profiles while logged out. That was wrong:
+  -- `profiles` has no SELECT policy for `anon` at all, so no logged-out read
+  -- has ever gone through this policy — those pages use the service client.
+  -- USING (true) was simply over-broad, and the tenancy audit filed it as
+  -- finding #8. 20260723200000 replaces it with a shared-scope predicate;
+  -- this branch only still exists so a from-scratch replay reproduces the
+  -- historical baseline before that migration tightens it.
+  -- `pin` is kept out of responses by the COLUMN grants (20260701000010) and
+  -- PUBLIC_PROFILE_COLUMNS, not by this row policy — that part was accurate.
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='profiles' AND policyname='profiles_select') THEN
     EXECUTE $ddl$CREATE POLICY profiles_select ON public.profiles FOR SELECT TO authenticated
       USING (true)$ddl$;
