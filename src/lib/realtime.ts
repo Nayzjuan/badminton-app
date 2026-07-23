@@ -228,6 +228,13 @@ export type OrganizerBroadcastHandlers = {
    * All co-organizers use this to display the lockout overlay in sync.
    */
   onDraftCapPhaseChanged?: (payload: DraftCapPhasePayload) => void;
+  /**
+   * Optional connection-state callback, same contract as the postgres_changes
+   * subscribers. Worth passing now that the channel is private: a join can be
+   * refused for *authorization* reasons (not a member of the session's club),
+   * which surfaces here as `false` rather than as silently missing events.
+   */
+  onStatus?: StatusHandler;
 };
 
 /**
@@ -237,7 +244,18 @@ export type OrganizerBroadcastHandlers = {
  * session close, auto-matchmaking toggle) so clients react immediately
  * without polling. Pass only the handlers you need — the rest are optional.
  *
- * Channel: "session-events:{sessionId}"
+ * Channel: "session-events:{sessionId}" — PRIVATE. The join is authorized by
+ * the `session_events_broadcast_read` policy on `realtime.messages`
+ * (migration 20260723100000), which admits anyone with a non-NULL
+ * `session_access_level` for the session — the same predicate that already
+ * gates `courts_select` and `queue_select`, so the audience is unchanged from
+ * the set that can already read the board.
+ *
+ * Two consequences of `private: true` that the public version did not have:
+ *   • the join MUST happen after the Realtime JWT is set, or it is evaluated
+ *     as `anon` and refused outright (the policy is `TO authenticated`);
+ *   • the server must mark its messages private too — see postBroadcast() in
+ *     src/lib/broadcast.ts. Private subscribers do not receive public messages.
  */
 export function subscribeToOrganizerBroadcast(
   supabase: TypedClient,
@@ -251,49 +269,57 @@ export function subscribeToOrganizerBroadcast(
     onAutoPublishToggled,
     onCapSaturation,
     onDraftCapPhaseChanged,
+    onStatus,
   } = handlers;
   const channelName = `session-events:${sessionId}`;
 
-  const channel = supabase
-    .channel(channelName)
-    .on(
-      "broadcast",
-      { event: "organizer_intervention" },
-      (msg: { payload: OrganizerInterventionPayload }) => {
-        onIntervention(msg.payload);
-      }
-    )
-    .on("broadcast", { event: "session_closed" }, (msg: { payload: SessionClosedPayload }) => {
-      onSessionClosed?.(msg.payload);
-    })
-    .on(
-      "broadcast",
-      { event: "auto_matchmaking_toggled" },
-      (msg: { payload: AutoMatchmakingToggledPayload }) => {
-        onAutoMatchmakingToggled?.(msg.payload);
-      }
-    )
-    .on(
-      "broadcast",
-      { event: "auto_publish_toggled" },
-      (msg: { payload: AutoPublishToggledPayload }) => {
-        onAutoPublishToggled?.(msg.payload);
-      }
-    )
-    .on("broadcast", { event: "cap_saturation" }, (msg: { payload: CapSaturationPayload }) => {
-      onCapSaturation?.(msg.payload);
-    })
-    .on("broadcast", { event: "draft_cap_phase" }, (msg: { payload: DraftCapPhasePayload }) => {
-      onDraftCapPhaseChanged?.(msg.payload);
-    })
-    .subscribe((status, err) => {
-      if (err) {
-        console.error(`[realtime] ${channelName} broadcast subscription error:`, err);
-      }
-    });
+  // Defer the join until the Realtime JWT is set (see whenRealtimeAuthReady).
+  // For a private channel this is not an optimisation: joining as `anon` fails
+  // the policy and the channel errors out instead of quietly delivering
+  // nothing, so every session event would be lost for the tab's lifetime.
+  let channel: RealtimeChannel | null = null;
+  let cancelled = false;
+
+  void whenRealtimeAuthReady().then(() => {
+    if (cancelled) return;
+    channel = supabase
+      .channel(channelName, { config: { private: true } })
+      .on(
+        "broadcast",
+        { event: "organizer_intervention" },
+        (msg: { payload: OrganizerInterventionPayload }) => {
+          onIntervention(msg.payload);
+        }
+      )
+      .on("broadcast", { event: "session_closed" }, (msg: { payload: SessionClosedPayload }) => {
+        onSessionClosed?.(msg.payload);
+      })
+      .on(
+        "broadcast",
+        { event: "auto_matchmaking_toggled" },
+        (msg: { payload: AutoMatchmakingToggledPayload }) => {
+          onAutoMatchmakingToggled?.(msg.payload);
+        }
+      )
+      .on(
+        "broadcast",
+        { event: "auto_publish_toggled" },
+        (msg: { payload: AutoPublishToggledPayload }) => {
+          onAutoPublishToggled?.(msg.payload);
+        }
+      )
+      .on("broadcast", { event: "cap_saturation" }, (msg: { payload: CapSaturationPayload }) => {
+        onCapSaturation?.(msg.payload);
+      })
+      .on("broadcast", { event: "draft_cap_phase" }, (msg: { payload: DraftCapPhasePayload }) => {
+        onDraftCapPhaseChanged?.(msg.payload);
+      })
+      .subscribe(createStatusHandler(channelName, onStatus));
+  });
 
   return () => {
-    supabase.removeChannel(channel);
+    cancelled = true;
+    if (channel) supabase.removeChannel(channel);
   };
 }
 

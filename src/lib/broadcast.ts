@@ -13,6 +13,20 @@
 //   Server sends to topic: "realtime:session-events:{sessionId}"
 //   Client subscribes to:  supabase.channel("session-events:{sessionId}")
 //   (The Supabase SDK strips the "realtime:" prefix for the client.)
+//
+// KNOWN DISCREPANCY — the "realtime:" prefix on the server topic is NOT
+// accepted by the Realtime image the Supabase CLI runs locally: a message
+// posted to "realtime:session-events:{id}" is delivered to nobody there, while
+// the same message posted to "session-events:{id}" is delivered normally.
+// It is left as-is because production demonstrably delivers these events (the
+// session_closed → Wrapped redirect and the co-organizer intervention toasts
+// are in daily use), so production's Realtime evidently normalises the prefix.
+// Consequence for testing: broadcast DELIVERY cannot be exercised end-to-end
+// against the local stack without dropping the prefix. Do not "fix" this on
+// the strength of a local repro alone — confirm against production first.
+//
+// The channel is PRIVATE (see postBroadcast below and the
+// session_events_broadcast_read policy in migration 20260723100000).
 // ============================================================
 
 // ── Payload types ─────────────────────────────────────────────
@@ -47,6 +61,18 @@ export interface OrganizerInterventionPayload {
  *
  * Never throws — failures are silently logged so the calling
  * server action can return success regardless.
+ *
+ * `private: true` is load-bearing and must stay in lockstep with the client:
+ * subscribeToOrganizerBroadcast() joins `session-events:{id}` as a private
+ * channel, and Realtime does not deliver public messages to private
+ * subscribers. Marking the message private is also what keeps it away from
+ * anyone who opened the same topic as a *public* channel — verified against a
+ * local stack: a public subscriber receives the public copy and never sees the
+ * private one. Authorization for the join itself lives in the
+ * `session_events_broadcast_read` policy on `realtime.messages`
+ * (migration 20260723100000); the service-role key used here bypasses RLS, so
+ * the server can still emit without any INSERT policy existing — which is
+ * deliberate, since an INSERT policy would let browsers forge these events.
  */
 async function postBroadcast(topic: string, event: string, payload: object): Promise<void> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -66,7 +92,7 @@ async function postBroadcast(topic: string, event: string, payload: object): Pro
         apikey: key,
       },
       body: JSON.stringify({
-        messages: [{ topic, event, payload }],
+        messages: [{ topic, event, payload, private: true }],
       }),
     });
 
