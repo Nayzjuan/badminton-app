@@ -159,8 +159,10 @@ Split into **PR4a (#7, DONE, held unmerged)** and **PR4b (#8, not started)**.
 
 ### 2.1 ✅ PR4a — private `session-events` broadcast (finding #7)
 
-**Status: code complete, reviewed (verdict *Minor issues*, all closed), held unmerged.**
-Branch `fix/tenancy-realtime-private-broadcast`.
+**Status: code complete, reviewed three times (verdict *Minor issues* each pass), held unmerged.**
+Branch `fix/tenancy-realtime-private-broadcast`. Every finding was either **fixed** or **declined with
+the reasoning recorded inline** — the one declined is `onStatus` (§2.3 below), which was a deliberate
+call, not an oversight.
 
 | File | Change |
 |---|---|
@@ -169,7 +171,7 @@ Branch `fix/tenancy-realtime-private-broadcast`.
 | `src/lib/realtime.ts` | join with `{ config: { private: true } }`, deferred behind `whenRealtimeAuthReady()`, optional `onStatus` |
 | `src/hooks/use-organizer-broadcast.ts` | comment only — why `onStatus` is not wired |
 | `tests/unit/realtime-private-broadcast.test.ts` | new — 6 tests pinning both halves + the JWT ordering |
-| `APP_MANIFEST.md`, `MEMORY.md` | documented, incl. reversing the old "no JWT needed" claim at `APP_MANIFEST.md:74` |
+| `APP_MANIFEST.md`, `MEMORY.md` | documented, incl. reversing the old "no JWT needed" claim in the Realtime JWT-before-join bullet (`APP_MANIFEST.md:76`) |
 
 The audit understated #7: the public topic was also **writable**, so any browser could forge
 `session_closed` (redirects every player to Wrapped) or `draft_cap_phase: 'clearing'` (freezes every

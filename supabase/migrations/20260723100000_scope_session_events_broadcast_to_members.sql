@@ -146,7 +146,11 @@ create policy session_events_broadcast_read on realtime.messages
 -- that looks hardened and is not. Stop the replay instead.
 do $$
 declare
-  v_sid uuid := '11111111-2222-3333-4444-555555555555';
+  -- Deliberately contains hex LETTERS in every group. A digits-only sentinel
+  -- (e.g. '1111…') makes the upper-case assertion below a verbatim duplicate of
+  -- the lower-case one, so it would still pass if the character class were
+  -- narrowed back to [0-9a-f] — the exact regression that assertion exists for.
+  v_sid uuid := 'a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5';
 begin
   -- Parser: exactly one accepted shape, everything else NULL.
   if public.realtime_topic_session_id('session-events:' || v_sid::text) is distinct from v_sid then

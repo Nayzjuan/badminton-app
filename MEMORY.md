@@ -64,7 +64,8 @@ belong to, *and* **write** to it. The write half was not in the audit and is wor
    `{ config: { private: true } }`. Private↔public routing is asymmetric and silent in **both** directions.
 3. The join is now deferred behind `whenRealtimeAuthReady()`. This **stopped being an optimisation**: the
    policy is `TO authenticated`, so a join that races ahead of `setAuth()` is evaluated as `anon` and refused
-   for the tab's lifetime. `APP_MANIFEST.md:74` previously claimed this channel needed no JWT-before-join —
+   for the tab's lifetime. The Realtime JWT-before-join bullet in `APP_MANIFEST.md` (line 76) previously
+   claimed this channel needed no JWT-before-join —
    that was true only while it was public, and has been reversed.
 
 **Topic parsing must be total.** Postgres does not guarantee AND short-circuits, so a bare
