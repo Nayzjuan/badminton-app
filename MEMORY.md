@@ -101,8 +101,23 @@ exported) because `mockAuthAs` only fools the server actions, not Postgres. Ever
 assertion with a `not.toContain(stranger.id)` control, so a pass cannot be explained by "the policy lets
 everything through".
 
-**Status:** locally validated (`supabase db reset` replay green, 20/20 in the RLS suite, 844 unit tests, tsc
-+ eslint clean on changed files). PR held unmerged.
+**Status:** ✅ **PR #43 open, HELD UNMERGED** (commit `389ecf0`). Locally validated: `supabase db reset`
+replay green with the DO block passing, 20/20 in the RLS suite, 236/236 full integration, 844 unit tests,
+tsc + eslint clean on changed files, `npm run build` green. Three review rounds — "Minor issues" ×2 (all 9
+findings fixed) then **LGTM**.
+
+**CI on #43:** Vitest ✅, Vitest Integration ✅, Vercel ✅. `Supabase Preview` is **cancelled, not failed** —
+"Maximum number of concurrent branches reached", because #40 and #41 already hold the two preview branches.
+Environmental, not a code signal; the same check passes on #40 and #41. Migration replay is proven by
+`Vitest Integration` (fresh Postgres) and the local `db reset` anyway.
+
+**⚠️ Before merging #43:** apply `20260723200000` to prod FIRST — migrations here are applied by hand, so
+merging ships no schema. Ordering vs #40/#41 is independent: this migration touches only `profiles_select`
+and adds one new function. Deploy between sessions, never during one.
+
+**Follow-up surfaced by this review:** `src/app/c/[clubSlug]/(full)/play/[sessionId]/page.tsx` ignores the
+`{ ok: false }` return from `ensureClubMembership`. That was inert under `USING (true)`; once #43 deploys, a
+walk-in whose enrolment silently failed sees only their own profile. Tracked as task #12.
 
 ---
 
