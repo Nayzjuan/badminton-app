@@ -117,6 +117,10 @@ async function allMatchesInSession(
   matchIds: string[]
 ): Promise<boolean> {
   const ids = [...new Set(matchIds)];
+  // No caller passes an empty list today, but `0 === 0` would make the vacuous
+  // case "authorized", and this is a security helper — the next caller with an
+  // optional match id would inherit a silent bypass. Refuse instead.
+  if (ids.length === 0) return false;
   const { data, error } = await db
     .from("matches")
     .select("id")
@@ -448,6 +452,38 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
   const db = createServiceClient();
   const user = await getAuthenticatedUser();
   if (!user) return { success: false };
+
+  // `ctx` is round-tripped through the client, so every field in it is forgeable.
+  // Unlike the three entry actions — which read `team` back out of the database
+  // (`outRow.team`) or out of the RPC's OUT params — this one takes both the ids
+  // and the team letters straight from the caller. The ids failed closed only
+  // incidentally (a malformed uuid reached `.eq()` raw and Postgres answered
+  // 22P02 → no row); `team` did not fail closed at all: `match_players.team` is
+  // `char(1) NOT NULL` with no CHECK constraint, so a forged single character
+  // writes garbage into the roster of the organizer's own session. Validate both
+  // before anything is used.
+  const ctxIds =
+    ctx.type === "team_swap"
+      ? [ctx.matchId, ctx.playerAId, ctx.playerBId]
+      : ctx.type === "queue_replacement"
+        ? [ctx.matchId, ctx.sessionId, ctx.inPlayerId, ctx.outPlayerId]
+        : [
+            ctx.activeMatchId,
+            ctx.onDeckMatchId,
+            ctx.sessionId,
+            ctx.outPlayerId,
+            ctx.onDeckPlayerId,
+            ctx.fillPlayerId,
+          ];
+  if (!ctxIds.every(isValidUUID)) return { success: false };
+
+  const ctxTeams =
+    ctx.type === "queue_replacement"
+      ? [ctx.team]
+      : ctx.type === "ondeck_replacement"
+        ? [ctx.outTeam, ctx.onDeckTeam]
+        : []; // team_swap carries no team letter — it flips both sides wholesale
+  if (!ctxTeams.every((t) => t === "a" || t === "b")) return { success: false };
 
   if (ctx.type === "team_swap") {
     // Lookup session_id from the match — team_swap undo context doesn't carry it.

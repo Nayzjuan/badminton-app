@@ -728,9 +728,22 @@ describe("LMS-15: swap_teams_in_active_match — refuses a match from another se
     expect(teamOf(victim.b1.id)).toBe("b");
   });
 
-  // The parameter is DEFAULT NULL so that 20260723000001 and the deploy that
-  // starts passing it can land in either order. If someone later makes it
-  // required without checking, this is what breaks first.
+  // ⚠ Read this before "strengthening" the test below.
+  //
+  // p_session_id is DEFAULT NULL as a ONE-WAY compatibility shim: it lets a
+  // not-yet-updated deploy keep calling the new function while 20260723000001 is
+  // already applied. It does NOT make the two halves order-free — PostgREST
+  // resolves an RPC by argument NAME, so code-first is PGRST202 and every team
+  // flip breaks. Required sequence: 20260723000000 → 20260723000001 → deploy.
+  //
+  // The uncomfortable corollary, asserted below on purpose: while the shim
+  // exists, a caller that simply omits the key gets the OLD UNBOUND behaviour.
+  // swap_teams_in_active_match is the only one of the four like this (the other
+  // three take p_session_id as required), so until the follow-up NULL-rejecting
+  // migration lands, its boundary is 20260723000000's revoke (no browser role
+  // can reach it) plus allMatchesInSession() in the server action. This test
+  // pins the shim so a premature `NOT NULL` breaks here rather than in prod —
+  // it is NOT an endorsement of the unbound path.
   it("keeps working when p_session_id is omitted entirely", async () => {
     const { db, victim } = await setupTwoSessions();
 
@@ -778,6 +791,10 @@ async function addOnDeckMatch(sessionId: string, tag = "") {
 }
 
 describe("LMS-16: swap_active_from_ondeck — refuses when both matches are another session's", () => {
+  // Also kills incidentally: without the predicate this still raises, but with
+  // FILL_PLAYER_UNAVAILABLE from the pre-existing session-scoped queue_entries
+  // lookup rather than from the binding. Still red, so it holds — LMS-17 (the
+  // mixed own/foreign pair) is the one that isolates the binding cleanly.
   it("raises MATCH_NOT_ACTIVE and moves nobody", async () => {
     const { db, victim, attacker } = await setupTwoSessions();
     const vod = await addOnDeckMatch(victim.session.id, "-V");
@@ -840,6 +857,16 @@ describe("LMS-18: undo_swap_active_from_ondeck — refuses a match from another 
   // spelling a NULL status makes the IF condition NULL — plpgsql treats that as
   // false — and execution falls through to the DELETE/INSERT pair, which
   // addresses rows by the client-supplied match ids and would have succeeded.
+  // ⚠ READ BEFORE TRUSTING THIS ONE AS A BINDING REGRESSION TEST. Its forged
+  // ids happen to COLLIDE: drop the session predicate and both status guards
+  // pass, then `INSERT INTO match_players (victim.match, victim.a1, …)` violates
+  // UNIQUE (match_id, player_id), so it is `expect(error).toBeNull()` that goes
+  // red and the state assertions never run. It is a real kill, but it detects a
+  // duplicate key, not an unbound mutation. The test below it — "cannot
+  // collide" — is the load-bearing one: there the unbound RPC succeeds cleanly
+  // and only the state assertion can fail. Keep both; they fail for different
+  // reasons, and a future schema change that relaxed the unique constraint
+  // would silence this one and leave the other standing.
   it("returns without error AND without mutating the victim's roster", async () => {
     const { db, victim, attacker } = await setupTwoSessions();
     const vod = await addOnDeckMatch(victim.session.id, "-V");

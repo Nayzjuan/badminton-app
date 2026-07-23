@@ -162,11 +162,50 @@ drift note above). `logMatchEvent` is best-effort — a logging failure never br
 old "PR5" sweep). **This is the most severe finding in the whole audit** — it is the only one that needs no
 account at all — and #10's entry in the audit was re-graded from 🟠 HIGH to 🔴 CRITICAL accordingly.
 
-### ⚠️⚠️ MERGING THE PR DOES NOT CLOSE THE HOLE
+### ⚠️⚠️ MERGING THE PR DOES NOT CLOSE THE HOLE — AND THE ORDER IS NOT FREE
 
 Migrations in this project are **applied by hand** (there is no deploy automation; prod's stamps differ from
 the repo filenames). Merging ships only the TypeScript half. **Both `.sql` files must be run against prod
-`usxftpexoimletqmrggb`**, `20260723000000` first. Until then, anon EXECUTE is still live in production.
+`usxftpexoimletqmrggb`.** Until then, anon EXECUTE is still live in production.
+
+### 👉 THE ONLY CORRECT SEQUENCE
+
+```
+1. apply 20260723000000   (the revokes)
+2. apply 20260723000001   (the session binding)
+3. merge the PR / let Vercel deploy
+```
+
+**Neither step 1→2 nor step 2→3 is reversible without breakage.** Both are counter-intuitive, and the first
+draft of this note had *both* of them wrong. Do not re-derive from "it's an optional param, so it's fine."
+
+**Why 2 before 3.** `p_session_id uuid DEFAULT NULL` makes only ONE of those two orders safe, because PostgREST
+resolves an RPC by the set of argument **names** in the request body (a subset of the parameter names is fine;
+a key naming *no* parameter is not):
+- *migration first* → old code sends only the keys it knows (5 at the swapTeams site, 6 at the `team_swap` undo
+  site), every required parameter is covered, `p_session_id` defaults, calls succeed — the binding is merely
+  unenforced for that window. **Safe.**
+- *code first* → new code sends `p_session_id` to a function that has no such parameter → no candidate →
+  **`PGRST202`, and every team flip and every `team_swap` undo fails** until the migration lands. **Not safe.**
+
+The optional parameter buys tolerance for a *late deploy*, not a *late migration*. A required one would have
+broken both directions; an overload answers `PGRST203`.
+
+**Why 1 before 2.** `20260723000000` grants/revokes on `swap_teams_in_active_match`, which `20260723000001`
+DROPs and re-CREATEs with an extra parameter. Naming a 7-type argument list after the drop is **42883** — and
+since the file is one transaction, that error rolls back **all 16 revokes** and leaves the unauthenticated hole
+open behind an error message that looks unrelated. `20260723000000` now addresses that one function by oid
+(a `DO` loop over every overload, with a zero-iteration guard). The backwards order doesn't reach that anyway:
+`20260723000001`'s assertion 5a sweeps every volatile SECDEF non-trigger function for anon EXECUTE and aborts
+if 1 hasn't run, so out-of-order = "2 rolls back", not "silent damage". Go in order anyway.
+
+**Do NOT read step 1 as order-free.** The app calls all 16 through `createServiceClient`, which keeps EXECUTE.
+Checked, don't re-derive: the only `.rpc()` calls outside `src/app/actions/` are `lookup_active_session`
+(anon, kept), `get_session_player_streaks` (authenticated, kept), `count_completed_matches_by_session`,
+`get_primary_club_slug`, and the `src/lib/` helpers, which are `server-only` or take a service client as a
+parameter. That means step 1 is safe to apply **immediately**, ahead of everything — it cannot break what is
+running. It does not mean it can come after the merge: 2 before 3 and 1 before 2 ⇒ 1 before 3. Scheduling 1
+late necessarily drags 2 late too, which is the `PGRST202` window.
 
 ### (a) 16 mutating SECDEF RPCs held `anon` EXECUTE — unauthenticated write, verified on prod
 
@@ -209,34 +248,65 @@ the authorization had been performed against the *attacker's*.
 3. **`DROP` + `CREATE` resets the ACL.** `swap_teams_in_active_match` needed a new param (`CREATE OR REPLACE`
    can't add one), so it is dropped and recreated — and the default privileges re-stamp anon/authenticated on the
    new function. `20260723000001` therefore **re-issues** its own grant/revoke pair after the CREATE, with a
-   `DO` block asserting exactly one function of that name survives (two ⇒ `PGRST203`).
+   `DO` block asserting exactly one function of that name survives (two ⇒ `PGRST203`). The `DROP` names **both**
+   shapes — the 7-arg pre-migration one and the 8-arg one the file creates — so `20260723000001` is re-runnable;
+   naming only the 7-arg form leaves the new function in place on a second run and the bare `CREATE` fails
+   `42723`. That matters here because migrations are hand-applied and prod's stamps drift from the filenames.
+   Proven: applied 3× in a row against a live DB, `EXIT=0` each time, one function, `anon=f auth=f svc=t`.
 
 **Deliberately keeping their grants:** `lookup_active_session` (anon — the public join path, and it's STABLE so
-the catalog sweep doesn't see it) and the four RLS helpers `is_club_member` / `session_access_level` /
-`has_match_access` / `is_session_organizer` — **RLS policies invoke them as the calling role; revoking them takes
-the whole app down.** Trigger functions are excluded (`prorettype <> 'trigger'::regtype`): not PostgREST-callable,
+the catalog sweep doesn't see it) and the six RLS helpers `is_club_member` / `session_access_level` /
+`has_match_access` / `is_session_organizer` / `is_match_club_member` / `is_session_club_member` — **RLS policies
+invoke them as the calling role; revoking them takes the whole app down.** All six are asserted at the bottom of
+`20260723000000` for **both** `anon` and `authenticated` (checking only `authenticated` would miss the /tv and
+public-session paths, and the schema-parity sweep can't see them either — it filters `provolatile = 'v'`). Trigger functions are excluded (`prorettype <> 'trigger'::regtype`): not PostgREST-callable,
 and firing a trigger doesn't re-check EXECUTE. Inner `PERFORM record_match_event(...)` calls are unaffected — a
 call from inside a SECDEF function runs as that function's owner.
 
-**`p_session_id` is `DEFAULT NULL` on purpose.** Migrations are hand-applied while Vercel auto-deploys on merge,
-so the halves land in either order; a *required* new param breaks **both** directions, appended-optional breaks
-neither. Overloads aren't viable (PostgREST answers `PGRST203`). **Follow-up owed:** once this is deployed
-everywhere, a migration making `p_session_id` NULL-rejecting.
+**`p_session_id` is `DEFAULT NULL` as a one-way compatibility shim, NOT because the order is free** — see the
+sequence box above; the default only rescues *old code → new function*. It also means
+`swap_teams_in_active_match` is the one function of the four that a caller can still invoke **unbound**, simply
+by omitting the key (the other three take `p_session_id` as required). Until the follow-up lands, its real
+boundary is `20260723000000` restricting callers to `service_role` plus the TypeScript pre-check.
+**Follow-up owed:** once this is deployed everywhere, a migration making `p_session_id` NULL-rejecting.
 
 **TS layer:** `allMatchesInSession(db, sessionId, matchIds)` on all five call sites in `live-match-swap.ts`,
 returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence
 oracle. `undoLiveSwap`'s `team_swap` branch is knowingly unguarded because it *derives* `session_id` from the
 match it already read; it passes `p_session_id` so every call site supplies the arg.
 
+`undoLiveSwap` is also the **only** entry point that takes ids *and* team letters straight from the client —
+`ctx` is built server-side, shipped with the undo toast and posted back verbatim, while the other three read
+`team` out of the DB (`outRow.team`) or the RPC's OUT params. It now validates both up front. The ids used to
+fail closed only by accident (malformed uuid → `.eq()` raw → 22P02 → no row); `team` did **not** fail closed at
+all, because `match_players.team` is `char(1) NOT NULL` with **no CHECK constraint** — a forged letter writes
+garbage into the roster of the organizer's own session, where no tenancy guard would ever see it.
+
 **Tests:** integration LMS-14…18 (per-RPC forgery, both-foreign, the realistic **mixed** own/foreign pair, and
-the silent-by-design undo asserted on *state*) · `tests/unit/live-swap-session-binding.test.ts` 14 tests where
-**every assertion checks the RPC was NOT called** (asserting on the returned message stays green with the entire
-guard deleted) · `schema-parity.test.ts` gains a catalog sweep asserting zero anon/authenticated-reachable
+the silent-by-design undo asserted on *state*) · `tests/unit/live-swap-session-binding.test.ts` **32 tests**
+whose refusal cases **all assert the RPC was NOT called** (asserting on the returned message stays green with
+the entire guard deleted, because the SQL refuses too) · its LSB-CTX block is **table-driven over every id and
+team field of all three ctx variants**, plus a meta-test that the tables cover every `*Id` field the type
+declares — the guard is a hand-written per-variant array, and dropping one entry is the mutation nothing else
+would catch · `schema-parity.test.ts` gains a catalog sweep asserting zero anon/authenticated-reachable
 volatile SECDEF non-trigger functions, plus a signature pin on the four rewritten RPCs.
 
-**Validation:** `tsc --noEmit` 0 · scoped `eslint` 0 · unit **858 passed / 1 skipped, 49 files** · integration
-**236 passed, 21 files on a real from-scratch `supabase db reset` replay** · `next build` clean · anon curl
-against the fresh local DB → `42501` · **4 SQL + 5 TS mutants, all killed**.
+⚠️ **The meta-test is only real because of one line.** It derives the expected set from `CTX_FIXTURES`, so the
+fixtures must be pinned to the union — `as const satisfies { [K in Ctx["type"]]: Extract<Ctx, { type: K }> }`.
+Without it the check is circular: `withField` casts through `unknown`, the LSB-UNDO cases use their own inline
+literals, and a field added to `LiveSwapUndoContext` would never reach the fixtures, so `ID_FIELDS` stays stale
+and an unvalidated client-supplied id ships. With it: type changes → fixture fails `tsc` → fixture updated →
+meta-test fails → `ID_FIELDS` updated → per-field test generated. Second reviewer's catch; verified by deleting
+`fillPlayerId` from the fixture (TS2741) — and note the naive version of that mutant hits the inline LSB-UNDO
+literal at :261 first, so target the fixture line specifically.
+
+**Validation:** `tsc --noEmit` 0 · scoped `eslint` 0 · unit **876 passed / 1 skipped, 49 files** · integration
+**236 passed, 21 files on a real from-scratch `supabase db reset` replay** · anon curl against the fresh local
+DB → `42501` on every revoked function, `200` on `lookup_active_session` · **4 SQL + 12 TS mutants, all
+killed**, including "drop `ctx.sessionId` from the queue_replacement list" and "drop `ctx.fillPlayerId` from
+the on-deck list" · the backwards migration order (`…0001` then `…0000`) re-applied cleanly on a live DB,
+proving the oid-addressed revoke works — the explicit 7-type form errors `42883` there, which is what it
+replaced.
 
 Two harness lessons banked: the mutation runner falsely reported a SURVIVOR because its regex
 `Tests\s+…(\d+) passed` never matched vitest's `Tests 1 failed | 18 skipped (19)` (no "passed" token) — now

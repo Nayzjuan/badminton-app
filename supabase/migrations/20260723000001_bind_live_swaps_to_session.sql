@@ -3,8 +3,17 @@
 -- ============================================================
 -- TENANCY_AUDIT_2026-07-21.md #10, the SQL half. The companion migration
 -- 20260723000000 removes anon/authenticated EXECUTE and is the fix for the live
--- hole; this file is the defence in depth behind it, and it is what makes the
--- TypeScript organizer gate's promise true at the database.
+-- UNAUTHENTICATED hole; this file closes the separate AUTHENTICATED one — an
+-- organizer of session A rewriting a live match in session B — and is what makes
+-- the TypeScript organizer gate's promise true at the database.
+--
+-- Neither file substitutes for the other, and the asymmetry is worth stating:
+-- three of the four functions take p_session_id as a REQUIRED parameter, so they
+-- are genuinely bound the moment this migration lands. swap_teams_in_active_match
+-- takes it with DEFAULT NULL, so any caller that simply omits the key still gets
+-- the old unbound behaviour. For THAT function the real boundary until the
+-- follow-up NULL-rejecting migration lands is 20260723000000 restricting callers
+-- to service_role, plus the TypeScript pre-check. Apply both.
 --
 -- ── THE DEFECT: AUTHORIZE ON A, OPERATE ON B ──────────────
 -- Every live-swap server action gates on isSessionOrganizer(user.id, sessionId)
@@ -47,12 +56,30 @@
 -- ── swap_teams_in_active_match NEEDS A SIGNATURE CHANGE ───
 -- It has no p_session_id to bind to. The new parameter is appended with
 -- `DEFAULT NULL`, and the binding is enforced only when a value is supplied.
--- That is deliberate, and the reason is deploy ordering: migrations here are
--- applied BY HAND and Vercel deploys on merge, so the two halves land in an
--- unknown order. A REQUIRED parameter breaks in BOTH directions — old code
--- calling a function that now demands an argument, or new code passing one the
--- deployed function does not accept. An optional one breaks in neither. Adding a
--- second overload instead is not an option: PostgREST answers PGRST203
+--
+-- ⚠⚠ APPLY THIS MIGRATION BEFORE THE CODE DEPLOYS. ⚠⚠
+--
+-- `DEFAULT NULL` makes ONE of the two orders safe, not both. PostgREST resolves
+-- an RPC by the set of argument NAMES in the request body:
+--
+--   migration first, code not yet deployed  → the old code sends only the keys
+--       it knows about (5 at the swapTeams site, 6 at the team_swap undo site),
+--       every REQUIRED parameter is covered, p_session_id defaults, the call
+--       succeeds, and the binding is simply not enforced for that window. SAFE.
+--       (PostgREST accepts a subset of the parameter names; what it cannot
+--       tolerate is a key that names NO parameter — that is the other case.)
+--   code first, migration not yet applied   → new code sends p_session_id to a
+--       function that has no such parameter → no candidate matches → PGRST202
+--       "Could not find the function … in the schema cache". Every team flip and
+--       every team_swap undo FAILS until the migration lands. NOT SAFE.
+--
+-- So the parameter being optional buys tolerance for a late deploy, not for a
+-- late migration. Migrations here are applied BY HAND while Vercel deploys on
+-- merge, so this ordering has to be carried out deliberately — see the PR body
+-- and MEMORY.md. A REQUIRED parameter would have broken BOTH directions, which
+-- is why it is still spelled `DEFAULT NULL`.
+--
+-- Adding a second overload instead is not an option: PostgREST answers PGRST203
 -- ("could not choose the best candidate function") as soon as two candidates
 -- match, which is how the ambiguity surfaced during PR2.
 --
@@ -68,8 +95,23 @@
 -- ALTER DEFAULT PRIVILEGES. Recreating it silently re-opens exactly the hole
 -- 20260723000000 just closed. The revoke is therefore re-issued below, and
 -- asserted. The other three use CREATE OR REPLACE, which preserves proacl; their
--- revokes are re-issued anyway so this file is self-sufficient on a from-scratch
--- replay regardless of the order the two migrations are applied in.
+-- revokes are re-issued anyway, so all four of THESE functions end up locked
+-- down by this file alone.
+--
+-- That is a statement about these four, not about the other twelve — and this
+-- file will not even commit without 20260723000000, because assertion 5a below
+-- sweeps EVERY volatile SECDEF non-trigger function in public for anon /
+-- authenticated EXECUTE and raises. Run out of order, this migration aborts and
+-- rolls back; it does not half-apply. Recovery is "apply 20260723000000, re-run
+-- this one".
+--
+-- ⚠ RE-RUNNABILITY. The DROP names both shapes — the 7-arg pre-migration one and
+-- the 8-arg one this file creates — so re-running it against a database that
+-- already has the new function replaces it instead of failing 42723. That
+-- matters here specifically because migrations in this project are applied by
+-- hand and prod's stamps drift from the repo filenames.
+--
+-- Intended order: 20260723000000 → 20260723000001 → merge/deploy.
 -- ============================================================
 
 
@@ -358,7 +400,15 @@ revoke execute on function public.undo_swap_active_from_ondeck(uuid, uuid, uuid,
 -- DROP + CREATE: a parameter cannot be added via CREATE OR REPLACE. See the
 -- header for why the parameter is optional rather than required, and for why the
 -- revoke below is mandatory rather than belt-and-braces.
+--
+-- BOTH shapes are dropped. The 7-arg one is what exists before this migration;
+-- the 8-arg one is what exists after, and naming it too is what makes this file
+-- re-runnable — without it a second run leaves the 8-arg function in place and
+-- the bare CREATE below fails 42723 ("function already exists with same
+-- argument types"). Migrations here are hand-applied against a prod whose
+-- stamps drift from the repo filenames, so a re-run is a realistic event.
 DROP FUNCTION IF EXISTS public.swap_teams_in_active_match(uuid, uuid, uuid, uuid, text, boolean, uuid);
+DROP FUNCTION IF EXISTS public.swap_teams_in_active_match(uuid, uuid, uuid, uuid, text, boolean, uuid, uuid);
 
 CREATE FUNCTION public.swap_teams_in_active_match(
     p_match_id uuid,
@@ -381,9 +431,13 @@ DECLARE
     v_session_id   uuid;
 BEGIN
     -- When p_session_id is supplied the match must belong to it. NULL keeps the
-    -- pre-existing behaviour so that this migration and its deploy can land in
-    -- either order; the caller in src/app/actions/live-match-swap.ts always
-    -- supplies it. Note v_session_id is still read back out of the row — it
+    -- pre-existing behaviour, which is what lets a not-yet-updated deploy keep
+    -- working against this function — it does NOT make the reverse order safe
+    -- (see the header: code-first is PGRST202). The caller in
+    -- src/app/actions/live-match-swap.ts always supplies it, so on the deployed
+    -- pair the NULL branch is unreachable from the app; it is a compatibility
+    -- shim with a follow-up migration owed to remove it. Note v_session_id is
+    -- still read back out of the row — it
     -- stamps record_match_event, and reading it from the match rather than the
     -- parameter keeps the audit row correct even in the NULL case.
     SELECT status, session_id INTO v_match_status, v_session_id
