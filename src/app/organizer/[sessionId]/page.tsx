@@ -92,7 +92,22 @@ export default async function OrganizerSessionRedirect({
     data: { user },
   } = await supabase.auth.getUser();
   if (user && (await isSessionOrganizerLocal(user.id, sessionId))) {
-    await ensureClubMembership(slug, user.id);
+    const enroll = await ensureClubMembership(slug, user.id);
+    if (enroll.reason === "write_failed" || enroll.reason === "club_not_found") {
+      // The write itself errored, so the whole reason for this branch — giving
+      // a membership-less co-organizer a club_members row before the club
+      // layout's gate sees them — did not happen. That gate bounces to /play,
+      // so go there directly rather than through it.
+      //
+      // An ALLOWLIST of known-negative reasons on purpose, matching the sibling
+      // /play shim. Everything else forwards — today that is `read_failed`,
+      // which means the membership SELECT errored, not that they lack a row.
+      // Every club owner/admin following a legacy /organizer link passes
+      // through this same read, so diverting them on a blip would read a
+      // transient error as "not a member"; the layout re-queries instead. A
+      // future reason must opt IN to diverting rather than inherit it.
+      redirect("/play");
+    }
   }
   redirect(clubOrganizer(slug, sessionId));
 }

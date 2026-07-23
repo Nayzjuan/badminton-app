@@ -5,6 +5,48 @@
 
 ---
 
+## 🩹 SHIM ENROLL FAILURE NOW BRANCHES ON *WHY* — 2026-07-24, branch `fix/shim-enroll-failure`
+
+Follow-up surfaced by the PR #43 review. `src/app/play/[sessionId]/page.tsx` and
+`src/app/organizer/[sessionId]/page.tsx` both **discarded** `ensureClubMembership`'s `{ ok }` and redirected
+into the club route regardless.
+
+**It was never a strand — that was my first framing and it was wrong.** `requireClubMembership`
+(`src/lib/clubs.ts`) already does `if (!role) redirect("/play")`, and both club layouts call it, so a failed
+`write` already landed the user on `/play` one hop later. (`club_not_found` is the one sub-case that got
+worse before: `requireClubMembership` does `if (!club) notFound()` *before* the role check, so that produced
+a 404.) The real win is narrower: the shim becomes fail-safe on its own rather than depending on a downstream
+gate, and skips a redirect plus the layout's club/role reads.
+
+**The part that actually needed care.** `ok: false` conflated two situations, and diverting on both would
+have introduced a regression: `ensureClubMembership` returns `ok:false` on a transient `club_members` SELECT
+error, and that read runs for **existing active members too** — every club owner/admin following a legacy
+`/organizer/[id]` link. Blanket-diverting would read a blip as "not a member", which is exactly what
+`getClubRole` refuses to do.
+
+**Fix.** `EnsureClubMembershipResult` becomes a discriminated union — `{ok:true; joined}` |
+`{ok:false; joined:false; reason: "club_not_found" | "read_failed" | "write_failed"}` — so "reason iff !ok"
+is compiler-enforced (`ok`/`joined` unchanged, so the join page and `auth.ts` still compile). The shims divert
+only on `reason === "write_failed" || reason === "club_not_found"` — an **allowlist** of known-negatives, not
+`!ok && reason !== "read_failed"`, so a reason added later forwards by default instead of silently inheriting
+the divert. Everything else forwards and lets the layout's independent query decide. App layer, no migration.
+
+**Known gap, deliberately out of scope.** `/c/[clubSlug]/join` and `src/app/actions/auth.ts` (×2) still
+branch on bare `!ok`, so a `read_failed` there can still bounce an existing member — the same behaviour this
+change just called a regression. Lower stakes (deliberate navigation, not a stale bookmark) but not fixed.
+The fourth caller, `src/app/auth/callback/route.ts`, discards the result and has no divert to get wrong.
+
+**Tests.** `tests/unit/tenancy-session-binding.test.ts` → **TB-PLAY-6 / TB-ORG-9** (`write_failed` →
+`REDIRECT:/play`) and **TB-PLAY-7 / TB-ORG-10** (`read_failed` → still forwards to the club route). The
+suite's `beforeEach` re-arms the stub to `{ ok: true, joined: true }`, so the 19 pre-existing cases are
+unaffected. `tests/unit/ensure-club-membership.test.ts` pins the producer side: EC-1/EC-3/EC-5 now assert the
+exact reason instead of a bare `{ ok:false, joined:false }`, and new **EC-7** covers `read_failed` (errored
+SELECT → no insert, no update, `reason: "read_failed"`).
+
+**Validation:** tsc clean, eslint clean on changed files, unit **849 passed** / 1 skipped (48 files, was 844).
+
+---
+
 ## 🕵️ AUDIT GAP — ORGANIZER QUEUE-KICK NOW LOGS `cancelled` — 2026-07-23, branch `fix/audit-organizer-remove`
 
 **Incident.** An on-deck match "Bri & Veejay vs Stelle & Alvin DG" (manually created + published) vanished

@@ -2219,9 +2219,44 @@ also get a club-namespaced convenience variant for in-app nav (§11.4 for Wrappe
 > gate: the home-page redirect only fires when the user *has* an active queue entry, the `/play` picker is
 > already scoped to their primary club, and PIN reconnect resolves a session they were queued in.
 > Enrollment proper belongs to `/c/[clubSlug]/join`, which is reached by QR and writes the queue row itself.
+>
+> **A failed enroll WRITE short-circuits to `/play`; a failed enroll READ still forwards (2026-07-24).**
+> Both shims used to discard `ensureClubMembership`'s `{ ok }` entirely. That was never a strand —
+> `requireClubMembership` already does `if (!role) redirect("/play")`, so a non-member ended up in the same
+> place one hop later. What the shims gain is being fail-safe on their own instead of leaning on a downstream
+> gate, and skipping a redirect plus the club layout's club and role reads.
+>
+> The distinction matters because `ok: false` covered two different situations. `EnsureClubMembershipResult`
+> now carries a `reason`, and the shims branch on it:
+>
+> - `write_failed` / `club_not_found` → **divert to `/play`.** We know there is no *active* `club_members`
+>   row. (After a failed reactivation the row does exist — it is just still `is_active:false`, and every
+>   membership gate filters on `is_active`, so the outcome is the same.)
+> - `read_failed` → **forward as before.** The membership SELECT errored, which says nothing about whether a
+>   row exists. Every club owner/admin following a legacy `/organizer/[id]` link passes through that same
+>   read, so diverting on it would turn a transient blip into "not a member" for someone who is one — the
+>   thing `getClubRole` explicitly refuses to do. The club layout's query is independent and re-runs.
+>
+> Both shims test the known-negative reasons **by name** rather than `!ok && reason !== "read_failed"`, so a
+> reason added to the union later forwards by default and has to opt in to diverting.
+>
+> This changes nothing for anyone whose enroll succeeds or is never attempted. It is also **not** applied
+> everywhere `ensureClubMembership` is called: `/c/[clubSlug]/join` and the two call sites in
+> `src/app/actions/auth.ts` still branch on bare `!ok`, so a `read_failed` on the QR-join path can still
+> bounce an existing member. Those are pre-existing and lower-stakes (the join page is reached deliberately,
+> not by a stale bookmark), but they carry the behaviour this section just called a regression. The fourth
+> caller, `src/app/auth/callback/route.ts`, discards the result entirely and so has no divert to get wrong.
+>
+> `EnsureClubMembershipResult` is a **discriminated union** (`{ok:true; joined}` | `{ok:false; joined:false;
+> reason}`), so "reason is set exactly when ok is false" is compiler-enforced — the shims key off `reason`
+> by name, and a stray `{ok:true, reason:"write_failed"}` would divert someone whose enroll had succeeded.
+>
 > **Tests:** `tests/unit/tenancy-session-binding.test.ts` (TB-PLAY / TB-ORG / TB-IMPORT) — the enroll *is* the
 > whole vulnerability, so a test that only asserts the redirect destination passes whether the hole is open
-> or shut.
+> or shut. TB-PLAY-6 / TB-ORG-9 cover the `write_failed` divert; TB-PLAY-7 / TB-ORG-10 pin the `read_failed`
+> forward, which is the case that protects real members from a transient error. The producer side is pinned
+> in `tests/unit/ensure-club-membership.test.ts`: EC-1/EC-3/EC-5 assert the exact `reason` rather than a bare
+> `{ ok:false, joined:false }`, and EC-7 covers the errored SELECT (no insert, no update, `read_failed`).
 >
 > **⚠️ Why both gates are local functions: importing a `"use server"` module from an RSC page PUBLISHES it.**
 > A `"use server"` module imported by another *action* module is an ordinary function call and registers
