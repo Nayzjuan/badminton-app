@@ -5,6 +5,41 @@
 
 ---
 
+## 🕵️ AUDIT GAP — ORGANIZER QUEUE-KICK NOW LOGS `cancelled` — 2026-07-23, branch `fix/audit-organizer-remove`
+
+**Incident.** An on-deck match "Bri & Veejay vs Stelle & Alvin DG" (manually created + published) vanished
+with **no audit trail**; Alvin DG ended up `left`, his three teammates back to `waiting`. That state is the
+exact signature of an organizer using per-player **Remove/Checkout** on Alvin — `removePlayerFromQueue`
+(`src/app/actions/queue.ts`) → `remove_player_from_queue_organizer` RPC. This was the **one clear/cancel path
+PR #22 explicitly left un-audited** (`writes_audit: false`), so "who killed this match?" had no answer.
+
+**Fix (application layer, no migration).** In the RPC-success branch of `removePlayerFromQueue`, after the
+existing broadcast, re-query the affected match ids for `status='cancelled'` and emit a best-effort
+`logMatchEvent({ eventType:'cancelled', phase:'draft', actorId:organizer, actorName, payload:{ reason:
+'organizer_removed_player', trigger_player_id: playerId, was_published } })` for each. Mirrors the
+`checkoutPlayer` (queue.ts:~240) and `cancelMatchAction` (match-lifecycle.ts:~609) patterns. Organizer is the
+actor (`getActorContext` → `actor_type='organizer'`), contrasting checkout's `system`.
+
+- **Why the `status='cancelled'` re-query.** The RPC returns affected match ids; only matches that fell below
+  4 players were actually cancelled. Filtering to `status='cancelled'` logs only true cancellations and is
+  robust whether the RPC returns all-affected or only-cancelled ids.
+- **FK-safe.** The deployed RPC **soft-cancels** (`UPDATE matches SET status='cancelled'`) — the row + FK
+  survive, so logging after the RPC is valid (verified the live function definition via SQL).
+- **⚠️ Repo↔prod drift (follow-up, not fixed here).** The *deployed* `remove_player_from_queue_organizer`
+  appends **all** affected ids to its return array (`array_append` sits *outside* the `IF <4` block); the
+  repo migration `20260512200002_fix_remove_from_queue.sql` appends **only cancelled** ids. Behaviour is
+  identical for our purposes (broadcast + the `status='cancelled'` filter both tolerate either), but the
+  migration file no longer reflects production. Worth reconciling in a later housekeeping pass.
+
+**Validation:** `tsc --noEmit` clean; eslint clean on changed files (repo's 15 pre-existing test-file `any`
+errors untouched); queue-sub-tab unit suite 16/16. Review verdict: **Minor issues** (only the comment-vs-repo
+drift note above). `logMatchEvent` is best-effort — a logging failure never breaks the kick.
+
+**Open question for the user:** Alvin DG is currently `left`. If the kick was unintended, re-add him
+(organizer re-adds, or he re-scans the join link) — confirm intent before any data change.
+
+---
+
 ## 🔒 TENANCY PR3 — SESSION BINDING + GATED SHIM AUTO-ENROLL — 2026-07-23, branch `fix/tenancy-pr3-session-binding`
 
 Closes findings **#4** and **#5** of `TENANCY_AUDIT_2026-07-21.md`. One root cause: a **session UUID was

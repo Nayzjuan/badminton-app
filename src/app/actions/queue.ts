@@ -38,7 +38,7 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
 import { logMatchEvent } from "@/lib/match-event-log";
 
@@ -428,6 +428,43 @@ export async function removePlayerFromQueue(
       const otherPlayerIds = (matchPlayers ?? []).map((mp) => mp.player_id);
       if (otherPlayerIds.length > 0) {
         await broadcastOrganizerIntervention(sessionId, "match_cancelled", otherPlayerIds);
+      }
+
+      // Audit: log a 'cancelled' event for each match the removal actually
+      // tore down. The RPC returns EVERY match the player was pulled from, but
+      // only those that fell below 4 players were cancelled (status='cancelled');
+      // matches that survived the removal are not cancellations and must not be
+      // logged as such. Filter to the truly-cancelled rows so the trail answers
+      // "who kicked this on-deck match?" — this is the organizer-remove path that
+      // PR #22 left un-audited (the Bri/Veejay/Stelle/Alvin incident). The RPC
+      // soft-cancels, so the row + FK survive; logging after is safe.
+      // Best-effort — logMatchEvent never throws.
+      const { data: cancelledRows } = await svc
+        .from("matches")
+        .select("id, is_published")
+        .in("id", matchIds)
+        .eq("status", "cancelled");
+
+      if (cancelledRows && cancelledRows.length > 0) {
+        const actor = await getActorContext(user.id);
+        for (const row of cancelledRows) {
+          await logMatchEvent({
+            matchId: row.id,
+            sessionId,
+            // The RPC only cancels 'pending' matches (never in_progress), so
+            // phase is always "draft" per the codebase convention. The
+            // published/on-deck distinction is preserved in the payload.
+            eventType: "cancelled",
+            phase: "draft",
+            actorId: actor.id,
+            actorName: actor.name,
+            payload: {
+              reason: "organizer_removed_player",
+              trigger_player_id: playerId,
+              was_published: row.is_published,
+            },
+          });
+        }
       }
     }
     // Engine hook: kicking a player may have cancelled a draft (freed other
