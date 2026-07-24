@@ -15,9 +15,21 @@
 //   1. UUID validation
 //   2. Auth (getAuthenticatedUser)
 //   3. Organizer check (isSessionOrganizer)
-//   4. Match state checks
-//   5. Atomic RPC (all writes in one Postgres transaction)
-//   6. Broadcast organizer intervention to affected players
+//   4. Session binding — every match id belongs to the session from step 3
+//   5. Match state checks
+//   6. Atomic RPC (all writes in one Postgres transaction)
+//   7. Broadcast organizer intervention to affected players
+// ============================================================
+// Step 4 exists because steps 3 and 6 used to be keyed on DIFFERENT
+// client-supplied ids: the organizer check on `sessionId`, the RPC on `matchId`.
+// Nothing tied them together, in this file or in the SQL, so an organizer of any
+// session could rewrite the live roster of a match in another club's session by
+// passing that match's id (TENANCY_AUDIT_2026-07-21.md #10).
+//
+// 20260723000001 binds the RPCs themselves, which is the authoritative fix — but
+// these actions run on the SERVICE client, so the guard below is what turns a
+// raised exception into the ordinary error contract, and it is the layer that
+// still holds if a future RPC edit drops the SQL predicate.
 // ============================================================
 
 import { after } from "next/server";
@@ -77,6 +89,47 @@ export type LiveSwapResult = {
   undoContext?: LiveSwapUndoContext;
 };
 
+// ── Session binding ───────────────────────────────────────────
+
+/**
+ * Do ALL of these match ids belong to `sessionId`?
+ *
+ * The organizer gate proves the caller may act on `sessionId`. It says nothing
+ * about a match id that arrived in the same request, and every id here is
+ * independently client-supplied — including the ones inside a
+ * `LiveSwapUndoContext`, which is a plain object the client round-trips and can
+ * therefore forge field by field.
+ *
+ * Deliberately on the service client: RLS on `matches` is derived from club
+ * membership, so a cross-club id would come back empty under the caller's own
+ * client too — but for the wrong reason, and it would silently start failing for
+ * legitimate organizers the moment the read path changes. This is an
+ * authorization check, the sanctioned service-role use.
+ *
+ * `.in()` with a de-duplicated list and a count comparison, rather than one
+ * query per id: a partial match must fail, and comparing counts makes "one of
+ * the two is someone else's" indistinguishable from "neither exists", which is
+ * what we want to expose to the caller.
+ */
+async function allMatchesInSession(
+  db: ReturnType<typeof createServiceClient>,
+  sessionId: string,
+  matchIds: string[]
+): Promise<boolean> {
+  const ids = [...new Set(matchIds)];
+  // No caller passes an empty list today, but `0 === 0` would make the vacuous
+  // case "authorized", and this is a security helper — the next caller with an
+  // optional match id would inherit a silent bypass. Refuse instead.
+  if (ids.length === 0) return false;
+  const { data, error } = await db
+    .from("matches")
+    .select("id")
+    .in("id", ids)
+    .eq("session_id", sessionId);
+  if (error) return false;
+  return (data?.length ?? 0) === ids.length;
+}
+
 // ── swapPlayerInActiveMatch ───────────────────────────────────
 
 /** Replace a player in an in_progress match with a player from the waiting queue. */
@@ -103,6 +156,18 @@ export async function swapPlayerInActiveMatch(
 
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
+
+  // The organizer gate above authorized `sessionId`, not `matchId`. Reported as
+  // MATCH_NOT_ACTIVE on purpose: it is the code the sheet already closes on, and
+  // it keeps "belongs to another session" indistinguishable from "does not
+  // exist" — no existence oracle over match ids.
+  if (!(await allMatchesInSession(db, sessionId, [matchId]))) {
+    return {
+      success: false,
+      errorCode: "MATCH_NOT_ACTIVE",
+      message: "Match is no longer active.",
+    };
+  }
 
   // Read the team of the outgoing player (needed for the RPC + undo context).
   const { data: outRow } = await db
@@ -206,6 +271,14 @@ export async function swapTeamsInActiveMatch(
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
 
+  if (!(await allMatchesInSession(db, sessionId, [matchId]))) {
+    return {
+      success: false,
+      errorCode: "MATCH_NOT_ACTIVE",
+      message: "Match is no longer active.",
+    };
+  }
+
   const actor = await getActorContext(user.id);
   const { error } = await db.rpc("swap_teams_in_active_match", {
     p_match_id: matchId,
@@ -213,6 +286,7 @@ export async function swapTeamsInActiveMatch(
     p_player_b_id: playerBId,
     p_actor_id: actor.id,
     p_actor_name: actor.name,
+    p_session_id: sessionId,
   });
 
   if (error) {
@@ -278,6 +352,16 @@ export async function swapActiveFromOnDeck(
 
   const organizer = await isSessionOrganizer(user.id, sessionId);
   if (!organizer) return { success: false, message: "Organizer access required." };
+
+  // BOTH match ids, not just the active one: the on-deck id addresses its own
+  // DELETE/INSERT pair inside the RPC and is just as forgeable.
+  if (!(await allMatchesInSession(db, sessionId, [activeMatchId, onDeckMatchId]))) {
+    return {
+      success: false,
+      errorCode: "MATCH_NOT_ACTIVE",
+      message: "Match is no longer active.",
+    };
+  }
 
   const actor = await getActorContext(user.id);
   // The RPC returns the original teams via OUT params, needed for undo.
@@ -369,6 +453,38 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
   const user = await getAuthenticatedUser();
   if (!user) return { success: false };
 
+  // `ctx` is round-tripped through the client, so every field in it is forgeable.
+  // Unlike the three entry actions — which read `team` back out of the database
+  // (`outRow.team`) or out of the RPC's OUT params — this one takes both the ids
+  // and the team letters straight from the caller. The ids failed closed only
+  // incidentally (a malformed uuid reached `.eq()` raw and Postgres answered
+  // 22P02 → no row); `team` did not fail closed at all: `match_players.team` is
+  // `char(1) NOT NULL` with no CHECK constraint, so a forged single character
+  // writes garbage into the roster of the organizer's own session. Validate both
+  // before anything is used.
+  const ctxIds =
+    ctx.type === "team_swap"
+      ? [ctx.matchId, ctx.playerAId, ctx.playerBId]
+      : ctx.type === "queue_replacement"
+        ? [ctx.matchId, ctx.sessionId, ctx.inPlayerId, ctx.outPlayerId]
+        : [
+            ctx.activeMatchId,
+            ctx.onDeckMatchId,
+            ctx.sessionId,
+            ctx.outPlayerId,
+            ctx.onDeckPlayerId,
+            ctx.fillPlayerId,
+          ];
+  if (!ctxIds.every(isValidUUID)) return { success: false };
+
+  const ctxTeams =
+    ctx.type === "queue_replacement"
+      ? [ctx.team]
+      : ctx.type === "ondeck_replacement"
+        ? [ctx.outTeam, ctx.onDeckTeam]
+        : []; // team_swap carries no team letter — it flips both sides wholesale
+  if (!ctxTeams.every((t) => t === "a" || t === "b")) return { success: false };
+
   if (ctx.type === "team_swap") {
     // Lookup session_id from the match — team_swap undo context doesn't carry it.
     const { data: match } = await db
@@ -391,6 +507,10 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
       p_actor_id: actor.id,
       p_actor_name: actor.name,
       p_is_undo: true,
+      // Tautological here — session_id was read FROM this match — but passed so
+      // that every call site supplies it, which is the precondition for the
+      // follow-up migration that makes the parameter NULL-rejecting.
+      p_session_id: match.session_id,
     });
     if (!error) {
       await broadcastOrganizerIntervention(match.session_id, "active_roster_changed", [
@@ -404,6 +524,11 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
   if (ctx.type === "queue_replacement") {
     const organizer = await isSessionOrganizer(user.id, ctx.sessionId);
     if (!organizer) return { success: false };
+    // `ctx` is a plain object the client round-trips, so ctx.matchId and
+    // ctx.sessionId are forgeable independently of each other. The team_swap
+    // branch above needs no such check — it derives the session FROM the match
+    // rather than trusting a second field.
+    if (!(await allMatchesInSession(db, ctx.sessionId, [ctx.matchId]))) return { success: false };
     const actor = await getActorContext(user.id);
     // Undo: swap the players back (in_player → out_player, out_player → in_player).
     // p_is_undo records an 'undo' event (decrements) — see plan §14 B1.
@@ -429,6 +554,8 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
   if (ctx.type === "ondeck_replacement") {
     const organizer = await isSessionOrganizer(user.id, ctx.sessionId);
     if (!organizer) return { success: false };
+    if (!(await allMatchesInSession(db, ctx.sessionId, [ctx.activeMatchId, ctx.onDeckMatchId])))
+      return { success: false };
     const actor = await getActorContext(user.id);
     const { error } = await db.rpc("undo_swap_active_from_ondeck", {
       p_active_match_id: ctx.activeMatchId,

@@ -1232,6 +1232,19 @@ export type Database = {
           p_actor_name?: string | null;
           p_is_undo?: boolean;
           p_reverses_event_id?: string | null;
+          /**
+           * Added by 20260723000001. When supplied, the RPC refuses a match that
+           * belongs to a different session. Every caller must pass it.
+           *
+           * ⚠ APPLY 20260723000001 BEFORE DEPLOYING THIS CODE. The `DEFAULT NULL`
+           * in the SQL only makes the OLD-code → NEW-function direction safe.
+           * PostgREST resolves an RPC by the set of argument NAMES in the body,
+           * so this code calling the pre-migration 7-arg function answers
+           * PGRST202 and every team flip (and every team_swap undo) fails until
+           * the migration lands. Optional in the type because the parameter is
+           * optional in the signature — not because the order is free.
+           */
+          p_session_id?: string | null;
         };
         Returns: void;
       };

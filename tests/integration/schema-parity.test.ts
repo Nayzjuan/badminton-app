@@ -308,6 +308,83 @@ describe("Schema Parity — Suite G", () => {
     expect(leaks).toEqual([]);
   });
 
+  // ── Mutating RPC surface (20260723000000 / 20260723000001) ──
+  // TENANCY_AUDIT_2026-07-21.md #10. Sixteen SECURITY DEFINER functions that
+  // create matches, rewrite live rosters, destroy drafts, reopen completed
+  // matches and write the audit trail were EXECUTE-able by `anon` — reachable
+  // over PostgREST with nothing but the public anon key, no login at all.
+  // Confirmed live against production before the fix: a POST to
+  // /rest/v1/rpc/swap_player_in_active_match came back 400 P0001
+  // "MATCH_NOT_ACTIVE" — the function's OWN exception, i.e. the privilege check
+  // had already passed — while the control (reorder_on_deck_matches, revoked
+  // back in 20260717172535) answered 401 42501 "permission denied".
+  //
+  // They were open because Supabase's ALTER DEFAULT PRIVILEGES stamps anon and
+  // authenticated EXECUTE onto every new function, and nothing had ever taken
+  // it back. Every one of the 27 call sites runs on the service client, so the
+  // revoke costs the app nothing.
+
+  it("no mutating SECURITY DEFINER function is reachable from the browser", async () => {
+    // A sweep, not a list: the failure mode here is a NEW function inheriting
+    // the default grants, which a hardcoded list cannot see. Volatile +
+    // SECURITY DEFINER + not a trigger = "writes, with the owner's rights,
+    // callable over PostgREST" — that combination must never be browser-facing.
+    //
+    // If this fails on a function you just added, the fix is almost never to
+    // add an exception. Either it is a read (mark it STABLE and it leaves this
+    // set), or it is a write, in which case it belongs behind a server action
+    // on the service client like the other 27 call sites. Trigger functions are
+    // excluded because PostgREST refuses to call them ("trigger functions can
+    // only be called as triggers") and firing a trigger does not re-check
+    // EXECUTE, so their grants are inert either way.
+    let offenders: string[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ sig: string; grantee: string }>(
+        `SELECT p.oid::regprocedure::text AS sig, g AS grantee
+           FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+           CROSS JOIN unnest(ARRAY['anon','authenticated']) AS g
+          WHERE n.nspname = 'public'
+            AND p.prosecdef
+            AND p.provolatile = 'v'
+            AND p.prorettype <> 'trigger'::regtype
+            AND has_function_privilege(g, p.oid, 'EXECUTE')
+          ORDER BY 1, 2`
+      );
+      offenders = rows.map((r) => `${r.grantee} -> ${r.sig}`);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("the live-swap RPCs still carry their post-fix signatures", async () => {
+    // 20260723000001 binds each of these to p_session_id. The sweep above would
+    // stay green if one were dropped, and tests/integration/live-match-swap.ts
+    // asserts behaviour rather than shape — so pin the shapes here. In
+    // particular swap_teams_in_active_match GAINED a trailing p_session_id, and
+    // must exist exactly ONCE: a leftover overload makes PostgREST answer
+    // PGRST203 ("could not choose the best candidate function") and every team
+    // flip in the app fails.
+    const expected = [
+      "swap_active_from_ondeck(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text)",
+      "swap_player_in_active_match(uuid,uuid,uuid,uuid,text,uuid,text,boolean,uuid)",
+      "swap_teams_in_active_match(uuid,uuid,uuid,uuid,text,boolean,uuid,uuid)",
+      "undo_swap_active_from_ondeck(uuid,uuid,uuid,uuid,uuid,uuid,text,text,uuid,text)",
+    ];
+    let actual: string[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ sig: string }>(
+        `SELECT p.oid::regprocedure::text AS sig
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public'
+            AND p.proname IN ('swap_player_in_active_match','swap_teams_in_active_match',
+                              'swap_active_from_ondeck','undo_swap_active_from_ondeck')
+          ORDER BY 1`
+      );
+      actual = rows.map((r) => r.sig);
+    });
+    expect(actual).toEqual(expected);
+  });
+
   // ── Leaderboard read surface (20260722010000 / 20260722010001) ──
   // TENANCY_AUDIT_2026-07-21.md #6: these four functions are SECURITY DEFINER
   // with every scoping parameter DEFAULTED, so `{}` over PostgREST returned
