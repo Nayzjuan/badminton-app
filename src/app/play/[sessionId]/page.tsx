@@ -71,7 +71,26 @@ export default async function PlayerSessionRedirect({
     data: { user },
   } = await supabase.auth.getUser();
   if (user && (await isQueuedInSession(sessionId, user.id))) {
-    await ensureClubMembership(slug, user.id);
+    const enroll = await ensureClubMembership(slug, user.id);
+    if (enroll.reason === "write_failed" || enroll.reason === "club_not_found") {
+      // We KNOW they have no ACTIVE membership: the club_members write itself
+      // errored (or the club vanished between the slug resolve and here).
+      // Forwarding would send them into the club layout's membership gate,
+      // which bounces to /play anyway — so go straight there and skip a
+      // redirect plus the layout's club and role reads. Same destination the
+      // QR-join page picks for the same failure.
+      //
+      // Deliberately an ALLOWLIST of known-negative reasons, not
+      // `!ok && reason !== "read_failed"`. Anything else — today only
+      // `read_failed`, tomorrow whatever gets added to that union — FORWARDS.
+      // `read_failed` means the membership SELECT errored, which says nothing
+      // about whether a row exists; diverting on it would turn a transient
+      // blip into "not a member" for someone who is one, the exact thing
+      // getClubRole refuses to do. The layout's own query is independent and
+      // usually succeeds, so forwarding is the fail-safe default and a new
+      // reason must opt IN to diverting rather than inherit it silently.
+      redirect("/play");
+    }
   }
   redirect(clubPlay(slug, sessionId));
 }

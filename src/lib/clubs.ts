@@ -293,8 +293,42 @@ export async function resolveSessionClubSlug(sessionId: string): Promise<string 
  *            by THIS call (i.e. their membership actually changed). false when
  *            they were already an active member. Drives the one-time
  *            "Welcome to X" confirmation on the QR-join path.
+ *   reason — present only when ok=false, and only so a caller can tell
+ *            "we know they have no active membership" from "we could not find
+ *            out".
+ *              club_not_found — no club with that slug. Known-negative:
+ *                getClubBySlug throws on a query error and returns null only on
+ *                a genuine miss.
+ *              write_failed   — the insert, or the reactivation of a
+ *                soft-removed row, errored. Known-negative in the sense that
+ *                matters: after a failed reactivation the row exists but is
+ *                still is_active=false, and every membership gate filters on
+ *                is_active.
+ *              read_failed    — the club_members SELECT errored. This says
+ *                NOTHING about whether a row exists, and it is the one reason
+ *                that also fires for people who are already members in good
+ *                standing. This module's standing rule is that a transient
+ *                error must never read as "not a member" (see getClubRole).
+ *            Callers that divert on failure should treat this as an ALLOWLIST —
+ *            act on the known-negative reasons by name and let everything else
+ *            (today `read_failed`, tomorrow whatever is added to this union)
+ *            fall through to the destination's own membership query, which is
+ *            an independent read that will usually succeed. Written that way,
+ *            a new reason has to opt in to diverting instead of inheriting it.
+ *
+ * A discriminated union rather than `{ ok: boolean; joined: boolean; reason?: … }`
+ * so "reason is present exactly when ok is false" is enforced by the compiler
+ * instead of only by this comment — the shims act on `reason` by name, and a
+ * stray `{ ok: true, reason: "write_failed" }` would make them divert someone
+ * whose enroll actually succeeded.
  */
-export type EnsureClubMembershipResult = { ok: boolean; joined: boolean };
+export type EnsureClubMembershipResult =
+  | { ok: true; joined: boolean; reason?: never }
+  | {
+      ok: false;
+      joined: false;
+      reason: "club_not_found" | "read_failed" | "write_failed";
+    };
 
 /**
  * Auto-enroll a player as an active member of the club (QR-join path).
@@ -307,7 +341,7 @@ export async function ensureClubMembership(
   userId: string
 ): Promise<EnsureClubMembershipResult> {
   const club = await getClubBySlug(clubSlug);
-  if (!club) return { ok: false, joined: false };
+  if (!club) return { ok: false, joined: false, reason: "club_not_found" };
   const db = createServiceClient();
   const { data: existing, error: readErr } = await db
     .from("club_members")
@@ -319,19 +353,23 @@ export async function ensureClubMembership(
   // actions), so report failure via ok=false rather than throwing — a throw
   // would abort the enclosing redirect. The QR-join guard turns ok=false into
   // a safe /clubs fallback.
-  if (readErr) return { ok: false, joined: false };
+  if (readErr) return { ok: false, joined: false, reason: "read_failed" };
   if (!existing) {
     const { error } = await db
       .from("club_members")
       .insert({ club_id: club.id, player_id: userId, role: "member" });
-    return { ok: !error, joined: !error };
+    return error
+      ? { ok: false, joined: false, reason: "write_failed" }
+      : { ok: true, joined: true };
   }
   if (!existing.is_active) {
     const { error } = await db
       .from("club_members")
       .update({ is_active: true })
       .eq("id", existing.id);
-    return { ok: !error, joined: !error };
+    return error
+      ? { ok: false, joined: false, reason: "write_failed" }
+      : { ok: true, joined: true };
   }
   return { ok: true, joined: false }; // already an active member — keep their role
 }

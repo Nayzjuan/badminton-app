@@ -287,6 +287,42 @@ describe("TB-PLAY: /play/[sessionId] auto-enroll gate", () => {
     expect(await render()).toBe("NOT_FOUND");
     expect(vi.mocked(ensureClubMembership)).not.toHaveBeenCalled();
   });
+
+  it("TB-PLAY-6: a failed enroll WRITE diverts straight to /play", async () => {
+    // TB-PLAY-1's walk-in is supposed to get a club_members row before the club
+    // layout's gate sees them. If the write errored they definitely have none,
+    // and that gate redirects to /play — so go there directly instead of
+    // through it. Same destination the QR-join page picks for the same failure.
+    authedAs(CALLER);
+    useServiceClient({ data: { id: "q1" }, error: null });
+    vi.mocked(ensureClubMembership).mockResolvedValue({
+      ok: false,
+      joined: false,
+      reason: "write_failed",
+    });
+
+    expect(await render()).toBe("REDIRECT:/play");
+  });
+
+  it("TB-PLAY-7: a failed enroll READ still forwards — a blip is not 'not a member'", async () => {
+    // read_failed means the club_members SELECT errored, which says nothing
+    // about whether a row exists. Diverting on it would turn a transient error
+    // into "not a member" for someone who is one — what getClubRole refuses to
+    // do. The club layout's own membership query is independent and re-runs.
+    authedAs(CALLER);
+    useServiceClient({ data: { id: "q1" }, error: null });
+    vi.mocked(ensureClubMembership).mockResolvedValue({
+      ok: false,
+      joined: false,
+      reason: "read_failed",
+    });
+
+    expect(await render()).toBe(`REDIRECT:/c/${SLUG}/play/${SESSION_B}`);
+    // Pin the enroll ATTEMPT too: this destination is also what a caller who
+    // never reached the enroll produces (TB-PLAY-3/4/5), so without this the
+    // case would still pass if the enroll call were deleted outright.
+    expect(ensureClubMembership).toHaveBeenCalledWith(SLUG, CALLER.id);
+  });
 });
 
 // ── #5b the organizer shim enrolls only actual organizers ─────
@@ -381,6 +417,39 @@ describe("TB-ORG: /organizer/[sessionId] auto-enroll gate", () => {
 
     expect(await render()).toBe(`REDIRECT:/c/${SLUG}/organizer/${SESSION_B}`);
     expect(vi.mocked(ensureClubMembership)).not.toHaveBeenCalled();
+  });
+
+  it("TB-ORG-9: a failed enroll WRITE diverts straight to /play", async () => {
+    // TB-ORG-1's co-organizer has no club_members row, so a failed write leaves
+    // them with none and the club layout's gate bounces them to /play. Go there
+    // directly rather than through it.
+    authedAs(CALLER);
+    useServiceClient(asOrganizerVia.sessionOrganizersRow);
+    vi.mocked(ensureClubMembership).mockResolvedValue({
+      ok: false,
+      joined: false,
+      reason: "write_failed",
+    });
+
+    expect(await render()).toBe("REDIRECT:/play");
+  });
+
+  it("TB-ORG-10: a failed enroll READ still forwards — protects real owners/admins", async () => {
+    // Every club owner/admin following a legacy /organizer link runs this same
+    // membership SELECT. If it blips, they are still members; diverting them to
+    // /play would make a transient error look like a revoked role.
+    authedAs(CALLER);
+    useServiceClient(asOrganizerVia.sessionOrganizersRow);
+    vi.mocked(ensureClubMembership).mockResolvedValue({
+      ok: false,
+      joined: false,
+      reason: "read_failed",
+    });
+
+    expect(await render()).toBe(`REDIRECT:/c/${SLUG}/organizer/${SESSION_B}`);
+    // Same reason as TB-PLAY-7: a non-organizer forwards to this exact URL
+    // without enrolling at all, so assert the attempt happened.
+    expect(ensureClubMembership).toHaveBeenCalledWith(SLUG, CALLER.id);
   });
 });
 
