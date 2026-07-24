@@ -38,6 +38,15 @@ export interface FakerLike {
 
 // ── makeProfile ───────────────────────────────────────────────
 
+/**
+ * Password every factory-made auth user is created with.
+ *
+ * Exported so tests that need a *real* authenticated session — rather than
+ * the mockAuthAs() shim, which only fools the server actions — can sign the
+ * user in for real and exercise RLS as the `authenticated` role.
+ */
+export const TEST_USER_PASSWORD = "integration-test-password";
+
 export interface MakeProfileOptions {
   /** Faker instance for deterministic display names. */
   faker: FakerLike;
@@ -54,6 +63,8 @@ export interface ProfileResult {
   id: string;
   /** The display name inserted into the profiles row. */
   displayName: string;
+  /** The generated auth.users email — pair with TEST_USER_PASSWORD to sign in. */
+  email: string;
 }
 
 /**
@@ -79,9 +90,10 @@ export async function makeProfile({
   const profilePin = pin ?? faker.string.numeric(4);
 
   // Create auth user (email-less anonymous-style user via admin API)
+  const email = `test-${Date.now()}-${Math.random().toString(36).slice(2)}@integration.local`;
   const { data: authData, error: authError } = await client.auth.admin.createUser({
-    email: `test-${Date.now()}-${Math.random().toString(36).slice(2)}@integration.local`,
-    password: "integration-test-password",
+    email,
+    password: TEST_USER_PASSWORD,
     email_confirm: true,
     user_metadata: { display_name: name },
   });
@@ -114,7 +126,7 @@ export async function makeProfile({
     );
   }
 
-  return { id: userId, displayName: name };
+  return { id: userId, displayName: name, email };
 }
 
 // ── makeSession ───────────────────────────────────────────────

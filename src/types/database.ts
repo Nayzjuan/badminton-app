@@ -845,6 +845,22 @@ export type Database = {
     };
     Functions: {
       /**
+       * Visibility predicate behind the `profiles_select` RLS policy
+       * (20260723200000): true when the caller shares an active club with the
+       * target, or the target is queued in / has played in / organizes /
+       * created a session the caller can reach. Returns false — never NULL —
+       * for an unknown or NULL id.
+       *
+       * EXECUTE is granted to `authenticated` and `service_role` only; it is
+       * revoked from PUBLIC/anon so it cannot be used as an anonymous
+       * membership oracle over /rest/v1/rpc. Declared here so tests can assert
+       * that revoke; application code never calls it directly — the policy does.
+       */
+      can_read_profile: {
+        Args: { p_profile_id: string | null };
+        Returns: boolean;
+      };
+      /**
        * Atomic, fail-closed rate-limit gate for joinAsCoOrganizer: records the
        * attempt and returns the in-window verdict in one transaction.
        * Service-role only (EXECUTE revoked from PUBLIC/anon/authenticated).

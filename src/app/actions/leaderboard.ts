@@ -162,14 +162,23 @@ function mergeAllTimeEntries(entries: AllTimeLeaderboardEntry[]): AllTimeLeaderb
 // Returns a Map<player_id, { vip_tag, vip_theme }>.
 //
 // Deliberately stays on the CALLER's client even though its only caller now
-// reads the board itself with the service client. It does not need the
-// escalation (profiles_select is `TO authenticated USING (true)` and the column
-// grants cover id/vip_tag/vip_theme), escalating would ADD data for logged-out
-// callers — the exact opposite of PR2's goal — and when profiles_select is
-// narrowed to shared-club visibility, a caller-client read narrows with it
-// while a service-role read would silently keep bypassing the new policy.
-// CLAUDE.md restricts the service role to bypassing RLS; there is none to
-// bypass here.
+// reads the board itself with the service client. Escalating would ADD data for
+// logged-out callers — the exact opposite of PR2's goal — and a caller-client
+// read narrows automatically as profiles_select narrows, while a service-role
+// read would silently keep bypassing it. CLAUDE.md restricts the service role
+// to bypassing RLS, and RLS is exactly what this read is supposed to obey.
+//
+// `pin` never reaches a response here regardless of the row policy: the COLUMN
+// grants (20260701000010) only expose id / vip_tag / vip_theme and friends to
+// `authenticated`, and this select names its three columns explicitly.
+//
+// The row policy has now narrowed: `20260723200000` replaced `USING (true)`
+// with shared-club-or-shared-session visibility (§11.8). This is the ONE
+// leaderboard read still bound by that policy, and it stays whole because every
+// board entry comes from `v_alltime_leaderboard_mat`, which is built from
+// completed matches — so arm 3 (target played a match in a session the caller
+// can reach) covers every id this is ever called with. A VIP tag that does
+// resolve to null here degrades to a plain name, never to a blank.
 async function buildVipMap(
   supabase: Awaited<
     ReturnType<typeof import("@/utils/supabase/server").createServerSupabaseClient>

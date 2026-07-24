@@ -47,6 +47,80 @@ SELECT → no insert, no update, `reason: "read_failed"`).
 
 ---
 
+## 🔒 TENANCY PR4b — `profiles_select` SCOPED (finding #8) — 2026-07-24, branch `fix/tenancy-scope-profiles-select`
+
+Closes finding **#8** of `TENANCY_AUDIT_2026-07-21.md`. One migration
+(`20260723200000_scope_profiles_select_to_shared_scope.sql`), no application code.
+
+**The hole.** `profiles_select` was `FOR SELECT TO authenticated USING (true)`. Any signed-in user —
+including a `signInAnonymously()` guest who had never joined a club — could `select * from profiles` and get
+every display name, skill level and VIP tag on the platform. The unfiltered `profiles` postgres_changes
+subscription (`subscribeToProfiles`) also streamed every profile UPDATE platform-wide to every browser.
+
+**The baseline comment that justified it was factually wrong.** `20260722000002` recorded `USING (true)` as
+"intentional and load-bearing… the public leaderboard and Wrapped share pages read arbitrary profiles while
+logged out". `profiles` has **no SELECT policy for `anon` at all**, so no logged-out read has ever gone
+through this policy — those pages use the service client (PR #38 moved them there). Tightening it therefore
+cannot break a logged-out path. That comment is corrected in place in the same PR.
+
+**The new predicate:** `id = auth.uid() OR public.can_read_profile(id)`, where `can_read_profile` is a
+STABLE SECURITY DEFINER union of five arms, ordered so the common one short-circuits first:
+
+1. shared **active** club (`club_members` × `club_members` on `club_id`)
+2. target is **queued** in a session I can reach — walk-ins have a `queue_entries` row and no membership
+3. target **played a match** in a session I can reach — checkout DELETEs the queue row, `match_players` survives
+4. target **organizes** a session I can reach (`session_organizers`) — QR-delegated organizers have no membership
+5. target **created** a session I can reach (`sessions.created_by`)
+
+Arms 4/5 were both found by testing, not by design. Without arm 4 visibility inside one session was
+asymmetric (a delegated organizer saw the whole room; the room could not see them). Arm 5 is **not** implied
+by arm 4 even though `handle_new_session()` inserts an organizer row for every creator: **production has one
+session whose creator has no such row**, so it is a separate arm.
+
+**Grants.** `service_role` FIRST, then `revoke ... from public, anon, authenticated`, then grant
+`authenticated`. Not anon-executable — it reads tables, so an anon `/rest/v1/rpc/can_read_profile` would be a
+membership oracle. `session_access_level` keeps its anon **and** authenticated grants (arms 2–5 call it, and
+the schema-parity sweep can't catch a lost grant there because it filters `provolatile = 'v'` and that
+function is STABLE).
+
+**Realtime needs no client change.** postgres_changes applies the SELECT policy per row at delivery time, so
+narrowing the policy narrows the stream. Verified empirically with a live subscription.
+
+**Cost, measured against a synthetic dataset ~15× production** (1001 profiles / 48k `match_players`):
+own-profile read 0.05 ms, 40 profiles by id on the hot path **4.18 ms**, 40 unreachable profiles 162 ms,
+unbounded `count(*)` 1746 ms. The last two are denied paths. Every RLS-bound read the app emits is
+`.eq("id", uid)` or `.in("id", ids)` → `id = ANY(array[...])`, an index qual, so the helper runs on the
+requested rows only. **Do not benchmark with `id IN (SELECT …)`** — that plans as a hash semi-join and,
+because the RLS qual is not leakproof, the planner applies it under a full seq scan *before* the join (1001
+helper calls for 40 rows, ~1.9 s). Measurement artifact, not a shape any client produces.
+
+**Tests.** `tests/integration/rls-edge-cases.test.ts` → `describe("profiles_select scope — finding #8")`,
+10 cases: the enumeration itself (`count(*) === 1`), one per arm, `is_active` respected, the anon-RPC revoke,
+own-profile. They sign users in **for real** (`makeProfile` now returns `email`; `TEST_USER_PASSWORD` is
+exported) because `mockAuthAs` only fools the server actions, not Postgres. Every arm test pairs its positive
+assertion with a `not.toContain(stranger.id)` control, so a pass cannot be explained by "the policy lets
+everything through".
+
+**Status:** ✅ **PR #43 open, HELD UNMERGED** (rebased onto `main` @ `214ef79`; head `e34def3`). Locally validated: `supabase db reset`
+replay green with the DO block passing, 20/20 in the RLS suite, 236/236 full integration, 844 unit tests,
+tsc + eslint clean on changed files, `npm run build` green. Three review rounds — "Minor issues" ×2 (all 9
+findings fixed) then **LGTM**.
+
+**CI on #43:** Vitest ✅, Vitest Integration ✅, Vercel ✅. `Supabase Preview` is **cancelled, not failed** —
+"Maximum number of concurrent branches reached", because #40 and #41 already hold the two preview branches.
+Environmental, not a code signal; the same check passes on #40 and #41. Migration replay is proven by
+`Vitest Integration` (fresh Postgres) and the local `db reset` anyway.
+
+**⚠️ Before merging #43:** apply `20260723200000` to prod FIRST — migrations here are applied by hand, so
+merging ships no schema. Ordering vs #40/#41 is independent: this migration touches only `profiles_select`
+and adds one new function. Deploy between sessions, never during one.
+
+**Follow-up surfaced by this review:** `src/app/c/[clubSlug]/(full)/play/[sessionId]/page.tsx` ignores the
+`{ ok: false }` return from `ensureClubMembership`. That was inert under `USING (true)`; once #43 deploys, a
+walk-in whose enrolment silently failed sees only their own profile. Tracked as task #12.
+
+---
+
 ## 🕵️ AUDIT GAP — ORGANIZER QUEUE-KICK NOW LOGS `cancelled` — 2026-07-23, branch `fix/audit-organizer-remove`
 
 **Incident.** An on-deck match "Bri & Veejay vs Stelle & Alvin DG" (manually created + published) vanished
