@@ -156,6 +156,87 @@ drift note above). `logMatchEvent` is best-effort — a logging failure never br
 
 ---
 
+## 🔒 TENANCY PR4a — PRIVATE `session-events` BROADCAST — 2026-07-23, branch `fix/tenancy-realtime-private-broadcast`
+
+Closes finding **#7**. **Held unmerged** — see "Deploy prerequisites" below; the migration must be applied by
+hand *before* the code deploys, and there is one prod behaviour to smoke-test that cannot be reproduced locally.
+
+**The hole, both halves.** `session-events:{sessionId}` was a **public** Broadcast topic, and public topics
+skip authorization entirely — Realtime never consults `realtime.messages` for them. With the publishable anon
+key and a session UUID, any browser could **read** every organizer event for a session in a club it does not
+belong to, *and* **write** to it. The write half was not in the audit and is worse:
+`channel.send({type:'broadcast', event:'session_closed'})` redirects every player in that session to Wrapped;
+`draft_cap_phase: 'clearing'` freezes every organizer behind the lockout overlay until a `done` arrives.
+
+**The fix is three things that only work together** (each fails *silently* without the others):
+
+1. `supabase/migrations/20260723100000_scope_session_events_broadcast_to_members.sql` — a **SELECT-only**
+   policy on `realtime.messages`, gated on `session_access_level(<topic session id>) IS NOT NULL`, the exact
+   predicate `courts_select`/`queue_select` already carry. **No INSERT policy, by design** — the server emits
+   over REST with the service-role key, which bypasses RLS, so omitting INSERT is what closes the forge half.
+   An assertion trips on any `cmd IN ('INSERT','ALL')` policy appearing later. Not `= 'organizer'`:
+   `player-dashboard.tsx` subscribes players to the same shared topic.
+2. `postBroadcast` marks every message `private: true`; `subscribeToOrganizerBroadcast` joins with
+   `{ config: { private: true } }`. Private↔public routing is asymmetric and silent in **both** directions.
+3. The join is now deferred behind `whenRealtimeAuthReady()`. This **stopped being an optimisation**: the
+   policy is `TO authenticated`, so a join that races ahead of `setAuth()` is evaluated as `anon` and refused
+   for the tab's lifetime. The Realtime JWT-before-join bullet in `APP_MANIFEST.md` (line 76) previously
+   claimed this channel needed no JWT-before-join —
+   that was true only while it was public, and has been reversed.
+
+**Topic parsing must be total.** Postgres does not guarantee AND short-circuits, so a bare
+`substring(topic)::uuid` behind a `LIKE` guard can still raise `22P02` *from inside the policy*. Hence
+`public.realtime_topic_session_id(text)` — IMMUTABLE, `exception when others then return null`. It is granted
+to **`authenticated` + `service_role` only**, and explicitly revoked `from public, anon, authenticated` first
+(service_role granted *before* the revoke — see the [[revoke-strips-service-role]] trap). Deliberately
+narrower than the six RLS helpers, which must keep `anon` because anon-facing policies name them; this policy
+does not. An assertion trips if it ever becomes anon-executable again.
+
+**Verified empirically, not by reading comments** — twice, including on a virgin DB after a full `db reset`:
+
+| subscriber | join | receives |
+|---|---|---|
+| member, private | `SUBSCRIBED` | the private message |
+| outsider, private | `CHANNEL_ERROR("Unauthorized: You do not have permissions to read from this Channel topic: session-events:<id>")` | nothing |
+| anon, public | `SUBSCRIBED` (public channels skip RLS — the residual gap) | only the *public* copy, never the private one |
+
+**Deploy prerequisites (both load-bearing):**
+
+- **Apply `20260723100000` BEFORE the code deploys.** `realtime.messages` ships RLS-enabled with **zero**
+  policies ⇒ deny-all. Applying early is harmless; applying late means every client gets `CHANNEL_ERROR`
+  instead of session events. Old tabs holding a public channel stop receiving until reload — **deploy between
+  sessions, not during one.**
+- **Smoke-test the `realtime:` topic prefix under `private: true`.** `broadcast.ts` posts to
+  `realtime:session-events:{id}`; the local CLI Realtime image delivers that to *nobody* (only the unprefixed
+  form works), so prod evidently normalises the prefix — it demonstrably delivers these events today. The
+  private path therefore cannot be exercised end-to-end locally. After deploy: two organizer boards on one
+  session → flip auto-matchmaking → confirm the co-organizer's toggle moves; then close the session and
+  confirm a player lands on Wrapped. **Do not "fix" the prefix on a local repro alone.**
+
+**Residual gap (not SQL).** Supabase enforces private channels *per channel*, so a hand-rolled client can
+still open this topic as a **public** channel and join. Marking messages private already denies it any
+content — that is what removes passive eavesdropping. Fully closing it needs "Allow public access" off in the
+project's Realtime settings, which is project-wide and requires every other (currently public)
+postgres_changes channel to go private with its own policy first. Tracked, not done.
+
+**`onStatus` exists on the helper but no caller passes it — considered, not an oversight.** Player side: a
+refused join is unrecoverable (closure is not observable any other way — `useSessionData` fetches courts and
+`queue_entries`, never the session row), and a "live updates down" toast would misfire constantly on gym
+wifi. Organizer side: it must **not** feed `useOrganizerSession`'s `handleChannelStatus`, which asserts an
+exact `REALTIME_CHANNEL_COUNT` of *postgres_changes* channels — a sixth would peg the board's live indicator
+to disconnected forever. Both call sites carry the reasoning inline.
+
+**Next: PR4b (finding #8).** Split out deliberately, and the audit groundwork changed its shape twice:
+`profiles_select` is `TO authenticated USING (true)` and **`anon` has no SELECT policy on `profiles` at
+all** — so the baseline migration's "load-bearing for logged-out leaderboard/Wrapped reads" comment is
+**stale** (those went to the service client in PR #38) and tightening cannot break any logged-out path. But a
+naive shared-club `EXISTS` **would** break delegated organizers: `session_access_level` grants `'organizer'`
+via a `session_organizers` row with no `club_members` row, which is exactly how QR-invite delegation works —
+they would see a roster of blank names. The predicate needs a session-scoped arm too.
+
+
+---
+
 ## 🔒 TENANCY PR3 — SESSION BINDING + GATED SHIM AUTO-ENROLL — 2026-07-23, branch `fix/tenancy-pr3-session-binding`
 
 Closes findings **#4** and **#5** of `TENANCY_AUDIT_2026-07-21.md`. One root cause: a **session UUID was

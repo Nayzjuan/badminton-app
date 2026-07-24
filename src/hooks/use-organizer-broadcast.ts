@@ -56,6 +56,21 @@ export function useOrganizerBroadcast(sessionId: string, playerId: string): void
   });
 
   useEffect(() => {
+    // `onStatus` is deliberately NOT passed. Two reasons, both worth stating
+    // because this is the only delivery path for session_closed:
+    //
+    //  • There is nothing to recover with. Closure is not observable any other
+    //    way from the player side — useSessionData fetches courts and
+    //    queue_entries, never the session row — so a fallback would need a new
+    //    player-facing server action. Tracked in PENDING_WORK_2026-07-23.md §2.3.
+    //  • A user-visible "live updates are down" toast would misfire constantly
+    //    on gym wifi, where transient CHANNEL_ERROR / TIMED_OUT is normal and
+    //    Realtime reconnects on its own.
+    //
+    // Failures are still visible: createStatusHandler console.errors them, and
+    // since the channel went private (migration 20260723100000) an authorization
+    // refusal arrives with an explicit "Unauthorized: You do not have
+    // permissions to read from this Channel topic: session-events:<id>".
     const unsub = subscribeToOrganizerBroadcast(supabase, sessionId, {
       // ── organizer_intervention ────────────────────────────
       onIntervention: (payload: OrganizerInterventionPayload) => {
