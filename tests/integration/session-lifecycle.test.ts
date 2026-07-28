@@ -214,9 +214,16 @@ describe("Session Lifecycle — Suite K", () => {
   // was closed. A second ACTIVE session in the same club within the guard
   // window must be refused with a pointer to the existing one.
   it("K-3b: createSession refuses a second active session in the same club, pointing at the first", async () => {
-    const userA = await makeProfile({ faker });
+    // Explicit displayName + pin so this test consumes ZERO seeded-faker
+    // draws. profiles.display_name has a normalized UNIQUE index
+    // (20260608000001) enforced inside handle_new_user, integration files
+    // share one DB and run concurrently, and every file's faker is seeded —
+    // adding draws here SHIFTS this file's name sequence into collision with
+    // another file's (it deterministically broke engine-trigger-realdb's
+    // makeProfile with "Database error creating new user" in CI).
+    const userA = await makeProfile({ faker, displayName: "K3b Owner Alpha", pin: "7301" });
     await makeClubOwner(userA.id);
-    const userB = await makeProfile({ faker });
+    const userB = await makeProfile({ faker, displayName: "K3b Owner Beta", pin: "7302" });
     await makeClubOwner(userB.id);
 
     const restoreA = mockAuthAs(userA.id);
