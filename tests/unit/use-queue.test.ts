@@ -361,6 +361,23 @@ describe("useQueue — Unit Suite", () => {
     expect(result.current.myEntry).toBeNull();
   });
 
+  it("Q-AUTH-4: cold start — empty fetch without auth keeps loading (no join-card flash)", async () => {
+    // The player unlocks their phone because the on-deck push fired; the PWA
+    // reloads and the first fetch races auth hydration. Committing that anon
+    // emptiness nulls myEntry and shows "Ready to play?" to an on-deck
+    // player — instead the hook must keep loading (skeleton) until auth lands.
+    mockQueueRows = [];
+    mockAuthSession = null;
+
+    const { result } = renderHook(() => useQueue(SESSION_ID, PLAYER_ID));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.queue).toEqual([]);
+  });
+
   it("Q-AUTH-3: TOKEN_REFRESHED triggers a corrective refetch", async () => {
     mockQueueRows = [makeEntry(PLAYER_ID, "waiting")];
 

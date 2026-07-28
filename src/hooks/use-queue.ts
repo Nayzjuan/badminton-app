@@ -42,13 +42,8 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
-  // Monotonic sequence guard (CLAUDE.md mandate) + previous-result mirror for
-  // the auth-loss guard below.
+  // Monotonic sequence guard (CLAUDE.md mandate).
   const fetchQueueSeq = useRef(0);
-  const queueRef = useRef<QueueEntry[]>([]);
-  useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
 
   // Fetch the full queue for this session.
   const fetchQueue = useCallback(async () => {
@@ -72,16 +67,20 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
     }
 
     const rows = data ?? [];
-    // Empty success while the queue had rows + no auth session = this client
-    // fell back to anon and RLS filtered every row (a success, so the error
-    // branch can't catch it) — NOT everyone checking out at once. Hold the
-    // stale queue; useAuthRecoveryRefetch refetches when the session is back.
-    if (rows.length === 0 && queueRef.current.length > 0) {
+    // Empty success + no auth session = this client is running as anon and
+    // RLS filtered every row (a success, so the error branch can't catch it)
+    // — NOT an actually-empty queue. This page only exists for authenticated
+    // players, so anon-emptiness is never authoritative — including on the
+    // FIRST fetch: on a cold PWA start racing auth hydration (the player
+    // unlocked their phone because the on-deck push fired), committing []
+    // nulls myEntry and paints "Ready to play?" over an on-deck player. Hold
+    // instead; loading stays as-is (skeleton on cold start, stale list
+    // mid-session) and useAuthRecoveryRefetch refetches on recovery.
+    if (rows.length === 0) {
       const authed = await hasAuthSession(supabase);
       if (mySeq !== fetchQueueSeq.current) return;
       if (!authed) {
-        console.warn("[useQueue] empty queue without auth — preserving stale");
-        setLoading(false);
+        console.warn("[useQueue] empty queue without auth — holding state");
         return;
       }
     }

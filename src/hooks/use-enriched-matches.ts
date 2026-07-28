@@ -70,10 +70,6 @@ export function useEnrichedMatches(
 ) {
   const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
   const seqRef = useRef(0);
-  // Mirror of the last committed result for the auth-loss guard below —
-  // assigned at both set sites (not via effect) so it is correct even before
-  // the next render.
-  const activeMatchesRef = useRef<EnrichedMatch[]>([]);
   const { includeDrafts, onProfilesLoaded } = options;
 
   const fetchActiveMatches = useCallback(async () => {
@@ -107,19 +103,18 @@ export function useEnrichedMatches(
 
     const matches = matchQuery.data;
     if (!matches || matches.length === 0) {
-      // Empty success while matches were showing + no auth session = this
-      // client fell back to anon and RLS filtered every row — hold stale
-      // rather than blanking the court/on-deck panels. RLS filtering is a
-      // success, so the error branch above cannot catch it.
-      if (activeMatchesRef.current.length > 0) {
-        const authed = await hasAuthSession(supabase);
-        if (mySeq !== seqRef.current) return;
-        if (!authed) {
-          console.warn("[useEnrichedMatches] empty matches without auth — preserving stale");
-          return;
-        }
+      // Empty success + no auth session = this client is running as anon and
+      // RLS filtered every row — hold rather than blanking the court/on-deck
+      // panels. RLS filtering is a success, so the error branch above cannot
+      // catch it. Applies to the FIRST fetch too (cold start racing auth
+      // hydration). Both consumers (useSessionData, useOrganizerData) are
+      // authenticated-only surfaces, so anon-emptiness is never authoritative.
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== seqRef.current) return;
+      if (!authed) {
+        console.warn("[useEnrichedMatches] empty matches without auth — holding state");
+        return;
       }
-      activeMatchesRef.current = [];
       setActiveMatches([]);
       return;
     }
@@ -214,7 +209,6 @@ export function useEnrichedMatches(
         })),
     }));
 
-    activeMatchesRef.current = enriched;
     setActiveMatches(enriched);
     // courtsRef is intentionally excluded: MutableRefObject identity is stable
     // across renders (React never reassigns the wrapper object), so listing it

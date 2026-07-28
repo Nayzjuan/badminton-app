@@ -77,13 +77,6 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   // internal seqRef inside useEnrichedMatches).
   const fetchWaitlistSeq = useRef(0);
 
-  // Mirror for the auth-loss guard: lets fetchWaitlist inspect its previous
-  // result without adding state to its dep array (same idea as courtsRef).
-  const waitlistRef = useRef<QueueEntryWithProfile[]>([]);
-  useEffect(() => {
-    waitlistRef.current = waitlist;
-  }, [waitlist]);
-
   // ── Active match enrichment (shared hook) ─────────────────
   // includeDrafts: false — draft firewall: players and TV only see
   // published pending matches and in_progress matches.
@@ -106,12 +99,13 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       return;
     }
     if (!data) return;
-    // Empty success while courts were showing + no auth session = this client
-    // fell back to anon and RLS filtered every row — NOT a court-less session.
-    // RLS filtering is a success, not an error, so the error branch above
-    // can't catch it. Hold stale; useAuthRecoveryRefetch refetches on recovery.
-    if (data.length === 0 && courtsRef.current.length > 0 && !(await hasAuthSession(supabase))) {
-      console.warn("[useSessionData] fetchCourts: empty result without auth — preserving stale");
+    // Empty success + no auth session = this client is running as anon and
+    // RLS filtered every row — NOT a court-less session. RLS filtering is a
+    // success, not an error, so the error branch above can't catch it. Applies
+    // to the FIRST fetch too (cold start racing auth hydration). Hold; the
+    // auth-recovery refetch reconverges.
+    if (data.length === 0 && !(await hasAuthSession(supabase))) {
+      console.warn("[useSessionData] fetchCourts: empty result without auth — holding state");
       return;
     }
     setCourts(data);
@@ -145,19 +139,17 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       QueueEntry & { profile: Omit<Profile, "pin"> | null }
     >;
 
-    // Empty success while the waitlist had rows + no auth session = this
-    // client fell back to anon and RLS filtered every row (a success, so the
-    // error branch can't catch it) — NOT everyone leaving at once. Hold the
-    // stale list; useAuthRecoveryRefetch triggers the corrective refetch.
+    // Empty success + no auth session = this client is running as anon and
+    // RLS filtered every row (a success, so the error branch can't catch it)
+    // — NOT everyone leaving at once. Applies to the FIRST fetch too (cold
+    // start racing auth hydration would otherwise paint "No One Waiting").
     // A genuinely-empty waitlist (all players drafted/playing) still commits:
     // hasAuthSession is true then, and the guard falls through.
-    if (entries.length === 0 && waitlistRef.current.length > 0) {
+    if (entries.length === 0) {
       const authed = await hasAuthSession(supabase);
       if (mySeq !== fetchWaitlistSeq.current) return;
       if (!authed) {
-        console.warn(
-          "[useSessionData] fetchWaitlist: empty result without auth — preserving stale"
-        );
+        console.warn("[useSessionData] fetchWaitlist: empty result without auth — holding state");
         return;
       }
     }

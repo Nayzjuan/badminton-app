@@ -45,6 +45,20 @@ prototype-stubbed offsetTop/animate — verifies deltas, not pixels). Mock lesso
 `@/utils/supabase/client` files needed `importOriginal` spread so the REAL `hasAuthSession` runs against the
 mock client's auth stub.
 
+**ROUND 2 (2026-07-28, same branch) — the waiting→on_deck "Heads Up" flash.** User saw it live: blank beat +
+"Ready to play?" before the takeover. Fixes: `use-player-match.ts` now error-preserves ALL 5–6 chained
+queries (it ignored `error` entirely — any blip committed `currentMatch=null` and tore the alert down) and
+holds on empty-without-auth incl. the FIRST fetch; the auth-loss guards in use-queue / use-session-data /
+use-enriched-matches / use-organizer-queue dropped their previously-non-empty precondition (cold start: the
+player unlocks the phone BECAUSE the on-deck push fired → PWA reload → first fetch races auth hydration →
+anon-empty committed → join card over an on-deck player; now loading stays true → skeleton); MyStatusTab
+MODE 1 renders a static "Match Forming" continuity backdrop instead of `null` (the overlay's enter slide was
+revealing a blank page); all three MyStatusTab Leave Queue buttons share a pending guard + error toast.
+Interaction audit: score submit (`isPending`), overlay LeaveQueueButton (`pending` + aria-disabled), checkout
+dialog (`checkingOut`), join (`joining`), create-session buttons — all already guarded. 903 unit tests
+(U-AUTH-1..2, U-ERR-1, Q-AUTH-4 new; U-new-2 rewritten to the preserve-on-null-roster contract).
+APP_MANIFEST §3.26 Round 2.
+
 ---
 
 ## 🔎 07/25 SESSION INCIDENT INVESTIGATION — 2026-07-28 (root-cause record; fixes shipped above)

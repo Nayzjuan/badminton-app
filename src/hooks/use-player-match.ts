@@ -10,8 +10,9 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient, hasAuthSession } from "@/utils/supabase/client";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import { trailingDebounce } from "@/lib/trailing-debounce";
 import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
 import { getUpcomingHeldDraft, type UpcomingHeldDraft } from "@/app/actions/upcoming-match";
@@ -78,7 +79,7 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
     // Find match_players rows for this player in this session's active matches.
     // P1-6: Scope by session_id via a join filter so we don't pull stale
     // assignments from historical sessions when a player reconnects.
-    const { data: myAssignments } = await supabase
+    const { data: myAssignments, error: assignError } = await supabase
       .from("match_players")
       .select("match_id, team, matches!inner(session_id)")
       .eq("player_id", playerId)
@@ -86,7 +87,29 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
 
     if (mySeq !== fetchMyMatchSeq.current) return;
 
+    // Errors preserve stale state — this chain runs 5–6 sequential queries on
+    // every realtime event, and treating one blip as "no match" is what made
+    // the Heads Up takeover vanish (or never appear) mid-transition.
+    if (assignError) {
+      console.error("[usePlayerMatch] assignments fetch error:", assignError.message);
+      return;
+    }
+
     if (!myAssignments || myAssignments.length === 0) {
+      // "No assignment" is the normal state for a waiting player — but it is
+      // ALSO what an anon-fallback fetch returns, and this page only exists
+      // for authenticated players. The worst case is a cold start: the player
+      // unlocks their phone BECAUSE the on-deck push fired, the PWA reloads,
+      // and the first fetch races auth hydration — committing that emptiness
+      // paints "Ready to play?" over a player who is actually on deck. Without
+      // auth, hold instead (loading stays as-is → skeleton on a cold start,
+      // stale alert mid-session); useAuthRecoveryRefetch refetches on recovery.
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchMyMatchSeq.current) return;
+      if (!authed) {
+        console.warn("[usePlayerMatch] empty assignments without auth — holding state");
+        return;
+      }
       setCurrentMatch(null);
       setUpcomingHeld(null);
       setLoading(false);
@@ -97,7 +120,7 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
 
     // Find the active match (pending or in_progress) for this session.
     // Draft Mode firewall: pending matches are only visible when published.
-    const { data: matches } = await supabase
+    const { data: matches, error: matchesError } = await supabase
       .from("matches")
       .select("*")
       .eq("session_id", sessionId)
@@ -108,7 +131,20 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
 
     if (mySeq !== fetchMyMatchSeq.current) return;
 
+    if (matchesError) {
+      console.error("[usePlayerMatch] matches fetch error:", matchesError.message);
+      return;
+    }
+
     if (!matches || matches.length === 0) {
+      // Assignments exist but none of their matches are active — the normal
+      // "all my matches completed" state. Same anon-fallback caveat as above.
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchMyMatchSeq.current) return;
+      if (!authed) {
+        console.warn("[usePlayerMatch] no active match without auth — holding state");
+        return;
+      }
       setCurrentMatch(null);
       setUpcomingHeld(null);
       setLoading(false);
@@ -158,28 +194,44 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
     }
 
     // Get all players in this match.
-    const { data: allPlayers } = await supabase
+    const { data: allPlayers, error: playersError } = await supabase
       .from("match_players")
       .select("player_id, team")
       .eq("match_id", match.id);
 
     if (mySeq !== fetchMyMatchSeq.current) return;
 
-    if (!allPlayers) {
-      setCurrentMatch(null);
-      setUpcomingHeld(null);
-      setLoading(false);
+    if (playersError || !allPlayers) {
+      // Was a wipe (setCurrentMatch(null)) — but a roster we already rendered
+      // failing to re-fetch is a blip, not "the match is gone". Preserve.
+      console.error("[usePlayerMatch] roster fetch error:", playersError?.message ?? "no data");
       return;
     }
 
     // Fetch profiles for all players.
     const playerIds = allPlayers.map((p) => p.player_id);
-    const { data: profiles } = await supabase
+    const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select(PUBLIC_PROFILE_COLUMNS)
       .in("id", playerIds);
 
     if (mySeq !== fetchMyMatchSeq.current) return;
+
+    if (profilesError) {
+      console.error("[usePlayerMatch] profiles fetch error:", profilesError.message);
+      return;
+    }
+
+    // Zero profiles for a real roster = anon fallback (profiles_select is
+    // authenticated-only) — don't re-render every teammate as missing.
+    if (playerIds.length > 0 && (profiles ?? []).length === 0) {
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchMyMatchSeq.current) return;
+      if (!authed) {
+        console.warn("[usePlayerMatch] no profiles without auth — holding state");
+        return;
+      }
+    }
 
     const profileMap = new Map((profiles ?? []).map((p) => [p.id, { ...p, pin: null }]));
 
@@ -220,6 +272,11 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
       setUpcomingHeld(null);
     }
   }, [supabase, sessionId, playerId]);
+
+  // Auth recovery → refetch, so the alert reappears (or appears for the first
+  // time, on a cold start that raced auth hydration) the moment the session
+  // is restored.
+  useAuthRecoveryRefetch(supabase, fetchMyMatch);
 
   // Initial fetch + real-time subscriptions.
   useEffect(() => {

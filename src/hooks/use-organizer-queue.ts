@@ -77,10 +77,6 @@ export function useOrganizerQueue(
 
   // Monotonic sequence counter — guards against stale concurrent fetches.
   const fetchQueueSeq = useRef(0);
-  // Row count of the last committed queue, for the auth-loss guard below.
-  // Assigned at the commit site (not via effect) so it is correct even
-  // before the next render.
-  const lastQueueLenRef = useRef(0);
 
   const fetchQueue = useCallback(async () => {
     // Capture sequence number up-front. Any newer fetchQueue call will
@@ -107,19 +103,20 @@ export function useOrganizerQueue(
       return;
     }
     if (!data) return;
-    // Empty success while the panel had rows + no auth session = this client
-    // fell back to anon and the security_invoker view's RLS filtered every
-    // row (a success, so the error branch can't catch it). Hold stale;
-    // useAuthRecoveryRefetch below refetches on recovery.
-    if (data.length === 0 && lastQueueLenRef.current > 0) {
+    // Empty success + no auth session = this client is running as anon and
+    // the security_invoker view's RLS filtered every row (a success, so the
+    // error branch can't catch it). Applies to the FIRST fetch too (cold
+    // start racing auth hydration) — the organizer surface is always authed,
+    // so anon-emptiness is never authoritative. Hold; useAuthRecoveryRefetch
+    // below refetches on recovery.
+    if (data.length === 0) {
       const authed = await hasAuthSession(supabase);
       if (mySeq !== fetchQueueSeq.current) return;
       if (!authed) {
-        console.warn("[useOrganizerQueue] empty queue without auth — preserving stale");
+        console.warn("[useOrganizerQueue] empty queue without auth — holding state");
         return;
       }
     }
-    lastQueueLenRef.current = data.length;
     setQueue(data);
   }, [supabase, sessionId]);
 
