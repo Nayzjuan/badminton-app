@@ -256,10 +256,13 @@ describe("LMS-6: swap_teams_in_active_match — swaps team assignments", () => {
   it("player A moves to team B and player B moves to team A; both stay 'playing'", async () => {
     const { db, match, a1, b1, session } = await setupActiveMatch();
 
+    // p_session_id is REQUIRED since 20260724000000 (SESSION_ID_REQUIRED
+    // otherwise) — every caller supplies the session it was authorized for.
     const { error } = await db.rpc("swap_teams_in_active_match", {
       p_match_id: match.id,
       p_player_a_id: a1.id,
       p_player_b_id: b1.id,
+      p_session_id: session.id,
     });
     expect(error).toBeNull();
 
@@ -314,6 +317,9 @@ describe("LMS-7: swap_teams_in_active_match — rejects when match not in_progre
       p_match_id: done.id,
       p_player_a_id: p1.id,
       p_player_b_id: p3.id,
+      // Required since 20260724000000 — with it omitted this raises
+      // SESSION_ID_REQUIRED before the status check ever runs.
+      p_session_id: session.id,
     });
     expect(error?.message).toContain("MATCH_NOT_ACTIVE");
   });
@@ -728,23 +734,22 @@ describe("LMS-15: swap_teams_in_active_match — refuses a match from another se
     expect(teamOf(victim.b1.id)).toBe("b");
   });
 
-  // ⚠ Read this before "strengthening" the test below.
+  // ⚠ This pin has FLIPPED — history matters if you're tempted to revert it.
   //
-  // p_session_id is DEFAULT NULL as a ONE-WAY compatibility shim: it lets a
-  // not-yet-updated deploy keep calling the new function while 20260723000001 is
-  // already applied. It does NOT make the two halves order-free — PostgREST
-  // resolves an RPC by argument NAME, so code-first is PGRST202 and every team
-  // flip breaks. Required sequence: 20260723000000 → 20260723000001 → deploy.
+  // p_session_id was born DEFAULT NULL as a ONE-WAY compatibility shim: it let
+  // a not-yet-updated deploy keep calling the new function while 20260723000001
+  // was already applied (PostgREST resolves an RPC by argument NAME, so
+  // code-first would have been PGRST202). While the shim existed, this test
+  // pinned it: omitting the key got the OLD UNBOUND behaviour, and a premature
+  // `NOT NULL` was meant to break here rather than in prod. It did exactly that.
   //
-  // The uncomfortable corollary, asserted below on purpose: while the shim
-  // exists, a caller that simply omits the key gets the OLD UNBOUND behaviour.
-  // swap_teams_in_active_match is the only one of the four like this (the other
-  // three take p_session_id as required), so until the follow-up NULL-rejecting
-  // migration lands, its boundary is 20260723000000's revoke (no browser role
-  // can reach it) plus allMatchesInSession() in the server action. This test
-  // pins the shim so a premature `NOT NULL` breaks here rather than in prod —
-  // it is NOT an endorsement of the unbound path.
-  it("keeps working when p_session_id is omitted entirely", async () => {
+  // The window is closed: the #40 code that always sends p_session_id is
+  // deployed, and 20260724000000 makes a NULL p_session_id raise
+  // SESSION_ID_REQUIRED before any read or write (the parameter keeps its
+  // DEFAULT NULL only so the resolvable argument-name set is unchanged).
+  // The pin now guards the opposite property: key-omission is a REFUSED
+  // bypass, and the roster must be untouched.
+  it("refuses when p_session_id is omitted entirely (SESSION_ID_REQUIRED)", async () => {
     const { db, victim } = await setupTwoSessions();
 
     const { error } = await db.rpc("swap_teams_in_active_match", {
@@ -752,15 +757,16 @@ describe("LMS-15: swap_teams_in_active_match — refuses a match from another se
       p_player_a_id: victim.a1.id,
       p_player_b_id: victim.b1.id,
     });
-    expect(error).toBeNull();
+    expect(error?.message).toContain("SESSION_ID_REQUIRED");
 
+    // Roster untouched — the guard raises before the first SELECT.
     const { data: rows } = await db
       .from("match_players")
       .select("player_id, team")
       .eq("match_id", victim.match.id);
     const teamOf = (id: string) => (rows ?? []).find((r) => r.player_id === id)?.team;
-    expect(teamOf(victim.a1.id)).toBe("b");
-    expect(teamOf(victim.b1.id)).toBe("a");
+    expect(teamOf(victim.a1.id)).toBe("a");
+    expect(teamOf(victim.b1.id)).toBe("b");
   });
 });
 
