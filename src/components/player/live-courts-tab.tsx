@@ -10,6 +10,7 @@
 
 import { Swords } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
+import { useFlipList } from "@/hooks/use-flip-list";
 import type { SessionMatch } from "@/hooks/use-session-data";
 
 interface LiveCourtsTabProps {
@@ -26,6 +27,19 @@ export function LiveCourtsTab({
   loading,
   myPlayerId,
 }: LiveCourtsTabProps) {
+  // FLIP moves only (animateEnter:false — CourtMatchCard owns its entrance via
+  // tailwind `animate-in`, and two systems on one transform would fight):
+  // cards glide when the organizer reorders the on-deck lineup. Keys are
+  // section-tagged because a promoted match REMOUNTS in the other section
+  // (same React key, different parent) and must read as that section's
+  // entrance, not a cross-section move. Hook must run before the early returns.
+  const registerFlip = useFlipList(
+    [...inProgressMatches.map((m) => `p:${m.id}`), ...onDeckMatches.map((m) => `d:${m.id}`)].join(
+      ","
+    ),
+    { animateEnter: false }
+  );
+
   if (loading) {
     // Two card-shaped skeletons matching CourtMatchCard's header + roster grid.
     // `loading` flips true→false once per mount, so this shows only on first load.
@@ -88,6 +102,7 @@ export function LiveCourtsTab({
             {inProgressMatches.map((match) => (
               <CourtMatchCard
                 key={match.id}
+                flipRef={registerFlip(`p:${match.id}`)}
                 match={match}
                 variant="in_progress"
                 myPlayerId={myPlayerId}
@@ -117,6 +132,7 @@ export function LiveCourtsTab({
             {onDeckMatches.map((match) => (
               <CourtMatchCard
                 key={match.id}
+                flipRef={registerFlip(`d:${match.id}`)}
                 match={match}
                 variant="on_deck"
                 myPlayerId={myPlayerId}
@@ -137,10 +153,13 @@ function CourtMatchCard({
   match,
   variant,
   myPlayerId,
+  flipRef,
 }: {
   match: SessionMatch;
   variant: "in_progress" | "on_deck";
   myPlayerId?: string;
+  /** useFlipList ref — lets the tab glide this card on on-deck reorders. */
+  flipRef?: (el: HTMLElement | null) => void;
 }) {
   const isOnDeck = variant === "on_deck";
 
@@ -166,6 +185,7 @@ function CourtMatchCard({
 
   return (
     <div
+      ref={flipRef}
       className={
         // Enter animation plays only on true DOM insertion (first load, a
         // genuinely new card, or a tab-switch remount) — stable `match.id`

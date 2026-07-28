@@ -33,6 +33,7 @@ import { QueueSkillGroups } from "@/components/organizer/queue-skill-groups";
 import { ManualMatchBar } from "@/components/organizer/manual-match-bar";
 import { RepeatPairDetails } from "@/components/organizer/repeat-pair-details";
 import { RepeatMarker, RepeatMarkerLegend } from "@/components/organizer/repeat-marker";
+import { useFlipList } from "@/hooks/use-flip-list";
 import { usePairCounts } from "@/hooks/use-pair-counts";
 import { useRepeatPairing } from "@/hooks/use-repeat-pairing";
 import { deriveTeams, EMPTY_SLOTS, filledCount, type Slots } from "@/lib/repeat-pairing";
@@ -308,6 +309,12 @@ export function QueueControl({
     return 0;
   });
 
+  // FLIP: List-lens rows glide to their new slot on requeues/status flips
+  // instead of teleporting (same treatment as the player WaitlistTab). Keyed
+  // on membership+order+status so an on_deck/drafted float-to-top re-measures
+  // even when the id sequence happens to survive.
+  const registerFlip = useFlipList(sortedQueue.map((q) => `${q.id}:${q.status}`).join(","));
+
   // ── Repeat-pairing warning ──────────────────────────────────
   const nameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -539,6 +546,7 @@ export function QueueControl({
                       return (
                         <tr
                           key={entry.id}
+                          ref={registerFlip(entry.id)}
                           tabIndex={isSelectable ? 0 : -1}
                           role="row"
                           aria-selected={isSelected}
