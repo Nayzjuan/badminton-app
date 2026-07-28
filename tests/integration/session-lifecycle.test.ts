@@ -49,16 +49,36 @@ faker.seed(11001);
  */
 const DEFAULT_CLUB_ID = "00000000-0000-0000-0000-000000000001";
 
-/** Make `userId` an owner of the default club so createSession's gate passes. */
-async function makeClubOwner(userId: string): Promise<void> {
+/** Make `userId` an owner of a club (default: the founding club) so
+ *  createSession's gate passes. */
+async function makeClubOwner(userId: string, clubId: string = DEFAULT_CLUB_ID): Promise<void> {
   const client = serviceClient();
   const { error } = await client
     .from("club_members")
     .upsert(
-      { club_id: DEFAULT_CLUB_ID, player_id: userId, role: "owner", is_active: true },
+      { club_id: clubId, player_id: userId, role: "owner", is_active: true },
       { onConflict: "club_id,player_id" }
     );
   if (error) throw new Error(`[makeClubOwner] ${error.message}`);
+}
+
+/**
+ * A second club, for tests where two sessions must coexist WITHOUT tripping
+ * the same-club duplicate-creation guard (createSession refuses a second
+ * active session in the same club within 10 minutes). The passcode
+ * uniqueness check is global across active sessions, so cross-club is the
+ * way to reach it.
+ */
+async function makeSecondClub(createdBy: string): Promise<string> {
+  const client = serviceClient();
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const { data, error } = await client
+    .from("clubs")
+    .insert({ name: `K Club ${suffix}`, slug: `k-club-${suffix}`, created_by: createdBy })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(`[makeSecondClub] ${error?.message ?? "no row"}`);
+  return data.id;
 }
 
 afterEach(async () => {
@@ -137,11 +157,16 @@ describe("Session Lifecycle — Suite K", () => {
   });
 
   // ── K-3: Duplicate active passcode rejected ───────────────
+  // The second create happens in a SECOND club: the passcode uniqueness
+  // check is global across active sessions, but a same-club second create
+  // is now refused earlier by the duplicate-session guard (K-3b) and would
+  // never reach the passcode check.
   it("K-3: createSession rejects a passcode already used by another active session", async () => {
     const userA = await makeProfile({ faker });
     await makeClubOwner(userA.id); // createSession now requires club-admin
     const userB = await makeProfile({ faker });
-    await makeClubOwner(userB.id); // createSession now requires club-admin
+    const secondClubId = await makeSecondClub(userB.id);
+    await makeClubOwner(userB.id, secondClubId);
 
     const restoreA = mockAuthAs(userA.id);
     let firstSessionId: string | undefined;
@@ -161,7 +186,7 @@ describe("Session Lifecycle — Suite K", () => {
     const restoreB = mockAuthAs(userB.id);
     try {
       const r2 = await createSession({
-        clubId: DEFAULT_CLUB_ID,
+        clubId: secondClubId,
         name: "Second",
         scoring: "single",
         passcode: "DUPE1",
@@ -178,6 +203,60 @@ describe("Session Lifecycle — Suite K", () => {
         .eq("is_active", true);
       expect(sessions).toHaveLength(1);
       expect(sessions?.[0].id).toBe(firstSessionId);
+    } finally {
+      restoreB();
+    }
+  });
+
+  // ── K-3b: Same-club duplicate-creation guard ──────────────
+  // 07/25 incident: two organizers created "the" Saturday session 343 ms
+  // apart; three players checked into the wrong one and were dumped when it
+  // was closed. A second ACTIVE session in the same club within the guard
+  // window must be refused with a pointer to the existing one.
+  it("K-3b: createSession refuses a second active session in the same club, pointing at the first", async () => {
+    const userA = await makeProfile({ faker });
+    await makeClubOwner(userA.id);
+    const userB = await makeProfile({ faker });
+    await makeClubOwner(userB.id);
+
+    const restoreA = mockAuthAs(userA.id);
+    let firstSessionId: string | undefined;
+    try {
+      const r1 = await createSession({
+        clubId: DEFAULT_CLUB_ID,
+        name: "Saturday 07/25",
+        scoring: "single",
+        passcode: "DUPGA1",
+      });
+      expect(r1.success).toBe(true);
+      firstSessionId = r1.sessionId;
+    } finally {
+      restoreA();
+    }
+
+    const restoreB = mockAuthAs(userB.id);
+    try {
+      // Different name, different passcode — the guard must fire on the
+      // same-club recency alone.
+      const r2 = await createSession({
+        clubId: DEFAULT_CLUB_ID,
+        name: "07/25 Saturday Session",
+        scoring: "single",
+        passcode: "DUPGB2",
+      });
+      expect(r2.success).toBe(false);
+      expect(r2.message).toMatch(/moments ago/i);
+      expect(r2.message).toContain("Saturday 07/25");
+      expect(r2.existingSessionId).toBe(firstSessionId);
+      expect(r2.sessionId).toBeUndefined();
+
+      // No second session was created.
+      const { data: sessions } = await serviceClient()
+        .from("sessions")
+        .select("id")
+        .eq("club_id", DEFAULT_CLUB_ID)
+        .eq("is_active", true);
+      expect(sessions).toHaveLength(1);
     } finally {
       restoreB();
     }
