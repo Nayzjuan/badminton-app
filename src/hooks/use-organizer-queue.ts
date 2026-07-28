@@ -8,6 +8,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { subscribeToQueue, subscribeToProfiles } from "@/lib/realtime";
+import { hasAuthSession } from "@/utils/supabase/client";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import {
   togglePlayerPause,
   removePlayerFromQueue as removePlayerFromQueueAction,
@@ -75,6 +77,10 @@ export function useOrganizerQueue(
 
   // Monotonic sequence counter — guards against stale concurrent fetches.
   const fetchQueueSeq = useRef(0);
+  // Row count of the last committed queue, for the auth-loss guard below.
+  // Assigned at the commit site (not via effect) so it is correct even
+  // before the next render.
+  const lastQueueLenRef = useRef(0);
 
   const fetchQueue = useCallback(async () => {
     // Capture sequence number up-front. Any newer fetchQueue call will
@@ -96,12 +102,30 @@ export function useOrganizerQueue(
     if (mySeq !== fetchQueueSeq.current) return;
 
     if (error) {
+      // Preserve stale queue — a transient failure must not blank the panel.
       console.error("[useOrganizerQueue] fetchQueue error:", error);
+      return;
     }
-    if (data) {
-      setQueue(data);
+    if (!data) return;
+    // Empty success while the panel had rows + no auth session = this client
+    // fell back to anon and the security_invoker view's RLS filtered every
+    // row (a success, so the error branch can't catch it). Hold stale;
+    // useAuthRecoveryRefetch below refetches on recovery.
+    if (data.length === 0 && lastQueueLenRef.current > 0) {
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchQueueSeq.current) return;
+      if (!authed) {
+        console.warn("[useOrganizerQueue] empty queue without auth — preserving stale");
+        return;
+      }
     }
+    lastQueueLenRef.current = data.length;
+    setQueue(data);
   }, [supabase, sessionId]);
+
+  // Auth recovery → refetch, so an organizer whose token died mid-session
+  // gets the live panel back the moment the session refreshes.
+  useAuthRecoveryRefetch(supabase, fetchQueue);
 
   // Refetch player profiles only when the SET of queued players changes.
   // Reorders and wait-time ticks produce a new queue array with the SAME

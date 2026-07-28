@@ -72,6 +72,9 @@ export type CreateSessionResult = {
   message: string;
   sessionId?: string;
   passcode?: string;
+  /** Set when creation was refused because another active session was just
+   *  created in the same club — the one the caller should join instead. */
+  existingSessionId?: string;
 };
 
 /**
@@ -140,6 +143,41 @@ export async function createSession(opts: {
   }
 
   const service = createServiceClient();
+
+  // ── Duplicate-creation guard ──────────────────────────────
+  // 07/25 incident: two organizers created "the" Saturday session 343 ms
+  // apart; three players checked into the wrong one and were dumped when it
+  // was closed. A second ACTIVE session in the same club within this window
+  // is far more likely a race than intent, so refuse it and point the caller
+  // at the existing one. The window is long enough to cover "both organizers
+  // tap Create as the gym opens" and short enough to never block a genuine
+  // second session later in the day.
+  //
+  // Best-effort SELECT-then-INSERT: a sub-commit-latency tie can still slip
+  // through (closing that fully needs a DB constraint, and time-window
+  // uniqueness can't be expressed as an index). This catches the realistic
+  // human race; the 343 ms real one would have been caught.
+  // is_hidden=false keeps the E2E sandbox session out of the guard.
+  const DUPLICATE_SESSION_WINDOW_MS = 10 * 60_000;
+  const dupCutoff = new Date(Date.now() - DUPLICATE_SESSION_WINDOW_MS).toISOString();
+  const { data: justCreated } = await service
+    .from("sessions")
+    .select("id, name")
+    .eq("club_id", clubId)
+    .eq("is_active", true)
+    .eq("is_hidden", false)
+    .gte("created_at", dupCutoff)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (justCreated) {
+    return {
+      success: false,
+      message: `"${justCreated.name}" was created in this club moments ago — join it instead of starting a duplicate.`,
+      existingSessionId: justCreated.id,
+    };
+  }
 
   // Determine the passcode to use
   let finalPasscode: string;

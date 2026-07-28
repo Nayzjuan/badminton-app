@@ -16,8 +16,9 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient, hasAuthSession } from "@/utils/supabase/client";
 import { createUnknownProfile } from "@/lib/utils";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import { useEnrichedMatches, type EnrichedMatch } from "@/hooks/use-enriched-matches";
 import {
   subscribeToCourts,
@@ -76,6 +77,13 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   // internal seqRef inside useEnrichedMatches).
   const fetchWaitlistSeq = useRef(0);
 
+  // Mirror for the auth-loss guard: lets fetchWaitlist inspect its previous
+  // result without adding state to its dep array (same idea as courtsRef).
+  const waitlistRef = useRef<QueueEntryWithProfile[]>([]);
+  useEffect(() => {
+    waitlistRef.current = waitlist;
+  }, [waitlist]);
+
   // ── Active match enrichment (shared hook) ─────────────────
   // includeDrafts: false — draft firewall: players and TV only see
   // published pending matches and in_progress matches.
@@ -97,7 +105,16 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       console.error("[useSessionData] fetchCourts error:", error.message);
       return;
     }
-    if (data) setCourts(data);
+    if (!data) return;
+    // Empty success while courts were showing + no auth session = this client
+    // fell back to anon and RLS filtered every row — NOT a court-less session.
+    // RLS filtering is a success, not an error, so the error branch above
+    // can't catch it. Hold stale; useAuthRecoveryRefetch refetches on recovery.
+    if (data.length === 0 && courtsRef.current.length > 0 && !(await hasAuthSession(supabase))) {
+      console.warn("[useSessionData] fetchCourts: empty result without auth — preserving stale");
+      return;
+    }
+    setCourts(data);
   }, [supabase, sessionId]);
 
   // ── Fetch waitlist (waiting queue entries + profiles) ──────
@@ -127,6 +144,23 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     const entries = (rows ?? []) as unknown as Array<
       QueueEntry & { profile: Omit<Profile, "pin"> | null }
     >;
+
+    // Empty success while the waitlist had rows + no auth session = this
+    // client fell back to anon and RLS filtered every row (a success, so the
+    // error branch can't catch it) — NOT everyone leaving at once. Hold the
+    // stale list; useAuthRecoveryRefetch triggers the corrective refetch.
+    // A genuinely-empty waitlist (all players drafted/playing) still commits:
+    // hasAuthSession is true then, and the guard falls through.
+    if (entries.length === 0 && waitlistRef.current.length > 0) {
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchWaitlistSeq.current) return;
+      if (!authed) {
+        console.warn(
+          "[useSessionData] fetchWaitlist: empty result without auth — preserving stale"
+        );
+        return;
+      }
+    }
 
     const enriched: QueueEntryWithProfile[] = entries
       .map(({ profile, ...entry }) => ({
@@ -226,6 +260,11 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const refresh = useCallback(async () => {
     await Promise.all([fetchCourts(), fetchActiveMatches(), fetchWaitlist()]);
   }, [fetchCourts, fetchActiveMatches, fetchWaitlist]);
+
+  // Auth recovery → refetch everything. Covers both halves of an auth outage:
+  // fetches the guards above held back, and realtime events that never arrived
+  // while the socket was de-authed.
+  useAuthRecoveryRefetch(supabase, refresh);
 
   return {
     courts,

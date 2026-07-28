@@ -412,6 +412,26 @@
     }
   }
 
+  /* ── Tab-panel entrance — player dashboard tab switches ────
+     Conditional tabpanels mount fresh on every switch, so a mount-time
+     animation is all that's needed. OPACITY ONLY, deliberately: a transform
+     here (even a retained translateY(0) via fill-mode) makes the tabpanel a
+     containing block for fixed AND absolute descendants — and the status
+     panel hosts MatchAlert, an absolute inset-0 overlay that must keep
+     resolving against <main>, not this div. The global
+     prefers-reduced-motion block collapses this to a snap. */
+  @keyframes tab-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  .animate-tab-in {
+    animation: tab-in 200ms ease-out both;
+  }
+
   /* ── New design: status-dot pulse used in player header ──── */
   @keyframes status-pulse {
     0%,

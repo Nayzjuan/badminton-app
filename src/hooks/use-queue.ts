@@ -8,10 +8,11 @@
 // their computed position and wait time.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient, hasAuthSession } from "@/utils/supabase/client";
 import { subscribeToQueue } from "@/lib/realtime";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import { joinQueueAction, checkoutPlayer } from "@/app/actions/queue";
 import type { QueueEntry } from "@/types/database";
 
@@ -41,9 +42,18 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
   const [loading, setLoading] = useState(true);
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
 
+  // Monotonic sequence guard (CLAUDE.md mandate) + previous-result mirror for
+  // the auth-loss guard below.
+  const fetchQueueSeq = useRef(0);
+  const queueRef = useRef<QueueEntry[]>([]);
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+
   // Fetch the full queue for this session.
   const fetchQueue = useCallback(async () => {
-    const { data } = await supabase
+    const mySeq = ++fetchQueueSeq.current;
+    const { data, error } = await supabase
       .from("queue_entries")
       .select("*")
       .eq("session_id", sessionId)
@@ -51,9 +61,38 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
       .order("games_played", { ascending: true })
       .order("joined_at", { ascending: true });
 
-    if (data) setQueue(data);
+    if (mySeq !== fetchQueueSeq.current) return;
+
+    if (error) {
+      // Preserve stale queue — a transient failure must not null out myEntry
+      // and flip the dashboard to the "not in queue" (= kicked-out) state.
+      console.error("[useQueue] fetchQueue error:", error.message);
+      setLoading(false);
+      return;
+    }
+
+    const rows = data ?? [];
+    // Empty success while the queue had rows + no auth session = this client
+    // fell back to anon and RLS filtered every row (a success, so the error
+    // branch can't catch it) — NOT everyone checking out at once. Hold the
+    // stale queue; useAuthRecoveryRefetch refetches when the session is back.
+    if (rows.length === 0 && queueRef.current.length > 0) {
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchQueueSeq.current) return;
+      if (!authed) {
+        console.warn("[useQueue] empty queue without auth — preserving stale");
+        setLoading(false);
+        return;
+      }
+    }
+
+    setQueue(rows);
     setLoading(false);
   }, [supabase, sessionId]);
+
+  // Auth recovery → refetch, so a player whose token died mid-session gets
+  // their live queue back the moment the session refreshes.
+  useAuthRecoveryRefetch(supabase, fetchQueue);
 
   // Initial fetch + real-time subscription.
   useEffect(() => {

@@ -186,6 +186,63 @@ describe("TG-CREATE: createSession club gate", () => {
   });
 });
 
+// ── #2b createSession duplicate-creation guard ────────────────
+// 07/25 incident: two organizers created "the" Saturday session 343 ms apart;
+// three players checked into the wrong one and were dumped when it was closed.
+// A second ACTIVE session in the same club inside the guard window must be
+// refused with a pointer to the existing one — and refused BEFORE any insert.
+describe("TG-DUP: createSession duplicate-creation guard", () => {
+  beforeEach(() => {
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(
+      authedAs(CALLER) as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>
+    );
+    vi.mocked(isClubAdmin).mockResolvedValue(true);
+  });
+
+  it("TG-DUP-1: refuses when an active session was just created in the club", async () => {
+    const svc = serviceClient([
+      // Guard SELECT finds the session the other organizer just created.
+      { data: { id: "existing-1", name: "07/25 Saturday Session" } },
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
+    );
+
+    const r = await createSession({ name: "Saturday 07/25", scoring: "single", clubId: CLUB_ID });
+
+    expect(r.success).toBe(false);
+    // The message names the existing session so the caller can join it…
+    expect(r.message).toContain("07/25 Saturday Session");
+    // …and the id rides along for a future "open it" affordance.
+    expect(r.existingSessionId).toBe("existing-1");
+    // Refused on the guard SELECT alone: no passcode check, no INSERT.
+    expect(svc.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("TG-DUP-2: proceeds to create when nothing recent is active in the club", async () => {
+    const svc = serviceClient([
+      { data: null }, // guard: no recent active session
+      { data: null }, // passcode conflict check: free
+      { data: { id: "new-session-1" } }, // insert
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
+    );
+
+    const r = await createSession({
+      name: "Thursday",
+      scoring: "single",
+      clubId: CLUB_ID,
+      passcode: "SMASH0001",
+    });
+
+    expect(r.success).toBe(true);
+    expect(r.sessionId).toBe("new-session-1");
+    expect(r.existingSessionId).toBeUndefined();
+    expect(svc.from).toHaveBeenCalledTimes(3);
+  });
+});
+
 // ── #3 co-organizer join is rate-limited ──────────────────────
 describe("TG-RATE: joinAsCoOrganizer rate limit", () => {
   beforeEach(() => {

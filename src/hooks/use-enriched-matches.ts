@@ -22,6 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Court, Match, MatchPlayer, Profile } from "@/types/database";
 import type { Database } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
+import { hasAuthSession } from "@/utils/supabase/client";
 import { createUnknownProfile } from "@/lib/utils";
 
 /**
@@ -69,6 +70,10 @@ export function useEnrichedMatches(
 ) {
   const [activeMatches, setActiveMatches] = useState<EnrichedMatch[]>([]);
   const seqRef = useRef(0);
+  // Mirror of the last committed result for the auth-loss guard below —
+  // assigned at both set sites (not via effect) so it is correct even before
+  // the next render.
+  const activeMatchesRef = useRef<EnrichedMatch[]>([]);
   const { includeDrafts, onProfilesLoaded } = options;
 
   const fetchActiveMatches = useCallback(async () => {
@@ -102,6 +107,19 @@ export function useEnrichedMatches(
 
     const matches = matchQuery.data;
     if (!matches || matches.length === 0) {
+      // Empty success while matches were showing + no auth session = this
+      // client fell back to anon and RLS filtered every row — hold stale
+      // rather than blanking the court/on-deck panels. RLS filtering is a
+      // success, so the error branch above cannot catch it.
+      if (activeMatchesRef.current.length > 0) {
+        const authed = await hasAuthSession(supabase);
+        if (mySeq !== seqRef.current) return;
+        if (!authed) {
+          console.warn("[useEnrichedMatches] empty matches without auth — preserving stale");
+          return;
+        }
+      }
+      activeMatchesRef.current = [];
       setActiveMatches([]);
       return;
     }
@@ -134,6 +152,20 @@ export function useEnrichedMatches(
       if (profileError) {
         console.error("[useEnrichedMatches] profiles fetch error:", profileError.message);
         return; // preserve stale state
+      }
+
+      // Zero profiles for a non-empty player set never happens under live
+      // auth (every player in a visible match is readable via the shared-
+      // session arm) — it means this client fell back to anon, where
+      // profiles_select is authenticated-only. Preserve the stale enriched
+      // state instead of re-rendering every name as "Unknown".
+      if ((profileData ?? []).length === 0) {
+        const authed = await hasAuthSession(supabase);
+        if (mySeq !== seqRef.current) return;
+        if (!authed) {
+          console.warn("[useEnrichedMatches] no profiles without auth — preserving stale");
+          return;
+        }
       }
 
       profileMap = new Map((profileData ?? []).map((p) => [p.id, { ...p, pin: null }]));
@@ -182,6 +214,7 @@ export function useEnrichedMatches(
         })),
     }));
 
+    activeMatchesRef.current = enriched;
     setActiveMatches(enriched);
     // courtsRef is intentionally excluded: MutableRefObject identity is stable
     // across renders (React never reassigns the wrapper object), so listing it
