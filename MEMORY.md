@@ -269,6 +269,14 @@ sequence box above; the default only rescues *old code → new function*. It als
 by omitting the key (the other three take `p_session_id` as required). Until the follow-up lands, its real
 boundary is `20260723000000` restricting callers to `service_role` plus the TypeScript pre-check.
 **Follow-up owed:** once this is deployed everywhere, a migration making `p_session_id` NULL-rejecting.
+**✅ DONE 2026-07-24 — `20260724000000_reject_null_session_in_swap_teams.sql`, applied to prod + verified.**
+After #40 deployed to prod (Vercel READY), a body-only `CREATE OR REPLACE` (same 8-arg signature — no DROP, ACL
+preserved) added `IF p_session_id IS NULL THEN RAISE 'SESSION_ID_REQUIRED'` as the first statement and dropped
+the `p_session_id IS NULL OR` disjunct, so the binding is now unconditional; the DEFAULT NULL survives only to
+keep PostgREST's resolvable arg-name set unchanged. Both call sites already pass it (`swapTeamsInActiveMatch` →
+`sessionId`; `undoLiveSwap`/team_swap → `match.session_id`), so real flips behave identically — only the
+key-omission bypass over raw PostgREST closes. In-migration asserts all passed (NULL→SESSION_ID_REQUIRED, single
+candidate, catalog sweep clean, service_role kept EXECUTE); post-apply advisors show no new findings.
 
 **TS layer:** `allMatchesInSession(db, sessionId, matchIds)` on all five call sites in `live-match-swap.ts`,
 returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence
@@ -316,6 +324,12 @@ the added non-colliding variant.
 
 **Still open after this:** PR4 (#7/#8 — private `session-events` broadcast + `profiles_select`) · #9 (LOW,
 optional) · the `p_session_id` NULL-rejecting follow-up.
+**✅ ALL CLOSED 2026-07-24:** PR4a=#41 merged (`4bc5cfc`) + migration applied; PR4b=#8=#43 merged (`ba49fa2`)
++ migration applied; the NULL-reject follow-up = `20260724000000` applied+verified. **#9 FORMALLY ACCEPTED**
+(opaque-UUID `match_players` DELETE leak; no policy fix is possible — RLS can't read a PK-only DELETE row, which
+is also why it's harmless; the only fix touches prod realtime infra + 5 hooks for negligible benefit — fix
+design banked in the `tenancy-audit-findings` memory). Remaining = 3 runtime/dashboard handoffs (leaked-password
+toggle, live #7 delivery smoke-test, optional project-wide "Allow public access" OFF).
 
 ---
 
