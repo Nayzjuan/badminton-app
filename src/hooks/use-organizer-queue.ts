@@ -163,7 +163,6 @@ export function useOrganizerQueue(
 
   // Refetch profiles on membership change (playerIdsKey), not every reorder.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchQueueProfiles();
   }, [fetchQueueProfiles, playerIdsKey]);
 

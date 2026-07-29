@@ -34,6 +34,11 @@ import type { Database } from "@/types/database";
 // createBrowserClient() is a singleton called from many hooks.
 let hasWiredRealtimeAuth = false;
 let realtimeAuthReady: Promise<void> | null = null;
+// Whether the realtime socket's auth last carried a REAL session (vs anon).
+// null = unknown until the eager hydration below resolves. Drives the
+// recycle-on-recovery logic: channels that joined during a no-session window
+// bound their postgres_changes RLS filters to `anon` and deliver nothing.
+let realtimeHadSession: boolean | null = null;
 
 export function createBrowserSupabaseClient() {
   const client = createBrowserClient<Database>(
@@ -51,19 +56,42 @@ export function createBrowserSupabaseClient() {
     realtimeAuthReady = client.auth
       .getSession()
       .then(({ data }) => {
+        realtimeHadSession = Boolean(data.session?.access_token);
         if (data.session?.access_token) {
           client.realtime.setAuth(data.session.access_token);
         }
       })
       .catch(() => {
         /* anon / no session — join as anon */
+        realtimeHadSession = false;
       });
 
     // (b) Keep the Realtime JWT current across every later auth transition
-    // (INITIAL_SESSION hydration, SIGNED_IN, TOKEN_REFRESHED).
+    // (INITIAL_SESSION hydration, SIGNED_IN, TOKEN_REFRESHED), and (c)
+    // RECYCLE the socket when a session appears after a no-session window.
+    //
+    // (c) exists because setAuth cannot fix an anon-bound channel:
+    // postgres_changes RLS filters bind at JOIN time. Any channel that joined
+    // while the client had no session (cold start racing auth hydration, or a
+    // mid-session refresh-token death that emitted SIGNED_OUT) is bound to
+    // `anon` and delivers nothing, forever. Dropping and reopening the socket
+    // makes every registered channel REJOIN with the fresh token — the only
+    // way to re-bind. Scoped tightly: only on a no-session → session
+    // transition, and only when channels exist. A routine TOKEN_REFRESHED on
+    // a live session never recycles (those channels bound correctly at join).
+    // Worst case (a client version that doesn't auto-rejoin on reconnect)
+    // equals the status quo: the recycled channels were already delivering
+    // nothing, and the auth-recovery refetches repopulate data regardless.
     client.auth.onAuthStateChange((_event, session) => {
       if (session?.access_token) {
         client.realtime.setAuth(session.access_token);
+        if (realtimeHadSession === false && client.getChannels().length > 0) {
+          client.realtime.disconnect();
+          client.realtime.connect();
+        }
+        realtimeHadSession = true;
+      } else {
+        realtimeHadSession = false;
       }
     });
   }

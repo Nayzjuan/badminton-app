@@ -23,6 +23,7 @@
 import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { VipTag } from "@/components/ui/vip-tag";
 import { RepeatMarker } from "@/components/organizer/repeat-marker";
+import { useFlipList } from "@/hooks/use-flip-list";
 import type { CandidateMarker } from "@/lib/repeat-pairing";
 import type { NameLookup } from "@/lib/repeat-pairing-copy";
 import { SKILL_LEVELS } from "@/types/database";
@@ -94,6 +95,13 @@ export function QueueSkillGroups({
   // but sink to the bottom of their tier (matchmaking-ineligible).
   const waiting = queue.filter((q) => q.status === "waiting");
 
+  // FLIP: rows glide on requeues AND on tier moves. skill_level is part of
+  // the ORDER key (not the registration key) because a skill edit moves a row
+  // between tiers without changing the id sequence — the effect must still
+  // re-measure, and the stable id registration makes it read as a MOVE.
+  // Hook must run before the early return below.
+  const registerFlip = useFlipList(waiting.map((q) => `${q.id}:${q.skill_level}`).join(","));
+
   if (waiting.length === 0) {
     return (
       <div className="clip-cut-sm border border-dashed border-cc-border p-10 text-center">
@@ -153,6 +161,7 @@ export function QueueSkillGroups({
                 return (
                   <PlayerRow
                     key={entry.id}
+                    flipRef={registerFlip(entry.id)}
                     entry={entry}
                     profile={profiles?.get(entry.player_id)}
                     isSelected={selected.has(entry.player_id)}
@@ -182,6 +191,8 @@ export function QueueSkillGroups({
 
 interface PlayerRowProps {
   entry: QueueFullWithWaitTime;
+  /** useFlipList ref — lets the lens glide this row on requeues/tier moves. */
+  flipRef: (el: HTMLElement | null) => void;
   profile?: Profile;
   isSelected: boolean;
   isFull: boolean;
@@ -199,6 +210,7 @@ interface PlayerRowProps {
 
 function PlayerRow({
   entry,
+  flipRef,
   profile,
   isSelected,
   isFull,
@@ -252,6 +264,7 @@ function PlayerRow({
     // Space aimed at the inner controls. Visible text (name, "Paused", wait,
     // "Longest waiting") is read directly by AT as it traverses the row.
     <div
+      ref={flipRef}
       onClick={toggle}
       className={`clip-cut-tr flex items-center gap-3 border px-3 py-2.5 transition-colors sm:py-2 ${rowState}`}
     >
