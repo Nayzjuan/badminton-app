@@ -28,10 +28,14 @@ const MOVE_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
  * @param orderKey a string that changes exactly when the list's membership or
  *   order changes (e.g. `items.map(i => i.id).join(",")`). Content-only
  *   changes (a stat ticking up in place) intentionally do not animate.
+ * @param opts.animateEnter false when the list's items own their entrance
+ *   (e.g. a tailwind `animate-in` on the item root) — FLIP then animates
+ *   MOVES only, so the two systems never fight over transform/opacity.
  * @returns `register(key)` — call in render to get the ref callback for that
  *   key's row element.
  */
-export function useFlipList(orderKey: string) {
+export function useFlipList(orderKey: string, opts?: { animateEnter?: boolean }) {
+  const animateEnter = opts?.animateEnter ?? true;
   const itemEls = useRef(new Map<string, HTMLElement>());
   const prevTops = useRef(new Map<string, number>());
   // First commit only records positions — animating 30+ rows "entering" on
@@ -57,6 +61,7 @@ export function useFlipList(orderKey: string) {
         if (!el || typeof el.animate !== "function") return;
         const prevTop = prevTops.current.get(key);
         if (prevTop === undefined) {
+          if (!animateEnter) return;
           // New row — slide-fade into its slot.
           el.animate(
             [
@@ -80,7 +85,7 @@ export function useFlipList(orderKey: string) {
 
     prevTops.current = nextTops;
     hasMeasured.current = true;
-  }, [orderKey]);
+  }, [orderKey, animateEnter]);
 
   return register;
 }
