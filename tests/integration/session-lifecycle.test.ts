@@ -63,18 +63,36 @@ async function makeClubOwner(userId: string, clubId: string = DEFAULT_CLUB_ID): 
 }
 
 /**
+ * The seed.sql bootstrap profile at the all-zeros id — the ONE profile that
+ * survives truncation (`.delete().neq('id', ZERO_UUID)` skips it), kept alive
+ * precisely so club FKs stay satisfiable across cleanups.
+ */
+const BOOTSTRAP_PROFILE_ID = "00000000-0000-0000-0000-000000000000";
+
+/**
  * A second club, for tests where two sessions must coexist WITHOUT tripping
  * the same-club duplicate-creation guard (createSession refuses a second
  * active session in the same club within 10 minutes). The passcode
  * uniqueness check is global across active sessions, so cross-club is the
  * way to reach it.
+ *
+ * ⚠ created_by MUST be the bootstrap profile, never a test profile:
+ * clubs.created_by REFERENCES profiles(id) with no ON DELETE clause, so a
+ * club pointing at a regular profile BLOCKS the whole profiles wipe in
+ * truncateViaDeletes — which then silently left every file's profiles behind
+ * and killed engine-trigger-realdb four files downstream with handle_new_user
+ * unique-display_name collisions ("Database error creating new user").
  */
-async function makeSecondClub(createdBy: string): Promise<string> {
+async function makeSecondClub(): Promise<string> {
   const client = serviceClient();
   const suffix = crypto.randomUUID().slice(0, 8);
   const { data, error } = await client
     .from("clubs")
-    .insert({ name: `K Club ${suffix}`, slug: `k-club-${suffix}`, created_by: createdBy })
+    .insert({
+      name: `K Club ${suffix}`,
+      slug: `k-club-${suffix}`,
+      created_by: BOOTSTRAP_PROFILE_ID,
+    })
     .select("id")
     .single();
   if (error || !data) throw new Error(`[makeSecondClub] ${error?.message ?? "no row"}`);
@@ -165,7 +183,7 @@ describe("Session Lifecycle — Suite K", () => {
     const userA = await makeProfile({ faker });
     await makeClubOwner(userA.id); // createSession now requires club-admin
     const userB = await makeProfile({ faker });
-    const secondClubId = await makeSecondClub(userB.id);
+    const secondClubId = await makeSecondClub();
     await makeClubOwner(userB.id, secondClubId);
 
     const restoreA = mockAuthAs(userA.id);
@@ -272,6 +290,10 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-4: Name length > 60 rejected ────────────────────────
   it("K-4: createSession rejects a name longer than 60 characters", async () => {
     const me = await makeProfile({ faker });
+    // Not required today (length validation precedes the club-admin gate) —
+    // granted anyway so this test keeps testing VALIDATION, not authorization,
+    // even if the gate order ever changes.
+    await makeClubOwner(me.id);
     const longName = "x".repeat(61);
     const restore = mockAuthAs(me.id);
     try {
@@ -291,6 +313,8 @@ describe("Session Lifecycle — Suite K", () => {
   // ── K-5: Passcode length > 20 rejected ────────────────────
   it("K-5: createSession rejects a passcode longer than 20 characters", async () => {
     const me = await makeProfile({ faker });
+    // Same rationale as K-4: decouple this validation test from gate order.
+    await makeClubOwner(me.id);
     const longPasscode = "P".repeat(21);
     const restore = mockAuthAs(me.id);
     try {
