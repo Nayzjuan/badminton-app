@@ -134,18 +134,21 @@ success-empty while `getSession()` is null/expired; surface a "reconnecting" sta
 disable + server idempotency); (4) transitions polish (separate task — app has near-zero animation infra:
 framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion tokens).
 
-## 📋 STANDING TO-DO (as of 2026-07-28)
+## 📋 STANDING TO-DO (as of 2026-07-29)
 
-1. **USER: merge PR #45** (swap_teams NULL-reject migration file → main; already applied+verified in prod).
+1. ~~Merge PR #45~~ ✅ MERGED 2026-07-29 (`52e30b1`) — migration-file drift closed; prod deploy READY.
 2. **USER: enable leaked-password protection** (Supabase Dashboard → Auth → Password strength).
-3. **USER: live #7 smoke-test** next session (two organizer boards → toggle propagates; close → Wrapped).
+3. **USER: live #7 smoke-test** next session (two organizer boards → toggle propagates; close → Wrapped) —
+   doubles as live verification of the resilience fixes + queue/courts transitions.
 4. Optional hardening: project-wide Realtime "Allow public access" OFF (needs every postgres_changes channel
    private first — scoped project).
-5. ~~Fix auth-loss resilience~~ ✅ DONE 2026-07-28 (branch `fix/session-resilience`, see section above).
-6. ~~Fix session-creation double-submit~~ ✅ DONE 2026-07-28 (same branch).
-7. Transitions pass — first slice DONE 2026-07-28 (waitlist FLIP + tab fade); remaining: organizer queue
-   panel FLIP, LiveCourtsTab card transitions, optional realtime channel-rebind on auth recovery.
-8. USER: merge the `fix/session-resilience` PR (after PR #45).
+5. ~~Fix auth-loss resilience~~ ✅ MERGED 2026-07-29 (PR #46 `90766f7`, prod READY).
+6. ~~Fix session-creation double-submit~~ ✅ MERGED 2026-07-29 (same PR; integration-pinned by K-3b).
+7. ~~Transitions pass~~ ✅ FULLY DONE 2026-07-29: waitlist FLIP + tab fade (PR #46) and organizer
+   List/By-Skill FLIP + LiveCourtsTab + realtime socket recycle on auth recovery (PR #48 `949a016`, prod
+   READY). No transition follow-ups remain tracked.
+8. ~~Merge the resilience PRs~~ ✅ ALL MERGED 2026-07-29: #45 → #46 → #48 (PR #47 was auto-closed when its
+   stacked base branch was deleted; #48 is its clean main-based replacement).
 
 ---
 
