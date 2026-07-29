@@ -60,6 +60,20 @@ now-required p_session_id, LMS-15's shim pin FLIPPED to assert SESSION_ID_REQUIR
 would break on the NULL-reject — it did), K-3 routes through a second club (the duplicate-session guard
 preempted the same-club passcode conflict), K-3b pins the guard with the 07/25 two-organizer shape.
 
+**⚠️ THE TRUNCATION POISON (integration-suite lesson, cost a full debug cycle).** K-3's first
+`makeSecondClub` set `created_by` to a regular test profile. `clubs.created_by REFERENCES profiles(id)` has
+NO ON DELETE clause → the profiles wipe in `truncateViaDeletes` failed its FK check — and every error there
+was SILENTLY SWALLOWED — so profiles accumulated across every later file until `engine-trigger-realdb`'s
+seeded faker names collided with leftovers inside `handle_new_user`'s unique display_name index ("Database
+error creating new user", four files downstream of the cause, deterministic across runs). `seed.sql` already
+documented the invariant: the bootstrap profile lives at the ALL-ZEROS id precisely so club FKs stay
+satisfiable across cleanups — any test-created club MUST use it as created_by. Fixes: bootstrap created_by in
+makeSecondClub; club_invites→club_members→clubs (keeping the seeded default) wiped before profiles; and
+`truncateViaDeletes` now THROWS on any delete error so the next leak fails at the test that leaked. Verified
+locally in the exact failing order after a fresh `supabase db reset`. Rule: red herrings looked like faker
+seed-shift (wrong — sequences are per-file) and GoTrue flake (wrong — deterministic); the tell was the
+failure being FILES away from the change.
+
 **ROUND 2 (2026-07-28, same branch) — the waiting→on_deck "Heads Up" flash.** User saw it live: blank beat +
 "Ready to play?" before the takeover. Fixes: `use-player-match.ts` now error-preserves ALL 5–6 chained
 queries (it ignored `error` entirely — any blip committed `currentMatch=null` and tore the alert down) and
