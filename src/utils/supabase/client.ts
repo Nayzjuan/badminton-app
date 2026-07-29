@@ -11,6 +11,7 @@
 // ============================================================
 
 import { createBrowserClient } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 
 // supabase-js's built-in auth listener (SupabaseClient#_handleTokenChanged)
@@ -82,4 +83,26 @@ export function createBrowserSupabaseClient() {
  */
 export function whenRealtimeAuthReady(): Promise<void> {
   return realtimeAuthReady ?? Promise.resolve();
+}
+
+/**
+ * True when the browser client currently holds an auth session.
+ *
+ * `getSession()` re-reads storage and refreshes an expired access token, so
+ * `false` here means the client has genuinely fallen back to `anon` — signed
+ * out, or its refresh token was rejected (rotation race, multi-tab).
+ *
+ * Data hooks use this to tell a genuinely-empty result apart from "RLS
+ * filtered every row because this client silently lost its auth" before
+ * wiping previously-populated state. Under club-scoped RLS an anon fetch
+ * returns success-with-0-rows, not an error, so an error check alone cannot
+ * catch it — this is what blanked queue/court panels mid-session on 07/25.
+ */
+export async function hasAuthSession(client: SupabaseClient<Database>): Promise<boolean> {
+  try {
+    const { data } = await client.auth.getSession();
+    return Boolean(data.session);
+  } catch {
+    return false;
+  }
 }

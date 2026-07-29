@@ -16,8 +16,9 @@
 // ============================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient, hasAuthSession } from "@/utils/supabase/client";
 import { createUnknownProfile } from "@/lib/utils";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import { useEnrichedMatches, type EnrichedMatch } from "@/hooks/use-enriched-matches";
 import {
   subscribeToCourts,
@@ -97,7 +98,17 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
       console.error("[useSessionData] fetchCourts error:", error.message);
       return;
     }
-    if (data) setCourts(data);
+    if (!data) return;
+    // Empty success + no auth session = this client is running as anon and
+    // RLS filtered every row — NOT a court-less session. RLS filtering is a
+    // success, not an error, so the error branch above can't catch it. Applies
+    // to the FIRST fetch too (cold start racing auth hydration). Hold; the
+    // auth-recovery refetch reconverges.
+    if (data.length === 0 && !(await hasAuthSession(supabase))) {
+      console.warn("[useSessionData] fetchCourts: empty result without auth — holding state");
+      return;
+    }
+    setCourts(data);
   }, [supabase, sessionId]);
 
   // ── Fetch waitlist (waiting queue entries + profiles) ──────
@@ -127,6 +138,21 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     const entries = (rows ?? []) as unknown as Array<
       QueueEntry & { profile: Omit<Profile, "pin"> | null }
     >;
+
+    // Empty success + no auth session = this client is running as anon and
+    // RLS filtered every row (a success, so the error branch can't catch it)
+    // — NOT everyone leaving at once. Applies to the FIRST fetch too (cold
+    // start racing auth hydration would otherwise paint "No One Waiting").
+    // A genuinely-empty waitlist (all players drafted/playing) still commits:
+    // hasAuthSession is true then, and the guard falls through.
+    if (entries.length === 0) {
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchWaitlistSeq.current) return;
+      if (!authed) {
+        console.warn("[useSessionData] fetchWaitlist: empty result without auth — holding state");
+        return;
+      }
+    }
 
     const enriched: QueueEntryWithProfile[] = entries
       .map(({ profile, ...entry }) => ({
@@ -226,6 +252,11 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   const refresh = useCallback(async () => {
     await Promise.all([fetchCourts(), fetchActiveMatches(), fetchWaitlist()]);
   }, [fetchCourts, fetchActiveMatches, fetchWaitlist]);
+
+  // Auth recovery → refetch everything. Covers both halves of an auth outage:
+  // fetches the guards above held back, and realtime events that never arrived
+  // while the socket was de-authed.
+  useAuthRecoveryRefetch(supabase, refresh);
 
   return {
     courts,

@@ -12,6 +12,7 @@
 // ============================================================
 
 import { VipTag } from "@/components/ui/vip-tag";
+import { useFlipList } from "@/hooks/use-flip-list";
 import type { QueueEntryWithProfile } from "@/hooks/use-session-data";
 import type { SkillLevel } from "@/types/database";
 
@@ -42,6 +43,12 @@ const YOU_TEXT_DIM = "oklch(0.24 0.05 62 / 0.72)";
 const YOU_RANK = "oklch(0.32 0.10 62)";
 
 export function WaitlistTab({ waitlist, myPlayerId, loading }: WaitlistTabProps) {
+  // FLIP reorder animation: rows glide to their new rank after every
+  // games_played / joined_at resort instead of teleporting. Keyed on
+  // membership+order only — a stat ticking up in place doesn't animate.
+  // Hook must run unconditionally (before the loading/empty early returns).
+  const registerFlip = useFlipList(waitlist.map((e) => e.id).join(","));
+
   if (loading) {
     // Skeleton shaped like the "Lineup" board header + ranked rows (same
     // 56px/1fr/auto grid). Renders once per mount — `loading` never re-enters.
@@ -147,6 +154,7 @@ export function WaitlistTab({ waitlist, myPlayerId, loading }: WaitlistTabProps)
         {waitlist.map((entry, idx) => (
           <WaitlistRow
             key={entry.id}
+            flipRef={registerFlip(entry.id)}
             entry={entry}
             position={idx + 1}
             isMe={entry.player_id === myPlayerId}
@@ -169,11 +177,14 @@ function WaitlistRow({
   position,
   isMe,
   isLast,
+  flipRef,
 }: {
   entry: QueueEntryWithProfile;
   position: number;
   isMe: boolean;
   isLast: boolean;
+  /** useFlipList ref — lets the list animate this row to its new rank. */
+  flipRef: (el: HTMLElement | null) => void;
 }) {
   const rankStr = String(position).padStart(2, "0");
   const skill = SKILL_ABBREV[entry.profile.skill_level];
@@ -184,6 +195,7 @@ function WaitlistRow({
   if (isMe) {
     return (
       <div
+        ref={flipRef}
         className="grid items-center py-3.5 rounded-xl my-1"
         style={{
           backgroundColor: YOU_BG,
@@ -275,6 +287,7 @@ function WaitlistRow({
 
   return (
     <div
+      ref={flipRef}
       className={`grid items-center py-3 transition-colors ${
         isOnDeck
           ? "bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50/80 dark:hover:bg-amber-950/30"

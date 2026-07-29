@@ -53,6 +53,8 @@ function makeEntry(
 // ── Mock Supabase client ──────────────────────────────────────
 
 let mockQueueRows: QueueEntry[] = [];
+let mockAuthSession: { access_token: string } | null = { access_token: "test-jwt" };
+let authChangeCallback: ((event: string) => void) | null = null;
 
 function buildMockClient() {
   return {
@@ -70,10 +72,34 @@ function buildMockClient() {
         return chain;
       },
     }),
+    // useAuthRecoveryRefetch registers on auth.onAuthStateChange, and the
+    // auth-loss guard (real hasAuthSession, kept via importOriginal below)
+    // probes auth.getSession. mockAuthSession defaults to a live session so
+    // the guard falls through and empty results commit normally — the
+    // behaviour the pre-guard tests assert; the Q-AUTH tests flip it to null.
+    auth: {
+      getSession: () => Promise.resolve({ data: { session: mockAuthSession } }),
+      onAuthStateChange: (cb: (event: string) => void) => {
+        authChangeCallback = cb;
+        return {
+          data: {
+            subscription: {
+              unsubscribe: () => {
+                authChangeCallback = null;
+              },
+            },
+          },
+        };
+      },
+    },
   };
 }
 
-vi.mock("@/utils/supabase/client", () => ({
+// importOriginal keeps the real hasAuthSession (the hook imports it from this
+// module) running against the mock client's auth stub; only the client factory
+// is replaced.
+vi.mock("@/utils/supabase/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/supabase/client")>()),
   createBrowserSupabaseClient: () => buildMockClient(),
 }));
 
@@ -116,6 +142,8 @@ vi.mock("next/navigation", () => ({
 describe("useQueue — Unit Suite", () => {
   beforeEach(() => {
     mockQueueRows = [];
+    mockAuthSession = { access_token: "test-jwt" };
+    authChangeCallback = null;
     queueCallback = null;
     mockJoinQueueAction.mockResolvedValue({});
     mockCheckoutPlayer.mockResolvedValue({});
@@ -292,5 +320,78 @@ describe("useQueue — Unit Suite", () => {
     });
 
     expect(leaveResult.error).toBe("RLS policy violation");
+  });
+
+  // ── Q-AUTH: auth-loss guard + recovery (07/25 incident) ────
+  // An anon-fallback fetch returns success-with-0-rows under club-scoped RLS.
+  // Wiping on it nulls myEntry — the "not in queue" (= kicked-out) screen.
+
+  it("Q-AUTH-1: empty fetch WITHOUT an auth session preserves the stale queue", async () => {
+    mockQueueRows = [makeEntry(PLAYER_ID, "waiting"), makeEntry("player-p2", "waiting")];
+
+    const { result } = renderHook(() => useQueue(SESSION_ID, PLAYER_ID));
+    await waitFor(() => expect(result.current.queue).toHaveLength(2));
+
+    // Auth dies; the next fetch comes back empty (RLS filtered everything).
+    mockAuthSession = null;
+    mockQueueRows = [];
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    // Stale queue held — the player still sees themselves in the queue.
+    expect(result.current.queue).toHaveLength(2);
+    expect(result.current.myEntry?.player_id).toBe(PLAYER_ID);
+  });
+
+  it("Q-AUTH-2: empty fetch WITH a live auth session commits the empty queue", async () => {
+    mockQueueRows = [makeEntry(PLAYER_ID, "waiting")];
+
+    const { result } = renderHook(() => useQueue(SESSION_ID, PLAYER_ID));
+    await waitFor(() => expect(result.current.queue).toHaveLength(1));
+
+    // Auth is alive and the queue genuinely emptied — this must commit,
+    // otherwise a real "everyone checked out" state could never render.
+    mockQueueRows = [];
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.queue).toEqual([]);
+    expect(result.current.myEntry).toBeNull();
+  });
+
+  it("Q-AUTH-4: cold start — empty fetch without auth keeps loading (no join-card flash)", async () => {
+    // The player unlocks their phone because the on-deck push fired; the PWA
+    // reloads and the first fetch races auth hydration. Committing that anon
+    // emptiness nulls myEntry and shows "Ready to play?" to an on-deck
+    // player — instead the hook must keep loading (skeleton) until auth lands.
+    mockQueueRows = [];
+    mockAuthSession = null;
+
+    const { result } = renderHook(() => useQueue(SESSION_ID, PLAYER_ID));
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.queue).toEqual([]);
+  });
+
+  it("Q-AUTH-3: TOKEN_REFRESHED triggers a corrective refetch", async () => {
+    mockQueueRows = [makeEntry(PLAYER_ID, "waiting")];
+
+    const { result } = renderHook(() => useQueue(SESSION_ID, PLAYER_ID));
+    await waitFor(() => expect(result.current.queue).toHaveLength(1));
+    expect(authChangeCallback).not.toBeNull();
+
+    // While this client was degraded, another player joined. The auth
+    // recovery event alone must pull the fresh queue in.
+    mockQueueRows = [makeEntry(PLAYER_ID, "waiting"), makeEntry("player-p2", "waiting")];
+    act(() => {
+      authChangeCallback?.("TOKEN_REFRESHED");
+    });
+
+    await waitFor(() => expect(result.current.queue).toHaveLength(2));
   });
 });

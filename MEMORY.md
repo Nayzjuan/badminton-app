@@ -5,6 +5,121 @@
 
 ---
 
+## 🛠️ 07/25 INCIDENT FIXES + TRANSITIONS — 2026-07-28, branch `fix/session-resilience` (stacked on PR #45)
+
+All three root causes below are now FIXED in code (same session as the investigation; 899 unit tests green,
+tsc/eslint/build clean; 12 new tests):
+
+1. **Auth-loss resilience.** New `hasAuthSession(client)` (`utils/supabase/client.ts`) + new
+   `use-auth-recovery-refetch.ts` hook. Every session-view fetcher — `use-session-data` (courts + waitlist),
+   `use-enriched-matches` (matches + the zero-profiles case), `use-queue`, `use-organizer-queue` — now treats
+   **success-with-0-rows while the previous result was non-empty AND getSession() is null** as an anon
+   fallback and HOLDS stale state instead of wiping (the wipe was the "kicked out of the queue" screen).
+   Genuine empties (auth alive) still commit — tested both ways. On TOKEN_REFRESHED/SIGNED_IN every one of
+   those hooks (plus `use-leaderboard`) refetches, so a recovered session reconverges immediately.
+   `use-queue` also gained the mandated fetchSeq guard + error handling it never had.
+   ⚠️ Known residual: after auth recovery the realtime CHANNELS may still be anon-bound (bind-at-join);
+   data converges via the recovery refetch + visibility refresh + 15 s leaderboard poll. Full
+   channel-rebind-on-recovery is a possible follow-up.
+2. **Middleware timeout.** `utils/supabase/middleware.ts` wraps the per-request `getUser()` refresh in a
+   5 s `Promise.race` + catch — a hung Supabase auth endpoint now passes the request through instead of
+   dying at Vercel's 25 s kill (2 players hit that mid-session on 07/25).
+3. **Duplicate-session guard.** `createSession` (`actions/sessions.ts`) refuses a second ACTIVE
+   non-hidden session in the same club created within 10 minutes, returning the existing session's name +
+   `existingSessionId` (new field on `CreateSessionResult`). Guard sits AFTER the club-admin gate (no name
+   leak to non-admins); fail-open on a transient SELECT error (deliberate). Closing the duplicate clears the
+   guard (it only counts active sessions). Best-effort SELECT-then-INSERT — a sub-commit-latency tie can
+   still slip through; the real 343 ms race would have been caught.
+4. **Transitions (first pass).** New dependency-free `use-flip-list.ts` (WAAPI FLIP): waitlist rows now
+   glide to their new rank on reorders and new rows fade in (measured via `offsetTop`, NOT
+   getBoundingClientRect — scroll-safe; first-commit silent; reduced-motion respected — WAAPI ignores the
+   global CSS reduced-motion block, so it's checked in the hook). Player-dashboard tabpanels get a 200 ms
+   `animate-tab-in` fade. ⚠️ `tab-in` is OPACITY-ONLY on purpose: any transform (even retained
+   translateY(0) via fill-mode) makes the tabpanel a containing block for absolute/fixed descendants and
+   breaks MatchAlert's `absolute inset-0` overlay — caught in self-review. Follow-ups left: FLIP on the
+   organizer queue panel + LiveCourtsTab card transitions.
+
+Tests added: Q-AUTH-1..3 (use-queue guard + recovery), EM-AUTH-1..2 (enriched-matches guard), TG-DUP-1..2
+(duplicate guard, refusal asserted BEFORE any insert), FLIP-1..5 (`use-flip-list.test.tsx`, happy-dom,
+prototype-stubbed offsetTop/animate — verifies deltas, not pixels). Mock lesson: the module-mocked
+`@/utils/supabase/client` files needed `importOriginal` spread so the REAL `hasAuthSession` runs against the
+mock client's auth stub.
+
+**ROUND 2 (2026-07-28, same branch) — the waiting→on_deck "Heads Up" flash.** User saw it live: blank beat +
+"Ready to play?" before the takeover. Fixes: `use-player-match.ts` now error-preserves ALL 5–6 chained
+queries (it ignored `error` entirely — any blip committed `currentMatch=null` and tore the alert down) and
+holds on empty-without-auth incl. the FIRST fetch; the auth-loss guards in use-queue / use-session-data /
+use-enriched-matches / use-organizer-queue dropped their previously-non-empty precondition (cold start: the
+player unlocks the phone BECAUSE the on-deck push fired → PWA reload → first fetch races auth hydration →
+anon-empty committed → join card over an on-deck player; now loading stays true → skeleton); MyStatusTab
+MODE 1 renders a static "Match Forming" continuity backdrop instead of `null` (the overlay's enter slide was
+revealing a blank page); all three MyStatusTab Leave Queue buttons share a pending guard + error toast.
+Interaction audit: score submit (`isPending`), overlay LeaveQueueButton (`pending` + aria-disabled), checkout
+dialog (`checkingOut`), join (`joining`), create-session buttons — all already guarded. 903 unit tests
+(U-AUTH-1..2, U-ERR-1, Q-AUTH-4 new; U-new-2 rewritten to the preserve-on-null-roster contract).
+APP_MANIFEST §3.26 Round 2.
+
+---
+
+## 🔎 07/25 SESSION INCIDENT INVESTIGATION — 2026-07-28 (root-cause record; fixes shipped above)
+
+User reports from the 07/25 Saturday session (`c1c4439c`, 03:58–08:02 UTC — the FIRST session after the 07-24
+tenancy migrations): (a) players "kicked out of the queue", (b) leaderboard initially missing some players'
+games, then self-fixing. Investigated 2026-07-28; root causes identified, all evidence in prod data + Vercel
+runtime error clusters.
+
+**Root cause 1 — de-authed clients now see EMPTY tenancy-scoped data, and the UI wipes instead of holding.**
+Vercel middleware errors during/around the session: `refresh_token_not_found` ×14 (4 users),
+`refresh_token_already_used` ×4 (2 users), plus 2× "function stopped, no response within 25s" ON `/middleware`
+at 05:44/05:59 UTC (mid-session). When a player's auth session dies (refresh-token rotation race — middleware
+`getUser()` on EVERY request + browser autoRefresh + multi-tab), the app does NOT redirect
+(`utils/supabase/middleware.ts`: "all pages are accessible"); every subsequent fetch runs as `anon`.
+Post-multi-tenant RLS: `queue_select` + `matches_select` gate on `session_access_level()` (NULL for anon) and
+since #43 `profiles_select` is `TO authenticated` ONLY → the de-authed client receives **success-with-0-rows**,
+and `fetchWaitlist`/`fetchActiveMatches` (`use-session-data.ts`) treat that as valid → `setWaitlist([])` →
+queue/court UI goes blank → "kicked out". Recovery (another tab refreshing the token, re-login, refetch) →
+"fixed itself". Pre-07-24 `profiles USING(true)` masked the profile half of this; the queue/matches half has
+existed since club-scoped RLS (07-02) but the 07-24 narrowing made the blank-out total and visible.
+
+**Root cause 2 — leaderboard refresh triggers are realtime events the viewer may never receive.** Board DATA
+comes from server actions (service-backed, viewer-independent) but REFRESH is driven by `subscribeToMatches`
+postgres_changes, which are RLS-filtered per viewer at delivery. A viewer whose JWT died or whose channel
+joined before auth attached gets NO events → stale board (players' games missing) until
+`useVisibilityRefresh` refetches on tab refocus → "fixed itself". Matches the earlier known gotcha (hero-card
+fallback stale until tab switch). MIN_SESSION_GP=1 also hides 0-game players early — by design, may have
+compounded the perception.
+
+**Root cause 3 — duplicate session double-submit.** TWO Saturday sessions created 350 ms apart
+(03:58:22.76 / 03:58:23.11). ≥3 players checked into the wrong one (03:59–04:02), it was closed 04:04:27,
+they were dumped ('left') and had to rejoin the real session (one lost ~9 min). No idempotency/double-submit
+guard on session creation.
+
+**Ruled out:** the 16 revoked RPCs (engine runs on service client — `matchmaking.ts:182`; browser calls only
+keeper RPCs: `lookup_active_session`, `get_session_player_streaks`); swap_teams NULL-reject (applied AFTER the
+session, and behavior-preserving); queue requeue mechanics (joined_at groups of ~4 = healthy match-completion
+requeues).
+
+**FIX LIST (pending — see TO-DO below):** (1) auth-loss resilience: never wipe a previously-populated list on
+success-empty while `getSession()` is null/expired; surface a "reconnecting" state + attempt silent re-auth;
+(2) middleware: timeout-guard the blocking `getUser()`; (3) session-creation double-submit guard (client
+disable + server idempotency); (4) transitions polish (separate task — app has near-zero animation infra:
+framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion tokens).
+
+## 📋 STANDING TO-DO (as of 2026-07-28)
+
+1. **USER: merge PR #45** (swap_teams NULL-reject migration file → main; already applied+verified in prod).
+2. **USER: enable leaked-password protection** (Supabase Dashboard → Auth → Password strength).
+3. **USER: live #7 smoke-test** next session (two organizer boards → toggle propagates; close → Wrapped).
+4. Optional hardening: project-wide Realtime "Allow public access" OFF (needs every postgres_changes channel
+   private first — scoped project).
+5. ~~Fix auth-loss resilience~~ ✅ DONE 2026-07-28 (branch `fix/session-resilience`, see section above).
+6. ~~Fix session-creation double-submit~~ ✅ DONE 2026-07-28 (same branch).
+7. Transitions pass — first slice DONE 2026-07-28 (waitlist FLIP + tab fade); remaining: organizer queue
+   panel FLIP, LiveCourtsTab card transitions, optional realtime channel-rebind on auth recovery.
+8. USER: merge the `fix/session-resilience` PR (after PR #45).
+
+---
+
 ## 🩹 SHIM ENROLL FAILURE NOW BRANCHES ON *WHY* — 2026-07-24, branch `fix/shim-enroll-failure`
 
 Follow-up surfaced by the PR #43 review. `src/app/play/[sessionId]/page.tsx` and

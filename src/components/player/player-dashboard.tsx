@@ -411,7 +411,12 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
         <main className="relative flex-1 overflow-hidden">
           <div className="px-4 py-5 pb-8">
             {activeTab === "status" && (
-              <div role="tabpanel" id="tabpanel-status" aria-labelledby="tab-status">
+              <div
+                role="tabpanel"
+                id="tabpanel-status"
+                aria-labelledby="tab-status"
+                className="animate-tab-in"
+              >
                 {/* MatchAlert full-screen overlay — scoped to the status tabpanel
                 so switching tabs (Live Courts / Waitlist / Leaderboard)
                 actually reveals the other tabs' content. MatchAlertPresence
@@ -466,7 +471,12 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
             )}
 
             {activeTab === "courts" && (
-              <div role="tabpanel" id="tabpanel-courts" aria-labelledby="tab-courts">
+              <div
+                role="tabpanel"
+                id="tabpanel-courts"
+                aria-labelledby="tab-courts"
+                className="animate-tab-in"
+              >
                 <LiveCourtsTab
                   inProgressMatches={inProgressMatches}
                   onDeckMatches={onDeckMatches}
@@ -477,13 +487,23 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
             )}
 
             {activeTab === "waitlist" && (
-              <div role="tabpanel" id="tabpanel-waitlist" aria-labelledby="tab-waitlist">
+              <div
+                role="tabpanel"
+                id="tabpanel-waitlist"
+                aria-labelledby="tab-waitlist"
+                className="animate-tab-in"
+              >
                 <WaitlistTab waitlist={waitlist} myPlayerId={profile.id} loading={sessionLoading} />
               </div>
             )}
 
             {activeTab === "leaderboard" && (
-              <div role="tabpanel" id="tabpanel-leaderboard" aria-labelledby="tab-leaderboard">
+              <div
+                role="tabpanel"
+                id="tabpanel-leaderboard"
+                aria-labelledby="tab-leaderboard"
+                className="animate-tab-in"
+              >
                 <LeaderboardPage
                   sessionId={session.id}
                   currentUserId={profile.id}

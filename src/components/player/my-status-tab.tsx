@@ -61,10 +61,30 @@ export function MyStatusTab({
   // ── MODE 1: Active match ────────────────────────────────────
   // The parent PlayerDashboard renders MatchAlert as an absolute overlay
   // and injects ScoreInputCard via the `scoreSlot` prop when in_progress.
-  // Leave Queue is a button inside the overlay too. Nothing to render
-  // here — return null so the queue/history sub-tabs don't bleed through.
+  // Leave Queue is a button inside the overlay too.
+  //
+  // NOT null: during the overlay's enter slide (translateY(100%) → 0) the
+  // area above the sheet is THIS component, and returning null painted a
+  // blank page for those frames — the "blank flash before Heads Up" users
+  // saw live. A static continuity backdrop (same visual family as the
+  // drafted/on_deck "Match Forming" bridge, no interactive targets — the
+  // overlay owns all interaction and the real a11y surface) keeps those
+  // frames coherent; once the overlay lands it is fully covered.
   if (!matchLoading && hasActiveMatch && currentMatch) {
-    return null;
+    return (
+      <div
+        className="flex flex-col items-center justify-center py-10 px-4 text-center"
+        aria-hidden="true"
+      >
+        <h2
+          className="text-3xl font-extrabold leading-tight text-foreground"
+          style={{ letterSpacing: "-0.02em" }}
+        >
+          Match Forming
+        </h2>
+        <p className="mt-3 text-sm text-muted-foreground">Hang tight — your match is ready.</p>
+      </div>
+    );
   }
 
   // ── Loading ─────────────────────────────────────────────────
@@ -164,6 +184,7 @@ function QueueSubTab({
   sessionName,
 }: QueueSubTabProps) {
   const [joining, setJoining] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   async function handleJoin() {
     setJoining(true);
@@ -172,6 +193,22 @@ function QueueSubTab({
       toast.error(result.error);
     }
     setJoining(false);
+  }
+
+  // Shared by every Leave Queue button in this sub-tab: a double-tap fired
+  // checkoutPlayer twice (harmless server-side, but the button gave no
+  // feedback), and errors were silently dropped.
+  async function handleLeave() {
+    if (leaving) return;
+    setLeaving(true);
+    try {
+      const result = await leaveQueue();
+      if (result?.error) {
+        toast.error(result.error);
+      }
+    } finally {
+      setLeaving(false);
+    }
   }
   // ── Paused by organizer ─────────────────────────────────────
   if (isInQueue && myEntry?.is_paused) {
@@ -186,11 +223,13 @@ function QueueSubTab({
           resume you when you&apos;re ready.
         </p>
         <button
-          onClick={() => leaveQueue()}
+          onClick={handleLeave}
+          disabled={leaving}
           className="mt-10 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
-                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive
+                     disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Leave Queue
+          {leaving ? "Leaving…" : "Leave Queue"}
         </button>
       </div>
     );
@@ -223,11 +262,13 @@ function QueueSubTab({
           <p className="mt-1 text-xs text-muted-foreground">selected from {totalWaiting} queued</p>
         </div>
         <button
-          onClick={() => leaveQueue()}
+          onClick={handleLeave}
+          disabled={leaving}
           className="mt-2 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
-                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive
+                     disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Leave Queue
+          {leaving ? "Leaving…" : "Leave Queue"}
         </button>
       </div>
     );
@@ -280,11 +321,13 @@ function QueueSubTab({
         />
 
         <button
-          onClick={() => leaveQueue()}
+          onClick={handleLeave}
+          disabled={leaving}
           className="mt-2 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
-                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
+                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive
+                     disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Leave Queue
+          {leaving ? "Leaving…" : "Leave Queue"}
         </button>
       </div>
     );

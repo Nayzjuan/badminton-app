@@ -71,9 +71,18 @@ vi.mock("@/app/actions/leaderboard", () => ({
 }));
 
 // ── Mock: Supabase browser client ─────────────────────────────
-// The hook passes the client to subscribeToMatches; a plain object is enough.
+// The hook passes the client to subscribeToMatches (mocked below) and to
+// useAuthRecoveryRefetch, which registers on auth.onAuthStateChange — so the
+// mock needs a minimal auth stub.
 
-const mockSupabase = {};
+const mockSupabase = {
+  auth: {
+    getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-jwt" } } }),
+    onAuthStateChange: vi
+      .fn()
+      .mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
+  },
+};
 
 vi.mock("@/utils/supabase/client", () => ({
   createBrowserSupabaseClient: () => mockSupabase,

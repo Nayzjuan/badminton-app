@@ -24,7 +24,7 @@
 // handleClearSession / handleSessionPick named handlers added.
 // ============================================================
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   getSessionLeaderboard,
   getAllTimeLeaderboard,
@@ -34,6 +34,7 @@ import {
   getPlayerMonthlyStats,
 } from "@/app/actions/leaderboard";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import { useClubSlug } from "@/hooks/use-club-slug";
 import { useVisibilityRefresh } from "@/hooks/use-visibility-refresh";
 import { subscribeToMatches } from "@/lib/realtime";
@@ -442,6 +443,16 @@ export function useLeaderboard({
   // unlock; this covers every board (incl. all-time / past months) at once.
   // Each fetch is seq-guarded, so overlapping with the poll is safe.
   useVisibilityRefresh(() => {
+    handleRefresh();
+    fetchMyStatsRef.current();
+  });
+
+  // Auth recovery → refetch the active board + hero card. The 15 s poll above
+  // only covers a live session / current month; this reconverges every board
+  // (incl. all-time / past months) the moment a died-and-restored auth session
+  // comes back, instead of waiting for the next tab-refocus.
+  const authRecoveryClient = useMemo(() => createBrowserSupabaseClient(), []);
+  useAuthRecoveryRefetch(authRecoveryClient, () => {
     handleRefresh();
     fetchMyStatsRef.current();
   });

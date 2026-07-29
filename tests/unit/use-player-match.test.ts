@@ -17,7 +17,7 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import { usePlayerMatch } from "@/hooks/use-player-match";
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -74,6 +74,13 @@ const mockProfiles = [
 
 let mockResponses: Record<string, unknown[]> = {};
 let mockResponseQueue: Record<string, unknown[][]> = {};
+// Tables listed here answer the NEXT query with an error instead of rows —
+// exercises the preserve-stale-on-error paths.
+let mockErrorTables = new Set<string>();
+// The auth-loss guard (real hasAuthSession via importOriginal below) probes
+// auth.getSession; null = "this client has fallen back to anon".
+let mockAuthSession: { access_token: string } | null = { access_token: "test-jwt" };
+let authChangeCallback: ((event: string) => void) | null = null;
 
 function nextResponse(table: string): unknown[] {
   const queue = mockResponseQueue[table];
@@ -102,6 +109,10 @@ function buildMockClient() {
             return { data: rows[0] ?? null, error: null };
           },
           then: (onFulfilled: (value: unknown) => unknown) => {
+            if (mockErrorTables.has(table)) {
+              mockErrorTables.delete(table);
+              return Promise.resolve({ data: null, error: { message: "boom" } }).then(onFulfilled);
+            }
             return Promise.resolve({
               data: nextResponse(table),
               error: null,
@@ -111,12 +122,30 @@ function buildMockClient() {
         return chain;
       },
     }),
+    auth: {
+      getSession: () => Promise.resolve({ data: { session: mockAuthSession } }),
+      onAuthStateChange: (cb: (event: string) => void) => {
+        authChangeCallback = cb;
+        return {
+          data: {
+            subscription: {
+              unsubscribe: () => {
+                authChangeCallback = null;
+              },
+            },
+          },
+        };
+      },
+    },
   };
 }
 
 // ── Mock Modules ──────────────────────────────────────────────
 
-vi.mock("@/utils/supabase/client", () => ({
+// importOriginal keeps the real hasAuthSession (the hook imports it from this
+// module) running against the mock client's auth stub.
+vi.mock("@/utils/supabase/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/supabase/client")>()),
   createBrowserSupabaseClient: () => buildMockClient(),
 }));
 
@@ -144,6 +173,9 @@ describe("usePlayerMatch — Unit Suite", () => {
   beforeEach(() => {
     mockResponses = {};
     mockResponseQueue = {};
+    mockErrorTables = new Set();
+    mockAuthSession = { access_token: "test-jwt" };
+    authChangeCallback = null;
     matchCallback = null;
     playerCallback = null;
   });
@@ -276,24 +308,32 @@ describe("usePlayerMatch — Unit Suite", () => {
   });
 
   // ── U-new-2 ─────────────────────────────────────────────────
-  it("U-new-2: match_players roster query returns null → currentMatch null without crashing (lines 154-156)", async () => {
+  it("U-new-2: match_players roster query returns null → state HELD, no crash, no wipe", async () => {
     // Player has an active match assignment, but the second match_players query
-    // (fetching all 4 players in the match) returns null — simulating a DB error.
-    // Guard at lines 154-156: `if (!allPlayers) { setCurrentMatch(null); setLoading(false); return; }`
+    // (fetching all 4 players in the match) returns null — a DB blip.
     //
-    // The mock queue accepts null entries: queue.shift() returns null →
-    // data: null → allPlayers = null → guard fires.
+    // CONTRACT CHANGE (Heads Up flash fix): this used to commit
+    // `currentMatch = null`, which tore the alert down over a transient
+    // failure. A roster we cannot re-fetch is a blip, not "the match is
+    // gone" — the hook now preserves state and leaves `loading` untouched
+    // (still true here, since this is the initial load), so the dashboard
+    // keeps its skeleton until a retry succeeds.
     mockResponseQueue.match_players = [
       [{ match_id: MATCH_ID, team: "a", matches: { session_id: SESSION_ID } }],
-      null as unknown as unknown[], // second call: data=null → triggers the null guard
+      null as unknown as unknown[], // second call: data=null → preserve-stale path
     ];
     mockResponses.matches = [mockMatch];
     mockResponses.courts = [];
 
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { result } = renderHook(() => usePlayerMatch(SESSION_ID, PLAYER_ID));
 
-    await waitFor(() => expect(result.current.loading).toBe(false));
+    // The mount fetch settles on the preserve-stale path — the error log is
+    // its completion signal (loading:false would never arrive, by design).
+    await waitFor(() => expect(errSpy).toHaveBeenCalled());
+    expect(result.current.loading).toBe(true);
     expect(result.current.currentMatch).toBeNull();
+    errSpy.mockRestore();
   });
 
   // ── U-6 ────────────────────────────────────────────────────
@@ -319,5 +359,90 @@ describe("usePlayerMatch — Unit Suite", () => {
     await result.current.refresh();
 
     await waitFor(() => expect(result.current.currentMatch).toBeNull());
+  });
+
+  // ── U-AUTH: anon-fallback guard (the "Heads Up" flash) ─────
+  // An anon-window fetch answers "no assignments" for a player who is
+  // actually on deck. Committing it painted "Ready to play?" (cold start)
+  // or tore the alert down mid-transition. Empty-without-auth must hold.
+
+  it("U-AUTH-1: cold start — empty assignments without auth keep loading (no join-card flash)", async () => {
+    mockResponses.match_players = [];
+    mockAuthSession = null;
+
+    const { result } = renderHook(() => usePlayerMatch(SESSION_ID, PLAYER_ID));
+
+    // Drive a full fetch to completion: it must NOT commit the anon
+    // emptiness — loading stays true, so the dashboard shows the skeleton
+    // instead of the "Ready to play?" join card.
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.loading).toBe(true);
+    expect(result.current.currentMatch).toBeNull();
+  });
+
+  it("U-AUTH-2: mid-session — empty assignments without auth preserve the alert; authed empty clears it", async () => {
+    mockResponseQueue.match_players = [
+      [{ match_id: MATCH_ID, team: "a", matches: { session_id: SESSION_ID } }],
+      [
+        { player_id: PLAYER_ID, team: "a" },
+        { player_id: "player-t1", team: "a" },
+        { player_id: "player-o1", team: "b" },
+        { player_id: "player-o2", team: "b" },
+      ],
+    ];
+    mockResponses.matches = [mockMatch];
+    mockResponses.courts = [mockCourt];
+    mockResponses.profiles = mockProfiles;
+
+    const { result } = renderHook(() => usePlayerMatch(SESSION_ID, PLAYER_ID));
+    await waitFor(() => expect(result.current.currentMatch).not.toBeNull());
+
+    // Auth dies; the next fetch sees no assignments (anon). Hold the alert.
+    mockAuthSession = null;
+    mockResponseQueue.match_players = [[]];
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.currentMatch).not.toBeNull();
+
+    // Recovery: TOKEN_REFRESHED refires the fetch; a genuinely-authed empty
+    // (the match is truly over) must still clear the alert.
+    mockAuthSession = { access_token: "test-jwt" };
+    mockResponseQueue.match_players = [[]];
+    act(() => {
+      authChangeCallback?.("TOKEN_REFRESHED");
+    });
+    await waitFor(() => expect(result.current.currentMatch).toBeNull());
+  });
+
+  it("U-ERR-1: a query error preserves the current match instead of wiping it", async () => {
+    mockResponseQueue.match_players = [
+      [{ match_id: MATCH_ID, team: "a", matches: { session_id: SESSION_ID } }],
+      [
+        { player_id: PLAYER_ID, team: "a" },
+        { player_id: "player-t1", team: "a" },
+        { player_id: "player-o1", team: "b" },
+        { player_id: "player-o2", team: "b" },
+      ],
+    ];
+    mockResponses.matches = [mockMatch];
+    mockResponses.courts = [mockCourt];
+    mockResponses.profiles = mockProfiles;
+
+    const { result } = renderHook(() => usePlayerMatch(SESSION_ID, PLAYER_ID));
+    await waitFor(() => expect(result.current.currentMatch).not.toBeNull());
+
+    // This chain runs 5–6 queries per realtime event — one blip must not
+    // tear the Heads Up takeover down.
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockErrorTables.add("match_players");
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(result.current.currentMatch).not.toBeNull();
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });

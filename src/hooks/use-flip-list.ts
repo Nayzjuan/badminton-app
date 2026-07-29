@@ -1,0 +1,86 @@
+"use client";
+
+// ============================================================
+// useFlipList — dependency-free FLIP animation for keyed lists
+// ============================================================
+// The queue reorders after every match (games_played / joined_at resort) and
+// rows previously teleported to their new slots. This hook animates each
+// surviving row from its old vertical position to its new one (FLIP: measure
+// First, Last, Invert, Play) and fades new rows in, using the Web Animations
+// API directly — no animation library in the bundle.
+//
+// Positions are measured with offsetTop (layout-relative), NOT
+// getBoundingClientRect().top — the viewport-relative value changes when the
+// user scrolls, which would read as a phantom reorder on the next commit.
+//
+// Reduced motion: WAAPI animations are not CSS animations, so the global
+// prefers-reduced-motion block in globals.css cannot reach them — checked
+// here explicitly instead. jsdom lacks el.animate; guarded for tests.
+
+import { useLayoutEffect, useRef } from "react";
+
+const MOVE_MS = 320;
+const ENTER_MS = 240;
+// Ease-out-quint-ish: fast start, long settle — reads as "snapping into rank".
+const MOVE_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+
+/**
+ * @param orderKey a string that changes exactly when the list's membership or
+ *   order changes (e.g. `items.map(i => i.id).join(",")`). Content-only
+ *   changes (a stat ticking up in place) intentionally do not animate.
+ * @returns `register(key)` — call in render to get the ref callback for that
+ *   key's row element.
+ */
+export function useFlipList(orderKey: string) {
+  const itemEls = useRef(new Map<string, HTMLElement>());
+  const prevTops = useRef(new Map<string, number>());
+  // First commit only records positions — animating 30+ rows "entering" on
+  // mount (and on every return to the tab) would be noise, not feedback.
+  const hasMeasured = useRef(false);
+
+  const register = (key: string) => (el: HTMLElement | null) => {
+    if (el) itemEls.current.set(key, el);
+    else itemEls.current.delete(key);
+  };
+
+  useLayoutEffect(() => {
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+
+    const nextTops = new Map<string, number>();
+    itemEls.current.forEach((el, key) => nextTops.set(key, el.offsetTop));
+
+    if (hasMeasured.current && !reduceMotion) {
+      nextTops.forEach((top, key) => {
+        const el = itemEls.current.get(key);
+        if (!el || typeof el.animate !== "function") return;
+        const prevTop = prevTops.current.get(key);
+        if (prevTop === undefined) {
+          // New row — slide-fade into its slot.
+          el.animate(
+            [
+              { opacity: 0, transform: "translateY(-6px)" },
+              { opacity: 1, transform: "translateY(0)" },
+            ],
+            { duration: ENTER_MS, easing: "ease-out" }
+          );
+        } else {
+          const dy = prevTop - top;
+          if (Math.abs(dy) > 1) {
+            // Surviving row that changed rank — play from the old slot.
+            el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0)" }], {
+              duration: MOVE_MS,
+              easing: MOVE_EASE,
+            });
+          }
+        }
+      });
+    }
+
+    prevTops.current = nextTops;
+    hasMeasured.current = true;
+  }, [orderKey]);
+
+  return register;
+}

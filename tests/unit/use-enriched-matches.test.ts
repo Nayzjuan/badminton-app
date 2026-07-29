@@ -159,6 +159,13 @@ function buildMockClient(responses: TableResponses, queryLogs: QueryLog[]) {
     // would happily answer a renamed or mis-argued RPC that PostgREST rejects
     // with PGRST202 in the browser.
     rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+    // The auth-loss guard (hasAuthSession) probes client.auth.getSession when a
+    // fetch comes back empty. A live session here makes the guard fall through,
+    // so empty results commit normally — the pre-guard behaviour these tests
+    // were written against. Tests exercising the guard itself override this.
+    auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "test-jwt" } } }),
+    },
   };
 }
 
@@ -609,6 +616,75 @@ describe("useEnrichedMatches — Unit Suite", () => {
     // Logged, not swallowed: "nobody is on a streak" and "the grant is broken"
     // are otherwise indistinguishable in production.
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  // ── EM-AUTH: auth-loss guard (07/25 incident) ──────────────
+  // An anon-fallback fetch returns success-with-0-rows under club-scoped RLS;
+  // committing it blanks the court/on-deck panels for everyone watching.
+
+  it("EM-AUTH-1: empty matches without auth preserves stale; with auth, empty commits", async () => {
+    const logs: QueryLog[] = [];
+    const responses: TableResponses = {
+      matches: [makeMatch(MATCH_ID_1, "in_progress")],
+      match_players: [makeMatchPlayer(MATCH_ID_1, PLAYER_A1, "a")],
+      profiles: [makeProfile(PLAYER_A1, "Alice")],
+    };
+    const { result, client } = renderWithCourts([], { includeDrafts: true }, responses, logs);
+
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+    expect(result.current.activeMatches).toHaveLength(1);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Auth dies; matches come back empty (RLS filtered everything) — hold.
+    responses.matches = [];
+    client.auth.getSession.mockResolvedValue({ data: { session: null } });
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+    expect(result.current.activeMatches).toHaveLength(1);
+
+    // Auth restored and matches are genuinely gone (e.g. all completed) —
+    // the empty result must commit, or a finished round could never clear.
+    client.auth.getSession.mockResolvedValue({
+      data: { session: { access_token: "test-jwt" } },
+    });
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+    expect(result.current.activeMatches).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("EM-AUTH-2: zero profiles without auth preserves stale names (no 'Unknown' re-render)", async () => {
+    const logs: QueryLog[] = [];
+    const responses: TableResponses = {
+      matches: [makeMatch(MATCH_ID_1, "in_progress")],
+      match_players: [makeMatchPlayer(MATCH_ID_1, PLAYER_A1, "a")],
+      profiles: [makeProfile(PLAYER_A1, "Alice")],
+    };
+    const { result, client } = renderWithCourts([], { includeDrafts: true }, responses, logs);
+
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+    expect(result.current.activeMatches[0].players[0].profile.display_name).toBe("Alice");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Auth dies; matches/match_players still arrive (some tables stay anon-
+    // readable) but profiles_select is authenticated-only → zero profiles.
+    responses.profiles = [];
+    client.auth.getSession.mockResolvedValue({ data: { session: null } });
+    await act(async () => {
+      await result.current.fetchActiveMatches();
+    });
+
+    // Stale enriched state held — Alice's name did not degrade to "Unknown".
+    expect(result.current.activeMatches[0].players[0].profile.display_name).toBe("Alice");
     warn.mockRestore();
   });
 });

@@ -22,6 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Court, Match, MatchPlayer, Profile } from "@/types/database";
 import type { Database } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
+import { hasAuthSession } from "@/utils/supabase/client";
 import { createUnknownProfile } from "@/lib/utils";
 
 /**
@@ -102,6 +103,18 @@ export function useEnrichedMatches(
 
     const matches = matchQuery.data;
     if (!matches || matches.length === 0) {
+      // Empty success + no auth session = this client is running as anon and
+      // RLS filtered every row — hold rather than blanking the court/on-deck
+      // panels. RLS filtering is a success, so the error branch above cannot
+      // catch it. Applies to the FIRST fetch too (cold start racing auth
+      // hydration). Both consumers (useSessionData, useOrganizerData) are
+      // authenticated-only surfaces, so anon-emptiness is never authoritative.
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== seqRef.current) return;
+      if (!authed) {
+        console.warn("[useEnrichedMatches] empty matches without auth — holding state");
+        return;
+      }
       setActiveMatches([]);
       return;
     }
@@ -134,6 +147,20 @@ export function useEnrichedMatches(
       if (profileError) {
         console.error("[useEnrichedMatches] profiles fetch error:", profileError.message);
         return; // preserve stale state
+      }
+
+      // Zero profiles for a non-empty player set never happens under live
+      // auth (every player in a visible match is readable via the shared-
+      // session arm) — it means this client fell back to anon, where
+      // profiles_select is authenticated-only. Preserve the stale enriched
+      // state instead of re-rendering every name as "Unknown".
+      if ((profileData ?? []).length === 0) {
+        const authed = await hasAuthSession(supabase);
+        if (mySeq !== seqRef.current) return;
+        if (!authed) {
+          console.warn("[useEnrichedMatches] no profiles without auth — preserving stale");
+          return;
+        }
       }
 
       profileMap = new Map((profileData ?? []).map((p) => [p.id, { ...p, pin: null }]));

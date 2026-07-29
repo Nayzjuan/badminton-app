@@ -8,6 +8,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { subscribeToQueue, subscribeToProfiles } from "@/lib/realtime";
+import { hasAuthSession } from "@/utils/supabase/client";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import {
   togglePlayerPause,
   removePlayerFromQueue as removePlayerFromQueueAction,
@@ -96,12 +98,31 @@ export function useOrganizerQueue(
     if (mySeq !== fetchQueueSeq.current) return;
 
     if (error) {
+      // Preserve stale queue — a transient failure must not blank the panel.
       console.error("[useOrganizerQueue] fetchQueue error:", error);
+      return;
     }
-    if (data) {
-      setQueue(data);
+    if (!data) return;
+    // Empty success + no auth session = this client is running as anon and
+    // the security_invoker view's RLS filtered every row (a success, so the
+    // error branch can't catch it). Applies to the FIRST fetch too (cold
+    // start racing auth hydration) — the organizer surface is always authed,
+    // so anon-emptiness is never authoritative. Hold; useAuthRecoveryRefetch
+    // below refetches on recovery.
+    if (data.length === 0) {
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchQueueSeq.current) return;
+      if (!authed) {
+        console.warn("[useOrganizerQueue] empty queue without auth — holding state");
+        return;
+      }
     }
+    setQueue(data);
   }, [supabase, sessionId]);
+
+  // Auth recovery → refetch, so an organizer whose token died mid-session
+  // gets the live panel back the moment the session refreshes.
+  useAuthRecoveryRefetch(supabase, fetchQueue);
 
   // Refetch player profiles only when the SET of queued players changes.
   // Reorders and wait-time ticks produce a new queue array with the SAME
