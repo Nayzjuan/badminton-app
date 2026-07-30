@@ -219,6 +219,35 @@ export function isGroupValid(players: ScoredPlayer[], maxVariance: number): bool
 // opponentCounts / opponentCap: when supplied, the engine PREFERS splits
 // where no cross-net pair is at the opponent cap (soft preference — never
 // a hard block so the engine cannot stall on small sessions).
+//
+// BALANCE GATE (anti-repeat vs balance priority inversion fix):
+// The 4-pass freshness search runs over the MOST skill-balanced splits
+// first, and only falls through to less-balanced splits when every
+// balanced split is at the partnership cap. Previously freshness was the
+// outer gate, so once all cross-tier pairings had been used once, the
+// engine would "prefer" a fresh high+high vs low+low split (INT+INT vs
+// BEG+BEG) over repeating a within-cap balanced pairing. A within-cap
+// repeat on balanced teams always beats a fresh-but-lopsided match.
+// `usedLopsidedFallback: true` on the result signals that only a
+// less-balanced split was available — the caller (runAlgorithm) uses it
+// to try a different 4th body before accepting the lopsided teams.
+
+export type SnakeDraftResult = {
+  teamA: ScoredPlayer[];
+  teamB: ScoredPlayer[];
+  /** True when every most-balanced split was partnership-capped and a
+   *  less-balanced split was returned to prevent a stall. */
+  usedLopsidedFallback?: boolean;
+};
+
+// Skill gap between the two teams of a split — 0 means perfectly balanced.
+function splitSkillGap(split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }): number {
+  return Math.abs(
+    split.teamA[0].skill_level_int +
+      split.teamA[1].skill_level_int -
+      (split.teamB[0].skill_level_int + split.teamB[1].skill_level_int)
+  );
+}
 
 export function snakeDraft(
   allFour: ScoredPlayer[],
@@ -226,7 +255,7 @@ export function snakeDraft(
   cap?: number,
   opponentCounts?: Map<string, number>,
   opponentCap?: number
-): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
+): SnakeDraftResult | null {
   const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
   // Without cap enforcement, always return the balanced default.
@@ -244,6 +273,18 @@ export function snakeDraft(
     { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] },
   ];
 
+  // Partition by balance: the freshness passes must never trade team
+  // balance away just to avoid a within-cap partnership repeat. Splits
+  // within SKILL_VARIANCE_MAX of the best gap still count as balanced —
+  // that keeps the fresh-pair preference alive between near-equal splits
+  // (e.g. skills 6/5/4/3: Split 2's gap of 2 is acceptable) while
+  // demoting genuinely lopsided ones (e.g. 4/4/1/1: high+high vs
+  // low+low has gap 6 and only ever fires as a stall-prevention
+  // fallback).
+  const minGap = Math.min(...splits.map(splitSkillGap));
+  const balancedSplits = splits.filter((s) => splitSkillGap(s) <= minGap + SKILL_VARIANCE_MAX);
+  const lopsidedSplits = splits.filter((s) => splitSkillGap(s) > minGap + SKILL_VARIANCE_MAX);
+
   // Helper: true when no cross-net pair is at or above the opponent cap.
   // Always returns true when opponentCounts / opponentCap are absent.
   const crossNetOk = (split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }): boolean => {
@@ -255,42 +296,58 @@ export function snakeDraft(
     );
   };
 
-  // Pass 1a: both team pairs fresh (count=0) AND no cross-net pair at cap.
-  for (const split of splits) {
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA === 0 && countB === 0 && crossNetOk(split)) return split;
-  }
+  const pairCount = (a: ScoredPlayer, b: ScoredPlayer): number =>
+    partnershipCounts.get(pairKey(a.player_id, b.player_id)) ?? 0;
 
-  // Pass 1b: both team pairs fresh — relax opponent cap (rare: all fresh splits
-  // have capped opponent pairings; fresh partnerships still preferred over repeat ones).
-  for (const split of splits) {
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA === 0 && countB === 0) return split;
-  }
+  // 4-pass freshness search over one pool of splits (ordered most→least balanced):
+  //   1a: both team pairs fresh (count=0) AND no cross-net pair at cap.
+  //   1b: both team pairs fresh — relax opponent cap.
+  //   2a: below partnership cap AND no cross-net pair at cap.
+  //   2b: below partnership cap only — last resort to prevent stalls.
+  const findSplit = (
+    pool: Array<{ teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }>
+  ): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null => {
+    for (const split of pool) {
+      if (
+        pairCount(split.teamA[0], split.teamA[1]) === 0 &&
+        pairCount(split.teamB[0], split.teamB[1]) === 0 &&
+        crossNetOk(split)
+      )
+        return split;
+    }
+    for (const split of pool) {
+      if (
+        pairCount(split.teamA[0], split.teamA[1]) === 0 &&
+        pairCount(split.teamB[0], split.teamB[1]) === 0
+      )
+        return split;
+    }
+    for (const split of pool) {
+      if (
+        pairCount(split.teamA[0], split.teamA[1]) < cap &&
+        pairCount(split.teamB[0], split.teamB[1]) < cap &&
+        crossNetOk(split)
+      )
+        return split;
+    }
+    for (const split of pool) {
+      if (
+        pairCount(split.teamA[0], split.teamA[1]) < cap &&
+        pairCount(split.teamB[0], split.teamB[1]) < cap
+      )
+        return split;
+    }
+    return null;
+  };
 
-  // Pass 2a: below partnership cap AND no cross-net pair at cap.
-  for (const split of splits) {
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA < cap && countB < cap && crossNetOk(split)) return split;
-  }
+  const balanced = findSplit(balancedSplits);
+  if (balanced) return balanced;
 
-  // Pass 2b: below partnership cap only — last resort to prevent stalls.
-  for (const split of splits) {
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA < cap && countB < cap) return split;
-  }
+  // Every balanced split is partnership-capped — fall through to a less
+  // balanced split rather than stalling, but flag it so the caller can
+  // try a different 4th body first.
+  const lopsided = findSplit(lopsidedSplits);
+  if (lopsided) return { ...lopsided, usedLopsidedFallback: true };
 
   return null;
 }
@@ -986,7 +1043,7 @@ export function runAlgorithm(
 
       const isMixed = maxVariance > SKILL_VARIANCE_MAX;
       const allFour = [anchor, ...group];
-      const draft = snakeDraft(
+      let draft = snakeDraft(
         allFour,
         partnershipCounts,
         MAX_PARTNERSHIP_REPEATS,
@@ -1001,6 +1058,55 @@ export function runAlgorithm(
         }
         continue;
       }
+
+      // ── Balance-preserving swap (Fix B) ─────────────────────────
+      // snakeDraft only returns a lopsided split when every balanced
+      // split of THIS group is partnership-capped. Before accepting
+      // high+high vs low+low teams, try replacing each member of the
+      // trio with another eligible candidate — a different 4th body
+      // usually restores a fresh balanced pairing. Constraints mirror
+      // the main path: skill window, ≤1 pulled body, diversity.
+      if (draft.usedLopsidedFallback) {
+        const inGroup = new Set(allFour.map((p) => p.player_id));
+        balanceSwap: for (const { candidate } of scored) {
+          if (inGroup.has(candidate.player_id)) continue;
+          // Evict lowest-priority members first, and never bench a Red-Zone
+          // player (mirrors the diversity-swap fairness guard).
+          for (let i = group.length - 1; i >= 0; i--) {
+            if (group[i].priorityScore >= RED_ZONE_SCORE_FLOOR) continue;
+            const swapGroup = group.map((g, idx) => (idx === i ? candidate : g));
+            if (swapGroup.filter((c) => c.isPulled).length > 1) continue;
+            if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
+            const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
+            if (isDiversityViolation(swappedIds, activeRosters)) continue;
+            const altDraft = snakeDraft(
+              [anchor, ...swapGroup],
+              partnershipCounts,
+              MAX_PARTNERSHIP_REPEATS,
+              opponentCounts,
+              MAX_OPPONENT_REPEATS
+            );
+            if (altDraft && !altDraft.usedLopsidedFallback) {
+              if (process.env.DEBUG_MATCHMAKING === "true") {
+                console.log(
+                  `[matchmaking] Balance swap: replaced ${group[i].display_name} with ` +
+                    `${candidate.display_name} to avoid lopsided teams`
+                );
+              }
+              draft = altDraft;
+              break balanceSwap;
+            }
+          }
+        }
+        // No balanced alternative anywhere in the pool — accept the
+        // lopsided split rather than stalling the queue.
+        if (draft.usedLopsidedFallback && process.env.DEBUG_MATCHMAKING === "true") {
+          console.log(
+            `[matchmaking] ±${maxVariance} window: no balanced alternative — accepting lopsided split`
+          );
+        }
+      }
+
       if (process.env.DEBUG_MATCHMAKING === "true") {
         console.log(
           `[matchmaking] ±${maxVariance} window: matched [${group.map((g) => g.display_name).join(", ")}]` +

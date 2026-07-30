@@ -5,6 +5,36 @@
 
 ---
 
+## ⚖️ MATCHMAKING BALANCE GATE — LOPSIDED TEAMS FIX — 2026-07-30, branch `fix/matchmaking-balanced-teams`
+
+**Incident (07/30 session).** Engine repeatedly generated INT+INT vs BEG+BEG. Root cause was a **priority
+inversion in `snakeDraft`** (`src/lib/matchmaking-core.ts`): the 4-pass partnership-freshness search was the
+OUTER gate, team balance only the inner ordering. Once every cross-tier pairing (H1+L1, H1+L2, H2+L1, H2+L2)
+had been used once, the only "fresh" split left was high+high vs low+low — chosen deliberately to avoid a
+within-cap partnership repeat. Compounds all night in two-tier pools.
+
+**Fix A — balance gate in `snakeDraft`.** Splits partitioned into balanced (gap ≤ minGap+`SKILL_VARIANCE_MAX`)
+vs lopsided; 4-pass freshness runs over balanced first; lopsided only fires when every balanced split is
+partnership-capped and is flagged `usedLopsidedFallback: true` (new `SnakeDraftResult` type). Tolerance of 2
+preserves the fresh-pair preference between near-equal splits (6/5/4/3 → Split 2 gap 2 OK). Side effect (by
+design): balance now also outranks opponent-cap freshness — 2 old tests encoding that inversion were updated.
+
+**Fix B — balance-preserving swap in `runAlgorithm` main path.** On `usedLopsidedFallback`, try replacing each
+trio member (lowest-priority first, Red-Zone members never benched — mirrors diversity-swap guard) with another
+eligible candidate (window + ≤1 pulled + no diversity violation); take the first balanced draft. If none exists,
+accept the lopsided draft (no stall).
+
+**Validated:** simulated the incident scenario against the real `snakeDraft` before+after (S1/S7 lopsided →
+balanced, 0 regressions); tsc/eslint clean; 169 unit tests pass incl. 3 new regression tests
+(`snakeDraft — balance gate` block); `npm run build` green. Review verdict: **Minor issues** (all addressed:
+eviction order + Red-Zone guard added, package-lock noise reverted, docs updated).
+
+**Accepted holes:** (1) `rotatedDraft` (forced repeat of the exact same 4) still cycles through top-vs-bottom —
+documented in APP_MANIFEST §snakeDraft. (2) When the same 4 bodies have capped ALL balanced pairings and no
+alternative candidate exists (tiny/late session), one lopsided match is still emitted rather than stalling.
+
+---
+
 ## 🛠️ 07/25 INCIDENT FIXES + TRANSITIONS — 2026-07-28, branch `fix/session-resilience` (stacked on PR #45)
 
 All three root causes below are now FIXED in code (same session as the investigation; 899 unit tests green,
