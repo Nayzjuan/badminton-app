@@ -1428,10 +1428,14 @@ describe("snakeDraft — opponent-cap preference", () => {
     return { a, b, c, d };
   }
 
-  it("Pass 1a: prefers least-balanced Split 1 when Splits 0+2 have a capped cross-net pair", () => {
+  it("Pass 1a→1b: balance gate keeps Split 1 out — capped cross-net pair on Splits 0+2 no longer forces lopsided teams", () => {
     // "a:b" is at the opponent cap. Splits 0 and 2 have a-vs-b cross-net;
     // Split 1 pairs a+b on the SAME team so "a:b" is not a cross-net pair there.
-    // All partnerships are fresh. Pass 1a should skip Splits 0+2 and return Split 1.
+    // OLD behavior: Pass 1a skipped Splits 0+2 and returned least-balanced Split 1
+    // (skill gap 4) just to dodge the opponent repeat — the balance inversion.
+    // NEW behavior: Split 1 is outside the balance gate (gap 4 > minGap 0 +
+    // SKILL_VARIANCE_MAX 2), so Pass 1a finds nothing in the balanced pool and
+    // Pass 1b relaxes the opponent cap → most-balanced fresh Split 0 wins.
     const { a, b, c, d } = makeFourAlpha();
     const partnershipCounts = new Map<string, number>(); // all fresh
     const opponentCounts = new Map([["a:b", OPP_CAP]]);
@@ -1443,9 +1447,10 @@ describe("snakeDraft — opponent-cap preference", () => {
       OPP_CAP
     );
     expect(result).not.toBeNull();
-    // Split 1: teamA=[a,b], teamB=[c,d]
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+    // Split 0: teamA=[a,d], teamB=[b,c] — balanced beats opponent-freshness
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+    expect(result!.usedLopsidedFallback).toBeUndefined();
   });
 
   it("Pass 1b: returns most-balanced Split 0 when all splits have capped cross-net pairs but partnerships are fresh", () => {
@@ -1471,10 +1476,12 @@ describe("snakeDraft — opponent-cap preference", () => {
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 
-  it("Pass 2a: when all partnerships are stale, prefers Split 1 which has no capped cross-net pair", () => {
+  it("Pass 2a→2b: balance gate keeps Split 1 out even when it is the only split with no capped cross-net pair", () => {
     // All partnerships below cap but stale (count=1). "a:b" at opponent cap.
-    // Splits 0+2 have a-vs-b cross-net → fail crossNetOk.
-    // Split 1 has a+b same-team → crossNetOk=true. Pass 2a returns Split 1.
+    // Splits 0+2 have a-vs-b cross-net → fail crossNetOk. Split 1 would pass,
+    // but it is outside the balance gate (gap 4 > minGap 0 + SKILL_VARIANCE_MAX 2).
+    // OLD behavior returned lopsided Split 1; NEW behavior falls to Pass 2b within
+    // the balanced pool → most-balanced below-cap Split 0, opponent cap relaxed.
     const { a, b, c, d } = makeFourAlpha();
     const partnershipCounts = new Map([
       ["a:d", 1], // Split 0 teamA stale
@@ -1490,9 +1497,72 @@ describe("snakeDraft — opponent-cap preference", () => {
       OPP_CAP
     );
     expect(result).not.toBeNull();
-    // Pass 2a: Skip Splits 0+2 (crossNetOk=false) → Split 1 has no a-vs-b cross-net → return it
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+    // Split 0: teamA=[a,d], teamB=[b,c] — balance beats opponent-freshness
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+    expect(result!.usedLopsidedFallback).toBeUndefined();
+  });
+
+  // ── Balance gate regression (INT+INT vs BEG+BEG incident) ──────────
+  // Live failure mode: 2 highs + 2 lows, every cross-tier partnership
+  // already used once. The old freshness-first search returned the fresh
+  // but maximally lopsided high+high vs low+low split. The balance gate
+  // must repeat a within-cap balanced pairing instead.
+  describe("snakeDraft — balance gate (lopsided-split regression)", () => {
+    function makeTwoTiers() {
+      const h1 = makePlayer("h1", { skillInt: 4 });
+      const h2 = makePlayer("h2", { skillInt: 4 });
+      const l1 = makePlayer("l1", { skillInt: 1 });
+      const l2 = makePlayer("l2", { skillInt: 1 });
+      return { h1, h2, l1, l2 };
+    }
+    const teamGap = (r: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }) =>
+      Math.abs(
+        r.teamA[0].skill_level_int +
+          r.teamA[1].skill_level_int -
+          r.teamB[0].skill_level_int -
+          r.teamB[1].skill_level_int
+      );
+
+    it("incident case: all cross-tier pairs used once → repeats a balanced pairing, never high+high vs low+low", () => {
+      const { h1, h2, l1, l2 } = makeTwoTiers();
+      const counts = new Map([
+        ["h1:l1", 1],
+        ["h1:l2", 1],
+        ["h2:l1", 1],
+        ["h2:l2", 1],
+      ]);
+      const result = snakeDraft([h1, h2, l1, l2], counts, MAX_PARTNERSHIP_REPEATS);
+      expect(result).not.toBeNull();
+      expect(teamGap(result!)).toBe(0); // each team = 1 high + 1 low
+      expect(result!.usedLopsidedFallback).toBeUndefined();
+    });
+
+    it("lopsided fallback fires (flagged) only when every balanced split is at the hard cap", () => {
+      const { h1, h2, l1, l2 } = makeTwoTiers();
+      const counts = new Map([
+        ["h1:l1", MAX_PARTNERSHIP_REPEATS],
+        ["h1:l2", MAX_PARTNERSHIP_REPEATS],
+        ["h2:l1", MAX_PARTNERSHIP_REPEATS],
+        ["h2:l2", MAX_PARTNERSHIP_REPEATS],
+      ]);
+      const result = snakeDraft([h1, h2, l1, l2], counts, MAX_PARTNERSHIP_REPEATS);
+      expect(result).not.toBeNull();
+      expect(result!.usedLopsidedFallback).toBe(true); // caller may swap a body
+    });
+
+    it("returns null when lopsided splits are also capped (no silent stall-break)", () => {
+      const { h1, h2, l1, l2 } = makeTwoTiers();
+      const counts = new Map([
+        ["h1:l1", MAX_PARTNERSHIP_REPEATS],
+        ["h1:l2", MAX_PARTNERSHIP_REPEATS],
+        ["h2:l1", MAX_PARTNERSHIP_REPEATS],
+        ["h2:l2", MAX_PARTNERSHIP_REPEATS],
+        ["h1:h2", MAX_PARTNERSHIP_REPEATS],
+        ["l1:l2", MAX_PARTNERSHIP_REPEATS],
+      ]);
+      expect(snakeDraft([h1, h2, l1, l2], counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
+    });
   });
 
   it("Pass 2b: last resort — returns most-balanced split when all capped on both partnership+opponent", () => {
