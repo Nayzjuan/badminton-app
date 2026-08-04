@@ -733,10 +733,15 @@ test.describe("Resilience — [R-5] a cap change locks out the other organizer",
     // generating. Both halves of the three-phase emit only exist with Auto ON.
     // Writing the column directly is safe: nothing server-side watches it —
     // the engine only ever runs from a server action.
-    await adminDb()
+    // Checked, not fire-and-forget: a silently failed update leaves Auto OFF, the
+    // server takes the short-circuit branch and emits a lone "done" — both polls
+    // below would pass and the run would die on the bare `toContain('"clearing"')`
+    // with no explanation. Fail here instead, where the cause is obvious.
+    const { error: seedCapError } = await adminDb()
       .from("sessions")
       .update({ is_auto_matchmaking_on: true, max_auto_drafts_override: null })
       .eq("id", SESSION_ID);
+    expect(seedCapError, `[R-5] setup: could not turn Auto ON for the sandbox session`).toBeNull();
 
     const ctxA = await organizerContext(browser);
     const ctxB = await organizerContext(browser);
@@ -795,13 +800,40 @@ test.describe("Resilience — [R-5] a cap change locks out the other organizer",
         })
         .toBeGreaterThan(0);
 
+      // Then wait for the TERMINAL frame before snapshotting the buffer.
+      // `clearing` is the FIRST of the three phases and `done` the last — it is
+      // emitted from a `finally`, so it also covers the early clear-failure
+      // return, not just a completed engine run. The poll above therefore
+      // resolves on `clearing` alone, and a buffer snapshot taken there would
+      // race the rest of the cycle and fail against a server that is working
+      // perfectly (observed on the first production run of this spec,
+      // 2026-08-04). The two polls stay separate on purpose: the first
+      // distinguishes "no broadcast ever left the server" from the second's
+      // "the cycle started but never terminated", and each carries the message
+      // that fits its own failure.
+      //
+      // 15s, not 25s: server-side this is three awaited REST posts plus one
+      // engine run — 2-5s in practice. A wider window would still pass while
+      // silently accepting a lockout long enough for a co-organizer to notice,
+      // and the overlay has no dismiss control. This keeps a real upper bound
+      // on lockout duration with 3-5x headroom.
+      await expect
+        .poll(() => capFrames.join("\n"), {
+          timeout: 15_000,
+          message:
+            "B received the opening draft_cap_phase frame but never the terminal " +
+            '"done". The overlay has no dismiss control, so a co-organizer would be ' +
+            "stuck behind it until the ttlMs lease expires. Check applyDraftCapOverride's " +
+            "emit-on-every-exit-path in src/app/actions/sessions.ts.",
+        })
+        .toContain('"done"');
+
       const framesText = capFrames.join("\n");
       // Not asserted with the client's `realtime:` wire prefix: realtime-js
       // prepends that itself, which is exactly why the REST payload must NOT
       // carry it. Matching on the bare name holds for both sides.
       expect(framesText, `frames:\n${framesText}`).toContain(`session-events:${SESSION_ID}`);
       expect(framesText).toContain('"clearing"');
-      expect(framesText).toContain('"done"');
       // opId is what stops the initiator's own echo from re-locking it, and
       // ttlMs is what lets a client self-unlock when the terminal "done" is
       // lost. Both are dead weight in a unit test and load-bearing here.

@@ -197,10 +197,10 @@ private one.
    `use-organizer-session.ts` polls every 15s, masking the two toggle events. The other three
    (`session_closed`, `cap_saturation`, `organizer_intervention`) had no fallback
    and were dead. `broadcast.ts` now posts the unprefixed `session-events:{id}`. See APP_MANIFEST
-   §3.27. **Still open:** `draft_cap_phase` is unaffected by the prefix fix — its
-   `clearing`/`generating`/`done` calls live in `use-organizer-dashboard.ts` (`"use client"`) and
-   `broadcast.ts` has no `"use server"`, so they run in the browser with no service-role key and
-   bail at the guard. Co-organizer lockout overlay still dead. Fix = move the emit to a server action.
+   §3.27. The follow-on `draft_cap_phase` defect (emit ran in the browser, no service-role key,
+   bailed at the guard — co-organizer lockout overlay dead) is **also CLOSED**: moved to the
+   `applyDraftCapOverride` server action, shipped in PR #51 (`e8e76bd`) and **verified against
+   production** by [R-5] on 2026-08-04. See APP_MANIFEST §3.28.
 
 `create policy` on prod's `realtime.messages` fails loudly with `42501` if `postgres` lacks
 ownership there — it will not fail silently.
