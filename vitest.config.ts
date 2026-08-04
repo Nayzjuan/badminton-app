@@ -30,7 +30,10 @@ export default defineConfig({
       //   src/hooks/use-organizer-broadcast.ts — thin wrapper
       //   src/hooks/use-organizer-courts.ts    — thin wrapper
       //   src/hooks/use-organizer-queue.ts     — thin wrapper
-      //   src/hooks/use-organizer-session.ts   — thin wrapper
+      //   src/hooks/use-organizer-session.ts   — no longer a thin wrapper, and
+      //     its draft-cap lease IS unit-tested (use-organizer-session-cap-phase),
+      //     but the bulk of the file is realtime subscription wiring that no unit
+      //     test exercises; adding it here would fail perFile on that alone.
       //   src/hooks/use-visibility-refresh.ts  — browser-only
       //   src/hooks/use-h2h.ts                 — small, E2E-covered
       include: [

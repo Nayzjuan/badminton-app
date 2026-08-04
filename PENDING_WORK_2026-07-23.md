@@ -190,12 +190,17 @@ private one.
    never consulted); applying late means every client gets `CHANNEL_ERROR` instead of session
    events. Old tabs holding a public channel stop receiving until reload — **deploy between
    sessions.**
-2. **Smoke-test the `realtime:` topic prefix under `private: true`.** `broadcast.ts` posts to
-   `realtime:session-events:{id}`, which the local CLI Realtime image delivers to *nobody*, so the
-   private path cannot be exercised end-to-end locally; prod evidently normalises the prefix, since
-   it delivers these events today. Immediately after deploy: two organizer boards on one session →
-   flip auto-matchmaking → the co-organizer's toggle must move; then close the session → a player
-   must land on Wrapped. **Do not "fix" the prefix on a local repro alone.**
+2. ~~**Smoke-test the `realtime:` topic prefix under `private: true`.**~~ **RESOLVED 2026-08-04 —
+   the prefix was a genuine bug.** This item asserted prod "normalises the prefix, since it delivers
+   these events today" and warned against fixing it from a local repro. Both halves were wrong: the
+   local CLI image behaved exactly like prod, and the events only *looked* delivered because
+   `use-organizer-session.ts` polls every 15s, masking the two toggle events. The other three
+   (`session_closed`, `cap_saturation`, `organizer_intervention`) had no fallback
+   and were dead. `broadcast.ts` now posts the unprefixed `session-events:{id}`. See APP_MANIFEST
+   §3.27. **Still open:** `draft_cap_phase` is unaffected by the prefix fix — its
+   `clearing`/`generating`/`done` calls live in `use-organizer-dashboard.ts` (`"use client"`) and
+   `broadcast.ts` has no `"use server"`, so they run in the browser with no service-role key and
+   bail at the guard. Co-organizer lockout overlay still dead. Fix = move the emit to a server action.
 
 `create policy` on prod's `realtime.messages` fails loudly with `42501` if `postgres` lacks
 ownership there — it will not fail silently.

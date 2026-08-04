@@ -16,6 +16,10 @@
 //   'generating' → chip shows "⟳ Generating…"
 //   Both disable the chip and the popover cannot open.
 //
+// The phase is authored SERVER-side (applyDraftCapOverride emits it on the
+// session broadcast channel) and reaches this chip through
+// useOrganizerDashboard, so a co-organizer's reset disables it too.
+//
 // The chip is dimmed (not hidden) when Auto is OFF so the
 // organizer can see their saved preference.
 // ============================================================
@@ -38,8 +42,13 @@ interface DraftCapPopoverProps {
   autoPublishIsOn?: boolean;
   /** Phase of an in-progress cap-reset. null = idle. */
   capPhase: CapPhase;
-  /** Called when the organizer picks a new cap value. */
-  onChange: (cap: number | null) => void;
+  /**
+   * Called when the organizer picks a new cap value. Async in practice
+   * (it runs a server action); the returned promise settles on its own and
+   * is deliberately not awaited here — the chip's loading state comes from
+   * `capPhase`, not from this call.
+   */
+  onChange: (cap: number | null) => void | Promise<void>;
   /** Whether to render the mobile-compact variant (no caret label). */
   compact?: boolean;
 }
@@ -103,7 +112,7 @@ export function DraftCapPopover({
 
   function handleSelect(cap: number | null) {
     setOpen(false);
-    if (cap !== value) onChange(cap);
+    if (cap !== value) void onChange(cap);
   }
 
   // ── Chip rendering ────────────────────────────────────────
@@ -120,6 +129,8 @@ export function DraftCapPopover({
     return (
       <button
         disabled
+        data-testid="draft-cap-chip"
+        data-cap-phase={capPhase}
         className={[
           ...chipBase,
           "border-cc-border-hi bg-cc-bg-3 text-cc-t2 cursor-not-allowed gap-[7px]",
@@ -142,6 +153,8 @@ export function DraftCapPopover({
       <button
         onClick={() => !isDisabled && setOpen((v) => !v)}
         disabled={isDisabled}
+        data-testid="draft-cap-chip"
+        data-cap-phase="idle"
         title={
           !autoIsOn
             ? "Turn on Auto matchmaking to change the cap"
@@ -198,6 +211,7 @@ export function DraftCapPopover({
                 {isFirst && <div className="mx-3 mb-1 h-px bg-cc-border" aria-hidden="true" />}
                 <button
                   onClick={() => handleSelect(opt.value)}
+                  data-testid={`draft-cap-option-${opt.value ?? "dynamic"}`}
                   className={[
                     "w-full text-left px-3 py-[7px] flex items-center gap-2",
                     "font-command text-[10px] font-semibold tracking-[0.08em] transition-colors",

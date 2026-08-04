@@ -30,9 +30,10 @@
 import { describe, it, expect } from "vitest";
 
 // ── Cap validation ─────────────────────────────────────────────
-// This is the validation logic that setCapAndClearDrafts will apply.
-// We test it as a pure function here so it's verifiable before the
-// server action exists.
+// A local restatement of the rule `applyDraftCapOverride` enforces
+// (null, or an integer 1–5). It is a MIRROR, not the real code path —
+// the action's own guard is asserted against the real implementation in
+// tests/unit/draft-cap-action.test.ts (DCA-2).
 
 function isValidCapOverride(value: unknown): value is number | null {
   if (value === null) return true;

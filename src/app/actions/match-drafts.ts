@@ -226,7 +226,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
 // players to 'waiting' status. Published on-deck matches are
 // untouched.
 //
-// Does NOT trigger the engine — the caller (setCapAndClearDrafts)
+// Does NOT trigger the engine — the caller (applyDraftCapOverride)
 // is responsible for running the engine after this resolves.
 // ============================================================
 

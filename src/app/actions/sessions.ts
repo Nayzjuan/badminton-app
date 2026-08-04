@@ -3,10 +3,13 @@
 // ============================================================
 // Session Lifecycle — Server Actions
 // ============================================================
-// createSession       — creates a new session with uniqueness-
-//                       enforced passcode (auto-generated if blank)
-// joinAsCoOrganizer   — co-organizer joins using ONLY the passcode
-// closeSession        — archives an active session
+// createSession        — creates a new session with uniqueness-
+//                        enforced passcode (auto-generated if blank)
+// joinAsCoOrganizer    — co-organizer joins using ONLY the passcode
+// closeSession         — archives an active session
+// applyDraftCapOverride — saves the max-draft cap and, when Auto is ON,
+//                        clears drafts + re-runs the engine, emitting the
+//                        co-organizer lockout broadcasts around that work
 // ============================================================
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
@@ -18,8 +21,9 @@ import {
   broadcastAutoPublishToggled,
   broadcastDraftCapPhase,
 } from "@/lib/broadcast";
+import type { DraftCapPhase } from "@/lib/broadcast";
 import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
-import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { isClubAdmin } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
 import { getClientIp } from "@/lib/client-ip";
@@ -538,29 +542,59 @@ export async function updateSessionSettings(
   return {};
 }
 
-// ── setCapAndClearDrafts ──────────────────────────────────────
+// ── applyDraftCapOverride ─────────────────────────────────────
+// Single server-owned orchestration of a draft-cap change:
+//   gate → persist → clear → engine → all three lockout broadcasts.
+//
+// Replaces setCapAndClearDrafts plus the client-side three-phase emit, which
+// never worked: src/lib/broadcast.ts was reachable from the browser bundle,
+// where SUPABASE_SERVICE_ROLE_KEY is undefined, so every phase was dropped at
+// the missing-key guard and the co-organizer lockout overlay never engaged.
+//
+// ONE action, not two, because the process that TAKES the lock must be the
+// process that RELEASES it. With a client-orchestrated split, a tab closed
+// between phase 1 and phase 2 leaves every co-organizer locked with no 'done'
+// ever coming.
 
-export type SetCapResult = {
+// NOT exported: a "use server" module may only export async functions
+// (see _shared.ts:19-22). The receiver clamps this into its own bounds
+// independently, which also means the lease can be retuned server-side without
+// shipping a client deploy.
+const CAP_PHASE_LOCK_TTL_MS = 45_000;
+
+export type ApplyDraftCapResult = {
   success: boolean;
   message?: string;
   error?: string;
+  /** Whether auto-matchmaking was ON — i.e. whether the engine actually ran. */
   autoIsOn?: boolean;
   clearedCount?: number;
 };
 
 /**
- * Save the organizer's max-draft override and — when Auto is ON —
- * atomically clear all unpublished drafts so the engine can
- * regenerate fresh ones against the new cap.
+ * Save the organizer's max-draft override and, when Auto is ON, clear all
+ * unpublished drafts and re-run the engine against the new cap — emitting the
+ * clearing/generating/done lockout broadcasts around that work so every OTHER
+ * organizer's dashboard locks and unlocks in step.
  *
- * Called as Phase 1 of the cap-change reset flow. The hook
- * calls runEngineForSession separately as Phase 2.
- * Does NOT trigger the engine itself.
+ * SECURITY — this is deliberately NOT a general-purpose emit endpoint. There is
+ * no `phase` parameter and there must never be one: the phase strings are
+ * server-side literals, so no authorized caller can emit a lock without its
+ * matching unlock. A `broadcastCapPhaseAction(sessionId, phase)` would recreate,
+ * behind a gate, exactly the forgery capability that migration 20260723100000
+ * closed by refusing an INSERT policy on realtime.messages.
+ *
+ * `opId` is minted by the calling tab so it can recognise (and ignore) its own
+ * echo — the REST broadcast has no sending socket, so Realtime fans every
+ * message back to the actor too. It is validated as a UUID and only ever echoed.
  */
-export async function setCapAndClearDrafts(
+export async function applyDraftCapOverride(
   sessionId: string,
-  cap: number | null
-): Promise<SetCapResult> {
+  cap: number | null,
+  opId: string
+): Promise<ApplyDraftCapResult> {
+  // Gate order is load-bearing: uuid → bounds → opId → auth → organizer.
+  // Nothing below emits until all of them have passed.
   if (!isValidUUID(sessionId)) {
     return { success: false, error: "Invalid session ID." };
   }
@@ -568,52 +602,132 @@ export async function setCapAndClearDrafts(
   if (cap !== null && (!Number.isInteger(cap) || cap < 1 || cap > 5)) {
     return { success: false, error: "Cap must be null or an integer between 1 and 5." };
   }
-
-  const db = createServiceClient();
-  const supabase = await createServerSupabaseClient();
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: "Not authenticated." };
-
-  const organizer = await isSessionOrganizer(user.id, sessionId);
-  if (!organizer) return { success: false, error: "Organizer access required." };
-
-  // Persist the override and read is_auto_matchmaking_on atomically in one
-  // UPDATE...RETURNING statement. This eliminates the race window where a
-  // co-organizer toggle between a separate read and write would produce a stale value.
-  const { data: updatedSession, error: updateErr } = await db
-    .from("sessions")
-    .update({ max_auto_drafts_override: cap })
-    .eq("id", sessionId)
-    .select("is_auto_matchmaking_on")
-    .single();
-
-  if (updateErr) {
-    return { success: false, error: `Failed to save cap: ${updateErr.message}` };
+  if (!isValidUUID(opId)) {
+    return { success: false, error: "Invalid operation ID." };
   }
 
-  const autoIsOn = updatedSession?.is_auto_matchmaking_on ?? false;
+  // Auth, authorization and the cap write share ONE try/catch: client
+  // construction and PostgREST transport can both throw, and CLAUDE.md forbids
+  // throwing out of a server action — the caller would get a network-shaped
+  // rejection instead of a result. Collapsing them into a single handler is safe
+  // precisely because this whole span is emit-free (see the box below): no path
+  // through it can leave anyone holding a lock.
+  let actor: Awaited<ReturnType<typeof getActorContext>>;
+  let autoIsOn: boolean;
+  try {
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Not authenticated." };
+
+    // Independent lookups → run in parallel. The denial message is uniform:
+    // isSessionOrganizer returns false for both "not yours" and "does not exist",
+    // so a distinct message would turn this into a session-UUID existence oracle.
+    const [isOrganizer, actorContext] = await Promise.all([
+      isSessionOrganizer(user.id, sessionId),
+      getActorContext(user.id),
+    ]);
+    if (!isOrganizer) return { success: false, error: "Organizer access required." };
+    actor = actorContext;
+
+    // Persist the override and read is_auto_matchmaking_on atomically in one
+    // UPDATE...RETURNING statement. This eliminates the race window where a
+    // co-organizer toggle between a separate read and write would produce a stale value.
+    const { data: updatedSession, error: updateErr } = await createServiceClient()
+      .from("sessions")
+      .update({ max_auto_drafts_override: cap })
+      .eq("id", sessionId)
+      .select("is_auto_matchmaking_on")
+      .single();
+
+    if (updateErr) {
+      // Nothing was locked — emit nothing.
+      return { success: false, error: `Failed to save cap: ${updateErr.message}` };
+    }
+
+    autoIsOn = updatedSession?.is_auto_matchmaking_on ?? false;
+  } catch (err) {
+    console.error("[applyDraftCapOverride] pre-flight failed:", err);
+    return { success: false, error: "Couldn't save the draft cap. Please try again." };
+  }
+
+  // ┌──────────────────────────────────────────────────────────────────────┐
+  // │ NOTHING ABOVE THIS LINE EMITS. Every rejection path is emit-free, so  │
+  // │ a failed or forged call can never leave anyone holding a lock.        │
+  // └──────────────────────────────────────────────────────────────────────┘
+
+  // Every emit is AWAITED, not void'd. Two reasons: (1) ordering — POST N+1 is
+  // not issued until N has been ingested, so a 'done' cannot overtake its
+  // 'clearing' and strand every co-organizer behind an overlay that has no
+  // dismiss control; (2) Vercel freezes the instance once the response is sent,
+  // so a trailing void'd fetch can be killed mid-flight. postBroadcast never
+  // rejects; the .catch keeps that true even if that ever changes, so no emit
+  // can break this action's return contract.
+  const emit = (phase: DraftCapPhase) =>
+    broadcastDraftCapPhase(sessionId, phase, cap, {
+      opId,
+      actorId: actor.id,
+      actorName: actor.name,
+      ttlMs: CAP_PHASE_LOCK_TTL_MS,
+    }).catch((err) => {
+      console.warn("[applyDraftCapOverride] broadcast failed (non-fatal):", phase, err);
+    });
 
   if (!autoIsOn) {
-    // Auto is OFF — just saved the preference, nothing to clear.
+    // Auto is OFF: the preference is stored, nothing was cleared, nothing
+    // regenerated — so NO lock is taken. A lone terminal 'done' is emitted
+    // purely so every co-organizer refetches and their cap chip converges. It
+    // is inversion-proof precisely because no 'clearing' is ever emitted here.
+    await emit("done");
     return { success: true, autoIsOn: false, clearedCount: 0 };
   }
 
-  const clearResult = await clearAllUnpublishedDrafts(sessionId);
+  await emit("clearing");
 
-  if (!clearResult.success) {
-    // Clearing failed — broadcast 'done' so all organizer screens unlock.
-    void broadcastDraftCapPhase(sessionId, "done", cap);
-    return { success: false, error: clearResult.message };
+  try {
+    // Wrapped like the engine call below, and for the same reason: CLAUDE.md
+    // forbids throwing out of a server action. Without this, a PostgREST/fetch
+    // failure inside the clear would emit 'done' from the finally and then
+    // REJECT — the caller gets a network-shaped error rather than a result.
+    let clearResult: Awaited<ReturnType<typeof clearAllUnpublishedDrafts>>;
+    try {
+      clearResult = await clearAllUnpublishedDrafts(sessionId);
+    } catch (err) {
+      console.error("[applyDraftCapOverride] clearAllUnpublishedDrafts threw:", err);
+      return { success: false, autoIsOn: true, error: "Failed to clear drafts." };
+    }
+    if (!clearResult.success) {
+      return { success: false, autoIsOn: true, error: clearResult.message };
+    }
+
+    await emit("generating");
+
+    try {
+      await runEngineForSession(sessionId);
+    } catch (err) {
+      // Best-effort. The cap is persisted and the drafts are cleared — both
+      // organizer-visible guarantees already hold — and the next queue mutation
+      // re-runs the engine anyway. CLAUDE.md: never throw out of a server action.
+      console.error("[applyDraftCapOverride] engine threw unexpectedly:", err);
+    }
+
+    return {
+      success: true,
+      autoIsOn: true,
+      clearedCount: clearResult.clearedCount,
+      message: `Draft cap applied. ${clearResult.clearedCount} draft(s) cleared.`,
+    };
+  } finally {
+    // THE single unlock point for the locked region. Covers the clear-failure
+    // early return, the engine path, and any unexpected throw. An async
+    // function's promise does not settle until its finally completes, so this
+    // POST is on the wire BEFORE the HTTP response and cannot be lost to
+    // post-response instance suspension. Do NOT move this into after():
+    // after() work that fails cannot report back, and 'done' must not be
+    // best-effort — it is what releases every co-organizer's dashboard.
+    await emit("done");
   }
-
-  return {
-    success: true,
-    autoIsOn: true,
-    clearedCount: clearResult.clearedCount,
-  };
 }
 
 // ── toggleAutoPublish ─────────────────────────────────────────
@@ -643,7 +757,7 @@ export type ToggleAutoPublishResult = {
  * clear-and-rerun — there is nothing to regenerate against.
  *
  * Takes an explicit target (not an atomic flip) so the result is deterministic
- * under concurrent organizer clicks — last write wins, mirroring setCapAndClearDrafts.
+ * under concurrent organizer clicks — last write wins, mirroring applyDraftCapOverride.
  */
 export async function toggleAutoPublish(
   sessionId: string,

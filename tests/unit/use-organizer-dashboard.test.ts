@@ -20,6 +20,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { useOrganizerDashboard } from "@/hooks/use-organizer-dashboard";
+import type { CapPhaseSignal } from "@/hooks/use-organizer-session";
 
 // ── Mock next/navigation ──────────────────────────────────────
 const mockRouter = { push: vi.fn() };
@@ -37,10 +38,14 @@ vi.mock("sonner", () => ({
 }));
 
 // ── Mock session actions ──────────────────────────────────────
+// toggleAutoPublish is mocked even though no test drives it: a vi.mock factory
+// REPLACES the module, so an omitted export is `undefined` at import time and
+// the hook would throw the moment that path is exercised.
 vi.mock("@/app/actions/sessions", () => ({
   closeSession: vi.fn(),
   toggleAutoMatchmaking: vi.fn(),
-  setCapAndClearDrafts: vi.fn(),
+  toggleAutoPublish: vi.fn(),
+  applyDraftCapOverride: vi.fn(),
 }));
 
 // ── Mock queue actions ────────────────────────────────────────
@@ -49,7 +54,8 @@ vi.mock("@/app/actions/queue", () => ({
 }));
 
 import { toast } from "sonner";
-import { closeSession, toggleAutoMatchmaking, setCapAndClearDrafts } from "@/app/actions/sessions";
+import { closeSession, toggleAutoMatchmaking, applyDraftCapOverride } from "@/app/actions/sessions";
+import type { ApplyDraftCapResult } from "@/app/actions/sessions";
 import { joinQueueAction } from "@/app/actions/queue";
 
 // ── Fixtures ──────────────────────────────────────────────────
@@ -64,6 +70,7 @@ function makeParams(
     bottleneckCount: number;
     draftCount: number;
     handleCancelSwap: () => void;
+    capSignal: CapPhaseSignal;
   }> = {}
 ) {
   return {
@@ -78,11 +85,8 @@ function makeParams(
   };
 }
 
-// ── Mock for runEngineForSession (used by handleCapChange phase 2) ──
-vi.mock("@/app/actions/matchmaking", () => ({
-  runEngineForSession: vi.fn().mockResolvedValue(undefined),
-}));
-import { runEngineForSession } from "@/app/actions/matchmaking";
+/** Matches the crypto.randomUUID() opId the hook mints per operation. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Tests ─────────────────────────────────────────────────────
 
@@ -435,66 +439,76 @@ describe("useOrganizerDashboard", () => {
 });
 
 // ============================================================
-// Draft Cap Override — OD-11 through OD-17
+// Draft Cap Override — OD-11 through OD-21
 // ============================================================
 //
-// OD-11  handleCapChange (Auto ON) — two-phase sequence fires in order:
-//          phase 'clearing' → setCapAndClearDrafts → phase 'generating'
-//          → runEngineForSession → phase null
-// OD-12  handleCapChange (Auto OFF) — only saves cap, no engine run
-// OD-13  handleCapChange failure in phase 1 — reverts to null phase,
-//          engine NOT called, error toast shown
-// OD-14  isDashboardLocked is true during both 'clearing' and 'generating'
-// OD-15  capPhase state transitions are null → clearing → generating → null
-// OD-16  setCapAndClearDrafts is called with correct sessionId and cap value
-// OD-17  setting cap to null (reset to Dynamic) calls setCapAndClearDrafts(id, null)
+// The whole clear → regenerate sequence now lives in ONE server action
+// (applyDraftCapOverride). This hook no longer orchestrates phases and no
+// longer imports @/lib/broadcast — it could not publish anything from the
+// browser anyway, because the service-role key is server-only. See §3.28.
+//
+// OD-11  handleCapChange (Auto ON) — one action call, dashboard ends unlocked
+// OD-12  handleCapChange (Auto OFF) — identical call shape; auto-state is the
+//          server's business, not the hook's
+// OD-13  action returns success:false — error toast, dashboard unlocked
+// OD-14  isDashboardLocked is true while the action is in flight
+// OD-15  capPhase is null → 'clearing' → null across one operation
+// OD-16  applyDraftCapOverride receives (sessionId, cap, opId)
+// OD-17  resetting to Dynamic passes cap = null
+// OD-18  our OWN echo never re-locks us (opId self-correlation)
+// OD-19  a CO-ORGANIZER's signal locks us and surfaces their name
+// OD-20  a transport-level throw still unlocks and toasts
+// OD-21  the watchdog force-unlocks a lock the action never released
 // ============================================================
 
-describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
-  describe("OD-11: Auto ON — two-phase sequence fires in correct order", () => {
-    it("transitions: null → clearing → generating → null, calling the right actions", async () => {
-      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+describe("OD-11 through OD-21: handleCapChange — draft cap override", () => {
+  describe("OD-11: Auto ON — single server action drives the whole sequence", () => {
+    it("calls applyDraftCapOverride once and ends unlocked", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.mocked(applyDraftCapOverride).mockResolvedValue({
         success: true,
         autoIsOn: true,
         clearedCount: 2,
       });
-      vi.mocked(runEngineForSession).mockResolvedValue(undefined);
 
       const { result } = renderHook(() =>
         useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
       );
 
-      // Phase tracking: capture snapshots via a spy on state transitions
-      const phases: Array<string | null> = [];
-
-      // Wrap handleCapChange and capture phase mid-flight is non-trivial
-      // in a hook test. Instead we verify the final state and call order.
       await act(async () => {
         await result.current.handleCapChange(2);
       });
 
-      // After completion: phase is null (lockout lifted)
+      expect(applyDraftCapOverride).toHaveBeenCalledTimes(1);
       expect(result.current.capPhase).toBeNull();
       expect(result.current.isDashboardLocked).toBe(false);
+      expect(toast.error).not.toHaveBeenCalled();
 
-      // setCapAndClearDrafts was called (phase 1)
-      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 2);
-
-      // runEngineForSession was called (phase 2) — Auto was ON
-      expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
-
-      // Call order: setCapAndClearDrafts before runEngineForSession
-      const clearOrder = vi.mocked(setCapAndClearDrafts).mock.invocationCallOrder[0];
-      const engineOrder = vi.mocked(runEngineForSession).mock.invocationCallOrder[0];
-      expect(clearOrder).toBeLessThan(engineOrder);
+      // Historical tripwire: before 2026-08-04 this hook called
+      // broadcastDraftCapPhase directly, and every call logged
+      // "[broadcast] Missing SUPABASE_URL or service role key — skipping
+      // broadcast." from the browser. A green run used to emit 19 of them.
+      //
+      // Kept as documentation, NOT as coverage: post-fix the hook no longer
+      // references broadcast.ts at all, so this assertion can never fail and
+      // proves nothing on its own. (Note it is NOT `import "server-only"` doing
+      // the work under this runner — vitest.config.ts aliases that to a no-op
+      // stub; the guard only bites in `next build`.) What actually carries the
+      // weight is CB-1 in client-bundle-boundaries, which statically pins the
+      // whole class across src/.
+      const broadcastWarnings = warnSpy.mock.calls.filter((args) =>
+        String(args[0]).includes("[broadcast] Missing SUPABASE_URL")
+      );
+      expect(broadcastWarnings).toEqual([]);
+      warnSpy.mockRestore();
     });
   });
 
-  describe("OD-12: Auto OFF — saves cap without clearing or running engine", () => {
-    it("calls setCapAndClearDrafts but NOT runEngineForSession when Auto is OFF", async () => {
-      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+  describe("OD-12: Auto OFF — same call shape, decided server-side", () => {
+    it("still issues exactly one applyDraftCapOverride call", async () => {
+      vi.mocked(applyDraftCapOverride).mockResolvedValue({
         success: true,
-        autoIsOn: false, // <-- Auto is OFF
+        autoIsOn: false, // <-- server reports Auto was OFF
         clearedCount: 0,
       });
 
@@ -506,15 +520,15 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
         await result.current.handleCapChange(3);
       });
 
-      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 3);
-      expect(runEngineForSession).not.toHaveBeenCalled();
+      expect(applyDraftCapOverride).toHaveBeenCalledTimes(1);
+      expect(applyDraftCapOverride).toHaveBeenCalledWith(SESSION_ID, 3, expect.any(String));
       expect(result.current.capPhase).toBeNull();
     });
   });
 
-  describe("OD-13: Phase 1 failure — reverts cleanly, engine not called", () => {
-    it("shows error toast, unlocks dashboard, and does NOT call engine when setCapAndClearDrafts fails", async () => {
-      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+  describe("OD-13: action failure — reverts cleanly and reports", () => {
+    it("shows an error toast and unlocks when the action returns success:false", async () => {
+      vi.mocked(applyDraftCapOverride).mockResolvedValue({
         success: false,
         error: "Database error",
       });
@@ -527,15 +541,9 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
         await result.current.handleCapChange(2);
       });
 
-      // Dashboard unlocked
       expect(result.current.capPhase).toBeNull();
       expect(result.current.isDashboardLocked).toBe(false);
-
-      // Engine was NOT called — clearing failed so regeneration is skipped
-      expect(runEngineForSession).not.toHaveBeenCalled();
-
-      // Error toast shown
-      expect(toast.error).toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith("Database error");
     });
   });
 
@@ -545,11 +553,11 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
       expect(result.current.isDashboardLocked).toBe(false);
     });
 
-    it("isDashboardLocked is true while clearing phase is active", async () => {
-      let resolveClear!: (v: import("@/app/actions/sessions").SetCapResult) => void;
-      vi.mocked(setCapAndClearDrafts).mockReturnValue(
+    it("isDashboardLocked is true while the action is in flight", async () => {
+      let resolveAction!: (v: ApplyDraftCapResult) => void;
+      vi.mocked(applyDraftCapOverride).mockReturnValue(
         new Promise((res) => {
-          resolveClear = res;
+          resolveAction = res;
         })
       );
 
@@ -565,26 +573,20 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
       await waitFor(() => expect(result.current.isDashboardLocked).toBe(true));
 
       // Clean up
-      act(() => resolveClear({ success: true, autoIsOn: true, clearedCount: 0 }));
+      await act(async () => {
+        resolveAction({ success: true, autoIsOn: true, clearedCount: 0 });
+      });
     });
   });
 
   describe("OD-15: capPhase transitions", () => {
-    it("starts null, calls clearing then generating in order, ends null after completion", async () => {
-      // Verify that:
-      // 1. Phase starts null (not locked)
-      // 2. setCapAndClearDrafts is called (phase 1)
-      // 3. runEngineForSession is called after (phase 2)
-      // 4. Phase returns to null after both resolve
-      // Mid-flight state capture is intentionally omitted — React batches state
-      // within useTransition, making synchronous phase snapshots unreliable in
-      // happy-dom. The phase logic is unit-tested in draft-cap-override.test.ts.
-      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
-        success: true,
-        autoIsOn: true,
-        clearedCount: 1,
-      });
-      vi.mocked(runEngineForSession).mockResolvedValue(undefined);
+    it("goes null → 'clearing' → null across one operation", async () => {
+      let resolveAction!: (v: ApplyDraftCapResult) => void;
+      vi.mocked(applyDraftCapOverride).mockReturnValue(
+        new Promise((res) => {
+          resolveAction = res;
+        })
+      );
 
       const { result } = renderHook(() =>
         useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
@@ -592,24 +594,23 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
 
       expect(result.current.capPhase).toBeNull(); // starts null
 
+      act(() => {
+        void result.current.handleCapChange(2);
+      });
+      await waitFor(() => expect(result.current.capPhase).toBe("clearing"));
+
       await act(async () => {
-        await result.current.handleCapChange(2);
+        resolveAction({ success: true, autoIsOn: true, clearedCount: 1 });
       });
 
-      // Both actions called in order
-      const clearOrder = vi.mocked(setCapAndClearDrafts).mock.invocationCallOrder[0];
-      const engineOrder = vi.mocked(runEngineForSession).mock.invocationCallOrder[0];
-      expect(clearOrder).toBeLessThan(engineOrder);
-
-      // Ends null after completion
       expect(result.current.capPhase).toBeNull();
       expect(result.current.isDashboardLocked).toBe(false);
     });
   });
 
-  describe("OD-16: setCapAndClearDrafts called with correct arguments", () => {
-    it("passes sessionId and cap=2 to setCapAndClearDrafts", async () => {
-      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+  describe("OD-16: applyDraftCapOverride called with correct arguments", () => {
+    it("passes sessionId, cap and a UUID opId", async () => {
+      vi.mocked(applyDraftCapOverride).mockResolvedValue({
         success: true,
         autoIsOn: false,
         clearedCount: 0,
@@ -621,11 +622,15 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
         await result.current.handleCapChange(2);
       });
 
-      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 2);
+      expect(applyDraftCapOverride).toHaveBeenCalledWith(
+        SESSION_ID,
+        2,
+        expect.stringMatching(UUID_RE)
+      );
     });
 
-    it("passes cap=4 correctly", async () => {
-      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+    it("mints a FRESH opId per operation", async () => {
+      vi.mocked(applyDraftCapOverride).mockResolvedValue({
         success: true,
         autoIsOn: false,
         clearedCount: 0,
@@ -636,14 +641,64 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
       await act(async () => {
         await result.current.handleCapChange(4);
       });
+      await act(async () => {
+        await result.current.handleCapChange(5);
+      });
 
-      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, 4);
+      const calls = vi.mocked(applyDraftCapOverride).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0][1]).toBe(4);
+      expect(calls[1][1]).toBe(5);
+      expect(calls[0][2]).not.toBe(calls[1][2]);
+    });
+
+    it("OD-16b: still mints a valid UUID when crypto.randomUUID is unavailable", async () => {
+      // randomUUID is secure-context-only. Over plain http — a phone hitting a
+      // dev box at http://192.168.x.x:3000 — it is undefined, and calling it
+      // threw on the FIRST line of handleCapChange, before any setState, with
+      // the popover's `void onChange(cap)` swallowing the rejection: the chip
+      // did nothing at all. Exactly the silent no-op class this change set
+      // exists to delete, so the fallback is pinned here. The server validates
+      // the id with isValidUUID, hence UUID_RE and not "some random string".
+      // Shadow with an own property rather than `delete crypto.randomUUID`:
+      // randomUUID lives on Crypto.prototype, so deleting it off the instance
+      // silently succeeds and changes nothing — the test would pass vacuously.
+      Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+      try {
+        // Inside the try: a failed shadow must still be unwound, or every later
+        // test in this file mints ids against an undefined randomUUID.
+        expect(crypto.randomUUID).toBeUndefined(); // the shadow actually took
+
+        vi.mocked(applyDraftCapOverride).mockResolvedValue({
+          success: true,
+          autoIsOn: false,
+          clearedCount: 0,
+        });
+
+        const { result } = renderHook(() => useOrganizerDashboard(makeParams()));
+
+        await act(async () => {
+          await result.current.handleCapChange(3);
+        });
+
+        expect(applyDraftCapOverride).toHaveBeenCalledWith(
+          SESSION_ID,
+          3,
+          expect.stringMatching(UUID_RE)
+        );
+        expect(toast.error).not.toHaveBeenCalled();
+      } finally {
+        // Drop the shadow so the prototype's real implementation is visible
+        // again — every later test in this file mints ids through it.
+        delete (crypto as { randomUUID?: unknown }).randomUUID;
+      }
+      expect(typeof crypto.randomUUID).toBe("function"); // restored
     });
   });
 
-  describe("OD-17: resetting to Dynamic (null) calls setCapAndClearDrafts with null", () => {
-    it("passes null to setCapAndClearDrafts when organizer resets to Dynamic", async () => {
-      vi.mocked(setCapAndClearDrafts).mockResolvedValue({
+  describe("OD-17: resetting to Dynamic (null) passes cap = null", () => {
+    it("passes null when the organizer resets to Dynamic", async () => {
+      vi.mocked(applyDraftCapOverride).mockResolvedValue({
         success: true,
         autoIsOn: false,
         clearedCount: 0,
@@ -655,7 +710,144 @@ describe("OD-11 through OD-17: handleCapChange — draft cap override", () => {
         await result.current.handleCapChange(null);
       });
 
-      expect(setCapAndClearDrafts).toHaveBeenCalledWith(SESSION_ID, null);
+      expect(applyDraftCapOverride).toHaveBeenCalledWith(
+        SESSION_ID,
+        null,
+        expect.stringMatching(UUID_RE)
+      );
+    });
+  });
+
+  describe("OD-18: our own echo never re-locks us", () => {
+    it("stays unlocked when a signal carrying OUR opId arrives after completion", async () => {
+      vi.mocked(applyDraftCapOverride).mockResolvedValue({
+        success: true,
+        autoIsOn: true,
+        clearedCount: 1,
+      });
+
+      let capSignal: CapPhaseSignal = {
+        phase: null,
+        opId: null,
+        actorName: null,
+      };
+      const { result, rerender } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true, capSignal }))
+      );
+
+      await act(async () => {
+        await result.current.handleCapChange(2);
+      });
+      expect(result.current.isDashboardLocked).toBe(false);
+
+      // A REST broadcast has no sending socket, so the initiator receives its
+      // own "clearing" too — often AFTER the action already resolved.
+      const myOpId = vi.mocked(applyDraftCapOverride).mock.calls[0][2];
+      capSignal = { phase: "clearing", opId: myOpId, actorName: "Me" };
+      rerender();
+
+      expect(result.current.capPhase).toBeNull();
+      expect(result.current.isDashboardLocked).toBe(false);
+      expect(result.current.capPhaseActorName).toBeNull();
+    });
+  });
+
+  describe("OD-19: a co-organizer's signal locks this dashboard", () => {
+    it("locks on a foreign opId and exposes the actor name", () => {
+      const capSignal: CapPhaseSignal = {
+        phase: "generating",
+        opId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        actorName: "Jake L",
+      };
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true, capSignal }))
+      );
+
+      expect(result.current.capPhase).toBe("generating");
+      expect(result.current.isDashboardLocked).toBe(true);
+      expect(result.current.capPhaseActorName).toBe("Jake L");
+    });
+
+    it("attributes nothing while WE hold the optimistic lock", async () => {
+      let resolveAction!: (v: ApplyDraftCapResult) => void;
+      vi.mocked(applyDraftCapOverride).mockReturnValue(
+        new Promise((res) => {
+          resolveAction = res;
+        })
+      );
+
+      const capSignal: CapPhaseSignal = {
+        phase: "clearing",
+        opId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        actorName: "Jake L",
+      };
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true, capSignal }))
+      );
+
+      act(() => {
+        void result.current.handleCapChange(2);
+      });
+      await waitFor(() => expect(result.current.capPhase).toBe("clearing"));
+
+      // Local lock wins: no "Started by …" line on the initiator's overlay.
+      expect(result.current.capPhaseActorName).toBeNull();
+
+      await act(async () => {
+        resolveAction({ success: true, autoIsOn: true, clearedCount: 0 });
+      });
+    });
+  });
+
+  describe("OD-20: transport failure", () => {
+    it("unlocks and toasts when the action itself throws", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.mocked(applyDraftCapOverride).mockRejectedValue(new Error("network down"));
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
+      );
+
+      await act(async () => {
+        await result.current.handleCapChange(2);
+      });
+
+      expect(result.current.isDashboardLocked).toBe(false);
+      expect(toast.error).toHaveBeenCalledWith("Couldn't reach the server. Please try again.");
+      errSpy.mockRestore();
+    });
+  });
+
+  describe("OD-21: watchdog", () => {
+    it("force-unlocks when the action never settles", async () => {
+      vi.useFakeTimers();
+      try {
+        // A promise that never resolves — offline tab, sleeping device.
+        vi.mocked(applyDraftCapOverride).mockReturnValue(new Promise(() => {}));
+
+        const { result } = renderHook(() =>
+          useOrganizerDashboard(makeParams({ liveAutoMatchmaking: true }))
+        );
+
+        act(() => {
+          void result.current.handleCapChange(2);
+        });
+        expect(result.current.isDashboardLocked).toBe(true);
+
+        // CAP_LOCK_WATCHDOG_MS = 60s.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(60_000);
+        });
+
+        expect(result.current.isDashboardLocked).toBe(false);
+        expect(toast.error).toHaveBeenCalledWith(
+          "Draft cap change timed out. Refresh to confirm the result."
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
