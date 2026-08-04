@@ -5,7 +5,7 @@
 
 ---
 
-## 🔒 `draft_cap_phase` MOVED SERVER-SIDE — co-organizer lockout now actually works — 2026-08-04, **UNCOMMITTED on `main`**
+## 🔒 `draft_cap_phase` MOVED SERVER-SIDE — co-organizer lockout now actually works — 2026-08-04, **SHIPPED — `main` `e8e76bd` + `ddd080c`, prod-verified**
 
 **Status: working tree only. NOTHING committed, pushed or deployed.** Sits on top of the `broadcast.ts`
 topic-prefix fix in the entry below — same tree, same session. Full write-up: **APP_MANIFEST §3.28**.
@@ -89,14 +89,27 @@ five items are all fixed. **Worth keeping from it:**
 - `vitest.config.ts` aliases `server-only` to a no-op stub, so the guard bites in `next build` **only** —
   never cite it as the reason a unit assertion holds.
 
-**Not done:** [R-5] has NOT been run against production (the E2E suite hits the live deployment; needs the
-snapshot-first care). Nothing committed. **When it does deploy, verify on the way out, not after:** the
-`realtime:` prefix removal rides in this same tree and governs `session_closed` → Wrapped for *every* player,
-not just the draft-cap path — so run [R-5] or a manual two-tab session-close check as part of the deploy.
+**✅ SHIPPED + PROD-VERIFIED 2026-08-04.** PR #51 → `main` `e8e76bd`, Vercel prod deploy
+`dpl_Bnqy3QVqKnEE8XCJZNHv3iftcgTi` READY; follow-up PR #52 → `ddd080c`. **[R-5] passes against
+production**, which also closes §3.27's delivery proof (the `realtime:` prefix removal rode in the same
+tree and governs `session_closed` → Wrapped for *every* player). Whole resilience spec: 5 passed / 1
+skipped. Production data proven untouched — a 22-table content snapshot taken *before* the merge, diffed
+after: zero row-count change, three sandbox-scoped field drifts only (sandbox session cap override since
+reset, bot profile `updated_at`, `leaderboard_refresh_state` singleton); 19 tables byte-identical.
+
+**The lesson worth keeping — a mid-cycle frame-buffer snapshot looks exactly like a broken server.**
+[R-5]'s first prod run failed on `toContain('"done"')`. It was the test racing the engine: `clearing` is
+the first of three phases, so `expect.poll(() => capFrames.length).toBeGreaterThan(0)` resolves on it and
+the `capFrames.join()` below was taken before the cycle finished. **Never snapshot a growing buffer on a
+"something arrived" poll — poll on the terminal condition itself.** The discriminator that settles this
+class of question: `done` is emitted from a `finally` and `emit` cannot reject, so a real post-`clearing`
+stall yields `clearing` + `done` **without** `generating`. A buffer holding *only* `clearing` has no
+explanation but an early snapshot. Also tightened 25s → 15s: an over-wide window passes while accepting a
+lockout long enough for a co-organizer to notice, and that overlay has no dismiss control.
 
 ---
 
-## 📡 PROD VERIFICATION OF PRs #45/#46/#48 → FOUND A DEAD BROADCAST CHANNEL — 2026-08-04, **UNCOMMITTED on `main`**
+## 📡 PROD VERIFICATION OF PRs #45/#46/#48 → FOUND A DEAD BROADCAST CHANNEL — 2026-08-04, **SHIPPED — `main` `e8e76bd` + `ddd080c`, prod-verified**
 
 **Status: all work is in the working tree. NOTHING has been committed, pushed, or deployed.** The production
 fix below is therefore NOT live — `R-1`/`R-2` stay red against the deployed app until `src/lib/broadcast.ts`
