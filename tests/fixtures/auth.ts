@@ -69,8 +69,8 @@ async function findUserIdByEmail(
     if (data.users.length < perPage) break; // last page reached, exhausted
   }
   throw new Error(
-    `[seed] findUserIdByEmail(${label}): createUser reported "already registered" but no ` +
-      `matching user was found across up to ${perPage * 20} accounts`
+    `[seed] findUserIdByEmail(${label}): no account matching ${email} was found across up to ` +
+      `${perPage * 20} accounts. If this is the organizer bot, run: npm run test:setup`
   );
 }
 
@@ -367,12 +367,8 @@ export async function loadOrganizerContext(context: BrowserContext): Promise<voi
 // the test needs to assert DB rows owned by the organizer).
 export async function getOrganizerUserId(): Promise<string> {
   const db = getAdminClient();
-  const { data: existing } = await db.auth.admin.listUsers();
-  const found = existing?.users?.find((u) => u.email === ORGANIZER_EMAIL);
-
-  if (!found) {
-    throw new Error("[auth] Organizer bot not found. Run ensureOrganizerAccount() first.");
-  }
-
-  return found.id;
+  // Must paginate: listUsers() defaults to a single 50-user page, and the live
+  // project is well past that, so the bot (created once, long ago) is never on
+  // it. This is the same trap findUserIdByEmail was written for.
+  return findUserIdByEmail(db, ORGANIZER_EMAIL, "organizer bot");
 }

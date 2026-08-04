@@ -63,6 +63,11 @@ for (const key of requiredEnv) {
 export default defineConfig({
   testDir: "./tests/e2e",
 
+  // Last-resort sandbox sweep. Per-spec afterAll hooks are skipped on Ctrl-C,
+  // a hard test timeout, or a crash — which would strand scenario I's 50 bot
+  // accounts in the production profiles table. See tests/helpers/global-teardown.ts.
+  globalTeardown: "./tests/helpers/global-teardown.ts",
+
   // ── Execution ─────────────────────────────────────────────
   // Serial: all specs share one sandbox session — parallel runs
   // would corrupt each other's state.
@@ -73,10 +78,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
 
   // ── Reporters ─────────────────────────────────────────────
-  reporter: [
-    ["list"],
-    ["html", { outputFolder: "playwright-report", open: "never" }],
-  ],
+  reporter: [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
 
   // ── Global settings ────────────────────────────────────────
   use: {

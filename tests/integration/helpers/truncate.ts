@@ -143,6 +143,13 @@ async function truncateViaDeletes(client: ReturnType<typeof serviceClient>): Pro
     client.from("player_partnerships").delete().neq("player_id", ZERO_UUID),
     "player_partnerships"
   );
+  // An independently required delete, not an ordering constraint.
+  // match_events.match_id, .session_id and the self-FK .reverses_event_id are all
+  // ON DELETE SET NULL, so no cascade ever removes these rows — deleting matches
+  // merely nulls the pointer and strands the audit row. Without this they
+  // accumulate across every test file in a run. Same defect that leaked 171 rows
+  // into production via the E2E teardown path (APP_MANIFEST §3.27).
+  await wipe(client.from("match_events").delete().neq("id", ZERO_UUID), "match_events");
   await wipe(client.from("match_players").delete().neq("id", ZERO_UUID), "match_players");
   await wipe(client.from("match_games").delete().neq("id", ZERO_UUID), "match_games");
   await wipe(client.from("matches").delete().neq("id", ZERO_UUID), "matches");

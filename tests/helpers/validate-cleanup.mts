@@ -64,6 +64,12 @@ async function run() {
     db.from("queue_entries").select("id", { count: "exact", head: true }).eq("session_id", sessionId),
     db.from("courts").select("id", { count: "exact", head: true }).eq("session_id", sessionId),
     db.from("session_wrapped_stats").select("id", { count: "exact", head: true }).eq("session_id", sessionId),
+    // match_events must be counted by session_id, NOT via the matches above.
+    // match_events.match_id is ON DELETE SET NULL, so deleting a match leaves the
+    // audit row behind with a null match_id — invisible to a matches-based check.
+    // That is exactly how 171 sandbox rows accumulated unnoticed between
+    // 2026-07-02 and 2026-08-03 while this validator kept reporting "fully clean".
+    db.from("match_events").select("id", { count: "exact", head: true }).eq("session_id", sessionId),
     // Exclude E2E_OrganizerBot — it's the persistent bot account reused across all
     // test runs and is intentionally NOT deleted between sessions.
     db.from("profiles")
@@ -72,7 +78,7 @@ async function run() {
       .neq("display_name", "E2E_OrganizerBot"),
   ]);
 
-  const [matches, queue, courts, wrapped, e2eBots] = checks.map(r => r.count ?? 0);
+  const [matches, queue, courts, wrapped, matchEvents, e2eBots] = checks.map(r => r.count ?? 0);
 
   // ── Session state checks ──────────────────────────────────────
   const sessionStateOk =
@@ -92,6 +98,7 @@ async function run() {
   console.log(row("Queue entries",   queue));
   console.log(row("Courts",          courts));
   console.log(row("Wrapped stats",   wrapped));
+  console.log(row("Match events",    matchEvents));
   console.log(row("E2E bot profiles",e2eBots));
   console.log();
 
@@ -109,6 +116,7 @@ async function run() {
     queue   === 0 &&
     courts  === 0 &&
     wrapped === 0 &&
+    matchEvents === 0 &&
     e2eBots === 0 &&
     sessionStateOk;
 
