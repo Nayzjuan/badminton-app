@@ -100,7 +100,7 @@ export function OrganizerDashboard({
     updateTimeLimit,
     capSaturation,
     dismissCapSaturation,
-    externalCapPhase,
+    capSignal,
   } = useOrganizerData(session.id, session, profile.id);
 
   const {
@@ -140,6 +140,7 @@ export function OrganizerDashboard({
     togglingAutoPublish,
     handleToggleAutoPublish,
     capPhase,
+    capPhaseActorName,
     isDashboardLocked,
     handleCapChange,
     joinQueue,
@@ -155,7 +156,7 @@ export function OrganizerDashboard({
     // Publish All banner handles the prompt there.
     draftCount: draftMatches.length,
     handleCancelSwap,
-    externalCapPhase,
+    capSignal,
   });
 
   // ── New-draft notification ────────────────────────────────
@@ -842,27 +843,41 @@ export function OrganizerDashboard({
       {/* ── Dashboard lockout overlay ─────────────────────────────
           Shown during a draft-cap reset so no organizer (local or
           co-organizer) can interact with the dashboard mid-flight.
+          There is no dismiss control: the overlay clears when the
+          terminal "done" broadcast arrives, or when the co-organizer's
+          lease expires (useOrganizerSession's TTL self-unlock).
       ──────────────────────────────────────────────────────── */}
       {isDashboardLocked && (
         <div
+          data-testid="cap-lockout-overlay"
+          data-cap-phase={capPhase}
           className="fixed inset-0 z-[200] flex items-center justify-center"
           style={{ background: "oklch(0.07 0.012 245 / 0.60)", backdropFilter: "blur(2px)" }}
           aria-live="polite"
           aria-label={capPhase === "clearing" ? "Clearing drafts…" : "Generating new drafts…"}
         >
           <div
-            className="flex items-center gap-3 bg-cc-bg-2 border border-cc-border-hi
-                       px-5 py-3 font-command text-[10px] uppercase tracking-[0.14em] text-cc-t1"
+            className="flex flex-col items-center gap-1.5 bg-cc-bg-2 border border-cc-border-hi
+                       px-5 py-3"
             style={{
               clipPath:
                 "polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px))",
             }}
           >
-            <span
-              className="h-[10px] w-[10px] shrink-0 rounded-full border-[1.5px]
-                         border-current border-t-transparent animate-spin"
-            />
-            {capPhase === "clearing" ? "Clearing drafts…" : "Generating new drafts…"}
+            <div className="flex items-center gap-3 font-command text-[10px] uppercase tracking-[0.14em] text-cc-t1">
+              <span
+                className="h-[10px] w-[10px] shrink-0 rounded-full border-[1.5px]
+                           border-current border-t-transparent animate-spin"
+              />
+              {capPhase === "clearing" ? "Clearing drafts…" : "Generating new drafts…"}
+            </div>
+            {/* Attribution — only set when a CO-ORGANIZER started this, so the
+                lock never looks like it came from nowhere. */}
+            {capPhaseActorName && (
+              <p data-testid="cap-lockout-actor" className="text-[10px] text-cc-t3">
+                Started by {capPhaseActorName}
+              </p>
+            )}
           </div>
         </div>
       )}

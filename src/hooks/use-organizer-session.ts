@@ -47,6 +47,45 @@ const CO_ORGANIZER_INTERVENTION_COPY: Record<
 // courts(1) + queue_entries(1) + matches(1) + match_players(1) + profiles(1) = 5
 const REALTIME_CHANNEL_COUNT = 5;
 
+// ── Draft-cap lockout lease ───────────────────────────────────
+// The lockout is a LEASE, not a latch: 'done' releases it early, and the lease
+// releases it no matter what. Without this, a dropped 'done' — a Realtime 5xx,
+// a WebSocket drop, a serverless timeout, a CHANNEL_ERROR on this private
+// channel — leaves a `fixed inset-0 z-[200]` overlay with no dismiss control
+// and no Esc handler, i.e. a dashboard bricked until reload. Neither the 15s
+// poll nor the reconnect refresh touches this state. The server supplies ttlMs;
+// these bounds clamp a garbled or hostile value.
+const CAP_PHASE_TTL_DEFAULT_MS = 30_000;
+const CAP_PHASE_TTL_MIN_MS = 5_000;
+const CAP_PHASE_TTL_MAX_MS = 120_000;
+
+// Phase ordering, so a duplicate or inverted message cannot walk the lock
+// backwards (e.g. a late 'clearing' after 'generating' already arrived).
+const CAP_PHASE_RANK: Record<"clearing" | "generating" | "done", number> = {
+  clearing: 1,
+  generating: 2,
+  done: 3,
+};
+
+// Ring of recently-finished opIds, so a 'clearing' that arrives AFTER its own
+// 'done' is discarded rather than re-locking the board for a full lease.
+const FINISHED_CAP_OPS_MAX = 16;
+
+// Stand-in id for a payload with no opId (an older server, mid-rolling-deploy).
+// It is deliberately kept OUT of the finished-op ring: every legacy op collapses
+// onto this one string, so remembering it would make the first legacy 'done'
+// discard the 'clearing' of every legacy op that followed — during a rolling
+// deploy, where legacy is the only traffic, exactly one cap reset would ever
+// show the overlay. Out-of-order delivery cannot be detected without a
+// correlation id anyway; the TTL lease is what bounds that case.
+const LEGACY_CAP_OP = "__legacy__";
+
+function rememberFinishedCapOp(ring: string[], id: string): void {
+  if (ring.includes(id)) return;
+  ring.push(id);
+  if (ring.length > FINISHED_CAP_OPS_MAX) ring.shift();
+}
+
 /**
  * Manages the live session record, realtime health tracking, and cap saturation signals.
  *
@@ -58,6 +97,23 @@ const REALTIME_CHANNEL_COUNT = 5;
  */
 /** Phase exposed to the UI. 'done' is broadcast-only and maps to null here. */
 export type CapPhase = "clearing" | "generating" | null;
+
+/**
+ * Draft-cap lockout signal received over Broadcast. `phase: null` = idle.
+ *
+ * Carries the opId so the tab that STARTED the operation can recognise its own
+ * echo (the REST broadcast endpoint has no sending socket, so Realtime fans
+ * every message back to the actor's own tab) and `actorName` so co-organizers
+ * can be told whose reset is holding their board.
+ */
+export type CapPhaseSignal = {
+  phase: CapPhase;
+  /** Correlates to the opId the initiating tab minted. null on a legacy payload. */
+  opId: string | null;
+  actorName: string | null;
+};
+
+const IDLE_CAP_SIGNAL: CapPhaseSignal = { phase: null, opId: null, actorName: null };
 
 export function useOrganizerSession(
   sessionId: string,
@@ -72,13 +128,31 @@ export function useOrganizerSession(
   capSaturation: CapSaturationPayload | null;
   dismissCapSaturation: () => void;
   handleChannelStatus: (channelId: string, connected: boolean) => void;
-  /** Phase of a draft-cap reset driven by a co-organizer or self. */
-  externalCapPhase: CapPhase;
+  /** Draft-cap reset signal driven by a co-organizer or self (see CapPhaseSignal). */
+  capSignal: CapPhaseSignal;
 } {
   const [liveSession, setSession] = useState<Session>(initialSession);
   const [realtimeConnected, setRealtimeConnected] = useState(true);
   const [capSaturation, setCapSaturation] = useState<CapSaturationPayload | null>(null);
-  const [externalCapPhase, setExternalCapPhase] = useState<CapPhase>(null);
+  const [capSignal, setCapSignal] = useState<CapPhaseSignal>(IDLE_CAP_SIGNAL);
+
+  // The op currently holding this client's lock, with the highest phase rank
+  // seen for it. Ref, not state — read inside the broadcast callback, which must
+  // not re-register the channel.
+  //
+  // Deliberately a SINGLE slot, not a map. Two co-organizers changing the cap at
+  // the same instant can interleave: op2's 'clearing' overwrites the slot, then
+  // op2's 'done' unlocks the board while op1 is still generating. If op1 has an
+  // advancing phase left it re-adopts the slot and re-locks; if its only
+  // remaining phase is 'done' the board just stays unlocked through op1's engine
+  // run. Either way the lease bounds the worst case, and
+  // the overlay is advisory (the server is the authority on what the cap is), so
+  // the residue is a flicker rather than a lost edit. A map keyed by opId would
+  // close it, at the cost of a second eviction policy for ops whose 'done' never
+  // arrives — not worth it for a window this narrow.
+  const capOpRef = useRef<{ id: string; rank: number } | null>(null);
+  const finishedCapOpsRef = useRef<string[]>([]);
+  const capLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Tracks which channel IDs have confirmed SUBSCRIBED — Set prevents double-counting.
   const connectedChannelIds = useRef(new Set<string>());
@@ -111,6 +185,20 @@ export function useOrganizerSession(
   const fetchSessionRef = useRef(fetchSession);
   // eslint-disable-next-line react-hooks/refs
   fetchSessionRef.current = fetchSession;
+
+  // Single release path for the draft-cap lockout: cancels the lease timer,
+  // forgets the active op, and returns the signal to idle.
+  const releaseCapLock = useCallback(() => {
+    if (capLockTimerRef.current) {
+      clearTimeout(capLockTimerRef.current);
+      capLockTimerRef.current = null;
+    }
+    capOpRef.current = null;
+    setCapSignal(IDLE_CAP_SIGNAL);
+  }, []);
+  const releaseCapLockRef = useRef(releaseCapLock);
+  // eslint-disable-next-line react-hooks/refs
+  releaseCapLockRef.current = releaseCapLock;
 
   // ── Stable handleChannelStatus callback ───────────────────────
   // Passed to every sub-hook so they can report their channel status.
@@ -206,19 +294,83 @@ export function useOrganizerSession(
         setCapSaturation(payload);
       },
       onDraftCapPhaseChanged: (payload: DraftCapPhasePayload) => {
-        // Sync co-organizer lockout overlay with whoever triggered the cap reset.
-        setExternalCapPhase(payload.phase === "done" ? null : payload.phase);
-        // When 'done', also sync the cap value from the session refresh.
-        if (payload.phase === "done") {
+        const phase = payload?.phase;
+
+        // Closed-union guard. The previous code was `phase === "done" ? null :
+        // phase`, so ANY other wire value — "Done", "clearing ", an object —
+        // locked the board permanently and rendered as "Generating new drafts…".
+        // Never trust a wire string as a state value.
+        if (phase !== "clearing" && phase !== "generating" && phase !== "done") {
+          console.warn("[useOrganizerSession] ignoring unknown draft_cap_phase:", phase);
+          return;
+        }
+
+        // Rolling-deploy compatibility: an older server sends no opId. A single
+        // sentinel reproduces the previous semantics (any phase adopts, any
+        // 'done' clears) without a separate code path.
+        const opId = typeof payload.opId === "string" ? payload.opId : LEGACY_CAP_OP;
+        const isLegacy = opId === LEGACY_CAP_OP;
+
+        if (phase === "done") {
+          if (!isLegacy) rememberFinishedCapOp(finishedCapOpsRef.current, opId);
+          const active = capOpRef.current;
+          // Only OUR op's 'done' releases OUR lock — otherwise organizer A
+          // finishing would unlock organizer B's still-running reset.
+          if (!active || active.id === opId || isLegacy) {
+            releaseCapLockRef.current();
+          }
+          // Refetch regardless of actor: cheaply converges max_auto_drafts_override.
           ++fetchSessionSeq.current;
           fetchSessionRef.current();
+          return;
         }
+
+        // Out-of-order guard: 'done' for this op already arrived. Without this a
+        // late 'clearing' locks a board that only the lease would ever unlock.
+        // Legacy payloads are exempt — see LEGACY_CAP_OP.
+        if (!isLegacy && finishedCapOpsRef.current.includes(opId)) return;
+
+        const active = capOpRef.current;
+        // Same op, same-or-earlier phase → a stale duplicate or an inverted pair.
+        if (active && active.id === opId && CAP_PHASE_RANK[phase] <= active.rank) return;
+
+        capOpRef.current = { id: opId, rank: CAP_PHASE_RANK[phase] };
+        setCapSignal({
+          phase,
+          opId: payload.opId ?? null,
+          actorName: typeof payload.actorName === "string" ? payload.actorName : null,
+        });
+
+        // (Re-)arm the lease on every advancing phase, so a long-but-progressing
+        // operation is never cut short mid-flight.
+        if (capLockTimerRef.current) clearTimeout(capLockTimerRef.current);
+        const ttl = Math.min(
+          Math.max(payload.ttlMs ?? CAP_PHASE_TTL_DEFAULT_MS, CAP_PHASE_TTL_MIN_MS),
+          CAP_PHASE_TTL_MAX_MS
+        );
+        capLockTimerRef.current = setTimeout(() => {
+          console.warn(
+            "[useOrganizerSession] draft-cap lock expired without 'done' — self-unlocking"
+          );
+          if (!isLegacy) rememberFinishedCapOp(finishedCapOpsRef.current, opId);
+          releaseCapLockRef.current();
+          ++fetchSessionSeq.current;
+          fetchSessionRef.current();
+          if (document.visibilityState === "visible") {
+            toast.info("Draft reset is taking longer than expected — controls unlocked.");
+          }
+        }, ttl);
       },
     });
 
     return () => {
       sessionChannelCancelled = true;
       if (sessionChannel) supabase.removeChannel(sessionChannel);
+      // Drop any armed lease so it cannot fire after unmount.
+      if (capLockTimerRef.current) {
+        clearTimeout(capLockTimerRef.current);
+        capLockTimerRef.current = null;
+      }
       unsubBroadcast();
     };
   }, [supabase, sessionId]);
@@ -264,6 +416,6 @@ export function useOrganizerSession(
     capSaturation,
     dismissCapSaturation,
     handleChannelStatus,
-    externalCapPhase,
+    capSignal,
   };
 }

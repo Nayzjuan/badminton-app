@@ -216,18 +216,29 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
   const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
   const page = await context.newPage();
 
+  // Realtime channel failures surface only as console.error from
+  // createStatusHandler, and usePlayerMatch's hold path only as console.warn.
+  const consoleLines: string[] = [];
+  page.on("console", (m) => consoleLines.push(`${m.type()}: ${m.text()}`));
+
   try {
     const organizerUserId = await getOrganizerUserId();
     await seedDraftedState(organizerUserId);
 
     await page.goto(`${BASE_URL}${clubPlay(CLUB_SLUG, SESSION_ID)}`);
 
-    // Confirm drafted state is showing first (exact: true avoids strict-mode
-    // violation with the QueueStatus "Match forming" span). 15s tolerates a
-    // cold Vercel serverless page load on the first navigation of the run.
-    await expect(page.getByText("Match Forming", { exact: true })).toBeVisible({
-      timeout: 15_000,
-    });
+    // Confirm the drafted bridge is showing first.
+    //
+    // Scope to the HEADING role, not bare text. my-status-tab renders the same
+    // "Match Forming" <h2> from two different branches: the drafted/on_deck
+    // bridge, and — since PR #46 — an aria-hidden continuity backdrop that sits
+    // behind the MatchAlert overlay while it slides up (it exists to kill the
+    // blank flash before "Heads Up"). Playwright's role engine skips
+    // aria-hidden subtrees, so getByRole matches the bridge and only the
+    // bridge; getByText matches both and cannot tell the two states apart.
+    // 15s tolerates a cold Vercel serverless page load on the run's first nav.
+    const draftedHeading = page.getByRole("heading", { name: "Match Forming", exact: true });
+    await expect(draftedHeading).toBeVisible({ timeout: 15_000 });
 
     // Simulate organizer publishing: flip matches.is_published AND
     // queue_entries.status in the same order that publishMatchAction does.
@@ -249,30 +260,58 @@ test("J-B: transitioning drafted → on_deck via Realtime replaces Match Forming
       .eq("session_id", SESSION_ID)
       .eq("player_id", organizerUserId);
 
-    // "Match Forming" card should disappear once the drafted→on_deck
+    // The on-deck overlay should take over once the drafted→on_deck
     // queue_entries UPDATE arrives over Realtime. Delivery is prompt now that
     // the browser client sets the Realtime JWT *before* joining channels (see
     // whenRealtimeAuthReady in src/utils/supabase/client.ts) — previously the
     // channel joined as `anon` and club-scoped RLS silently dropped the event.
     // Timeout stays generous to tolerate preview cold-start under full-suite
     // load, matching the file's 20s convention for realtime-dependent asserts.
-    await expect(page.getByText("Match Forming", { exact: true })).not.toBeVisible({
-      timeout: 20_000,
-    });
-
+    //
     // MatchAlert renders the on-deck overlay as a labelled role="region"
     // (the a11y pass 8c33e9a replaced role="alert", which re-announced the
     // whole roster on every child update; a separate sr-only role="status"
     // node now announces the state once). Assert the region AND its heading
     // so the test fails if the overlay mounts empty rather than passing
     // silently. Name-scoping also keeps this disjoint from sonner toasts.
-    await expect(page.getByRole("region", { name: /on deck/i })).toBeVisible({
-      timeout: 20_000,
-    });
+    //
+    // This assertion has been seen to flake. The overlay depends on TWO
+    // independent realtime deliveries (the queue_entries status flip and the
+    // matches is_published flip), and the drafted bridge renders identically
+    // for `drafted` and `on_deck` — so the failure screenshot alone cannot say
+    // which one went missing. Report the DB state and the client's own hold
+    // warnings on failure so a repeat is diagnosable from the artifact.
+    try {
+      await expect(page.getByRole("region", { name: /on deck/i })).toBeVisible({
+        timeout: 20_000,
+      });
+    } catch (err) {
+      const { data: m } = await db
+        .from("matches")
+        .select("id, status, is_published")
+        .eq("session_id", SESSION_ID);
+      const { data: q } = await db
+        .from("queue_entries")
+        .select("player_id, status")
+        .eq("session_id", SESSION_ID);
+      throw new Error(
+        `On-deck overlay never mounted.\n` +
+          `matches: ${JSON.stringify(m)}\n` +
+          `queue_entries: ${JSON.stringify(q)}\n` +
+          `console:\n${consoleLines.join("\n")}\n` +
+          `Original: ${(err as Error).message}`
+      );
+    }
     // "Heads Up" is the heading for a pending (on-deck) match in MatchAlert
     await expect(page.getByRole("heading", { name: /heads up/i })).toBeVisible({
       timeout: 5_000,
     });
+
+    // …and the drafted bridge must be gone — the player has genuinely moved on
+    // to the next stage rather than having the overlay stack on top of it.
+    // Role-scoped so PR #46's aria-hidden backdrop (which reuses this exact
+    // heading text) cannot keep this assertion red while the UI is correct.
+    await expect(draftedHeading).toHaveCount(0);
   } finally {
     await context.close();
   }

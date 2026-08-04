@@ -110,6 +110,27 @@ async function run() {
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId);
 
+  // Match events — counted by session_id, not through matchIds. match_events.match_id
+  // is ON DELETE SET NULL, so rows orphaned by an earlier run have a null match_id and
+  // would be invisible to a matches-based count. Without this the "already clean"
+  // short-circuit below would return before deleting a session holding nothing but
+  // orphaned audit rows — the exact state that let 171 of them pile up.
+  const { count: matchEventCount } = await db
+    .from("match_events")
+    .select("id", { count: "exact", head: true })
+    .eq("session_id", sessionId);
+
+  // Bot profiles — fetched here rather than at the delete step so the preview
+  // and the "already clean" check below can see them. Excludes E2E_OrganizerBot,
+  // the permanent account reused by every spec: deleting it invalidates the
+  // saved storage state and breaks every sign-in until `npm run test:setup`
+  // re-creates it. Mirrors the guard in teardown.ts step 8.
+  const { data: botProfiles } = await db
+    .from("profiles")
+    .select("id, display_name")
+    .like("display_name", "E2E_%")
+    .neq("display_name", "E2E_OrganizerBot");
+
   // ── Print what will be deleted ────────────────────────────────
 
   // Courts
@@ -182,6 +203,17 @@ async function run() {
     console.log();
   }
 
+  if ((matchEventCount ?? 0) > 0) {
+    console.log(bold(`Match events:   ${matchEventCount}`));
+    console.log();
+  }
+
+  if ((botProfiles ?? []).length > 0) {
+    console.log(bold(`Bot profiles (${botProfiles!.length}):`));
+    console.log(`  ${amber("▸")} ${botProfiles!.map((p) => p.display_name).join(", ")}`);
+    console.log();
+  }
+
   // ── Confirmation (unless --yes flag) ─────────────────────────
   const autoConfirm = process.argv.includes("--yes");
   if (!autoConfirm) {
@@ -190,7 +222,9 @@ async function run() {
       (matches?.length ?? 0) +
       (matchPlayers?.length ?? 0) +
       (queueEntries?.length ?? 0) +
-      (wrappedCount ?? 0);
+      (wrappedCount ?? 0) +
+      (matchEventCount ?? 0) +
+      (botProfiles?.length ?? 0);
 
     if (totalRows === 0) {
       console.log(green("✓  Session already clean — nothing to delete.\n"));
@@ -228,6 +262,12 @@ async function run() {
   // wrapped stats
   await db.from("session_wrapped_stats").delete().eq("session_id", sessionId);
 
+  // match_events — deleted unconditionally, NOT inside the matchIds branch.
+  // match_events.match_id is ON DELETE SET NULL, so a previous run that
+  // deleted the matches left these rows behind with a null match_id; they are
+  // still reachable by session_id and would survive forever otherwise.
+  await db.from("match_events").delete().eq("session_id", sessionId);
+
   // match_players → matches
   if (matchIds.length > 0) {
     await db.from("match_players").delete().in("match_id", matchIds);
@@ -240,12 +280,8 @@ async function run() {
   // courts
   await db.from("courts").delete().eq("session_id", sessionId);
 
-  // bot users (E2E_ prefix)
-  const { data: botProfiles } = await db
-    .from("profiles")
-    .select("id, display_name")
-    .like("display_name", "E2E_%");
-
+  // bot users (E2E_ prefix) — the list was gathered in the audit phase above,
+  // behind the same E2E_OrganizerBot exclusion.
   let botUsersDeleted = 0;
   for (const p of botProfiles ?? []) {
     const { error } = await db.auth.admin.deleteUser(p.id);
@@ -273,6 +309,7 @@ async function run() {
   console.log(`  ${bold("Queue entries deleted:")}   ${queueEntries?.length ?? 0}`);
   console.log(`  ${bold("Bot users deleted:")}       ${botUsersDeleted}`);
   console.log(`  ${bold("Wrapped stats deleted:")}   ${wrappedCount ?? 0}`);
+  console.log(`  ${bold("Match events deleted:")}    ${matchEventCount ?? 0}`);
   console.log();
   console.log(dim(`  Session row preserved: ${sessionId}`));
   console.log(dim("  is_active=true  is_auto_matchmaking_on=false  ended_at=null"));

@@ -35,14 +35,66 @@ import {
   closeSession,
   toggleAutoMatchmaking,
   toggleAutoPublish,
-  setCapAndClearDrafts,
+  applyDraftCapOverride,
 } from "@/app/actions/sessions";
-import { runEngineForSession } from "@/app/actions/matchmaking";
-import { broadcastDraftCapPhase } from "@/lib/broadcast";
 import { joinQueueAction } from "@/app/actions/queue";
 import { useClubSlug } from "@/hooks/use-club-slug";
 import { clubBase } from "@/lib/club-paths";
-import type { CapPhase } from "@/hooks/use-organizer-session";
+import type { CapPhase, CapPhaseSignal } from "@/hooks/use-organizer-session";
+
+// ── Constants ────────────────────────────────────────────────
+
+/** Neutral signal used when the parent does not pass one (tests, storybook). */
+const IDLE_CAP_SIGNAL: CapPhaseSignal = { phase: null, opId: null, actorName: null };
+
+/**
+ * Hard ceiling on the initiator's optimistic lock. applyDraftCapOverride
+ * always resolves (server actions never throw past their own try/finally), so
+ * this only fires when the fetch itself never settles — offline tab, sleeping
+ * device, proxy that holds the socket open. Longer than the server-side lease
+ * (CAP_PHASE_LOCK_TTL_MS = 45s) so the authoritative "done" wins the race in
+ * every normal case and this is purely a last-resort escape hatch.
+ */
+const CAP_LOCK_WATCHDOG_MS = 60_000;
+
+/** Bound on remembered self-op ids — only the in-flight one ever matters. */
+const MY_CAP_OPS_MAX = 8;
+
+/**
+ * UUID for the op-correlation id. `crypto.randomUUID` is secure-context-only,
+ * so it is `undefined` over plain http — e.g. a phone hitting a dev box at
+ * http://192.168.x.x:3000. Calling it there would throw on the first line of
+ * handleCapChange, before any setState, and the popover's `void onChange(cap)`
+ * would swallow the rejection: the chip does nothing, silently. That is the
+ * exact failure class this whole change set exists to remove, so fall back to
+ * `getRandomValues` (available in insecure contexts too) and hand-assemble a
+ * v4. The server validates this with isValidUUID, hence the version/variant
+ * nibbles rather than 32 loose hex digits.
+ *
+ * Deliberately TOTAL — it has no throwing path. A helper whose whole purpose is
+ * to stop an exception on the first line of handleCapChange must not be able to
+ * raise one itself, so even "no Web Crypto at all" degrades rather than throws.
+ */
+function newOpId(): string {
+  const c = typeof crypto === "undefined" ? undefined : crypto;
+  if (typeof c?.randomUUID === "function") {
+    return c.randomUUID();
+  }
+  const b = new Uint8Array(16);
+  if (typeof c?.getRandomValues === "function") {
+    c.getRandomValues(b);
+  } else {
+    // Unreachable in practice — getRandomValues is not secure-context-gated and
+    // ships in every browser and Node >= 19. Math.random is acceptable as the
+    // floor because this id is a self-echo correlator, never a secret: the
+    // server only ever validates its shape and echoes it back.
+    for (let i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256);
+  }
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -68,8 +120,13 @@ export interface UseOrganizerDashboardParams {
   draftCount: number;
   /** from useSwapState — wired to the Esc key */
   handleCancelSwap: () => void;
-  /** Phase received from a co-organizer's cap-change broadcast. */
-  externalCapPhase?: CapPhase;
+  /**
+   * Latest `draft_cap_phase` signal observed on the session broadcast channel
+   * (from useOrganizerSession). Because REST-originated broadcasts have no
+   * sending socket, the initiator receives its own echo too — `opId` is what
+   * lets this hook tell "my own operation" apart from a co-organizer's.
+   */
+  capSignal?: CapPhaseSignal;
 }
 
 export interface UseOrganizerDashboardResult {
@@ -109,6 +166,11 @@ export interface UseOrganizerDashboardResult {
 
   // Draft cap override
   capPhase: CapPhase;
+  /**
+   * Display name of the co-organizer who triggered the in-flight cap change,
+   * or null when the phase is self-initiated / the name is unknown.
+   */
+  capPhaseActorName: string | null;
   isDashboardLocked: boolean;
   handleCapChange: (cap: number | null) => Promise<void>;
 
@@ -137,7 +199,7 @@ export function useOrganizerDashboard({
   bottleneckCount,
   draftCount,
   handleCancelSwap,
-  externalCapPhase = null,
+  capSignal = IDLE_CAP_SIGNAL,
 }: UseOrganizerDashboardParams): UseOrganizerDashboardResult {
   const router = useRouter();
   const clubSlug = useClubSlug();
@@ -340,47 +402,71 @@ export function useOrganizerDashboard({
   }, [sessionId]);
 
   // ── Draft cap override ────────────────────────────────────
-  // Local capPhase tracks the phase when THIS organizer triggers the change.
-  // externalCapPhase tracks the phase when a CO-ORGANIZER triggers it.
-  // The effective phase shown in the UI is whichever is non-null.
+  //
+  // The whole clear → regenerate sequence runs inside ONE server action
+  // (applyDraftCapOverride). It is the action — not this hook — that emits
+  // clearing / generating / done on the session broadcast channel, because
+  // the service-role key required to publish only exists on the server.
+  // (Before 2026-08-04 this hook called broadcastDraftCapPhase directly; in
+  // the browser the key is undefined, so every emit silently no-op'd and
+  // co-organizers were never locked out. See APP_MANIFEST §3.28.)
+  //
+  // Two lock sources feed the overlay:
+  //   localCapPhase — optimistic, so the initiator sees the lock on click
+  //                   instead of waiting for a broadcast round-trip.
+  //   capSignal     — the authoritative phase from the channel; this is what
+  //                   locks CO-ORGANIZERS out.
+  //
+  // A REST-published broadcast has no sending socket, so the initiator also
+  // receives its own echo. myOpIds is the self-correlator: opId (not actorId,
+  // which would misclassify the same organizer's second tab as "self") tells
+  // our own echo apart from a co-organizer's. Without it, our own trailing
+  // "clearing" could re-lock this dashboard right after the action resolved.
   const [localCapPhase, setLocalCapPhase] = useState<CapPhase>(null);
-  const capPhase: CapPhase = localCapPhase ?? externalCapPhase;
+  const [myOpIds, setMyOpIds] = useState<string[]>([]);
+
+  const isSelfSignal = capSignal.opId !== null && myOpIds.includes(capSignal.opId);
+  // A co-organizer's phase — the only one allowed to lock us on its own.
+  const remotePhase: CapPhase = isSelfSignal ? null : capSignal.phase;
+  // Our own echo never *creates* a lock; it only advances the label of the
+  // optimistic one we already hold ("Clearing…" → "Generating…").
+  const selfPhase: CapPhase = isSelfSignal ? capSignal.phase : null;
+  const capPhase: CapPhase = localCapPhase === null ? remotePhase : (selfPhase ?? localCapPhase);
+  const capPhaseActorName =
+    localCapPhase === null && remotePhase !== null ? capSignal.actorName : null;
   const isDashboardLocked = capPhase !== null;
+
+  // Last-resort unlock for the initiator: see CAP_LOCK_WATCHDOG_MS.
+  useEffect(() => {
+    if (localCapPhase === null) return;
+    const timer = setTimeout(() => {
+      setLocalCapPhase(null);
+      toast.error("Draft cap change timed out. Refresh to confirm the result.");
+    }, CAP_LOCK_WATCHDOG_MS);
+    return () => clearTimeout(timer);
+  }, [localCapPhase]);
 
   const handleCapChange = useCallback(
     async (cap: number | null) => {
-      // Phase 1: clear drafts + save cap.
+      const opId = newOpId();
+      // Registered BEFORE the await so our own echo can never arrive first.
+      setMyOpIds((prev) => [...prev, opId].slice(-MY_CAP_OPS_MAX));
       setLocalCapPhase("clearing");
-      void broadcastDraftCapPhase(sessionId, "clearing", cap);
-
-      const clearResult = await setCapAndClearDrafts(sessionId, cap);
-
-      if (!clearResult.success) {
-        toast.error(clearResult.error ?? "Failed to reset drafts. Please try again.");
-        setLocalCapPhase(null);
-        void broadcastDraftCapPhase(sessionId, "done", cap);
-        return;
-      }
-
-      // Auto OFF — just saved the preference, no engine run needed.
-      if (!clearResult.autoIsOn) {
-        setLocalCapPhase(null);
-        void broadcastDraftCapPhase(sessionId, "done", cap);
-        return;
-      }
-
-      // Phase 2: regenerate drafts with the new effective cap.
-      setLocalCapPhase("generating");
-      void broadcastDraftCapPhase(sessionId, "generating", cap);
 
       try {
-        await runEngineForSession(sessionId);
+        const result = await applyDraftCapOverride(sessionId, cap, opId);
+        if (!result.success) {
+          toast.error(result.error ?? "Failed to apply the draft cap. Please try again.");
+        }
       } catch (err) {
-        console.error("[handleCapChange] engine threw unexpectedly:", err);
+        // Server actions return errors rather than throwing, so this is a
+        // transport failure (offline, deploy mid-flight, aborted navigation).
+        console.error("[handleCapChange] applyDraftCapOverride threw:", err);
+        toast.error("Couldn't reach the server. Please try again.");
       } finally {
-        // Always unlock — whether engine succeeded, returned an error, or threw.
+        // Always unlock this dashboard. The action's own `finally` emits the
+        // terminal "done" that unlocks everyone else.
         setLocalCapPhase(null);
-        void broadcastDraftCapPhase(sessionId, "done", cap);
       }
     },
     [sessionId]
@@ -438,6 +524,7 @@ export function useOrganizerDashboard({
     togglingAutoPublish,
     handleToggleAutoPublish,
     capPhase,
+    capPhaseActorName,
     isDashboardLocked,
     handleCapChange,
     joinQueue,

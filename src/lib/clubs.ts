@@ -80,7 +80,17 @@ export async function getMyClubs(userId: string): Promise<MyClub[]> {
 
   const [{ data: clubs, error: cErr }, { data: activeSessions, error: sErr }] = await Promise.all([
     db.from("clubs").select("*").in("id", clubIds).eq("is_active", true),
-    db.from("sessions").select("club_id").in("club_id", clubIds).eq("is_active", true),
+    // is_hidden filtered for the same reason the listing pages filter it: this
+    // count is the club card's "N active sessions" badge, and the E2E sandbox
+    // session is permanently active (teardown resets is_active back to true).
+    // Without this the badge counts a session the member can never see, so the
+    // card and the list it links to disagree.
+    db
+      .from("sessions")
+      .select("club_id")
+      .in("club_id", clubIds)
+      .eq("is_active", true)
+      .eq("is_hidden", false),
   ]);
   if (cErr) throw new Error(`getMyClubs clubs: ${cErr.message}`);
   if (sErr) throw new Error(`getMyClubs sessions: ${sErr.message}`);
@@ -226,13 +236,20 @@ export async function getClubMembers(
     );
 }
 
-/** All sessions belonging to a club, newest first. */
+/**
+ * All listable sessions belonging to a club, newest first.
+ *
+ * Hidden sessions (the E2E sandbox) are excluded: both callers are
+ * member-facing pickers, and this runs on the service client, so RLS
+ * would not filter them out.
+ */
 export async function getClubSessions(clubId: string): Promise<Session[]> {
   const db = createServiceClient();
   const { data, error } = await db
     .from("sessions")
     .select("*")
     .eq("club_id", clubId)
+    .eq("is_hidden", false)
     .order("created_at", { ascending: false });
   if (error) throw new Error(`getClubSessions: ${error.message}`);
   return data ?? [];

@@ -4,18 +4,24 @@
 // Tests the full DB-level behaviour of the cap override feature
 // against a real Supabase test DB. These verify:
 //
-// DCINT-1   setCapAndClearDrafts saves max_auto_drafts_override to sessions
-// DCINT-2   setCapAndClearDrafts with null resets to dynamic (NULL in DB)
+// DCINT-1   applyDraftCapOverride saves max_auto_drafts_override to sessions
+// DCINT-2   applyDraftCapOverride with null resets to dynamic (NULL in DB)
 // DCINT-3   clear_all_unpublished_drafts RPC: returns all players to 'waiting'
 // DCINT-4   clear_all_unpublished_drafts RPC: deletes only is_published=false matches
 // DCINT-5   clear_all_unpublished_drafts RPC: published on-deck matches are untouched
-// DCINT-6   clear_all_unpublished_drafts RPC: atomic — no partial state on failure
 // DCINT-7   Engine respects override: generates only min(override, dynamic) drafts
 // DCINT-8   Engine with override > dynamic: uses dynamic cap (not override)
-// DCINT-9   Engine with null override: uses dynamic cap unchanged
-// DCINT-10  setCapAndClearDrafts: non-organizer is rejected (403)
-// DCINT-11  setCapAndClearDrafts: invalid cap (0, 6) returns validation error
-// DCINT-12  Co-organizer receives draft_cap_phase broadcast in correct order
+// DCINT-11  applyDraftCapOverride: invalid cap (0, 6) rejected by the DB constraint
+// DCINT-13  held cross-court drafts are excluded from the bulk clear
+//
+// This list is the file's contents, not a wishlist. DCINT-6/9/10 and the former
+// DCINT-12 ("co-organizer receives draft_cap_phase in order") were listed here
+// for months without ever being written — and DCINT-12 in particular read as
+// proof that the broadcast worked while it was in fact dead on arrival. The
+// phase sequence is now pinned where it can actually be asserted: DCA-8 in
+// tests/unit/draft-cap-action.test.ts (server emits clearing→generating→done)
+// and UCS-* in tests/unit/use-organizer-session-cap-phase.test.ts (client lease
+// and ordering). Anything added back here must come with a test body.
 //
 // Setup: uses tests/integration/setup.ts factory helpers.
 // Every test runs in its own transaction, rolled back on completion.
@@ -144,7 +150,7 @@ async function cleanup(sessionId: string) {
 
 // ── Tests ─────────────────────────────────────────────────────
 
-describe("DCINT-1: setCapAndClearDrafts saves override to sessions", () => {
+describe("DCINT-1: applyDraftCapOverride saves override to sessions", () => {
   it("stores the override value in max_auto_drafts_override column", async () => {
     const sessionId = await createTestSession();
     try {

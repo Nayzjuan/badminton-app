@@ -5,6 +5,156 @@
 
 ---
 
+## 🔒 `draft_cap_phase` MOVED SERVER-SIDE — co-organizer lockout now actually works — 2026-08-04, **UNCOMMITTED on `main`**
+
+**Status: working tree only. NOTHING committed, pushed or deployed.** Sits on top of the `broadcast.ts`
+topic-prefix fix in the entry below — same tree, same session. Full write-up: **APP_MANIFEST §3.28**.
+
+**What was broken.** The three-phase emit lived in a `"use client"` hook. Next never inlines
+`SUPABASE_SERVICE_ROLE_KEY` into a client bundle, so every emit hit `postBroadcast`'s missing-key guard and
+returned **normally** — no error, no request, no lockout, for months. A green unit run was emitting 19
+`[broadcast] Missing SUPABASE_URL…` warnings and nobody read them.
+
+**The fix.**
+
+- `src/lib/broadcast.ts` line 1 is now `import "server-only"` → a repeat of this mistake is a **build failure**,
+  not a silent no-op. `npm run build` is now a real gate on this class of bug.
+- **`"use server"` was deliberately NOT added.** It would publish all six broadcasters as ungated, POST-able
+  Server Action endpoints — forged `session_closed` on any session UUID would kick every player to Wrapped.
+  That is exactly what migration `20260723100000` closed by shipping no INSERT policy on `realtime.messages`.
+  Stated in the module header and pinned by `client-bundle-boundaries.test.ts` CB-3.
+- `setCapAndClearDrafts` → **`applyDraftCapOverride(sessionId, cap, opId)`** in `src/app/actions/sessions.ts`,
+  which owns validate → auth → `UPDATE…RETURNING` → the whole emit sequence. Nothing above the authorization
+  line emits. `done` lives in a `finally`; every emit is awaited (ordering + Vercel post-response freeze).
+- **`opId`, not `actorId`, is the self-correlator** — a REST broadcast has no sending socket, so Realtime fans
+  it back to the initiator too. `actorId` would misclassify the same organizer's second tab as "self".
+- **Lease, not latch:** server sends `ttlMs` 45 s; the receiver clamps to [5 s, 120 s] (default 30 s) and
+  re-arms on each advancing phase, so a lost `done` self-unlocks instead of bricking a dashboard whose overlay
+  has no dismiss control. The initiator also runs a 60 s watchdog.
+- Receiver guards: closed-union phase check (the old `phase === "done" ? null : phase` let ANY other wire
+  string lock the board forever), `CAP_PHASE_RANK` anti-inversion, and a 16-entry finished-op ring — with
+  **legacy (opId-less) payloads exempt from the ring**, or the first legacy `done` would swallow every later
+  legacy `clearing`, which during a rolling deploy is all of them.
+
+**Four source defects the review agents found and I fixed:**
+
+1. the legacy-sentinel ring poisoning above;
+2. `clearAllUnpublishedDrafts` unwrapped inside `applyDraftCapOverride` — a throw there would emit `done`
+   and then **reject**, violating the CLAUDE.md never-throw rule (DCA-9b);
+3. the rest of the pre-flight (`createServerSupabaseClient`, the `Promise.all` gate, the cap `UPDATE`) was
+   likewise unwrapped — same contract hole, one env/transport failure away. All now inside one `try/catch`,
+   which is safe only because that whole span emits nothing (DCA-6b/6c);
+4. **`crypto.randomUUID` is secure-context-only** — over plain http (a phone on `http://192.168.x.x:3000`)
+   it is `undefined`, so the call threw on the *first* line of `handleCapChange`, before any `setState`, and
+   the popover's `void onChange(cap)` swallowed the rejection. The chip just did nothing. That is the same
+   silent-no-op class this whole change set exists to delete. Now `newOpId()` falls back to
+   `getRandomValues` + a hand-assembled v4 (the server validates with `isValidUUID`). Pinned by OD-16b.
+   **Gotcha worth keeping:** `delete crypto.randomUUID` does NOT remove it — it lives on `Crypto.prototype`,
+   so the delete succeeds and changes nothing, and the test passes vacuously. Shadow it with
+   `Object.defineProperty(crypto, "randomUUID", {value: undefined, configurable: true})` instead.
+
+**Accepted, not fixed:** `capOpRef` in `use-organizer-session.ts` is a single slot, so two co-organizers
+changing the cap simultaneously can interleave and unlock one another's overlay early. The next phase of the
+still-running op re-adopts the slot, the lease bounds the worst case, and the overlay is advisory — so it is a
+flicker, not a lost edit. Documented in the code as a decision. Also accepted: OD-11's
+`[broadcast] Missing SUPABASE_URL` tripwire is now **unfalsifiable** (post-fix the hook cannot import
+broadcast at all) — kept as documentation, with a comment saying CB-1 is the guard that actually carries it.
+
+**Tests.** `draft-cap-action.test.ts` (DCA-1…12c), `use-organizer-session-cap-phase.test.ts` (UCS-1…10),
+`use-organizer-dashboard.test.ts` OD-11…21, `client-bundle-boundaries.test.ts` (CB-1…3, static analysis so the
+CLASS is pinned), RPB-7, and **`scenario-r-resilience.spec.ts` [R-5]** — the only test that proves delivery: a
+second organizer context that never clicked anything must receive the frame and render the overlay.
+The old integration header advertised a `DCINT-12` that **did not exist** and read as proof the broadcast
+worked; header corrected. If a test claims to prove delivery, check it exists before trusting it.
+
+**Validation:** `tsc --noEmit` 0 errors · **960 passed / 1 skipped, 55 files** · `npm run build` ✅ (the
+server-only gate) · eslint clean on every changed file. `organizer-dashboard.tsx:190` `set-state-in-effect` is
+**pre-existing** — my +1-line insert above it just renumbered it from 189.
+
+**Review gate — two independent passes, both "Minor issues", every actionable item fixed rather than logged.**
+Pass 1 verified empirically (running the tests' own logic against `git show HEAD:` copies of the pre-fix
+files) that CB-1, CB-2, UCS-1, RPB-2 and [R-5] all fail pre-fix, and noted that DCA-\*/OD-18…21 target APIs
+that did not exist before — new-code coverage, not regression guards. Its three items became fixes 3, 4 and
+the OD-11 note above. Because fix 3 restructured `applyDraftCapOverride`'s control flow *after* sign-off, a
+second pass audited just that delta; it proved the new tests non-vacuous the same way (2 targeted failures
+for DCA-6b/6c, 1 for OD-16b, zero collateral) and confirmed the emit-free invariant by tracing every callee
+above the line — no trigger, no `realtime.send`, `sessions` not among the 5 postgres_changes channels. Its
+five items are all fixed. **Worth keeping from it:**
+
+- **An unconsumed `mockImplementationOnce` survives `vi.clearAllMocks()` and beats a later `mockReturnValue`**
+  (verified in Vitest 4.1.5). So a once-impl is only leak-safe if the code path definitely consumes it —
+  assert that it did (`toHaveBeenCalledTimes(1)`), don't assume.
+- A helper that exists to stop an exception must itself be **total**: `newOpId`'s fallback now degrades
+  instead of throwing, since a `ReferenceError` there would recreate the very silent no-op it prevents.
+- `vitest.config.ts` aliases `server-only` to a no-op stub, so the guard bites in `next build` **only** —
+  never cite it as the reason a unit assertion holds.
+
+**Not done:** [R-5] has NOT been run against production (the E2E suite hits the live deployment; needs the
+snapshot-first care). Nothing committed. **When it does deploy, verify on the way out, not after:** the
+`realtime:` prefix removal rides in this same tree and governs `session_closed` → Wrapped for *every* player,
+not just the draft-cap path — so run [R-5] or a manual two-tab session-close check as part of the deploy.
+
+---
+
+## 📡 PROD VERIFICATION OF PRs #45/#46/#48 → FOUND A DEAD BROADCAST CHANNEL — 2026-08-04, **UNCOMMITTED on `main`**
+
+**Status: all work is in the working tree. NOTHING has been committed, pushed, or deployed.** The production
+fix below is therefore NOT live — `R-1`/`R-2` stay red against the deployed app until `src/lib/broadcast.ts`
+ships. Needs the user's go-ahead to commit.
+
+**What this session set out to do:** run the E2E suite against live production to verify the #45/#46/#48
+resilience fixes, behind a full backup (Phase 0 snapshot: every public table dumped to JSON + row-count and
+content checksums, so an UPDATE to real member data would be detectable, not just a row-count change).
+Phases 0–3 all completed; 102/105 existing specs green; sandbox verified clean afterwards and real-club data
+byte-identical (`auth.users` sha unchanged).
+
+**The find — every private broadcast has been silently discarded since the feature shipped.** `broadcast.ts`
+posted to topic `realtime:session-events:{id}`; clients join `session-events:{id}`. **Proof, because a 202
+proves nothing:** a Node probe against production Realtime with a real authenticated subscriber — prefixed →
+202 / `delivered:false`, unprefixed → 202 / `delivered:true`; then R-1/R-2 fail against the deployed app and
+pass against a local production build whose only diff is `broadcast.ts`. Full write-up: **APP_MANIFEST §3.27**.
+Why it hid for months: the REST endpoint 202s ANY topic; a 15s poll in `use-organizer-session.ts` covered the
+two toggle events; and a prior session misread a local repro and left a standing note *not* to fix it.
+
+**⚠️ `draft_cap_phase` was NOT fixed by this** — second, independent defect: `broadcast.ts` had no
+server-only guard, so the `clearing`/`generating`/`done` calls in `use-organizer-dashboard.ts` (`"use client"`)
+ran in the BROWSER, where `SUPABASE_SERVICE_ROLE_KEY` is undefined (verified in the emitted client chunk: the
+URL is inlined as a literal, the key compiles to a runtime `process.env` read → `undefined`) and
+`postBroadcast` bailed at its missing-key guard. Safe failure direction (unlock delivered, lock not).
+**✅ Now fixed — see the section directly above and APP_MANIFEST §3.28.**
+
+**Second find — E2E runs were leaking rows into a production table.** `match_events.match_id` is
+`ON DELETE SET NULL`, so deleting a match nulls the pointer and preserves the audit row forever. Teardown
+deleted matches but not events: ~36 rows/run, **171 accumulated since 2026-07-02**. Fixed in `teardown.ts`,
+`emergency-cleanup.ts`, `validate-cleanup.mts` and `tests/integration/helpers/truncate.ts` — always scoped by
+`session_id`, never through match ids, because orphans have a null `match_id` and are invisible to a
+matches-based query. That is precisely why a validator reporting "fully clean" never saw the leak. Reclaimed
+927→756 in prod, with the 176 real-session audit rows untouched.
+
+**Also shipped (unrelated, same tree):** `is_hidden` filtering for `getMyClubs`/`getClubSessions`/leaderboard
+page, and two **already-applied** migrations (`20260804000000/0001`) putting an `is_hidden = false` predicate
+inside `v_alltime_leaderboard_mat` so sandbox bots can't strand phantom rows on a real club's all-time board.
+
+**Validation:** `tsc --noEmit` 0 errors · **910 passed / 1 skipped, 52 files** · prod cleanup validator green.
+`eslint` clean **on every changed file**; repo-wide is NOT clean and never was — `npx eslint src tests` reports
+7 pre-existing errors (`organizer-dashboard.tsx`, `share-session-dialog.tsx`, `matchmaking-db.test.ts`) and
+`npm run lint` reports ~520 because `.claude/worktrees/**` and `.agents/skills/**` are gitignored but not
+eslint-ignored. None are ours. Don't read a future "lint is red" as a regression from this work.
+
+**Behaviour change worth knowing:** `emergency-cleanup.ts` now EXCLUDES `E2E_OrganizerBot` from the bot-profile
+delete (it previously deleted it, unlike `teardown.ts`, which always spared it). Deleting that account
+invalidates the saved Playwright storage state and breaks every sign-in until `npm run test:setup` re-creates
+it. The three cleanup helpers now agree.
+
+Three review rounds, each **"Minor issues"**, all items addressed. Round 2 caught the `draft_cap_phase`
+overstatement above; round 3 caught an inaccurate "eslint 0" claim in this very entry.
+
+**Known residual:** `useFlipList` is called above the `if (loading)` early return in `waitlist-tab.tsx`, so
+~60% of runs emit 4×240ms ENTER instead of a 320ms MOVE despite stable row identity. Cosmetic, not a #45/#46/#48
+regression; recorded as a `test.fixme` in `scenario-r-resilience.spec.ts` with the measurement and fix direction.
+
+---
+
 ## ⚖️ MATCHMAKING BALANCE GATE — LOPSIDED TEAMS FIX — 2026-07-30, branch `fix/matchmaking-balanced-teams`
 
 **Incident (07/30 session).** Engine repeatedly generated INT+INT vs BEG+BEG. Root cause was a **priority
@@ -560,12 +710,22 @@ does not. An assertion trips if it ever becomes anon-executable again.
   policies ⇒ deny-all. Applying early is harmless; applying late means every client gets `CHANNEL_ERROR`
   instead of session events. Old tabs holding a public channel stop receiving until reload — **deploy between
   sessions, not during one.**
-- **Smoke-test the `realtime:` topic prefix under `private: true`.** `broadcast.ts` posts to
-  `realtime:session-events:{id}`; the local CLI Realtime image delivers that to *nobody* (only the unprefixed
-  form works), so prod evidently normalises the prefix — it demonstrably delivers these events today. The
-  private path therefore cannot be exercised end-to-end locally. After deploy: two organizer boards on one
-  session → flip auto-matchmaking → confirm the co-organizer's toggle moves; then close the session and
-  confirm a player lands on Wrapped. **Do not "fix" the prefix on a local repro alone.**
+- ~~**Smoke-test the `realtime:` topic prefix under `private: true`.**~~ **RESOLVED 2026-08-04 — the prefix
+  was a real bug, not a local-only artefact.** This entry used to say prod "evidently normalises the prefix"
+  and warned: _"Do not 'fix' the prefix on a local repro alone."_ That conclusion was wrong, and the reasoning
+  behind it is the lesson worth keeping: the local CLI image was right, prod behaves identically, and the
+  Realtime REST API answers **202 for any topic string** — so a wrong topic looks like a successful send while
+  being routed to a channel no client ever joins. It looked like it worked because
+  `use-organizer-session.ts` polls `fetchSession()` every 15s, which quietly covered for the two toggle
+  events; `session_closed`, `cap_saturation` and `organizer_intervention` have no fallback
+  and were simply dead in production. Confirmed by subscribing to production Realtime as an authenticated
+  user: the unprefixed message arrived, the prefixed one never did. `broadcast.ts` now posts the unprefixed
+  topic. **Never conclude a broadcast was delivered from a 202, or from UI that has a polling fallback.**
+  ⚠️ **`draft_cap_phase` is NOT fixed by this and remains broken** for a second, independent reason:
+  `broadcast.ts` has no `"use server"`, so the `clearing`/`generating`/`done` calls in
+  `use-organizer-dashboard.ts` (`"use client"`) execute in the browser, where `SUPABASE_SERVICE_ROLE_KEY`
+  is undefined and `postBroadcast` returns at its missing-key guard. The co-organizer lockout overlay is
+  still non-functional. Fix = route the three-phase emit through a server action; NOT by exposing the key.
 
 **Residual gap (not SQL).** Supabase enforces private channels *per channel*, so a hand-rolled client can
 still open this topic as a **public** channel and join. Marking messages private already denies it any
@@ -3121,7 +3281,8 @@ onPointerDown={(e) => e.stopPropagation()}
 ### 5. Broadcast System
 
 **File:** `src/lib/broadcast.ts` — server-side REST broadcast (no WebSocket from server).
-Topic: `"realtime:session-events:{sessionId}"`. Event types:
+Topic: `"session-events:{sessionId}"` — no `realtime:` prefix; it must equal the client's channel name
+exactly (see §3.27). Event types:
 
 - `organizer_intervention` — `{ type: "on_deck_cleared" | "match_cancelled", affectedPlayerIds }`
 - `session_closed` — redirects all players to `/wrapped/{sessionId}/{playerId}`

@@ -1,3 +1,5 @@
+import "server-only";
+
 // ============================================================
 // Server-side Realtime Broadcast Helpers
 // ============================================================
@@ -9,21 +11,50 @@
 // never propagate to the caller. The underlying DB transaction
 // has already succeeded before these are called.
 //
-// Channel naming:
-//   Server sends to topic: "realtime:session-events:{sessionId}"
+// Channel naming — the topic here must match the client's channel name EXACTLY:
+//   Server sends to topic: "session-events:{sessionId}"
 //   Client subscribes to:  supabase.channel("session-events:{sessionId}")
-//   (The Supabase SDK strips the "realtime:" prefix for the client.)
 //
-// KNOWN DISCREPANCY — the "realtime:" prefix on the server topic is NOT
-// accepted by the Realtime image the Supabase CLI runs locally: a message
-// posted to "realtime:session-events:{id}" is delivered to nobody there, while
-// the same message posted to "session-events:{id}" is delivered normally.
-// It is left as-is because production demonstrably delivers these events (the
-// session_closed → Wrapped redirect and the co-organizer intervention toasts
-// are in daily use), so production's Realtime evidently normalises the prefix.
-// Consequence for testing: broadcast DELIVERY cannot be exercised end-to-end
-// against the local stack without dropping the prefix. Do not "fix" this on
-// the strength of a local repro alone — confirm against production first.
+// Do NOT prefix the topic with "realtime:". The REST API answers 202 for any
+// topic string, so a prefixed topic looks like a successful send while being
+// routed to a channel no client ever joins — every event silently vanishes.
+// This was shipped for months and confirmed against PRODUCTION on 2026-08-04:
+// an authenticated subscriber on "session-events:{id}" received the unprefixed
+// message and never received the prefixed one. It went unnoticed because the
+// two toggle events have a 15s polling fallback in use-organizer-session.ts
+// that made them look delivered; session_closed, cap_saturation and
+// organizer_intervention have no fallback and were simply dead. Covered by
+// [R-1]/[R-2] in tests/e2e/scenario-r-resilience.spec.ts, which assert
+// delivery inside a window too short for the poll to explain.
+//
+// FIXED 2026-08-04 — draft_cap_phase was dead for a SECOND, independent reason.
+// This module used to have no server-side guard, so it was bundled into any
+// client that imported it. use-organizer-dashboard.ts ("use client") called
+// broadcastDraftCapPhase for the "clearing"/"generating"/"done" phases, and in
+// the browser SUPABASE_SERVICE_ROLE_KEY is undefined — the client build compiles
+// it to a runtime process.env read, not an inlined literal (verified in the
+// emitted chunk) — so postBroadcast short-circuited at the guard below and
+// logged "[broadcast] Missing SUPABASE_URL or service role key". Those phases
+// were never sent, and removing the topic prefix did not change that. The
+// co-organizer lockout overlay had therefore never engaged.
+// All three phases are now emitted server-side by applyDraftCapOverride in
+// src/app/actions/sessions.ts, which is the ONLY caller of broadcastDraftCapPhase.
+//
+// `import "server-only"` above is the real guard: it fails the BUILD if this
+// module ever re-enters a client bundle, so the class of bug cannot silently
+// return. The missing-key check in postBroadcast is now defence-in-depth for
+// misconfigured server environments, not the only thing standing between a
+// browser and a dead broadcast.
+//
+// NEVER add "use server" to this module. It would compile — type exports are
+// erased and all six senders are already async — and it would appear to fix the
+// original bug by turning the client import into an RPC. It would also publish
+// six ungated, POST-able Server Action endpoints with no auth check: anyone with
+// an action id could forge session_closed on any session UUID (kicking every
+// player to Wrapped), organizer_intervention, cap_saturation, and unbounded
+// draft_cap_phase locks. That is exactly the forgery capability migration
+// 20260723100000 closed by deliberately shipping NO INSERT policy on
+// realtime.messages. Emits belong behind purpose-built, organizer-gated actions.
 //
 // The channel is PRIVATE (see postBroadcast below and the
 // session_events_broadcast_read policy in migration 20260723100000).
@@ -123,7 +154,7 @@ export interface SessionClosedPayload {
  */
 export async function broadcastSessionClosed(sessionId: string): Promise<void> {
   const payload: SessionClosedPayload = { sessionId };
-  await postBroadcast(`realtime:session-events:${sessionId}`, "session_closed", payload);
+  await postBroadcast(`session-events:${sessionId}`, "session_closed", payload);
 }
 
 // ── auto_matchmaking_toggled ──────────────────────────────
@@ -150,7 +181,7 @@ export async function broadcastAutoMatchmakingToggled(
   isOn: boolean
 ): Promise<void> {
   const payload: AutoMatchmakingToggledPayload = { isOn };
-  await postBroadcast(`realtime:session-events:${sessionId}`, "auto_matchmaking_toggled", payload);
+  await postBroadcast(`session-events:${sessionId}`, "auto_matchmaking_toggled", payload);
 }
 
 // ── auto_publish_toggled ──────────────────────────────────
@@ -170,7 +201,7 @@ export interface AutoPublishToggledPayload {
  */
 export async function broadcastAutoPublishToggled(sessionId: string, isOn: boolean): Promise<void> {
   const payload: AutoPublishToggledPayload = { isOn };
-  await postBroadcast(`realtime:session-events:${sessionId}`, "auto_publish_toggled", payload);
+  await postBroadcast(`session-events:${sessionId}`, "auto_publish_toggled", payload);
 }
 
 // ── cap_saturation ────────────────────────────────────────
@@ -201,7 +232,7 @@ export async function broadcastCapSaturation(
   sessionId: string,
   payload: CapSaturationPayload
 ): Promise<void> {
-  await postBroadcast(`realtime:session-events:${sessionId}`, "cap_saturation", payload);
+  await postBroadcast(`session-events:${sessionId}`, "cap_saturation", payload);
 }
 
 // ── draft_cap_phase ───────────────────────────────────────
@@ -212,26 +243,55 @@ export interface DraftCapPhasePayload {
   phase: DraftCapPhase;
   /** The override cap being applied. null = Dynamic. */
   override: number | null;
+  /**
+   * One id per cap-reset operation, minted by the initiating tab and echoed on
+   * every phase of that operation. It does two jobs:
+   *   1. the initiating TAB recognises its own echo and never lets it drive its
+   *      own lock — the REST broadcast endpoint has no sending socket, so
+   *      Realtime fans every message back to the actor's own tab too;
+   *   2. one organizer's 'done' cannot release another organizer's in-flight
+   *      reset, and a 'clearing' that arrives after its own 'done' is discarded.
+   *
+   * Deliberately NOT actorId: actorId would classify a SECOND TAB of the same
+   * organizer as "self", so that tab would silently skip a lock it should honour.
+   * Optional only for rolling-deploy compatibility with older clients.
+   */
+  opId?: string;
+  /** Organizer who started the reset — drives "{name} is changing the draft cap". */
+  actorId?: string | null;
+  actorName?: string | null;
+  /**
+   * Milliseconds after receipt at which the receiver MUST self-unlock even if no
+   * 'done' ever arrives. The lockout is a LEASE, not a latch — this is the only
+   * reason a dropped 'done' cannot brick a co-organizer's dashboard until reload
+   * (the overlay has no dismiss control, no Esc handler and no polling fallback).
+   */
+  ttlMs?: number;
 }
 
 /**
  * Broadcast the current phase of a draft-cap reset operation to all
  * co-organizers so they can display the lockout overlay in sync.
  *
- * Three phases emitted sequentially by the hook:
- *   'clearing'   — phase 1 started (all organizers lock)
- *   'generating' — phase 2 started (engine running)
- *   'done'       — operation complete (all organizers unlock)
+ * Emitted ONLY by applyDraftCapOverride (src/app/actions/sessions.ts) — never
+ * from a client, and never from a general-purpose "emit any phase" endpoint.
+ * That restriction is the security property: no caller can emit a lock without
+ * also emitting its unlock.
  *
- * 'done' is also emitted on failure so screens never stay locked.
+ *   'clearing'   — drafts are being cleared (all OTHER organizers lock)
+ *   'generating' — the engine is running
+ *   'done'       — operation complete (unlock + session refetch)
+ *
+ * 'done' is emitted from a `finally` so screens never stay locked on failure.
  */
 export async function broadcastDraftCapPhase(
   sessionId: string,
   phase: DraftCapPhase,
-  override: number | null
+  override: number | null,
+  meta: { opId: string; actorId: string | null; actorName: string | null; ttlMs: number }
 ): Promise<void> {
-  const payload: DraftCapPhasePayload = { phase, override };
-  await postBroadcast(`realtime:session-events:${sessionId}`, "draft_cap_phase", payload);
+  const payload: DraftCapPhasePayload = { phase, override, ...meta };
+  await postBroadcast(`session-events:${sessionId}`, "draft_cap_phase", payload);
 }
 
 /**
@@ -260,5 +320,5 @@ export async function broadcastOrganizerIntervention(
     actorName: actor?.name ?? null,
   };
 
-  await postBroadcast(`realtime:session-events:${sessionId}`, "organizer_intervention", payload);
+  await postBroadcast(`session-events:${sessionId}`, "organizer_intervention", payload);
 }

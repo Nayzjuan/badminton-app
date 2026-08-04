@@ -11,7 +11,8 @@
 //      even if TEST_SESSION_ID is accidentally set to one.
 //
 // What is wiped (scoped to TEST_SESSION_ID only):
-//   match_players → matches → queue_entries → courts → bot auth users
+//   match_players → match_events → matches → queue_entries → courts
+//   → bot auth users
 //
 // What is NOT wiped:
 //   The sessions row itself — its UUID is our stable anchor.
@@ -100,6 +101,7 @@ export async function getSandboxClubSlug(): Promise<string> {
 export interface TeardownResult {
   matchesDeleted: number;
   matchPlayersDeleted: number;
+  matchEventsDeleted: number;
   queueEntriesDeleted: number;
   courtsDeleted: number;
   botUsersDeleted: number;
@@ -163,7 +165,30 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     matchPlayersDeleted = count ?? 0;
   }
 
-  // ── Step 4: Delete matches ────────────────────────────────
+  // ── Step 4: Delete match_events ───────────────────────────
+  // Must happen explicitly: match_events.match_id is ON DELETE SET NULL, so
+  // the matches delete below only nulls the pointer and leaves the audit row
+  // in place permanently. That is the right behaviour for real sessions — an
+  // organizer cancelling a match should not erase the record — but it meant
+  // every E2E run deposited rows in a production table that nothing ever
+  // reclaimed. 171 sandbox rows had built up between 2026-07-02 and
+  // 2026-08-03, roughly 36 per full-suite run. Scoped by session_id, which
+  // the sandbox-name guard at the top of this function has already validated.
+  //
+  // session_id is a safe handle here only because teardown never deletes the
+  // sandbox SESSION row (it resets it in place). Were that to change, these
+  // rows would be orphaned a second way — session_id nulled — and would need
+  // session_id_snapshot (NOT NULL) to stay reachable. Keep the session row.
+  const { count: matchEventCount, error: matchEventErr } = await db
+    .from("match_events")
+    .delete({ count: "exact" })
+    .eq("session_id", sessionId);
+
+  if (matchEventErr) {
+    throw new Error(`[teardown] Failed to delete match_events: ${matchEventErr.message}`);
+  }
+
+  // ── Step 5: Delete matches ────────────────────────────────
   const { count: matchCount, error: matchErr } = await db
     .from("matches")
     .delete({ count: "exact" })
@@ -173,7 +198,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     throw new Error(`[teardown] Failed to delete matches: ${matchErr.message}`);
   }
 
-  // ── Step 5: Delete queue_entries ─────────────────────────
+  // ── Step 6: Delete queue_entries ─────────────────────────
   const { count: queueCount, error: queueErr } = await db
     .from("queue_entries")
     .delete({ count: "exact" })
@@ -183,7 +208,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     throw new Error(`[teardown] Failed to delete queue_entries: ${queueErr.message}`);
   }
 
-  // ── Step 6: Delete courts ─────────────────────────────────
+  // ── Step 7: Delete courts ─────────────────────────────────
   const { count: courtCount, error: courtErr } = await db
     .from("courts")
     .delete({ count: "exact" })
@@ -193,7 +218,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     throw new Error(`[teardown] Failed to delete courts: ${courtErr.message}`);
   }
 
-  // ── Step 7: Delete bot auth users (cascades to profiles) ──
+  // ── Step 8: Delete bot auth users (cascades to profiles) ──
   // Bot accounts are identified by display_name prefix "E2E_", excluding
   // the organizer bot ("E2E_OrganizerBot" would otherwise also match this
   // prefix) — the organizer account is permanent and reused across every
@@ -215,7 +240,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     }
   }
 
-  // ── Step 8: Reset the session row to a known-good state ────
+  // ── Step 9: Reset the session row to a known-good state ────
   await db
     .from("sessions")
     .update({
@@ -228,6 +253,7 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
   const result: TeardownResult = {
     matchesDeleted: matchCount ?? 0,
     matchPlayersDeleted,
+    matchEventsDeleted: matchEventCount ?? 0,
     queueEntriesDeleted: queueCount ?? 0,
     courtsDeleted: courtCount ?? 0,
     botUsersDeleted,
@@ -238,7 +264,8 @@ export async function resetSandboxSession(): Promise<TeardownResult> {
     `[teardown] ✓ Reset session ${sessionId}: ` +
       `${result.matchesDeleted} matches, ${result.queueEntriesDeleted} queue entries, ` +
       `${result.courtsDeleted} courts, ${result.botUsersDeleted} bot users, ` +
-      `${result.wrappedStatsDeleted} wrapped stats`
+      `${result.wrappedStatsDeleted} wrapped stats, ` +
+      `${result.matchEventsDeleted} match events`
   );
 
   return result;
@@ -377,19 +404,30 @@ export async function softResetSandboxSession(): Promise<void> {
     await db.from("match_players").delete().in("match_id", matchIds);
   }
 
-  // Step 3: Delete matches
+  // Step 3: Delete match_events.
+  // Not covered by the matches delete below: match_events.match_id is
+  // ON DELETE SET NULL, so dropping a match nulls the pointer and leaves the
+  // audit row behind for good. That is correct for real sessions — an
+  // organizer cancelling a match should not erase the record of it — but it
+  // means every E2E run permanently deposits rows in a production table.
+  // 171 sandbox rows had accumulated this way between 2026-07-02 and
+  // 2026-08-03, roughly 36 per full-suite run. Deleted by session_id, which
+  // the sandbox-name guard above has already validated.
+  await db.from("match_events").delete().eq("session_id", sessionId);
+
+  // Step 4: Delete matches
   await db.from("matches").delete().eq("session_id", sessionId);
 
-  // Step 4: Delete queue_entries
+  // Step 5: Delete queue_entries
   await db.from("queue_entries").delete().eq("session_id", sessionId);
 
-  // Step 5: Delete courts
+  // Step 6: Delete courts
   await db.from("courts").delete().eq("session_id", sessionId);
 
-  // Step 6: Delete session_wrapped_stats
+  // Step 7: Delete session_wrapped_stats
   await db.from("session_wrapped_stats").delete().eq("session_id", sessionId);
 
-  // Step 7: Reset session row to clean state
+  // Step 8: Reset session row to clean state
   await db
     .from("sessions")
     .update({

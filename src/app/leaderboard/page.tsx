@@ -48,6 +48,7 @@ export default async function LobbyLeaderboardPage() {
           .from("sessions")
           .select("id, name, created_at, is_active")
           .in("club_id", clubIds)
+          .eq("is_hidden", false)
           .order("created_at", { ascending: false });
 
   return (
