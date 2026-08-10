@@ -163,7 +163,8 @@ describe("Matchmaking Engine — Suite A", () => {
     ]);
 
     // Seed MAX_PARTNERSHIP_REPEATS completed matches with p1+p2 as same-team partners.
-    // The engine reads fetchPartnershipCounts from completed/in_progress/pending matches.
+    // The engine snapshots completed/in_progress/pending matches per slot and
+    // derives the partnership counts from that.
     for (let i = 0; i < MAX_PARTNERSHIP_REPEATS; i++) {
       await makeCompletedMatch({
         sessionId: session.id,

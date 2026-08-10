@@ -139,7 +139,7 @@ describe("scoreCandidates — fresh-first (games-ahead penalty)", () => {
 });
 
 // ── ED-OPP: opponent-diversity weighting (round-2 lever) ───────
-// buildOverlapMap (DB layer) contributes OVERLAP_WEIGHT_TEAMMATE per same-team
+// deriveOverlapMap (matchmaking-db) contributes OVERLAP_WEIGHT_TEAMMATE per same-team
 // meeting and OVERLAP_WEIGHT_OPPONENT per cross-net meeting; scoreCandidates
 // then multiplies the resulting overlap by the overlap unit. These tests pin
 // the round-2 behaviour at the pure layer using the real constants.

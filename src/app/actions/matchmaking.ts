@@ -29,8 +29,10 @@
 // Module boundaries:
 //   matchmaking-core.ts — pure algorithm (runAlgorithm, scoreAndSortPool,
 //     snakeDraft, scoreCandidates, etc.). Zero DB calls, zero side effects.
-//   matchmaking-db.ts   — DB helpers (fetchActivePool, buildOverlapMap,
-//     fetchPartnershipCounts, fetchRecentRosters, executeMatch).
+//   matchmaking-db.ts   — DB helpers. The engine's read phase is ONE
+//     fetchSessionMatchSnapshot (committed matches + their rosters) plus
+//     fetchActivePool; recent rosters, pair counts and the overlap map are
+//     PURE derivations off that snapshot. executeMatch commits.
 // ============================================================
 
 import { after } from "next/server";
@@ -58,9 +60,10 @@ import {
 } from "@/lib/matchmaking-core";
 import {
   fetchActivePool,
-  fetchRecentRosters,
-  fetchPartnershipCounts,
-  buildOverlapMap,
+  fetchSessionMatchSnapshot,
+  deriveRecentRosters,
+  derivePairCounts,
+  deriveOverlapMap,
   executeMatch,
   fetchPullablePlayers,
   executeHeldMatch,
@@ -463,16 +466,38 @@ async function runEngineInternal(
       }
     }
 
-    // Recent rosters are re-fetched PER SLOT (not once per run) so the
-    // isDiversityViolation check sees sibling drafts committed by earlier
-    // slots of THIS SAME burst. With the old pre-loop snapshot, slot 3 was
-    // blind to the rosters slots 1–2 had just drafted — the one diversity
-    // input that wasn't live within a burst (partnership counts and the
-    // overlap map already re-fetch per slot below).
-    const recentRosters = await fetchRecentRosters(supabase, sessionId);
+    // ── Per-slot data fetch ──────────────────────────────────────
+    // Everything here is re-read PER SLOT, never hoisted out of the loop:
+    // sibling drafts committed by slots 1–2 have to be visible to slot 3's
+    // diversity check, partnership cap and overlap map, or a burst happily
+    // drafts the same pairing three times.
+    //
+    // The snapshot (2 queries) and the pool (1) are independent, so they run
+    // concurrently — the slot's read phase costs 2 round trips, not 3. The
+    // interleave is deterministic for order-sensitive test mocks: `matches`,
+    // then `v_queue_with_wait_time`, then `match_players`.
+    const [snapshotResult, rawPool] = await Promise.all([
+      fetchSessionMatchSnapshot(supabase, sessionId),
+      fetchActivePool(supabase, sessionId),
+    ]);
 
-    // ── Per-slot: fetch pool (changes as players are drafted) ────
-    const rawPool = await fetchActivePool(supabase, sessionId);
+    // Fail CLOSED. Every diversity input the engine has — recent rosters, the
+    // partnership/opponent caps, the overlap map — is derived from this one
+    // snapshot, so without it the algorithm would not degrade gracefully; it
+    // would run with empty history and read every repeat as a fresh pairing,
+    // producing exactly the duplicate rosters the caps exist to prevent.
+    // Stopping the burst leaves the organizer with fewer drafts, which is
+    // recoverable; a batch of confidently-wrong ones is not.
+    if (!snapshotResult.ok) {
+      console.error(
+        `[matchmaking] runEngineInternal: slot ${i + 1}/${slotsAvailable} — ` +
+          `stopping, match snapshot unavailable (${snapshotResult.reason})`
+      );
+      break;
+    }
+    const snapshot = snapshotResult.snapshot;
+
+    const recentRosters = deriveRecentRosters(snapshot);
     const pool = scoreAndSortPool(rawPool);
 
     if (pool.length < PLAYERS_PER_MATCH) {
@@ -485,11 +510,11 @@ async function runEngineInternal(
       break;
     }
 
-    // partnershipCounts + opponentCounts are per-slot: new drafts from previous
-    // iterations add pairs that must be counted before the next slot's cap check.
-    const { partnershipCounts, opponentCounts } = await fetchPartnershipCounts(supabase, sessionId);
-    // overlapMap is per-anchor: anchor changes each slot as pool reorders.
-    const overlapMap = await buildOverlapMap(supabase, sessionId, pool[0].player_id);
+    // Both derived from the snapshot above — no further round trips. The
+    // overlap map is per-ANCHOR, and the anchor changes each slot as the pool
+    // reorders, so it is derived here rather than alongside the rosters.
+    const { partnershipCounts, opponentCounts } = derivePairCounts(snapshot);
+    const overlapMap = deriveOverlapMap(snapshot, pool[0].player_id);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
     const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters, opponentCounts);

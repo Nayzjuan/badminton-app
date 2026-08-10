@@ -377,7 +377,7 @@ export interface MakeCompletedMatchOptions {
 /**
  * Inserts a completed match with scores and match_players.
  * Used to seed session history for testing:
- *   • Partnership cap (fetchPartnershipCounts reads completed matches)
+ *   • Partnership cap (fetchSessionMatchSnapshot reads completed matches)
  *   • closeSession → refresh_cross_session_stats / compute_session_wrapped
  *   • Cross-session arithmetic tests
  */

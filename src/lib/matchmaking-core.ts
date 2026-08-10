@@ -6,8 +6,11 @@
 // data with no side effects. This makes them directly unit-testable
 // without mocking Supabase or Next.js server infrastructure.
 //
-// DB-coupled helpers (fetchActivePool, buildOverlapMap, etc.) and
-// the executeMatch write live in matchmaking-db.ts.
+// DB-coupled helpers (fetchActivePool, fetchSessionMatchSnapshot, etc.)
+// and the executeMatch write live in matchmaking-db.ts. The diversity
+// projections that read that snapshot (deriveRecentRosters,
+// derivePairCounts, deriveOverlapMap) are pure, but live beside it there
+// because the snapshot shape is theirs.
 //
 // runAlgorithm() is the pure orchestration layer that composes the
 // building blocks below. It accepts pre-fetched data and returns a
@@ -106,8 +109,8 @@ export type ScoredCandidate = {
 // ─────────────────────────────────────────────────────────────
 // Canonical symmetric key for a same-team pair of player UUIDs.
 // Sorts alphabetically so pairKey(a, b) === pairKey(b, a).
-// Used by fetchPartnershipCounts (matchmaking.ts) and the pair-aware
-// draft functions to look up session-scoped partnership counts.
+// Used by derivePairCounts (matchmaking-db.ts) and the pair-aware draft
+// functions to look up session-scoped partnership counts.
 
 export function pairKey(a: string, b: string): string {
   return a < b ? `${a}:${b}` : `${b}:${a}`;

@@ -20,20 +20,28 @@
 // Mock strategy:
 //   @/utils/supabase/service is replaced by vi.mock() and the returned
 //   client is passed down to matchmaking-db helpers (fetchActivePool,
-//   fetchPartnershipCounts, buildOverlapMap, executeMatch) which use
-//   it directly. Each test builds a queue-based mock client where each
-//   from() call consumes the next pre-configured response.
+//   fetchSessionMatchSnapshot, executeMatch) which use it directly.
+//   Each test builds a queue-based mock client where each from() call
+//   consumes the next pre-configured response.
 //   queriedTables tracks the DB table-access order for assertions.
 //
 // Per-slot query order inside runEngineInternal:
-//   Promise.all (after courts): v_queue_with_wait_time [0], matches draft count [1]
+//   Promise.all (after courts): v_queue_with_wait_time [0], matches draft count [1],
+//                               sessions [2]; auto mode adds a published on-deck count
 //   soft gate (if triggered):   matches in_progress count
-//   fetchRecentRosters (PER SLOT, at the top of each loop iteration):
-//                               matches (+ match_players if non-empty)
-//   fetchActivePool:            v_queue_with_wait_time, queue_entries
-//   fetchPartnershipCounts:     matches (+ match_players if non-empty)
-//   buildOverlapMap:            match_players, matches, match_players (if non-empty)
+//   PER SLOT, at the top of each loop iteration — two independent reads issued
+//   concurrently via Promise.all, so from() sees them in this fixed order:
+//     fetchSessionMatchSnapshot: matches   (+ match_players, only if matches is non-empty)
+//     fetchActivePool:           v_queue_with_wait_time
+//   The recent rosters, partnership/opponent caps and the overlap map are then
+//   DERIVED IN MEMORY from that one snapshot — they cost no further round trips.
 //   executeMatch:               rpc("create_match_with_players")
+//
+// CAUTION when adding fixtures: because the snapshot short-circuits when the
+// `matches` response is empty, a test whose history fixture is `{ data: [] }`
+// never issues the match_players read, and every response after it shifts by
+// one. Give a test a NON-empty matches fixture only if you have also supplied
+// the match_players response that follows it (see ENG-SNAP-1).
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -54,6 +62,25 @@ vi.mock("next/server", () => ({
 vi.mock("@/lib/notifications/push-server", () => ({
   pushToPlayers: vi.fn().mockResolvedValue({ sent: 0, errors: 0 }),
 }));
+// Broadcast is stubbed so that "did the engine hit cap saturation?" is a POSITIVE
+// assertion (ME-new-1) rather than a negative one that passes when nothing ran.
+//
+// It is NOT stubbed for credential safety, though that is the obvious guess:
+// postBroadcast() reads NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY from
+// process.env, and .env.test does hold the real values — but vitest.config.ts
+// declares no `env` key and loads no dotenv, and Vite only surfaces VITE_-prefixed
+// vars, so those names are UNSET under `vitest run` (probed on 4.1.5, 2026-08-04).
+// Unmocked, postBroadcast would hit its missing-env guard and warn, not fetch.
+// Keep that true: if anyone ever wires dotenv into the unit config, this mock
+// becomes the only thing standing between a unit run and a live prod broadcast.
+vi.mock("@/lib/broadcast", () => ({
+  broadcastSessionClosed: vi.fn().mockResolvedValue(undefined),
+  broadcastAutoMatchmakingToggled: vi.fn().mockResolvedValue(undefined),
+  broadcastAutoPublishToggled: vi.fn().mockResolvedValue(undefined),
+  broadcastCapSaturation: vi.fn().mockResolvedValue(undefined),
+  broadcastDraftCapPhase: vi.fn().mockResolvedValue(undefined),
+  broadcastOrganizerIntervention: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
@@ -65,6 +92,7 @@ import {
 } from "@/app/actions/matchmaking";
 import { getDynamicDraftCap } from "@/lib/matchmaking-core";
 import { fetchPullablePlayers, executeHeldMatch } from "@/lib/matchmaking-db";
+import { broadcastCapSaturation } from "@/lib/broadcast";
 
 // ─────────────────────────────────────────────────────────────
 // Mock infrastructure
@@ -148,12 +176,13 @@ function makeBuilder(response: MockResponse, recorder?: { update: unknown[]; ins
  * can assert the order-of-queries (e.g. verify toggle bypass by checking
  * "sessions" does not appear after a successful promotion).
  *
- * NOTE: buildOverlapMap uses a 3-step join — NOT the old v_recent_pairings view.
- * Step 1: from("match_players").eq("player_id", anchor)          — anchor's match IDs
- * Step 2: from("matches").in("id", ...).eq("session_id", ...)    — filter to session
- * Step 3: from("match_players").in("match_id", ...)              — co-players + teams
- * Steps 2 and 3 are only reached when the anchor has prior matches (Step 1 non-empty).
- * Tests with empty queues will never reach any of these — no mock responses needed.
+ * NOTE: the engine no longer runs a per-helper join for match history. One
+ * fetchSessionMatchSnapshot per slot reads the session's committed matches and
+ * their rosters:
+ *   Step 1: from("matches").eq("session_id", ...).in("status", COMMITTED)   — match IDs
+ *   Step 2: from("match_players").in("match_id", ids)                       — rosters
+ * Step 2 is skipped entirely when Step 1 comes back empty, so tests with empty
+ * queues need exactly one `{ data: [], error: null }` here — not three.
  */
 function makeMockClient(fromResponses: MockResponse[], rpcResponses: MockResponse[] = []) {
   let fromIdx = 0;
@@ -492,14 +521,12 @@ describe("runEngineForSession", () => {
     //   [2] v_queue_with_wait_time: 4 players, maxWait=10 ≥ GATE_HOLD_MINUTES=8
     //        → gateTimedOut=true → gate releases; estimatedWaiting=4 (Promise.all[0])
     //   [3] matches: draft count=0 → slotsAvailable=3 (Promise.all[1])
-    //   [4] matches: fetchRecentRosters → [] (empty; no match_players query follows)
+    //   [4] sessions: max_auto_drafts_override (Promise.all[2])
     //   slot 0 (i=0 exempt from pool-diversity cap):
-    //   [5] v_queue_with_wait_time: fetchActivePool → 4 players
-    //   [6] queue_entries: fetchActivePool paused filter → []
-    //       (pool=4 ≥ 4 → continues)
-    //   [7] matches: fetchPartnershipCounts step 1 → [] (no prior matches → empty map; no step 2)
-    //   [8] match_players: buildOverlapMap step 1 → beyond array → default {data:null,error:null}
-    //        → anchorRows=null → early return; empty overlapMap
+    //   [5] matches: fetchSessionMatchSnapshot → [] (empty; no match_players hop follows)
+    //   [6] v_queue_with_wait_time: fetchActivePool → 4 players (pool=4 ≥ 4 → continues)
+    //       recentRosters / partnership counts / overlapMap all derive from the
+    //       empty snapshot — zero further queries.
     //   → runAlgorithm(pool, counts, overlap, rosters) → proposal → executeMatch → rpc FAILS
     //   → loop breaks (slot 1: estimatedWaiting=4 < MIN_POOL=8 → cap fires anyway)
     const fourPlayers = Array.from({ length: 4 }, (_, i) => ({
@@ -526,13 +553,9 @@ describe("runEngineForSession", () => {
         { data: fourPlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10 → gateTimedOut (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
         { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
-        { data: [], error: null }, // [5] fetchRecentRosters: recent matches → []
-        // (match_players not queried since recentMatchIds is empty)
-        { data: fourPlayers, error: null }, // [6] runAlgorithm: v_queue_with_wait_time → 4 players
-        { data: [], error: null }, // [7] queue_entries paused → []
-        { data: [], error: null }, // [8] fetchPartnershipCounts: matches (no prior session matches → empty map)
-        // [9] buildOverlapMap step 1: match_players → beyond array → undefined fallback
-        //     → anchorRows=null → early return; empty overlapMap
+        { data: [], error: null }, // [5] fetchSessionMatchSnapshot: matches → []
+        // (match_players not queried since the snapshot short-circuits on empty)
+        { data: fourPlayers, error: null }, // [6] fetchActivePool: v_queue_with_wait_time → 4 players
         // rpc fails → loop breaks (slot 1 never reached — estimatedWaiting=4 < MIN_POOL=8)
       ],
       [{ data: null, error: { message: "unique constraint violation" } }] // rpc → error
@@ -551,23 +574,28 @@ describe("runEngineForSession", () => {
     );
   });
 
-  it("ME-new-1: engine completes without error when runAlgorithm returns capSaturation=true (broadcast fires silently — env vars absent in tests)", async () => {
+  it("ME-new-1: engine broadcasts cap saturation (not an error) when the partnership cap empties the candidate list", async () => {
     // Force capSaturation=true by supplying partnership counts that cap every
-    // anchor-candidate pair. The pool has anchor (p0) + 2 candidates (p1, p2),
+    // anchor-candidate pair. The pool has anchor (p0) + 3 candidates (p1, p2, p3),
     // all at the same skill so every skill window would pass — but the cap filter
-    // removes p1 and p2 before the window loop runs, leaving candidates=[].
+    // removes p1, p2 and p3 before the window loop runs, leaving candidates=[].
     //
-    // capWasActive = pool.length-1(2) > candidates.length(0) = true
+    // ⚠️ The pool MUST hold ≥ PLAYERS_PER_MATCH (4). runEngineInternal breaks out
+    // of the slot at `pool.length < PLAYERS_PER_MATCH` (matchmaking.ts:503) BEFORE
+    // derivePairCounts / deriveOverlapMap / runAlgorithm ever run — so a 3-player
+    // pool makes capSaturation structurally unreachable and every assertion below
+    // is then satisfied by the player-shortage abort instead. This test carried a
+    // 3-player fixture for exactly that reason and passed for the wrong one.
+    //
+    // capWasActive = pool.length-1(3) > candidates.length(0) = true
     // → runAlgorithm returns { proposal: null, capSaturation: true }
-    // → broadcastCapSaturation() is called but env vars are absent in tests
-    //   so postBroadcast() logs a console.warn and returns immediately.
-    // → The .catch() handler in matchmaking.ts is NOT invoked (no rejection).
-    // → console.error is NOT called.
+    // → broadcastCapSaturation() is called (mocked at the top of this file)
+    // → the else-branch console.error("no compatible match") is NOT reached.
 
     // Use wait_minutes=10 so maxWait(10) >= GATE_HOLD_MINUTES(8) → gateTimedOut=true
     // → gate releases without an extra active-court query, matching the existing
     // test pattern (4-player RPC failure test at ~line 428+).
-    const threePlayers = [
+    const cappedPool = [
       {
         id: "e-p0",
         session_id: SESSION_ID,
@@ -616,32 +644,70 @@ describe("runEngineForSession", () => {
         wait_minutes: 8,
         is_bottleneck: false,
       },
+      {
+        id: "e-p3",
+        session_id: SESSION_ID,
+        player_id: "p3",
+        joined_at: new Date(Date.now() - 7 * 60_000).toISOString(),
+        games_played: 0,
+        status: "waiting" as const,
+        position: null,
+        is_paused: false,
+        created_at: new Date().toISOString(),
+        display_name: "Player 3",
+        skill_level: "intermediate" as const,
+        skill_level_int: 4,
+        wait_minutes: 7,
+        is_bottleneck: false,
+      },
     ];
 
-    // fetchPartnershipCounts: p0 played with p1 AND p2 twice each
-    // Matches: m1 (p0+p1 same team), m2 (p0+p2 same team) — each repeated twice
-    const matchRows = [{ id: "m1" }, { id: "m2" }, { id: "m3" }, { id: "m4" }];
+    // Session match history, read ONCE per slot by fetchSessionMatchSnapshot and
+    // then projected in memory into recentRosters + partnership/opponent counts +
+    // the overlap map. Here it puts p0 on the SAME TEAM as p1, p2 and p3 exactly
+    // twice each, so every one of the anchor's three candidate pairs sits at
+    // MAX_PARTNERSHIP_REPEATS (2) and the pre-filter at matchmaking-core.ts:849
+    // empties the candidate list.
+    //
+    // derivePairCounts walks the WHOLE snapshot (no lookback window), so all six
+    // matches count — unlike deriveOverlapMap, which stops at
+    // ANTI_REPEAT_LOOKBACK.
+    const matchRows = [
+      { id: "m1" },
+      { id: "m2" },
+      { id: "m3" },
+      { id: "m4" },
+      { id: "m5" },
+      { id: "m6" },
+    ];
     const mpRows = [
-      // m1: p0-p1 same team → count +1
+      // m1 + m2: p0-p1 same team twice → p0-p1 count = 2 = MAX_PARTNERSHIP_REPEATS
       { match_id: "m1", player_id: "p0", team: "a" },
       { match_id: "m1", player_id: "p1", team: "a" },
       { match_id: "m1", player_id: "p2", team: "b" },
-      { match_id: "m1", player_id: "px", team: "b" },
-      // m2: p0-p2 same team → count +1
+      { match_id: "m1", player_id: "p3", team: "b" },
       { match_id: "m2", player_id: "p0", team: "a" },
-      { match_id: "m2", player_id: "p2", team: "a" },
-      { match_id: "m2", player_id: "p1", team: "b" },
+      { match_id: "m2", player_id: "p1", team: "a" },
+      { match_id: "m2", player_id: "px", team: "b" },
       { match_id: "m2", player_id: "py", team: "b" },
-      // m3: p0-p1 same team again → p0-p1 count = 2 = MAX_PARTNERSHIP_REPEATS
+      // m3 + m4: p0-p2 same team twice → p0-p2 count = 2
       { match_id: "m3", player_id: "p0", team: "a" },
-      { match_id: "m3", player_id: "p1", team: "a" },
-      { match_id: "m3", player_id: "p2", team: "b" },
-      { match_id: "m3", player_id: "px", team: "b" },
-      // m4: p0-p2 same team again → p0-p2 count = 2 = MAX_PARTNERSHIP_REPEATS
+      { match_id: "m3", player_id: "p2", team: "a" },
+      { match_id: "m3", player_id: "p1", team: "b" },
+      { match_id: "m3", player_id: "p3", team: "b" },
       { match_id: "m4", player_id: "p0", team: "a" },
       { match_id: "m4", player_id: "p2", team: "a" },
-      { match_id: "m4", player_id: "p1", team: "b" },
+      { match_id: "m4", player_id: "px", team: "b" },
       { match_id: "m4", player_id: "py", team: "b" },
+      // m5 + m6: p0-p3 same team twice → p0-p3 count = 2
+      { match_id: "m5", player_id: "p0", team: "a" },
+      { match_id: "m5", player_id: "p3", team: "a" },
+      { match_id: "m5", player_id: "p1", team: "b" },
+      { match_id: "m5", player_id: "p2", team: "b" },
+      { match_id: "m6", player_id: "p0", team: "a" },
+      { match_id: "m6", player_id: "p3", team: "a" },
+      { match_id: "m6", player_id: "px", team: "b" },
+      { match_id: "m6", player_id: "py", team: "b" },
     ];
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -649,23 +715,51 @@ describe("runEngineForSession", () => {
     const mock = makeMockClient([
       { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
       { data: [{ id: "c1" }], error: null }, // [1] courts (1)
-      { data: threePlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10≥8 → gateTimedOut=true (Promise.all[0])
-      { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=2 (Promise.all[1])
+      { data: cappedPool, error: null }, // [2] v_queue_with_wait_time: maxWait=10≥8 → gateTimedOut=true (Promise.all[0])
+      { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
-      { data: [], error: null }, // [5] fetchRecentRosters: matches → [] (no recent matches → no step 2)
-      { data: threePlayers, error: null }, // [6] fetchActivePool: v_queue_with_wait_time
-      { data: [], error: null }, // [7] fetchActivePool: paused filter
-      { data: matchRows, error: null }, // [8] fetchPartnershipCounts step 1: match IDs
-      { data: mpRows, error: null }, // [9] fetchPartnershipCounts step 2: match_players rows
-      // buildOverlapMap step 1: beyond array → default {data:null} → early return → empty overlapMap
+      // Slot 1 read phase — snapshot and pool are issued concurrently, so from()
+      // sees matches → v_queue_with_wait_time → match_players (the roster read is
+      // the snapshot's second hop and lands after the pool's synchronous from()).
+      { data: matchRows, error: null }, // [5] fetchSessionMatchSnapshot: committed match IDs
+      { data: cappedPool, error: null }, // [6] fetchActivePool: v_queue_with_wait_time
+      { data: mpRows, error: null }, // [7] fetchSessionMatchSnapshot: roster rows
+      // recentRosters, partnership/opponent counts and the overlap map are all
+      // derived from [5]+[7] — no further queries.
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
     await runEngineForSession(SESSION_ID);
 
-    // capSaturation=true path: broadcastCapSaturation fires (silently, env vars absent)
-    // but console.error is NOT called
+    // POSITIVE proof the cap-saturation branch was the one taken. Without this,
+    // every other assertion in this test is satisfied just as well by the engine
+    // bailing out early — which is exactly what the 3-player fixture used to do.
+    expect(broadcastCapSaturation).toHaveBeenCalledTimes(1);
+    expect(broadcastCapSaturation).toHaveBeenCalledWith(SESSION_ID, {
+      type: "general", // anchor waits 10min → priorityScore < RED_ZONE_SCORE_FLOOR
+      anchorPlayerId: "p0",
+      anchorPlayerName: "Player 0",
+    });
+
+    // The sibling else-branch must NOT have fired: cap saturation and
+    // "skill spread or diversity exhausted" are mutually exclusive (see ME-new-2).
     expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining("no compatible match"));
+
+    // Pin the read that makes the caps real: the roster hop must have run (proving
+    // the snapshot was non-empty), and no match may be created out of a saturated
+    // pool. The burst stops after slot 1 because !proposal breaks the loop, so the
+    // sequence is 8 entries even though slotsAvailable is 3.
+    expect(mock.queriedTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+      "sessions",
+      "matches",
+      "v_queue_with_wait_time",
+      "match_players",
+    ]);
+    expect(mock.rpc).not.toHaveBeenCalled();
 
     consoleSpy.mockRestore();
   });
@@ -703,11 +797,8 @@ describe("runEngineForSession", () => {
       { data: eightExtremes, error: null }, // [2] v_queue_with_wait_time: 8 players (Promise.all[0])
       { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=2 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
-      { data: [], error: null }, // [5] fetchRecentRosters
+      { data: [], error: null }, // [5] fetchSessionMatchSnapshot: matches → [] (short-circuits)
       { data: eightExtremes, error: null }, // [6] fetchActivePool: pool=8
-      { data: [], error: null }, // [7] paused filter
-      { data: [], error: null }, // [8] fetchPartnershipCounts step 1 → no matches → empty counts
-      // buildOverlapMap → beyond array → empty map
       // runAlgorithm: anchor skill=1, candidates skill=9 → |9-1|=8 > max Red Zone window(4)
       // → { proposal: null, capSaturation: false } → console.error logged
     ]);
@@ -754,11 +845,8 @@ describe("runEngineForSession", () => {
         { data: eightPlayers, error: null }, // [2] v_queue_with_wait_time (estimatedWaiting=8) (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
         { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
-        { data: [], error: null }, // [5] fetchRecentRosters: recent matches → []
+        { data: [], error: null }, // [5] fetchSessionMatchSnapshot: matches → [] (short-circuits)
         { data: eightPlayers, error: null }, // [6] fetchActivePool: v_queue_with_wait_time → 8 players
-        { data: [], error: null }, // [7] fetchActivePool: queue_entries paused → []
-        { data: [], error: null }, // [8] fetchPartnershipCounts: matches → [] (no prior matches → empty map)
-        // [9] buildOverlapMap step 1: match_players → beyond array → default fallback → empty overlapMap
         // runAlgorithm → proposal → rpc succeeds → estimatedWaiting=8-4=4
         // slot 1: estimatedWaiting(4) < MIN_POOL(8) → cap fires → break
       ],
@@ -990,7 +1078,7 @@ describe("callNextMatch", () => {
       { data: [], error: null }, // [6] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 2, data: null, error: null }, // [7] runEngine: matches draft count=2 → slotsAvailable=1 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [8] runEngine: sessions override (Promise.all[2])
-      { data: [], error: null }, // [9] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [9] runEngine: fetchSessionMatchSnapshot matches → []
       { data: [], error: null }, // [10] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
       { data: [], error: null }, // [11] promote 2: no published pending
       { count: 2, data: null, error: null }, // [12] promote 2: 2 drafts → hasDraftsBlocking
@@ -1024,7 +1112,7 @@ describe("callNextMatch", () => {
       { data: [], error: null }, // [6] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 0, data: null, error: null }, // [7] runEngine: matches draft count=0 → slotsAvailable=3 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [8] runEngine: sessions override (Promise.all[2])
-      { data: [], error: null }, // [9] runEngine: fetchRecentRosters → []
+      { data: [], error: null }, // [9] runEngine: fetchSessionMatchSnapshot matches → []
       { data: [], error: null }, // [10] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
       { data: [], error: null }, // [11] promote 2: still no pending
       { count: 0, data: null, error: null }, // [12] promote 2: 0 drafts
@@ -1078,11 +1166,10 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
         { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: true }, error: null }, // [4] session (Promise.all[2])
         { count: 0, data: null, error: null }, // [5] PUBLISHED on-deck count (auto-mode extra)
-        { data: [], error: null }, // [6] fetchRecentRosters
+        { data: [], error: null }, // [6] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
         { data: four, error: null }, // [7] fetchActivePool v_queue
-        { data: [], error: null }, // [8] queue_entries paused
-        { data: [], error: null }, // [9] fetchPartnershipCounts matches
-        // [10] buildOverlapMap match_players → fallback → empty map
+        // No history ⇒ no match_players read, and the rosters / pair counts /
+        // overlap map all derive from the empty snapshot with zero further queries.
       ],
       [{ data: null, error: { message: "stop after one slot" } }] // rpc → error to break the loop
     );
@@ -1093,15 +1180,19 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
       "create_match_with_players",
       expect.objectContaining({ p_is_published: true, p_origin: "auto" })
     );
-    // Auto mode counts the published on-deck set: a 2nd matches count query runs in the
-    // cap phase (unpublished [3] + published [5]) before fetchRecentRosters.
-    expect(mock.queriedTables.slice(0, 6)).toEqual([
+    // Auto mode counts the published on-deck set: a 2nd matches count query runs in
+    // the cap phase (unpublished [3] + published [5]) before the slot loop starts.
+    // The whole array is pinned, not a slice, so the merged per-slot read phase
+    // ([6] snapshot + [7] pool, concurrent) can't silently regain a 3rd round trip.
+    expect(mock.queriedTables).toEqual([
       "sessions",
       "courts",
       "v_queue_with_wait_time",
       "matches",
       "sessions",
       "matches",
+      "matches", // slot 1 — fetchSessionMatchSnapshot (empty ⇒ no match_players)
+      "v_queue_with_wait_time", // slot 1 — fetchActivePool
     ]);
   });
 
@@ -1115,10 +1206,8 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
         { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session (Promise.all[2])
         // no published-count query in draft mode
-        { data: [], error: null }, // [5] fetchRecentRosters
+        { data: [], error: null }, // [5] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
         { data: four, error: null }, // [6] fetchActivePool v_queue
-        { data: [], error: null }, // [7] queue_entries paused
-        { data: [], error: null }, // [8] fetchPartnershipCounts matches
       ],
       [{ data: null, error: { message: "stop after one slot" } }]
     );
@@ -1129,6 +1218,116 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
       "create_match_with_players",
       expect.objectContaining({ p_is_published: false, p_origin: "auto" })
     );
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// SESSION MATCH SNAPSHOT — fail-closed + per-slot cadence (ENG-SNAP)
+// ═════════════════════════════════════════════════════════════
+//
+// The snapshot feeds EVERY diversity input the engine has: recent rosters, the
+// partnership/opponent caps, and the overlap map. These two tests pin the parts
+// of that contract the pure unit tests in matchmaking-snapshot.test.ts cannot
+// see, because they are properties of the engine loop rather than the helper.
+//
+// ENG-SNAP-1  an unavailable snapshot STOPS the burst — it must never fall
+//             through to drafting against empty history
+// ENG-SNAP-2  the snapshot is re-read PER SLOT, so sibling drafts committed
+//             earlier in the same burst are visible to later slots
+
+describe("runEngineForSession — match-snapshot contract (ENG-SNAP)", () => {
+  const waiting = (n: number, waitMinutes = 10) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `entry-s${i}`,
+      session_id: SESSION_ID,
+      player_id: `s${i}`,
+      joined_at: new Date(Date.now() - waitMinutes * 60_000).toISOString(),
+      games_played: 0,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: `Player ${i}`,
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: waitMinutes,
+      is_bottleneck: false,
+    }));
+
+  it("ENG-SNAP-1: snapshot query error ⇒ engine stops the burst and creates NO match", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const four = waiting(4);
+
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+      { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
+      { data: four, error: null }, // [2] v_queue (Promise.all[0])
+      { count: 0, data: null, error: null }, // [3] draft count=0 → slots=3 (Promise.all[1])
+      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
+      { data: null, error: { message: "statement timeout" } }, // [5] snapshot matches → FAILS
+      { data: four, error: null }, // [6] fetchActivePool (already in flight — concurrent)
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    // Fail CLOSED. Continuing would run the algorithm with empty history, which
+    // does not degrade gracefully: every repeat reads as a fresh pairing, so the
+    // burst would emit exactly the duplicate rosters the caps exist to prevent.
+    // Fewer drafts is recoverable; a batch of confidently-wrong ones is not.
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("match snapshot unavailable"));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("statement timeout"));
+
+    // Stopped inside slot 1 — no slot-2 read phase.
+    expect(mock.queriedTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+      "sessions",
+      "matches",
+      "v_queue_with_wait_time",
+    ]);
+
+    consoleSpy.mockRestore();
+  });
+
+  it("ENG-SNAP-2: the snapshot is re-read every slot (sibling drafts stay visible)", async () => {
+    // 12 waiting ⇒ after slot 1 commits, estimatedWaiting is still 8, so the
+    // pool-diversity cap does not fire and slot 2 runs a full read phase of its
+    // own. Hoisting the snapshot out of the loop would show up here as a single
+    // pair of reads instead of two.
+    const twelve = waiting(12);
+
+    const mock = makeMockClient(
+      [
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+        { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
+        { data: twelve, error: null }, // [2] v_queue (Promise.all[0])
+        { count: 0, data: null, error: null }, // [3] draft count=0 (Promise.all[1])
+        { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
+        { data: [], error: null }, // [5] slot 1 snapshot: matches → []
+        { data: twelve, error: null }, // [6] slot 1 pool
+        { data: [], error: null }, // [7] slot 2 snapshot: matches → []
+        { data: twelve, error: null }, // [8] slot 2 pool
+      ],
+      [
+        { data: "match-1", error: null },
+        { data: "match-2", error: null },
+      ]
+    );
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    expect(mock.rpc).toHaveBeenCalledTimes(2);
+    expect(mock.queriedTables.slice(5)).toEqual([
+      "matches", // slot 1 snapshot
+      "v_queue_with_wait_time", // slot 1 pool
+      "matches", // slot 2 snapshot — re-read, NOT hoisted
+      "v_queue_with_wait_time", // slot 2 pool
+    ]);
   });
 });
 

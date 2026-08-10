@@ -366,7 +366,7 @@ The factory does a 2-step insert + update (scores aren't in `MatchInsert`). If t
 
 ### Partnership cap test — engine still pairs the capped players
 
-`fetchPartnershipCounts` reads from `completed`, `in_progress`, and `pending` matches in the **current session**. The history must be in the same `session_id` as the engine run. Seeding completed matches in a different session ID won't affect the cap.
+`fetchSessionMatchSnapshot` reads `completed`, `in_progress`, and `pending` matches in the **current session** (the caps are then derived from it by `derivePairCounts`). The history must be in the same `session_id` as the engine run. Seeding completed matches in a different session ID won't affect the cap.
 
 Also: make sure players are seeded directly into `queue_entries` via `makeQueueEntry` — NOT via `seedPlayers` after `makeCompletedMatch` (which would create duplicate queue entries and trigger a unique constraint).
 

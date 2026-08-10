@@ -214,12 +214,12 @@ export const MAX_PARTNERSHIP_REPEATS = 2;
  * third time when the pool genuinely leaves no alternative. Affects round 3+
  * team-splitting (in round 2 no pair has met more than once, so the cap does
  * not bite — round-2 opponent freshness is driven by OVERLAP_WEIGHT_OPPONENT
- * in buildOverlapMap instead). Still soft, so small sessions never stall.
+ * in deriveOverlapMap instead). Still soft, so small sessions never stall.
  */
 export const MAX_OPPONENT_REPEATS = 2;
 
 /**
- * Familiarity weights applied by buildOverlapMap per prior in-session
+ * Familiarity weights applied by deriveOverlapMap per prior in-session
  * encounter with the anchor, consumed by scoreCandidates (weight × the overlap
  * multiplier) to push already-encountered players down the candidate order.
  *
@@ -316,6 +316,21 @@ import type { MatchStatus, SkillLevel } from "@/types/database";
  * in a second draft before the first one is reviewed or cancelled.
  */
 export const COMMITTED_MATCH_STATUSES: MatchStatus[] = ["completed", "in_progress", "pending"];
+
+/**
+ * Hard ceiling on how many committed matches fetchSessionMatchSnapshot will
+ * load for one session. Above this it returns { ok: false } and the engine
+ * fails CLOSED (stops drafting) rather than matchmaking off a truncated view
+ * of who has already played whom.
+ *
+ * Sized against reality, not guessed: the busiest session in production
+ * history holds 56 committed matches, so 200 is ~3.5x headroom. The snapshot
+ * is per-session and sessions are single-evening, so this is not a growth
+ * curve that creeps up — a session that trips this is anomalous (a stuck
+ * engine loop, or a session record being reused as a permanent bucket), and
+ * in that case refusing to draft is the correct answer.
+ */
+export const SESSION_MATCH_SNAPSHOT_CEILING = 200;
 
 // ── UI timing constants ───────────────────────────────────────────────────────
 
