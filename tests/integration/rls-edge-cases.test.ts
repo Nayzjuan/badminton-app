@@ -661,3 +661,204 @@ describe("profiles_select scope — finding #8", () => {
     expect(data?.id).toBe(alice.id);
   });
 });
+
+// ============================================================
+// has_match_access draft firewall — tenancy audit finding #11
+// ============================================================
+// `matches` has carried a draft firewall for a long time; `match_players` did
+// not. Its policy delegates entirely to `has_match_access(match_id)`, which
+// only ever asked "can this caller see the SESSION?" — so any club member could
+// read the full named roster of an UNPUBLISHED draft, and postgres_changes
+// pushed those rows to them live as the organizer generated them.
+//
+// 20260810000001 folds the `matches_select` CASE into the helper. These tests
+// sign users in FOR REAL (mockAuthAs only fools the server actions, not
+// Postgres), because the `authenticated` role with a genuine JWT is the only
+// way auth.uid() inside session_access_level is actually exercised.
+//
+// Every denial assertion is paired with a positive control on the SAME client,
+// so "0 rows" can never be explained by a broken seed or a blanket denial —
+// which is the exact failure mode a firewall change risks introducing.
+// ============================================================
+
+describe("has_match_access draft firewall — finding #11", () => {
+  async function signedInAs(profile: { id: string; email: string }) {
+    const client = anonClient();
+    const { data, error } = await client.auth.signInWithPassword({
+      email: profile.email,
+      password: TEST_USER_PASSWORD,
+    });
+    if (error || data.session?.user.id !== profile.id) {
+      throw new Error(
+        `[signedInAs] could not sign in ${profile.id}: ${error?.message ?? "no session"}`
+      );
+    }
+    return client;
+  }
+
+  async function clubIdOf(sessionId: string): Promise<string> {
+    const { data, error } = await serviceClient()
+      .from("sessions")
+      .select("club_id")
+      .eq("id", sessionId)
+      .single();
+    if (error || !data?.club_id) {
+      throw new Error(`[clubIdOf] no club_id for ${sessionId}: ${error?.message ?? "null"}`);
+    }
+    return data.club_id;
+  }
+
+  async function addClubMember(clubId: string, playerId: string) {
+    const { error } = await serviceClient()
+      .from("club_members")
+      .upsert(
+        { club_id: clubId, player_id: playerId, role: "member" as const, is_active: true },
+        { onConflict: "club_id,player_id" }
+      );
+    if (error) throw new Error(`[addClubMember] ${error.message}`);
+  }
+
+  /** How many match_players rows this client can SELECT for one match. */
+  async function rosterSizeFor(
+    client: Awaited<ReturnType<typeof signedInAs>>,
+    matchId: string
+  ): Promise<number> {
+    const { data, error } = await client
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", matchId);
+    if (error) throw new Error(`[rosterSizeFor] select failed: ${error.message}`);
+    return (data ?? []).length;
+  }
+
+  /**
+   * One session, six players, and one match per visibility state.
+   *
+   * The four players are seeded as club members so their PROFILES are readable
+   * under profiles_select — this suite must fail on the roster policy, not on a
+   * profile join.
+   */
+  async function seedSession() {
+    const organizer = await makeProfile({ faker });
+    const member = await makeProfile({ faker });
+    const coOrganizer = await makeProfile({ faker });
+    const p1 = await makeProfile({ faker });
+    const p2 = await makeProfile({ faker });
+    const p3 = await makeProfile({ faker });
+    const p4 = await makeProfile({ faker });
+
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const clubId = await clubIdOf(session.id);
+    for (const p of [member, p1, p2, p3, p4]) await addClubMember(clubId, p.id);
+
+    // The delegated co-organizer deliberately gets NO club_members row — this is
+    // the QR/passcode path, and session_access_level's session_organizers arm is
+    // the only thing that can admit them.
+    const { error: soError } = await serviceClient()
+      .from("session_organizers")
+      .insert({ session_id: session.id, user_id: coOrganizer.id });
+    if (soError) throw new Error(`[seedSession] session_organizers: ${soError.message}`);
+
+    const teamA: [string, string] = [p1.id, p2.id];
+    const teamB: [string, string] = [p3.id, p4.id];
+
+    const draft = await makeMatch({ sessionId: session.id, teamA, teamB });
+    const published = await makeMatch({
+      sessionId: session.id,
+      teamA,
+      teamB,
+      status: "pending",
+      isPublished: true,
+    });
+    const completed = await makeMatch({
+      sessionId: session.id,
+      teamA,
+      teamB,
+      status: "completed",
+    });
+
+    return { organizer, member, coOrganizer, session, draft, published, completed };
+  }
+
+  // ── The finding itself ──────────────────────────────────────
+
+  it("a club member cannot read the roster of an unpublished draft", async () => {
+    const { member, draft, published } = await seedSession();
+    const client = await signedInAs(member);
+
+    expect(await rosterSizeFor(client, draft.id)).toBe(0);
+    // Control on the SAME client: the published on-deck roster still arrives, so
+    // the zero above is the firewall and not a blanket denial.
+    expect(await rosterSizeFor(client, published.id)).toBe(4);
+  });
+
+  it("a club member still reads published and completed rosters", async () => {
+    const { member, published, completed } = await seedSession();
+    const client = await signedInAs(member);
+
+    expect(await rosterSizeFor(client, published.id)).toBe(4);
+    expect(await rosterSizeFor(client, completed.id)).toBe(4);
+  });
+
+  it("the session creator reads the draft roster", async () => {
+    const { organizer, draft } = await seedSession();
+    const client = await signedInAs(organizer);
+
+    expect(await rosterSizeFor(client, draft.id)).toBe(4);
+  });
+
+  it("a delegated co-organizer with no club_members row reads the draft roster", async () => {
+    const { coOrganizer, draft } = await seedSession();
+    const client = await signedInAs(coOrganizer);
+
+    // The QR/passcode co-organizer is the case a naive "shared club" firewall
+    // breaks: they run the session but belong to no club.
+    expect(await rosterSizeFor(client, draft.id)).toBe(4);
+  });
+
+  it("publishing a draft opens its roster to the member", async () => {
+    const { member, draft } = await seedSession();
+    const client = await signedInAs(member);
+
+    expect(await rosterSizeFor(client, draft.id)).toBe(0);
+
+    const { error } = await serviceClient()
+      .from("matches")
+      .update({ is_published: true })
+      .eq("id", draft.id);
+    expect(error).toBeNull();
+
+    expect(await rosterSizeFor(client, draft.id)).toBe(4);
+  });
+
+  it("an outsider in no shared club reads no roster at all", async () => {
+    const { draft, published, completed } = await seedSession();
+    const outsider = await makeProfile({ faker });
+    const client = await signedInAs(outsider);
+
+    // session_access_level is NULL for them, so the CASE falls to ELSE false on
+    // every match regardless of status — the pre-existing behaviour, asserted
+    // here so the new CASE cannot quietly widen it.
+    expect(await rosterSizeFor(client, draft.id)).toBe(0);
+    expect(await rosterSizeFor(client, published.id)).toBe(0);
+    expect(await rosterSizeFor(client, completed.id)).toBe(0);
+  });
+
+  it("anon reads no roster at all", async () => {
+    const { published } = await seedSession();
+
+    const { data, error } = await anonClient()
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", published.id);
+
+    // match_players_select is TO authenticated, so anon was already shut out —
+    // the old helper returned `NULL IS NOT NULL` = false and the new one falls
+    // to ELSE false. Whether that surfaces as a permission error or as an empty
+    // result depends on the table GRANT, not on this migration; assert the
+    // invariant that actually matters (no roster rows) rather than pinning a
+    // shape a future grant change could flip without a real regression.
+    expect(data ?? []).toEqual([]);
+    if (error) expect(["42501", "PGRST301"]).toContain(error.code);
+  });
+});
