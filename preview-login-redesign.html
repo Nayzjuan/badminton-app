@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login Redesign Preview — Badminton Queue</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,600;0,700;1,700;1,800&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Design tokens (faithful to app's oklch palette) ──────── */
+    :root {
+      --canvas:        oklch(0.09 0.014 245);
+      --surface:       oklch(0.13 0.016 245);
+      --surface-raised:oklch(0.17 0.018 245);
+      --border:        oklch(0.22 0.016 245);
+      --border-soft:   oklch(0.19 0.014 245);
+
+      --amber:         oklch(0.78 0.17 62);
+      --amber-dim:     oklch(0.60 0.13 62);
+      --amber-glow:    oklch(0.78 0.17 62 / 0.15);
+      --amber-text:    oklch(0.92 0.08 62);
+
+      --emerald:       oklch(0.76 0.17 155);
+      --emerald-dim:   oklch(0.58 0.13 155);
+      --emerald-glow:  oklch(0.76 0.17 155 / 0.12);
+
+      --teal:          oklch(0.79 0.18 188);
+      --teal-glow:     oklch(0.79 0.18 188 / 0.12);
+
+      --text-primary:  oklch(0.95 0.006 245);
+      --text-secondary:oklch(0.65 0.010 245);
+      --text-muted:    oklch(0.45 0.008 245);
+
+      --font-display:  'Barlow Condensed', sans-serif;
+      --font-body:     'Barlow', sans-serif;
+      --font-mono:     'JetBrains Mono', monospace;
+
+      --radius-sm: 6px;
+      --radius:    10px;
+      --radius-lg: 14px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--canvas);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      min-height: 100dvh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Layout wrapper ───────────────────────────────────────── */
+    .preview-wrapper {
+      display: grid;
+      grid-template-columns: 1fr 1px 1fr;
+      gap: 0;
+      min-height: 100dvh;
+    }
+
+    .preview-pane {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 48px 32px 64px;
+      min-height: 100dvh;
+    }
+
+    .pane-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 32px;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 100px;
+    }
+
+    .pane-divider {
+      width: 1px;
+      background: var(--border);
+    }
+
+    /* ── Before panel ─────────────────────────────────────────── */
+    .before-pane { background: oklch(0.09 0.014 245); }
+
+    /* ── After panel ──────────────────────────────────────────── */
+    .after-pane { background: oklch(0.095 0.014 245); }
+
+    /* ── Shared card width ────────────────────────────────────── */
+    .login-card {
+      width: 100%;
+      max-width: 400px;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       BEFORE — Current design (reproduced faithfully)
+    ══════════════════════════════════════════════════════════ */
+
+    .before-brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 32px;
+      text-align: center;
+    }
+
+    .before-icon {
+      width: 56px; height: 56px;
+      background: var(--amber);
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      color: oklch(0.12 0.014 245);
+      margin-bottom: 4px;
+    }
+
+    .before-title {
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+
+    .before-subtitle {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .before-form { display: flex; flex-direction: column; gap: 20px; }
+
+    .before-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .before-input {
+      width: 100%;
+      background: oklch(0.13 0.016 245);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      font-size: 16px;
+      color: var(--text-primary);
+      font-family: var(--font-body);
+    }
+
+    .before-skill-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .before-skill-chip {
+      border: 2px solid var(--border);
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .before-skill-chip.active {
+      border-color: oklch(0.55 0.18 220);
+      background: oklch(0.14 0.02 220);
+    }
+
+    .before-skill-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+    .before-skill-desc { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+
+    .before-btn {
+      width: 100%;
+      background: var(--amber);
+      color: oklch(0.12 0.014 245);
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 15px;
+      font-size: 16px;
+      font-weight: 700;
+      font-family: var(--font-body);
+      cursor: pointer;
+      margin-top: 4px;
+    }
+
+    .before-reconnect {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 13px;
+      color: var(--text-muted);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .before-annotation {
+      margin-top: 12px;
+      padding: 8px 12px;
+      background: oklch(0.65 0.15 30 / 0.12);
+      border: 1px solid oklch(0.65 0.15 30 / 0.30);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: oklch(0.80 0.12 40);
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       AFTER — Redesigned with prominent Reconnect
+    ══════════════════════════════════════════════════════════ */
+
+    .after-brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 28px;
+      text-align: center;
+    }
+
+    .after-icon {
+      width: 52px; height: 52px;
+      background: var(--amber);
+      border-radius: 13px;
+      display: flex; align-items: center; justify-content: center;
+      color: oklch(0.12 0.014 245);
+      box-shadow: 0 0 0 6px var(--amber-glow);
+    }
+
+    .after-title {
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+      margin-top: 4px;
+    }
+
+    /* ── Path switcher ───────────────────────────────────────── */
+    .path-switcher {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 4px;
+      margin-bottom: 24px;
+      border: 1px solid var(--border);
+    }
+
+    .path-tab {
+      padding: 10px 8px;
+      border-radius: 7px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 180ms cubic-bezier(0.16,1,0.3,1);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .path-tab-label {
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .path-tab-sub {
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      font-family: var(--font-mono);
+    }
+
+    .path-tab.new-tab {
+      background: var(--surface-raised);
+      color: var(--text-primary);
+      box-shadow: 0 1px 4px oklch(0 0 0 / 0.3);
+    }
+
+    .path-tab.new-tab .path-tab-label { color: var(--text-primary); }
+    .path-tab.new-tab .path-tab-sub { color: var(--text-secondary); }
+
+    .path-tab.return-tab {
+      color: var(--text-muted);
+    }
+
+    .path-tab.return-tab .path-tab-label { color: var(--text-muted); }
+    .path-tab.return-tab .path-tab-sub { color: var(--text-muted); }
+
+    /* ── New Player form ─────────────────────────────────────── */
+    .after-form { display: flex; flex-direction: column; gap: 18px; }
+
+    .after-field-label {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      display: block;
+      font-family: var(--font-mono);
+    }
+
+    .after-input {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 15px;
+      color: var(--text-primary);
+      font-family: var(--font-body);
+    }
+
+    .after-input:focus-visible {
+      outline: 2px solid var(--amber);
+      outline-offset: 2px;
+    }
+
+    .skill-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .skill-chip {
+      border: 1.5px solid var(--border-soft);
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      cursor: pointer;
+      position: relative;
+      transition: all 140ms ease;
+    }
+
+    .skill-chip:nth-child(3) {
+      border-color: oklch(0.55 0.20 210);
+      background: oklch(0.14 0.025 210);
+    }
+
+    .skill-dot {
+      position: absolute;
+      top: 9px; right: 9px;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+
+    .skill-chip:nth-child(1) .skill-dot { background: oklch(0.76 0.17 155); }
+    .skill-chip:nth-child(2) .skill-dot { background: oklch(0.78 0.17 188); }
+    .skill-chip:nth-child(3) .skill-dot { background: oklch(0.72 0.18 210); }
+    .skill-chip:nth-child(4) .skill-dot { background: oklch(0.68 0.18 260); }
+    .skill-chip:nth-child(5) .skill-dot { background: oklch(0.68 0.22 310); }
+    .skill-chip:nth-child(6) .skill-dot { background: oklch(0.70 0.22 290); }
+
+    .skill-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-primary);
+      font-family: var(--font-body);
+    }
+
+    .skill-desc {
+      font-size: 10px;
+      color: var(--text-secondary);
+      margin-top: 1px;
+    }
+
+    .pin-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .pin-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 22px;
+      font-family: var(--font-mono);
+      font-weight: 500;
+      color: var(--text-primary);
+      text-align: center;
+      letter-spacing: 0.3em;
+    }
+
+    .join-btn {
+      width: 100%;
+      background: var(--amber);
+      color: oklch(0.10 0.014 245);
+      border: none;
+      border-radius: var(--radius);
+      padding: 15px;
+      font-family: var(--font-display);
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      margin-top: 4px;
+    }
+
+    /* ── Reconnect panel (the redesigned returning path) ──────── */
+    .reconnect-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    /* Hero reconnect card — what returning players see FIRST */
+    .reconnect-hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Subtle teal ambient glow at top edge */
+    .reconnect-hero::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--teal), transparent);
+    }
+
+    .reconnect-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--teal);
+      margin-bottom: 8px;
+    }
+
+    .reconnect-heading {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 800;
+      font-style: italic;
+      letter-spacing: -0.01em;
+      color: var(--text-primary);
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+
+    .reconnect-sub {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    .reconnect-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .reconnect-input {
+      width: 100%;
+      background: oklch(0.11 0.014 245);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 15px;
+      color: var(--text-primary);
+      font-family: var(--font-body);
+    }
+
+    .reconnect-pin-input {
+      width: 100%;
+      background: oklch(0.11 0.014 245);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 22px;
+      font-family: var(--font-mono);
+      font-weight: 500;
+      color: var(--text-primary);
+      text-align: center;
+      letter-spacing: 0.3em;
+    }
+
+    .reconnect-btn {
+      width: 100%;
+      background: var(--teal);
+      color: oklch(0.10 0.014 245);
+      border: none;
+      border-radius: var(--radius);
+      padding: 15px;
+      font-family: var(--font-display);
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .reconnect-note {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 10px;
+      line-height: 1.5;
+    }
+
+    /* ── Divider for new player link on reconnect tab ─────────── */
+    .new-player-link {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    .new-player-link-text {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .new-player-link-btn {
+      font-size: 12px;
+      color: var(--amber-dim);
+      text-decoration: underline;
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-family: var(--font-body);
+    }
+
+    /* ── Annotation chips ─────────────────────────────────────── */
+    .annotation {
+      margin-top: 10px;
+      padding: 7px 12px;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    .annotation.good {
+      background: oklch(0.76 0.17 155 / 0.10);
+      border: 1px solid oklch(0.76 0.17 155 / 0.25);
+      color: oklch(0.82 0.12 155);
+    }
+
+    .annotation.bad {
+      background: oklch(0.65 0.15 30 / 0.10);
+      border: 1px solid oklch(0.65 0.15 30 / 0.25);
+      color: oklch(0.80 0.12 40);
+    }
+
+    .annotation.info {
+      background: var(--teal-glow);
+      border: 1px solid oklch(0.79 0.18 188 / 0.25);
+      color: oklch(0.85 0.10 188);
+    }
+
+    /* ── Vertical rule between panels ─────────────────────────── */
+    .vs-divider {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 1px;
+      background: var(--border);
+    }
+
+    .vs-badge {
+      position: sticky;
+      top: 50%;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 6px 10px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* ── Scrollable inner ──────────────────────────────────────── */
+    .scroll-inner {
+      width: 100%;
+      max-width: 400px;
+    }
+
+    /* ── Skill level legend ────────────────────────────────────── */
+    .skill-legend {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      text-align: center;
+      font-family: var(--font-mono);
+    }
+
+    /* ── Page footer note ─────────────────────────────────────── */
+    .footer-note {
+      position: fixed;
+      bottom: 0;
+      left: 0; right: 0;
+      background: oklch(0.09 0.014 245 / 0.92);
+      backdrop-filter: blur(8px);
+      border-top: 1px solid var(--border);
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+    }
+
+    .footer-note strong { color: var(--text-secondary); }
+
+    .footer-dot {
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="preview-wrapper">
+
+    <!-- ═══════════════════════════════════════════════════
+         LEFT — BEFORE (current design)
+    ═══════════════════════════════════════════════════ -->
+    <div class="preview-pane before-pane">
+      <div class="scroll-inner">
+        <div class="pane-label">Current — Before</div>
+
+        <div class="before-brand">
+          <div class="before-icon">
+            <!-- Badminton racket SVG -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="28" height="28" aria-hidden="true">
+              <g transform="rotate(45,12,12)">
+                <ellipse cx="12" cy="5.5" rx="3.5" ry="4.5"/>
+                <g stroke-width="1"><line x1="12" y1="1.2" x2="12" y2="9.8"/><line x1="8.7" y1="5.5" x2="15.3" y2="5.5"/></g>
+                <line x1="9.8" y1="9.8" x2="11.2" y2="13.5"/>
+                <line x1="14.2" y1="9.8" x2="12.8" y2="13.5"/>
+                <line x1="11.2" y1="13.5" x2="10.7" y2="21.5"/>
+                <line x1="12.8" y1="13.5" x2="13.3" y2="21.5"/>
+                <path d="M10.7 21.5 Q12 23 13.3 21.5"/>
+              </g>
+            </svg>
+          </div>
+          <div class="before-title">Badminton Queue</div>
+          <div class="before-subtitle">Enter your name and skill level to get started.</div>
+        </div>
+
+        <div class="before-form">
+          <div>
+            <label class="before-label">Your Name</label>
+            <input class="before-input" type="text" placeholder="e.g. Miggy, Stelle, Carlo B" style="outline:none;" />
+          </div>
+
+          <fieldset style="border:0;padding:0;margin:0;">
+            <legend class="before-label">Skill Level</legend>
+            <div class="before-skill-grid">
+              <div class="before-skill-chip">
+                <div class="before-skill-name">Beginner</div>
+                <div class="before-skill-desc">Just starting out</div>
+              </div>
+              <div class="before-skill-chip">
+                <div class="before-skill-name">Lower Intermediate</div>
+                <div class="before-skill-desc">Getting consistent</div>
+              </div>
+              <div class="before-skill-chip active">
+                <div class="before-skill-name">Intermediate</div>
+                <div class="before-skill-desc">Solid rallies</div>
+              </div>
+              <div class="before-skill-chip">
+                <div class="before-skill-name">Upper Intermediate</div>
+                <div class="before-skill-desc">Match-ready</div>
+              </div>
+              <div class="before-skill-chip">
+                <div class="before-skill-name">Lower Advanced</div>
+                <div class="before-skill-desc">Competitive play</div>
+              </div>
+              <div class="before-skill-chip">
+                <div class="before-skill-name">Advanced</div>
+                <div class="before-skill-desc">Tournament level</div>
+              </div>
+            </div>
+          </fieldset>
+
+          <div>
+            <label class="before-label">4-Digit PIN</label>
+            <input class="before-input" type="password" placeholder="1234" style="text-align:center;letter-spacing:0.3em;font-family:'JetBrains Mono';font-size:20px;" />
+          </div>
+
+          <button class="before-btn" type="button">Join Queue</button>
+        </div>
+
+        <!-- The buried reconnect link -->
+        <div class="before-reconnect">Already have a PIN? Reconnect</div>
+
+        <div class="annotation bad" style="margin-top:24px;">
+          ⚠ RECONNECT is buried below the full onboarding form<br/>
+          Returning players must scroll past everything to find it<br/>
+          Styled as muted underline text — lowest visual hierarchy
+        </div>
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div class="vs-divider">
+      <div class="vs-badge">BEFORE / AFTER</div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         RIGHT — AFTER (redesigned)
+    ═══════════════════════════════════════════════════ -->
+    <div class="preview-pane after-pane">
+      <div class="scroll-inner">
+        <div class="pane-label">Redesigned — After</div>
+
+        <div class="after-brand">
+          <div class="after-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="26" height="26" aria-hidden="true">
+              <g transform="rotate(45,12,12)">
+                <ellipse cx="12" cy="5.5" rx="3.5" ry="4.5"/>
+                <g stroke-width="1"><line x1="12" y1="1.2" x2="12" y2="9.8"/><line x1="8.7" y1="5.5" x2="15.3" y2="5.5"/></g>
+                <line x1="9.8" y1="9.8" x2="11.2" y2="13.5"/>
+                <line x1="14.2" y1="9.8" x2="12.8" y2="13.5"/>
+                <line x1="11.2" y1="13.5" x2="10.7" y2="21.5"/>
+                <line x1="12.8" y1="13.5" x2="13.3" y2="21.5"/>
+                <path d="M10.7 21.5 Q12 23 13.3 21.5"/>
+              </g>
+            </svg>
+          </div>
+          <div class="after-title">Badminton Queue</div>
+        </div>
+
+        <!-- ── Path switcher — the key UX fix ────────────── -->
+        <div class="path-switcher">
+          <div class="path-tab new-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+            <span class="path-tab-label">New Player</span>
+            <span class="path-tab-sub">First time here</span>
+          </div>
+          <div class="path-tab return-tab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            <span class="path-tab-label">Returning</span>
+            <span class="path-tab-sub">I have a PIN</span>
+          </div>
+        </div>
+
+        <!-- ── New Player form (active tab shown) ─────────── -->
+        <div class="after-form">
+          <div>
+            <label class="after-field-label">Your Name</label>
+            <input class="after-input" type="text" placeholder="e.g. Miggy, Stelle, Carlo B" style="outline:none;" />
+          </div>
+
+          <div>
+            <label class="after-field-label">Skill Level</label>
+            <div class="skill-grid">
+              <div class="skill-chip">
+                <span class="skill-dot"></span>
+                <div class="skill-name">Beginner</div>
+                <div class="skill-desc">Just starting out</div>
+              </div>
+              <div class="skill-chip">
+                <span class="skill-dot"></span>
+                <div class="skill-name">Lower Int.</div>
+                <div class="skill-desc">Getting consistent</div>
+              </div>
+              <div class="skill-chip">
+                <span class="skill-dot"></span>
+                <div class="skill-name">Intermediate</div>
+                <div class="skill-desc">Solid rallies</div>
+              </div>
+              <div class="skill-chip">
+                <span class="skill-dot"></span>
+                <div class="skill-name">Upper Int.</div>
+                <div class="skill-desc">Match-ready</div>
+              </div>
+              <div class="skill-chip">
+                <span class="skill-dot"></span>
+                <div class="skill-name">Lower Adv.</div>
+                <div class="skill-desc">Competitive play</div>
+              </div>
+              <div class="skill-chip">
+                <span class="skill-dot"></span>
+                <div class="skill-name">Advanced</div>
+                <div class="skill-desc">Tournament level</div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="after-field-label">Choose a 4-Digit PIN</label>
+            <input class="pin-input" type="password" placeholder="——" style="outline:none;" />
+            <div style="font-size:11px;color:var(--text-muted);margin-top:5px;font-family:var(--font-mono);">You'll use this to reconnect if you lose your session</div>
+          </div>
+
+          <button class="join-btn" type="button">Join Queue</button>
+        </div>
+
+        <div class="annotation good">
+          ✓ Tab toggle is the FIRST element — zero scrolling required<br/>
+          ✓ Equal visual weight for both paths<br/>
+          ✓ Clear label — "I have a PIN" is immediately scannable
+        </div>
+
+        <!-- ── Spacer ──────────────────────────────────────── -->
+        <div style="height: 40px;"></div>
+
+        <!-- ══════════════════════════════════════════════
+             RETURNING TAB STATE — shown below as a separate preview
+        ══════════════════════════════════════════════ -->
+        <div style="border-top: 1px solid var(--border); padding-top: 32px;">
+          <div class="pane-label" style="text-align:center; display:inline-block; margin-bottom:20px;">Returning tab — what players see</div>
+
+          <!-- Same switcher — now RETURNING is active -->
+          <div class="path-switcher" style="margin-bottom:20px;">
+            <div class="path-tab return-tab" style="color:var(--text-muted);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+              <span class="path-tab-label">New Player</span>
+              <span class="path-tab-sub">First time here</span>
+            </div>
+            <div class="path-tab" style="background:var(--surface-raised);box-shadow:0 1px 4px oklch(0 0 0 / 0.3);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+              <span class="path-tab-label" style="color:var(--teal);">Returning</span>
+              <span class="path-tab-sub" style="color:var(--text-secondary);">I have a PIN</span>
+            </div>
+          </div>
+
+          <!-- Reconnect hero card -->
+          <div class="reconnect-panel">
+            <div class="reconnect-hero">
+              <div class="reconnect-eyebrow">Welcome back</div>
+              <div class="reconnect-heading">Rejoin the court.</div>
+              <div class="reconnect-sub">Enter your name and PIN to reclaim your queue position and match history.</div>
+
+              <div class="reconnect-fields">
+                <input class="reconnect-input" type="text" placeholder="Your name" style="outline:none;" />
+                <input class="reconnect-pin-input" type="password" placeholder="PIN" style="outline:none;" />
+                <button class="reconnect-btn" type="button">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                  Reconnect
+                </button>
+                <div class="reconnect-note">Forgot your PIN? Ask the session organizer to reset it.</div>
+              </div>
+            </div>
+
+            <div class="new-player-link">
+              <span class="new-player-link-text">New to this session? </span>
+              <button class="new-player-link-btn" type="button">Create a new player profile →</button>
+            </div>
+          </div>
+
+          <div class="annotation info">
+            ✓ Reconnect is the HERO — full card, prominent button<br/>
+            ✓ Teal accent differentiates from amber new-player CTA<br/>
+            ✓ Only 2 fields — name + PIN. Zero friction for returning users.<br/>
+            ✓ "New player" escape hatch at the bottom (not buried)
+          </div>
+        </div>
+
+      </div><!-- /scroll-inner -->
+    </div><!-- /after-pane -->
+
+  </div><!-- /preview-wrapper -->
+
+  <footer class="footer-note">
+    <strong>PREVIEW</strong>
+    <span class="footer-dot"></span>
+    <span>Login page redesign — Reconnect UX fix</span>
+    <span class="footer-dot"></span>
+    <span>Key change: NEW PLAYER / RETURNING toggle at top — equal hierarchy, zero scrolling</span>
+    <span class="footer-dot"></span>
+    <span>Badminton Queue · Court Nights design system</span>
+  </footer>
+
+</body>
+</html>

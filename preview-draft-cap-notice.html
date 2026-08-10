@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DraftCapNotice — Before / After Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cc-bg:          oklch(0.14 0.018 238);
+    --cc-bg-2:        oklch(0.19 0.02 238);
+    --cc-bg-3:        oklch(0.23 0.022 240);
+    --cc-border:      oklch(0.3 0.025 240);
+    --cc-border-hi:   oklch(0.44 0.032 240);
+    --cc-accent:      oklch(0.79 0.18 188);
+    --cc-accent-dim:  oklch(0.79 0.18 188 / 0.14);
+    --cc-accent-text: oklch(0.79 0.18 188);
+    --cc-amber:       oklch(0.78 0.17 62);
+    --cc-amber-dim:   oklch(0.78 0.17 62 / 0.14);
+    --cc-red:         oklch(0.65 0.21 25);
+    --cc-red-dim:     oklch(0.65 0.21 25 / 0.14);
+    --cc-t1:          oklch(0.94 0.008 238);
+    --cc-t2:          oklch(0.68 0.014 238);
+    --cc-t3:          oklch(0.48 0.016 238);
+    --cc-btn-on-accent: oklch(0.11 0.016 238);
+    --background:     oklch(0.07 0.012 245);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--background);
+    color: var(--cc-t1);
+    min-height: 100vh;
+    padding: 32px 24px;
+  }
+
+  .font-command { font-family: 'Chakra Petch', sans-serif; }
+
+  .page-header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+  .page-header h1 {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cc-t2);
+    margin-bottom: 6px;
+  }
+  .page-header p {
+    font-size: 13px;
+    color: var(--cc-t3);
+  }
+
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  @media (max-width: 700px) {
+    .columns { grid-template-columns: 1fr; }
+  }
+
+  .col-label {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--cc-t3);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .col-label .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    display: inline-block;
+  }
+  .dot-red   { background: oklch(0.65 0.21 25); }
+  .dot-green { background: oklch(0.72 0.18 155); }
+
+  .panel {
+    background: var(--cc-bg);
+    border: 1px solid var(--cc-border);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ── Clip-cut polygon ── */
+  .clip-cut-sm {
+    clip-path: polygon(
+      0 0,
+      calc(100% - 10px) 0,
+      100% 10px,
+      100% 100%,
+      10px 100%,
+      0 calc(100% - 10px)
+    );
+  }
+  .clip-cut {
+    clip-path: polygon(
+      0 0,
+      calc(100% - 18px) 0,
+      100% 18px,
+      100% 100%,
+      18px 100%,
+      0 calc(100% - 18px)
+    );
+  }
+
+  /* ── BEFORE: current DraftCapNotice ── */
+  .notice-before {
+    border-radius: 12px;
+    border: 1px solid oklch(0.83 0.08 85 / 0.3);
+    background: oklch(0.56 0.09 85 / 0.10);
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    animation: slide-in 0.2s ease-out;
+  }
+  .notice-before .icon-before {
+    color: oklch(0.73 0.14 73);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .notice-before .title {
+    font-size: 14px;
+    font-weight: 600;
+    color: oklch(0.25 0.06 73);
+    line-height: 1.3;
+  }
+  .notice-before .body {
+    font-size: 12px;
+    color: oklch(0.38 0.06 73);
+    margin-top: 2px;
+    line-height: 1.5;
+  }
+
+  /* ── AFTER: proposed DraftCapNotice ── */
+  .notice-after {
+    background: var(--cc-amber-dim);
+    border: 1px solid oklch(0.78 0.17 62 / 0.35);
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    animation: slide-in 0.2s ease-out;
+    position: relative;
+  }
+  .notice-after .icon-after {
+    color: var(--cc-amber);
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .notice-after .content { flex: 1; min-width: 0; }
+  .notice-after .title {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--cc-amber);
+    line-height: 1.3;
+    margin-bottom: 3px;
+  }
+  .notice-after .body {
+    font-size: 11.5px;
+    color: var(--cc-t2);
+    line-height: 1.5;
+  }
+  .notice-after .inline-btn {
+    flex-shrink: 0;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cc-btn-on-accent);
+    background: var(--cc-amber);
+    border: none;
+    padding: 0 12px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    align-self: center;
+    transition: opacity 0.15s;
+  }
+  .notice-after .inline-btn:hover { opacity: 0.85; }
+
+  /* ── CapSaturationNotice (same in both — showing current implementation) ── */
+  .cap-sat-notice {
+    border-radius: 12px;
+    border: 1px solid oklch(0.65 0.14 38 / 0.3);
+    background: oklch(0.5 0.09 38 / 0.10);
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .cap-sat-notice .icon { color: oklch(0.65 0.14 38); flex-shrink: 0; margin-top: 1px; }
+  .cap-sat-notice .title { font-size: 14px; font-weight: 600; color: oklch(0.86 0.06 35); }
+  .cap-sat-notice .body  { font-size: 12px; color: oklch(0.72 0.07 38); margin-top: 2px; line-height: 1.5; }
+
+  /* ── Improved CapSaturationNotice ── */
+  .cap-sat-after {
+    background: var(--cc-red-dim);
+    border: 1px solid oklch(0.65 0.21 25 / 0.4);
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .cap-sat-after .icon { color: var(--cc-red); flex-shrink: 0; margin-top: 2px; }
+  .cap-sat-after .dismiss {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--cc-t3);
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    line-height: 1;
+    align-self: flex-start;
+  }
+  .cap-sat-after .dismiss:hover { color: var(--cc-t2); }
+  .cap-sat-after .title {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--cc-red);
+    margin-bottom: 3px;
+  }
+  .cap-sat-after .body  { font-size: 11.5px; color: var(--cc-t2); line-height: 1.5; }
+
+  /* ── Publish All banner ── */
+  .publish-banner {
+    background: var(--cc-accent-dim);
+    border: 1px solid oklch(0.79 0.18 188 / 0.25);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .publish-banner .label {
+    font-size: 13px;
+    color: var(--cc-accent-text);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-weight: 500;
+  }
+  .publish-banner .label strong { font-weight: 700; }
+  .publish-banner .btn {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cc-btn-on-accent);
+    background: var(--cc-accent);
+    border: none;
+    padding: 0 16px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .publish-banner .btn:hover { opacity: 0.85; }
+
+  /* ── Match card stub ── */
+  .match-card {
+    background: var(--cc-bg-2);
+    border: 1px solid var(--cc-border);
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .match-card .court-label {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cc-t3);
+  }
+  .match-card .players {
+    font-size: 12px;
+    color: var(--cc-t2);
+    flex: 1;
+  }
+  .match-card .draft-badge {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cc-amber);
+    border: 1px solid oklch(0.78 0.17 62 / 0.4);
+    background: var(--cc-amber-dim);
+    padding: 2px 8px;
+  }
+
+  .section-divider {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--cc-t3);
+    padding: 4px 0;
+    border-bottom: 1px solid var(--cc-border);
+    margin-bottom: 4px;
+  }
+
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Annotations */
+  .change-tag {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 3px;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+  .tag-fix   { background: oklch(0.72 0.18 155 / 0.15); color: oklch(0.72 0.18 155); border: 1px solid oklch(0.72 0.18 155 / 0.3); }
+  .tag-same  { background: oklch(0.48 0.016 238 / 0.3); color: var(--cc-t3); border: 1px solid var(--cc-border); }
+
+  .row-label {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8.5px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cc-t3);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  svg { display: block; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>DraftCapNotice — Design Preview</h1>
+  <p>Compare current implementation vs proposed fixes. Approve before wiring to the app.</p>
+</div>
+
+<div class="columns">
+
+  <!-- ── BEFORE ── -->
+  <div>
+    <div class="col-label"><span class="dot dot-red"></span> Current (before)</div>
+    <div class="panel clip-cut">
+
+      <!-- CapSaturationNotice — current -->
+      <div>
+        <div class="row-label">1 — CapSaturationNotice (current, raw tailwind)</div>
+        <div class="cap-sat-notice">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <div>
+            <div class="title">Partner-pair cap reached</div>
+            <div class="body">Could not form a match for Marco — all partner combinations have reached the 2-game cap.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DraftCapNotice — current (BEFORE) -->
+      <div>
+        <div class="row-label">2 — DraftCapNotice (current, raw tailwind, rounded)</div>
+        <div class="notice-before">
+          <svg class="icon-before" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+          <div>
+            <div class="title">Auto-generation paused</div>
+            <div class="body">3/3 draft slots filled — review the drafts <strong>above</strong> to unblock the queue.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Publish All banner -->
+      <div>
+        <div class="row-label">3 — Publish All banner (existing, unchanged)</div>
+        <div class="publish-banner clip-cut-sm">
+          <div class="label">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <span><strong>3</strong> on-deck matches waiting for approval</span>
+          </div>
+          <button class="btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            Publish All
+          </button>
+        </div>
+      </div>
+
+      <!-- Match card stubs -->
+      <div>
+        <div class="section-divider">Drafts — 3</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
+          <div class="match-card clip-cut-sm">
+            <span class="draft-badge">Draft</span>
+            <span class="players">Alex & Ben vs Carlo & Dave</span>
+          </div>
+          <div class="match-card clip-cut-sm">
+            <span class="draft-badge">Draft</span>
+            <span class="players">Eve & Frank vs Gina & Hiro</span>
+          </div>
+          <div class="match-card clip-cut-sm">
+            <span class="draft-badge">Draft</span>
+            <span class="players">Ivan & Jan vs Kim & Leo</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /panel -->
+
+    <!-- Issues callout -->
+    <div style="margin-top:16px;padding:12px 14px;background:oklch(0.65 0.21 25 / 0.08);border:1px solid oklch(0.65 0.21 25 / 0.25);">
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--cc-red);margin-bottom:8px;">Issues in current</div>
+      <ul style="font-size:11.5px;color:var(--cc-t2);line-height:1.9;padding-left:14px;">
+        <li><strong style="color:var(--cc-t1);">P0</strong> — Raw <code>amber-*</code> Tailwind classes, not <code>cc-amber</code> tokens</li>
+        <li><strong style="color:var(--cc-t1);">P1</strong> — <code>rounded-xl</code> — wrong geometry (should be clip-cut)</li>
+        <li><strong style="color:var(--cc-t1);">P1</strong> — "above" is wrong — drafts render below the notice</li>
+        <li><strong style="color:var(--cc-t1);">P2</strong> — Heading not using <code>font-command</code> uppercase</li>
+        <li><strong style="color:var(--cc-t1);">P2</strong> — Render order: DraftCap sits above CapSaturation (inverts urgency)</li>
+        <li><strong style="color:var(--cc-t1);">P2</strong> — No inline action — organizer must hunt for Publish All button</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── AFTER ── -->
+  <div>
+    <div class="col-label"><span class="dot dot-green"></span> Proposed (after)</div>
+    <div class="panel clip-cut">
+
+      <!-- CapSaturationNotice — improved -->
+      <div>
+        <div class="row-label">1 — CapSaturationNotice (fixed: cc-red tokens + clip-cut)</div>
+        <div class="cap-sat-after clip-cut-sm">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          <div style="flex:1;min-width:0;">
+            <div class="title">Partner-pair cap reached — urgent</div>
+            <div class="body">Could not form a match for Marco — all partner combinations have reached the 2-game cap.</div>
+          </div>
+          <button class="dismiss">✕</button>
+        </div>
+      </div>
+
+      <!-- DraftCapNotice — proposed (AFTER) -->
+      <div>
+        <div class="row-label">2 — DraftCapNotice (fixed: cc-amber + clip-cut + font-command + inline action)</div>
+        <div class="notice-after clip-cut-sm">
+          <svg class="icon-after" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></svg>
+          <div class="content">
+            <div class="title">Auto-generation paused</div>
+            <div class="body">3/3 draft slots filled — publish the <strong style="color:var(--cc-t1);">drafts below</strong> to resume the queue.</div>
+          </div>
+          <button class="inline-btn clip-cut-sm">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            Publish All
+          </button>
+        </div>
+      </div>
+
+      <!-- Publish All banner -->
+      <div>
+        <div class="row-label">3 — Publish All banner (existing, unchanged)</div>
+        <div class="publish-banner clip-cut-sm">
+          <div class="label">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <span><strong>3</strong> on-deck matches waiting for approval</span>
+          </div>
+          <button class="btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            Publish All
+          </button>
+        </div>
+      </div>
+
+      <!-- Match card stubs -->
+      <div>
+        <div class="section-divider">Drafts — 3</div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
+          <div class="match-card clip-cut-sm">
+            <span class="draft-badge">Draft</span>
+            <span class="players">Alex & Ben vs Carlo & Dave</span>
+          </div>
+          <div class="match-card clip-cut-sm">
+            <span class="draft-badge">Draft</span>
+            <span class="players">Eve & Frank vs Gina & Hiro</span>
+          </div>
+          <div class="match-card clip-cut-sm">
+            <span class="draft-badge">Draft</span>
+            <span class="players">Ivan & Jan vs Kim & Leo</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /panel -->
+
+    <!-- Changes callout -->
+    <div style="margin-top:16px;padding:12px 14px;background:oklch(0.72 0.18 155 / 0.08);border:1px solid oklch(0.72 0.18 155 / 0.25);">
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:oklch(0.72 0.18 155);margin-bottom:8px;">Changes in proposed</div>
+      <ul style="font-size:11.5px;color:var(--cc-t2);line-height:1.9;padding-left:14px;">
+        <li>DraftCapNotice: <code>cc-amber</code> / <code>cc-amber-dim</code> tokens throughout</li>
+        <li>DraftCapNotice: <code>clip-cut-sm</code> polygon — matches surrounding cards</li>
+        <li>DraftCapNotice: <code>font-command uppercase tracking</code> heading</li>
+        <li>Copy: "drafts <strong>below</strong>" (spatially accurate)</li>
+        <li>Render order: CapSaturation (error, urgent) → DraftCap (status, informational)</li>
+        <li>Inline "Publish All" button in the notice — action co-located with status</li>
+        <li>CapSaturationNotice: same fixes applied (cc-red + clip-cut-sm)</li>
+      </ul>
+    </div>
+  </div>
+
+</div><!-- /columns -->
+
+<div style="max-width:960px;margin:32px auto 0;padding:14px 16px;background:oklch(0.19 0.02 238);border:1px solid oklch(0.3 0.025 240);text-align:center;">
+  <p style="font-family:'Chakra Petch',sans-serif;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--cc-t3);">
+    This is a static preview — no app code has been changed.
+    Reply "approve" to wire both fixes into the actual components.
+  </p>
+</div>
+
+</body>
+</html>
