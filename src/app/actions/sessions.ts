@@ -891,6 +891,85 @@ export async function getSessionForOrganizer(sessionId: string): Promise<GetSess
   return { success: true, session: data };
 }
 
+// ── getPlayerSessionStatus ────────────────────────────────────
+
+export type PlayerSessionStatusResult =
+  | { success: true; isActive: boolean }
+  | { success: false; error: string };
+
+/**
+ * Reports whether a session is still running, for the player side.
+ *
+ * Why this exists: `session_closed` used to reach players over the broadcast
+ * channel and nowhere else. Nothing the player dashboard polls carries the
+ * fact — useSessionData reads `courts` and `queue_entries`, never the session
+ * row — so a player whose channel never joined (or dropped across the exact
+ * moment the organizer closed) sat on a frozen dashboard indefinitely.
+ * useOrganizerBroadcast now calls this as a slow fallback. See
+ * PENDING_WORK_2026-07-23.md §2.3.
+ *
+ * Why a server action rather than a client read: `sessions_select` is
+ * `is_session_organizer(id) OR is_club_member(club_id)`. Every client that can
+ * mount the caller has already passed the club layout's membership gate, so
+ * that predicate holds for them AT MOUNT — but it is not a property of the
+ * player, it is a property of a row that can change under them. If an admin
+ * soft-removes a member (`club_members.is_active = false`) mid-session, the
+ * predicate starts failing AND `session_access_level` goes NULL, so the private
+ * broadcast channel refuses the join at the same instant. That player is
+ * stranded on both paths, and only an RLS-bypassing read can answer them. The
+ * action returns a single boolean, never the row (which carries
+ * organizer_passcode).
+ *
+ * Not covered, deliberately: a de-authed client. The `getUser()` gate below and
+ * the `TO authenticated` channel policy fail together, so this is a fallback
+ * for a dead CHANNEL, not for a dead SESSION. Auth loss has its own recovery
+ * path (APP_MANIFEST §3.26) and a `sessions` read is not the place to re-solve
+ * it — reporting "closed" to someone whose token merely expired would eject
+ * them from a live session.
+ *
+ * Disclosure: an authenticated caller who already knows a session UUID learns
+ * only whether it is active. `lookup_active_session` already exposes almost the
+ * same bit to anon for the QR-join path — with ONE genuine delta: it carries
+ * `AND s.is_active = true`, so it collapses "closed session" and "no such
+ * session" into the same empty answer, whereas this action distinguishes them
+ * (`isActive: false` vs. `isActive: null`). That is one bit, to an
+ * authenticated caller, about a UUID they already hold — accepted, not nil.
+ * Booked in PENDING_WORK_2026-07-23.md §4 alongside the other `"use server"`
+ * oracles.
+ */
+export async function getPlayerSessionStatus(
+  sessionId: string
+): Promise<PlayerSessionStatusResult> {
+  if (!isValidUUID(sessionId)) return { success: false, error: "Invalid session ID." };
+
+  const userClient = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await userClient.auth.getUser();
+  if (!user) return { success: false, error: "Not authenticated." };
+
+  let service: ReturnType<typeof createServiceClient>;
+  try {
+    service = createServiceClient();
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const { data, error } = await service
+    .from("sessions")
+    .select("is_active")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (error) return { success: false, error: "Failed to read session status." };
+  // No row: treat as unknown, not as closed. The caller navigates only on a
+  // definite `isActive: false`, so an ambiguous answer holds the dashboard
+  // rather than yanking a player out of a session that is still live.
+  if (!data) return { success: false, error: "Session not found." };
+
+  return { success: true, isActive: data.is_active };
+}
+
 export type CloseSessionResult = {
   success: boolean;
   message: string;
