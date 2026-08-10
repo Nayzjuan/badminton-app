@@ -83,17 +83,24 @@
 -- Organizer surfaces (use-enriched-matches, use-organizer-matches) resolve to
 -- 'organizer' and are unaffected.
 --
--- APP-SIDE: THE TWO THINGS THAT DO CHANGE
--- ---------------------------------------
---   1. useMatchAlerts stops DOUBLE-firing COURT_CALL for a member.  Today the
---      draft-time match_players INSERT nulls `lastMatchStatus.current`
---      (use-match-alerts.ts:299), so when promoteOnDeckMatchInternal flips the
---      match to in_progress AND the roster's queue_entries to 'playing' in one
---      call (matchmaking.ts:751, :786-791), BOTH handleMatchChange and
---      handleQueueChange fire COURT_CALL.  Suppressing the draft INSERT leaves
---      exactly one.  This is de-duplication, not alert loss — do NOT "fix" it by
---      also resetting those refs from the `matches` subscription, which would
---      restore the double beep.  Server-side Web Push is independent of both.
+-- APP-SIDE: WHAT ACTUALLY CHANGES
+-- -------------------------------
+--   1. NOTHING, for useMatchAlerts.  An earlier draft of this comment claimed the
+--      migration de-duplicates a double COURT_CALL.  It does not — the double
+--      fire is PRE-EXISTING and SURVIVES this change, so do not read the absence
+--      of a fix here as a deliberate design choice.
+--      Why it survives: at promote, promoteOnDeckMatchInternal flips the match to
+--      in_progress AND the roster's queue_entries to 'playing' in one transaction
+--      (matchmaking.ts:751, :786-791).  handleQueueChange fires COURT_CALL off
+--      'playing' (use-match-alerts.ts:213-215) with no reference to match_players
+--      at all.  handleMatchChange fires independently (:260): by then the match is
+--      in_progress, so has_match_access returns TRUE and its slow-path roster
+--      lookup (:236-241) still resolves playerIsInMatch — the firewall only ever
+--      hid the row while the match was pending.  fireAlert (:97-110) has no
+--      cross-type dedupe, so both land.  Suppressing the draft-time INSERT changes
+--      only which of null/'pending' `prev` holds, and both differ from
+--      'in_progress'.  Server-side Web Push is independent of both.
+--      The real fix belongs in the hook, not here — banked as an app-side item.
 --   2. The held cross-court reservation badge needed a new live trigger.  A held
 --      draft is created as pending+unpublished, so `matches_select` ALREADY hid
 --      its `matches` row from the reserved player; its match_players INSERTs were
