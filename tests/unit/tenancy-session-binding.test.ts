@@ -130,20 +130,40 @@ function useServiceClient(src: RespSource): Recorded[] {
   return recorded;
 }
 
-/** Shapes the two reads `isSessionOrganizerLocal` makes before the club arm. */
+/**
+ * Shapes the reads the organizer shim makes. The `sessions` row now carries the
+ * club slug too: the shim reads created_by, club_id and clubs(slug) in ONE
+ * query and passes the result into the organizer predicate, instead of calling
+ * resolveSessionClubSlug and then re-reading the same row.
+ */
+const sessionRow = (createdBy: string): Resp => ({
+  data: { created_by: createdBy, club_id: CLUB_ID, clubs: { slug: SLUG } },
+  error: null,
+});
+
 const asOrganizerVia = {
-  creator: { sessions: { data: { created_by: CALLER.id, club_id: CLUB_ID }, error: null } },
+  creator: { sessions: sessionRow(CALLER.id) },
   sessionOrganizersRow: {
-    sessions: { data: { created_by: STRANGER.id, club_id: CLUB_ID }, error: null },
+    sessions: sessionRow(STRANGER.id),
     session_organizers: { data: { id: "so1" }, error: null },
   },
   clubAdmin: {
-    sessions: { data: { created_by: STRANGER.id, club_id: CLUB_ID }, error: null },
+    sessions: sessionRow(STRANGER.id),
     session_organizers: { data: null, error: null },
     club_members: { data: { role: "admin" }, error: null },
   },
+  clubOwner: {
+    sessions: sessionRow(STRANGER.id),
+    session_organizers: { data: null, error: null },
+    club_members: { data: { role: "owner" }, error: null },
+  },
+  plainClubMember: {
+    sessions: sessionRow(STRANGER.id),
+    session_organizers: { data: null, error: null },
+    club_members: { data: { role: "member" }, error: null },
+  },
   nobody: {
-    sessions: { data: { created_by: STRANGER.id, club_id: CLUB_ID }, error: null },
+    sessions: sessionRow(STRANGER.id),
     session_organizers: { data: null, error: null },
     club_members: { data: null, error: null },
   },
@@ -360,13 +380,16 @@ describe("TB-ORG: /organizer/[sessionId] auto-enroll gate", () => {
 
     expect(await render()).toBe(`REDIRECT:/c/${SLUG}/organizer/${SESSION_B}`);
     expect(vi.mocked(ensureClubMembership)).not.toHaveBeenCalled();
-    expect(recorded).toHaveLength(0);
+    // The `sessions` read is unconditional — it is how the page knows where to
+    // redirect. What must not happen for an anonymous visitor is any
+    // ENTITLEMENT lookup, so assert on those tables by name rather than on a
+    // total count that the slug read now legitimately occupies.
+    expect(recorded.map((x) => x.table)).toEqual(["sessions"]);
   });
 
   it("TB-ORG-4: an unknown session 404s without touching membership", async () => {
-    vi.mocked(resolveSessionClubSlug).mockResolvedValue(null);
     authedAs(CALLER);
-    useServiceClient(asOrganizerVia.creator);
+    useServiceClient({ sessions: { data: null, error: null } });
 
     expect(await render()).toBe("NOT_FOUND");
     expect(vi.mocked(ensureClubMembership)).not.toHaveBeenCalled();
@@ -411,12 +434,61 @@ describe("TB-ORG: /organizer/[sessionId] auto-enroll gate", () => {
     ]);
   });
 
-  it("TB-ORG-8: a deleted session enrolls nobody", async () => {
+  it("TB-ORG-7b: an active club OWNER counts too", async () => {
+    // The other half of the C6 pair. Without this, mutating the predicate to
+    // `role === "admin"` alone would still pass every other test here.
     authedAs(CALLER);
-    useServiceClient({ sessions: { data: null, error: null } });
+    useServiceClient(asOrganizerVia.clubOwner);
+
+    await render();
+    expect(vi.mocked(ensureClubMembership)).toHaveBeenCalledWith(SLUG, CALLER.id);
+  });
+
+  it("TB-ORG-7c: a plain club MEMBER is not an organizer and is not enrolled", async () => {
+    // The equivalent-mutant this pins: `clubMembership?.role !== undefined`, or
+    // adding "member" to the accepted set, passes every other TB-ORG test —
+    // asOrganizerVia.nobody returns a null club_members row, so "any row" and
+    // "an owner/admin row" are indistinguishable without this case.
+    //
+    // It is not a hypothetical widening either: this branch decides auto-ENROLL,
+    // and while a plain member already has a club_members row, admitting them
+    // here would mean any active member could turn a bare session UUID from
+    // another organizer's session into a confirmed membership write. The
+    // predicate must stay owner/admin, exactly as isSessionOrganizer has it.
+    authedAs(CALLER);
+    useServiceClient(asOrganizerVia.plainClubMember);
 
     expect(await render()).toBe(`REDIRECT:/c/${SLUG}/organizer/${SESSION_B}`);
     expect(vi.mocked(ensureClubMembership)).not.toHaveBeenCalled();
+  });
+
+  it("TB-ORG-8: a session whose club has no slug 404s and enrolls nobody", async () => {
+    // resolveSessionClubSlug used to answer this question separately; the shim
+    // now derives the slug from the same row, so a missing club embed is what a
+    // null slug looks like.
+    authedAs(CALLER);
+    useServiceClient({
+      sessions: {
+        data: { created_by: CALLER.id, club_id: CLUB_ID, clubs: null },
+        error: null,
+      },
+    });
+
+    expect(await render()).toBe("NOT_FOUND");
+    expect(vi.mocked(ensureClubMembership)).not.toHaveBeenCalled();
+  });
+
+  it("TB-ORG-11: the session row is read exactly ONCE", async () => {
+    // The shim used to read `sessions` twice — once via resolveSessionClubSlug
+    // for the slug, once inside the organizer check for created_by/club_id.
+    // Same row, two round trips, and a window in which they could disagree.
+    authedAs(CALLER);
+    const recorded = useServiceClient(asOrganizerVia.clubAdmin);
+
+    await render();
+
+    expect(recorded.filter((x) => x.table === "sessions")).toHaveLength(1);
+    expect(vi.mocked(resolveSessionClubSlug)).not.toHaveBeenCalled();
   });
 
   it("TB-ORG-9: a failed enroll WRITE diverts straight to /play", async () => {
