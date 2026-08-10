@@ -11,8 +11,20 @@ snapshot, so the next session does not have to re-derive it.
   applied; see the status line on each section. `main` is well past `5e5fa88` (latest verified deploy
   `dpl_Bnqy3QVqKnEE8XCJZNHv3iftcgTi`, PR #51 `e8e76bd`).** ~~The only item still genuinely open in
   this file is §2.3.~~ **§2.3 SHIPPED 2026-08-10** — see that section. Nothing in §0–§5 is open.
-  The one thing this file no longer tracks is the two **unapplied migrations** (`20260810000000`,
-  `20260810000001`); those are handed off in `MEMORY.md` under "UNAPPLIED MIGRATIONS".
+  ~~The one thing this file no longer tracks is the two **unapplied migrations** (`20260810000000`,
+  `20260810000001`); those are handed off in `MEMORY.md` under "UNAPPLIED MIGRATIONS".~~
+  **Both were applied to production on 2026-08-10** — stamps `20260810151122` and `20260810151355`.
+  `20260810000000` was a proven strict no-op (function md5 unchanged); `20260810000001` closed audit
+  finding #11 and was verified functionally through real `authenticated`/`anon` roles. The
+  authoritative record is `TENANCY_AUDIT_2026-07-21.md` §2 #11.
+- ⚠️ **Owed reconciliation — two documents still contradict the line above.** They were left alone
+  deliberately: a concurrent session was mid-write on both when this landed, so editing them would
+  have clobbered its work. They are stale in the *safe* direction (they claim more is outstanding
+  than actually is), and re-applying `20260810000001` would be a benign no-op, but fix them on the
+  next pass: **`MEMORY.md:8`** ("🚨 UNAPPLIED MIGRATIONS — read this first" — note `20260810000000`
+  and `20260810000001` are applied; its own 2026-08-11 entries are a separate matter),
+  **`MEMORY.md:92`**, and **`APP_MANIFEST.md:1582`** ("Finding #11 stays exploitable until
+  `20260810000001` is applied" — it no longer does). Until then, prefer this file and the audit.
 - **Full audit context:** [TENANCY_AUDIT_2026-07-21.md](TENANCY_AUDIT_2026-07-21.md)
 
 > ⚠️ **Migrations in this project are applied by hand.** There is no deploy automation for the
@@ -387,8 +399,8 @@ NULL, and a NULL `IF` condition is treated as false, so a naive guard falls *thr
 | `get_monthly_leaderboard` holds anon EXECUTE | **Not an issue** — it is invoker-rights, so it correctly returns `[]` to anon. An earlier agent claim that this was a hole was a false positive |
 | `refresh_alltime_leaderboard()` PUBLIC EXECUTE | **Closed by PR #40** (§1.1) — no longer a residual |
 | `isSessionOrganizer(userId, sessionId)` is a boolean oracle | Pre-existing, structural: every export of a `"use server"` module is a public HTTP endpoint. Not widened by any recent PR. Fixing it means moving the helper out of the action module |
-| Audit finding **#9** — `match_players` DELETE metadata leak | ⚪ **LOW, optional, defer or accept.** WALRUS skips RLS on DELETE, but the table is REPLICA IDENTITY DEFAULT with PK `id` only, so the payload is an opaque UUID — no player, match, or team. Optional fix: drive roster refresh off the already-subscribed `matches` stream and drop `match_players` from the publication |
-| Audit finding **#11** — draft firewall covers `matches` but not `match_players` | 🟠 **FIX WRITTEN 2026-08-10, NOT YET APPLIED TO PROD.** Any club member can read (and is pushed, live) the full named roster of an unpublished draft. Fix = fold the firewall into `has_match_access`; blast radius is exactly `match_players_select` + `match_games_select`. Migration `20260810000001_extend_draft_firewall_to_match_players.sql` is written and self-asserting, **but migrations here are applied by hand — merging ships nothing.** Still open on prod until someone applies it. See the audit's §2 #11 and §4 item 7, and `MEMORY.md` → "UNAPPLIED MIGRATIONS" |
+| Audit finding **#9** — `match_players` DELETE metadata leak | ⚪ **LOW — FORMALLY ACCEPTED 2026-07-24, no action.** WALRUS skips RLS on DELETE, but the table is REPLICA IDENTITY DEFAULT with PK `id` only, so the payload is an opaque UUID — no player, match, or team. Optional fix: drive roster refresh off the already-subscribed `matches` stream and drop `match_players` from the publication |
+| Audit finding **#11** — draft firewall covers `matches` but not `match_players` | ✅ **CLOSED — applied to prod 2026-08-10**, stamp `20260810151355`, after the code deploy (merge `23ced21`) reached READY. The firewall CASE was folded into `has_match_access`; both dependent policies were left untouched and verified unchanged. Confirmed functionally through real `authenticated`/`anon` roles: a plain member is now denied exactly the `pending`-and-unpublished case and nothing else; organizers unaffected. Zero existing rows lost visibility (every prod match is `completed` or `cancelled`). Revert only via `supabase/rollbacks/20260810000001_rollback_has_match_access.sql` — **never `DROP FUNCTION`**. See the audit's §2 #11 |
 | **Anon TV realtime is dead for every event the board renders from — the 15 s poll is load-bearing** | 🟢 **Accepted, but know it.** An anonymous `/tv/{id}` viewer receives **no INSERT and no UPDATE** on either of its channels: `postgres_changes` re-checks each table's SELECT policy per row, and every branch of `session_access_level` tests `auth.uid()` → NULL for anon. That is every event the board actually renders from — a score change, a court call and a new draft are all INSERT/UPDATE. (Realtime does not apply RLS to **DELETE**, so those still arrive; they carry only the PK and the hook refetches blindly, so a cleared draft can nudge an anon board incidentally. Not part of the 2026-08-04 prod verification, and not something to rely on.) The board can therefore lag **up to 15 s** on the shared screen. A signed-in viewer (an organizer casting) does get the realtime path, which is why this never showed up in testing. Making it work for anon means widening an RLS policy to the anon role — deliberately not done. Written up in full at `src/hooks/use-tv-board.ts:20-52` |
 
 ---
