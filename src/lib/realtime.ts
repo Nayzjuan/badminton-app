@@ -177,8 +177,40 @@ export function subscribeToMatchPlayers(
   channelPrefix?: string,
   onStatus?: (channelId: string, connected: boolean) => void
 ) {
-  // match_players has no session_id column, so we subscribe broadly
-  // and let the callback + state refresh handle filtering.
+  // match_players has no session_id column, so we subscribe broadly and let the
+  // callback + state refresh handle filtering.
+  //
+  // Denormalizing session_id onto match_players to make this filterable was
+  // designed, costed and DECLINED on 2026-08-04 — the design is banked in
+  // PENDING_WORK_2026-07-23.md so nobody re-derives it. The short version:
+  //
+  //   • It would suppress no measured traffic. postgres_changes re-checks
+  //     `match_players_select` → has_match_access → session_access_level per row,
+  //     so cross-CLUB events are already suppressed server-side, and the club has
+  //     never run two sessions concurrently — a session_id filter's entire
+  //     remaining job is cross-session-within-a-club events, of which prod has
+  //     had zero across 27 sessions.
+  //   • It could not cover DELETE anyway. Filters are matched against the OLD
+  //     row for a DELETE, and this table is REPLICA IDENTITY DEFAULT, so `old`
+  //     carries only the PK — a session_id filter silently drops every DELETE.
+  //     Fixing THAT needs REPLICA IDENTITY FULL, i.e. a WAL cost on a hot table
+  //     to buy a filter that suppresses nothing.
+  //
+  // The real cost this binding was blamed for was a CLIENT problem, not a filter
+  // problem. Each draft is 1 `matches` row + 4 `match_players` rows, so at
+  // MAX_AUTO_DRAFTS_XLARGE (6) a clear-then-regenerate DELIVERS ~54 events: 24
+  // match_players DELETEs on the clear (this channel is unfiltered, and Realtime
+  // skips RLS on DELETE), then 6 matches + 24 match_players INSERTs on the
+  // rebuild. The 6 matches DELETEs are dropped by subscribeToTable's
+  // `session_id` filter for the reason given two bullets up — it matches the OLD
+  // row, which is PK-only. Every delivered event used to trigger its own refetch.
+  // The fix is caller-side: share one trailingDebounce with the caller's
+  // `matches` subscription so a match INSERT and its four match_players INSERTs
+  // collapse into a single refetch. Four of the five call sites do that
+  // (use-session-data, use-organizer-matches, use-player-match, use-tv-board);
+  // use-match-alerts deliberately does not — see the note at its subscription.
+  // Revisit the column only if a second club goes live AND two sessions run
+  // concurrently in one of them.
   const channelName = channelPrefix
     ? `${channelPrefix}:match_players:${sessionId}`
     : `match_players:${sessionId}`;
@@ -334,6 +366,24 @@ export function subscribeToOrganizerBroadcast(
  * Subscribe to all profile changes. Profiles have no session_id column, so
  * this subscribes broadly — the callback should re-fetch the queue view,
  * match players, or any derived data to pick up the updated skill level.
+ *
+ * No `filter` on purpose, and this is NOT the unscoped firehose it looks like.
+ * postgres_changes evaluates the table's SELECT policy per row at delivery
+ * under the role bound at JOIN time (see whenRealtimeAuthReady above), so
+ * migration 20260723200000 narrowing `profiles_select` to
+ * shared-club-or-shared-session narrowed this stream with it — that migration
+ * says so explicitly under "DELIBERATELY NOT DONE HERE". A client-side filter
+ * would be redundant, and is also not expressible: postgres_changes filters
+ * take a single column with eq/neq/lt/lte/gt/gte/in, "shared club" is not a
+ * single-column predicate, and an `id=in.(…)` approximation would need a
+ * teardown+rejoin on every queue mutation — which the organizer board cannot
+ * absorb: its `realtimeConnected` indicator asserts an EXACT
+ * REALTIME_CHANNEL_COUNT of simultaneously-connected postgres_changes channels
+ * (use-organizer-session.ts:212), so a channel cycling through re-join would
+ * flap the board to "disconnected" on every queue mutation. What remains is
+ * intra-club refetch noise, and
+ * profile writes are rare and organizer-initiated (skill edit, PIN reset,
+ * OAuth rename, registration upsert).
  */
 export function subscribeToProfiles(
   supabase: TypedClient,

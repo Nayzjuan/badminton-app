@@ -10,6 +10,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { useEnrichedMatches, type EnrichedMatch } from "@/hooks/use-enriched-matches";
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { trailingDebounce } from "@/lib/trailing-debounce";
+import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
 import {
   callNextMatch as callNextMatchAction,
   type MatchmakingResult,
@@ -140,28 +142,46 @@ export function useOrganizerMatches(
   }, [fetchActiveMatches]);
 
   // ── Realtime subscriptions ────────────────────────────────────
+  // ONE debouncer shared by both streams, because both drive the SAME target:
+  // a matchesRevision bump (which re-runs usePairCounts over in queue-control)
+  // plus a full fetchActiveMatches — two round trips per event, un-debounced.
+  //
+  // One organizer action fans out into many rows. Each draft is 1 `matches` row
+  // + 4 `match_players` rows, so a draft-cap regeneration at the deepest cap
+  // (MAX_AUTO_DRAFTS_XLARGE = 6) delivers ~54 events: 24 match_players DELETEs on
+  // the clear (that channel is unfiltered and Realtime skips RLS on DELETE; the 6
+  // matches DELETEs are dropped by the PK-only OLD-row filter), then 6 + 24
+  // INSERTs on the rebuild. An identity merge repoints every match_players row a
+  // player ever had. At two round trips each that is ~108 requests from a single
+  // tab, all collapsing to the same final state. `useSessionData` and
+  // `useMatchHistory` already debounce for exactly this reason; these two
+  // subscriptions were simply never converted.
+  //
+  // Sharing ONE debouncer (rather than one each) is deliberate: a match INSERT
+  // and its four match_players INSERTs are the same logical event, so they must
+  // collapse into a single refetch, not two.
   useEffect(() => {
+    const matchesDeb = trailingDebounce(() => {
+      bumpMatchesRevision();
+      void fetchActiveMatchesRef.current();
+    }, REALTIME_REFETCH_DEBOUNCE_MS);
+
     const unsubMatches = subscribeToMatches(
       supabase,
       sessionId,
-      () => {
-        bumpMatchesRevision();
-        return fetchActiveMatchesRef.current();
-      },
+      matchesDeb.run,
       undefined,
       onChannelStatusMatches
     );
     const unsubMatchPlayers = subscribeToMatchPlayers(
       supabase,
       sessionId,
-      () => {
-        bumpMatchesRevision();
-        return fetchActiveMatchesRef.current();
-      },
+      matchesDeb.run,
       undefined,
       onChannelStatusMatchPlayers
     );
     return () => {
+      matchesDeb.cancel();
       unsubMatches();
       unsubMatchPlayers();
     };

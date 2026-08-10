@@ -35,6 +35,8 @@
 import { useCallback, useEffect, useRef, useMemo } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToQueue, subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { trailingDebounce } from "@/lib/trailing-debounce";
+import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
 import { playWarningBeep, playCourtCall, unlockAudio } from "@/lib/notifications/audio";
 import type { QueueStatus, MatchStatus, QueueEntry, Match } from "@/types/database";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
@@ -155,6 +157,20 @@ export function useMatchAlerts({
     }
   }, [supabase, sessionId, playerId]);
 
+  // Ref-based callback per CLAUDE.md guardrail 3.1. The subscription effect below
+  // carries an exhaustive-deps disable to keep its channels stable, so the
+  // LONG-LIVED path — the debounced re-seed fired by the match_players handler on
+  // every later event — must go through this ref rather than a captured closure.
+  //
+  // The one-shot `bootstrap()` at the top of that effect is deliberately a direct
+  // call, not `bootstrapRef.current()`: it runs only when the effect itself runs,
+  // and `bootstrap`'s deps ([supabase, sessionId, playerId]) are exactly the
+  // effect's deps, so the captured closure is never stale at that moment.
+  const bootstrapRef = useRef(bootstrap);
+  useEffect(() => {
+    bootstrapRef.current = bootstrap;
+  }, [bootstrap]);
+
   // ── Queue changes ─────────────────────────────────────────────
   const handleQueueChange = useCallback(
     (payload: RealtimePostgresChangesPayload<QueueEntry>) => {
@@ -259,6 +275,21 @@ export function useMatchAlerts({
       "alerts-matches"
     );
 
+    // Only the NETWORK half of this handler is debounced. The two ref resets
+    // stay EAGER and un-debounced on purpose: they are ordering-critical. A
+    // roster change arrives as up to 4 match_players rows immediately followed
+    // by the `matches` status event, and handleMatchChange reads these refs
+    // synchronously. Deferring the resets by even one event would let the
+    // status event be attributed to the player's OLD match and fire — or
+    // suppress — a COURT_CALL alert wrongly. Debouncing only bootstrap()
+    // collapses the redundant re-seed round trips (an identity merge repoints
+    // every match_players row a player has ever had) while leaving the
+    // synchronous attribution logic exactly as it was.
+    const alertsDeb = trailingDebounce(
+      () => void bootstrapRef.current(),
+      REALTIME_REFETCH_DEBOUNCE_MS
+    );
+
     const unsubPlayers = subscribeToMatchPlayers(
       supabase,
       sessionId,
@@ -267,12 +298,13 @@ export function useMatchAlerts({
         // match status events are correctly attributed.
         assignedMatchId.current = null;
         lastMatchStatus.current = null;
-        bootstrap();
+        alertsDeb.run();
       },
       "alerts-match-players"
     );
 
     return () => {
+      alertsDeb.cancel();
       unsubQueue();
       unsubMatches();
       unsubPlayers();
