@@ -100,6 +100,24 @@ Verified live grants (`pg_proc.proacl`): all three are `SECURITY DEFINER` and ho
 - WALRUS skips RLS on DELETE; with no filter, every authenticated subscriber gets a DELETE event for any `match_players` row removed platform-wide. But the table is REPLICA IDENTITY DEFAULT with PK `id` only, so the payload is just an opaque row UUID — no player, match, or team. Leak is timing/volume of teardowns, nothing identifying.
 - **Fix (optional):** Drive roster refresh off the already-subscribed `matches` stream and drop `match_players` from the realtime publication, or accept it. Low priority.
 
+### #11 — The draft firewall covers `matches` but not `match_players` → members can read unpublished draft rosters  🟡 MEDIUM-LOW · EXPLOITABLE TODAY, within-club
+**Files:** policy `match_players_select`; `src/lib/realtime.ts:173` (`subscribeToMatchPlayers`)
+
+*Found 2026-08-04 while re-deriving the deferred DB-optimization items; not in the original sweep.*
+
+- **The asymmetry** (verified against prod `pg_policies`, 2026-08-04):
+
+  | Table | Policy | Qual |
+  |---|---|---|
+  | `matches` | `matches_select_draft_firewall` (RESTRICTIVE) | `organizer → true; member → (status <> 'pending' OR is_published)` |
+  | `match_players` | `match_players_select` (PERMISSIVE, only policy) | `has_match_access(match_id)` → `session_access_level(session_id) IS NOT NULL` |
+
+  `has_match_access` asks *"do you have any access to this match's session?"* — a plain member passes. It never asks the draft-firewall question. So the `matches` row of an unpublished draft is hidden from members while **its roster rows are not**.
+- **What leaks:** `match_players` carries `match_id`, `player_id` and `team`, so the rows group straight back into the drafted teams, and `player_id` resolves to a display name through `profiles_select`. Any club member gets the **full named roster of a match the organizer has not published yet** — over a plain PostgREST `GET /match_players`, no enumeration needed (the rows hand out the `match_id` the hidden `matches` row would have withheld), and pushed to them live: `subscribeToMatchPlayers` is unfiltered, and `postgres_changes` re-checks this same policy per row, so draft roster INSERTs are delivered to every member of the session's club the instant the organizer generates them.
+- **Blast radius / severity:** within-club and within-session — no cross-club or cross-session data crosses, which is why this sits below the tenancy findings above. The harm is that it defeats the *point* of draft mode: the organizer's review-before-publish window is exactly the window in which the roster is readable. A prod count returns **0 rows today** — drafts are transient by nature, so at rest there is nothing to read; the exposure exists only while drafts are pending, i.e. precisely when it matters.
+- **Fix:** fold the firewall into `has_match_access` itself rather than bolting a second RESTRICTIVE policy onto `match_players`. The blast radius is exactly two policies — `match_players_select` and `match_games_select` are the **only** two consumers (verified: no RPC body references the helper) — and both want the same behaviour. Folding it in also keeps the cost at one `matches` lookup per row; a separate RESTRICTIVE policy would add a second. Organizers are unaffected (they still short-circuit to `true`); the only newly-denied case is a member reading a `pending`-and-unpublished match, which is the intent.
+- **Not yet fixed.** Filed for triage, not shipped — it touches a hot-path helper on two SELECT policies and wants its own migration + verification pass.
+
 ### #10 — 16 mutating `SECURITY DEFINER` RPCs are callable with the **anon** key, and the live-swap RPCs mutate a match they never bound to the authorized session  🔴 CRITICAL · UNAUTHENTICATED WRITE TODAY
 **Files:** `src/app/actions/live-match-swap.ts:104→124`, `:206→210`, `:279→284`; RPCs in `supabase/migrations/20260617000000_match_provenance_audit.sql:485`, `:556`, `:626` (plus 13 more across the migration history)
 
@@ -177,6 +195,7 @@ Because they are SECURITY DEFINER they run as the owner and **RLS never applies*
 4. **Stop granting club membership from link views** (#5) — remove `ensureClubMembership` from the two legacy shims; restrict it to the token-validated invite/QR path. Do this **before onboarding a second club** — it is the mechanism that turns every latent cross-club finding into a live one.
 5. **Harden realtime before club #2:** make `session-events` private + policy'd and strip names from payloads (#7); tighten `profiles_select` to shared-club visibility (#8, also fixes the query-level `USING(true)`).
 6. **Optional / low:** the `match_players` DELETE metadata leak (#9) — defer or accept.
+7. **Triage (added 2026-08-04):** extend the draft firewall to `match_players` (#11) — one migration folding the `status <> 'pending' OR is_published` check into `has_match_access`. Not a tenancy breach (within-club, within-session), but it is exploitable today and it defeats draft mode's review window, so it should not sit behind the cross-club items indefinitely.
 
 Item 0 is exploitable **today by anyone, with no account**. Items 1–3 and the matview/RPC revokes in item 2 are exploitable **today with the single CHILLAX club**, but need a login. Items 4–5 are the gate that must be closed **before a second club is created**, or they become active cross-tenant breaches on day one of multi-club.
 
