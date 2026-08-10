@@ -25,10 +25,19 @@ lines **208-226**: (1) the helper discriminates drafts; (2) still exactly two de
 the instant the organizer publishes. The migration also carries its own 4-check `DO $$` assertion
 block, so a drifted schema aborts the apply rather than silently half-applying.
 
-**Client half is already merged:** `use-player-match.ts` gained a third `queue_entries`
-subscription, because once the firewall hides a draft's `match_players` rows from the very player
-it reserves, the `queue_entries` flip to `'drafted'` is the *only* event that still reaches them.
-That subscription is harmless before the migration and load-bearing after it — do not remove it.
+**Client half is committed on this branch — it is NOT the same thing as deployed.**
+`use-player-match.ts` gained a third `queue_entries` subscription, because once the firewall hides
+a draft's `match_players` rows from the very player it reserves, the `queue_entries` flip to
+`'drafted'` is the *only* event that still reaches them. That subscription is inert before the
+migration and load-bearing after it — do not remove it.
+
+> 🔒 **ORDER LOCK: deploy the code BEFORE applying `20260810000001`.** Code-first is
+> unconditionally safe (the subscription is a no-op under the current, more permissive helper).
+> Migration-first is not: a drafted player would lose *every* signal — their `matches` row and
+> their `match_players` rows are both hidden, and the deployed bundle has no `queue_entries`
+> subscription to fall back on. Verify with
+> `git show main:src/hooks/use-player-match.ts | grep -c subscribeToQueue` — it must return ≥1
+> **and** the Vercel deploy for that commit must be READY before the migration runs.
 
 > ⚠️ Prod migration stamps drift from repo filenames. **Never compare by version number — compare
 > by name suffix, and ultimately by querying the catalog.**
