@@ -103,6 +103,17 @@ Verified live grants (`pg_proc.proacl`): all three are `SECURITY DEFINER` and ho
 ### #11 — The draft firewall covers `matches` but not `match_players` → members can read unpublished draft rosters  🟡 MEDIUM-LOW · EXPLOITABLE TODAY, within-club
 **Files:** policy `match_players_select`; `src/lib/realtime.ts:173` (`subscribeToMatchPlayers`)
 
+> **🟠 STATUS 2026-08-10 — FIX WRITTEN, NOT YET APPLIED. STILL OPEN ON PRODUCTION.**
+> `supabase/migrations/20260810000001_extend_draft_firewall_to_match_players.sql` implements the
+> fix below (folds the firewall CASE into `has_match_access`, re-asserts grants, and carries a
+> 4-check `DO $$` assertion block that fails the apply loudly if anything drifted). Client-side,
+> `use-player-match.ts` gained a third `queue_entries` subscription so a drafted player still gets
+> their pull event once the roster row is hidden from them.
+> **Migrations in this project are applied by hand — merging the code closes nothing.** Until
+> someone applies this against prod and runs the post-apply checks at
+> `20260810000001:208-226`, treat #11 as live. Handoff recorded in `MEMORY.md` →
+> "UNAPPLIED MIGRATIONS".
+
 *Found 2026-08-04 while re-deriving the deferred DB-optimization items; not in the original sweep.*
 
 - **The asymmetry** (verified against prod `pg_policies`, 2026-08-04):
@@ -148,7 +159,7 @@ Because they are SECURITY DEFINER they run as the owner and **RLS never applies*
 - **Fix (SHIPPED, two migrations + a TS layer):**
   - `20260723000000_revoke_anon_execute_on_mutating_rpcs.sql` — `grant execute … to service_role` **then** `revoke execute … from public, anon, authenticated` for all 16, with in-migration assertions. The grant must come first: on a from-scratch replay `proacl` is NULL, so the revoke materialises `acldefault` and would otherwise strip `service_role` too. `lookup_active_session` and the six RLS helper functions (`is_club_member`, `session_access_level`, `has_match_access`, `is_session_organizer`, `is_match_club_member`, `is_session_club_member`) deliberately **keep** their anon/authenticated grants — RLS policies invoke them as the calling role — and the migration asserts all six for **both** roles before it commits.
   - `20260723000001_bind_live_swaps_to_session.sql` — `AND session_id = p_session_id` on every match lookup in the four live-swap RPCs; `swap_teams_in_active_match` gains `p_session_id uuid DEFAULT NULL` (appended last as a one-way compatibility shim — it lets an old deploy keep working against the new function, **not** the reverse; see the ordering note below, and note it also leaves that one function invocable *unbound* by a caller who omits the key, which is why the revokes matter for it). Every status guard became `IS DISTINCT FROM`, because with the new predicate a mismatch yields *no row* → a NULL status, and plpgsql treats a NULL `IF` as false — the old `!=` guards would have fallen through.
-  - `src/app/actions/live-match-swap.ts` — an `allMatchesInSession()` pre-check on all five call sites, returning `MATCH_NOT_ACTIVE` so it is indistinguishable from "does not exist" (no existence oracle).
+  - `src/app/actions/live-match-swap.ts` — an `allMatchesInSession()` pre-check on all five call sites, returning `MATCH_NOT_ACTIVE` so it is indistinguishable from "does not exist" (no existence oracle). *(2026-08-10: the call sites are still here; the helper's definition moved to `src/lib/match-session-binding.ts` so it is not itself a dispatchable `"use server"` export.)*
   - Regression coverage: 5 integration tests (LMS-14…18, incl. the mixed own-match/foreign-match pair), 32 unit tests whose refusal cases all assert the RPC is *not called*, and two schema-parity tests — a catalog sweep asserting **no** volatile non-trigger SECDEF function is anon/authenticated-reachable, and a signature pin on the four rewritten RPCs. Validated on a real from-scratch `supabase db reset` replay (236 integration tests green) and by anon curl against the fresh DB returning `42501` on the revoked functions while `lookup_active_session` still answers `200`. 4 SQL + 12 TS mutants, all killed.
   - `undoLiveSwap` also validates every field of the client-round-tripped `ctx` before use. It is the only one of the four entry points that takes ids *and* team letters straight from the caller — the other three read `team` back out of the database or the RPC's OUT params. The ids previously failed closed only by accident (a malformed uuid reached `.eq()` raw and Postgres answered 22P02); `team` did not fail closed at all, since `match_players.team` is `char(1) NOT NULL` with no CHECK constraint.
 - **⚠ Deploying the code does NOT close this, and the order is not free.** Migrations in this project are applied by hand; merging the PR ships only the TypeScript half. Both `.sql` files must be run against prod `usxftpexoimletqmrggb`, in this exact sequence:
@@ -195,7 +206,7 @@ Because they are SECURITY DEFINER they run as the owner and **RLS never applies*
 4. **Stop granting club membership from link views** (#5) — remove `ensureClubMembership` from the two legacy shims; restrict it to the token-validated invite/QR path. Do this **before onboarding a second club** — it is the mechanism that turns every latent cross-club finding into a live one.
 5. **Harden realtime before club #2:** make `session-events` private + policy'd and strip names from payloads (#7); tighten `profiles_select` to shared-club visibility (#8, also fixes the query-level `USING(true)`).
 6. **Optional / low:** the `match_players` DELETE metadata leak (#9) — defer or accept.
-7. **Triage (added 2026-08-04):** extend the draft firewall to `match_players` (#11) — one migration folding the `status <> 'pending' OR is_published` check into `has_match_access`. Not a tenancy breach (within-club, within-session), but it is exploitable today and it defeats draft mode's review window, so it should not sit behind the cross-club items indefinitely.
+7. **🟠 Triage (added 2026-08-04) — WRITTEN 2026-08-10, AWAITING A MANUAL APPLY:** extend the draft firewall to `match_players` (#11) — one migration folding the `status <> 'pending' OR is_published` check into `has_match_access`. Not a tenancy breach (within-club, within-session), but it is exploitable today and it defeats draft mode's review window, so it should not sit behind the cross-club items indefinitely. The migration is `20260810000001_extend_draft_firewall_to_match_players.sql`; **it has NOT been run against prod**, so this item is still open there. See the status box under §2 #11.
 
 Item 0 is exploitable **today by anyone, with no account**. Items 1–3 and the matview/RPC revokes in item 2 are exploitable **today with the single CHILLAX club**, but need a login. Items 4–5 are the gate that must be closed **before a second club is created**, or they become active cross-tenant breaches on day one of multi-club.
 

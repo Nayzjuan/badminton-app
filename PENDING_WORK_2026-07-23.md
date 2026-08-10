@@ -9,8 +9,10 @@ snapshot, so the next session does not have to re-derive it.
 - **Live deployment (as of 2026-07-23):** `dpl_EhWSHP3T…`, `READY`, commit `5e5fa88` (PR #39 merge).
   ~~Only open PR: #40~~ — merged as `fdeb5e3`. **Everything in §0–§3 has since shipped and been
   applied; see the status line on each section. `main` is well past `5e5fa88` (latest verified deploy
-  `dpl_Bnqy3QVqKnEE8XCJZNHv3iftcgTi`, PR #51 `e8e76bd`).** The only item still genuinely open in this
-  file is §2.3.
+  `dpl_Bnqy3QVqKnEE8XCJZNHv3iftcgTi`, PR #51 `e8e76bd`).** ~~The only item still genuinely open in
+  this file is §2.3.~~ **§2.3 SHIPPED 2026-08-10** — see that section. Nothing in §0–§5 is open.
+  The one thing this file no longer tracks is the two **unapplied migrations** (`20260810000000`,
+  `20260810000001`); those are handed off in `MEMORY.md` under "UNAPPLIED MIGRATIONS".
 - **Full audit context:** [TENANCY_AUDIT_2026-07-21.md](TENANCY_AUDIT_2026-07-21.md)
 
 > ⚠️ **Migrations in this project are applied by hand.** There is no deploy automation for the
@@ -50,8 +52,9 @@ Then **PR4a** (§2.1), which is already built, reviewed and waiting:
 Steps 5 and 6 are order-locked and must not straddle a live session — see §2.1.
 
 > ~~§2.2 (PR4b, finding #8) is the only audit item still unbuilt.~~ **Every audit item in §0–§2.2 is
-> now shipped AND applied to prod. §2.3 (`session_closed` has no fallback path) is the only open
-> follow-up left in this file.** Reconciled object-by-object against prod 2026-08-04.
+> now shipped AND applied to prod.** ~~§2.3 (`session_closed` has no fallback path) is the only open
+> follow-up left in this file.~~ **§2.3 SHIPPED 2026-08-10 too.** Reconciled object-by-object against
+> prod 2026-08-04; §2.3 built 2026-08-10.
 
 ---
 
@@ -174,15 +177,16 @@ Split into **PR4a (#7, DONE, held unmerged)** and **PR4b (#8, not started)**.
 
 **Status: code complete, reviewed three times (verdict *Minor issues* each pass), held unmerged.**
 Branch `fix/tenancy-realtime-private-broadcast`. Every finding was either **fixed** or **declined with
-the reasoning recorded inline** — the one declined is `onStatus` (§2.3 below), which was a deliberate
-call, not an oversight.
+the reasoning recorded inline** — ~~the one declined is `onStatus` (§2.3 below), which was a deliberate
+call, not an oversight.~~ **`onStatus` was declined here and then WIRED on 2026-08-10** once the
+fallback it needed existed; see §2.3.
 
 | File | Change |
 |---|---|
 | `supabase/migrations/20260723100000_scope_session_events_broadcast_to_members.sql` | new — SELECT-only policy on `realtime.messages` + non-throwing topic parser |
 | `src/lib/broadcast.ts` | every emitted message carries `private: true` |
 | `src/lib/realtime.ts` | join with `{ config: { private: true } }`, deferred behind `whenRealtimeAuthReady()`, optional `onStatus` |
-| `src/hooks/use-organizer-broadcast.ts` | comment only — why `onStatus` is not wired |
+| `src/hooks/use-organizer-broadcast.ts` | *(at the time: comment only — why `onStatus` is not wired. As of 2026-08-10 it wires `onStatus` + the timer fallback — see §2.3.)* |
 | `tests/unit/realtime-private-broadcast.test.ts` | new — 6 tests pinning both halves + the JWT ordering |
 | `APP_MANIFEST.md`, `MEMORY.md` | documented, incl. reversing the old "no JWT needed" claim in the Realtime JWT-before-join bullet (`APP_MANIFEST.md:76`) |
 
@@ -314,7 +318,10 @@ server actions, not Postgres.
 
 **Docs.** `APP_MANIFEST.md` §11.8.
 
-### 2.3 Follow-up — `session_closed` has no fallback path
+### 2.3 ✅ Follow-up — `session_closed` has no fallback path — **SHIPPED 2026-08-10**
+
+**Status: BUILT.** The description below is the original diagnosis and is still accurate as
+*motivation*; what follows the rule is what actually shipped.
 
 Not a regression, but PR4a adds a new way to hit it (an *authorization*-refused join), so it is
 worth recording. The broadcast channel is the **only** mechanism that moves a player to Wrapped:
@@ -323,6 +330,27 @@ channel never joins simply sits on a dead dashboard. A fallback needs a new play
 action that reports session status, polled slowly (or folded into `useVisibilityRefresh`).
 Deliberately **not** bundled into a security PR. A user-visible toast is the wrong fix — transient
 `CHANNEL_ERROR`/`TIMED_OUT` is normal on gym wifi and Realtime reconnects on its own.
+
+---
+
+**What shipped (2026-08-10):**
+
+| File | Change |
+|---|---|
+| `src/app/actions/sessions.ts` | new `getPlayerSessionStatus(sessionId)` — auth-gated, service-role read of `sessions.is_active` only, returns `{ isActive: boolean \| null }`. Never returns the row (it carries `organizer_passcode`). Doc comment covers the disclosure delta vs. `lookup_active_session` |
+| `src/hooks/use-organizer-broadcast.ts` | `onStatus` is now wired. A non-`SUBSCRIBED` status arms a timer; on expiry the hook calls the action once and navigates to Wrapped **only** on a definite `isActive: false` |
+| `tests/unit/use-organizer-broadcast-closure.test.ts` | new — pins the arm/disarm/cleanup behaviour and the three-way `true` / `false` / `null` response handling |
+
+Two design points that are load-bearing and should not be "simplified" away:
+
+- **`isActive: null` is not `false`.** A missing row, an RLS error, or a service-client
+  construction failure all resolve to `null`, and the caller **holds** the dashboard rather than
+  navigating. Treating ambiguity as "closed" would yank players out of a live session on a
+  transient error — the exact failure the original note warned about.
+- **The fallback is for a dead CHANNEL, not a dead SESSION.** A de-authed client fails the
+  action's `getUser()` gate and the `TO authenticated` channel policy at the same instant, so this
+  path deliberately does not fire for auth loss. That has its own recovery path (APP_MANIFEST
+  §3.26).
 
 ### 2.4 Reversed from the original PR4 spec — do NOT strip display names
 
@@ -360,19 +388,25 @@ NULL, and a NULL `IF` condition is treated as false, so a naive guard falls *thr
 | `refresh_alltime_leaderboard()` PUBLIC EXECUTE | **Closed by PR #40** (§1.1) — no longer a residual |
 | `isSessionOrganizer(userId, sessionId)` is a boolean oracle | Pre-existing, structural: every export of a `"use server"` module is a public HTTP endpoint. Not widened by any recent PR. Fixing it means moving the helper out of the action module |
 | Audit finding **#9** — `match_players` DELETE metadata leak | ⚪ **LOW, optional, defer or accept.** WALRUS skips RLS on DELETE, but the table is REPLICA IDENTITY DEFAULT with PK `id` only, so the payload is an opaque UUID — no player, match, or team. Optional fix: drive roster refresh off the already-subscribed `matches` stream and drop `match_players` from the publication |
-| Audit finding **#11** — draft firewall covers `matches` but not `match_players` | 🟡 **NEW 2026-08-04, not accepted — filed for triage.** Any club member can read (and is pushed, live) the full named roster of an unpublished draft. Fix = fold the firewall into `has_match_access`; blast radius is exactly `match_players_select` + `match_games_select`. See the audit's §2 #11 and §4 item 7 |
+| Audit finding **#11** — draft firewall covers `matches` but not `match_players` | 🟠 **FIX WRITTEN 2026-08-10, NOT YET APPLIED TO PROD.** Any club member can read (and is pushed, live) the full named roster of an unpublished draft. Fix = fold the firewall into `has_match_access`; blast radius is exactly `match_players_select` + `match_games_select`. Migration `20260810000001_extend_draft_firewall_to_match_players.sql` is written and self-asserting, **but migrations here are applied by hand — merging ships nothing.** Still open on prod until someone applies it. See the audit's §2 #11 and §4 item 7, and `MEMORY.md` → "UNAPPLIED MIGRATIONS" |
 | **Anon TV realtime is dead for every event the board renders from — the 15 s poll is load-bearing** | 🟢 **Accepted, but know it.** An anonymous `/tv/{id}` viewer receives **no INSERT and no UPDATE** on either of its channels: `postgres_changes` re-checks each table's SELECT policy per row, and every branch of `session_access_level` tests `auth.uid()` → NULL for anon. That is every event the board actually renders from — a score change, a court call and a new draft are all INSERT/UPDATE. (Realtime does not apply RLS to **DELETE**, so those still arrive; they carry only the PK and the hook refetches blindly, so a cleared draft can nudge an anon board incidentally. Not part of the 2026-08-04 prod verification, and not something to rely on.) The board can therefore lag **up to 15 s** on the shared screen. A signed-in viewer (an organizer casting) does get the realtime path, which is why this never showed up in testing. Making it work for anon means widening an RLS policy to the anon role — deliberately not done. Written up in full at `src/hooks/use-tv-board.ts:20-52` |
 
 ---
 
-## 5. Banked reviewer minors (from PR #40's review rounds — non-blocking)
+## 5. Banked reviewer minors (from PR #40's review rounds) — ✅ ALL THREE CLEARED 2026-08-10
 
-- Redundant `sessions` re-read on the organizer shim.
-- `role = "member"` equivalent-mutant coverage gap in the tests.
-- Relocate `allMatchesInSession` from the `"use server"` module into `src/lib/` so it can be
-  imported directly. It is currently kept **non-exported** on purpose (an export would become a
-  dispatchable endpoint) and is tested via a source-text guard — moving it would let the test import
-  the real thing.
+- ~~Redundant `sessions` re-read on the organizer shim.~~ ✅ Now a single `loadSessionForRedirect`
+  read whose row feeds both the redirect target and `isSessionOrganizerLocal(userId, sessionId, session)`.
+  `tests/unit/tenancy-session-binding.test.ts` — 26 tests, incl. TB-ORG-3 asserting exactly one
+  `sessions` read for a logged-out visitor.
+- ~~`role = "member"` equivalent-mutant coverage gap in the tests.~~ ✅ Covered — `member` is not an
+  organizer role, and the test asserts that (club membership is what gets you into the club route at
+  all; treating it as organizership would auto-enroll every club member on any session id they can name).
+- ~~Relocate `allMatchesInSession` from the `"use server"` module into `src/lib/`.~~ ✅ Now
+  `src/lib/match-session-binding.ts`, exported and imported directly by `live-match-swap.ts`, so
+  `tests/unit/live-swap-session-binding.test.ts` (32 tests) exercises the real function instead of a
+  source-text regex. The regex guard it replaced is gone; `TB-IMPORT` still guards the `app/actions/`
+  directory for new `"use server"` exports.
 
 ---
 

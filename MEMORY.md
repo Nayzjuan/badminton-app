@@ -5,13 +5,45 @@
 
 ---
 
+## 🚨 UNAPPLIED MIGRATIONS — read this first (as of 2026-08-10)
+
+**Migrations in this project are applied BY HAND. There is no deploy automation for the database.
+Merging a PR ships TypeScript only.** Two migration files are in the repo and have **NOT** been run
+against production. Until they are, the repo and prod disagree.
+
+| File | What it does | Risk if left unapplied | Risk of applying |
+|---|---|---|---|
+| `supabase/migrations/20260810000000_declare_compute_session_wrapped.sql` | Declares `compute_session_wrapped` exactly as prod defines it (verbatim `pg_get_functiondef` capture, md5 `ec5c724c4fd8705449d0fd014d57b82d`) | None to runtime — the repo just keeps lying about the function's body | **Effectively none.** Convergent, strict no-op against prod today: `CREATE OR REPLACE` with the byte-identical body already installed. Grants re-asserted are exactly the two prod has (`postgres`, `service_role`) — not widened |
+| `supabase/migrations/20260810000001_extend_draft_firewall_to_match_players.sql` | Folds the draft-firewall CASE into `has_match_access`, closing audit finding **#11** | **#11 stays exploitable on prod.** Any club member can read, and is pushed live, the full named roster of an unpublished draft | **Real — this one changes RLS behaviour.** Blast radius is exactly `match_players_select` + `match_games_select`. Apply it **outside a live session** |
+
+**Order:** `20260810000000` first (it is inert), then `20260810000001`.
+
+**After applying `20260810000001` you MUST run the post-apply checks** written into the file at
+lines **208-226**: (1) the helper discriminates drafts; (2) still exactly two dependent policies;
+(3) a live check with a real member JWT — during an active draft a member's PostgREST GET on
+`match_players` filtered to a drafted match must return `[]`, and must start returning the roster
+the instant the organizer publishes. The migration also carries its own 4-check `DO $$` assertion
+block, so a drifted schema aborts the apply rather than silently half-applying.
+
+**Client half is already merged:** `use-player-match.ts` gained a third `queue_entries`
+subscription, because once the firewall hides a draft's `match_players` rows from the very player
+it reserves, the `queue_entries` flip to `'drafted'` is the *only* event that still reaches them.
+That subscription is harmless before the migration and load-bearing after it — do not remove it.
+
+> ⚠️ Prod migration stamps drift from repo filenames. **Never compare by version number — compare
+> by name suffix, and ultimately by querying the catalog.**
+
+---
+
 ## 🧩 Engine diversity reads merged 9 → 3; the other three deferred DB items KILLED — 2026-08-04, **working tree, uncommitted**
 
 Closes the last open line from `DB_OPTIMIZATION_AUDIT.md`. Full verdicts: **`PENDING_WORK_2026-07-23.md` §6**.
 Architecture: **APP_MANIFEST §"Session match snapshot"**.
 
-**Shipped (audit item #7).** `fetchRecentRosters` + `fetchPartnershipCounts` + `buildOverlapMap` were three
-helpers issuing **eight** queries per engine slot, all re-reading overlapping slices of the same two tables.
+**Shipped (audit item #7).** `fetchRecentRosters` (2) + `fetchPartnershipCounts` (2) + `buildOverlapMap` (3)
+were three helpers issuing **seven** queries per engine slot, all re-reading overlapping slices of the same
+two tables. The eighth query in the slot's read phase is `fetchActivePool`'s separate read of
+`v_queue_with_wait_time` — a different table, left as-is — which is why the depth figures below say 8.
 Now **one** `fetchSessionMatchSnapshot` (2 queries, run concurrently with `fetchActivePool`) + three pure
 derivations `deriveRecentRosters` / `derivePairCounts` / `deriveOverlapMap`.
 
@@ -47,7 +79,9 @@ testing — their designs were simply wrong:
    an **unpublished** draft, over a plain PostgREST GET — the rows hand out the `match_id` the hidden
    `matches` row withheld. Verified against prod `pg_policies`. Fix = fold the firewall into
    `has_match_access`; blast radius is exactly `match_players_select` + `match_games_select` (no RPC body
-   references it). **Not shipped** — wants its own migration. `TENANCY_AUDIT_2026-07-21.md` §2 #11 + §4 item 7.
+   references it). ~~**Not shipped** — wants its own migration.~~ 🟠 **MIGRATION WRITTEN 2026-08-10,
+   NOT YET APPLIED — still open on prod.** See "UNAPPLIED MIGRATIONS" below.
+   `TENANCY_AUDIT_2026-07-21.md` §2 #11 + §4 item 7.
 2. **Anon TV realtime is entirely dead** — an anonymous `/tv/{id}` viewer gets **ZERO** events on both
    channels (every `session_access_level` branch tests `auth.uid()` → NULL), so the 15 s poll is
    load-bearing and the board can lag 15 s. A signed-in organizer casting DOES get realtime, which is why it
@@ -743,7 +777,8 @@ keep PostgREST's resolvable arg-name set unchanged. Both call sites already pass
 key-omission bypass over raw PostgREST closes. In-migration asserts all passed (NULL→SESSION_ID_REQUIRED, single
 candidate, catalog sweep clean, service_role kept EXECUTE); post-apply advisors show no new findings.
 
-**TS layer:** `allMatchesInSession(db, sessionId, matchIds)` on all five call sites in `live-match-swap.ts`,
+**TS layer:** `allMatchesInSession(db, sessionId, matchIds)` (defined in `src/lib/match-session-binding.ts`
+— moved out of the `"use server"` module 2026-08-10 so it is not itself a public endpoint) on all five call sites in `live-match-swap.ts`,
 returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence
 oracle. `undoLiveSwap`'s `team_swap` branch is knowingly unguarded because it _derives_ `session_id` from the
 match it already read; it passes `p_session_id` so every call site supplies the arg.
@@ -935,7 +970,7 @@ unauthenticated uuid → display-name lookup. A tenancy fix would have widened t
 (Latent, not live: action ids are salted with `serverReferenceHashSalt: encryptionKey`, regenerated per build
 unless `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` is set, and this project sets it nowhere.)
 
-**Fix:** a local, non-exported `isSessionOrganizerLocal` in the page — identical predicate (`created_by` OR
+**Fix:** a local, non-exported `isSessionOrganizerLocal(userId, sessionId, session)` in the page — identical predicate (`created_by` OR
 `session_organizers` OR an active owner/admin of the session's club), mirroring `isQueuedInSession` in the
 sibling `/play` shim. **Verified after the fix: back to 70 actions, zero `_shared` entries, nothing scoped to
 `app/organizer/[sessionId]/page`.** `TB-IMPORT` guards the whole `app/actions/` directory, extracted from the

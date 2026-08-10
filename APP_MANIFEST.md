@@ -1278,7 +1278,7 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 | --- | --- |
 | `20260723000000` | 16 × (`grant execute … to service_role;` **then** `revoke execute … from public, anon, authenticated;`) + `DO`-block assertions + `NOTIFY pgrst`. Grant **first**: on a from-scratch replay `proacl` is NULL, so the revoke materialises `acldefault` and would otherwise strip `service_role` too (see §3.8d and `20260722000004`). |
 | `20260723000001` | `AND session_id = p_session_id` on every match lookup in the four live-swap RPCs; `swap_teams_in_active_match` gains `p_session_id uuid DEFAULT NULL`. |
-| `live-match-swap.ts` | `allMatchesInSession(db, sessionId, matchIds)` pre-check on all five call sites, returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence oracle. |
+| `live-match-swap.ts` | `allMatchesInSession(db, sessionId, matchIds)` pre-check on all five call sites, returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence oracle. The helper itself lives in `src/lib/match-session-binding.ts`, **not** in the `"use server"` module: every export of a `"use server"` file is a public HTTP endpoint, and a security predicate must not be one. |
 
 **What deliberately keeps its grants:** `lookup_active_session` (anon — the public join path) and the six RLS helpers `is_club_member` / `session_access_level` / `has_match_access` / `is_session_organizer` / `is_match_club_member` / `is_session_club_member` (anon + authenticated — **RLS policies invoke them as the calling role; revoking them takes the whole app down**). The migration asserts all six for **both** roles before committing; checking only `authenticated` would let an accidental anon revoke through and break the logged-out `/tv` and public-session paths, and the forward-looking schema-parity sweep cannot see them either because it filters `provolatile = 'v'` and these are STABLE. Trigger functions are excluded by `prorettype <> 'trigger'::regtype`: they aren't callable over PostgREST and firing a trigger doesn't re-check EXECUTE, so their grants are inert. Inner `PERFORM record_match_event(...)` calls are unaffected — a call from inside a SECDEF function runs as that function's owner.
 
@@ -1371,13 +1371,13 @@ All `{ error }` bare returns in `auth.ts` and `sessions.ts` now include `success
 | Layer | File | Responsibility |
 |---|---|---|
 | Pure logic | `src/lib/match-history-filter.ts` | 4 exported pure helpers: `filterMatchesByPlayer`, `derivePlayerOptions`, `resolvePartnerIds`, `selectionStillValid` |
-| Unit tests | `tests/unit/match-history-filter.test.ts` | 28 MHF-* Vitest tests covering all edge cases (null id, leave-triggered cancel, dup names, swapped-out player, empty history) |
+| Unit tests | `tests/unit/match-history-filter.test.ts` | 29 MHF-* Vitest tests covering all edge cases (null id, leave-triggered cancel, dup names incl. case/whitespace variants, swapped-out player, empty history) |
 | Filter UI | `src/components/organizer/match-history-player-filter.tsx` | Controlled searchable list — `<input>` + `<ul>` of `<button aria-pressed>` (swap-sheet pattern, NOT a combobox) |
 | Panel integration | `src/components/organizer/match-history-panel.tsx` | Adds `selected` state, `playerOptions` + `visibleMatches` memos, reconcile effect, active-filter chip, highlight rings, safety-net empty state, legend |
 
 **Filtering mechanics:**
 - `filterMatchesByPlayer(matches, id)` — null id returns the same array reference (identity, zero re-renders); otherwise filters by roster membership.
-- `derivePlayerOptions(matches)` — deduplicates by `player_id`, alpha-sorts by `display_name`, attaches a `player_id.slice(-4)` disambiguator when two players share the same display name.
+- `derivePlayerOptions(matches)` — deduplicates by `player_id`, alpha-sorts by `display_name`, attaches a `player_id.slice(-4)` disambiguator when two players share the same display name. The collision key is `normalizeName()` (`src/lib/normalize-name.ts`, the app's single source of truth for name identity, parity-locked to the SQL index expression) — **not** the raw string. `idx_profiles_unique_active_name` already blocks case/whitespace variants for ordinary profiles, so the case this actually catches is a `needs_rename = true` profile, which is exempt from that index precisely so a duplicate identity can sit unresolved. Those two rows differ only by case or collapsed whitespace, render identically in the picker, and would both come back with a null disambiguator under a raw-string key.
 - `resolvePartnerIds(match, id)` — returns teammate `player_id`s (same team, different id) for the selected player in a single match.
 - `selectionStillValid(matches, id)` — checks raw `matches` roster (NOT derived `playerOptions`). Used to detect stale selections after identity merges or score reverts.
 
@@ -1386,11 +1386,23 @@ All `{ error }` bare returns in `auth.ts` and `sessions.ts` now include `success
 - **Conservative reconcile:** if `selectionStillValid` returns false (player gone from all rosters), the filter chip stays visible with a safety-net empty state — never auto-cleared. The organizer dismisses via ✕. This is intentional for score-revert via `FixRecordSheet` which temporarily removes a match from history.
 - **Two cancel paths handled correctly:** organizer-cancel retains all `match_players` rows (player appears in filtered history). Leave-triggered cancel deletes the leaver's row first — they do NOT appear in the match's roster.
 
-**Highlight encoding (when a filter is active):**
-- `●` Selected player: `bg-cc-accent-dim outline outline-1 outline-cc-accent/55` (solid ring, both completed and cancelled branches).
-- `○` Partner: `outline outline-1 outline-dashed outline-cc-accent/55` (dashed ring, both branches).
-- Cancelled branch: ring uses `outline-2` (heavier) because the player area is inside an `opacity-60` wrapper — thicker ring reads through the dimming.
+**Highlight encoding (when a filter is active).** The two card branches use *different* ring treatments — that is deliberate, and the numbers below are measured, not asserted:
+
+| Branch | Selected (`●`) | Partner (`○`) |
+|---|---|---|
+| Completed (`match-history-panel.tsx` ~:433/:478) | `bg-cc-accent-dim outline outline-1 outline-cc-accent text-cc-accent-text font-bold` | `outline outline-1 outline-dashed outline-cc-accent font-medium` |
+| Cancelled (~:277/:312) | `bg-cc-accent-dim outline outline-2 outline-cc-accent text-cc-accent-text` | `outline outline-2 outline-dashed outline-cc-accent` |
+
+- Cancelled uses `outline-2` because that whole player area sits inside an `opacity-60` wrapper — the compositing eats the ring, so it needs the extra width. Measured light-mode ring-vs-panel contrast under that wrapper: **1.91:1** with the current full-opacity accent vs **1.36:1** if the completed branch's style were reused. The heavier ring is doing real work.
+- **The `opacity-60` wrapper caps the cancelled ring at ≈2.1:1 in light mode no matter what colour is used** (darkening the accent to `L=0.40` only reaches 2.07). Reaching 3:1 there would require raising the wrapper opacity or lifting the highlighted name out of the dimmed subtree — a visual-design change to a deliberately de-emphasised card, so it is **accepted, not fixed**. Dark mode is unaffected (**7.21:1**).
+- The completed branch previously used `outline-cc-accent/55`, which measured **1.80:1** in light mode — an effectively invisible ring. Dropping the `/55` (2026-08-10) takes it to **5.23:1** light / **6.65:1**+ dark, with no change to hue, width or layout.
+- WCAG 1.4.11 is not the binding constraint in either branch — the ring is never the sole encoding. Selected also carries `text-cc-accent-text` + `font-bold` + the dim fill + the "Showing {name}" chip; partner also carries a literal `partner` caption underneath. The rings are a scanning aid, and the light-mode fix above is about them actually being visible.
+- The active-filter chip's own `outline-cc-accent/55` ring (~:171) is intentionally left soft — its meaning is carried by its text.
 - Legend renders below the cards when filter is active: `◍ solid = selected · ◌ dashed = partner`.
+
+**Two behaviours worth knowing (both intentional):**
+- **The filter resets on tab switch.** `organizer-dashboard.tsx:952` mounts the panel as `{activeTab === "history" && <MatchHistoryPanel …/>}`, so leaving the History tab unmounts it and `selected` is lost with it. Every sibling tab is mounted the same way; hoisting this one panel's state to the dashboard would break that pattern and would also resurrect a stale filter after a long detour. Leaving the tab is treated as ending the enquiry.
+- **Escape is two-stage, innermost-first.** It clears the search query if one is typed, and only clears the selection once the query is empty. Because `handleSelect` empties the query on selection, the steady post-selection state needs a **single** Escape to un-pick the player; the "two presses" case exists only while the organizer is mid-typing.
 
 **Access control:** `MatchHistoryPlayerFilter` is rendered only inside `MatchHistoryPanel` which lives in the `src/components/organizer/` subtree. Player-facing components (`PlayerDashboard`, `match-history.tsx`) do not import anything from this subtree — organizer-only by structural exclusion, no runtime checks needed.
 
@@ -1525,6 +1537,53 @@ The RLS policy corroborates it independently: `realtime_topic_session_id` (migra
 **Proof.** FLIP-6 (a reorder following a skeleton commit still plays a MOVE, asserting the exact `translateY(60px)` deltas *and* that no emitted first keyframe carries `opacity`), FLIP-7 (a skeleton-only mount does not arm the enter branch), FLIP-8 (a non-reordering layout shift is silent but still refreshes First, caught by the next reorder's delta being 60 rather than 80). All three **fail against the pre-fix hook and pass after**, with FLIP-1…5 green either way — so they discriminate rather than merely pass. The E2E is confirmation only; it now also asserts `isRow` on the 320 ms filter (`Element.animate` is global, so an unrelated 320 ms translateY elsewhere on the page would otherwise satisfy it) and asserts that **no** surviving row played a 240 ms enter, which catches a partial regression that a `moves.length > 0` check alone would miss.
 
 **Trap for anyone re-running this.** Do not make the E2E green by toggling tabs or otherwise remounting `WaitlistTab` before the removal — that remounts the hook with data already present, sidesteps the gated commit entirely, and would leave the production bug in place.
+
+---
+
+### 3.30 Closure fallback + the draft firewall extended to rosters (2026-08-10)
+
+Two changes that look unrelated and are not: both exist because a **broadcast/realtime channel is the only thing telling a player something happened**, and both close a case where that channel legitimately says nothing.
+
+**Files:** `src/app/actions/sessions.ts` (`getPlayerSessionStatus`) · `src/hooks/use-organizer-broadcast.ts` · `src/hooks/use-player-match.ts` · `supabase/migrations/20260810000001_extend_draft_firewall_to_match_players.sql` · `supabase/migrations/20260810000000_declare_compute_session_wrapped.sql` · `tests/unit/use-organizer-broadcast-closure.test.ts` · `tests/unit/use-player-match.test.ts` (U-HELD-1) · `tests/integration/rls-edge-cases.test.ts`
+
+#### A. `session_closed` has a fallback now (closes `PENDING_WORK_2026-07-23.md` §2.3)
+
+**The gap.** The `session-events` broadcast is the *only* mechanism that moves a player to Wrapped — `useSessionData` fetches `courts` and `queue_entries`, never the session row. `session_closed` is fire-and-forget with **no replay**, so a player whose channel was down for the one second it was emitted sits on a dead dashboard forever. Since the channel went private (`20260723100000`) there is a second way in: an *authorization*-refused join.
+
+**The fix, in three parts.**
+1. **`getPlayerSessionStatus(sessionId)`** — auth-gated server action, service-role read of **`is_active` only**. It never returns the row, which carries `organizer_passcode`. Service role rather than a client read because the failure mode it must survive is exactly the one where the client's own RLS predicate has stopped holding: `sessions_select` is `is_session_organizer(id) OR is_club_member(club_id)`, so an admin soft-removing a member mid-session makes the predicate fail **and** `session_access_level` go NULL, refusing the channel join at the same instant. That player is stranded on both paths; only an RLS-bypassing read can answer them.
+2. **`onStatus` is wired** (it was deliberately declined in PR4a — see §2.1 of the pending-work doc — and only became wireable once the action existed). It carries **no user-visible signal**: transient `CHANNEL_ERROR`/`TIMED_OUT` is normal on gym wifi and Realtime reconnects itself, so a "live updates are down" toast would misfire constantly. It drives the closure re-check instead. Every transition in **either** direction means the channel either never joined or dropped and re-joined, and any such gap is a message that can never arrive on its own.
+3. **A slow poll + a visibilitychange listener.** `SESSION_STATUS_POLL_MS = 120_000`, floored by `SESSION_STATUS_MIN_GAP_MS = 10_000` so a flapping channel cannot turn `onStatus` into a request storm. The visibility listener is separate from `useVisibilityRefresh` on purpose — that hook also calls `router.refresh()`, which the dashboard already does; this one asks the single question, at the realistic recovery moment (phone unlock after the socket was killed with the screen off).
+
+**The invariant that matters: `isActive: null` is NOT `false`.** A missing row, an RLS error, a service-client construction failure and a transport throw all resolve to "unknown", and the caller **holds** the dashboard. Only a definite `success && !isActive` navigates. Reporting "closed" on a transient error would eject a player from a live session — precisely the failure the original note warned against, and worse than the gap being fixed.
+
+**Deliberately not covered: a de-authed client.** The action's `getUser()` gate and the `TO authenticated` channel policy fail *together*, so this is a fallback for a dead **channel**, not a dead **session**. Auth loss has its own recovery path (§3.26) and a `sessions` read is not the place to re-solve it.
+
+**Disclosure, stated honestly.** An authenticated caller holding a session UUID learns whether it is active. `lookup_active_session` already exposes almost the same bit to **anon** for the QR-join path, with one real delta: it carries `AND s.is_active = true`, so it collapses "closed session" and "no such session" into one empty answer, while this action distinguishes them. One bit, to an authenticated caller, about a UUID they already hold — accepted, not nil.
+
+#### B. The draft firewall now covers `match_players` and `match_games` (tenancy audit finding #11)
+
+**The asymmetry.** `matches` carries the firewall (`matches_select_draft_firewall`, RESTRICTIVE): a member sees a row only when `status <> 'pending' OR is_published`. `match_players_select` was just `has_match_access(match_id)` → `session_access_level(session_id) IS NOT NULL`, which never asks the draft question. So any club member could read — and was **pushed, live** — the full named roster of an unpublished draft over a plain PostgREST GET, and those rows hand out the very `match_id` the hidden `matches` row withheld. That defeats draft mode's entire review window.
+
+**The fix.** Fold the CASE into the helper rather than into the policies, so both dependents inherit it and their quals stay byte-identical:
+
+```
+CASE public.session_access_level(session_id)
+  WHEN 'organizer' THEN true
+  WHEN 'member'    THEN (status <> 'pending' OR is_published)
+  ELSE false
+END
+```
+
+Blast radius is exactly two policies — `match_players_select` (TO `authenticated`) and `match_games_select` (TO `public`). No RPC body references the helper. The migration re-asserts grants unchanged and carries a 4-check `DO $$` block (helper carries the firewall · still `SECURITY DEFINER` with a pinned `search_path` · still exactly 2 dependents · both policies present with unchanged roles), each with an explicit row-count guard — a bare `SELECT … INTO` leaves NULL on zero rows and `IF NULL <> 'x'` is **not taken**, so without the guards an assertion against a *dropped* policy would silently pass.
+
+**The client half — a third subscription, and it is load-bearing.** `create_held_cross_court_match` inserts the match as `status='pending', is_published=false` and flips three `queue_entries` rows to `'drafted'` in the same transaction. Once the firewall lands, that draft's `matches` row **and** its `match_players` rows are both hidden from the very player it reserves — so the `queue_entries` flip is the *only* event that still reaches them. `use-player-match.ts` therefore subscribes to `queue_entries` alongside `matches` and `match_players` (`channelPrefix: "player-match"`). It is harmless before the migration and required after it; **do not remove it as redundant.** Pinned by U-HELD-1.
+
+> 🚨 **Both migrations in this section are UNAPPLIED as of 2026-08-10.** Migrations here are applied by hand — merging this code closes **nothing** on production. Finding #11 stays exploitable until `20260810000001` is applied (outside a live session) and the post-apply checks at its lines 208-226 are run. Full handoff in `MEMORY.md` → "UNAPPLIED MIGRATIONS".
+
+#### C. `compute_session_wrapped` is finally declared in the repo
+
+`20260810000000` is a verbatim `pg_get_functiondef` capture of production's definition (44 897 chars, md5 `ec5c724c4fd8705449d0fd014d57b82d`). The repo had **never** held the function's full body: `20260423100000` created a much smaller early version and every change since has been an in-place text substitution against whatever prod happened to contain. It is convergent and a strict no-op against prod today; its value is giving future edits a diffable baseline instead of another blind substitution. `pg_get_functiondef` and **not** `prosrc` — `prosrc` drops the `SECURITY DEFINER` marker and the `SET search_path` in `proconfig`, so replaying a `prosrc` capture would silently de-harden the function. Note it does **not** by itself make a from-scratch replay work; that still aborts earlier, at `20260718150312_harden_first_to_100_claim.sql`.
 
 ---
 
@@ -2363,7 +2422,7 @@ also get a club-namespaced convenience variant for in-app nav (§11.4 for Wrappe
 > and history opened up. A session id is not a capability; the QR path has a scan, these had nothing.
 > Enrollment now requires a real participation signal, and only that one case:
 >
-> - `/organizer/[id]` → a **local** `isSessionOrganizerLocal(user.id, sessionId)` in the page — same predicate
+> - `/organizer/[id]` → a **local** `isSessionOrganizerLocal(user.id, sessionId, session)` in the page — same predicate
 >   every organizer-only action already gates on (`created_by` OR `session_organizers` OR an active
 >   owner/admin of the session's club), so it admits exactly the people who could already act as organizers
 >   here. Keeps the case the enroll exists for: `joinAsCoOrganizer` writes `session_organizers` and no
