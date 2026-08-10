@@ -4,6 +4,20 @@
 > while intent was fresh. This is the **build's TDD checklist** — each case is transplantable into the named test file.
 > Case ids are stable; regression cases name their plan tag (C-1, C-3, N-1, N-2, R3-1, R3-B, M-4, M-6, L-1, N-4, R3-C, R3-2…).
 
+> ## ⚠️ HISTORICAL — the per-slot mock ordering in §"Engine" is OBSOLETE (2026-08-04)
+>
+> This catalog was authored against the engine's old three-helper diversity read
+> (`fetchRecentRosters` + `fetchPartnershipCounts` + `buildOverlapMap`). Those helpers no longer
+> exist: one `fetchSessionMatchSnapshot` per slot replaced all three, and the derivations are now
+> pure. **Every `queriedTables` sequence, FIFO index and "step 1/2/3 overlap" comment below is wrong
+> for current code** — the assertions and intent are still valid, the query order is not.
+>
+> Current per-slot order (`matches` → `v_queue_with_wait_time` → `match_players`, the roster hop
+> landing *after* the pool because it follows an await) is documented in the header of
+> `tests/unit/matchmaking-engine.test.ts` and APP_MANIFEST §"Session match snapshot". Read those,
+> not this file, when wiring engine mocks. The feature itself shipped — `fetchPullablePlayers` is
+> live in `src/app/actions/matchmaking.ts`.
+
 ---
 
 ## 1. Pure Core

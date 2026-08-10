@@ -470,6 +470,21 @@ async function installFlipProbe(context: BrowserContext): Promise<void> {
         // failing to play its move. Test by descendant, not by the element's
         // own aria-label: useFlipList's ref sits on the row WRAPPER, while
         // aria-label="Position N" sits on the rank number inside it.
+        //
+        // Read it as "in the waitlist subtree", NOT as "this element is a row":
+        // the predicate is also true for the list container and every ancestor
+        // up to <body>. Do not lean on it as proof of which node moved.
+        //
+        // Why it is still safe to treat a hit as "the waitlist animated":
+        // framer-motion is not installed, so the only WAAPI callers in the app
+        // are useFlipList's two `el.animate()` sites. The one other surface
+        // using that hook — LiveCourtsTab — cannot pollute this probe for
+        // three independent reasons: it is unmounted while the Waitlist tab is
+        // active, its court cards contain no `[aria-label^="Position "]`
+        // descendant (so isRow would be false regardless), and it passes
+        // `animateEnter: false`, so it can never emit a 240ms enter — which is
+        // the assertion most at risk from a false positive. (Tailwind
+        // `animate-in` classes elsewhere are CSS, and never reach this patch.)
         isRow: !!this.querySelector?.('[aria-label^="Position "]'),
         rows: document.querySelectorAll('[aria-label^="Position "]').length,
       });
@@ -498,12 +513,6 @@ async function reorderWaitlistTopRow(
 
   const rows = page.getByLabel(/^Position \d+$/);
   await expect.poll(async () => rows.count(), { timeout: 25_000 }).toBeGreaterThanOrEqual(4);
-
-  // useFlipList never animates its first commit (it only records offsetTop),
-  // so discard anything captured during mount.
-  await page.evaluate(() => {
-    (window as unknown as { __flips: unknown[] }).__flips.length = 0;
-  });
 
   const { data: waiting } = await adminDb()
     .from("queue_entries")
@@ -538,6 +547,18 @@ async function reorderWaitlistTopRow(
 
   const topEntry = waiting!.find((e) => e.player_id === topProfile!.id)!;
   const before = await rows.count();
+
+  // Discard everything captured so far, as late as possible — the very last
+  // statement before the mutation. useFlipList never animates its first commit
+  // (it only records offsetTop), so mount noise is not evidence. Clearing
+  // earlier — e.g. right after the `>= 4` poll — would leave the two admin
+  // SELECTs and the DOM read inside the recording window, so a split paint
+  // (4 rows, then the 5th) would bank a legitimate 240ms ENTER and red the
+  // "no survivor played an ENTER" assertion on something that is not a bug.
+  await page.evaluate(() => {
+    (window as unknown as { __flips: unknown[] }).__flips.length = 0;
+  });
+
   await adminDb().from("queue_entries").update({ status: "left" }).eq("id", topEntry.id);
 
   // Prove the reorder actually reached the DOM before anything is asserted
@@ -619,33 +640,29 @@ test.describe("Resilience — [R-4] queue reordering animates via WAAPI", () => 
     }
   });
 
-  // KNOWN ISSUE — intermittent, cosmetic, and NOT a regression from
-  // PRs #45/#46/#48. Left as fixme rather than deleted so the expectation
-  // stays on the record; re-enable it with the fix.
+  // Was `test.fixme` until 2026-08-04: it failed on ~60% of runs because
+  // useFlipList genuinely played the 240ms ENTER fade instead of the 320ms
+  // MOVE. The test was right and the hook was wrong.
   //
-  // What was measured on 2026-08-04, against production, ~10 runs:
-  //   • The removal is now always the top-rendered row (the ordering bug
-  //     above is fixed), so every survivor genuinely changes rank.
-  //   • Row identity is stable: "1,2,3,4,5" → "2,3,4,5". The survivors keep
-  //     their DOM nodes, so useFlipList should emit MOVE (320ms) for each.
-  //   • On roughly 60% of runs it emits ENTER (240ms) for all four instead.
+  // Root cause (fixed in src/hooks/use-flip-list.ts): the layout effect was
+  // keyed [orderKey, animateEnter] and wrote prevTops/hasMeasured on EVERY run,
+  // including runs where the host had rendered no rows. waitlist-tab.tsx calls
+  // the hook above `if (loading) return <skeleton/>`, and `waitlist` and
+  // `loading` are independent props — fetchWaitlist is one round trip while
+  // fetchActiveMatches is up to four, so setWaitlist lands several commits
+  // before setLoading(false). That intermediate commit changed the orderKey
+  // with zero rows registered, wiping every First position; the commit that
+  // finally painted the rows changed no key, so the keyed effect never ran and
+  // never re-measured. The next reorder saw an empty prevTops and took the
+  // `prevTop === undefined` branch for every survivor. The ~40% pass rate was
+  // just the races where the tab mounted after setLoading(false).
   //
-  // useFlipList emits ENTER only for a key it holds no previous offsetTop
-  // for, so its prevTops map is empty at that commit. The likely cause is
-  // waitlist-tab.tsx: useFlipList() is called ABOVE the `if (loading)` early
-  // return, whose skeleton renders no Position rows, so a commit that changes
-  // the orderKey while loading is true runs the layout effect against an empty
-  // element map and wipes prevTops. A MutationObserver did not catch a
-  // zero-row render between the two states, but that is not exonerating —
-  // observer callbacks are batched microtasks, so two commits inside one task
-  // collapse into a single notification showing only the final DOM.
-  //
-  // Fix direction: either move the useFlipList call below the early return, or
-  // have the hook skip (rather than overwrite) its bookkeeping when it is
-  // invoked with no registered elements.
-  test.fixme("a row that changes rank plays a 320ms translateY move animation", async ({
-    browser,
-  }) => {
+  // The hook now skips (rather than overwrites) its bookkeeping on a zero-row
+  // commit, re-measures on every commit, and only arms `hasMeasured` once rows
+  // have actually been measured. Regression-locked deterministically by
+  // FLIP-6/7/8 in tests/unit/use-flip-list.test.tsx (all three fail against the
+  // old hook); this E2E is the against-production confirmation.
+  test("a row that changes rank plays a 320ms translateY move animation", async ({ browser }) => {
     const seeded = await seedSession("all_waiting");
     const context = await organizerContext(browser);
     await installFlipProbe(context);
@@ -654,19 +671,39 @@ test.describe("Resilience — [R-4] queue reordering animates via WAAPI", () => 
     try {
       const { flips, rowIds } = await reorderWaitlistTopRow(page, seeded.sessionId);
 
+      const dump =
+        `\nElement.animate() calls: ${JSON.stringify(flips, null, 2)}` +
+        `\nRow identity over time: ${JSON.stringify(rowIds)}`;
+
       // MOVE_MS is 320 and ENTER_MS is 240, so the duration distinguishes a
-      // genuine rank change from a row merely entering the list.
+      // genuine rank change from a row merely entering the list. `isRow` is
+      // load-bearing and not redundant with the duration: Element.animate is
+      // global, so a 320ms translateY fired by any other list on the page
+      // (courts, banners) would satisfy the duration filter on its own and let
+      // the waitlist regress silently. [R-4] above asserts the same predicate.
       const moves = flips.filter(
-        (f) => f.duration === 320 && typeof f.from === "string" && f.from.includes("translateY")
+        (f) =>
+          f.isRow &&
+          f.duration === 320 &&
+          typeof f.from === "string" &&
+          f.from.includes("translateY")
       );
       expect(
         moves.length,
-        `List reordered but no 320ms translateY move was recorded.` +
-          `\nElement.animate() calls: ${JSON.stringify(flips, null, 2)}` +
-          `\nRow identity over time: ${JSON.stringify(rowIds)}`
+        `List reordered but no waitlist row recorded a 320ms translateY move.${dump}`
       ).toBeGreaterThan(0);
       // A move always starts from a NON-zero offset — the row's old slot.
-      expect(moves.some((f) => !/translateY\(0(px)?\)/.test(f.from as string))).toBe(true);
+      expect(
+        moves.some((f) => !/translateY\(0(px)?\)/.test(f.from as string)),
+        `every recorded move started from translateY(0), i.e. no row actually shifted${dump}`
+      ).toBe(true);
+      // And the survivors must NOT have been treated as entrances. This is the
+      // exact symptom the fix removes, so assert its absence directly rather
+      // than inferring it from the presence of a move.
+      expect(
+        flips.filter((f) => f.isRow && f.duration === 240),
+        `a surviving row played the 240ms ENTER fade instead of a MOVE${dump}`
+      ).toEqual([]);
     } finally {
       await context.close();
     }
