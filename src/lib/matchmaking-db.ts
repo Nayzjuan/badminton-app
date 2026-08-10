@@ -11,11 +11,19 @@
 //   2. These DB helpers are independently mockable via vi.mock('@/lib/matchmaking-db').
 //
 // Exports:
-//   fetchActivePool        — waiting players, paused-filtered, unscored
-//   fetchRecentRosters     — recent match rosters for diversity checks
-//   fetchPartnershipCounts — per-session same-team pair counts
-//   buildOverlapMap        — per-anchor co-player familiarity weights
-//   executeMatch           — write: commit a MatchProposal via RPC
+//   fetchActivePool            — waiting players, paused-filtered, unscored
+//   fetchSessionMatchSnapshot  — READ: this session's committed matches + rosters
+//   deriveRecentRosters        — pure: recent rosters for diversity checks
+//   derivePairCounts           — pure: same-team + cross-net pair counts
+//   deriveOverlapMap           — pure: per-anchor co-player familiarity weights
+//   fetchPartnershipCounts     — snapshot + derivePairCounts, for non-engine callers
+//   executeMatch               — write: commit a MatchProposal via RPC
+//
+// The three derive* functions used to be three separate DB helpers issuing
+// eight queries per engine slot over overlapping slices of the same two
+// tables. They are now one snapshot read plus pure functions — see the
+// SESSION MATCH SNAPSHOT block below for the arithmetic and the ordering
+// invariant that makes the derivations safe.
 // ============================================================
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -30,6 +38,7 @@ import {
   OVERLAP_WEIGHT_TEAMMATE,
   PLAYERS_PER_MATCH,
   ROSTER_LOOKBACK_COUNT,
+  SESSION_MATCH_SNAPSHOT_CEILING,
 } from "@/lib/constants";
 import { pairKey, type MatchProposal } from "@/lib/matchmaking-core";
 
@@ -88,134 +97,174 @@ export async function fetchActivePool(
   return rested.length >= PLAYERS_PER_MATCH ? rested : active;
 }
 
-// ─────────────────────────────────────────────────────────────
-// fetchRecentRosters
-// ─────────────────────────────────────────────────────────────
-// Returns the last ROSTER_LOOKBACK_COUNT match rosters (completed,
-// in_progress, and pending) as arrays of player IDs. Used by the
-// diversity-violation check in runAlgorithm.
+// ═════════════════════════════════════════════════════════════
+// SESSION MATCH SNAPSHOT — one read, three derivations
+// ═════════════════════════════════════════════════════════════
 //
-// Including in_progress and pending means the engine sees players
-// who are CURRENTLY paired together, not only those who have
-// already finished. This prevents the engine from forming the
-// same pairing "again" just because the first game is still live.
+// fetchRecentRosters (2 queries), fetchPartnershipCounts (2) and buildOverlapMap
+// (3) were three separate helpers issuing SEVEN queries per engine slot, and all
+// seven were re-reading overlapping slices of the same two tables: this session's
+// committed matches, and their match_players rows. Every slot of every burst paid
+// for that three times over. With fetchActivePool's one read of
+// v_queue_with_wait_time — a different table, kept as-is — the slot's read phase
+// was 8 queries deep.
 //
-// Fetched PER SLOT inside runEngineInternal's fill loop (not once per
-// run) so the diversity-violation check also sees sibling drafts
-// committed by earlier slots of the same burst.
+// The three helpers are now ONE read of both tables plus three PURE derivations,
+// taking the read phase to 3. Per slot:
+//
+//              queries        sequential depth
+//   before        8                  8
+//   after         3                  2        (snapshot's 2 run in parallel
+//                                              with fetchActivePool's 1)
+//
+// Counting the commit RPC, a slot is 9 requests → 4. Deep bursts win most: a
+// maximum burst is MAX_AUTO_DRAFTS_XLARGE = 6 slots (getDynamicDraftCap at 30+
+// waiting; the organizer override is a ceiling, so it can only lower this), and
+// that drops from 54 requests to 24.
+//
+// ── The ordering invariant (load-bearing, do not weaken) ──────────────────
+// `matchIds` is returned in the order Postgres produced it: created_at DESC,
+// id DESC. Both derivations that need recency (deriveRecentRosters,
+// deriveOverlapMap) slice a prefix of that array and do NOT re-sort. Two
+// consequences:
+//
+//   1. The `id DESC` tiebreak is not decoration. `created_at` is written by
+//      the same statement for every row of a burst, so ties are the NORM in
+//      this table, not an edge case, and `ORDER BY created_at DESC` alone
+//      leaves the tied rows in whatever order the plan happens to emit. That
+//      made "the 5 most recent matches" quietly non-deterministic before.
+//      Ordering by id as well makes the prefix stable.
+//   2. Nothing here sorts timestamps in JS. Comparing ISO-8601 strings looks
+//      safe but is not: `localeCompare` is locale- and ICU-dependent, and
+//      Postgres emits a variable number of fractional-second digits, so
+//      "…T10:00:00+00" and "…T10:00:00.000+00" are the same instant with
+//      different string lengths. Leave the ordering in SQL.
+//
+// The snapshot is fetched fresh PER SLOT, not once per run: sibling drafts
+// committed by earlier slots of the same burst must be visible to the
+// diversity check, the partnership cap, and the overlap map alike.
 
-export async function fetchRecentRosters(
+/** One session's committed matches and their rosters, newest-first. */
+export type SessionMatchSnapshot = {
+  /** Committed match IDs in created_at DESC, id DESC order. */
+  matchIds: string[];
+  /** match_id → its roster rows. Matches with no rows are absent. */
+  rowsByMatch: Map<string, { player_id: string; team: string }[]>;
+};
+
+/**
+ * Fail-closed result. `ok: false` means "the engine must not draft against
+ * this" — either a query errored or the session exceeded the row ceiling.
+ * It never carries a partial snapshot, because a partial view of who has
+ * already played whom produces confidently-wrong pairings rather than none.
+ */
+export type SessionMatchSnapshotResult =
+  | { ok: true; snapshot: SessionMatchSnapshot }
+  | { ok: false; reason: string };
+
+const EMPTY_SNAPSHOT: SessionMatchSnapshot = { matchIds: [], rowsByMatch: new Map() };
+
+export async function fetchSessionMatchSnapshot(
   supabase: DbClient,
   sessionId: string
-): Promise<string[][]> {
-  const { data: recentMatchRows } = await supabase
+): Promise<SessionMatchSnapshotResult> {
+  const { data: matchRows, error: matchErr } = await supabase
     .from("matches")
     .select("id")
     .eq("session_id", sessionId)
     .in("status", COMMITTED_MATCH_STATUSES)
     .order("created_at", { ascending: false })
-    .limit(ROSTER_LOOKBACK_COUNT);
+    .order("id", { ascending: false });
 
-  const recentMatchIds = (recentMatchRows ?? []).map((m) => m.id);
-  if (recentMatchIds.length === 0) return [];
-
-  const { data: recentPlayers } = await supabase
-    .from("match_players")
-    .select("match_id, player_id")
-    .in("match_id", recentMatchIds);
-
-  if (!recentPlayers) return [];
-
-  const rosterMap = new Map<string, string[]>();
-  for (const row of recentPlayers) {
-    const list = rosterMap.get(row.match_id) ?? [];
-    list.push(row.player_id);
-    rosterMap.set(row.match_id, list);
+  if (matchErr) {
+    return { ok: false, reason: `matches query failed: ${matchErr.message}` };
   }
 
-  return recentMatchIds.map((id) => rosterMap.get(id) ?? []).filter((r) => r.length > 0);
-}
+  // { data: null, error: null } is not a real PostgREST response for a select —
+  // an empty result is []. It is still handled as "no matches", because a null
+  // here is unambiguous about intent and treating it as an error would turn a
+  // harmless shape difference into a refusal to draft.
+  const matchIds = (matchRows ?? []).map((m) => m.id);
+  if (matchIds.length === 0) return { ok: true, snapshot: EMPTY_SNAPSHOT };
 
-// ─────────────────────────────────────────────────────────────
-// fetchPartnershipCounts
-// ─────────────────────────────────────────────────────────────
-// Returns both same-team (partnership) AND cross-team (opponent)
-// pair counts for this session in a single pass over the match_players
-// data — no extra DB calls.
-//
-// partnershipCounts: Map<pairKey, count> of same-team co-appearances.
-// opponentCounts:    Map<pairKey, count> of cross-net opponent appearances.
-//
-// Covers completed, in_progress, and pending matches so caps apply the
-// moment a draft is created, not only after publish.
-//
-// Called once per slot (per runAlgorithm invocation) so fresh drafts
-// from earlier slots are counted before the next slot's cap check.
-
-export async function fetchPartnershipCounts(
-  supabase: DbClient,
-  sessionId: string
-): Promise<{ partnershipCounts: Map<string, number>; opponentCounts: Map<string, number> }> {
-  const partnershipCounts = new Map<string, number>();
-  const opponentCounts = new Map<string, number>();
-
-  // Step 1: all match IDs for this session with committed statuses.
-  const { data: sessionMatches, error: matchErr } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId)
-    .in("status", COMMITTED_MATCH_STATUSES);
-
-  if (matchErr || !sessionMatches || sessionMatches.length === 0) {
-    if (matchErr) {
-      console.warn(
-        "[matchmaking-db] fetchPartnershipCounts: match query failed:",
-        matchErr.message
-      );
-    }
-    return { partnershipCounts, opponentCounts };
+  if (matchIds.length > SESSION_MATCH_SNAPSHOT_CEILING) {
+    return {
+      ok: false,
+      reason:
+        `session has ${matchIds.length} committed matches, above the ` +
+        `${SESSION_MATCH_SNAPSHOT_CEILING} snapshot ceiling`,
+    };
   }
 
-  const matchIds = sessionMatches.map((m) => m.id);
-
-  // Step 2: all match_players rows for those matches.
   const { data: rows, error: rowsErr } = await supabase
     .from("match_players")
     .select("match_id, player_id, team")
     .in("match_id", matchIds);
 
-  if (rowsErr || !rows || rows.length === 0) {
-    if (rowsErr) {
-      console.warn(
-        "[matchmaking-db] fetchPartnershipCounts: players query failed:",
-        rowsErr.message
-      );
+  if (rowsErr) {
+    return { ok: false, reason: `match_players query failed: ${rowsErr.message}` };
+  }
+
+  const rowsByMatch = new Map<string, { player_id: string; team: string }[]>();
+  for (const row of rows ?? []) {
+    const list = rowsByMatch.get(row.match_id);
+    if (list) list.push({ player_id: row.player_id, team: row.team });
+    else rowsByMatch.set(row.match_id, [{ player_id: row.player_id, team: row.team }]);
+  }
+
+  return { ok: true, snapshot: { matchIds, rowsByMatch } };
+}
+
+// ─────────────────────────────────────────────────────────────
+// deriveRecentRosters (pure)
+// ─────────────────────────────────────────────────────────────
+// The last ROSTER_LOOKBACK_COUNT match rosters (completed, in_progress AND
+// pending) as arrays of player IDs, newest-first. Feeds the
+// diversity-violation check in runAlgorithm.
+//
+// Including in_progress and pending means the engine sees players who are
+// CURRENTLY paired, not only those who have already finished — so it will not
+// form the same pairing "again" just because the first game is still live.
+
+export function deriveRecentRosters(snapshot: SessionMatchSnapshot): string[][] {
+  const rosters: string[][] = [];
+  for (const id of snapshot.matchIds.slice(0, ROSTER_LOOKBACK_COUNT)) {
+    const rows = snapshot.rowsByMatch.get(id);
+    if (rows && rows.length > 0) rosters.push(rows.map((r) => r.player_id));
+  }
+  return rosters;
+}
+
+// ─────────────────────────────────────────────────────────────
+// derivePairCounts (pure)
+// ─────────────────────────────────────────────────────────────
+// Same-team (partnership) AND cross-team (opponent) pair counts across every
+// committed match in the session.
+//
+//   partnershipCounts: Map<pairKey, count> of same-team co-appearances.
+//   opponentCounts:    Map<pairKey, count> of cross-net appearances.
+//
+// Covers pending matches too, so the caps apply the moment a draft exists
+// rather than only after publish.
+
+export function derivePairCounts(snapshot: SessionMatchSnapshot): {
+  partnershipCounts: Map<string, number>;
+  opponentCounts: Map<string, number>;
+} {
+  const partnershipCounts = new Map<string, number>();
+  const opponentCounts = new Map<string, number>();
+
+  for (const rows of snapshot.rowsByMatch.values()) {
+    // Bucket this match's roster by team. row.team is typed Team (non-nullable).
+    const byTeam = new Map<string, string[]>();
+    for (const row of rows) {
+      const bucket = byTeam.get(row.team);
+      if (bucket) bucket.push(row.player_id);
+      else byTeam.set(row.team, [row.player_id]);
     }
-    return { partnershipCounts, opponentCounts };
-  }
 
-  // Step 3: group by (match_id, team). row.team is typed Team (non-nullable).
-  const byMatchTeam = new Map<string, string[]>();
-  for (const row of rows) {
-    const key = `${row.match_id}:${row.team}`;
-    const group = byMatchTeam.get(key) ?? [];
-    group.push(row.player_id);
-    byMatchTeam.set(key, group);
-  }
-
-  // Step 4: group team buckets by match_id so we can compute both
-  // same-team (partnership) pairs and cross-team (opponent) pairs.
-  const byMatch = new Map<string, string[][]>();
-  for (const [key, players] of byMatchTeam.entries()) {
-    const matchId = key.split(":")[0]; // match UUID precedes the first ':'
-    const teamList = byMatch.get(matchId) ?? [];
-    teamList.push(players);
-    byMatch.set(matchId, teamList);
-  }
-
-  for (const teamBuckets of byMatch.values()) {
-    // Same-team (partnership) pairs — within each team bucket.
-    for (const teammates of teamBuckets) {
+    // Same-team pairs — within each bucket.
+    for (const teammates of byTeam.values()) {
       for (let i = 0; i < teammates.length; i++) {
         for (let j = i + 1; j < teammates.length; j++) {
           const k = pairKey(teammates[i], teammates[j]);
@@ -224,9 +273,10 @@ export async function fetchPartnershipCounts(
       }
     }
 
-    // Cross-team (opponent) pairs — between team buckets for the same match.
-    if (teamBuckets.length === 2) {
-      const [teamA, teamB] = teamBuckets;
+    // Cross-team pairs — only meaningful for a well-formed two-sided match.
+    const buckets = [...byTeam.values()];
+    if (buckets.length === 2) {
+      const [teamA, teamB] = buckets;
       for (const a of teamA) {
         for (const b of teamB) {
           const k = pairKey(a, b);
@@ -235,122 +285,87 @@ export async function fetchPartnershipCounts(
       }
     } else if (process.env.DEBUG_MATCHMAKING === "true") {
       console.warn(
-        `[matchmaking-db] fetchPartnershipCounts: match has ${teamBuckets.length} team bucket(s) — opponent pairs skipped (expected 2)`
+        `[matchmaking-db] derivePairCounts: match has ${buckets.length} team bucket(s) — ` +
+          "opponent pairs skipped (expected 2)"
       );
     }
-  }
-
-  if (process.env.DEBUG_MATCHMAKING === "true") {
-    console.log(
-      `[matchmaking-db] fetchPartnershipCounts: ${partnershipCounts.size} partnership pair(s), ` +
-        `${opponentCounts.size} opponent pair(s) across ` +
-        `${sessionMatches.length} match(es) for session ${sessionId}`
-    );
   }
 
   return { partnershipCounts, opponentCounts };
 }
 
 // ─────────────────────────────────────────────────────────────
-// buildOverlapMap
+// deriveOverlapMap (pure)
 // ─────────────────────────────────────────────────────────────
-// Returns a Map<player_id, weight> representing how "familiar"
-// each co-player is to the anchor across recent matches in this
-// session. Used by scoreCandidates to apply anti-repeat penalties.
+// Map<player_id, weight> of how "familiar" each co-player is to the anchor
+// across the anchor's ANTI_REPEAT_LOOKBACK most recent matches in this
+// session. Consumed by scoreCandidates as an anti-repeat penalty.
 //
-// Team-aware weighting (OVERLAP_WEIGHT_TEAMMATE / OVERLAP_WEIGHT_OPPONENT):
-//   Teammate appearance  → weight += 2  (same side)
-//   Opponent appearance  → weight += 2  (cross-net; equal to teammate as of the
-//                          2026-07 diversity pass — re-facing avoided as hard
-//                          as re-partnering, the primary round-2 opponent lever)
+//   Teammate appearance → OVERLAP_WEIGHT_TEAMMATE
+//   Opponent appearance → OVERLAP_WEIGHT_OPPONENT
 //
-// Implementation: 3-step join to avoid relying on v_recent_pairings
-// (which lacks team data and only tracks completed matches).
-//   Step 1 — find the anchor's match IDs (global, via match_players)
-//   Step 2 — filter to session + recent statuses
-//   Step 3 — fetch all co-players + teams, compute weighted map
+// (Equal as of the 2026-07 diversity pass: re-facing is avoided as hard as
+// re-partnering, the primary round-2 opponent lever.)
+//
+// This replaces a three-query join that started by pulling the anchor's
+// match_players rows GLOBALLY — across every session they had ever played —
+// under an unordered `.limit(200)`, then intersecting with this session. That
+// cap was silent and mis-ordered: a heavy regular past 200 lifetime rows could
+// have this session's matches truncated away by rows from unrelated sessions,
+// and the engine would then treat a genuine repeat as a fresh pairing. Scoping
+// to the session snapshot removes both the extra queries and that failure mode.
 
-export async function buildOverlapMap(
-  supabase: DbClient,
-  sessionId: string,
+export function deriveOverlapMap(
+  snapshot: SessionMatchSnapshot,
   anchorPlayerId: string
-): Promise<Map<string, number>> {
+): Map<string, number> {
   const overlapMap = new Map<string, number>();
+  let seen = 0;
 
-  // Step 1: Find all match IDs the anchor has participated in.
-  // Safety cap: limit to 200 rows so the allAnchorMatchIds array
-  // stays bounded for the .in() clause in Step 2.
-  const { data: anchorRows, error: anchorErr } = await supabase
-    .from("match_players")
-    .select("match_id")
-    .eq("player_id", anchorPlayerId)
-    .limit(200);
+  for (const id of snapshot.matchIds) {
+    if (seen >= ANTI_REPEAT_LOOKBACK) break;
+    const rows = snapshot.rowsByMatch.get(id);
+    if (!rows) continue;
 
-  if (anchorErr || !anchorRows || anchorRows.length === 0) {
-    if (anchorErr) {
-      console.warn("[matchmaking-db] buildOverlapMap: anchor query failed:", anchorErr.message);
+    const anchorRow = rows.find((r) => r.player_id === anchorPlayerId);
+    if (!anchorRow) continue;
+    seen++;
+
+    for (const row of rows) {
+      if (row.player_id === anchorPlayerId) continue;
+      const weight =
+        row.team === anchorRow.team ? OVERLAP_WEIGHT_TEAMMATE : OVERLAP_WEIGHT_OPPONENT;
+      overlapMap.set(row.player_id, (overlapMap.get(row.player_id) ?? 0) + weight);
     }
-    return overlapMap; // First-time player or error — no overlap data
-  }
-
-  const allAnchorMatchIds = anchorRows.map((r) => r.match_id);
-
-  // Step 2: Filter to this session's recent matches (completed +
-  // in_progress + pending) that actually include the anchor.
-  const { data: sessionMatches, error: sessionErr } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("session_id", sessionId)
-    .in("status", COMMITTED_MATCH_STATUSES)
-    .in("id", allAnchorMatchIds)
-    .order("created_at", { ascending: false })
-    .limit(ANTI_REPEAT_LOOKBACK);
-
-  if (sessionErr || !sessionMatches || sessionMatches.length === 0) {
-    if (sessionErr) {
-      console.warn("[matchmaking-db] buildOverlapMap: session filter failed:", sessionErr.message);
-    }
-    return overlapMap;
-  }
-
-  const recentMatchIds = sessionMatches.map((m) => m.id);
-
-  // Step 3: Fetch all players + teams for those matches.
-  const { data: allPlayers, error: playersErr } = await supabase
-    .from("match_players")
-    .select("match_id, player_id, team")
-    .in("match_id", recentMatchIds);
-
-  if (playersErr || !allPlayers) {
-    if (playersErr) {
-      console.warn(
-        "[matchmaking-db] buildOverlapMap: co-players query failed:",
-        playersErr.message
-      );
-    }
-    return overlapMap;
-  }
-
-  // Build a map of match_id → anchor's team assignment.
-  const anchorTeamByMatch = new Map<string, string>();
-  // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
-  for (const row of allPlayers) {
-    if (row.player_id === anchorPlayerId) {
-      anchorTeamByMatch.set(row.match_id, row.team);
-    }
-  }
-
-  // Apply team-weighted overlap for every co-player.
-  for (const row of allPlayers) {
-    if (row.player_id === anchorPlayerId) continue;
-    const anchorTeam = anchorTeamByMatch.get(row.match_id);
-    if (anchorTeam === undefined) continue;
-    // row.team is typed Team (non-nullable) — the DB column is NOT NULL.
-    const weight = row.team === anchorTeam ? OVERLAP_WEIGHT_TEAMMATE : OVERLAP_WEIGHT_OPPONENT;
-    overlapMap.set(row.player_id, (overlapMap.get(row.player_id) ?? 0) + weight);
   }
 
   return overlapMap;
+}
+
+// ─────────────────────────────────────────────────────────────
+// fetchPartnershipCounts
+// ─────────────────────────────────────────────────────────────
+// Snapshot + derive, for callers OUTSIDE the engine loop (the organizer's
+// manual-match repeat warning). The engine takes one snapshot per slot and
+// derives all three products from it instead of calling this.
+//
+// Fails soft, deliberately: an unavailable snapshot yields empty maps rather
+// than an error, because the only consumer is an advisory "you've paired these
+// two before" badge. use-pair-counts.ts drops non-success results without
+// surfacing anything, so the organizer sees the previous counts or a blank
+// badge — never a broken dialog. The engine's fail-CLOSED handling of the same
+// condition lives at its call site, where a wrong pairing is the real cost.
+
+export async function fetchPartnershipCounts(
+  supabase: DbClient,
+  sessionId: string
+): Promise<{ partnershipCounts: Map<string, number>; opponentCounts: Map<string, number> }> {
+  const result = await fetchSessionMatchSnapshot(supabase, sessionId);
+  if (!result.ok) {
+    console.warn("[matchmaking-db] fetchPartnershipCounts:", result.reason);
+    return { partnershipCounts: new Map(), opponentCounts: new Map() };
+  }
+  return derivePairCounts(result.snapshot);
 }
 
 // ─────────────────────────────────────────────────────────────

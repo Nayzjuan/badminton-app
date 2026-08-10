@@ -9,8 +9,42 @@
 import { redirect, notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { resolveSessionClubSlug, ensureClubMembership } from "@/lib/clubs";
+import { ensureClubMembership } from "@/lib/clubs";
 import { clubOrganizer } from "@/lib/club-paths";
+import { isValidUUID } from "@/lib/validate";
+
+/** The session facts this shim needs — the redirect target and the two columns
+ *  the organizer predicate is built on. */
+type SessionRedirectRow = {
+  createdBy: string;
+  clubId: string;
+  clubSlug: string | null;
+};
+
+/**
+ * One read for all of it.
+ *
+ * Was two: `resolveSessionClubSlug()` for the slug, then a second `sessions`
+ * select inside the organizer check for `created_by, club_id`. Same row both
+ * times, so the second bought nothing but a window in which the session could
+ * be re-homed between them. `resolveSessionClubSlug` stays as-is — the /play
+ * shim, push send and reconnect all still want just the slug.
+ */
+async function loadSessionForRedirect(sessionId: string): Promise<SessionRedirectRow | null> {
+  if (!isValidUUID(sessionId)) return null;
+  const svc = createServiceClient();
+  const { data, error } = await svc
+    .from("sessions")
+    .select("created_by, club_id, clubs(slug)")
+    .eq("id", sessionId)
+    .maybeSingle();
+  // Same posture as resolveSessionClubSlug: a query ERROR throws rather than
+  // reading as "no such session", because a blip must not 404 a real bookmark.
+  if (error) throw new Error(`OrganizerSessionRedirect: ${error.message}`);
+  if (!data?.club_id) return null;
+  const club = data.clubs as unknown as { slug: string } | null;
+  return { createdBy: data.created_by, clubId: data.club_id, clubSlug: club?.slug ?? null };
+}
 
 /**
  * Does this user run this session? Local copy of `isSessionOrganizer` from
@@ -29,38 +63,43 @@ import { clubOrganizer } from "@/lib/club-paths";
  *
  * Same predicate as the original — created_by OR session_organizers OR an
  * active owner/admin of the session's club — and the same use of the service
- * client, so RLS on `sessions`/`session_organizers` cannot hide the very rows
- * that prove the caller is an organizer. Mirrors `isQueuedInSession` in the
- * sibling `/play` shim. If these ever move to a `server-only` lib, both pages
- * should import from there instead.
+ * client, so RLS on `session_organizers` cannot hide the very rows that prove
+ * the caller is an organizer. Mirrors `isQueuedInSession` in the sibling
+ * `/play` shim. If these ever move to a `server-only` lib, both pages should
+ * import from there instead.
+ *
+ * `session` is passed in rather than re-read — see loadSessionForRedirect.
+ * `member` is NOT an organizer role: club membership is what gets you into the
+ * club route at all, so treating it as organizership here would hand every
+ * member of the club an auto-enroll on any session id they can name.
  */
-async function isSessionOrganizerLocal(userId: string, sessionId: string): Promise<boolean> {
-  const svc = createServiceClient();
+async function isSessionOrganizerLocal(
+  userId: string,
+  sessionId: string,
+  session: SessionRedirectRow
+): Promise<boolean> {
+  if (session.createdBy === userId) return true;
 
-  const [sessionRes, organizerRes] = await Promise.all([
-    svc.from("sessions").select("created_by, club_id").eq("id", sessionId).maybeSingle(),
+  const svc = createServiceClient();
+  const [organizerRes, clubRes] = await Promise.all([
     svc
       .from("session_organizers")
       .select("id")
       .eq("session_id", sessionId)
       .eq("user_id", userId)
       .maybeSingle(),
+    svc
+      .from("club_members")
+      .select("role")
+      .eq("club_id", session.clubId)
+      .eq("player_id", userId)
+      .eq("is_active", true)
+      .maybeSingle(),
   ]);
 
-  const session = sessionRes.data; // deleted/invalid sessions return null, not an error
-  if (!session) return false;
-  if (session.created_by === userId) return true;
   if (organizerRes.data) return true;
-
-  const { data: clubMembership } = await svc
-    .from("club_members")
-    .select("role")
-    .eq("club_id", session.club_id)
-    .eq("player_id", userId)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  return clubMembership?.role === "owner" || clubMembership?.role === "admin";
+  const role = clubRes.data?.role;
+  return role === "owner" || role === "admin";
 }
 
 export default async function OrganizerSessionRedirect({
@@ -69,8 +108,9 @@ export default async function OrganizerSessionRedirect({
   params: Promise<{ sessionId: string }>;
 }) {
   const { sessionId } = await params;
-  const slug = await resolveSessionClubSlug(sessionId);
-  if (!slug) notFound();
+  const session = await loadSessionForRedirect(sessionId);
+  const slug = session?.clubSlug;
+  if (!session || !slug) notFound();
 
   // Enroll ONLY a real organizer of this session. The case worth keeping is the
   // non-member organizer who co-joined via the legacy entry — joinAsCoOrganizer
@@ -91,7 +131,7 @@ export default async function OrganizerSessionRedirect({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (user && (await isSessionOrganizerLocal(user.id, sessionId))) {
+  if (user && (await isSessionOrganizerLocal(user.id, sessionId, session))) {
     const enroll = await ensureClubMembership(slug, user.id);
     if (enroll.reason === "write_failed" || enroll.reason === "club_not_found") {
       // The write itself errored, so the whole reason for this branch — giving

@@ -9,8 +9,11 @@
 // there is no reason to expose it more widely.
 //
 // Reads go through the service client: fetchPartnershipCounts is typed for a
-// service-role DbClient and is documented as running with RLS bypassed (it is
-// the engine's own helper). The JS-level organizer gate above is the boundary.
+// service-role DbClient and runs with RLS bypassed. It is now this action's
+// helper alone — the engine derives its own counts from the per-slot match
+// snapshot — and it fails SOFT (empty maps + a warn) so a transient DB error
+// blanks the badge rather than erroring the organizer's screen. The JS-level
+// organizer gate above is the boundary.
 //
 // Both actions honour the CLAUDE.md contract: return { success, ... }, never throw.
 //

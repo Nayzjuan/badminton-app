@@ -5,6 +5,165 @@
 
 ---
 
+## 🚨 UNAPPLIED MIGRATIONS — read this first (as of 2026-08-10)
+
+**Migrations in this project are applied BY HAND. There is no deploy automation for the database.
+Merging a PR ships TypeScript only.** Two migration files are in the repo and have **NOT** been run
+against production. Until they are, the repo and prod disagree.
+
+| File | What it does | Risk if left unapplied | Risk of applying |
+|---|---|---|---|
+| `supabase/migrations/20260810000000_declare_compute_session_wrapped.sql` | Declares `compute_session_wrapped` exactly as prod defines it (verbatim `pg_get_functiondef` capture, md5 `ec5c724c4fd8705449d0fd014d57b82d`) | None to runtime — the repo just keeps lying about the function's body | **Effectively none.** Convergent, strict no-op against prod today: `CREATE OR REPLACE` with the byte-identical body already installed. Grants re-asserted are exactly the two prod has (`postgres`, `service_role`) — not widened |
+| `supabase/migrations/20260810000001_extend_draft_firewall_to_match_players.sql` | Folds the draft-firewall CASE into `has_match_access`, closing audit finding **#11** | **#11 stays exploitable on prod.** Any club member can read, and is pushed live, the full named roster of an unpublished draft | **Real — this one changes RLS behaviour.** Blast radius is exactly `match_players_select` + `match_games_select`. Apply it **outside a live session** |
+
+**Order:** `20260810000000` first (it is inert), then `20260810000001`.
+
+**After applying `20260810000001` you MUST run the post-apply checks** written into the file at
+lines **208-226**: (1) the helper discriminates drafts; (2) still exactly two dependent policies;
+(3) a live check with a real member JWT — during an active draft a member's PostgREST GET on
+`match_players` filtered to a drafted match must return `[]`, and must start returning the roster
+the instant the organizer publishes. The migration also carries its own 4-check `DO $$` assertion
+block, so a drifted schema aborts the apply rather than silently half-applying.
+
+**Client half is committed on this branch — it is NOT the same thing as deployed.**
+`use-player-match.ts` gained a third `queue_entries` subscription, because once the firewall hides
+a draft's `match_players` rows from the very player it reserves, the `queue_entries` flip to
+`'drafted'` is the *only* event that still reaches them. That subscription is inert before the
+migration and load-bearing after it — do not remove it.
+
+> 🔒 **ORDER LOCK: deploy the code BEFORE applying `20260810000001`.** Code-first is
+> unconditionally safe (the subscription is a no-op under the current, more permissive helper).
+> Migration-first is not: a drafted player would lose *every* signal — their `matches` row and
+> their `match_players` rows are both hidden, and the deployed bundle has no `queue_entries`
+> subscription to fall back on. Verify with
+> `git show main:src/hooks/use-player-match.ts | grep -c subscribeToQueue` — it must return ≥1
+> **and** the Vercel deploy for that commit must be READY before the migration runs.
+
+> ⚠️ Prod migration stamps drift from repo filenames. **Never compare by version number — compare
+> by name suffix, and ultimately by querying the catalog.**
+
+---
+
+## 🧩 Engine diversity reads merged 9 → 3; the other three deferred DB items KILLED — 2026-08-04, **working tree, uncommitted**
+
+Closes the last open line from `DB_OPTIMIZATION_AUDIT.md`. Full verdicts: **`PENDING_WORK_2026-07-23.md` §6**.
+Architecture: **APP_MANIFEST §"Session match snapshot"**.
+
+**Shipped (audit item #7).** `fetchRecentRosters` (2) + `fetchPartnershipCounts` (2) + `buildOverlapMap` (3)
+were three helpers issuing **seven** queries per engine slot, all re-reading overlapping slices of the same
+two tables. The eighth query in the slot's read phase is `fetchActivePool`'s separate read of
+`v_queue_with_wait_time` — a different table, left as-is — which is why the depth figures below say 8.
+Now **one** `fetchSessionMatchSnapshot` (2 queries, run concurrently with `fetchActivePool`) + three pure
+derivations `deriveRecentRosters` / `derivePairCounts` / `deriveOverlapMap`.
+
+- Per slot **8 queries/depth 8 → 3/depth 2**; with the commit RPC 9 requests → 4; the deepest possible
+  burst is 6 slots (`MAX_AUTO_DRAFTS_XLARGE`), so a full regeneration is **54 → 24**.
+- **Fails CLOSED.** `SESSION_MATCH_SNAPSHOT_CEILING = 200` (prod's busiest session: 56). Error or
+  over-ceiling → `{ ok:false }` → engine **breaks the burst**. Falling through to empty history would make
+  every repeat read as fresh — i.e. emit exactly the duplicates the caps exist to prevent.
+- **Ordering stays in SQL** (`created_at DESC, id DESC`). The `id` tiebreak is load-bearing, not cosmetic: a
+  burst writes one `created_at` for every row it commits, so ties are the NORM and `created_at DESC` alone
+  leaves "the 5 most recent" non-deterministic.
+- **Latent bug fixed in passing:** old `buildOverlapMap` pulled the anchor's `match_players` rows
+  **globally** — every session they had ever played — under an unordered `.limit(200)`, then intersected with
+  the session. A heavy regular past 200 lifetime rows could have this session's matches truncated away by
+  unrelated ones, and a genuine repeat would read as fresh.
+- `fetchPartnershipCounts` survives as the **organizer repeat-pairing badge's** helper alone, and fails
+  **soft** there on purpose (empty maps + warn ⇒ blank badge, not a broken screen).
+
+**Killed, with reasons banked so nobody re-derives them.** Two of the three were never blocked on live
+testing — their designs were simply wrong:
+
+| Item | Verdict |
+|---|---|
+| `compute_session_wrapped` CTE hoist | ❌ **WON'T DO.** "236.5 ms" is a `pg_stat_statements` **mean over 44 calls** (sd 121.9) — honest saving ~2–12% ≈ **2 s DB CPU/year**. And **no valid oracle**: of 621 stored rows, 419 predate the deuce `>=30` change and 130 more predate the first-to-100 hardening, so a re-run diff is noise. |
+| `#2` page-level realtime channel mux | ❌ **NO-GO.** Census was wrong (**11** channels not 12; `matches` has **3** subscribers — `MatchHistory` isn't mounted by default, `my-status-tab.tsx:59` defaults to `"queue"`), and the design ignores `channel(topic)` dedupe, the exact-equality `REALTIME_CHANNEL_COUNT = 5` check (any dedup pegs "live" → disconnected **forever**), and that `on()` throws after `subscribe()`. 5 revisit preconditions in §6.3. |
+| `match_players.session_id` denorm | ❌ **DECLINED.** Suppresses no measured traffic, and **cannot cover DELETE at all** — filters match the OLD row and the table is REPLICA IDENTITY DEFAULT. Verdict lives at `src/lib/realtime.ts:180-209`. |
+
+**Two findings surfaced while doing this:**
+
+1. **Audit finding #11 (NEW, 🟡 medium-low, exploitable today)** — the draft firewall covers `matches` but
+   **not** `match_players`. `match_players_select` is just `has_match_access(match_id)` → any club member;
+   it never asks the draft question. So a member can read (and is **pushed, live**) the full named roster of
+   an **unpublished** draft, over a plain PostgREST GET — the rows hand out the `match_id` the hidden
+   `matches` row withheld. Verified against prod `pg_policies`. Fix = fold the firewall into
+   `has_match_access`; blast radius is exactly `match_players_select` + `match_games_select` (no RPC body
+   references it). ~~**Not shipped** — wants its own migration.~~ 🟠 **MIGRATION WRITTEN 2026-08-10,
+   NOT YET APPLIED — still open on prod.** See "UNAPPLIED MIGRATIONS" below.
+   `TENANCY_AUDIT_2026-07-21.md` §2 #11 + §4 item 7.
+2. **Anon TV realtime is entirely dead** — an anonymous `/tv/{id}` viewer gets **ZERO** events on both
+   channels (every `session_access_level` branch tests `auth.uid()` → NULL), so the 15 s poll is
+   load-bearing and the board can lag 15 s. A signed-in organizer casting DOES get realtime, which is why it
+   never showed in testing. Accepted, written up at `src/hooks/use-tv-board.ts:24-45`.
+
+**Verification.** New `tests/unit/matchmaking-snapshot.test.ts` (22 tests) + `ENG-SNAP-1/2` — all
+**mutation-proven to discriminate**: ceiling `>`→`>=`, dropping the `id DESC` tiebreak, widening
+`ANTI_REPEAT_LOOKBACK`, and fail-closed→fail-open each kill exactly the intended test. A temporary
+differential harness proved equivalence to the three deleted helpers across 7 fixture shapes
+(0/1/4/9/14/27/56 matches), then was deleted with them. `tsc --noEmit` clean, eslint clean on changed
+files, **995 passed / 1 skipped (57 files)**, `npm run build` exit 0.
+
+⚠️ **Trap banked — `ME-new-1` went vacuous TWICE, for two unrelated reasons.**
+**(a) FIFO drift.** Its seeded partnership history landed on a mock slot nothing read any more. The engine
+mock is order-dependent and the snapshot **short-circuits on an empty `matches` response**, so a
+`{ data: [] }` history fixture never issues the `match_players` read and shifts every later response by one.
+Pair a non-empty `matches` fixture with the `match_players` response that follows it.
+**(b) Unreachable premise.** Its fixture had 3 waiting players, but `runEngineInternal` breaks at
+`pool.length < PLAYERS_PER_MATCH` (`matchmaking.ts:503`) **before** `derivePairCounts`/`runAlgorithm` —
+so `capSaturation`, the whole subject of the test, could not occur. Pinning `queriedTables` + `rpc`
+not-called did **not** cure it: both hold identically on the player-shortage abort. The review gate caught
+this; I had already written "fixed" in two docs. **Lesson: a negative assertion plus a shape pin is not
+proof a branch ran — only a positive assertion on that branch's side effect is.** The test now uses 4
+players with p0 partnered to p1/p2/p3 twice each and asserts `broadcastCapSaturation` was called once.
+**Second lesson, from the same review:** I justified the new `@/lib/broadcast` mock as credential safety —
+"Vitest loads `.env.test`, which holds the real service-role key, so an unmocked path POSTs at prod" — and
+wrote that into four files. **It is false.** `vitest.config.ts` declares no `env` key and loads no dotenv,
+and Vite surfaces only `VITE_`-prefixed vars, so both names are UNSET under `vitest run` (probed directly,
+Vitest 4.1.5). `postBroadcast` would hit its missing-env guard. The mock is for DETERMINISM. **Don't invent
+a security rationale for a change that is already justified on its own terms** — it survives longer than the
+change does. (It would become a real safety control if anyone wires dotenv into the unit config.)
+`CROSS_COURT_TEST_CATALOG.md`'s mock orderings are now historical — it carries a stale banner.
+
+---
+
+## 🎞️ `useFlipList` — a gated commit was wiping the FLIP baseline — 2026-08-04, **working tree, uncommitted**
+
+Full write-up: **APP_MANIFEST §3.29**. Closes the long-standing `test.fixme` in
+`tests/e2e/scenario-r-resilience.spec.ts` (the [R-4] "320ms translateY move" test) — the fixme is now an
+enabled, passing test.
+
+**Root cause.** The hook's `useLayoutEffect` was keyed `[orderKey, animateEnter]` and wrote
+`prevTops`/`hasMeasured` on **every** run, including runs where the host rendered zero rows. Every caller
+renders behind a gate (`if (loading) return <skeleton/>`), and `waitlist`/`loading` are independent state:
+`fetchWaitlist` is one round trip while `fetchActiveMatches` is four sequential ones, so `setWaitlist` commits
+several frames before `setLoading(false)`. That intermediate commit changed `orderKey` with zero rows
+registered → every First position wiped. The commit that finally painted rows changed no key → the keyed effect
+never re-ran → `prevTops` stayed empty → the next real reorder took the `prevTop === undefined` branch for
+every survivor and played a 240 ms ENTER fade instead of a 320 ms MOVE. The "~60% flaky" reading was just the
+race: Playwright clicks the Waitlist tab inside that window, humans do not (`activeTab` defaults to `"status"`).
+
+**Fix (`src/hooks/use-flip-list.ts`).** Skip (don't overwrite) on a zero-row commit with a non-empty key;
+arm `hasMeasured` only once rows have been measured; drop the dependency array and track `prevOrderKey` in a
+ref. **New contract:** `orderKey` must be a bare join over exactly the rendered rows, so `orderKey === ""`
+means "genuinely empty" — all four call sites comply; prefixing the key would silently re-open the bug.
+
+**Proof.** FLIP-6/7/8 in `tests/unit/use-flip-list.test.tsx` — verified to **fail against the pre-fix hook**
+(restored via `git show HEAD:…`) and pass after, so they discriminate rather than merely pass. Suite
+963 passed / 1 skipped. `tsc --noEmit` clean, eslint clean on changed files, `npm run build` exit 0.
+E2E confirmed against a **local production build** (the fix is not deployed yet, so a prod-URL run would
+legitimately fail): the previously-fixme'd test passed **3/3**; the sibling R-4 test hit its own documented
+~1-in-14 realtime-delivery flake once and passed the other two runs. Snapshot-first protocol honoured — the
+only prod drift across the whole run was `E2E_OrganizerBot`'s own `profiles.updated_at`.
+
+**Gotcha banked:** the Playwright organizer storage state (`.playwright/organizer-storage-state.json`) pins
+cookies to the **Vercel hostname**, and `signInOrganizerBot` short-circuits when the file exists. Pointing
+`TEST_BASE_URL` at `http://localhost:3000` therefore silently runs **unauthenticated** — every page lands on
+the login screen, which itself has a `[role="tablist"]`, so the failure surfaces as a confusing
+"tab named /waitlist/i not found" rather than "not logged in". Delete the file before a local run, restore it
+after.
+
+---
+
 ## 🔒 `draft_cap_phase` MOVED SERVER-SIDE — co-organizer lockout now actually works — 2026-08-04, **SHIPPED — `main` `e8e76bd` + `ddd080c`, prod-verified**
 
 **Status: working tree only. NOTHING committed, pushed or deployed.** Sits on top of the `broadcast.ts`
@@ -45,7 +204,7 @@ returned **normally** — no error, no request, no lockout, for months. A green 
    likewise unwrapped — same contract hole, one env/transport failure away. All now inside one `try/catch`,
    which is safe only because that whole span emits nothing (DCA-6b/6c);
 4. **`crypto.randomUUID` is secure-context-only** — over plain http (a phone on `http://192.168.x.x:3000`)
-   it is `undefined`, so the call threw on the *first* line of `handleCapChange`, before any `setState`, and
+   it is `undefined`, so the call threw on the _first_ line of `handleCapChange`, before any `setState`, and
    the popover's `void onChange(cap)` swallowed the rejection. The chip just did nothing. That is the same
    silent-no-op class this whole change set exists to delete. Now `newOpId()` falls back to
    `getRandomValues` + a hand-assembled v4 (the server validates with `isValidUUID`). Pinned by OD-16b.
@@ -75,7 +234,7 @@ server-only gate) · eslint clean on every changed file. `organizer-dashboard.ts
 Pass 1 verified empirically (running the tests' own logic against `git show HEAD:` copies of the pre-fix
 files) that CB-1, CB-2, UCS-1, RPB-2 and [R-5] all fail pre-fix, and noted that DCA-\*/OD-18…21 target APIs
 that did not exist before — new-code coverage, not regression guards. Its three items became fixes 3, 4 and
-the OD-11 note above. Because fix 3 restructured `applyDraftCapOverride`'s control flow *after* sign-off, a
+the OD-11 note above. Because fix 3 restructured `applyDraftCapOverride`'s control flow _after_ sign-off, a
 second pass audited just that delta; it proved the new tests non-vacuous the same way (2 targeted failures
 for DCA-6b/6c, 1 for OD-16b, zero collateral) and confirmed the emit-free invariant by tracing every callee
 above the line — no trigger, no `realtime.send`, `sessions` not among the 5 postgres_changes channels. Its
@@ -92,8 +251,8 @@ five items are all fixed. **Worth keeping from it:**
 **✅ SHIPPED + PROD-VERIFIED 2026-08-04.** PR #51 → `main` `e8e76bd`, Vercel prod deploy
 `dpl_Bnqy3QVqKnEE8XCJZNHv3iftcgTi` READY; follow-up PR #52 → `ddd080c`. **[R-5] passes against
 production**, which also closes §3.27's delivery proof (the `realtime:` prefix removal rode in the same
-tree and governs `session_closed` → Wrapped for *every* player). Whole resilience spec: 5 passed / 1
-skipped. Production data proven untouched — a 22-table content snapshot taken *before* the merge, diffed
+tree and governs `session_closed` → Wrapped for _every_ player). Whole resilience spec: 5 passed / 1
+skipped. Production data proven untouched — a 22-table content snapshot taken _before_ the merge, diffed
 after: zero row-count change, three sandbox-scoped field drifts only (sandbox session cap override since
 reset, bot profile `updated_at`, `leaderboard_refresh_state` singleton); 19 tables byte-identical.
 
@@ -103,7 +262,7 @@ the first of three phases, so `expect.poll(() => capFrames.length).toBeGreaterTh
 the `capFrames.join()` below was taken before the cycle finished. **Never snapshot a growing buffer on a
 "something arrived" poll — poll on the terminal condition itself.** The discriminator that settles this
 class of question: `done` is emitted from a `finally` and `emit` cannot reject, so a real post-`clearing`
-stall yields `clearing` + `done` **without** `generating`. A buffer holding *only* `clearing` has no
+stall yields `clearing` + `done` **without** `generating`. A buffer holding _only_ `clearing` has no
 explanation but an early snapshot. Also tightened 25s → 15s: an over-wide window passes while accepting a
 lockout long enough for a co-organizer to notice, and that overlay has no dismiss control.
 
@@ -127,7 +286,7 @@ proves nothing:** a Node probe against production Realtime with a real authentic
 202 / `delivered:false`, unprefixed → 202 / `delivered:true`; then R-1/R-2 fail against the deployed app and
 pass against a local production build whose only diff is `broadcast.ts`. Full write-up: **APP_MANIFEST §3.27**.
 Why it hid for months: the REST endpoint 202s ANY topic; a 15s poll in `use-organizer-session.ts` covered the
-two toggle events; and a prior session misread a local repro and left a standing note *not* to fix it.
+two toggle events; and a prior session misread a local repro and left a standing note _not_ to fix it.
 
 **⚠️ `draft_cap_phase` was NOT fixed by this** — second, independent defect: `broadcast.ts` had no
 server-only guard, so the `clearing`/`generating`/`done` calls in `use-organizer-dashboard.ts` (`"use client"`)
@@ -162,9 +321,13 @@ it. The three cleanup helpers now agree.
 Three review rounds, each **"Minor issues"**, all items addressed. Round 2 caught the `draft_cap_phase`
 overstatement above; round 3 caught an inaccurate "eslint 0" claim in this very entry.
 
-**Known residual:** `useFlipList` is called above the `if (loading)` early return in `waitlist-tab.tsx`, so
+~~**Known residual:** `useFlipList` is called above the `if (loading)` early return in `waitlist-tab.tsx`, so
 ~60% of runs emit 4×240ms ENTER instead of a 320ms MOVE despite stable row identity. Cosmetic, not a #45/#46/#48
-regression; recorded as a `test.fixme` in `scenario-r-resilience.spec.ts` with the measurement and fix direction.
+regression; recorded as a `test.fixme` in `scenario-r-resilience.spec.ts` with the measurement and fix direction.~~
+✅ **FIXED 2026-08-04 — see the `useFlipList` entry at the top of this file and `APP_MANIFEST.md` §3.29.** The
+call site was correctly identified but the remedy was not: the bug was in the hook, not in where it is called
+(moving it below the early return is a rules-of-hooks violation — it is `WaitlistTab`'s only hook). The
+`test.fixme` is now an enabled, passing test.
 
 ---
 
@@ -330,7 +493,11 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 ## 📋 STANDING TO-DO (as of 2026-07-29)
 
 1. ~~Merge PR #45~~ ✅ MERGED 2026-07-29 (`52e30b1`) — migration-file drift closed; prod deploy READY.
-2. **USER: enable leaked-password protection** (Supabase Dashboard → Auth → Password strength).
+2. ~~USER: enable leaked-password protection~~ ❌ **CLOSED — WON'T DO (user decision, reconfirmed 2026-08-04).**
+   The toggle is **Pro-plan-gated** and the org is on Free, so it is not actionable. It would also protect
+   nothing real: every `auth.users` row signs in via Google OAuth and walk-in players are anonymous+PIN, so no
+   email+password credential exists for HIBP to check. The advisor WARN `auth_leaked_password_protection` will
+   keep appearing — **accepted noise**. Re-open only if the app adds password sign-up _or_ the org upgrades to Pro.
 3. **USER: live #7 smoke-test** next session (two organizer boards → toggle propagates; close → Wrapped) —
    doubles as live verification of the resilience fixes + queue/courts transitions.
 4. Optional hardening: project-wide Realtime "Allow public access" OFF (needs every postgres_changes channel
@@ -345,7 +512,7 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 
 ---
 
-## 🩹 SHIM ENROLL FAILURE NOW BRANCHES ON *WHY* — 2026-07-24, branch `fix/shim-enroll-failure`
+## 🩹 SHIM ENROLL FAILURE NOW BRANCHES ON _WHY_ — 2026-07-24, branch `fix/shim-enroll-failure`
 
 Follow-up surfaced by the PR #43 review. `src/app/play/[sessionId]/page.tsx` and
 `src/app/organizer/[sessionId]/page.tsx` both **discarded** `ensureClubMembership`'s `{ ok }` and redirected
@@ -354,7 +521,7 @@ into the club route regardless.
 **It was never a strand — that was my first framing and it was wrong.** `requireClubMembership`
 (`src/lib/clubs.ts`) already does `if (!role) redirect("/play")`, and both club layouts call it, so a failed
 `write` already landed the user on `/play` one hop later. (`club_not_found` is the one sub-case that got
-worse before: `requireClubMembership` does `if (!club) notFound()` *before* the role check, so that produced
+worse before: `requireClubMembership` does `if (!club) notFound()` _before_ the role check, so that produced
 a 404.) The real win is narrower: the shim becomes fail-safe on its own rather than depending on a downstream
 gate, and skips a redirect plus the layout's club/role reads.
 
@@ -431,7 +598,7 @@ own-profile read 0.05 ms, 40 profiles by id on the hot path **4.18 ms**, 40 unre
 unbounded `count(*)` 1746 ms. The last two are denied paths. Every RLS-bound read the app emits is
 `.eq("id", uid)` or `.in("id", ids)` → `id = ANY(array[...])`, an index qual, so the helper runs on the
 requested rows only. **Do not benchmark with `id IN (SELECT …)`** — that plans as a hash semi-join and,
-because the RLS qual is not leakproof, the planner applies it under a full seq scan *before* the join (1001
+because the RLS qual is not leakproof, the planner applies it under a full seq scan _before_ the join (1001
 helper calls for 40 rows, ~1.9 s). Measurement artifact, not a shape any client produces.
 
 **Tests.** `tests/integration/rls-edge-cases.test.ts` → `describe("profiles_select scope — finding #8")`,
@@ -481,8 +648,8 @@ actor (`getActorContext` → `actor_type='organizer'`), contrasting checkout's `
   robust whether the RPC returns all-affected or only-cancelled ids.
 - **FK-safe.** The deployed RPC **soft-cancels** (`UPDATE matches SET status='cancelled'`) — the row + FK
   survive, so logging after the RPC is valid (verified the live function definition via SQL).
-- **⚠️ Repo↔prod drift (follow-up, not fixed here).** The *deployed* `remove_player_from_queue_organizer`
-  appends **all** affected ids to its return array (`array_append` sits *outside* the `IF <4` block); the
+- **⚠️ Repo↔prod drift (follow-up, not fixed here).** The _deployed_ `remove_player_from_queue_organizer`
+  appends **all** affected ids to its return array (`array_append` sits _outside_ the `IF <4` block); the
   repo migration `20260512200002_fix_remove_from_queue.sql` appends **only cancelled** ids. Behaviour is
   identical for our purposes (broadcast + the `status='cancelled'` filter both tolerate either), but the
   migration file no longer reflects production. Worth reconciling in a later housekeeping pass.
@@ -517,18 +684,19 @@ the repo filenames). Merging ships only the TypeScript half. **Both `.sql` files
 ```
 
 **Neither step 1→2 nor step 2→3 is reversible without breakage.** Both are counter-intuitive, and the first
-draft of this note had *both* of them wrong. Do not re-derive from "it's an optional param, so it's fine."
+draft of this note had _both_ of them wrong. Do not re-derive from "it's an optional param, so it's fine."
 
 **Why 2 before 3.** `p_session_id uuid DEFAULT NULL` makes only ONE of those two orders safe, because PostgREST
 resolves an RPC by the set of argument **names** in the request body (a subset of the parameter names is fine;
-a key naming *no* parameter is not):
-- *migration first* → old code sends only the keys it knows (5 at the swapTeams site, 6 at the `team_swap` undo
+a key naming _no_ parameter is not):
+
+- _migration first_ → old code sends only the keys it knows (5 at the swapTeams site, 6 at the `team_swap` undo
   site), every required parameter is covered, `p_session_id` defaults, calls succeed — the binding is merely
   unenforced for that window. **Safe.**
-- *code first* → new code sends `p_session_id` to a function that has no such parameter → no candidate →
+- _code first_ → new code sends `p_session_id` to a function that has no such parameter → no candidate →
   **`PGRST202`, and every team flip and every `team_swap` undo fails** until the migration lands. **Not safe.**
 
-The optional parameter buys tolerance for a *late deploy*, not a *late migration*. A required one would have
+The optional parameter buys tolerance for a _late deploy_, not a _late migration_. A required one would have
 broken both directions; an overload answers `PGRST203`.
 
 **Why 1 before 2.** `20260723000000` grants/revokes on `swap_teams_in_active_match`, which `20260723000001`
@@ -549,7 +717,7 @@ late necessarily drags 2 late too, which is the `PGRST202` window.
 
 ### (a) 16 mutating SECDEF RPCs held `anon` EXECUTE — unauthenticated write, verified on prod
 
-Every server action here is `auth → authorize → service-role RPC`, so nobody ever treated the *function grant*
+Every server action here is `auth → authorize → service-role RPC`, so nobody ever treated the _function grant_
 as a boundary. But PostgREST exposes every function in `public` to whichever role holds EXECUTE, and Supabase's
 `ALTER DEFAULT PRIVILEGES` stamps `anon`/`authenticated` at `CREATE FUNCTION` time. Curl against prod, anon key,
 **no `Authorization` header**:
@@ -564,15 +732,15 @@ swap_player_in_active_match  →  400 P0001 MATCH_NOT_ACTIVE   ← the function'
 `swap_teams_in_active_match`, `swap_active_from_ondeck`, `undo_swap_active_from_ondeck`, `revert_match_to_active`,
 `clear_on_deck_match_atomic`, `clear_all_unpublished_drafts`, `fix_record_swap_player`, `record_match_event`,
 `compute_session_wrapped`, `refresh_cross_session_stats`, `refresh_alltime_leaderboard`. SECDEF ⇒ RLS never
-applies, so this was anon executing the *privileged* path: match forgery, live-roster rewrites, wiping every
+applies, so this was anon executing the _privileged_ path: match forgery, live-roster rewrites, wiping every
 unpublished draft, forging audit events under any actor name, rewriting player history, poisoning published stats.
 
 ### (b) The live swaps authorized on `sessionId` and mutated by `matchId`
 
 #4 again, on writes. None of the four RPCs compared `matches.session_id` to `p_session_id` — that argument only
 drove `queue_entries` and the audit stamp. `swap_teams_in_active_match` didn't even take it; it read `session_id`
-back **out of the match** to label the event, so the audit trail faithfully recorded the *victim's* session while
-the authorization had been performed against the *attacker's*.
+back **out of the match** to label the event, so the audit trail faithfully recorded the _victim's_ session while
+the authorization had been performed against the _attacker's_.
 
 ### 🧨 THREE THINGS THAT WILL BITE THE NEXT PERSON
 
@@ -582,7 +750,7 @@ the authorization had been performed against the *attacker's*.
 2. **`!=` had to become `IS DISTINCT FROM` everywhere.** With `AND session_id = p_session_id` added, a mismatch
    returns **no row**, so the status var is NULL — and `NULL != 'in_progress'` is NULL, which plpgsql treats as
    false, so the old guard falls **through**. In `undo_swap_active_from_ondeck` that is the difference between a
-   fix and a *new* bug: it `RETURN`s instead of raising, and every later statement addresses rows by
+   fix and a _new_ bug: it `RETURN`s instead of raising, and every later statement addresses rows by
    client-supplied match ids. `NOT FOUND` is **not** a substitute — the two-match functions lock in id order to
    avoid deadlock, so it refers to whichever SELECT ran last.
 3. **`DROP` + `CREATE` resets the ACL.** `swap_teams_in_active_match` needed a new param (`CREATE OR REPLACE`
@@ -604,7 +772,7 @@ and firing a trigger doesn't re-check EXECUTE. Inner `PERFORM record_match_event
 call from inside a SECDEF function runs as that function's owner.
 
 **`p_session_id` is `DEFAULT NULL` as a one-way compatibility shim, NOT because the order is free** — see the
-sequence box above; the default only rescues *old code → new function*. It also means
+sequence box above; the default only rescues _old code → new function_. It also means
 `swap_teams_in_active_match` is the one function of the four that a caller can still invoke **unbound**, simply
 by omitting the key (the other three take `p_session_id` as required). Until the follow-up lands, its real
 boundary is `20260723000000` restricting callers to `service_role` plus the TypeScript pre-check.
@@ -618,12 +786,13 @@ keep PostgREST's resolvable arg-name set unchanged. Both call sites already pass
 key-omission bypass over raw PostgREST closes. In-migration asserts all passed (NULL→SESSION_ID_REQUIRED, single
 candidate, catalog sweep clean, service_role kept EXECUTE); post-apply advisors show no new findings.
 
-**TS layer:** `allMatchesInSession(db, sessionId, matchIds)` on all five call sites in `live-match-swap.ts`,
+**TS layer:** `allMatchesInSession(db, sessionId, matchIds)` (defined in `src/lib/match-session-binding.ts`
+— moved out of the `"use server"` module 2026-08-10 so it is not itself a public endpoint) on all five call sites in `live-match-swap.ts`,
 returning `MATCH_NOT_ACTIVE` — deliberately indistinguishable from "does not exist", so there is no existence
-oracle. `undoLiveSwap`'s `team_swap` branch is knowingly unguarded because it *derives* `session_id` from the
+oracle. `undoLiveSwap`'s `team_swap` branch is knowingly unguarded because it _derives_ `session_id` from the
 match it already read; it passes `p_session_id` so every call site supplies the arg.
 
-`undoLiveSwap` is also the **only** entry point that takes ids *and* team letters straight from the client —
+`undoLiveSwap` is also the **only** entry point that takes ids _and_ team letters straight from the client —
 `ctx` is built server-side, shipped with the undo toast and posted back verbatim, while the other three read
 `team` out of the DB (`outRow.team`) or the RPC's OUT params. It now validates both up front. The ids used to
 fail closed only by accident (malformed uuid → `.eq()` raw → 22P02 → no row); `team` did **not** fail closed at
@@ -631,7 +800,7 @@ all, because `match_players.team` is `char(1) NOT NULL` with **no CHECK constrai
 garbage into the roster of the organizer's own session, where no tenancy guard would ever see it.
 
 **Tests:** integration LMS-14…18 (per-RPC forgery, both-foreign, the realistic **mixed** own/foreign pair, and
-the silent-by-design undo asserted on *state*) · `tests/unit/live-swap-session-binding.test.ts` **32 tests**
+the silent-by-design undo asserted on _state_) · `tests/unit/live-swap-session-binding.test.ts` **32 tests**
 whose refusal cases **all assert the RPC was NOT called** (asserting on the returned message stays green with
 the entire guard deleted, because the SQL refuses too) · its LSB-CTX block is **table-driven over every id and
 team field of all three ctx variants**, plus a meta-test that the tables cover every `*Id` field the type
@@ -665,27 +834,30 @@ the added non-colliding variant.
 **Still open after this:** PR4 (#7/#8 — private `session-events` broadcast + `profiles_select`) · #9 (LOW,
 optional) · the `p_session_id` NULL-rejecting follow-up.
 **✅ ALL CLOSED 2026-07-24:** PR4a=#41 merged (`4bc5cfc`) + migration applied; PR4b=#8=#43 merged (`ba49fa2`)
-+ migration applied; the NULL-reject follow-up = `20260724000000` applied+verified. **#9 FORMALLY ACCEPTED**
-(opaque-UUID `match_players` DELETE leak; no policy fix is possible — RLS can't read a PK-only DELETE row, which
-is also why it's harmless; the only fix touches prod realtime infra + 5 hooks for negligible benefit — fix
-design banked in the `tenancy-audit-findings` memory). Remaining = 3 runtime/dashboard handoffs (leaked-password
-toggle, live #7 delivery smoke-test, optional project-wide "Allow public access" OFF).
+
+- migration applied; the NULL-reject follow-up = `20260724000000` applied+verified. **#9 FORMALLY ACCEPTED**
+  (opaque-UUID `match_players` DELETE leak; no policy fix is possible — RLS can't read a PK-only DELETE row, which
+  is also why it's harmless; the only fix touches prod realtime infra + 5 hooks for negligible benefit — fix
+  design banked in the `tenancy-audit-findings` memory). Remaining = **2** runtime/dashboard handoffs (live #7
+  delivery smoke-test, optional project-wide "Allow public access" OFF). _(Was 3 — the leaked-password toggle was
+  closed as WON'T DO on 2026-08-04: Pro-plan-gated on a Free org, and there are no email+password credentials for
+  HIBP to check. See the STANDING TO-DO at the top of this file.)_
 
 ---
 
 ## 🔒 TENANCY PR4a — PRIVATE `session-events` BROADCAST — 2026-07-23, branch `fix/tenancy-realtime-private-broadcast`
 
 Closes finding **#7**. **Held unmerged** — see "Deploy prerequisites" below; the migration must be applied by
-hand *before* the code deploys, and there is one prod behaviour to smoke-test that cannot be reproduced locally.
+hand _before_ the code deploys, and there is one prod behaviour to smoke-test that cannot be reproduced locally.
 
 **The hole, both halves.** `session-events:{sessionId}` was a **public** Broadcast topic, and public topics
 skip authorization entirely — Realtime never consults `realtime.messages` for them. With the publishable anon
 key and a session UUID, any browser could **read** every organizer event for a session in a club it does not
-belong to, *and* **write** to it. The write half was not in the audit and is worse:
+belong to, _and_ **write** to it. The write half was not in the audit and is worse:
 `channel.send({type:'broadcast', event:'session_closed'})` redirects every player in that session to Wrapped;
 `draft_cap_phase: 'clearing'` freezes every organizer behind the lockout overlay until a `done` arrives.
 
-**The fix is three things that only work together** (each fails *silently* without the others):
+**The fix is three things that only work together** (each fails _silently_ without the others):
 
 1. `supabase/migrations/20260723100000_scope_session_events_broadcast_to_members.sql` — a **SELECT-only**
    policy on `realtime.messages`, gated on `session_access_level(<topic session id>) IS NOT NULL`, the exact
@@ -702,20 +874,20 @@ belong to, *and* **write** to it. The write half was not in the audit and is wor
    that was true only while it was public, and has been reversed.
 
 **Topic parsing must be total.** Postgres does not guarantee AND short-circuits, so a bare
-`substring(topic)::uuid` behind a `LIKE` guard can still raise `22P02` *from inside the policy*. Hence
+`substring(topic)::uuid` behind a `LIKE` guard can still raise `22P02` _from inside the policy_. Hence
 `public.realtime_topic_session_id(text)` — IMMUTABLE, `exception when others then return null`. It is granted
 to **`authenticated` + `service_role` only**, and explicitly revoked `from public, anon, authenticated` first
-(service_role granted *before* the revoke — see the [[revoke-strips-service-role]] trap). Deliberately
+(service*role granted \_before* the revoke — see the [[revoke-strips-service-role]] trap). Deliberately
 narrower than the six RLS helpers, which must keep `anon` because anon-facing policies name them; this policy
 does not. An assertion trips if it ever becomes anon-executable again.
 
 **Verified empirically, not by reading comments** — twice, including on a virgin DB after a full `db reset`:
 
-| subscriber | join | receives |
-|---|---|---|
-| member, private | `SUBSCRIBED` | the private message |
-| outsider, private | `CHANNEL_ERROR("Unauthorized: You do not have permissions to read from this Channel topic: session-events:<id>")` | nothing |
-| anon, public | `SUBSCRIBED` (public channels skip RLS — the residual gap) | only the *public* copy, never the private one |
+| subscriber        | join                                                                                                              | receives                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| member, private   | `SUBSCRIBED`                                                                                                      | the private message                           |
+| outsider, private | `CHANNEL_ERROR("Unauthorized: You do not have permissions to read from this Channel topic: session-events:<id>")` | nothing                                       |
+| anon, public      | `SUBSCRIBED` (public channels skip RLS — the residual gap)                                                        | only the _public_ copy, never the private one |
 
 **Deploy prerequisites (both load-bearing):**
 
@@ -740,7 +912,7 @@ does not. An assertion trips if it ever becomes anon-executable again.
   is undefined and `postBroadcast` returns at its missing-key guard. The co-organizer lockout overlay is
   still non-functional. Fix = route the three-phase emit through a server action; NOT by exposing the key.
 
-**Residual gap (not SQL).** Supabase enforces private channels *per channel*, so a hand-rolled client can
+**Residual gap (not SQL).** Supabase enforces private channels _per channel_, so a hand-rolled client can
 still open this topic as a **public** channel and join. Marking messages private already denies it any
 content — that is what removes passive eavesdropping. Fully closing it needs "Allow public access" off in the
 project's Realtime settings, which is project-wide and requires every other (currently public)
@@ -750,7 +922,7 @@ postgres_changes channel to go private with its own policy first. Tracked, not d
 refused join is unrecoverable (closure is not observable any other way — `useSessionData` fetches courts and
 `queue_entries`, never the session row), and a "live updates down" toast would misfire constantly on gym
 wifi. Organizer side: it must **not** feed `useOrganizerSession`'s `handleChannelStatus`, which asserts an
-exact `REALTIME_CHANNEL_COUNT` of *postgres_changes* channels — a sixth would peg the board's live indicator
+exact `REALTIME_CHANNEL_COUNT` of _postgres_changes_ channels — a sixth would peg the board's live indicator
 to disconnected forever. Both call sites carry the reasoning inline.
 
 **Next: PR4b (finding #8).** Split out deliberately, and the audit groundwork changed its shape twice:
@@ -760,8 +932,6 @@ all** — so the baseline migration's "load-bearing for logged-out leaderboard/W
 naive shared-club `EXISTS` **would** break delegated organizers: `session_access_level` grants `'organizer'`
 via a `session_organizers` row with no `club_members` row, which is exactly how QR-invite delegation works —
 they would see a roster of blank names. The predicate needs a session-scoped arm too.
-
-
 
 ---
 
@@ -779,13 +949,13 @@ over 465 matches, **0 null snapshots, 0 rows where the snapshot disagrees with t
 so it costs nothing. `getSessionProvenance` was already session-keyed.
 
 **#5 the two legacy shims.** `/play/[sessionId]` and `/organizer/[sessionId]` called `ensureClubMembership`
-for *any* logged-in visitor, so a bare session UUID was a self-service membership in someone else's club.
+for _any_ logged-in visitor, so a bare session UUID was a self-service membership in someone else's club.
 Now gated on a real participation signal — the organizer predicate for the organizer route, an existing
 `queue_entries` row for the player route. Both still redirect either way; the club route's own membership
 gate stays the single authority, rather than a second copy of it in a shim.
 
 **Why the service client on both.** RLS on `queue_entries` is `session_access_level(session_id) IS NOT NULL`
-— membership-derived, with **no "own row" arm** — so the *caller's own* client cannot see the very row that
+— membership-derived, with **no "own row" arm** — so the _caller's own_ client cannot see the very row that
 proves a non-member walk-in belongs there; same for the `sessions` / `session_organizers` rows that prove
 someone is an organizer. This is the sanctioned service-role use (an authorization check), not a data read.
 `queue_entries` has `UNIQUE (session_id, player_id)`, so `.maybeSingle()` cannot error on multiples. The
@@ -809,7 +979,7 @@ unauthenticated uuid → display-name lookup. A tenancy fix would have widened t
 (Latent, not live: action ids are salted with `serverReferenceHashSalt: encryptionKey`, regenerated per build
 unless `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` is set, and this project sets it nowhere.)
 
-**Fix:** a local, non-exported `isSessionOrganizerLocal` in the page — identical predicate (`created_by` OR
+**Fix:** a local, non-exported `isSessionOrganizerLocal(userId, sessionId, session)` in the page — identical predicate (`created_by` OR
 `session_organizers` OR an active owner/admin of the session's club), mirroring `isQueuedInSession` in the
 sibling `/play` shim. **Verified after the fix: back to 70 actions, zero `_shared` entries, nothing scoped to
 `app/organizer/[sessionId]/page`.** `TB-IMPORT` guards the whole `app/actions/` directory, extracted from the
@@ -823,7 +993,7 @@ never be published is a `(userId, sessionId) → boolean` authorization oracle o
 When one of those needs sharing, it goes in a `server-only` lib — never a `"use server"` one.
 
 **Every live entry point still passes the gate** (traced before writing the code, not after):
-`src/app/page.tsx:42` only redirects when the user *has* an active queue entry · `/play`'s picker
+`src/app/page.tsx:42` only redirects when the user _has_ an active queue entry · `/play`'s picker
 (`src/app/play/page.tsx`) lists only sessions in the user's primary club, so callers are already members ·
 PIN reconnect resolves a session the player was queued in · `signInAnonymously`'s `sessionId && !clubSlug`
 branch is unreachable in practice (`<LoginForm sessionId>` renders only from `/c/[clubSlug]/join`, which
@@ -836,7 +1006,7 @@ both pages redirect either way, so a test that only asserts the destination is g
 or shut — every shim test asserts on `ensureClubMembership` having been called or not. `next/navigation`'s
 `redirect`/`notFound` are mocked to **throw**, because the real ones do; a no-op mock would let a page run
 past `notFound()` with a null slug, which the runtime never does. The per-table stub map defaults any
-un-stubbed table to "no row" — the *denying* default, so a test that forgets a step fails closed rather than
+un-stubbed table to "no row" — the _denying_ default, so a test that forgets a step fails closed rather than
 inheriting a row. **TB-IMPORT** is a source-text guard: it reads both shim files and fails if either imports
 `@/app/actions/_shared`, so the blocker above cannot come back by way of a helpful refactor.
 
@@ -850,7 +1020,7 @@ two would have survived the round-1 regex, which is why the guard now extracts s
 
 One branch is knowingly uncovered: no fixture sets `club_members.role = "member"`, so mutating
 `role === "owner" || role === "admin"` → `!!clubMembership` survives. Traced and accepted — the mutant is
-*behaviourally equivalent* here, because a plain member of the session's own club is already `is_active`, so
+_behaviourally equivalent_ here, because a plain member of the session's own club is already `is_active`, so
 `ensureClubMembership` returns `joined:false` and writes nothing. Coverage nit, not a hole.
 
 **Validation:** `tsc --noEmit` 0 · scoped `eslint` 0 · `next build` clean · unit **844 passed / 1 skipped,
@@ -873,7 +1043,7 @@ priority than PR4: it corrupts live state rather than leaking a read.
 **Still open after PR3:** ~~#10~~ + ~~PR5~~ — **both shipped together**, see the PR5/#10 section above (and note
 the severity was far worse than this paragraph guessed: it turned out to need no login at all) · PR4 (#7/#8 —
 private `session-events` broadcast + `profiles_select`; note `realtime.messages` has `rls=true` and **zero
-policies**, so the policy migration must land *before* any `private: true` client change, and the topic must be
+policies**, so the policy migration must land _before_ any `private: true` client change, and the topic must be
 gated at `session_access_level(...) IS NOT NULL` because `player-dashboard.tsx:149` subscribes **players** to it,
 not just organizers) · #9 (LOW, optional).
 
@@ -901,11 +1071,11 @@ The two halves fail in opposite directions, which is the whole reason there are 
 
 ### What changed
 
-| Board | Client | Scoped by |
-| --- | --- | --- |
-| Session (incl. the public share link) | **service** | the mandatory `p_session_id` — the one deliberately public surface |
-| All-time + `getPlayerStats` | **service**, behind an auth gate | `getMyActiveClubIds(user.id)`; unknown/foreign `clubSlug` → zero rows |
-| Monthly | caller's client — **untouched** | already `SECURITY INVOKER` off the base tables; revoking would *delete* working RLS scoping |
+| Board                                 | Client                           | Scoped by                                                                                   |
+| ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------- |
+| Session (incl. the public share link) | **service**                      | the mandatory `p_session_id` — the one deliberately public surface                          |
+| All-time + `getPlayerStats`           | **service**, behind an auth gate | `getMyActiveClubIds(user.id)`; unknown/foreign `clubSlug` → zero rows                       |
+| Monthly                               | caller's client — **untouched**  | already `SECURITY INVOKER` off the base tables; revoking would _delete_ working RLS scoping |
 
 New RPC **`get_session_player_streaks(p_session_id)`** replaces the browser call in `use-enriched-matches.ts`: no DEFAULT on the parameter, self-gates on `session_access_level()`. A **distinct name, not an overload** — two candidates matching `{p_session_id}` make PostgREST answer `PGRST203`.
 
@@ -921,15 +1091,15 @@ Every revoke says **`from public, anon, authenticated`**. `from public` alone is
 
 ### Validation
 
-`db reset` replays both cleanly · tsc 0 · scoped lint 0 · `next build` clean · unit **825** · integration **21 files / 226 tests** (was 219: +4 schema-parity grant assertions, +3 RLS behavioural). New coverage: `schema-parity.test.ts` re-derives the grant shape from the catalog every reset (a migration `DO` block runs once and cannot catch the *next* bad revoke); `rls-edge-cases.test.ts` reproduces the dump through a real anon client and proves the gate three ways (organizer sees rows → outsider sees none → **same outsider sees rows once given club membership**, so the empty result is the gate and not an empty seed); `use-enriched-matches.test.ts` EM-9/EM-10 pin the RPC name + argument, which the name-agnostic `rpc` mock would otherwise let drift.
+`db reset` replays both cleanly · tsc 0 · scoped lint 0 · `next build` clean · unit **825** · integration **21 files / 226 tests** (was 219: +4 schema-parity grant assertions, +3 RLS behavioural). New coverage: `schema-parity.test.ts` re-derives the grant shape from the catalog every reset (a migration `DO` block runs once and cannot catch the _next_ bad revoke); `rls-edge-cases.test.ts` reproduces the dump through a real anon client and proves the gate three ways (organizer sees rows → outsider sees none → **same outsider sees rows once given club membership**, so the empty result is the gate and not an empty seed); `use-enriched-matches.test.ts` EM-9/EM-10 pin the RPC name + argument, which the name-agnostic `rpc` mock would otherwise let drift.
 
-**`tests/unit/leaderboard-club-scope.test.ts` (13 tests) guards the half that is no longer Postgres' job.** Everything above is DB-layer; the authorization that *moved out of the database into TypeScript* needed its own gate, because deleting the block at `leaderboard.ts:290-305` broke no test. LB-AUTH ×5 = the four fail-closed denials on both entry points, LB-SCOPE ×3 = the `.in("club_id", …)` filter and the per-club RPC fan-out (`p_club_id: null` = every club in the database), LB-MERGE ×5 = the cross-club fold and the post-merge threshold. Mutation-checked: six targeted mutants (drop the club filter · unknown slug falls through to all clubs · skip the logged-out check · move the GP filter pre-merge · skip the membership check in `getPlayerStats` · collapse the fan-out to `p_club_id: null`) were each injected and **all six were killed**, so these assertions are load-bearing rather than decorative.
+**`tests/unit/leaderboard-club-scope.test.ts` (13 tests) guards the half that is no longer Postgres' job.** Everything above is DB-layer; the authorization that _moved out of the database into TypeScript_ needed its own gate, because deleting the block at `leaderboard.ts:290-305` broke no test. LB-AUTH ×5 = the four fail-closed denials on both entry points, LB-SCOPE ×3 = the `.in("club_id", …)` filter and the per-club RPC fan-out (`p_club_id: null` = every club in the database), LB-MERGE ×5 = the cross-club fold and the post-merge threshold. Mutation-checked: six targeted mutants (drop the club filter · unknown slug falls through to all clubs · skip the logged-out check · move the GP filter pre-merge · skip the membership check in `getPlayerStats` · collapse the fan-out to `p_club_id: null`) were each injected and **all six were killed**, so these assertions are load-bearing rather than decorative.
 
 Round-2 review caught a **seventh** mutant that survived: deleting `.in("club_id", scopeClubIds)` from the `getPlayerStats` query at `leaderboard.ts:694` left the whole suite green, because LB-SCOPE only ever exercised `getAllTimeLeaderboard`. LB-MERGE-4 now asserts that filter directly (mutant re-run → killed). Two hardening changes went in with it: `beforeEach` re-arms `getMyActiveClubIds`/`getClubBySlug` to their **denying** values, since `vi.clearAllMocks()` clears call history but not implementations and a leaked stub could hand the next test a green it did not earn; and LB-SCOPE-3 now pins **which** two RPC names were called, because a count of 4 also matches fanning one RPC out twice and silently dropping the streaks.
 
 ### Two things PR2 knowingly does NOT fix
 
-1. **`get_session_leaderboard_public` — accepted residual risk, not closed.** The revoke kills the *unscoped* PostgREST dump, but any already-known session UUID still yields the full named board unauthenticated via `getSessionLeaderboard`, which runs as service_role. That is the share-link contract (`/leaderboard/[sessionId]`, same class as `/tv` and `/wrapped`) — recorded as such in `TENANCY_AUDIT_2026-07-21.md` #6 so nobody later reads "#6 closed" as "the board needs a login".
+1. **`get_session_leaderboard_public` — accepted residual risk, not closed.** The revoke kills the _unscoped_ PostgREST dump, but any already-known session UUID still yields the full named board unauthenticated via `getSessionLeaderboard`, which runs as service_role. That is the share-link contract (`/leaderboard/[sessionId]`, same class as `/tv` and `/wrapped`) — recorded as such in `TENANCY_AUDIT_2026-07-21.md` #6 so nobody later reads "#6 closed" as "the board needs a login".
 2. **`refresh_alltime_leaderboard()` still has PUBLIC EXECUTE** (`proacl IS NULL`) and is SECURITY DEFINER, so anon can trigger `REFRESH MATERIALIZED VIEW` at will — a DoS lever, not a read leak. `20260722000004` did not cover it. Folded into PR5.
 
 **Still open from the audit:** PR3 (`getMatchEvents` session-binding + drop `ensureClubMembership` from the two legacy shims) · PR4 (private `session-events` broadcast + tighten `profiles_select`) · **PR5, new and worse than #6** — ~24 `SECURITY DEFINER` functions still hold anon EXECUTE and **8 have no internal authorization at all** (`create_match_with_players`, `create_held_cross_court_match`, `swap_player_in_active_match`, `record_match_event`, `revert_match_to_active`, `clear_all_unpublished_drafts`, `compute_session_wrapped`, `refresh_cross_session_stats`); their only required input is a session UUID, which is published in share URLs ⇒ **unauthenticated match forgery**.
@@ -940,15 +1110,15 @@ Round-2 review caught a **seventh** mutant that survived: deleting `.in("club_id
 
 Merge order was forced by the dependency: **#36 → #35 → #33**. #36 is the one that made the Integration job capable of passing at all, so the other two had to land on top of it — their CI was red only because they were based on pre-#36 `main`.
 
-| PR | Branch | Merge commit | What it was |
-| --- | --- | --- | --- |
-| **#36** | `fix/migration-replay-publication` | `a6cac37` | migration set replays from scratch (see the section below) |
-| **#35** | `security/throttle-reconnect-pin` | `1d1b009` | reconnect-PIN oracle rate limit + registration bypass |
-| **#33** | `fix/hide-e2e-sandbox-session` | `98ac7a7` | `sessions.is_hidden` — infrastructure sessions off every human list |
+| PR      | Branch                             | Merge commit | What it was                                                         |
+| ------- | ---------------------------------- | ------------ | ------------------------------------------------------------------- |
+| **#36** | `fix/migration-replay-publication` | `a6cac37`    | migration set replays from scratch (see the section below)          |
+| **#35** | `security/throttle-reconnect-pin`  | `1d1b009`    | reconnect-PIN oracle rate limit + registration bypass               |
+| **#33** | `fix/hide-e2e-sandbox-session`     | `98ac7a7`    | `sessions.is_hidden` — infrastructure sessions off every human list |
 
-**Both rebases were re-validated from scratch, not just re-pushed.** #35's rebase was proven **content-neutral** (`git range-diff` `=` on all six commits; the only diff-level change is a uniform +23 hunk-offset in `APP_MANIFEST.md`). #33's had one conflict, in `MEMORY.md`, where #36's and #33's session blocks collided — resolved by keeping both. After **each** rebase: `npx supabase db reset` over the *combined* set, `tsc` 0, **21/21 integration files · 219/219 tests**, unit green (792 → **810** once #35's two new suites landed), `next build` clean, scoped lint 0. #33 was then rebased a **second** time onto post-#35 `main` so its final CI ran against the true merged state rather than a base that predated #35.
+**Both rebases were re-validated from scratch, not just re-pushed.** #35's rebase was proven **content-neutral** (`git range-diff` `=` on all six commits; the only diff-level change is a uniform +23 hunk-offset in `APP_MANIFEST.md`). #33's had one conflict, in `MEMORY.md`, where #36's and #33's session blocks collided — resolved by keeping both. After **each** rebase: `npx supabase db reset` over the _combined_ set, `tsc` 0, **21/21 integration files · 219/219 tests**, unit green (792 → **810** once #35's two new suites landed), `next build` clean, scoped lint 0. #33 was then rebased a **second** time onto post-#35 `main` so its final CI ran against the true merged state rather than a base that predated #35.
 
-**Ordering held, as designed.** #33's `20260721101500` and #35's `20260721210000`–`240000` all sort *ahead* of #36's `20260722000002`/`3`/`4` assertions, so the assertions see the finished schema. Nothing tripped: #35 creates **no tables** (it `ALTER`s the existing `co_organizer_join_attempts`), its two new functions are granted by its own `20260721240000`, and #36's RLS baseline is a **subset** check.
+**Ordering held, as designed.** #33's `20260721101500` and #35's `20260721210000`–`240000` all sort _ahead_ of #36's `20260722000002`/`3`/`4` assertions, so the assertions see the finished schema. Nothing tripped: #35 creates **no tables** (it `ALTER`s the existing `co_organizer_join_attempts`), its two new functions are granted by its own `20260721240000`, and #36's RLS baseline is a **subset** check.
 
 **⚠️ Still true: none of this changed production.** There is no migration automation (see the #36 section). All three PRs' DB objects were already applied to prod **by hand** earlier in the session, re-verified read-only after the merges: `reconnect_record_and_check` · `auth_attempt_mark_succeeded` · `cojoin_record_and_check` · `rejoin_queue` all `service_role=true / anon=false / authenticated=false`; `co_organizer_join_attempts.scope`+`.subject` present with `user_id` nullable; `sessions.is_hidden` present; **0** tables missing `service_role` SELECT. The merges shipped **app code and repo-side declarations only**.
 
@@ -972,11 +1142,11 @@ Merge order was forced by the dependency: **#36 → #35 → #33**. #36 is the on
 
 **8 tests that had NEVER executed were themselves wrong:** ×5 in `live-match-swap` repeated one player id in filler matches, violating `match_players (match_id, player_id)` · `DCINT-13` wrote `is_held` directly, but it is `GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0) STORED` — the insert was rejected and **the error was swallowed**, which is how `undefined` reached `toContain()` and read as a real result · `drafted-status` asserted publish leaves `waiting` players alone, but `20260717165546` deliberately widened the predicate to `IN ('drafted','waiting')` to heal exactly those rows.
 
-**One app change:** the score entry points in `match-lifecycle.ts` no longer validate the payload before deciding whether the caller may call at all. `updateMatchDetails` is now uuid → auth → fetch → organizer → validate, and `submitMatchScore` fully settles authorization the same way (auth + participation, then validate). **`endMatchAction` gets only *authentication* in first** — its organizer-OR-player gate lives inside `endMatchInternal`, which takes the parsed scores as arguments, so an authenticated non-participant sending a malformed payload still gets the score message. Don't describe all three as equivalent.
+**One app change:** the score entry points in `match-lifecycle.ts` no longer validate the payload before deciding whether the caller may call at all. `updateMatchDetails` is now uuid → auth → fetch → organizer → validate, and `submitMatchScore` fully settles authorization the same way (auth + participation, then validate). **`endMatchAction` gets only _authentication_ in first** — its organizer-OR-player gate lives inside `endMatchInternal`, which takes the parsed scores as arguments, so an authenticated non-participant sending a malformed payload still gets the score message. Don't describe all three as equivalent.
 
 **`after()` in tests:** the stub RUNS the callback. A no-op looks safer and is wrong — the 7 sites in `queue.ts` wrap `runEngineForSession`, not push. (`fix-player-record.ts:204` is a third non-push site but wraps `compute_session_wrapped`.) In-flight promises go to `tests/integration/helpers/after-queue.ts`; `truncateTracked()` drains them before deleting rows, or the engine writes race cleanup. **Known limit:** running the engine sites inline is safe only because no test pairs an auto-matchmaking-ON session with a `queue.ts` action — every scheduled run hits the `is_auto_matchmaking_on = false` early return. The first test that does will race its own assertions, and `runEngineForSession`'s module-level `engineRunningFor` set will silently skip a direct call for the same session. Such a test must `await flushAfterCallbacks()` first.
 
-**Review round 2 (commit `39412d9`):** the apply-time DO block in `20260722000004` cannot catch the *next* bad revoke — a DO block runs once, and later migrations always sort after it. The forward-looking gate now lives in `tests/integration/schema-parity.test.ts`, re-derived from the catalog on every reset: `service_role` executes every **non-trigger** function in `public` (trigger functions excluded on purpose — only the trigger machinery invokes them, so revoking there is legitimate hardening), and `anon`/`authenticated` still cannot execute the **8** privilege-granting primitives (was 2; `rejoin_queue` was the last one added, in `c842a0f` — it is one of the four this migration *grants*, so a typo'd `to service_role, anon` there would otherwise have gone unnoticed). Also fixed: `after-queue.ts` leaked an unhandled rejection because `.finally()` returns a *new* promise that rejects when the tracked one does while `flushAfterCallbacks` settles only the original — Vitest would have reported it as a run-level "Unhandled Error" with no owning test, possibly in another file; `.catch()` now precedes `.finally()`. The drain warns instead of returning silently when its 20-iteration bound is exhausted.
+**Review round 2 (commit `39412d9`):** the apply-time DO block in `20260722000004` cannot catch the _next_ bad revoke — a DO block runs once, and later migrations always sort after it. The forward-looking gate now lives in `tests/integration/schema-parity.test.ts`, re-derived from the catalog on every reset: `service_role` executes every **non-trigger** function in `public` (trigger functions excluded on purpose — only the trigger machinery invokes them, so revoking there is legitimate hardening), and `anon`/`authenticated` still cannot execute the **8** privilege-granting primitives (was 2; `rejoin_queue` was the last one added, in `c842a0f` — it is one of the four this migration _grants_, so a typo'd `to service_role, anon` there would otherwise have gone unnoticed). Also fixed: `after-queue.ts` leaked an unhandled rejection because `.finally()` returns a _new_ promise that rejects when the tracked one does while `flushAfterCallbacks` settles only the original — Vitest would have reported it as a run-level "Unhandled Error" with no owning test, possibly in another file; `.catch()` now precedes `.finally()`. The drain warns instead of returning silently when its 20-iteration bound is exhausted.
 
 **Gotchas:** `proacl IS NULL` ≡ "PUBLIC has EXECUTE", so a string diff of ACLs is all false positives — compare effective executor sets via `aclexplode(coalesce(p.proacl, acldefault('f', p.proowner)))` · **never pass `has_table_privilege`/`has_function_privilege` a NAME** — the planner may evaluate it before the predicate meant to constrain the rows (this resolved `public.instances` and broke an earlier `20260722000003`) · `.maybeSingle()` **errors** on >1 row (PGRST116), it does not return the first · Next's `after()` throws outside a request scope.
 
@@ -988,7 +1158,7 @@ Merge order was forced by the dependency: **#36 → #35 → #33**. #36 is the on
 
 **All five declarations re-verified as true no-ops against prod (read-only, 2026-07-22)** using the migrations' own predicates: `20260722000002` would create **0** policies (all 44 present, RLS on for all 14 tables) · `v_recent_pairings` exists · realtime publication membership matches the from-scratch replay **exactly** (`courts, match_players, matches, profiles, queue_entries, sessions`) · **0** functions where `service_role` lacks EXECUTE · all **8** lockdowns still closed to anon/authenticated. Also confirmed **PR #33's `sessions.is_hidden` is already live in prod** with the `anon`/`authenticated` column grant — that PR ships app code only.
 
-**Merged-set replay verified:** #33's and #35's migrations were copied into `supabase/migrations/` and `npx supabase db reset` run over the combined set, so their timestamps (`202607211015`–`2024`) interleave *ahead* of #36's `20260722000002`/`3`/`4` exactly as post-merge `main` will order them. All three assertion migrations passed. #36's RLS baseline uses a **subset** check ("missing policies"), so neither PR's absence of new policies conflicts; #33 already carries its own `grant select (is_hidden) on public.sessions to authenticated, anon` (required — `20260701000010` revoked table-wide SELECT and re-granted an explicit column list), and #35's three limiter functions are covered by its own `20260721240000`.
+**Merged-set replay verified:** #33's and #35's migrations were copied into `supabase/migrations/` and `npx supabase db reset` run over the combined set, so their timestamps (`202607211015`–`2024`) interleave _ahead_ of #36's `20260722000002`/`3`/`4` exactly as post-merge `main` will order them. All three assertion migrations passed. #36's RLS baseline uses a **subset** check ("missing policies"), so neither PR's absence of new policies conflicts; #33 already carries its own `grant select (is_hidden) on public.sessions to authenticated, anon` (required — `20260701000010` revoked table-wide SELECT and re-granted an explicit column list), and #35's three limiter functions are covered by its own `20260721240000`.
 
 ---
 
@@ -1010,13 +1180,13 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 
 **761 unit tests pass** (baseline 693, +68) · tsc 0 · scoped eslint 0 errors · `next build` clean. Sticky geometry verified in a real browser at 375×812 (`top: 56px` = `--cc-header-h`, `z-index: 15`, opaque, 183px inside the 200px cap) AND in the emitted production CSS (`top:var(--cc-header-h,176px)`, `max-height:min(33vh,200px)`, `z-index:15`).
 
-**Bugs the adversarial review caught and that are now fixed:** inline `ref={(node)=>node?.scrollIntoView()}` re-fired on EVERY commit (hijacked the organizer's scroll every realtime event / 45s poll) → stable ref + effect keyed on the open pairKey · the marker chip welded `primaryRelation` (teammate-first) to `worstCount` (max across all relations) and could read "TEAM 6TH" for a 3rd-time teammate → now `relations[0]`'s own count · the live region never spoke when the counts landed *after* the taps settled → `message` added to the effect deps (safe: the episode snapshot freezes counts, so mid-episode `message` can only change via a selection change or that one first adoption) · the avoidability gate degenerated to "is the bench non-empty" at 4/4 and made the headline **vanish at the decision point** on a 4-selectable night → probes the last slot instead.
+**Bugs the adversarial review caught and that are now fixed:** inline `ref={(node)=>node?.scrollIntoView()}` re-fired on EVERY commit (hijacked the organizer's scroll every realtime event / 45s poll) → stable ref + effect keyed on the open pairKey · the marker chip welded `primaryRelation` (teammate-first) to `worstCount` (max across all relations) and could read "TEAM 6TH" for a 3rd-time teammate → now `relations[0]`'s own count · the live region never spoke when the counts landed _after_ the taps settled → `message` added to the effect deps (safe: the episode snapshot freezes counts, so mid-episode `message` can only change via a selection change or that one first adoption) · the avoidability gate degenerated to "is the bench non-empty" at 4/4 and made the headline **vanish at the decision point** on a 4-selectable night → probes the last slot instead.
 
 **⚠️ PROCESS HAZARD LEARNED THE HARD WAY:** review subagents given shell access **edited the working tree and did not revert**. A mutation-testing agent left the cap-saturation check deleted from the gate, another set the CTA to `disabled={creating || !isReady}` (violating the "never disabled" constraint), and two scratch `zz-*.test.tsx` files were left behind. All were caught by file-mtime audit + re-reading every authored file. **After any review workflow that grants Write/Bash, diff/audit your own files before trusting a green suite.** (The suite did catch the gate mutation — RPH-G3 and QRP-W3 failed.)
 
 **✅ LIVE-TESTED 2026-07-21** against the branch's Vercel preview + the `🤖 E2E SANDBOX` session (`tests/e2e/scenario-p-repeat-pairing.spec.ts`, 3/3 green, sandbox verified empty afterwards). This closed the last verification gap: the sticky bar pins at the **real** ~178px header, proving the `--cc-header-h` ResizeObserver measures the real thing (every local check had used a synthetic 56px header). **The live run found a bug 777 unit tests missed:** `PairMatchRow` filtered `team === "A"` but `match_players.team` is the lowercase `Team` enum — both rosters rendered empty in the disclosure. The unit fixture had been invented with `"A"`/`"B"`, so it agreed with the wrong code and proved nothing. Lesson: **fixtures you author yourself cannot validate an assumption you also authored** — pin enum-ish values against `src/types/database.ts` or a real row.
 
-**Gotchas worth keeping:** thresholds MUST come from `MAX_PARTNERSHIP_REPEATS`/`MAX_OPPONENT_REPEATS` (a UI threshold above the engine cap is silent on exactly what the engine refuses) · `cc-accent` is TEAL = *selected* on this screen, never the warning · adding a 6th realtime channel permanently breaks `realtimeConnected` (`REALTIME_CHANNEL_COUNT = 5`) · happy-dom drops `var()` in an inline `style.top`, so the sticky offset lives in the className instead · repo-wide `npm run lint` has a DIRTY ~520-error baseline — always scope lint to changed files.
+**Gotchas worth keeping:** thresholds MUST come from `MAX_PARTNERSHIP_REPEATS`/`MAX_OPPONENT_REPEATS` (a UI threshold above the engine cap is silent on exactly what the engine refuses) · `cc-accent` is TEAL = _selected_ on this screen, never the warning · adding a 6th realtime channel permanently breaks `realtimeConnected` (`REALTIME_CHANNEL_COUNT = 5`) · happy-dom drops `var()` in an inline `style.top`, so the sticky offset lives in the className instead · repo-wide `npm run lint` has a DIRTY ~520-error baseline — always scope lint to changed files.
 
 ---
 
@@ -1057,6 +1227,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 **Status: MERGED to main via PR (user go: "create the PR then merge"). tsc / eslint / `next build` clean. Review gate: LGTM ×2 (2 cosmetic notes).** Motion **verified via Web-Animations-API timeline scrubbing** of the real rendered layers (pause + step `currentTime`, sample computed opacity/transform) — the workaround for both browser panes reporting `visibilityState="hidden"` (rAF + CSS animation clocks frozen; wall-clock playback unobservable). Scrub caught + fixed a real bug: the original crossfade faded BOTH layers → combined coverage dipped to ~54% at t=150ms (~46% background bleed, a mid-dissolve flicker). Fix: outgoing layer stays fully opaque beneath; only the incoming fades in (`ma-fade-in`); `ma-fade-out` keyframe removed. Verified post-fix: outgoing op=1.00 across the full timeline, incoming 0→0.32→1.00; exit `ma-slide-out` op 1→0.68→0 + translateY 0→51px (=8% of frame), layer unmounts, region gone. Remaining untested (accepted): subjective device feel + actual screen-reader audio.
 
 **What (`src/components/player/match-alert.tsx` + `player-dashboard.tsx` + `globals.css`):**
+
 - **New `MatchAlertPresence` wrapper** owns the overlay lifecycle so transitions animate instead of hard-cutting: none→active = slide-up (MatchAlert's own); **pending↔in_progress = crossfade dissolve** (outgoing stays FULLY OPAQUE beneath; only the incoming fades in via `ma-fade-in` on top → fixes the amber→navy dark-theme flash; the tuned 380ms in_progress slide never fired on the normal path before); active→none = **`ma-slide-out` fade+slide-down exit** (delivers the long-deferred exit animation). `MatchAlert` gained an `animate` prop (false → render in place, for outgoing layers). New globals.css keyframes `ma-fade-in` + `ma-slide-out` are explicit from/to — tailwindcss-animate's from-only `enter`/`exit` left the persistent layer stuck at opacity 0.
 - **State machine:** "adjust state during render" guard (`incomingKey !== committed.key`) — converges (no loop), StrictMode-safe, reads only state (not refs) during render; `committed` snapshots the outgoing props, the current layer renders live from `active`. Exit timer `setTimeout(setExiting(null))` keyed on `[exiting]`, `CROSSFADE_MS=320`/`EXIT_MS=340`.
 - **A11y (/critique):** `role="alert"`→`role="region"` on both overlays (alert re-announced the whole roster on every child update) + one visually-hidden `role="status" aria-live="polite"` announcing state once per change; **focus** enters the overlay on appear + restores on match-end (synchronous `.focus()` — a rAF version was left cancelled by StrictMode's double-invoke); **Leave Queue** `disabled`→`aria-disabled` + `if(pending)return` guard + `aria-live` so "Leaving…" is announced without losing focus.
@@ -1072,6 +1243,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 **Status: COMMITTED to main as `d419221`. tsc / eslint / `next build` all clean. Review gate: LGTM (3 minor non-blocking notes below).** Two-part task: (1) finish the deferred cosmetic/staleness polish; (2) run `/critique` on recent player+club UI and fix caught issues. **Completes the player-side items of the 2026-07-11 entry's "Deferred (audit backlog)" list below** (History+Leaderboard visibility refresh, on-deck drag re-sync, match-history seq guard, skeletons, enter animations, Leave-Queue pending); the MatchAlert crossfade+exit landed separately via `feat/match-alert-transitions-a11y`.
 
 **Polish pass (5 shipped · 1 already-done · 1 non-existent · 1 deferred):**
+
 - **Foreground re-sync (visibilitychange).** `all-sessions-history.tsx` → `useVisibilityRefresh(fetchAll)` + a `fetchSeqRef` monotonic guard (was fetch-once-on-mount, no realtime → went stale after backgrounding on the standalone `/play` page). `use-leaderboard.ts` → hook-level `useVisibilityRefresh(() => { handleRefresh(); fetchMyStatsRef.current() })`; the existing 15 s poll + `matches` realtime only cover live-session/current-month and never fire instantly on unlock, so this also covers all-time/past-months + every standalone leaderboard mount. Each board fetch is seq-guarded → poll/visibility overlap is safe.
 - **On-deck drag re-sync (REAL bug fix).** `on-deck-panel.tsx`: the prop-sync effect's "same id-set → keep local order" branch permanently discarded a co-organizer's reorder (same matches, new order) and never reverted a failed self-reorder. Added `pendingReorderRef` gating a 3rd branch — same-set + not-pending → `setOrderedMatches(matches)` (adopt server order). `handleDragEnd` is now `async`, sets the ref **before** the await, reverts to the pre-drag order on `result.error`, clears in `finally`. Boolean (not counter) → a rare, self-healing revert-flicker if two drags overlap one round-trip; strictly better than the prior permanent divergence.
 - **Initial-load skeletons.** `my-status-tab` / `live-courts-tab` / `waitlist-tab` replaced bare "Loading…" text with `animate-pulse` skeletons shaped like the real content (+ `role="status"` + `aria-busy`). On-background shapes use `bg-slate-200 dark:bg-muted` (bare `bg-muted` washed out on the pale light canvas, Δ0.03 L). Waitlist skeleton header sized to the real ●LIVE/Lineup+count so the list doesn't jump. `loading` is one-shot (true only at mount) → skeletons never re-flash on realtime refetch.
@@ -1118,6 +1290,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 **Status: MERGED — cherry-picked onto current main, all 669 unit tests green.** Originally built + reviewed in an earlier session but never merged; resurrected here (2 commits, net +515 lines). Verified genuinely absent from main before merging (main only had `MAX_OPPONENT_REPEATS=3`).
 
 **What (net effect after the R2 drop):**
+
 - **Fresh-first rule** — `scoreCandidates` penalises candidates per game above the waiting-pool minimum (`GAMES_AHEAD_PENALTY=10_000`; Red-Zone variant `=100` so urgency always wins). Stops early round-2 matches from recycling just-played alumni.
 - **Opponent diversity** — `buildOverlapMap` opponent weight raised to equal teammate weight via named `OVERLAP_WEIGHT_TEAMMATE = OVERLAP_WEIGHT_OPPONENT = 2`; re-facing a round-1 opponent is now deprioritised as strongly as re-partnering (fires on a single prior meeting → drives round-2 opponent freshness). `MAX_OPPONENT_REPEATS` tightened 3 → 2.
 - **`derive-reuse-notice.ts`** (new) + reuse badge on `sortable-card.tsx` — surfaces when a draft reuses a recent partner/opponent.
@@ -1142,7 +1315,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 
 **Design notes:** delete paths log BEFORE the delete (FK valid at insert; `ON DELETE SET NULL` preserves `match_id_snapshot` — same as `created` events). Best-effort (never blocks the action). **Known caveat:** logging-before-delete means a domain error / lost race after the log leaves a false `cancelled` row — narrow window, unavoidable for FK validity, acceptable per §14.E-2. The RPC-not-found fallback loops (dead code in prod) are intentionally un-audited.
 
-**Still pending (separate):** stop `clear_all_unpublished_drafts` from wiping *manual* unpublished drafts (no `created_method` filter) — the batch-clear footgun.
+**Still pending (separate):** stop `clear_all_unpublished_drafts` from wiping _manual_ unpublished drafts (no `created_method` filter) — the batch-clear footgun.
 
 ---
 
@@ -1210,6 +1383,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 **Problem:** the Wrapped recap (`/wrapped/[sessionId]/[playerId]`) was only reachable transiently — session-close broadcast redirect, 48h reconnect window (`auth.ts` `wrappedUrl`), or a raw link. No persistent/browsable way to revisit a past session's recap even though `session_wrapped_stats` persists.
 
 **Fix (4 files, no schema change, reuses the existing recap page):**
+
 - **`src/app/actions/history.ts`** — `getAllSessionsHistory` now also returns `wrappedSessionIds: string[]` (sessions where this player has a `session_wrapped_stats` row). One extra service-role query, scoped `.eq(player_id).in(session_id, sessionIds)` AFTER the existing `playerId !== user.id` ownership gate. Early `matches.length===0` return updated to include `wrappedSessionIds: []`.
 - **`src/components/player/all-sessions-history.tsx`** — each past-session group header shows a **`✦ Wrapped`** chip (amber, echoing the recap identity) linking to `/wrapped/[sessionId]/[playerId]?recap=1`. Only rendered when `hasWrapped` (session in the set). Header **restructured**: outer flex `div` holds the toggle `<button>` (chevron+label, `flex-1`) and a sibling group (chip `<Link>` + W/L pills) — the anchor can't nest inside the toggle button. Chip visible even while collapsed. `wrappedSet` state lazy-init `() => new Set()`, rebuilt each fetch.
 - **`src/app/wrapped/[sessionId]/[playerId]/page.tsx`** + **club-scoped `/c/[clubSlug]/wrapped/...`** — read `searchParams.recap`; pass `introDismissed={data.introDismissed || recap === "1"}`. `?recap=1` skips the celebratory intro overlay (revisit = reference, not re-celebration). No DB write on load (`dismissWrappedIntro` still only fires on Done/Back).
@@ -1225,6 +1399,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 **Problem:** When a player is the still-playing "pulled body" of a cross-court **held draft**, they're in TWO `match_players` rows at once (in_progress source + pending held draft). `usePlayerMatch` correctly shows the in_progress match (held draft is `is_published=false`, firewalled), so the player had **zero signal** they're already booked for the next game.
 
 **Fix (4 files):** keep the active-match screen as the hero, add a compact non-covering strip pinned **above Leave Queue** inside the `in_progress` overlay.
+
 - **NEW `src/app/actions/upcoming-match.ts`** — `getUpcomingHeldDraft(sessionId)`: service-role, scoped to `user.id` only (no roster leak, firewall stays intact for all other drafts). Detects `status='pending' AND is_held=true AND pulled_player_ids @> [user.id]` via `.contains()`. Returns `{ reserved, ready }` (`ready` = `held_ready_at` stamped). `{success}` union, never throws.
 - **`src/hooks/use-player-match.ts`** — returns `upcomingHeld`. Fetched inside `fetchMyMatch` only when resolved match is `in_progress`; seq-guarded after the await; `setUpcomingHeld(null)` on all null-match early returns + non-in_progress branch.
 - **`src/components/player/match-alert.tsx`** — `upcomingReserved?: {ready} | null` prop + `UpcomingReservedStrip` (amber `CalendarClock`, "Next match reserved" → "Up right after this" when ready, pulsing dot on ready). Bottom region restructured so strip + Leave Queue share the `mt-auto` anchor; null `upcomingReserved` = original layout exactly.
@@ -1271,6 +1446,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 **Verified:** tsc/lint/build clean. `get_advisors` re-run — zero `security_definer_view` findings remain. Live SQL proof (`set role anon/authenticated; select ...`) — both views now `permission denied` for direct access. Live browser test — public `/leaderboard/[sessionId]` share page still renders correctly for a logged-out session via the new RPC. Full writeup: `APP_MANIFEST.md` §11.5.
 
 **Task #56 (rls-4/rls-6/rls-7 low-priority hardening) — RESOLVED 2026-07-02, all 4 items closed:**
+
 - `function_search_path_mutable` (20 functions, incl. `is_club_member`/`is_session_club_member` themselves) — user said "yes, prepare + apply now." **Fixed + applied to prod**: `supabase/migrations/20260702000004_pin_search_path_hardening.sql`, pure `ALTER FUNCTION ... SET search_path` (no body changes). `get_advisors` re-run — 0 remaining findings. Independent review: **LGTM**. Full writeup: `APP_MANIFEST.md` §11.6.
 - `materialized_view_in_api` (`v_alltime_leaderboard_mat`) — user chose **"keep it as-is."** The legacy root `/leaderboard` all-clubs-combined board is confirmed-intentional, not a new leak — no fix made, no longer tracked as an open item.
 - `rls_enabled_no_policy` (`club_invites`/`clubs`/`player_renames`) — already-accepted deny-all-by-design pattern, no action needed.
@@ -1301,6 +1477,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 ## 🆕 LEAVE-CLUB / MEMBER-MANAGEMENT + 2 MORE `migrate_player_identity` FK FIXES — branch `feat/multi-tenant` (2026-07-01, follow-ups 2026-07-02)
 
 **Status: feature BUILT + APPLIED TO PROD (usxftpexoimletqmrggb) + fully live-verified + committed/pushed (`2ef6b93`, follow-ups in `9f50c23`).** Both known follow-ups from the initial ship are now also fixed, applied to prod, functionally live-verified, re-reviewed LGTM, and committed/pushed:
+
 1. `leaveClub`'s `revalidatePath` scope gap — done, tsc-clean, committed in `9f50c23`.
 2. `countActiveOwners` TOCTOU race — atomic-RPC fix **built, applied to prod, functionally live-verified with disposable fixtures (9/9 cases passed), committed in `9f50c23`.** See `supabase/migrations/20260702000000_club_member_atomic_owner_guard.sql` + `20260702000001_club_member_atomic_owner_guard_lockdown.sql` and `APP_MANIFEST.md` §11.3 for full design (two `SECURITY DEFINER` RPCs, `pg_advisory_xact_lock` per `club_id`).
    - **Mid-verification finding, fixed same-session:** the original migration's `REVOKE ALL FROM PUBLIC` +
@@ -1308,7 +1485,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
      `pg_proc.proacl` check, not caught by the code-review agent's LGTM which only read the SQL text). This
      project's default privileges grant `EXECUTE` to `anon`/`authenticated` directly, independent of `PUBLIC` —
      revoking `PUBLIC` alone doesn't retract it. Fixed with an explicit `REVOKE EXECUTE ... FROM anon,
-     authenticated` corrective migration, re-verified via `pg_proc.proacl` (now `postgres`/`service_role` only)
+authenticated` corrective migration, re-verified via `pg_proc.proacl` (now `postgres`/`service_role` only)
      and via `get_advisors` (WARN findings for both functions gone). **Rule going forward: any future
      service_role-only function in this schema needs the explicit named-role revoke, not just `FROM PUBLIC`.**
      Full details in `APP_MANIFEST.md` §11.3. `migrate_player_identity` has the same anon/authenticated
@@ -1317,11 +1494,12 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 
 **Feature (Tasks #37–39):** `leaveClub`/`removeMember`/`restoreMember`/`changeMemberRole` server actions (`src/app/actions/clubs.ts`) + admin panel role-dropdown/remove/restore UI (`src/components/clubs/club-admin-panel.tsx`) + self-service Leave control on `/clubs` (`src/components/clubs/club-list.tsx`). Full permission model written up in `APP_MANIFEST.md` §11.3.
 
-**Live-verified in prod (Task #42), fixture club `qa-member-test-club`, 3 real anonymous PIN accounts (QA Owner/Admin/Member Test):** admin blocked from acting on owner/self; admin remove→restore cycle on a plain member; owner promote→demote of an admin via `changeMemberRole`; owner's own row hides manage controls; owner's self-leave correctly rejected (sole-owner guard: *"You're the only owner — promote someone else to owner before leaving"*); member's genuine self-service leave succeeds. Every fixture (3 profiles, 3 `auth.users`, the club, its `club_members`/`club_invites` rows) deleted afterward — verified zero residue via count query.
+**Live-verified in prod (Task #42), fixture club `qa-member-test-club`, 3 real anonymous PIN accounts (QA Owner/Admin/Member Test):** admin blocked from acting on owner/self; admin remove→restore cycle on a plain member; owner promote→demote of an admin via `changeMemberRole`; owner's own row hides manage controls; owner's self-leave correctly rejected (sole-owner guard: _"You're the only owner — promote someone else to owner before leaving"_); member's genuine self-service leave succeeds. Every fixture (3 profiles, 3 `auth.users`, the club, its `club_members`/`club_invites` rows) deleted afterward — verified zero residue via count query.
 
 **Standing rule reconfirmed this session:** production DDL/schema changes to the live Supabase DB (`apply_migration`) require an **explicit in-session user go-ahead** each time, even under a broad "do everything autonomously" authorization — the platform's permission classifier blocks a subsequent action citing missing authorization otherwise.
 
 **Two more `migrate_player_identity` FK gaps found + fixed while live-testing (same bug class as Task #35's rivalries/partnerships fix above — a new multi-tenant FK to `profiles.id` never retrofitted into the repoint function, so its final `DELETE FROM profiles` hard-fails on reconnect):**
+
 1. `club_invites.created_by`/`consumed_by` — hit reconnecting as the admin who redeemed an invite. Fixed by `supabase/migrations/20260701000016_migrate_identity_club_invites.sql`, applied to prod, live-verified.
 2. `clubs.created_by`/`club_members.invited_by` — `clubs.created_by` hit reconnecting as the club's original creator (`clubs_created_by_fkey` violation); `club_members.invited_by` found via a full FK audit (query `information_schema.table_constraints`/`key_column_usage`/`constraint_column_usage` filtered to `ccu.table_name='profiles' AND ccu.column_name='id'`, enumerating all FK columns referencing `profiles(id)` — reusable technique if this bug class recurs). Fixed by `supabase/migrations/20260701000017_migrate_identity_clubs_invited_by.sql`, applied to prod, live-verified (reconnect succeeded; `clubs.created_by` confirmed repointed to the new profile id; no orphan duplicate profile).
 
@@ -1330,10 +1508,11 @@ Both fixes are blind two-row `UPDATE ... WHERE col = p_old_user_id` (safe: neith
 **Migrations 016/017 got their own dedicated review agent pass (separate from the broader feature's review): LGTM.** Verified against actual DDL (not just TS types) that none of the 4 columns carry a uniqueness constraint; confirmed each `CREATE OR REPLACE FUNCTION` strictly preserves every prior block (015→016→017 is additive only, nothing dropped/reordered); confirmed both new blocks sit before the `DELETE FROM profiles` branch; cross-referenced every FK column referencing `profiles(id)` and confirmed all are now handled.
 
 **Stop hook flagged 3 more things after the feature build; triaged and fixed the 2 real ones:**
+
 1. `removeMember` "optimistic UI before confirming server success" — **false positive**, verified: `club-admin-panel.tsx`'s `handleRemove` only calls `onUpdate`/`setConfirming(false)` inside `if (result.success)`, strictly after the awaited server action resolves. No fix made.
 2. `acceptClubInvite`'s invite-consume `UPDATE` didn't check its error result — fixed: now captures `{ error: consumeErr }` and logs via `console.error` on failure. Purely additive (no behavior/return-value change) — membership is already granted earlier in the function, so this stays non-fatal by design.
 3. `getMyClubs` had an N+1 query (one `sessions` count query per club) — fixed: batched into one `sessions.club_id` query grouped in-memory into a `Map`, run in parallel with the `clubs` query. **Live-verified twice**, the second time specifically to close a gap flagged by the fix's own review agent (the first test only had 1 club, which can't distinguish correct per-club grouping from a buggy global-sum): created 2 clubs under one profile — Club Alpha (0 sessions) and Club Beta (2 sessions) — confirmed `/clubs` showed no badge on Alpha and "2 live" on Beta, proving the `Map` keys correctly by `club_id` and sums correctly per club. Both fixture profiles/clubs/sessions deleted afterward, zero residue.
-Both fixes also passed their own dedicated review agent pass: LGTM.
+   Both fixes also passed their own dedicated review agent pass: LGTM.
 
 **Next steps:** none outstanding on this feature — re-spawned review agent independently re-verified live `pg_proc.proacl` grant state (not just SQL text) and returned LGTM, work is committed as `9f50c23` and pushed to `origin/feat/multi-tenant`. Nothing else known-broken on this branch. Separately, out-of-scope but flagged: `migrate_player_identity`'s anon/authenticated `proacl` exposure (see above) could use its own audit pass sometime.
 
@@ -1351,6 +1530,7 @@ Both fixes also passed their own dedicated review agent pass: LGTM.
    - **Verified live via browser click-through** (button clicked from `/c/legacy/join`): the RSC-stream server-action response was `{"success":true,"url":"...redirect_to=...%2Fauth%2Fcallback%3Fnext%3D%252Fc%252Flegacy%26club%3Dlegacy..."}` — decoded `redirect_to` = `/auth/callback?next=/c/legacy&club=legacy`, proving the club survives the full PKCE round trip. (Full Google consent completion is untestable in this sandbox without real credentials — accepted environment limit, not a defect.)
 
 **3 newly-discovered files verified as part of Task #36's review** (all matched what the review agents reported, no discrepancies):
+
 - `src/app/actions/_shared.ts` — `isSessionOrganizer` (C6) now also treats an active (`is_active=true`) `club_members` row with `role IN ('owner','admin')` for the session's club as organizer, mirrored at the DB level by migration `club_admin_auto_organizer` (confirmed live on prod).
 - `src/app/actions/auth.ts` — `reconnectPlayer(playerName, pin, clubSlug?)` scopes its profile lookup via `club_members!club_members_player_id_fkey!inner(club_id)` (explicit constraint name required — `club_members` has two FKs to `profiles`) when a `clubSlug` is given, so reconnecting inside a club only matches that club's members.
 - `src/app/leaderboard/page.tsx` + `src/app/leaderboard/[sessionId]/page.tsx` — lobby picker scopes via `getMyActiveClubIds`; public share link intentionally keeps `createServiceClient()` for the sanctioned public-share bypass (same pattern as TV board/Wrapped). Backed by migration `scope_sessions_select` (confirmed live on prod).
@@ -1365,7 +1545,7 @@ Both fixes also passed their own dedicated review agent pass: LGTM.
 
 **Findings + fixes (all closed):**
 
-1. **`profiles.pin` leaking via `.select("*")` in 5 client hooks** (`use-enriched-matches.ts`, `use-match-history.ts`, `use-organizer-queue.ts`, `use-player-match.ts`, `use-session-data.ts`) — every other player's 4-digit reconnect PIN shipped to the browser on any queue/match/history view, because `profiles_select` RLS is (deliberately) `qual: true` — leaderboard.ts + the Wrapped share page read profiles unauthenticated by design, and RLS can't restrict by column. **Fix:** `PUBLIC_PROFILE_COLUMNS` const added to `src/types/database.ts` (10 safe columns, `pin` excluded, `as const` for `.select()` literal typing). All 5 hooks now `.select(PUBLIC_PROFILE_COLUMNS)` + `{ ...p, pin: null }`. Own-row pin reads (profile.ts actions, player-dashboard.tsx) and the service-role reconnect lookup (auth.ts) untouched. Review agent grepped all 36 `.from("profiles")` callsites — confirmed no other bulk-fetch-of-other-players site was missed.
+1. **`profiles.pin` leaking via `.select("*")` in 5 client hooks** (`use-enriched-matches.ts`, `use-match-history.ts`, `use-organizer-queue.ts`, `use-player-match.ts`, `use-session-data.ts`) — every other player's 4-digit reconnect PIN shipped to the browser on any queue/match/history view, because `profiles_select` RLS was `qual: true` at the time, and RLS can't restrict by column. **⚠️ SUPERSEDED 2026-07-24, and the parenthetical rationale was wrong even then:** `profiles_select` is now `((id = (SELECT auth.uid())) OR can_read_profile(id))` — migration `20260723200000`, PR #43 `ba49fa2`, applied to prod under stamp `20260724050127` (see APP_MANIFEST §11.8). The old note claimed the `qual: true` was deliberate because "leaderboard.ts + the Wrapped share page read profiles unauthenticated" — there has never been an `anon` SELECT policy on `profiles`, and those reads go through `createServiceClient`; the one RLS-bound profile read on that path is `buildVipMap` (`src/app/actions/leaderboard.ts:182`), which is authenticated. The column-layer fix below is still correct and still load-bearing — the row policy never gated `pin`. **Fix:** `PUBLIC_PROFILE_COLUMNS` const added to `src/types/database.ts` (10 safe columns, `pin` excluded, `as const` for `.select()` literal typing). All 5 hooks now `.select(PUBLIC_PROFILE_COLUMNS)` + `{ ...p, pin: null }`. Own-row pin reads (profile.ts actions, player-dashboard.tsx) and the service-role reconnect lookup (auth.ts) untouched. Review agent grepped all 36 `.from("profiles")` callsites — confirmed no other bulk-fetch-of-other-players site was missed.
 2. **`profiles.pin` / `sessions.organizer_passcode` over-broadcasting via Supabase Realtime** — both columns were in the `supabase_realtime` publication's replicated column set, so every UPDATE broadcast the raw pin/passcode to all subscribers regardless of relevance. **Fix:** `supabase/migrations/20260701000006_realtime_publication_exclude_secrets.sql` — `ALTER PUBLICATION supabase_realtime SET TABLE profiles (...)` / `sessions (...)` with explicit safe column lists. Verified live via `pg_publication_tables.attnames`.
 3. **Cross-club RLS gap on `matches`/`match_players`/`queue_entries`/`courts`/`session_organizers`/`match_games`** — every SELECT policy on these 6 tables was `qual: true` (or, for `matches`, an organizer/draft-firewall check with zero club dimension) — any authenticated (some: even anonymous) caller could read live queue/match/court/organizer data from every club, not just their own. **Fix:** `supabase/migrations/20260701000008_club_scoped_rls.sql` — 3 new `SECURITY DEFINER` SQL helpers mirroring `is_session_organizer`'s shape: `is_club_member(p_club_id)` → `is_session_club_member(p_session_id)` → `is_match_club_member(p_match_id)`. Every policy now requires `is_session_organizer(...) OR is_<x>_club_member(...)`. `matches`' PERMISSIVE+RESTRICTIVE draft-firewall duplicate-qual pattern preserved identically (pre-existing precedent: `20260506000000_draft_mode_bugfixes.sql`); `queue_entries`' two redundant PERMISSIVE policies (role split `authenticated`/`public`) both tightened (fixing only one is a no-op — PERMISSIVE policies OR together). `profiles_select` deliberately untouched (see #1).
    - **Verified live** by impersonating 3 different `auth.uid()` values inside rolled-back transactions against a real session: a real club member sees full expected counts (18 queue/28 matches/2 courts/112 match_players); a random non-member sees **zero** rows on all 6 tables; the session's actual organizer sees everything including `session_organizers`.
@@ -1381,6 +1561,7 @@ Both fixes also passed their own dedicated review agent pass: LGTM.
 **Known residual (flagged by review agent, non-blocking, pre-existing, out of scope):** none of the `SECURITY DEFINER` helper functions (including the pre-existing `is_session_organizer`) pin `search_path` (Supabase advisor `function_search_path_mutable`) — a repo-wide gap across ~15 functions, not introduced by this audit.
 
 **Minor issues from independent review (2 agents, both verdict "LGTM"/"Minor issues" — not blocking, not yet fixed unless noted):**
+
 - ~~`src/hooks/use-leaderboard.ts:363` subscribes to `matches` realtime... no polling fallback~~ **FIXED 2026-07-01** — see "Live verification + remaining-fix pass" block below.
 - `matches_select` / `matches_select_draft_firewall` now carry an identical qual (PERMISSIVE AND RESTRICTIVE, same expression) — logically correct (X AND X = X) but makes the RESTRICTIVE policy a redundant no-op rather than an independent backstop as originally designed in `20260506000000_draft_mode_bugfixes.sql`. Cosmetic only.
 - `src/lib/clubs.ts:173` (`getClubSessions`) does a service-role `select("*")` (including `organizer_passcode`) when its two current callers only read `id/name/created_at/is_active`. Not exploitable today (raw row never forwarded to a client) — worth narrowing to `PUBLIC_SESSION_COLUMNS` as future hardening.
@@ -1406,6 +1587,7 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 **Status: BUILT + ✅ APPLIED TO PROD (2026-06-30) + verified. NOT merged.** tsc clean · lint clean · 620/621 unit pass · review gate **LGTM** (7-dimension independent review, incl. byte-diff of migrate_player_identity vs live prod). Plan: `MULTI_TENANT_PLAN.md` (v2; committed `6562b83`).
 
 **✅ APPLIED TO PROD (project usxftpexoimletqmrggb) 2026-06-30 — all 4 migrations, verified:**
+
 - clubs/club_invites/club_members created, RLS deny-all (0 policies, 7 FKs). Legacy club `00000000-0000-0000-0000-000000000001` created (created_by = top session creator).
 - sessions.club_id NOT NULL, all 16 sessions backfilled to Legacy. Rivalry/partnership PKs swapped to (club_id,…); 1050+702 rows backfilled, none lost. refresh_cross_session_stats + migrate_player_identity updated (verified live).
 - Functional smoke (txn rollback, zero residue): club+owner+invite+club-session inserts all satisfy FK/CHECK/UNIQUE. Advisors: no new ERROR/serious lints (3 new tables = expected deny-all `rls_enabled_no_policy` INFO only).
@@ -1415,25 +1597,30 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 **Goal:** single-organizer → multi-club SaaS. Shared schema, `club_id` FK, path routing `/c/[clubSlug]/...`. Phase 0 = DB foundation only (no app code wired yet).
 
 ### Migrations (build-only, in `supabase/migrations/`)
+
 - `20260630000000_clubs_foundation.sql` — `clubs` (slug UNIQUE, 3–50 char CHECK), `club_invites` (one-time tokens), `club_members` (UNIQUE(club_id,player_id), role owner/admin/member, is_active soft-offboard). RLS enabled, **deny-all** (service-role only; member-read policies deferred to route phase).
 - `20260630000001_sessions_club_id.sql` — Legacy club at **fixed uuid `00000000-0000-0000-0000-000000000001`** (created_by = most-prolific session creator) + `sessions.club_id` nullable→backfill→NOT NULL. **Transition DEFAULT = Legacy club** so the still-deployed club-unaware createSession keeps working post-NOT-NULL (DEFAULT dropped in Phase 2). ON DELETE RESTRICT.
 - `20260630000002_rivalries_partnerships_club_id.sql` — **ATOMIC** (C4): add club_id + backfill + SET NOT NULL + swap PRIMARY KEY `(player_id,rival_id)`→`(club_id,player_id,rival_id)` (same for partnerships) + `CREATE OR REPLACE refresh_cross_session_stats` with `v_club_id` threaded (ON CONFLICT targets now include club_id). Must stay one file or next closeSession() throws.
 - `20260630000003_migrate_identity_club_members.sql` — `migrate_player_identity` reproduced byte-faithful + ONE new non-fatal block re-pointing `club_members.player_id` (delete-old-if-new-already-member, then UPDATE).
 
 ### Types (`src/types/database.ts`)
+
 - New: `ClubRole`, `Club`/`ClubInsert`/`ClubUpdate`, `ClubInvite`/…, `ClubMember`/… + 3 table registrations.
 - `club_id: string` added to `Session`, `PlayerRivalry`, `PlayerPartnership` Row types; optional in `SessionInsert` (DB default fills it); excluded from ledger Update types (part of PK).
 - Test fixture `queue-sub-tab.test.tsx` got `club_id` (only full Session literal in repo).
 
 ### Corrections made during build (beyond the v2 plan)
+
 - **Transition DEFAULT on sessions.club_id** — the plan's bare SET NOT NULL would break new-session creation by the old app. Added DEFAULT→Legacy as the bridge. Documented in migration header + needs a Phase-2 "DROP DEFAULT" step.
 - **DEFERRED (pre-existing gap, C7):** migrate_player_identity still does NOT re-point `player_rivalries`/`player_partnerships` (needs counter-merge both directions + drift test → own migration). Documented in migration header.
 
 ### Phase 1 — CLUB REGISTRATION UI — BUILT (2026-06-30, same branch)
-**Status: BUILT. Migrations still NOT applied to prod (UI can't run until they are).** tsc/lint/build clean · 635/636 tests (+15 CS-* slug tests) · review gate **Minor issues → fixed** (no authz holes — every app-layer gate correctly placed, which is the ONLY isolation since club tables are RLS deny-all).
+
+**Status: BUILT. Migrations still NOT applied to prod (UI can't run until they are).** tsc/lint/build clean · 635/636 tests (+15 CS-\* slug tests) · review gate **Minor issues → fixed** (no authz holes — every app-layer gate correctly placed, which is the ONLY isolation since club tables are RLS deny-all).
 
 **Review fixes applied:** (#1 med) `acceptClubInvite` now handles the 3 membership states explicitly — re-activates a soft-removed (is_active=false) member instead of an `ignoreDuplicates` upsert that silently skipped them and lied "success" → redirect loop. (#2 low) `createClub` no longer leaks raw Postgres error to client (logs + generic msg). (#3 low) club rollback delete now logs on failure.
 **Deferred (Phase 2):** member removal/restore UI (admin panel is read-only roster + invites today); `getMyClubs` issues 1 count query/club (fan-out, fine at scale); one-time invites only (no reusable/multi-use links).
+
 - **Pure:** `src/lib/club-slug.ts` (slugifyClubName/isValidClubSlug, parity w/ SQL CHECK) + `tests/unit/club-slug.test.ts` (CS-1..15).
 - **Data (server-only):** `src/lib/clubs.ts` — getClubBySlug (React cache), getMyClubs, getClubRole (cache), isClubMember, isClubAdmin, getClubMembers, getClubSessions. All via service client (club tables are RLS deny-all → app-layer authz is the ONLY control).
 - **Actions:** `src/app/actions/clubs.ts` — createClub (club+owner membership, best-effort rollback), createClubInvite (admin-gated, one-time token), acceptClubInvite (idempotent join + consume). `sessions.ts` createSession gained optional `clubId` (admin-gated; omitted → Legacy DEFAULT).
@@ -1442,6 +1629,7 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 - **Routing decided:** `/c/[clubSlug]/...` prefix (user picked; no reserved-slug denylist needed). `/clubs` is the new multi-club home; existing `/` login untouched (route relocation is Phase 2).
 
 ### Next (await user approval before building)
+
 - ✅ Schema APPLIED to prod + verified (see Phase 0 section). Phase 1 UI write/read paths confirmed valid against the live schema.
 - **To see the UI live:** deploy `feat/multi-tenant` (prod main runs old code without the club routes).
 - **Phase 2** = Route Migration (relocate `/play`,`/organizer`,`/tv` under `/c/[clubSlug]`; isClubMember/Admin guards; reconnect/leaderboard/QR club-scoping; getPlayerStats `.maybeSingle()` fix; the cross-session aggregators H1–H6). Largest, mostly-breaking phase. See `MULTI_TENANT_PLAN.md` §8.
@@ -1451,19 +1639,22 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 
 ## 🆕 PLAYER-SPECIFIC SESSION HISTORY FILTER — `main` (2026-06-26)
 
-**Status: BUILT + validated. NOT yet committed (working tree).** tsc clean · 28/28 MHF-* unit tests pass · build clean · 0 new lint errors on changed files. Plan: `ORGANIZER_PLAYER_HISTORY_PLAN.md` (5-section plan + 2 adversarial review rounds).
+**Status: BUILT + validated. NOT yet committed (working tree).** tsc clean · 28/28 MHF-\* unit tests pass · build clean · 0 new lint errors on changed files. Plan: `ORGANIZER_PLAYER_HISTORY_PLAN.md` (5-section plan + 2 adversarial review rounds).
 
 **Feature:** Organizer-only player filter inside the Match History tab. Type-to-search, select a player, see only their matches. Zero new DB tables, migrations, RPC, or server actions — 100% client-side `useMemo` filtering over already-fetched `CompletedMatch[]`.
 
 ### New files
+
 - `src/lib/match-history-filter.ts` — 4 pure helpers: `filterMatchesByPlayer`, `derivePlayerOptions`, `resolvePartnerIds`, `selectionStillValid`. Exportable; no React/Supabase deps.
 - `src/components/organizer/match-history-player-filter.tsx` — controlled `<input>` + `<ul>/<button aria-pressed>` filter UI (swap-sheet.tsx pattern). Shows game count + SkillBadge + disambiguator suffix for dup names + checkmark when selected.
-- `tests/unit/match-history-filter.test.ts` — 28 MHF-* Vitest unit tests.
+- `tests/unit/match-history-filter.test.ts` — 28 MHF-\* Vitest unit tests.
 
 ### Modified files
+
 - `src/components/organizer/match-history-panel.tsx` — wired filter, active-filter chip (N of M count + ✕ clear), `selected` pinned state, `playerOptions` + `visibleMatches` memos, conservative reconcile effect, highlight rings in both completed + cancelled branches, legend, safety-net empty state.
 
 ### Key design decisions (locked)
+
 - **Conservative reconcile:** never auto-clears on revert; keeps chip + safety-net so organizer dismisses via ✕.
 - **Cancelled match handling:** organizer-cancel retains all rows → player appears. Leave-triggered cancel deletes leaver's row first → leaver absent from filter. Both correctly handled.
 - **Disambiguator = `player_id.slice(-4)`** (last 4 chars, more unique than first 4 for UUIDs).
@@ -1472,6 +1663,7 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 - **Review gate:** Minor issues (unused `idx` param + dead `if` body in effect) — both fixed. Final verdict: LGTM.
 
 ### Next steps
+
 - Commit the working tree (monthly leaderboard + player history filter together, or as two separate commits).
 
 ---
@@ -1483,12 +1675,14 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 **Feature:** third leaderboard scope **Monthly**, alongside Session + All-Time. Browsable months (default current); shows on all surfaces (players + organizers).
 
 ### Decisions (locked)
+
 - **Month = Asia/Manila** (UTC+8, no DST), identical for every viewer. `CLUB_TIMEZONE='Asia/Manila'` (`src/lib/constants.ts`, app's first canonical tz).
 - **Live RPC** (no matview): `get_monthly_leaderboard(year,month)` aggregates one Manila-month slice off base tables (match_players⋈matches, NOT v_match_history). Boundary computed once via `make_timestamptz(...,'Asia/Manila')` → sargable `completed_at >= start AND < end` range on partial index `idx_matches_completed_at`. SECURITY INVOKER (respects matches RLS — which IS enabled but permissive for completed), granted anon+authenticated. `get_leaderboard_months()` = picker source (distinct Manila-months + current). Migration `20260626000000`. Verified live: 832=832 cross-check vs direct aggregation.
 - **Ranking:** MIN_MONTH_GP=8, MONTH_CONFIDENCE_K=6, **no win-streak** (streak RPC isn't month-scoped), **no Δ** column.
 - **Default tab:** session in-session, else **Monthly** (lobby).
 
 ### Key files
+
 - DB: migration `20260626000000_monthly_leaderboard.sql`; `database.ts` Functions += get_monthly_leaderboard / get_leaderboard_months.
 - `src/lib/month.ts` (NEW, pure) — getCurrentManilaMonth (Intl + Asia/Manila, NOT runtime tz), formatMonthLabel, isCurrentManilaMonth. Tests `tests/unit/month.test.ts` (MON-1..8).
 - `src/app/actions/leaderboard.ts` — getMonthlyLeaderboard, getLeaderboardMonths, **getPlayerMonthlyStats (additive — getPlayerStats signature UNCHANGED)**. Reuses existing sortLeaderboard/assignRanks/buildVipMap (already shared module-level — no risky refactor).
@@ -1498,6 +1692,7 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 - `leaderboard-hero-card.tsx` — scope 3-way; minGP 3-way; zero-games copy scope-aware ("this month").
 
 ### Notable / deferred
+
 - **Deliberate side-effect:** `showMovement={alltime}` means the **session board no longer renders the ✦ Δ column** either (all session rows had null movement → ✦ on every row = noise). Improvement, but a behavior change to the existing session board beyond plan scope.
 - **Migration drift found (not blocking):** `get_alltime_snapshot_before` exists in prod but is absent from `supabase/migrations/` — the all-time board works; repo migrations just don't reproduce it. Worth back-filling.
 - Player panel expanded from session-only/compact to the full 3-way switch (per "monthly for all").
@@ -1512,6 +1707,7 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 **Feature:** per-session `sessions.auto_publish` toggle. OFF (default) = engine writes drafts (`is_published=false`) for organizer review. ON = engine writes matches straight to On Deck (`is_published=true`), skipping the publish gate. The whole pipeline downstream of publish was already automatic, so this is the only manual step it removes.
 
 ### The critical cluster (all 5 ship together or it silently no-ops)
+
 1. `database.ts` — `Session.auto_publish: boolean` + `SessionUpdate`. (Else TS drops the column → always falsy.)
 2. `runEngineInternal` session SELECT (`matchmaking.ts`) — also fetch `auto_publish`.
 3. Cap-count branch — draft mode counts `is_published=false`; **auto mode does an EXTRA query counting `is_published=true`** (else counts 0 → unbounded generation flooding courts).
@@ -1519,27 +1715,33 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 5. `executeMatch` call site passes `autoPublish`; auto-published matches fire `ON_DECK_WARNING` via `after()` (engine path bypasses the publish action's push).
 
 ### Key decisions / mechanics
+
 - **D12 — held drafts auto-publish at READINESS, not creation:** held drafts born `is_published=false`; `recomputeHeldReadiness` publishes via new `auto_publish_match` RPC the moment `held_ready_at` is stamped (pulled body now free) → no premature ping / on-deck of a still-playing player. RPC = `publish_match` minus organizer gate, service-role-only (grants revoked anon/authenticated). Verified live `create_match_with_players`: `p_is_on_deck=true AND p_is_published=true → roster on_deck`.
 - **D7 ghost-player guard** in `promoteOnDeckMatchInternal`: skips+clears any ready match with a `left` roster player (adds 2 queries/candidate; reuses roster fetch).
 - **D11** — auto-publish toggle disabled while Auto-Matchmaking OFF (engine paused). **D3/D8** ON flip clears drafts + reruns engine inline. **D4** OFF flip leaves live on-deck alone. **D9** confirm dialog only when drafts exist. **D2** cap re-interpreted as on-deck cap; chip label MAX→DECK.
 - Realtime: `auto_publish_toggled` broadcast (RLS-bypass for co-orgs); `auto_publish` excluded from postgres_changes apply.
 
 ### Migrations applied to prod (project usxftpexoimletqmrggb)
+
 - `20260623000000_add_auto_publish_mode.sql` — column (additive, NOT NULL DEFAULT false).
 - `20260623000001_auto_publish_match_rpc.sql` — service-role publish RPC.
 - `20260623000002_lock_auto_publish_match_grants.sql` — REVOKE from anon/authenticated/PUBLIC; GRANT service_role. Verified: only postgres + service_role have EXECUTE.
 
 ### Tests added
+
 - `matchmaking-core.test.ts` AP-1/2 (shouldAutoPublishMatch). `matchmaking-engine.test.ts` ENG-AP-1/2 (p_is_published per mode + cap re-count). `auto-publish-session-action.test.ts` TAP-1..6 (toggle orchestration, mocked). `schema-parity.test.ts` (integration) +column +RPC checks. Existing engine-test mocks updated for the +2 promote queries and +1 recompute session fetch (no behavior masked).
 
 ### Post-merge adversarial audit + cluster fix (2026-06-24)
+
 24-agent audit (7 hunters + per-finding adversarial verify) → 13 confirmed / 3 partial / 1 refuted. **All serious findings were in the held-cross-court-draft × auto-mode path** (the D12 readiness-publish); the normal auto-publish path is clean. Fixed the cluster on branch `fix/auto-publish-held-draft-cluster`:
+
 - **#1 (HIGH) orphaned held draft:** recomputeHeldReadiness stamped held_ready_at BEFORE auto_publish_match; on HAS_LEFT_PLAYERS/CONFLICT the draft was left stamped-ready-but-unpublished → orphaned (recompute skips held_ready_at≠null; promote needs is_published=true; auto mode hides the draft section) → players silently benched. FIX: on those two RPC results, `clear_on_deck_match_atomic` so players re-enter the pool. Tests CC-RDY-AP1/2/3.
 - **#3 (MED) cap overshoot:** held drafts (is_published=false) didn't count the auto-mode cap. FIX: recount `.or("is_published.eq.true,is_held.eq.true")`.
 - **#2 (MED) status corruption:** `clear_all_unpublished_drafts` swept up held drafts and flipped a still-PLAYING pulled body to 'waiting'. FIX: migration `20260624000000` adds `AND is_held IS NOT TRUE` (fixes toggleAutoPublish ON-flip AND the existing setCapAndClearDrafts cap-change). Integration test DCINT-13 (manual-run).
 - Independent review: LGTM. tsc clean, 584 unit pass (+3), build clean.
 
 ### Accepted-for-v1 / deferred (audit confirmed, low-impact)
+
 - TOCTOU cap overshoot by ~1–2 under 2 concurrent engine workers (soft cap, same as draft mode).
 - Stale auto_publish read if toggle lands mid-engine-run (self-corrects next tick).
 - Double/stale ON_DECK_WARNING timing; confirm-dialog stale count; optimistic toggle could stick if action throws + broadcast lost; toggle clickable while dashboard locked. All low/UI polish, not fixed.
@@ -1554,12 +1756,14 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 **Problem solved:** the flat `matches.origin` enum (auto|manual|modified) collapsed every modification into one tag with ZERO audit trail (no who/what/when/order). Replaced with a 3-layer model.
 
 ### The model
+
 - **Birth (immutable):** `matches.created_method` ∈ {auto, manual, held}. Never overwritten. (held was previously stamped origin='auto' — now distinct.)
 - **Rollup:** `matches.modification_count` int (composition changes net of undos), `provenance_backfilled` bool (pre-cutover rows: floored count, no trail).
 - **Ultimate label:** `matches.final_classification` GENERATED ALWAYS AS `created_method || (count>0 ? '_modified' : '_clean')` → 6 values (auto_clean … held_modified).
-- **Full trail:** `match_events` append-only table (match_id/session_id ON DELETE SET NULL + *_snapshot cols so trail survives deletion). One row per organizer ACTION; movements in JSONB; actor_id + actor_name SNAPSHOT (durable vs profile merges); `correlation_id` ties cross-match legs; `reverses_event_id` for undo. RLS: organizers SELECT only, no insert/update/delete policy (RPC/service-role writes only).
+- **Full trail:** `match_events` append-only table (match_id/session_id ON DELETE SET NULL + \*\_snapshot cols so trail survives deletion). One row per organizer ACTION; movements in JSONB; actor_id + actor_name SNAPSHOT (durable vs profile merges); `correlation_id` ties cross-match legs; `reverses_event_id` for undo. RLS: organizers SELECT only, no insert/update/delete policy (RPC/service-role writes only).
 
 ### Key files
+
 - **NEW** `src/lib/match-provenance.ts` — pure logic (deriveFinalClassification, backfillProvenance, modificationDelta, movement builders) + `tests/unit/match-provenance.test.ts` (21 tests, MP-CLS/BF/CNT/MOV).
 - **NEW** `src/lib/match-event-log.ts` — best-effort `logMatchEvent` (score_edit/revert/cancelled — never throws, never counts).
 - **NEW** `src/app/actions/match-events.ts` — `getMatchEvents` (organizer-gated trail read) + `getSessionProvenance` (completed-only % summary).
@@ -1570,19 +1774,23 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 - Badge `match-origin-tag.tsx` → `classification` prop (6-value: Manual/Held/·Edited). 5 call sites repointed to `match.final_classification`.
 
 ### Critical correctness decisions (LOCKED by user)
+
 - **Undo = net accounting:** the 2 live undo paths re-call the FORWARD RPC with `p_is_undo:true` → records 'undo' (−1) not a 2nd forward (+1). Fixes the over-count the plan review (B1) caught. Decrement by exactly 1 (never reset) → partial-undo (2 swaps, undo 1) correctly stays modified.
 - **Composition counts in ALL phases** (draft/active/post_completion); the old `WHERE origin='auto'` guard is GONE → `manual_modified` is now trackable. Score/revert never count.
 - **Cross-match (on-deck pull + cross-match draft swap) = 2 correlated rows**, +1 each match.
 - **Full audit:** leaver/cancel via events — `cancelMatchAction` wired; **DEFERRED (best-effort gap):** organizer-kick `remove_player_from_queue_organizer`, self-checkout `checkout_player_cleanup_drafts`, `clear_*` — these always CANCEL the match (excluded from completed metrics) so low-value; not yet logged.
 
 ### Backfill (existing ~541 prod matches — 62% manual, 31% auto, 7% modified, 0 held, 55 cancelled)
+
 - created_method recovered EXACTLY for birth (sticky rule: origin='modified' ⇒ born auto; is_held ⇒ held). "% auto vs manual vs held" accurate retroactively.
 - **manual_modified UNRECOVERABLE** (sticky kept swapped-manual at origin='manual') → ~335 manual matches read manual_clean; accurate only going forward. modification_count=1 floor for legacy modified rows (COUNT-safe, SUM-unsafe → `provenance_backfilled` marks them).
 
 ### Implementation review gate (2026-06-17): **Minor issues → acceptable pass**
+
 3-dimension independent review (SQL / TS / plan-conformance) — NO blockers, NO true bugs. Fixes folded: **L4** wrapped the `created` event PERFORM in `BEGIN/EXCEPTION` in both create RPCs (an audit defect can't roll back matchmaking); **L3** rewrote the stale `MatchOrigin` doc comment; **M1/comments** corrected `match-event-log.ts` to stop overclaiming leaver coverage; **L5** documented the `record_match_event` service_role-only GRANT (reached via SECURITY DEFINER composition). Remaining minor items DEFERRED + documented (below).
 
 ### ⚠ NOT DONE / NEXT
+
 - **Migrations NOT applied** (no local Postgres; needs Supabase branch validation OR prod apply with go-ahead). Apply order: mig1 → deploy app → mig2.
 - **DEFERRED — leaver/clear events (M1):** `player_left`/`cancelled` from `checkout_player_cleanup_drafts`, `remove_player_from_queue_organizer`, `clear_on_deck_match_atomic`, `clear_all_unpublished_drafts` are plumbed (type + DB CHECK + delta) but NOT emitted. All those paths CANCEL the draft → excluded from completed metrics → zero analytics impact; only the trail entry is missing. Wiring needs per-RPC affected-id handling (some RPCs return void → need a pre-query).
 - **DEFERRED — `published` event (L2):** never emitted (publish actions raw-update `is_published`). Non-counting; timeline just won't show the publish step.
@@ -1598,9 +1806,11 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 **Status: COMPLETE ✅** — Review gate: **LGTM**. Commit `d6080bc`.
 
 ### Root cause
+
 `src/components/player/match-history.tsx`: `useMemo` for W/D/L stats was placed AFTER three conditional early returns (`if (loading)`, `if (fetchError)`, `if (history.length === 0)`). React's Rules of Hooks require all hooks to be called unconditionally in the same order every render. On the first render `loading=true` so the useMemo was skipped; on the next render (after data loads) it was called — hook count changed → React threw → global error boundary (`error.tsx`) showed "Unexpected Error" for any player with match history.
 
 ### Fix
+
 Moved the `useMemo` before all early returns. Hook logic is unchanged; it just runs on every render (cheaply returns zeros when `history` is empty).
 
 ---
@@ -1625,6 +1835,7 @@ Moved the `useMemo` before all early returns. Hook logic is unchanged; it just r
 - **`src/components/player/player-dashboard.tsx`**: Overflow menu now shows "Google · Connected" row when `hasGoogleLinked=true`, replacing the empty space left by hiding the link button.
 
 ### Known gap (still deferred)
+
 - Phase 3 collision-merge (`identity_already_exists` full resolution via `migrate_player_identity(B, A)`) is still stubbed. The error state in `GoogleLinkCard` explains the situation to the user but doesn't auto-merge.
 
 ---
@@ -1636,30 +1847,36 @@ Moved the `useMemo` before all early returns. Hook logic is unchanged; it just r
 ### What changed
 
 **A — `GoogleLinkCard` refactor: `sessionId` → `next` prop**
+
 - `src/components/notifications/google-link-card.tsx`: prop renamed from `sessionId: string` to `next: string`. The component itself uses `<GoogleLinkButton next={next} />` directly — callers pass the full return path.
 - `src/components/player/my-status-tab.tsx`: updated call site to `<GoogleLinkCard next={`/play/${session.id}`} />`.
 - Added a FOURTH upgrade surface: `src/app/play/page.tsx` — the `/play` session picker now renders `<GoogleLinkCard next="/play" />` when the user is not Google-linked (`hasGoogleLinked = user.identities?.some(i => i.provider === "google") ?? false`).
 
 **B — Google Sign-in moved to top of login form**
+
 - `src/components/auth/google-sign-in-button.tsx`: new `dividerPosition?: "above" | "below"` prop (default `"above"`). When `"below"`, the "─── or ───" divider renders BELOW the button with `pt-6 pb-2` extra padding. The `divider` constant is defined INSIDE the if-null check so there's no orphaned JSX when the flag is off.
 - `src/components/login-form.tsx`: moved `<GoogleSignInButton next={...} dividerPosition="below" />` to ABOVE the segmented tab control (the button is now the first element in the form, followed by the divider, then the NEW/RETURNING tabs). The old placement inside the NEW PLAYER panel was removed. Tab panels (`new` and `returning`) both gained `animate-in fade-in duration-150` on their root element for a smooth entrance on tab switch.
 
 **C — Env vars + Supabase config (infra, not code)**
+
 - `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED=true` added to Vercel production env vars. An empty commit triggered redeployment.
 - Supabase "Allow manual linking" enabled (Authentication → Providers → scroll to bottom) — required for `linkIdentity()` to work.
 - `NEXT_PUBLIC_SITE_URL=https://badminton-app-dusky-six.vercel.app` — **RESOLVED + VERIFIED LIVE (2026-06-10).** Set on Vercel (Production) + picked up by redeploy `dpl_H8UZ…` (commit `2dffe41`, ~1781060076481). Confirmed via live intercept: production `signInWithGoogle` now returns a Supabase authorize URL whose `redirect_to` host = `badminton-app-dusky-six.vercel.app` (no longer localhost). **Gotcha learned:** `NEXT_PUBLIC_*` is inlined at BUILD time — setting the var on Vercel does nothing to already-built deployments; a fresh build/redeploy AFTER setting it (scoped to Production) is required. The test user who hit localhost was on the pre-redeploy build.
 - **ROOT CAUSE CONFIRMED + FIXED (2026-06-10):** dashboard screenshot showed **Site URL = `http://localhost:3000`** AND **Redirect URLs = EMPTY** (`No Redirect URLs`). With nothing whitelisted, GoTrue rejected the app's (correct, prod) `redirect_to` and fell back to the localhost Site URL → every link attempt landed on localhost, for every user (deterministic/global, not per-user — that's why it happened "every time"). User fixed both fields: **Site URL** → `https://badminton-app-dusky-six.vercel.app` (no wildcard — that box forbids them); **Redirect URLs** → added `https://badminton-app-dusky-six.vercel.app/**` (the `/**` is required so the full `/auth/callback?intent=link&next=…` URL passes) + kept `http://localhost:3000/**` for local dev. No redeploy needed (Supabase config is live instantly). **Pending:** user to confirm via a real end-to-end link in a fresh window. ⚠ Note for future: fixing ONLY the Site URL (not the allow-list) would have shifted the symptom from localhost → lands on prod **root** `/?code=…` with the link still failing (only `/auth/callback` runs `exchangeCodeForSession`, the bare Site-URL fallback skips it). Dashboard path: Authentication → URL Configuration.
 
 ### Upgrade path surfaces (all four, post-refactor)
+
 1. **Login form top** — `GoogleSignInButton` with `dividerPosition="below"`, NEW PLAYER tab only.
 2. **Overflow menu** — `GoogleLinkButton` between Theme and Sign Out, anonymous users only.
 3. **My Status tab card** — dismissible `GoogleLinkCard` at top of tab (localStorage key `google-link-card-dismissed`).
 4. **Session picker (`/play`)** — `GoogleLinkCard` with `next="/play"` rendered above session list.
 
 ### Still pending
+
 - ~~`NEXT_PUBLIC_SITE_URL` must be added to Vercel env vars + redeploy triggered.~~ **DONE + verified live 2026-06-10** (see Section C). ~~Supabase URL Configuration~~ **DONE** — Site URL set to prod + `https://badminton-app-dusky-six.vercel.app/**` added to Redirect URLs (was empty). Awaiting user's real end-to-end link confirmation.
 
 ### Test-data reset (2026-06-10)
+
 - Unlinked Google from **Jackie B** (`2d394921-7221-4f63-9feb-6326bbb17d5d`) and **JVL** (`317ee635-a7a0-48cb-9675-a79b45273500`) to re-test the link flow on a clean Supabase config. Did via SQL: `DELETE FROM auth.identities WHERE provider='google' AND user_id IN (…)` + `UPDATE auth.users SET is_anonymous=true, email=null, email_confirmed_at=null`. Profiles/PINs/history untouched (keyed on unchanged `user_id`). Reversible by re-linking. Both verified `identity_count=0, is_anonymous=true`. Note: `raw_app_meta_data.providers` left stale (self-heals on re-link; app reads `user.identities`, not app_metadata, for `hasGoogleLinked`).
 - Phase 3 collision-merge: `/auth/callback` `identity_already_exists` stub → `migrate_player_identity(B, A)` (deferred).
 - Google Client Secret shared in prior session chat should be rotated at [console.cloud.google.com](https://console.cloud.google.com/).
@@ -1674,18 +1891,22 @@ Moved the `useMemo` before all early returns. Hook logic is unchanged; it just r
 ### What changed
 
 **A — Registration page messaging:**
+
 - `src/app/page.tsx`: subtitle → "No account needed — pick a name, skill, and a 4-digit PIN to play."
 - `src/components/login-form.tsx`: (1) Trust badge row inside NEW PLAYER panel only ("✓ No email · ✓ No password · ✓ Just a PIN" with emerald checks). (2) `<GoogleSignInButton>` **moved inside** the NEW PLAYER `<form>` (after submit button) — was outside both panels, showing on RETURNING tab too. RETURNING now has NO Google button.
 
 **B — Google upgrade path (two surfaces):**
+
 1. **Overflow menu** (`player-dashboard.tsx`): "Link Google Account" row (`GoogleLinkButton`) between Theme and Sign Out, hidden when `hasGoogleLinked`.
 2. **My Status soft-card** (`google-link-card.tsx`): dismissible card at top of `MyStatusTab`; `localStorage["google-link-card-dismissed"]` persists dismiss; SSR-safe (idle → visible in `useEffect`).
 
 ### New files
+
 - `src/components/auth/google-link-button.tsx` — compact `linkWithGoogle()` button; flag-gated; menu-style.
 - `src/components/notifications/google-link-card.tsx` — dismissible card; localStorage dismiss; flag-gated.
 
 ### Modified files
+
 - `src/app/page.tsx`, `src/components/login-form.tsx`
 - `src/app/play/[sessionId]/page.tsx` — reads `user.identities?.some(i => i.provider === "google") ?? false` → `hasGoogleLinked` prop
 - `src/components/player/player-dashboard.tsx` — accepts + passes `hasGoogleLinked`; renders `GoogleLinkButton` in menu
@@ -1693,6 +1914,7 @@ Moved the `useMemo` before all early returns. Hook logic is unchanged; it just r
 - `tests/unit/queue-sub-tab.test.tsx` — `renderQueueSubTab` gains `hasGoogleLinked?: boolean` (default `true`)
 
 ### Key architecture notes
+
 - Both upgrade surfaces are independently flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`).
 - `GoogleLinkButton` inside `<form>` is safe — explicit `type="button"`.
 - `hasGoogleLinked` flows server page → `PlayerDashboard` → `MyStatusTab` (prop threading).
@@ -1710,6 +1932,7 @@ All four migrations applied to prod (`usxftpexoimletqmrggb`) + data-fix executed
 - **Advisors (pre-existing, NOT mine, untouched):** `migrate_player_identity` mutable search_path (project-wide pattern, SECURITY INVOKER); `auth_allow_anonymous_sign_ins`; `rls_policy_always_true` on match_players; `materialized_view_in_api`.
 
 **⚠ DEPLOY GAP:** the branch `feat/duplicate-name-resolution` (dup-name gate + OAuth code) is **NOT merged to main / NOT deployed**. Prod runs OLD app code. Consequences right now:
+
 - The unique index DOES enforce global name uniqueness even for old code (registration 23505 → "name taken") — desirable early effect, handled by old code's 23505 path.
 - The 3 flagged players are INERT (old code has no `enforceRenameGate`) — they won't be forced to rename until the branch deploys. Same display state as before.
 - OAuth button hidden until branch deploys + Vercel env (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`, `NEXT_PUBLIC_SITE_URL`) set. Supabase dashboard (Google provider, Manual Linking, redirect URLs) = done by user.
@@ -1723,6 +1946,7 @@ All four migrations applied to prod (`usxftpexoimletqmrggb`) + data-fix executed
 Built ON TOP of the duplicate-name feature (reuses normalizeName + partial unique index + isNameTaken + /rename gate). **Dark/flag-gated (`NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED`), NOT wired to live Google, migrations NOT applied to prod.** Review gate: **LGTM**. 550 tests pass · tsc/lint/build clean.
 
 **What's built:**
+
 - **Trigger hardening** (`20260608000002`): `handle_new_user` OAuth/metadata-less branch inserts a UNIQUE stub (`Player_`+id8) with `needs_rename=true` (excluded from the unique index → no 23505). Anonymous path unchanged.
 - `src/lib/oauth-name.ts` — `deriveDisplayName`/`sanitizeToDisplayName` (Google name → `[a-zA-Z0-9 ]`, 3–30, NFKD + transliterate ø/æ/ß…). `src/lib/pin.ts` — `generatePin()`. `src/lib/safe-next.ts` — shared open-redirect guard.
 - `src/lib/oauth-provision.ts` — `ensureOAuthProfile`: unresolved-stub = `needs_rename=true && collided_name=null`; derive→ensure PIN→ unique?assign+clear flag : set collided_name+keep flag (→ /rename gate). **Mints a PIN for every OAuth account** (recovery, no lockout). TOCTOU on assign → falls back to collision branch.
@@ -1741,6 +1965,7 @@ Built ON TOP of the duplicate-name feature (reuses normalizeName + partial uniqu
 Built (NOT yet merged / NOT applied to prod). Scope A = lazy/reactive. Code complete + reviewed (gate verdict: **Minor issues**, all 4 fixed). 538 tests pass · tsc/lint/build clean.
 
 **Mechanism — three layers (the flag is a UX nudge; the index is the authority):**
+
 - **L1** `enforceRenameGate(profile, nextPath)` (`src/lib/rename-gate.ts`) at top of `/play` + `/play/[sessionId]` → redirects flagged profiles to `/rename`. Grandfathers active players (live queue entry) + skips active organizers. Fast path = zero queries for clean profiles.
 - **L2** `joinQueueAction` first step reads `needs_rename` → returns `requiresRename` (client routes to `/rename`). Real mutation boundary.
 - **L3** partial UNIQUE index `idx_profiles_unique_active_name` on `lower(btrim(regexp_replace(display_name,E'[ \t]+',' ','g'))) WHERE needs_rename=false` — cross-instance/TOCTOU authority. **Migration `20260608000001` — apply ONLY after the data-fix flags duplicates** (held).
@@ -1754,6 +1979,7 @@ Built (NOT yet merged / NOT applied to prod). Scope A = lazy/reactive. Code comp
 **Schema (migration `20260608000000`, additive/safe):** `profiles.needs_rename bool / collided_name text / flagged_at timestamptz`; `player_renames` audit table; `rename_player_identity(p_user_id,p_new_name)` RPC (atomic rename+flag-clear+audit, server-side R1 recheck, 23505→name_taken, SECURITY DEFINER, service_role only). `src/types/database.ts` updated (Profile, PlayerRename, Functions).
 
 **DATA FIX — `supabase/data-fixes/20260608_duplicate_name_data_fix.sql` (BUILD ONLY, hand-run, guarded+idempotent):**
+
 - MERGE Miggy ghost `3a14c449` (0 games) → real `499b5fb7`; MERGE lianne `9c6bc387` (PIN 1111) → Lianne `f30a6c4f` (keep latest PIN 0000, reassign 6 games). Guards abort if the "ghost" owns data.
 - FLAG non-canonical of remaining clusters (Tristan/Bea/Jason) generically: canonical = most completed games, tiebreak `created_at,id`. Keeps real name in `collided_name`.
 - Then: apply unique index `000001` → `refresh_alltime_leaderboard()` → recompute Wrapped for merge-affected sessions. Preview + verify queries included.
@@ -1819,18 +2045,19 @@ Held drafts: when the waiting pool can only manage a **forced repeat**, the engi
 
 ### PR review findings (external reviewer) — validated 2026-06-07
 
-| Finding | Verdict | Outcome |
-|---------|---------|---------|
-| H-1: recomputeHeldReadiness throws on MATCH_NOT_FOUND | ❌ FALSE POSITIVE | `supabase.rpc()` never throws — error silently dropped = already idempotent |
-| M-1: deriveHeldState dead code | ✅ True (low severity) | Intentional forward-build for deferred #4; keep in place |
-| M-2: recomputeHeldReadiness missing from callNextMatch/publish | ✅ True, tracked | Deferred #1 (already in list below) |
-| M-3: held drafts in COMMITTED_MATCH_STATUSES | ❌ FALSE POSITIVE | By design — `constants.ts` comment explains it explicitly |
-| L-1: SET search_path missing on RPC | ✅ True, tracked | Deferred #5 (already in list below) |
-| L-2: ghost-availability query should filter at DB | ✅ True | **FIXED `0336847`** — `.overlaps()` (`&&`) not reviewer's `.contains()` (`@>`) |
-| L-3: unsafe `?.profile.display_name` in HeldBadge | ✅ True | **FIXED `0336847`** — `?.profile?.display_name` |
-| L-4: executeHeldMatch doesn't broadcast | Non-issue | Consistent with executeMatch |
+| Finding                                                        | Verdict                | Outcome                                                                        |
+| -------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------ |
+| H-1: recomputeHeldReadiness throws on MATCH_NOT_FOUND          | ❌ FALSE POSITIVE      | `supabase.rpc()` never throws — error silently dropped = already idempotent    |
+| M-1: deriveHeldState dead code                                 | ✅ True (low severity) | Intentional forward-build for deferred #4; keep in place                       |
+| M-2: recomputeHeldReadiness missing from callNextMatch/publish | ✅ True, tracked       | Deferred #1 (already in list below)                                            |
+| M-3: held drafts in COMMITTED_MATCH_STATUSES                   | ❌ FALSE POSITIVE      | By design — `constants.ts` comment explains it explicitly                      |
+| L-1: SET search_path missing on RPC                            | ✅ True, tracked       | Deferred #5 (already in list below)                                            |
+| L-2: ghost-availability query should filter at DB              | ✅ True                | **FIXED `0336847`** — `.overlaps()` (`&&`) not reviewer's `.contains()` (`@>`) |
+| L-3: unsafe `?.profile.display_name` in HeldBadge              | ✅ True                | **FIXED `0336847`** — `?.profile?.display_name`                                |
+| L-4: executeHeldMatch doesn't broadcast                        | Non-issue              | Consistent with executeMatch                                                   |
 
 **DEFERRED (self-healing, not correctness bugs):**
+
 1. `recomputeHeldReadiness` wired only into `endMatchAction`+`cancelMatchAction`; spec also wanted `callNextMatch`/publish (held draft promotes ≤1 event late otherwise — readiness is monotonic so any next end/cancel recomputes it). NOTE: adding to `callNextMatch` shifts the engine-test response-queue → update those mocks if you do.
 2. **Swap auto-downgrade (M-5) trigger not wired** — no swap action calls `recomputeHeldReadiness` post-swap. If the organizer swaps the pulled body out, the held draft stays stale (violet badge) until the next end/cancel recompute runs the N-2 downgrade (which works — CC-RDY-CC03). Add the call to `swapPlayerInMatch`/`swapMatchPlayers`/`swapActiveFromOnDeck`.
 3. **Staleness-escape (5d) not implemented** — a held draft whose waiting members age into the Red Zone while the pulled court drags isn't auto-abandoned (resolves when the court finishes).
@@ -1846,6 +2073,7 @@ The persistent E2E fixture was **permanently deleted from production** at the us
 **Consequence:** the local E2E suite is now broken — `.env.test`'s `TEST_SESSION_ID` points to a session that no longer exists, and the OrganizerBot + its baked Playwright `storageState` are gone. `teardown.ts`/`seedSession` will FATAL ("Check TEST_SESSION_ID in .env.test").
 
 **To restore before running E2E again:**
+
 1. `npm run test:setup` → `tests/helpers/init-sandbox.ts` (idempotent): recreates E2E_OrganizerBot + a fresh `🤖 E2E SANDBOX` session and injects a new `TEST_SESSION_ID` into `.env.test`.
 2. Re-bake the Playwright auth storage state (the suite previously did this via scenario-k) so authenticated specs pass.
 3. The per-test `seedSession` recreates player data/bots into the session from there.
@@ -1857,6 +2085,7 @@ The persistent E2E fixture was **permanently deleted from production** at the us
 ## ✅ MERGED TO MAIN — 2026-06-07 (3-Tier Scoring + Cross-Court Drafting + Opponent Diversity)
 
 All feat/cross-court-drafting changes merged to main and pushed to origin/main.
+
 - **Commits on main:** `2d2144c` (3-tier scoring + opponentCounts), `6eadee3` (prettier residue), merge commit, `1ff9f6d` (stale test name fixes)
 - **Tests:** 511/511 pass (26 test files, 1 expected skip). `tsc --noEmit` clean.
 - **DB migration `20260607000000_cross_court_held_drafts.sql`** — ships in main; apply to prod DB via Supabase dashboard or `supabase db push` before next deploy.
@@ -1872,14 +2101,15 @@ All feat/cross-court-drafting changes merged to main and pushed to origin/main.
 
 **Algorithm changes (production, in `src/lib/constants.ts` + `src/lib/matchmaking-core.ts`):**
 
-| Constant | Before | After | Rationale |
-|---|---|---|---|
-| `CRITICAL_WAIT_MINUTES` | 25 | **20** | Red Zone fires sooner; harder for long-waiters to compete as "normal priority" |
-| `HARD_WAIT_CAP_MINUTES` | (new) | **25** | Hard override threshold |
-| `HARD_CAP_SCORE_FLOOR` | (new) | **2000** | Sentinel above all Red Zone scores |
-| `HARD_CAP_GAMES_CEILING` | (new) | **5** | Session-target players can't use the override |
+| Constant                 | Before | After    | Rationale                                                                      |
+| ------------------------ | ------ | -------- | ------------------------------------------------------------------------------ |
+| `CRITICAL_WAIT_MINUTES`  | 25     | **20**   | Red Zone fires sooner; harder for long-waiters to compete as "normal priority" |
+| `HARD_WAIT_CAP_MINUTES`  | (new)  | **25**   | Hard override threshold                                                        |
+| `HARD_CAP_SCORE_FLOOR`   | (new)  | **2000** | Sentinel above all Red Zone scores                                             |
+| `HARD_CAP_GAMES_CEILING` | (new)  | **5**    | Session-target players can't use the override                                  |
 
 **`computePriorityScore` — 3-tier system:**
+
 - Tier 1 Normal: `wait − games×PENALTY` (unbounded below)
 - Tier 2 Red Zone: `1000 + wait − games×PENALTY` (fires at wait ≥ 20)
 - Tier 3 Hard Cap: `2000 + (wait − 25) × 10` (fires when `wait ≥ 25 AND games < 5`)
@@ -1888,26 +2118,29 @@ All feat/cross-court-drafting changes merged to main and pushed to origin/main.
 
 **Simulation results — 3 scenarios (scripts/simulate-scenarios.ts):**
 
-| Scenario | Players / Courts / Min | Target Games | Games Range | Max Wait | Physics Violations |
-|---|---|---|---|---|---|
-| A: Saturday 06/06 | 31p / 3c / 240m | 5 | ±1 ✅ | 43m | 0 ✅ |
-| B: Small session | 18p / 2c / 240m | 5 | ±1 ✅ | 43m | 0 ✅ |
-| C: Large session | 50p / 5c / 240m | 5 | ±1 ✅ | 36m | 0 ✅ |
+| Scenario          | Players / Courts / Min | Target Games | Games Range | Max Wait | Physics Violations |
+| ----------------- | ---------------------- | ------------ | ----------- | -------- | ------------------ |
+| A: Saturday 06/06 | 31p / 3c / 240m        | 5            | ±1 ✅       | 43m      | 0 ✅               |
+| B: Small session  | 18p / 2c / 240m        | 5            | ±1 ✅       | 43m      | 0 ✅               |
+| C: Large session  | 50p / 5c / 240m        | 5            | ±1 ✅       | 36m      | 0 ✅               |
 
 **Physics constraint confirmed:** 30 min max wait target is physically impossible with 20–22 min courts. Minimum achievable: `hardCap + maxCourt = 25 + 22 = 47m`. Actual results: 36–43m — well below 47m due to progressive hard cap + wait-duration tiebreak.
 
 **Simulation-only features (NOT production, in `scripts/simulate-scenarios.ts`):**
+
 - Two-tier pool: primary pool = players with games < targetGames; overflow = all players (prevents 5-game players competing with under-served players for court slots in long sessions)
 - Wait-duration tiebreak among equal-score players (instead of arrival-time tiebreak)
 - Progressive hard cap eliminates flat-score ties
 
 **Unit tests:** 144/144 pass. Fixed 3 `scoreCandidates` tests that broke when thresholds changed:
+
 - `waitMinutes: CRITICAL_WAIT_MINUTES + 5` (=25) now hits Hard Cap → changed to `+2` (=22)
 - `waitMinutes: 20` is now Red Zone (not Normal) → changed to `15` for the "concrete values" test
 - Removed wrong `toBeGreaterThanOrEqual(RED_ZONE_SCORE_FLOOR)` assertion (score=995 < 1000 is valid Red Zone with game debt)
 - Updated stale score comments in `scoreCandidates` tests where passing tests had wrong annotations
 
 **Review verdict:** Minor issues (both fixed before close):
+
 1. Arithmetic error in JSDoc: `960` → `980` (5 games × 8 penalty = 40, not 60)
 2. Sub-1000 Red Zone behavior now fully documented in the tier-table block comment
 
@@ -1924,12 +2157,14 @@ All feat/cross-court-drafting changes merged to main and pushed to origin/main.
 **Problem:** `Math.max(0, wait − games × PENALTY)` collapsed all over-penalised players to score 0 at steady state. A 6-game player and a 4-game player waiting 30 min both scored 0 → selection was random among them. This caused Gelo and Michael Yan to accumulate 6 games while Madrid/JCG/Marcus got only 4 (range 3–6).
 
 **Fix (two-line change in `src/lib/matchmaking-core.ts`):**
+
 - Normal zone: `return wait - gamePenalty` (no floor — scores can be negative)
 - Red Zone: `return RED_ZONE_SCORE_FLOOR + wait - gamePenalty` (game penalty also applies inside Red Zone)
 
 **GAME_PENALTY calibration:** Changed from 16 → 8 in `src/lib/constants.ts`. Rationale: ~half the average game cycle (~20 min / 2 = 10 min). At 8 min, a player with 1 extra game catches up in ~8 extra minutes of waiting.
 
 **Final simulation results (Saturday 06/06 roster, 31 players, 3 courts, 240 min, GAME_PENALTY=8):**
+
 - **34 matches**, avg 4.4 games/player, **range 3–5** ✅
 - **Non-late-joiners**: ALL have 4 or 5 games (14 with 5g, 13 with 4g) — ±1 range achieved ✅
 - Late joiners Clark + Lei got 4 games each (joined at T=97m into a 240m session — partially served)
@@ -3197,8 +3432,9 @@ scoring_format: "single" | "best_of_3" | "best_of_5"
 ```
 v_queue_with_wait_time      — queue_entries + profiles; computes wait_minutes, is_bottleneck, skill_level_int
 v_match_history             — matches + match_players + profiles; includes scores, teams, game_scores JSON
-v_recent_pairings           — ⚠️ UNUSED BY ENGINE — still in DB, but buildOverlapMap now uses a 3-step
-                              manual join with team-aware weighting. Safe to drop in a future migration.
+v_recent_pairings           — ⚠️ UNUSED BY ENGINE — still in DB, but deriveOverlapMap now projects the
+                              per-slot session match snapshot with team-aware weighting (no DB hop at
+                              all). Safe to drop in a future migration.
 v_session_leaderboard       — per-session stats: GP, W, L, Win%, PF, PA, +/-
 v_alltime_leaderboard_mat   — materialized all-time stats (same columns, no session filter)
 ```
@@ -3355,18 +3591,24 @@ Full combination search replacing greedy algorithm. Iterates all C(n,3) triples 
 
 ### Partnership Cap Enforcement
 
-`fetchPartnershipCounts(supabase, sessionId)` — hoisted once per `runAlgorithm` invocation. Counts same-team pairings across `completed`, `in_progress`, **and `pending` (including unpublished drafts)**. Cap applies at draft creation, not publish. `MAX_PARTNERSHIP_REPEATS = 2` — no waivers, no Red Zone bypass.
+`derivePairCounts(snapshot)` — **pure**, derived once per `runAlgorithm` invocation from the per-slot snapshot (zero DB cost). Counts same-team pairings across `completed`, `in_progress`, **and `pending` (including unpublished drafts)**. Cap applies at draft creation, not publish. `MAX_PARTNERSHIP_REPEATS = 2` — no waivers, no Red Zone bypass.
+
+_(The async `fetchPartnershipCounts` still exists but is no longer the engine's — it is the organizer repeat-pairing badge's helper alone, and it fails **soft** there on purpose.)_
 
 `snakeDraft()` / `rotatedDraft()` return **`null`** when cap blocks all splits. All callers must null-guard.
 
 ### Anti-Repeat / Diversity Logic
 
-- `buildOverlapMap(anchorId)` — per-tick, anchor-specific. **Does NOT use `v_recent_pairings`.**
-  - 3-step manual join: (1) fetch match_players for anchor → (2) filter to session's recent matches (completed + in_progress + pending) → (3) fetch co-players + build weighted map
-  - Teammate appearances = 2×, opponent appearances = 1× (teammate repetition penalised more)
-- `fetchRecentRosters(sessionId)` — fetched **once per `runEngineInternal` run**, passed to each `runAlgorithm` call. Includes completed + in_progress + pending.
+> ⚠️ **Superseded 2026-08-04.** All three helpers below were merged into ONE per-slot
+> `fetchSessionMatchSnapshot` + three pure derivations. See the 2026-08-04 entry at the top of this
+> file and APP_MANIFEST §"Session match snapshot". Current shape:
+
+- `fetchSessionMatchSnapshot(db, sessionId)` — the only async read. Per slot, concurrent with `fetchActivePool`. 2 queries (`matches` IDs → `match_players` rosters; step 2 skipped when step 1 is empty). Ordering is SQL-side (`created_at DESC, id DESC` — the `id` tiebreak is load-bearing: a burst writes one `created_at` for all its rows). **Fails closed** past `SESSION_MATCH_SNAPSHOT_CEILING` (200) or on error → engine breaks the burst.
+- `deriveOverlapMap(snapshot, anchorId)` — pure, per-tick, anchor-specific. **Does NOT use `v_recent_pairings`.** Teammate = opponent = 2× (equalised in the 2026-07 diversity pass; the old 2×/1× note below was correct only pre-2026-07).
+- `deriveRecentRosters(snapshot)` — pure. Because the snapshot is re-read **per slot** (not once per run), sibling drafts from earlier slots of the same burst are visible.
+- `derivePairCounts(snapshot)` — pure, `{ partnershipCounts, opponentCounts }`.
 - `isDiversityViolation(playerIds, recentRosters)` — flags if ≥3 of 4 proposed players appeared in any single recent match.
-- `getEffectiveLookback(eligiblePoolSize)` — scales lookback to pool size (≤5→2, ≤9→3, ≤15→4, 16+→5).
+- `getEffectiveLookback(eligiblePoolSize)` — scales lookback to pool size (≤5→2, ≤9→3, ≤15→4, 16+→**7**).
 
 ### Engine Capacity (Updated 20260507)
 
@@ -3383,12 +3625,14 @@ Old formula (`courtCount + ON_DECK_LOOKAHEAD`) only counted published matches �
 1. Single atomic COUNT(*) → totalPending; slotsAvailable = max(0, 3 − totalPending)
 2. Soft gate check: if pool ≤ GATE_POOL_THRESHOLD AND activeCourts > 0
      AND maxWait < GATE_HOLD_MINUTES AND no Red Zone → defer (return early)
-3. Pre-fetch recentRosters once (completed + in_progress + pending)
+3. PER SLOT: fetchSessionMatchSnapshot, concurrent with fetchActivePool
+     (completed + in_progress + pending). !ok → BREAK the burst — never fall through
+     to empty history, or every repeat reads as a fresh pairing.
 4. For each slot in [0, slotsAvailable):
    a. Pool diversity cap (slots 1+): skip if estimatedWaiting < PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK
    b. runAlgorithm(anchor):
-        i.  fetchPartnershipCounts (once per runAlgorithm)
-        ii. buildOverlapMap(anchor) — team-aware 3-step join, per-tick
+        i.  derivePairCounts(snapshot) — pure, once per runAlgorithm
+        ii. deriveOverlapMap(snapshot, anchor) — pure, team-aware, per-tick
         iii.scoreCandidates → buildCombinationGroup → skill expansion → Tier 1/2/3 swap
         iv. executeMatch → create_match_with_players RPC
               • matchId returned → success
@@ -3496,7 +3740,7 @@ src/
                        #   createManualMatchAction, clearOnDeckMatch, reorderOnDeckMatches,
                        #   publishMatchAction, publishAllDraftMatchesAction
       matchmaking.ts   # callNextMatch, runEngineForSession, runEngineInternal,
-                       #   promoteOnDeckMatchInternal, buildOverlapMap, fetchRecentRosters
+                       #   promoteOnDeckMatchInternal (diversity reads live in lib/matchmaking-db.ts)
       notifications.ts # sendPlayerNotification — Web Push via VAPID
       profile.ts       # updatePlayerSkill, getPlayerPin, resetPlayerPin, updatePlayerPin
       queue.ts         # joinQueueAction, checkoutPlayer, togglePlayerPause
@@ -3600,9 +3844,9 @@ supabase/migrations/           # Chronological migrations: 20260417 → 20260507
 2. **`type` not `interface`** for all DB row types — Supabase generics require `type` aliases.
 3. **Column names: `team_a_score` / `team_b_score`** — NOT `score_a` / `score_b`. The wrong names are in the old MEMORY.md; the schema was updated.
 4. **`sessions.ts` not `session.ts`** — the actions file is plural. Never create a `session.ts` duplicate.
-5. **`buildOverlapMap` is async/DB** — lives in `matchmaking.ts`, NOT in `matchmaking-core.ts` (pure).
-6. **`recentRosters` hoisted; `overlapMap` NOT** — `recentRosters` same for all anchors; `overlapMap` is per-anchor, must be called per-tick.
-7. **`v_recent_pairings` is dead** — view exists in DB but is not queried. `buildOverlapMap` uses 3-step manual join.
+5. **The diversity derivations are pure but live in `matchmaking-db.ts`** — `deriveRecentRosters` / `derivePairCounts` / `deriveOverlapMap` take no client, but sit beside `fetchSessionMatchSnapshot` because the snapshot shape is theirs. The snapshot **fails closed**: on `{ ok: false }` the engine breaks the burst. Never substitute an empty snapshot.
+6. **Snapshot re-read per slot; `overlapMap` per-anchor** — the per-slot cadence is what makes sibling drafts from earlier slots of the same burst visible; `overlapMap` is per-anchor and must be derived per-tick.
+7. **`v_recent_pairings` is dead** — view exists in DB but is not queried. `deriveOverlapMap` projects the snapshot instead.
 8. **`MAX_AUTO_DRAFTS` replaces `ON_DECK_LOOKAHEAD`/`MAX_ON_DECK_MATCHES`** — those two are deprecated from engine capacity. Live engine uses single atomic `COUNT(*)`. Do NOT add a separate published/draft sub-count query — that reintroduces the race window.
 9. **`create_match_with_players` returns NULL on TOCTOU** — `{ data: null, error: null }` = guard fired, graceful skip. `{ data: null, error }` = hard error. Always check separately. RPC is `RETURNS uuid` (scalar) — never change to `RETURNS SETOF uuid`.
 10. **`engineRunningFor` Set is process-local only** — ineffective in Vercel serverless. DB TOCTOU guards are the primary cross-process serialization.
@@ -3625,7 +3869,7 @@ supabase/migrations/           # Chronological migrations: 20260417 → 20260507
 27. **Vercel bypass** — `_vercel_share` tokens do NOT work for Playwright. Only `x-vercel-protection-bypass` header works.
 28. **dnd-kit** — `data-no-dnd` + `onPointerDown stopPropagation` BOTH required on interactive children of draggable containers.
 29. **Registration must stay PIN-blind** — `signInAnonymously` may never branch its reply on whether a submitted PIN matches. It is unauthenticated and unthrottled, so any distinguishable message is a free oracle over the 9,000-value space and bypasses the `reconnectPlayer` limiter entirely. Every "name exists" arm returns the same `NAME_TAKEN_MESSAGE`. See APP_MANIFEST §3.8b intro + `tests/unit/registration-pin-oracle.test.ts`.
-30. **Never add a GLOBAL rate-limit arm to reconnect** — a scope-wide counter is a platform-wide kill switch on login (reconnect *is* the account for anonymous-auth players). ~30 enumerable names across ~5 IPs holds it open indefinitely. Denial arms must have a bounded blast radius (per-name, per-IP). The spray counter is advisory/log-only on purpose — migration `20260721230000` exists solely to undo that mistake.
-31. **Limiter gates count BEFORE inserting** — recording a *blocked* attempt makes the window self-feeding, i.e. a permanent lockout of a named victim. Both `*_record_and_check` functions return `attempt_id = NULL` on the over-limit path; callers must return before using it.
+30. **Never add a GLOBAL rate-limit arm to reconnect** — a scope-wide counter is a platform-wide kill switch on login (reconnect _is_ the account for anonymous-auth players). ~30 enumerable names across ~5 IPs holds it open indefinitely. Denial arms must have a bounded blast radius (per-name, per-IP). The spray counter is advisory/log-only on purpose — migration `20260721230000` exists solely to undo that mistake.
+31. **Limiter gates count BEFORE inserting** — recording a _blocked_ attempt makes the window self-feeding, i.e. a permanent lockout of a named victim. Both `*_record_and_check` functions return `attempt_id = NULL` on the over-limit path; callers must return before using it.
 32. **`co_organizer_join_attempts` is two-scoped** — despite the name it also logs `scope='reconnect'`. Every count MUST filter `scope`, or one flow burns the other's budget.
 33. **DB is AHEAD of `main` on the reconnect limiter (until this branch merges)** — prod's `reconnect_record_and_check` takes `p_spray_alert_at`. Any build from `38080f5`/`c5669e0` (a promoted preview, or a rollback past `7c9c6bc`) sends `p_global_max` → PGRST202 → the fail-closed gate denies **100% of reconnects platform-wide**. Do not roll the app back past `7c9c6bc` without also reverting the DB. Same class as `20260721190000` (revoking a grant out from under live code took Leave Session down).

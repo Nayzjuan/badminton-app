@@ -8,6 +8,7 @@
 
 import type { CompletedMatch } from "@/hooks/use-match-history";
 import type { SkillLevel } from "@/types/database";
+import { normalizeName } from "@/lib/normalize-name";
 
 // ── Public types ───────────────────────────────────────────────
 
@@ -46,8 +47,23 @@ export function filterMatchesByPlayer(
  * guarantees every selectable name yields ≥1 result.
  *
  * When two distinct player_ids share the same display_name a short
- * disambiguator (first 4 chars of the player_id) is set on each colliding
+ * disambiguator (last 4 chars of the player_id) is set on each colliding
  * entry so the picker can render "Maria Santos · a1b2" vs "Maria Santos · c3d4".
+ *
+ * Collisions are keyed on `normalizeName` — the repo's single source of truth
+ * for name identity (parity-locked to the SQL index expression). Do not fork a
+ * local `.trim().toLowerCase()` here: the whole point of that module is that
+ * one definition answers "same name?" everywhere.
+ *
+ * Which collisions actually reach this code: `idx_profiles_unique_active_name`
+ * already blocks case/whitespace variants for ordinary profiles, so a plain
+ * "Maria Santos" vs "maria santos" pair cannot exist. What CAN exist is a
+ * `needs_rename = true` profile — the flagged half of a duplicate identity is
+ * exempt from that index precisely so the collision can sit there until the
+ * organizer resolves it. That flagged row is the case this handles, and it is
+ * exactly the case where a raw-string key would fail: the two rows differ only
+ * by case or by collapsed whitespace, both render identically in the picker,
+ * and without normalization neither would get a disambiguator.
  */
 export function derivePlayerOptions(matches: CompletedMatch[]): PlayerOption[] {
   const byId = new Map<
@@ -76,12 +92,14 @@ export function derivePlayerOptions(matches: CompletedMatch[]): PlayerOption[] {
   // Detect name collisions and attach a disambiguator to each colliding entry.
   const nameCounts = new Map<string, number>();
   for (const opt of sorted) {
-    nameCounts.set(opt.display_name, (nameCounts.get(opt.display_name) ?? 0) + 1);
+    const key = normalizeName(opt.display_name);
+    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
   }
 
   return sorted.map((opt) => ({
     ...opt,
-    disambiguator: (nameCounts.get(opt.display_name) ?? 1) > 1 ? opt.player_id.slice(-4) : null,
+    disambiguator:
+      (nameCounts.get(normalizeName(opt.display_name)) ?? 1) > 1 ? opt.player_id.slice(-4) : null,
   }));
 }
 

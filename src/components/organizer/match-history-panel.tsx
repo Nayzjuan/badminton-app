@@ -430,9 +430,9 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                             className={[
                               "text-sm leading-snug rounded px-1 py-0.5 inline-block",
                               isSelf
-                                ? "bg-cc-accent-dim outline outline-1 outline-cc-accent/55 text-cc-accent-text font-bold"
+                                ? "bg-cc-accent-dim outline outline-1 outline-cc-accent text-cc-accent-text font-bold"
                                 : isPartner
-                                  ? "outline outline-1 outline-dashed outline-cc-accent/55 font-medium"
+                                  ? "outline outline-1 outline-dashed outline-cc-accent font-medium"
                                   : aWon
                                     ? "font-bold text-emerald-900 dark:text-emerald-300"
                                     : "font-medium text-slate-600 dark:text-foreground",
@@ -475,9 +475,9 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                             className={[
                               "text-sm leading-snug rounded px-1 py-0.5 inline-block",
                               isSelf
-                                ? "bg-cc-accent-dim outline outline-1 outline-cc-accent/55 text-cc-accent-text font-bold"
+                                ? "bg-cc-accent-dim outline outline-1 outline-cc-accent text-cc-accent-text font-bold"
                                 : isPartner
-                                  ? "outline outline-1 outline-dashed outline-cc-accent/55 font-medium"
+                                  ? "outline outline-1 outline-dashed outline-cc-accent font-medium"
                                   : bWon
                                     ? "font-bold text-emerald-900 dark:text-emerald-300"
                                     : "font-medium text-slate-600 dark:text-foreground",

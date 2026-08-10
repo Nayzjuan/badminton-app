@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createBrowserSupabaseClient, hasAuthSession } from "@/utils/supabase/client";
-import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
+import { subscribeToMatches, subscribeToMatchPlayers, subscribeToQueue } from "@/lib/realtime";
 import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import { trailingDebounce } from "@/lib/trailing-debounce";
 import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
@@ -289,11 +289,22 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
     const matchDeb = trailingDebounce(() => fetchMyMatch(), REALTIME_REFETCH_DEBOUNCE_MS);
     const unsubMatches = subscribeToMatches(supabase, sessionId, matchDeb.run);
     const unsubPlayers = subscribeToMatchPlayers(supabase, sessionId, matchDeb.run);
+    // Third stream, for the held-reservation badge only. A held cross-court
+    // draft is `status='pending', is_published=false`, so the draft firewall
+    // hides BOTH its `matches` row and (once the firewall reaches match_players)
+    // its roster rows from the very player it reserves — leaving the two streams
+    // above with nothing to deliver at the moment the reservation is created.
+    // `create_held_cross_court_match` flips exactly three `queue_entries` rows to
+    // 'drafted' in the same transaction, and queue_entries is not firewalled, so
+    // this is the one event the pulled player is guaranteed to receive. Shares
+    // the debouncer above, so a queue burst still collapses to one fetch.
+    const unsubQueue = subscribeToQueue(supabase, sessionId, matchDeb.run, "player-match");
 
     return () => {
       matchDeb.cancel();
       unsubMatches();
       unsubPlayers();
+      unsubQueue();
     };
   }, [supabase, sessionId, fetchMyMatch]);
 

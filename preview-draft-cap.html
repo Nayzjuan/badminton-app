@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Draft Cap Control — Preview v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=Barlow+Condensed:ital,wght@1,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cc-bg:          oklch(0.14 0.018 238);
+    --cc-bg-2:        oklch(0.19 0.020 238);
+    --cc-bg-3:        oklch(0.23 0.022 240);
+    --cc-border:      oklch(0.30 0.025 240);
+    --cc-border-hi:   oklch(0.44 0.032 240);
+    --cc-accent:      oklch(0.79 0.18 188);
+    --cc-accent-dim:  oklch(0.79 0.18 188 / 0.14);
+    --cc-amber:       oklch(0.78 0.17 62);
+    --cc-amber-dim:   oklch(0.78 0.17 62 / 0.14);
+    --cc-t1:          oklch(0.94 0.008 238);
+    --cc-t2:          oklch(0.68 0.014 238);
+    --cc-t3:          oklch(0.48 0.016 238);
+    --cc-header-bg:   oklch(0.11 0.016 238 / 0.97);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: oklch(0.07 0.012 245);
+    font-family: 'Inter', sans-serif;
+    color: var(--cc-t1);
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }
+
+  .section-label {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.24em;
+    color: var(--cc-t3);
+    margin-bottom: 10px;
+  }
+  .annotation {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cc-amber);
+    margin-top: 8px;
+    padding: 0 2px;
+  }
+  .demo-block { margin-bottom: 36px; }
+
+  .clip-sm {
+    clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
+  }
+  .clip-xs {
+    clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+  }
+
+  /* ── Header strip ── */
+  .header-strip {
+    background: var(--cc-header-bg);
+    border-bottom: 1px solid var(--cc-border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--cc-border);
+  }
+  .header-left {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--cc-t1);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* ── Combined control ── */
+  .auto-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  /* Toggle button */
+  .toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.10em;
+    border: 1px solid;
+    padding: 0 12px;
+    height: 36px;
+    cursor: pointer;
+    white-space: nowrap;
+    background: none;
+  }
+  .toggle-btn.on {
+    background: var(--cc-accent-dim);
+    border-color: oklch(0.79 0.18 188 / 0.45);
+    color: var(--cc-accent);
+  }
+  .toggle-btn.off {
+    background: var(--cc-bg-3);
+    border-color: var(--cc-border);
+    color: var(--cc-t3);
+  }
+
+  /* Ping dot */
+  .dot {
+    position: relative;
+    width: 7px; height: 7px;
+    flex-shrink: 0;
+  }
+  .dot::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+  }
+  .dot.on::before  { background: var(--cc-accent); }
+  .dot.off::before { background: var(--cc-t3); }
+  .dot.on::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    background: var(--cc-accent);
+    opacity: 0.4;
+    animation: ping 1.4s ease-in-out infinite;
+  }
+  @keyframes ping {
+    0%   { transform: scale(1); opacity: 0.4; }
+    70%  { transform: scale(2.2); opacity: 0; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
+
+  /* ── Separator between toggle and cap chip ── */
+  .sep {
+    width: 1px;
+    height: 20px;
+    background: var(--cc-border);
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+
+  /* ── Cap chip — shows only current value ── */
+  .cap-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    border: 1px solid var(--cc-border);
+    background: var(--cc-bg-3);
+    color: var(--cc-t2);
+    padding: 0 10px;
+    height: 28px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.12s;
+  }
+  .cap-chip:hover {
+    border-color: var(--cc-border-hi);
+    color: var(--cc-t1);
+  }
+  .cap-chip .cap-key {
+    color: var(--cc-t3);
+    font-size: 8px;
+    letter-spacing: 0.18em;
+  }
+  .cap-chip .cap-val {
+    font-weight: 600;
+  }
+  /* When in dynamic mode, value gets accent tint */
+  .cap-chip.dynamic .cap-val {
+    color: var(--cc-accent);
+  }
+  /* When overridden, value is white */
+  .cap-chip.override .cap-val {
+    color: var(--cc-t1);
+  }
+  /* Caret */
+  .cap-chip .caret {
+    font-size: 8px;
+    color: var(--cc-t3);
+    margin-left: 1px;
+  }
+  /* Disabled */
+  .cap-chip.disabled {
+    opacity: 0.30;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  /* ── Popover ── */
+  .popover-wrapper {
+    position: relative;
+    display: inline-flex;
+  }
+  .popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: var(--cc-bg-2);
+    border: 1px solid var(--cc-border-hi);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 10;
+    min-width: 140px;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  }
+  .popover-title {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.20em;
+    color: var(--cc-t3);
+    margin-bottom: 4px;
+    padding: 0 2px;
+  }
+  .pop-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--cc-t2);
+    cursor: pointer;
+    border: 1px solid transparent;
+    clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+    transition: all 0.1s;
+  }
+  .pop-pill:hover {
+    background: var(--cc-bg-3);
+    border-color: var(--cc-border);
+    color: var(--cc-t1);
+  }
+  .pop-pill.active {
+    background: var(--cc-accent-dim);
+    border-color: oklch(0.79 0.18 188 / 0.35);
+    color: var(--cc-accent);
+  }
+  .pop-pill .pop-check {
+    margin-left: auto;
+    font-size: 9px;
+    color: var(--cc-accent);
+    opacity: 0;
+  }
+  .pop-pill.active .pop-check { opacity: 1; }
+  .pop-pill .pop-sub {
+    font-family: 'Inter', sans-serif;
+    font-size: 8px;
+    font-weight: 400;
+    color: var(--cc-t3);
+    letter-spacing: 0;
+    margin-left: auto;
+  }
+  .pop-divider {
+    height: 1px;
+    background: var(--cc-border);
+    margin: 2px 0;
+  }
+
+  /* ═══════════════════════════════
+     MOBILE
+  ═══════════════════════════════ */
+  .section-divider {
+    height: 1px;
+    background: var(--cc-border);
+    margin: 40px 0 36px;
+    position: relative;
+  }
+  .section-divider::after {
+    content: attr(data-label);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: oklch(0.07 0.012 245);
+    padding: 0 12px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8px;
+    color: var(--cc-t3);
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+  }
+
+  .mobile-frame {
+    width: 390px;
+    background: var(--cc-header-bg);
+    border: 1px solid var(--cc-border);
+    overflow: hidden;
+  }
+
+  .mobile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--cc-border);
+    gap: 8px;
+  }
+
+  /* Mobile: toggle pill (compact) */
+  .mobile-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.10em;
+    border: 1px solid oklch(0.79 0.18 188 / 0.45);
+    background: var(--cc-accent-dim);
+    color: var(--cc-accent);
+    padding: 0 10px;
+    height: 32px;
+    cursor: pointer;
+    flex-shrink: 0;
+    clip-path: polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px));
+  }
+  .mobile-toggle.off {
+    background: var(--cc-bg-3);
+    border-color: var(--cc-border);
+    color: var(--cc-t3);
+  }
+
+  /* Mobile cap chip — separate, smaller */
+  .mobile-cap-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    border: 1px solid var(--cc-border);
+    background: var(--cc-bg-3);
+    color: var(--cc-t2);
+    padding: 0 8px;
+    height: 28px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 5px, 100% 100%, 5px 100%, 0 calc(100% - 5px));
+  }
+  .mobile-cap-chip .cap-key {
+    color: var(--cc-t3);
+    font-size: 8px;
+  }
+  .mobile-cap-chip .cap-val { font-weight: 600; }
+  .mobile-cap-chip.dynamic .cap-val { color: var(--cc-accent); }
+  .mobile-cap-chip.override .cap-val { color: var(--cc-t1); }
+  .mobile-cap-chip.disabled {
+    opacity: 0.30;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  .mobile-cap-chip .caret { color: var(--cc-t3); font-size: 8px; }
+
+  /* Expanded picker row (mobile) */
+  .mobile-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+    background: var(--cc-bg);
+    border-bottom: 1px solid var(--cc-border);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  .mobile-picker-label {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--cc-t3);
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+  .m-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 26px;
+    min-width: 26px;
+    padding: 0 7px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--cc-t3);
+    border: 1px solid var(--cc-border);
+    background: transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    clip-path: polygon(0 0, calc(100% - 4px) 0, 100% 4px, 100% 100%, 4px 100%, 0 calc(100% - 4px));
+  }
+  .m-pill.active-dyn {
+    background: var(--cc-accent-dim);
+    border-color: oklch(0.79 0.18 188 / 0.4);
+    color: var(--cc-accent);
+  }
+  .m-pill.active-num {
+    background: var(--cc-bg-3);
+    border-color: var(--cc-t2);
+    color: var(--cc-t1);
+  }
+  .mobile-hint {
+    padding: 5px 12px 7px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8px;
+    color: var(--cc-t3);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+</style>
+</head>
+<body>
+
+<!-- ════════════════ DESKTOP ════════════════ -->
+
+<div class="demo-block">
+  <div class="section-label">Desktop — Auto ON · Cap = Dynamic (default)</div>
+  <div class="header-strip">
+    <div class="header-left">Chillax Thursday</div>
+    <div class="auto-control">
+      <button class="toggle-btn on clip-sm">
+        <span class="dot on"></span>Auto On
+      </button>
+      <div class="sep"></div>
+      <!-- Cap chip: shows only current value -->
+      <div class="popover-wrapper">
+        <button class="cap-chip dynamic clip-xs">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">Dynamic</span>
+          <span class="caret">▾</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Cap chip shows only "Dynamic" — no number row in sight</div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Desktop — Auto ON · Cap chip clicked → Picker open</div>
+  <div class="header-strip">
+    <div class="header-left">Chillax Thursday</div>
+    <div class="auto-control">
+      <button class="toggle-btn on clip-sm">
+        <span class="dot on"></span>Auto On
+      </button>
+      <div class="sep"></div>
+      <div class="popover-wrapper">
+        <button class="cap-chip dynamic clip-xs" style="border-color: var(--cc-border-hi);">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">Dynamic</span>
+          <span class="caret">▴</span>
+        </button>
+        <!-- Popover -->
+        <div class="popover">
+          <div class="popover-title">Max drafts</div>
+          <button class="pop-pill active">
+            Dynamic
+            <span class="pop-sub">Auto-scales</span>
+            <span class="pop-check">✓</span>
+          </button>
+          <div class="pop-divider"></div>
+          <button class="pop-pill">1</button>
+          <button class="pop-pill">2</button>
+          <button class="pop-pill">3</button>
+          <button class="pop-pill">4</button>
+          <button class="pop-pill">5</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Popover opens below chip · Dynamic is checked · numbers 1–5 available</div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Desktop — Auto ON · Cap = 2 (override selected)</div>
+  <div class="header-strip">
+    <div class="header-left">Chillax Thursday</div>
+    <div class="auto-control">
+      <button class="toggle-btn on clip-sm">
+        <span class="dot on"></span>Auto On
+      </button>
+      <div class="sep"></div>
+      <div class="popover-wrapper">
+        <!-- Override: chip shows "2" in white -->
+        <button class="cap-chip override clip-xs">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">2</span>
+          <span class="caret">▾</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Chip changes to "2" — clear signal an override is active</div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Desktop — Auto ON · Cap = 2 override · picker open</div>
+  <div class="header-strip">
+    <div class="header-left">Chillax Thursday</div>
+    <div class="auto-control">
+      <button class="toggle-btn on clip-sm">
+        <span class="dot on"></span>Auto On
+      </button>
+      <div class="sep"></div>
+      <div class="popover-wrapper">
+        <button class="cap-chip override clip-xs" style="border-color: var(--cc-border-hi);">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">2</span>
+          <span class="caret">▴</span>
+        </button>
+        <div class="popover">
+          <div class="popover-title">Max drafts</div>
+          <button class="pop-pill">
+            Dynamic
+            <span class="pop-sub">Auto-scales</span>
+            <span class="pop-check">✓</span>
+          </button>
+          <div class="pop-divider"></div>
+          <button class="pop-pill">1</button>
+          <button class="pop-pill active">2 <span class="pop-check">✓</span></button>
+          <button class="pop-pill">3</button>
+          <button class="pop-pill">4</button>
+          <button class="pop-pill">5</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">2 is checked · organizer can pick Dynamic to return to default</div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Desktop — Auto OFF (cap chip dimmed)</div>
+  <div class="header-strip">
+    <div class="header-left">Chillax Thursday</div>
+    <div class="auto-control">
+      <button class="toggle-btn off clip-sm">
+        <span class="dot off"></span>Auto Off
+      </button>
+      <div class="sep"></div>
+      <button class="cap-chip dynamic disabled clip-xs">
+        <span class="cap-key">Max</span>
+        <span class="cap-val">Dynamic</span>
+        <span class="caret">▾</span>
+      </button>
+    </div>
+  </div>
+  <div class="annotation">Cap chip dims when Auto is OFF — setting preserved but inert</div>
+</div>
+
+
+<!-- ════════════════ MOBILE ════════════════ -->
+<div class="section-divider" data-label="Mobile"></div>
+
+<div class="demo-block">
+  <div class="section-label">Mobile — Auto ON · Cap = Dynamic (collapsed)</div>
+  <div class="mobile-frame">
+    <div class="mobile-header">
+      <div class="header-left" style="font-size:12px;">Chillax Thursday</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="mobile-toggle">
+          <span class="dot on" style="width:6px;height:6px;"></span>Auto
+        </button>
+        <button class="mobile-cap-chip dynamic">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">Dynamic</span>
+          <span class="caret">▾</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Toggle and cap chip are separate — no redundancy, no ambiguity</div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Mobile — Auto ON · Cap chip tapped → Picker expanded</div>
+  <div class="mobile-frame">
+    <div class="mobile-header">
+      <div class="header-left" style="font-size:12px;">Chillax Thursday</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="mobile-toggle">
+          <span class="dot on" style="width:6px;height:6px;"></span>Auto
+        </button>
+        <button class="mobile-cap-chip dynamic" style="border-color: var(--cc-border-hi);">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">Dynamic</span>
+          <span class="caret">▴</span>
+        </button>
+      </div>
+    </div>
+    <div class="mobile-picker-row">
+      <span class="mobile-picker-label">Drafts</span>
+      <button class="m-pill active-dyn">Dynamic</button>
+      <button class="m-pill">1</button>
+      <button class="m-pill">2</button>
+      <button class="m-pill">3</button>
+      <button class="m-pill">4</button>
+      <button class="m-pill">5</button>
+    </div>
+    <div class="mobile-hint">Tap a value · saves instantly · tap elsewhere to close</div>
+  </div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Mobile — Auto ON · Cap = 3 selected</div>
+  <div class="mobile-frame">
+    <div class="mobile-header">
+      <div class="header-left" style="font-size:12px;">Chillax Thursday</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="mobile-toggle">
+          <span class="dot on" style="width:6px;height:6px;"></span>Auto
+        </button>
+        <!-- Cap chip now shows "3" -->
+        <button class="mobile-cap-chip override">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">3</span>
+          <span class="caret">▾</span>
+        </button>
+      </div>
+    </div>
+    <div class="mobile-picker-row">
+      <span class="mobile-picker-label">Drafts</span>
+      <button class="m-pill">Dynamic</button>
+      <button class="m-pill">1</button>
+      <button class="m-pill">2</button>
+      <button class="m-pill active-num">3</button>
+      <button class="m-pill">4</button>
+      <button class="m-pill">5</button>
+    </div>
+    <div class="mobile-hint">Engine caps at min(3, dynamic limit) · tap Dynamic to reset</div>
+  </div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Mobile — Auto OFF</div>
+  <div class="mobile-frame">
+    <div class="mobile-header">
+      <div class="header-left" style="font-size:12px;">Chillax Thursday</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="mobile-toggle off">
+          <span class="dot off" style="width:6px;height:6px;"></span>Off
+        </button>
+        <button class="mobile-cap-chip dynamic disabled">
+          <span class="cap-key">Max</span>
+          <span class="cap-val">Dynamic</span>
+          <span class="caret">▾</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Chip stays visible but dimmed — setting remembered for when auto turns back ON</div>
+</div>
+
+
+<!-- ════════════════ LOADING STATES ════════════════ -->
+<div class="section-divider" data-label="Loading States"></div>
+
+<style>
+  /* Spinning arc */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin-arc {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border: 1.5px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+
+  /* Phase label */
+  .phase-text {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  /* Full-dashboard lockout overlay */
+  .dashboard-lockout {
+    position: relative;
+    border: 1px solid var(--cc-border);
+    overflow: hidden;
+  }
+  .lockout-overlay {
+    position: absolute;
+    inset: 0;
+    background: oklch(0.07 0.012 245 / 0.55);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    backdrop-filter: blur(1px);
+    cursor: not-allowed;
+  }
+  .lockout-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--cc-t1);
+    background: var(--cc-bg-2);
+    border: 1px solid var(--cc-border-hi);
+    padding: 8px 14px;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  }
+
+  /* Fake dashboard body */
+  .fake-dash {
+    background: var(--cc-bg);
+    padding: 16px 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+  }
+  .fake-card {
+    background: var(--cc-bg-2);
+    border: 1px solid var(--cc-border);
+    height: 72px;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .fake-card-label {
+    font-family: 'Chakra Petch', sans-serif;
+    font-size: 8px;
+    color: var(--cc-t3);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+  }
+
+  /* Chip in loading state */
+  .cap-chip.loading {
+    border-color: var(--cc-border-hi);
+    color: var(--cc-t2);
+    gap: 7px;
+    cursor: not-allowed;
+  }
+  .cap-chip.loading .phase-text {
+    color: var(--cc-t2);
+    font-size: 9px;
+  }
+</style>
+
+<!-- Phase 1: Clearing drafts -->
+<div class="demo-block">
+  <div class="section-label">Desktop — Phase 1: Clearing drafts · Full lockout active</div>
+  <div class="dashboard-lockout">
+    <div class="header-strip" style="border:none;border-bottom:1px solid var(--cc-border);">
+      <div class="header-left">Chillax Thursday</div>
+      <div class="auto-control">
+        <button class="toggle-btn on clip-sm" disabled style="opacity:0.4;cursor:not-allowed;">
+          <span class="dot on"></span>Auto On
+        </button>
+        <div class="sep"></div>
+        <button class="cap-chip loading clip-xs">
+          <span class="spin-arc"></span>
+          <span class="phase-text">Clearing…</span>
+        </button>
+      </div>
+    </div>
+    <div class="fake-dash">
+      <div class="fake-card"><span class="fake-card-label">Court 1</span></div>
+      <div class="fake-card"><span class="fake-card-label">Court 2</span></div>
+      <div class="fake-card"><span class="fake-card-label">Court 3</span></div>
+    </div>
+    <!-- Full lockout overlay -->
+    <div class="lockout-overlay">
+      <div class="lockout-badge">
+        <span class="spin-arc"></span>
+        Clearing drafts…
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Entire dashboard blocked · spinner + "Clearing…" in the chip · overlay prevents any interaction</div>
+</div>
+
+<!-- Phase 2: Generating new drafts -->
+<div class="demo-block">
+  <div class="section-label">Desktop — Phase 2: Generating new drafts</div>
+  <div class="dashboard-lockout">
+    <div class="header-strip" style="border:none;border-bottom:1px solid var(--cc-border);">
+      <div class="header-left">Chillax Thursday</div>
+      <div class="auto-control">
+        <button class="toggle-btn on clip-sm" disabled style="opacity:0.4;cursor:not-allowed;">
+          <span class="dot on"></span>Auto On
+        </button>
+        <div class="sep"></div>
+        <button class="cap-chip loading clip-xs">
+          <span class="spin-arc"></span>
+          <span class="phase-text">Generating…</span>
+        </button>
+      </div>
+    </div>
+    <div class="fake-dash">
+      <div class="fake-card"><span class="fake-card-label">Court 1</span></div>
+      <div class="fake-card"><span class="fake-card-label">Court 2</span></div>
+      <div class="fake-card"><span class="fake-card-label">Court 3</span></div>
+    </div>
+    <div class="lockout-overlay">
+      <div class="lockout-badge">
+        <span class="spin-arc"></span>
+        Generating new drafts…
+      </div>
+    </div>
+  </div>
+  <div class="annotation">Same overlay · phase label on chip changes · organizer still locked out</div>
+</div>
+
+<!-- Done: settled at new cap -->
+<div class="demo-block">
+  <div class="section-label">Desktop — Done · Cap settled at 2</div>
+  <div class="header-strip">
+    <div class="header-left">Chillax Thursday</div>
+    <div class="auto-control">
+      <button class="toggle-btn on clip-sm">
+        <span class="dot on"></span>Auto On
+      </button>
+      <div class="sep"></div>
+      <button class="cap-chip override clip-xs">
+        <span class="cap-key">Max</span>
+        <span class="cap-val">2</span>
+        <span class="caret">▾</span>
+      </button>
+    </div>
+  </div>
+  <div class="annotation">Overlay lifts · chip snaps to new value · on-deck panel updates with fresh drafts</div>
+</div>
+
+<!-- Mobile loading -->
+<div class="section-divider" data-label="Mobile Loading"></div>
+
+<div class="demo-block">
+  <div class="section-label">Mobile — Phase 1: Clearing</div>
+  <div class="mobile-frame" style="position:relative;">
+    <div class="mobile-header">
+      <div class="header-left" style="font-size:12px;">Chillax Thursday</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="mobile-toggle" style="opacity:0.35;cursor:not-allowed;">
+          <span class="dot on" style="width:6px;height:6px;"></span>Auto
+        </button>
+        <button class="mobile-cap-chip dynamic" style="cursor:not-allowed;gap:7px;">
+          <span class="spin-arc" style="width:9px;height:9px;"></span>
+          <span style="font-family:'Chakra Petch',sans-serif;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--cc-t2);">Clearing…</span>
+        </button>
+      </div>
+    </div>
+    <!-- Mobile lockout overlay -->
+    <div style="position:absolute;inset:0;background:oklch(0.07 0.012 245 / 0.6);z-index:10;cursor:not-allowed;"></div>
+  </div>
+</div>
+
+<div class="demo-block">
+  <div class="section-label">Mobile — Phase 2: Generating</div>
+  <div class="mobile-frame" style="position:relative;">
+    <div class="mobile-header">
+      <div class="header-left" style="font-size:12px;">Chillax Thursday</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+        <button class="mobile-toggle" style="opacity:0.35;cursor:not-allowed;">
+          <span class="dot on" style="width:6px;height:6px;"></span>Auto
+        </button>
+        <button class="mobile-cap-chip dynamic" style="cursor:not-allowed;gap:7px;">
+          <span class="spin-arc" style="width:9px;height:9px;"></span>
+          <span style="font-family:'Chakra Petch',sans-serif;font-size:9px;text-transform:uppercase;letter-spacing:0.12em;color:var(--cc-t2);">Generating…</span>
+        </button>
+      </div>
+    </div>
+    <div style="position:absolute;inset:0;background:oklch(0.07 0.012 245 / 0.6);z-index:10;cursor:not-allowed;"></div>
+  </div>
+</div>
+
+</body>
+</html>

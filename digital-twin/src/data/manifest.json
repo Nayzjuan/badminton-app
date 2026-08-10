@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-06-13T07:37:41.928Z",
+  "_lastExtracted": "2026-08-04T15:04:48.299Z",
   "tables": [
     {
       "name": "profiles",
@@ -99,6 +99,12 @@
           "note": "uuid — references profiles.id"
         },
         {
+          "name": "club_id",
+          "type": "string",
+          "nullable": false,
+          "note": "uuid — references clubs.id (owning tenant). NOT NULL post Phase-0 migration."
+        },
+        {
           "name": "organizer_passcode",
           "type": "string",
           "nullable": true,
@@ -133,6 +139,18 @@
           "type": "number",
           "nullable": true,
           "note": "Organizer cap on auto-draft generation. null = dynamic (3/5/6 by pool size). 1–5 = ceiling."
+        },
+        {
+          "name": "auto_publish",
+          "type": "boolean",
+          "nullable": false,
+          "note": "Auto-publish mode: when true, engine-generated matches skip the draft gate and go straight to On Deck (is_published=true). false = manual review."
+        },
+        {
+          "name": "is_hidden",
+          "type": "boolean",
+          "nullable": false,
+          "note": "Infrastructure sessions (the E2E sandbox, staging) that must never appear in a human-facing session list. NOT access control — the row is still readable by id, which is how the e2e suite drives it."
         },
         {
           "name": "created_at",
@@ -331,10 +349,28 @@
           "note": ""
         },
         {
-          "name": "origin",
-          "type": "MatchOrigin",
+          "name": "created_method",
+          "type": "MatchCreatedMethod",
           "nullable": false,
-          "note": "How the match was created. NOT NULL — defaults to 'auto' for all rows."
+          "note": "How the match was originally created. Immutable — never overwritten."
+        },
+        {
+          "name": "modification_count",
+          "type": "number",
+          "nullable": false,
+          "note": "Count of composition changes (roster/team) net of undos. 0 = clean."
+        },
+        {
+          "name": "final_classification",
+          "type": "MatchClassification",
+          "nullable": false,
+          "note": "Generated 6-value ultimate label (created_method × modified?). Read-only."
+        },
+        {
+          "name": "provenance_backfilled",
+          "type": "boolean",
+          "nullable": false,
+          "note": "True for rows backfilled at the audit cutover (no event trail; floored count)."
         },
         {
           "name": "is_published",
@@ -455,6 +491,109 @@
         {
           "name": "team",
           "type": "Team",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "match_events",
+      "typeName": "MatchEvent",
+      "desc": "match_events table — append-only audit log of how a match was made and every composition change it underwent. Written only by SECURITY DEFINER RPCs + best-effort server-action logging; never updated or deleted.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "match_id",
+          "type": "string",
+          "nullable": true,
+          "note": "Live FK — null after the match row is deleted (snapshot preserves the id)."
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "match_id_snapshot",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id_snapshot",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "seq",
+          "type": "number",
+          "nullable": false,
+          "note": "Per-match monotonic order (1,2,3,…)."
+        },
+        {
+          "name": "event_type",
+          "type": "MatchEventType",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "phase",
+          "type": "MatchPhase",
+          "nullable": false,
+          "note": "Match status at the moment of the event."
+        },
+        {
+          "name": "actor_type",
+          "type": "MatchEventActorType",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "actor_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "actor_name",
+          "type": "string",
+          "nullable": true,
+          "note": "display_name snapshotted at write time (durable against profile merges/renames)."
+        },
+        {
+          "name": "correlation_id",
+          "type": "string",
+          "nullable": true,
+          "note": "Ties the two legs of a cross-match action (on-deck pull / cross-match draft swap)."
+        },
+        {
+          "name": "reverses_event_id",
+          "type": "string",
+          "nullable": true,
+          "note": "For undo events — the event this reverses."
+        },
+        {
+          "name": "movements",
+          "type": "MatchMovement[]",
+          "nullable": false,
+          "note": "Granular player movements (RosterSwapMovement[] | TeamFlipMovement[])."
+        },
+        {
+          "name": "payload",
+          "type": "Record<string, unknown>",
+          "nullable": true,
+          "note": "Event-specific extras (created roster/method, score deltas, secondary_match_id)."
+        },
+        {
+          "name": "created_at",
+          "type": "string",
           "nullable": false,
           "note": ""
         }
@@ -630,6 +769,12 @@
       "desc": "player_rivalries table — running all-time H2H ledger between players (directional)",
       "columns": [
         {
+          "name": "club_id",
+          "type": "string",
+          "nullable": false,
+          "note": "uuid — references clubs.id (tenant scope); part of the PK"
+        },
+        {
           "name": "player_id",
           "type": "string",
           "nullable": false,
@@ -684,6 +829,12 @@
       "typeName": "PlayerPartnership",
       "desc": "player_partnerships table — running all-time partnership ledger between players (directional)",
       "columns": [
+        {
+          "name": "club_id",
+          "type": "string",
+          "nullable": false,
+          "note": "uuid — references clubs.id (tenant scope); part of the PK"
+        },
         {
           "name": "player_id",
           "type": "string",
@@ -778,6 +929,55 @@
       ]
     },
     {
+      "name": "co_organizer_join_attempts",
+      "typeName": "CoOrganizerJoinAttempt",
+      "desc": "co_organizer_join_attempts table — append-only credential-guessing log used by the rate limiters (service-role only: RLS on, no policies, no grants). Despite the name it now covers two scopes (20260721210000): scope='cojoin'    → keys on `user_id`  (caller is authenticated), subject null scope='reconnect' → keys on `subject`  (normalized display_name being attacked), user_id null — the caller is anonymous and can mint identities freely, so a caller-keyed limit would be worthless. Hence both `user_id` and `subject` are nullable: exactly one is set per row.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "scope",
+          "type": "\"cojoin\" | \"reconnect\"",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "subject",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "ip",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "succeeded",
+          "type": "boolean",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "attempted_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
       "name": "player_renames",
       "typeName": "PlayerRename",
       "desc": "player_renames audit table — append-only record of name changes.",
@@ -826,6 +1026,202 @@
         },
         {
           "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "clubs",
+      "typeName": "Club",
+      "desc": "clubs table — tenant root. slug is the URL identifier under /c/[slug].",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "slug",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "created_by",
+          "type": "string",
+          "nullable": false,
+          "note": "uuid — references profiles.id"
+        },
+        {
+          "name": "is_active",
+          "type": "boolean",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "club_invites",
+      "typeName": "ClubInvite",
+      "desc": "club_invites table — one-time invite tokens for joining a club.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "club_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "role",
+          "type": "ClubRole",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "created_by",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "consumed_by",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "consumed_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "expires_at",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "created_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "club_members",
+      "typeName": "ClubMember",
+      "desc": "club_members table — membership + role of a player within a club.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "club_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "role",
+          "type": "ClubRole",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "is_active",
+          "type": "boolean",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "invited_by",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "joined_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
+    },
+    {
+      "name": "club_milestones",
+      "typeName": "ClubMilestone",
+      "desc": "club_milestones — append-only ledger of one-time, club-wide \"firsts\" (currently just 'first_to_100_games'). UNIQUE (club_id, milestone) is the concurrency-safety mechanism: claiming one is a single atomic `INSERT ... ON CONFLICT DO NOTHING` inside compute_session_wrapped(). RLS is enabled with zero policies (deny-all to anon/authenticated; service-role bypasses) — the app never reads this table directly; it's consumed purely inside the RPC and surfaced to players via session_wrapped_stats.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "club_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "milestone",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "session_id",
+          "type": "string",
+          "nullable": true,
+          "note": ""
+        },
+        {
+          "name": "achieved_at",
           "type": "string",
           "nullable": false,
           "note": ""
@@ -1004,10 +1400,22 @@
           "note": ""
         },
         {
-          "name": "match_origin",
-          "type": "MatchOrigin",
+          "name": "created_method",
+          "type": "MatchCreatedMethod",
           "nullable": false,
-          "note": "Origin of the match as recorded at completion time."
+          "note": "Provenance, as exposed by the rebuilt v_match_history (migration 2)."
+        },
+        {
+          "name": "modification_count",
+          "type": "number",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "final_classification",
+          "type": "MatchClassification",
+          "nullable": false,
+          "note": ""
         },
         {
           "name": "game_scores",
@@ -1026,6 +1434,12 @@
           "type": "string[]",
           "nullable": true,
           "note": ""
+        },
+        {
+          "name": "club_id",
+          "type": "string",
+          "nullable": false,
+          "note": "Resolved via sessions.club_id (migration: 20260701000001_leaderboard_club_scoping)."
         }
       ]
     },
@@ -1079,6 +1493,12 @@
         },
         {
           "name": "session_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "club_id",
           "type": "string",
           "nullable": false,
           "note": ""
@@ -1140,6 +1560,12 @@
       "columns": [
         {
           "name": "player_id",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "club_id",
           "type": "string",
           "nullable": false,
           "note": ""
@@ -1236,17 +1662,93 @@
   ],
   "rpcs": [
     {
-      "name": "elevate_to_organizer",
+      "name": "can_read_profile",
       "returns": "boolean",
       "args": [
         {
-          "name": "p_session_id",
+          "name": "p_profile_id",
+          "type": "string | null",
+          "optional": false
+        }
+      ],
+      "note": "Visibility predicate behind the `profiles_select` RLS policy (20260723200000): true when the caller shares an active club with the target, or the target is queued in / has played in / organizes / created a session the caller can reach. Returns false — never NULL — for an unknown or NULL id. EXECUTE is granted to `authenticated` and `service_role` only; it is revoked from PUBLIC/anon so it cannot be used as an anonymous membership oracle over /rest/v1/rpc. Declared here so tests can assert that revoke; application code never calls it directly — the policy does."
+    },
+    {
+      "name": "reconnect_record_and_check",
+      "returns": "{ /** * NULL when the caller was already over a limit: an over-limit attempt * is rejected WITHOUT being recorded, so the window can actually drain * (20260721220000). Only read this after checking the flags below. */ attempt_id: string | null; over_subject_limit: boolean; over_ip_limit: boolean; /** Detection signal for horizontal spray. NOT a denial. */ spray_suspected: boolean; }[]",
+      "args": [
+        {
+          "name": "p_subject",
           "type": "string",
           "optional": false
         },
         {
-          "name": "p_passcode",
+          "name": "p_ip",
+          "type": "string | null",
+          "optional": false
+        },
+        {
+          "name": "p_window_min",
+          "type": "number",
+          "optional": false
+        },
+        {
+          "name": "p_subject_max",
+          "type": "number",
+          "optional": false
+        },
+        {
+          "name": "p_ip_max",
+          "type": "number",
+          "optional": false
+        },
+        {
+          "name": "p_spray_alert_at",
+          "type": "number",
+          "optional": false
+        }
+      ],
+      "note": "Atomic, fail-closed rate-limit gate for joinAsCoOrganizer: records the attempt and returns the in-window verdict in one transaction. Service-role only (EXECUTE revoked from PUBLIC/anon/authenticated)."
+    },
+    {
+      "name": "auth_attempt_mark_succeeded",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_attempt_id",
           "type": "string",
+          "optional": false
+        }
+      ],
+      "note": "Flips a pessimistically-logged attempt to succeeded. Service-role only."
+    },
+    {
+      "name": "cojoin_record_and_check",
+      "returns": "{ attempt_id: string | null; over_user_limit: boolean; over_ip_limit: boolean; }[]",
+      "args": [
+        {
+          "name": "p_user_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_ip",
+          "type": "string | null",
+          "optional": false
+        },
+        {
+          "name": "p_window_min",
+          "type": "number",
+          "optional": false
+        },
+        {
+          "name": "p_user_max",
+          "type": "number",
+          "optional": false
+        },
+        {
+          "name": "p_ip_max",
+          "type": "number",
           "optional": false
         }
       ],
@@ -1284,9 +1786,26 @@
           "name": "p_session_id",
           "type": "string | null",
           "optional": true
+        },
+        {
+          "name": "p_club_id",
+          "type": "string | null",
+          "optional": true
         }
       ],
-      "note": ""
+      "note": "SERVICE ROLE ONLY as of 20260722010001. Both params default to NULL, so `{}` returns every player in every club — that is why it lost anon/authenticated EXECUTE. Browser callers use get_session_player_streaks instead."
+    },
+    {
+      "name": "get_session_player_streaks",
+      "returns": "{ player_id: string; win_streak: number }[]",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": "Browser-callable, session-scoped half of get_player_streaks (20260722010000). p_session_id is MANDATORY and the function gates itself on session_access_level(), so a caller without access to the session receives zero rows. Granted to authenticated + service_role; never to anon."
     },
     {
       "name": "get_alltime_snapshot_before",
@@ -1296,6 +1815,45 @@
           "name": "p_cutoff",
           "type": "string",
           "optional": false
+        },
+        {
+          "name": "p_club_id",
+          "type": "string | null",
+          "optional": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "get_monthly_leaderboard",
+      "returns": "{ player_id: string; display_name: string; games_played: number; wins: number; losses: number; points_for: number; points_against: number; point_diff: number; win_pct: number; vip_tag: string | null; vip_theme: string | null; }[]",
+      "args": [
+        {
+          "name": "p_year",
+          "type": "number",
+          "optional": false
+        },
+        {
+          "name": "p_month",
+          "type": "number",
+          "optional": false
+        },
+        {
+          "name": "p_club_id",
+          "type": "string | null",
+          "optional": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "get_leaderboard_months",
+      "returns": "{ year: number; month: number }[]",
+      "args": [
+        {
+          "name": "p_club_id",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1307,6 +1865,57 @@
         {
           "name": "—",
           "type": "Record<string, never>",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "requeue_finished_players",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_player_ids",
+          "type": "string[]",
+          "optional": false
+        },
+        {
+          "name": "p_drafted_ids",
+          "type": "string[]",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "count_completed_matches_by_session",
+      "returns": "{ session_id: string; cnt: number }[]",
+      "args": [
+        {
+          "name": "p_session_ids",
+          "type": "string[]",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "reorder_on_deck_matches",
+      "returns": "void",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_match_ids",
+          "type": "string[]",
           "optional": false
         }
       ],
@@ -1362,6 +1971,26 @@
           "name": "p_is_published",
           "type": "boolean",
           "optional": true
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_is_undo",
+          "type": "boolean",
+          "optional": true
+        },
+        {
+          "name": "p_reverses_event_id",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1389,6 +2018,16 @@
           "name": "p_b_player_id",
           "type": "string",
           "optional": false
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1446,6 +2085,16 @@
           "name": "p_is_published",
           "type": "boolean",
           "optional": true
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1475,6 +2124,18 @@
       "note": ""
     },
     {
+      "name": "get_primary_club_slug",
+      "returns": "string | null",
+      "args": [
+        {
+          "name": "p_user_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": "Slug of the club a player should land in cold (last session attended → last joined → null). SECURITY DEFINER; service-role only."
+    },
+    {
       "name": "get_h2h_record",
       "returns": "{ alltime_a: number; alltime_b: number; session_a: number; session_b: number; }[]",
       "args": [
@@ -1488,6 +2149,23 @@
           "type": "string[]",
           "optional": false
         },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_club_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "get_session_leaderboard_public",
+      "returns": "{ player_id: string; session_id: string; club_id: string; display_name: string; games_played: number; wins: number; losses: number; points_for: number; points_against: number; point_diff: number; win_pct: number; vip_tag: string | null; vip_theme: string | null; }[]",
+      "args": [
         {
           "name": "p_session_id",
           "type": "string",
@@ -1527,7 +2205,7 @@
     },
     {
       "name": "lookup_active_session",
-      "returns": "{ id: string; name: string; is_active: boolean }[]",
+      "returns": "{ id: string; name: string; is_active: boolean; club_slug: string | null }[]",
       "args": [
         {
           "name": "p_session_id",
@@ -1594,6 +2272,23 @@
       "note": ""
     },
     {
+      "name": "auto_publish_match",
+      "returns": "string",
+      "args": [
+        {
+          "name": "p_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
       "name": "publish_all_drafts",
       "returns": "{ success: boolean; error?: string; published_count?: number; skipped_count?: number; }",
       "args": [
@@ -1612,7 +2307,7 @@
     },
     {
       "name": "checkout_player_cleanup_drafts",
-      "returns": "void",
+      "returns": "{ cancelled_match_id: string }[]",
       "args": [
         {
           "name": "p_session_id",
@@ -1623,6 +2318,68 @@
           "name": "p_player_id",
           "type": "string",
           "optional": false
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "record_match_event",
+      "returns": "string",
+      "args": [
+        {
+          "name": "p_match_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_event_type",
+          "type": "MatchEventType",
+          "optional": false
+        },
+        {
+          "name": "p_phase",
+          "type": "MatchPhase",
+          "optional": false
+        },
+        {
+          "name": "p_actor_type",
+          "type": "MatchEventActorType",
+          "optional": false
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": false
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": false
+        },
+        {
+          "name": "p_movements",
+          "type": "unknown",
+          "optional": true
+        },
+        {
+          "name": "p_payload",
+          "type": "unknown",
+          "optional": true
+        },
+        {
+          "name": "p_correlation_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_reverses_event_id",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1684,6 +2441,16 @@
           "name": "p_session_id",
           "type": "string",
           "optional": false
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1716,6 +2483,26 @@
           "name": "p_team",
           "type": "string",
           "optional": false
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_is_undo",
+          "type": "boolean",
+          "optional": true
+        },
+        {
+          "name": "p_reverses_event_id",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1738,6 +2525,31 @@
           "name": "p_player_b_id",
           "type": "string",
           "optional": false
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_is_undo",
+          "type": "boolean",
+          "optional": true
+        },
+        {
+          "name": "p_reverses_event_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_session_id",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1775,6 +2587,16 @@
           "name": "p_session_id",
           "type": "string",
           "optional": false
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1822,6 +2644,16 @@
           "name": "p_ondeck_team",
           "type": "string",
           "optional": false
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1876,6 +2708,65 @@
           "name": "p_origin",
           "type": "MatchOrigin",
           "optional": true
+        },
+        {
+          "name": "p_actor_id",
+          "type": "string | null",
+          "optional": true
+        },
+        {
+          "name": "p_actor_name",
+          "type": "string | null",
+          "optional": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "club_member_deactivate",
+      "returns": "{ success: boolean; reason: \"ok\" | \"not_found\" | \"only_owner\" | \"role_changed\" }",
+      "args": [
+        {
+          "name": "p_club_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_member_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_expected_role",
+          "type": "string | null",
+          "optional": true
+        }
+      ],
+      "note": ""
+    },
+    {
+      "name": "club_member_set_role",
+      "returns": "{ success: boolean; reason: \"ok\" | \"no_change\" | \"not_found\" | \"only_owner\" | \"invalid_role\" | \"role_changed\"; }",
+      "args": [
+        {
+          "name": "p_club_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_member_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_new_role",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_expected_role",
+          "type": "string | null",
+          "optional": true
         }
       ],
       "note": ""
@@ -1885,7 +2776,7 @@
     {
       "name": "BOTTLENECK_THRESHOLD_MINUTES",
       "value": 20,
-      "desc": "Minutes before a player is flagged as a \"bottleneck\" in the wait time monitor."
+      "desc": "The club's canonical timezone. The app is single-locale; all \"calendar\" boundaries that must be identical for every viewer (e.g. the Monthly leaderboard's month membership) are anchored here, NOT in the browser's local timezone. Asia/Manila is a stable UTC+8 with no DST. If the club ever spans timezones, this should become a session/club setting. / export const CLUB_TIMEZONE = \"Asia/Manila\"; /** Minutes before a player is flagged as a \"bottleneck\" in the wait time monitor."
     },
     {
       "name": "SKILL_VARIANCE_TARGET",
@@ -1994,13 +2885,28 @@
     },
     {
       "name": "MAX_OPPONENT_REPEATS",
-      "value": 3,
-      "desc": "Soft cap on the number of times two players may face each other as opponents (cross-net) within a single session. Enforced in snakeDraft / rotatedDraft as a PREFERENCE (soft), not a hard block: the engine first tries team splits where no cross-net pair is at this cap. If all splits have at least one capped opponent pair, the cap is relaxed and the best available split is used — preventing stalls. This is a soft cap to avoid conflicts with the hard partnership cap: in small sessions the same players necessarily face each other often."
+      "value": 2,
+      "desc": "Soft cap on the number of times two players may face each other as opponents (cross-net) within a single session. Enforced in snakeDraft / rotatedDraft as a PREFERENCE (soft), not a hard block: the engine first tries team splits where no cross-net pair is at this cap. If all splits have at least one capped opponent pair, the cap is relaxed and the best available split is used — preventing stalls. This is a soft cap to avoid conflicts with the hard partnership cap: in small sessions the same players necessarily face each other often. Lowered 3 → 2 (2026-07 diversity pass): the engine now prefers splits where no cross-net pair has already met twice, so a given pair only faces off a third time when the pool genuinely leaves no alternative. Affects round 3+ team-splitting (in round 2 no pair has met more than once, so the cap does not bite — round-2 opponent freshness is driven by OVERLAP_WEIGHT_OPPONENT in deriveOverlapMap instead). Still soft, so small sessions never stall."
+    },
+    {
+      "name": "OVERLAP_WEIGHT_TEAMMATE",
+      "value": 2,
+      "desc": "Familiarity weights applied by deriveOverlapMap per prior in-session encounter with the anchor, consumed by scoreCandidates (weight × the overlap multiplier) to push already-encountered players down the candidate order. TEAMMATE (same side) and OPPONENT (cross-net) are now weighted EQUALLY (both 2) — raised from the old 2/1 split as part of the 2026-07 diversity pass so that re-FACING someone from round 1 is avoided as strongly as re-PARTNERING them. This is the primary lever for round-2 opponent diversity: it fires on a single prior meeting (unlike MAX_OPPONENT_REPEATS, which only bites on a 2nd meeting). Soft signal only — reorders candidates, never hard-blocks; skill windows and the partnership cap are enforced separately."
+    },
+    {
+      "name": "OVERLAP_WEIGHT_OPPONENT",
+      "value": 2,
+      "desc": ""
     },
     {
       "name": "MIN_REST_MINUTES",
       "value": 18,
       "desc": "Minimum minutes a returning player must wait before they can be drafted again. Guards against 0-minute back-to-back play. Applies to players with games_played > 0. First-time players (games_played = 0) are always eligible regardless of wait time. Fallback: if applying this filter would leave fewer than PLAYERS_PER_MATCH waiting players, the filter is waived so the session can still form a match (handles very small sessions or returning bursts)."
+    },
+    {
+      "name": "GAMES_AHEAD_PENALTY_RED_ZONE",
+      "value": 100,
+      "desc": "scoreCandidates penalty per game a candidate is AHEAD of the pool minimum (fresh-first rule). Same magnitude as one overlap unit (10_000) so a candidate one game ahead of the freshest waiting players ranks behind them — effectively \"draw from the freshest cohort first\" whenever the skill window allows, without ever hard-blocking (skill compatibility and Red Zone urgency still win). Zero effect when every candidate has equal games. / export const GAMES_AHEAD_PENALTY = 10_000; /** Red Zone variant of GAMES_AHEAD_PENALTY — capped small (like the 100× overlap cap) so an urgent long-waiting player is never displaced by a fresher-but-not-urgent candidate."
     },
     {
       "name": "CROSS_COURT_REST_FALLBACK_MINUTES",
@@ -2018,9 +2924,14 @@
       "desc": "Max gap (in minutes) between a player's consecutive games for them to still count as \"back-to-back\" when computing the consecutive-games streak in fetchPullablePlayers."
     },
     {
+      "name": "SESSION_MATCH_SNAPSHOT_CEILING",
+      "value": 200,
+      "desc": "The three match statuses that represent a committed team assignment. Used by matchmaking-db.ts to count partnership repeats and recent rosters. \"pending\" is included so unpublished drafts count toward the partnership cap immediately — preventing the engine from pairing the same players in a second draft before the first one is reviewed or cancelled. / export const COMMITTED_MATCH_STATUSES: MatchStatus[] = [\"completed\", \"in_progress\", \"pending\"]; /** Hard ceiling on how many committed matches fetchSessionMatchSnapshot will load for one session. Above this it returns { ok: false } and the engine fails CLOSED (stops drafting) rather than matchmaking off a truncated view of who has already played whom. Sized against reality, not guessed: the busiest session in production history holds 56 committed matches, so 200 is ~3.5x headroom. The snapshot is per-session and sessions are single-evening, so this is not a growth curve that creeps up — a session that trips this is anomalous (a stuck engine loop, or a session record being reused as a permanent bucket), and in that case refusing to draft is the correct answer."
+    },
+    {
       "name": "DIALOG_CLOSE_DELAY_MS",
       "value": 800,
-      "desc": "The three match statuses that represent a committed team assignment. Used by matchmaking-db.ts to count partnership repeats and recent rosters. \"pending\" is included so unpublished drafts count toward the partnership cap immediately — preventing the engine from pairing the same players in a second draft before the first one is reviewed or cancelled. / export const COMMITTED_MATCH_STATUSES: MatchStatus[] = [\"completed\", \"in_progress\", \"pending\"]; // ── UI timing constants ─────────────────────────────────────────────────────── /** ms delay between showing a success message and closing a dialog."
+      "desc": "ms delay between showing a success message and closing a dialog."
     },
     {
       "name": "DIALOG_FOCUS_DELAY_MS",
@@ -2033,9 +2944,14 @@
       "desc": "ms before a success/info toast auto-dismisses. */ export const TOAST_DISMISS_MS = 5_000; /** ms before an error message auto-dismisses. Longer than TOAST_DISMISS_MS — errors need more read time. */ export const ERROR_AUTO_DISMISS_MS = 8_000; // ── Court timer constants ───────────────────────────────────────────────────── /** Minutes past the time limit that triggers the \"critical\" alert tier (red glow)."
     },
     {
+      "name": "REALTIME_REFETCH_DEBOUNCE_MS",
+      "value": 200,
+      "desc": "ms interval for recomputing the court alert tier. Minute-level granularity is sufficient. */ export const COURT_ALERT_RECOMPUTE_INTERVAL_MS = 30_000; // ── Realtime refetch debounce ───────────────────────────────────────────────── /** Trailing-edge debounce (ms) for realtime-subscription refetches. A single engine action (e.g. a draft) writes ~9 rows that fan into multiple postgres_changes events; without a debounce each event fires a full refetch pipeline. Collapsing a burst into one trailing refetch cuts refetch storms ~5× per device. Small enough to stay visually instant. The per-fetch-target fetchSeq guards still discard any stale response that lands out of order."
+    },
+    {
       "name": "MAX_BADMINTON_SCORE",
       "value": 31,
-      "desc": "ms interval for recomputing the court alert tier. Minute-level granularity is sufficient. */ export const COURT_ALERT_RECOMPUTE_INTERVAL_MS = 30_000; // ── Score validation ────────────────────────────────────────────────────────── /** Maximum valid score in a single badminton game (standard 21-point, but we allow up to 31 for deuce scenarios)."
+      "desc": "Maximum valid score in a single badminton game (standard 21-point, but we allow up to 31 for deuce scenarios)."
     },
     {
       "name": "RED_ZONE_SKILL_VARIANCE_MAX",
@@ -2076,7 +2992,12 @@
   "actions": [
     {
       "file": "_shared.ts",
-      "functions": ["getAuthenticatedUser", "isSessionOrganizer"]
+      "functions": [
+        "getAuthenticatedUser",
+        "isSessionOrganizer",
+        "isPlayerInSessionScope",
+        "getActorContext"
+      ]
     },
     {
       "file": "auth.ts",
@@ -2086,6 +3007,18 @@
         "signOut",
         "playerLogOut",
         "getCurrentProfile"
+      ]
+    },
+    {
+      "file": "clubs.ts",
+      "functions": [
+        "createClub",
+        "createClubInvite",
+        "acceptClubInvite",
+        "leaveClub",
+        "removeMember",
+        "restoreMember",
+        "changeMemberRole"
       ]
     },
     {
@@ -2110,7 +3043,14 @@
     },
     {
       "file": "leaderboard.ts",
-      "functions": ["getSessionLeaderboard", "getAllTimeLeaderboard", "getPlayerStats"]
+      "functions": [
+        "getSessionLeaderboard",
+        "getAllTimeLeaderboard",
+        "getMonthlyLeaderboard",
+        "getLeaderboardMonths",
+        "getPlayerMonthlyStats",
+        "getPlayerStats"
+      ]
     },
     {
       "file": "live-match-swap.ts",
@@ -2130,6 +3070,10 @@
         "publishMatchAction",
         "publishAllDraftMatchesAction"
       ]
+    },
+    {
+      "file": "match-events.ts",
+      "functions": ["getMatchEvents", "getSessionProvenance"]
     },
     {
       "file": "match-lifecycle.ts",
@@ -2176,13 +3120,18 @@
       "functions": ["checkNameAvailable", "renamePlayer"]
     },
     {
+      "file": "repeat-pairing.ts",
+      "functions": ["getSessionPairCounts", "getPairMatches"]
+    },
+    {
       "file": "sessions.ts",
       "functions": [
         "createSession",
         "joinAsCoOrganizer",
         "toggleAutoMatchmaking",
         "updateSessionSettings",
-        "setCapAndClearDrafts",
+        "applyDraftCapOverride",
+        "toggleAutoPublish",
         "getSessionForOrganizer",
         "closeSession"
       ]
@@ -2196,8 +3145,12 @@
       "functions": ["getTvData"]
     },
     {
+      "file": "upcoming-match.ts",
+      "functions": ["getUpcomingHeldDraft"]
+    },
+    {
       "file": "wrapped.ts",
-      "functions": ["dismissWrappedIntro"]
+      "functions": ["dismissWrappedIntro", "getWrappedData"]
     }
   ],
   "channels": [],
@@ -2208,6 +3161,10 @@
     },
     {
       "event": "auto_matchmaking_toggled",
+      "payloadType": ""
+    },
+    {
+      "event": "auto_publish_toggled",
       "payloadType": ""
     },
     {
@@ -2299,16 +3256,16 @@
     },
     {
       "id": "build-overlap-map-async",
-      "title": "`buildOverlapMap` is async/DB — not in matchmaking-core",
-      "body": "buildOverlapMap lives in matchmaking.ts (async DB call) not in matchmaking-core.ts (pure logic). Moving it to core would add a DB dependency to a pure function file.",
+      "title": "Diversity derivations are pure but live in matchmaking-db",
+      "body": "deriveRecentRosters / derivePairCounts / deriveOverlapMap take no client and hit no DB, yet they sit in matchmaking-db.ts next to fetchSessionMatchSnapshot rather than in the pure matchmaking-core.ts — the snapshot shape is theirs. The one async helper, fetchSessionMatchSnapshot, FAILS CLOSED: on { ok: false } the engine breaks the burst. Never substitute an empty snapshot, or every repeat reads as a fresh pairing.",
       "severity": "warn",
       "category": "Engine",
       "link": "/engine"
     },
     {
       "id": "recent-rosters-hoisted",
-      "title": "`recentRosters` hoisted once; `overlapMap` per-anchor",
-      "body": "recentRosters is the same for all anchors in one engine run and is fetched once before the loop. overlapMap is anchor-specific and must be recomputed inside the per-anchor tick — not hoisted.",
+      "title": "Snapshot re-read per slot; `overlapMap` per-anchor",
+      "body": "One fetchSessionMatchSnapshot per engine slot feeds all three diversity inputs at zero extra DB cost. It is re-read per slot on purpose, so sibling drafts committed by earlier slots of the same burst are visible. overlapMap is anchor-specific and must be derived inside the per-anchor tick.",
       "severity": "warn",
       "category": "Engine",
       "link": "/engine"
@@ -3170,6 +4127,970 @@
       "functions": ["handle_new_user"],
       "policies": [],
       "lines": 67
+    },
+    {
+      "file": "20260617000000_match_provenance_audit.sql",
+      "date": "2026-06-17",
+      "ts": "20260617000000",
+      "title": "Migration 1 (additive): Match provenance & modification audit",
+      "kinds": ["column", "index", "policy", "rls", "rpc", "table"],
+      "tables": ["match_events", "matches"],
+      "functions": [
+        "_player_name",
+        "create_held_cross_court_match",
+        "create_match_with_players",
+        "fix_record_swap_player",
+        "record_match_event",
+        "swap_active_from_ondeck",
+        "swap_match_players",
+        "swap_player_in_active_match",
+        "swap_player_in_match",
+        "swap_teams_in_active_match",
+        "undo_swap_active_from_ondeck"
+      ],
+      "policies": ["match_events_select_organizer"],
+      "lines": 1108
+    },
+    {
+      "file": "20260617000001_drop_match_origin.sql",
+      "date": "2026-06-17",
+      "ts": "20260617000001",
+      "title": "Migration 2: Retire matches.origin (B-clean)",
+      "kinds": ["index", "view"],
+      "tables": ["matches"],
+      "functions": [],
+      "policies": [],
+      "lines": 151
+    },
+    {
+      "file": "20260623000000_add_auto_publish_mode.sql",
+      "date": "2026-06-23",
+      "ts": "20260623000000",
+      "title": "Per-session Auto-Publish mode",
+      "kinds": ["column"],
+      "tables": ["sessions"],
+      "functions": [],
+      "policies": [],
+      "lines": 27
+    },
+    {
+      "file": "20260623000001_auto_publish_match_rpc.sql",
+      "date": "2026-06-23",
+      "ts": "20260623000001",
+      "title": "auto_publish_match — engine-initiated publish (no organizer)",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["auto_publish_match"],
+      "policies": [],
+      "lines": 93
+    },
+    {
+      "file": "20260623000002_lock_auto_publish_match_grants.sql",
+      "date": "2026-06-23",
+      "ts": "20260623000002",
+      "title": "Lock down auto_publish_match to service-role only",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 20
+    },
+    {
+      "file": "20260624000000_clear_drafts_exclude_held.sql",
+      "date": "2026-06-24",
+      "ts": "20260624000000",
+      "title": "clear_all_unpublished_drafts: never clear HELD cross-court drafts",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["clear_all_unpublished_drafts"],
+      "policies": [],
+      "lines": 62
+    },
+    {
+      "file": "20260625000000_fix_clear_drafts_for_update.sql",
+      "date": "2026-06-25",
+      "ts": "20260625000000",
+      "title": "Fix clear_all_unpublished_drafts: FOR UPDATE + aggregate is illegal",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["clear_all_unpublished_drafts"],
+      "policies": [],
+      "lines": 65
+    },
+    {
+      "file": "20260626000000_monthly_leaderboard.sql",
+      "date": "2026-06-26",
+      "ts": "20260626000000",
+      "title": "Monthly Leaderboard — live RPC + month picker source + index",
+      "kinds": ["index", "rpc"],
+      "tables": [],
+      "functions": ["get_leaderboard_months", "get_monthly_leaderboard"],
+      "policies": [],
+      "lines": 113
+    },
+    {
+      "file": "20260630000000_clubs_foundation.sql",
+      "date": "2026-06-30",
+      "ts": "20260630000000",
+      "title": "Multi-Tenant Phase 0 — Migration 1: Clubs foundation",
+      "kinds": ["index", "rls", "table"],
+      "tables": ["club_invites", "club_members", "clubs"],
+      "functions": [],
+      "policies": [],
+      "lines": 74
+    },
+    {
+      "file": "20260630000001_sessions_club_id.sql",
+      "date": "2026-06-30",
+      "ts": "20260630000001",
+      "title": "Multi-Tenant Phase 0 — Migration 2: sessions.club_id",
+      "kinds": ["column", "index"],
+      "tables": ["sessions"],
+      "functions": [],
+      "policies": [],
+      "lines": 63
+    },
+    {
+      "file": "20260630000002_rivalries_partnerships_club_id.sql",
+      "date": "2026-06-30",
+      "ts": "20260630000002",
+      "title": "Multi-Tenant Phase 0 — Migration 3: club_id on the rivalry/partnership ledgers",
+      "kinds": ["column", "index", "rpc"],
+      "tables": ["player_partnerships", "player_rivalries"],
+      "functions": ["refresh_cross_session_stats"],
+      "policies": [],
+      "lines": 170
+    },
+    {
+      "file": "20260630000003_migrate_identity_club_members.sql",
+      "date": "2026-06-30",
+      "ts": "20260630000003",
+      "title": "Multi-Tenant Phase 0 — Migration 4: migrate_player_identity + club_members",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["migrate_player_identity"],
+      "policies": [],
+      "lines": 147
+    },
+    {
+      "file": "20260701000000_lookup_active_session_club_slug.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000000",
+      "title": "Multi-Tenant Phase 2 — lookup_active_session returns club_slug",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["lookup_active_session"],
+      "policies": [],
+      "lines": 46
+    },
+    {
+      "file": "20260701000001_leaderboard_club_scoping.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000001",
+      "title": "Multi-Tenant Phase 3 (File A) — club-scope the leaderboard view chain",
+      "kinds": ["index", "rpc", "view"],
+      "tables": [],
+      "functions": ["get_alltime_snapshot_before", "get_player_streaks"],
+      "policies": [],
+      "lines": 230
+    },
+    {
+      "file": "20260701000002_monthly_leaderboard_club_scoping.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000002",
+      "title": "Multi-Tenant Phase 3 (File B) — club-scope the monthly leaderboard RPCs",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["get_leaderboard_months", "get_monthly_leaderboard"],
+      "policies": [],
+      "lines": 89
+    },
+    {
+      "file": "20260701000003_wrapped_awards_club_scoping.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000003",
+      "title": "Multi-Tenant Phase 3 (File C) — club-scope compute_session_wrapped",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["compute_session_wrapped"],
+      "policies": [],
+      "lines": 170
+    },
+    {
+      "file": "20260701000004_wrapped_ledger_club_scope_fix.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000004",
+      "title": "Multi-Tenant Phase 3 — club-scope the cross-session ledger reads",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["compute_session_wrapped"],
+      "policies": [],
+      "lines": 178
+    },
+    {
+      "file": "20260701000005_get_h2h_record_club_scope_fix.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000005",
+      "title": "Multi-Tenant Phase 3 — club-scope get_h2h_record",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["get_h2h_record", "grants"],
+      "policies": [],
+      "lines": 109
+    },
+    {
+      "file": "20260701000006_realtime_publication_exclude_secrets.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000006",
+      "title": "Exclude authentication secrets from the realtime publication",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 83
+    },
+    {
+      "file": "20260701000007_backfill_orphaned_profiles_legacy.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000007",
+      "title": "Backfill orphaned profiles into the Legacy club",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 28
+    },
+    {
+      "file": "20260701000008_club_scoped_rls.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000008",
+      "title": "Club-scoped RLS for matches, match_players, queue_entries,",
+      "kinds": ["policy", "rls", "rpc"],
+      "tables": [
+        "courts",
+        "match_games",
+        "match_players",
+        "matches",
+        "queue_entries",
+        "session_organizers"
+      ],
+      "functions": ["is_club_member", "is_match_club_member", "is_session_club_member"],
+      "policies": [
+        "matches_select",
+        "matches_select_draft_firewall",
+        "queue_entries_select",
+        "queue_select",
+        "courts_select",
+        "session_organizers_select",
+        "match_players_select",
+        "match_games_select"
+      ],
+      "lines": 167
+    },
+    {
+      "file": "20260701000009_column_lockdown_pin_organizer_passcode.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000009",
+      "title": "Column-level lockdown: profiles.pin, sessions.organizer_passcode",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 33
+    },
+    {
+      "file": "20260701000010_column_lockdown_fix_table_grants.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000010",
+      "title": "Fix 20260701000009: table-wide SELECT grant defeated the column revoke",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 35
+    },
+    {
+      "file": "20260701000011_drop_unscoped_profiles_update_organizer.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000011",
+      "title": "Drop profiles_update_organizer: unscoped cross-club/cross-session",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 19
+    },
+    {
+      "file": "20260701000012_scope_match_players_insert.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000012",
+      "title": "Scope match_players_insert to session organizers (was with_check=true)",
+      "kinds": ["policy", "rls"],
+      "tables": ["match_players"],
+      "functions": [],
+      "policies": ["match_players_insert"],
+      "lines": 27
+    },
+    {
+      "file": "20260701000013_scope_sessions_select.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000013",
+      "title": "Club-scope sessions_select — close the last USING(true) leak",
+      "kinds": ["policy", "rls"],
+      "tables": ["sessions"],
+      "functions": [],
+      "policies": ["sessions_select"],
+      "lines": 40
+    },
+    {
+      "file": "20260701000014_club_admin_auto_organizer.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000014",
+      "title": "C6: club owner/admin = implicit organizer on every session",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["is_session_organizer"],
+      "policies": [],
+      "lines": 55
+    },
+    {
+      "file": "20260701000015_migrate_identity_rivalries_partnerships.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000015",
+      "title": "C7: migrate_player_identity — repoint player_rivalries and",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["migrate_player_identity"],
+      "policies": [],
+      "lines": 293
+    },
+    {
+      "file": "20260701000016_migrate_identity_club_invites.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000016",
+      "title": "migrate_player_identity — repoint club_invites old -> new on",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["migrate_player_identity"],
+      "policies": [],
+      "lines": 285
+    },
+    {
+      "file": "20260701000017_migrate_identity_clubs_invited_by.sql",
+      "date": "2026-07-01",
+      "ts": "20260701000017",
+      "title": "migrate_player_identity — repoint clubs.created_by and",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["migrate_player_identity"],
+      "policies": [],
+      "lines": 293
+    },
+    {
+      "file": "20260702000000_club_member_atomic_owner_guard.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000000",
+      "title": "Migration: Atomic owner-guard for club member deactivate/role-change",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["club_member_deactivate", "club_member_set_role"],
+      "policies": [],
+      "lines": 133
+    },
+    {
+      "file": "20260702000001_club_member_atomic_owner_guard_lockdown.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000001",
+      "title": "Corrective lockdown: club_member_deactivate / club_member_set_role",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 37
+    },
+    {
+      "file": "20260702000002_club_members_select_policy.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000002",
+      "title": "club_members: additive SELECT policy (defense-in-depth)",
+      "kinds": ["policy", "rls"],
+      "tables": ["club_members"],
+      "functions": [],
+      "policies": ["club_members_select"],
+      "lines": 24
+    },
+    {
+      "file": "20260702000003_harden_security_definer_views.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000003",
+      "title": "Harden SECURITY DEFINER views (Task #55)",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["get_session_leaderboard_public"],
+      "policies": [],
+      "lines": 131
+    },
+    {
+      "file": "20260702000004_pin_search_path_hardening.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000004",
+      "title": "Pin search_path on 20 functions (Task #56, part 1)",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 43
+    },
+    {
+      "file": "20260702000005_legacy_backfill_new_signups.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000005",
+      "title": "2026-07-02 EMERGENCY STOPGAP — persisted for tracking (already applied to",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 28
+    },
+    {
+      "file": "20260702000006_handle_new_user_legacy_autoenroll.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000006",
+      "title": "2026-07-02 EMERGENCY STOPGAP — persisted for tracking (already applied to",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["handle_new_user"],
+      "policies": [],
+      "lines": 62
+    },
+    {
+      "file": "20260702000007_regrant_leaderboard_history_views_stopgap.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000007",
+      "title": "2026-07-02 EMERGENCY STOPGAP — persisted for tracking (already applied to",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 34
+    },
+    {
+      "file": "20260702000008_club_member_guard_hierarchy_recheck.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000008",
+      "title": "Migration: club member guard — re-check actor↔target hierarchy under the lock",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["club_member_deactivate", "club_member_set_role"],
+      "policies": [],
+      "lines": 139
+    },
+    {
+      "file": "20260702000009_rename_legacy_club_to_chillax.sql",
+      "date": "2026-07-02",
+      "ts": "20260702000009",
+      "title": "2026-07-02: rename the seeded Legacy club → \"CHILLAX\"",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 13
+    },
+    {
+      "file": "20260704000000_deuce_magnet_threshold_30.sql",
+      "date": "2026-07-04",
+      "ts": "20260704000000",
+      "title": "Deuce Magnet threshold fix: 20-20 → 30-30",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 51
+    },
+    {
+      "file": "20260704000001_first_to_100_milestone.sql",
+      "date": "2026-07-04",
+      "ts": "20260704000001",
+      "title": "\"First to 100\" milestone award",
+      "kinds": ["rls", "table"],
+      "tables": ["club_milestones"],
+      "functions": [],
+      "policies": [],
+      "lines": 141
+    },
+    {
+      "file": "20260705000000_primary_club_and_retire_autoenroll.sql",
+      "date": "2026-07-05",
+      "ts": "20260705000000",
+      "title": "2026-07-05: primary-club resolution + retire blanket auto-enroll",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["get_primary_club_slug", "handle_new_user"],
+      "policies": [],
+      "lines": 94
+    },
+    {
+      "file": "20260717165546_fix_drafted_branch_and_publish_predicates.sql",
+      "date": "2026-07-17",
+      "ts": "20260717165546",
+      "title": "C1 correctness fix: restore the 'drafted' queue-status branch + widen the",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["create_match_with_players", "publish_all_drafts", "publish_match"],
+      "policies": [],
+      "lines": 292
+    },
+    {
+      "file": "20260717170135_migrate_identity_club_milestones.sql",
+      "date": "2026-07-17",
+      "ts": "20260717170135",
+      "title": "C2 correctness fix: migrate_player_identity must repoint club_milestones.",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["migrate_player_identity"],
+      "policies": [],
+      "lines": 294
+    },
+    {
+      "file": "20260717171328_leaderboard_refresh_gate_and_fk_indexes.sql",
+      "date": "2026-07-17",
+      "ts": "20260717171328",
+      "title": "M1: global refresh gate for the all-time leaderboard matview + FK index pack.",
+      "kinds": ["index", "rls", "rpc", "table"],
+      "tables": ["leaderboard_refresh_state"],
+      "functions": ["refresh_alltime_leaderboard"],
+      "policies": [],
+      "lines": 74
+    },
+    {
+      "file": "20260717171903_rls_consolidate_access_helpers.sql",
+      "date": "2026-07-17",
+      "ts": "20260717171903",
+      "title": "M2: consolidate the session/match RLS access checks into single-pass helpers.",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["has_match_access", "session_access_level"],
+      "policies": [],
+      "lines": 142
+    },
+    {
+      "file": "20260717172335_drop_dead_and_redundant_indexes.sql",
+      "date": "2026-07-17",
+      "ts": "20260717172335",
+      "title": "M3a: drop never-used and prefix-redundant indexes (they only tax writes).",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 21
+    },
+    {
+      "file": "20260717172535_requeue_and_reorder_rpcs.sql",
+      "date": "2026-07-17",
+      "ts": "20260717172535",
+      "title": "M3b: set-based RPCs replacing per-row read-modify-write loops.",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["reorder_on_deck_matches", "requeue_finished_players"],
+      "policies": [],
+      "lines": 55
+    },
+    {
+      "file": "20260717174914_rls_initplan_wrap_and_publication_trim.sql",
+      "date": "2026-07-17",
+      "ts": "20260717174914",
+      "title": "M2 remainder: (a) initplan-hoist bare auth.* calls in RLS policies, and",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 289
+    },
+    {
+      "file": "20260717180329_vmatch_history_drop_baked_orderby.sql",
+      "date": "2026-07-17",
+      "ts": "20260717180329",
+      "title": "Low-tier: drop the baked ORDER BY from v_match_history.",
+      "kinds": ["view"],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 44
+    },
+    {
+      "file": "20260717180510_get_h2h_record_prefilter.sql",
+      "date": "2026-07-17",
+      "ts": "20260717180510",
+      "title": "Low-tier: get_h2h_record scans the club's ENTIRE completed history per call",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["get_h2h_record"],
+      "policies": [],
+      "lines": 89
+    },
+    {
+      "file": "20260717181023_fold_vip_into_leaderboard_rpcs.sql",
+      "date": "2026-07-17",
+      "ts": "20260717181023",
+      "title": "M3: fold vip_tag / vip_theme into the two live leaderboard RPCs so the client",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["get_monthly_leaderboard", "get_session_leaderboard_public"],
+      "policies": [],
+      "lines": 87
+    },
+    {
+      "file": "20260717190000_count_completed_matches_by_session.sql",
+      "date": "2026-07-17",
+      "ts": "20260717190000",
+      "title": "Review finding #1 (organizer hub counts): the bulk-count refactor fetched",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["count_completed_matches_by_session"],
+      "policies": [],
+      "lines": 30
+    },
+    {
+      "file": "20260718150042_repair_first_to_100_misattribution.sql",
+      "date": "2026-07-18",
+      "ts": "20260718150042",
+      "title": "Repair: first_to_100 milestone mis-attribution",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 82
+    },
+    {
+      "file": "20260718150312_harden_first_to_100_claim.sql",
+      "date": "2026-07-18",
+      "ts": "20260718150312",
+      "title": "Harden the first_to_100 claim in compute_session_wrapped()",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 45
+    },
+    {
+      "file": "20260721101500_sessions_is_hidden.sql",
+      "date": "2026-07-21",
+      "ts": "20260721101500",
+      "title": "sessions.is_hidden — keep infrastructure sessions out of human lists",
+      "kinds": ["column"],
+      "tables": ["sessions"],
+      "functions": [],
+      "policies": [],
+      "lines": 43
+    },
+    {
+      "file": "20260721140000_co_organizer_join_attempts.sql",
+      "date": "2026-07-21",
+      "ts": "20260721140000",
+      "title": "co_organizer_join_attempts — rate-limit backing for joinAsCoOrganizer",
+      "kinds": ["index", "rls", "table"],
+      "tables": ["co_organizer_join_attempts"],
+      "functions": [],
+      "policies": [],
+      "lines": 38
+    },
+    {
+      "file": "20260721160000_close_session_insert_and_elevate.sql",
+      "date": "2026-07-21",
+      "ts": "20260721160000",
+      "title": "Close the two DB-layer bypasses of the createSession / co-organizer fixes",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["cojoin_record_and_check"],
+      "policies": [],
+      "lines": 99
+    },
+    {
+      "file": "20260721180000_close_queue_forgery_and_rpc_grants.sql",
+      "date": "2026-07-21",
+      "ts": "20260721180000",
+      "title": "Close the two routes that forge the queue row isPlayerInSessionScope trusts",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 73
+    },
+    {
+      "file": "20260721190000_revoke_queue_update_post_deploy.sql",
+      "date": "2026-07-21",
+      "ts": "20260721190000",
+      "title": "Revoke queue_entries UPDATE from anon/authenticated",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 37
+    },
+    {
+      "file": "20260721200000_revoke_session_organizers_insert.sql",
+      "date": "2026-07-21",
+      "ts": "20260721200000",
+      "title": "Revoke direct INSERT on session_organizers + one more ungated RPC",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 36
+    },
+    {
+      "file": "20260721210000_generalize_auth_attempt_limiter.sql",
+      "date": "2026-07-21",
+      "ts": "20260721210000",
+      "title": "Extend the attempt limiter to cover the reconnect PIN oracle",
+      "kinds": ["column", "index", "rpc"],
+      "tables": ["co_organizer_join_attempts"],
+      "functions": ["auth_attempt_mark_succeeded", "reconnect_record_and_check"],
+      "policies": [],
+      "lines": 113
+    },
+    {
+      "file": "20260721220000_fix_limiter_scope_and_selffeeding.sql",
+      "date": "2026-07-21",
+      "ts": "20260721220000",
+      "title": "Limiter fixes: scope the counters, and stop the window self-feeding",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["cojoin_record_and_check", "reconnect_record_and_check"],
+      "policies": [],
+      "lines": 164
+    },
+    {
+      "file": "20260721230000_spray_arm_alert_only.sql",
+      "date": "2026-07-21",
+      "ts": "20260721230000",
+      "title": "Demote the scope-wide spray arm from a denial to an alert",
+      "kinds": ["index", "rpc"],
+      "tables": [],
+      "functions": ["reconnect_record_and_check"],
+      "policies": [],
+      "lines": 123
+    },
+    {
+      "file": "20260721240000_grant_limiter_execute_to_service_role.sql",
+      "date": "2026-07-21",
+      "ts": "20260721240000",
+      "title": "The limiter functions' missing service_role EXECUTE grants",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 72
+    },
+    {
+      "file": "20260722000000_declare_realtime_publication_membership.sql",
+      "date": "2026-07-22",
+      "ts": "20260722000000",
+      "title": "Declare the realtime publication's full membership in migrations",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 154
+    },
+    {
+      "file": "20260722000001_create_dashboard_authored_view.sql",
+      "date": "2026-07-22",
+      "ts": "20260722000001",
+      "title": "Bring the last dashboard-authored object into migrations",
+      "kinds": ["view"],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 75
+    },
+    {
+      "file": "20260722000002_declare_rls_baseline.sql",
+      "date": "2026-07-22",
+      "ts": "20260722000002",
+      "title": "Declare the RLS baseline that production has and migrations never captured",
+      "kinds": ["policy", "rls"],
+      "tables": [
+        "courts",
+        "identity_migrations",
+        "match_games",
+        "match_players",
+        "matches",
+        "player_partnerships",
+        "player_rivalries",
+        "profiles",
+        "push_subscriptions",
+        "queue_entries",
+        "session_organizers",
+        "session_wrapped_stats",
+        "sessions"
+      ],
+      "functions": [],
+      "policies": [
+        "courts_delete",
+        "courts_insert",
+        "courts_update",
+        "identity_migrations_select_own",
+        "match_games_delete",
+        "match_games_insert",
+        "match_games_update",
+        "match_players_delete",
+        "match_players_update",
+        "matches_delete",
+        "matches_insert",
+        "matches_update",
+        "Players can read own partnership data",
+        "Players can read own rivalry data",
+        "profiles_insert",
+        "profiles_select",
+        "profiles_update_own",
+        "push_subscriptions_delete_own",
+        "push_subscriptions_insert_own",
+        "push_subscriptions_select_own",
+        "push_subscriptions_update_own",
+        "queue_delete_organizer",
+        "queue_delete_own",
+        "queue_insert",
+        "queue_update_organizer",
+        "queue_update_own",
+        "session_organizers_delete",
+        "session_organizers_insert",
+        "Organizers can read wrapped stats for their sessions",
+        "Players can dismiss their own wrapped intro",
+        "Players can read own wrapped stats",
+        "Service role insert",
+        "Service role update",
+        "sessions_insert",
+        "sessions_update"
+      ],
+      "lines": 378
+    },
+    {
+      "file": "20260722000003_declare_table_grants.sql",
+      "date": "2026-07-22",
+      "ts": "20260722000003",
+      "title": "Declare the table GRANTs that production has and migrations never did",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 205
+    },
+    {
+      "file": "20260722000004_declare_function_execute_grants.sql",
+      "date": "2026-07-22",
+      "ts": "20260722000004",
+      "title": "Declare the service_role EXECUTE grants the migrations assumed",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 138
+    },
+    {
+      "file": "20260722010000_add_session_scoped_streaks_rpc.sql",
+      "date": "2026-07-22",
+      "ts": "20260722010000",
+      "title": "PR2, part 1 of 2 — ADDITIVE. Safe to apply at any time.",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["get_session_player_streaks", "time"],
+      "policies": [],
+      "lines": 196
+    },
+    {
+      "file": "20260722010001_lock_leaderboard_reads_to_service_role.sql",
+      "date": "2026-07-22",
+      "ts": "20260722010001",
+      "title": "PR2, part 2 of 2 — REVOKES. Apply AFTER the code deploy.",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 266
+    },
+    {
+      "file": "20260723000000_revoke_anon_execute_on_mutating_rpcs.sql",
+      "date": "2026-07-23",
+      "ts": "20260723000000",
+      "title": "Close unauthenticated match forgery: revoke EXECUTE on every",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["time"],
+      "policies": [],
+      "lines": 337
+    },
+    {
+      "file": "20260723000001_bind_live_swaps_to_session.sql",
+      "date": "2026-07-23",
+      "ts": "20260723000001",
+      "title": "Bind the live-match swap RPCs to the session they were authorized for",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": [
+        "on",
+        "swap_active_from_ondeck",
+        "swap_player_in_active_match",
+        "swap_teams_in_active_match",
+        "undo_swap_active_from_ondeck"
+      ],
+      "policies": [],
+      "lines": 547
+    },
+    {
+      "file": "20260723100000_scope_session_events_broadcast_to_members.sql",
+      "date": "2026-07-23",
+      "ts": "20260723100000",
+      "title": "Scope the session-events broadcast channel to session members",
+      "kinds": ["policy", "rls", "rpc"],
+      "tables": ["realtime"],
+      "functions": ["realtime_topic_session_id"],
+      "policies": ["session_events_broadcast_read"],
+      "lines": 216
+    },
+    {
+      "file": "20260723200000_scope_profiles_select_to_shared_scope.sql",
+      "date": "2026-07-23",
+      "ts": "20260723200000",
+      "title": "Scope profiles_select from USING (true) to a shared-scope predicate",
+      "kinds": ["policy", "rls", "rpc"],
+      "tables": ["profiles"],
+      "functions": ["can_read_profile"],
+      "policies": ["profiles_select"],
+      "lines": 333
+    },
+    {
+      "file": "20260724000000_reject_null_session_in_swap_teams.sql",
+      "date": "2026-07-24",
+      "ts": "20260724000000",
+      "title": "swap_teams_in_active_match — make p_session_id NULL-rejecting",
+      "kinds": ["rpc"],
+      "tables": [],
+      "functions": ["swap_teams_in_active_match"],
+      "policies": [],
+      "lines": 188
+    },
+    {
+      "file": "20260804000000_exclude_hidden_sessions_from_alltime_leaderboard.sql",
+      "date": "2026-08-04",
+      "ts": "20260804000000",
+      "title": "Exclude hidden sessions from the club-wide all-time leaderboard.",
+      "kinds": ["index", "view"],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 124
+    },
+    {
+      "file": "20260804000001_relock_alltime_leaderboard_to_service_role.sql",
+      "date": "2026-08-04",
+      "ts": "20260804000001",
+      "title": "Re-lock v_alltime_leaderboard_mat to service_role.",
+      "kinds": [],
+      "tables": [],
+      "functions": [],
+      "policies": [],
+      "lines": 20
     }
   ],
   "rlsPolicies": [
@@ -3567,20 +5488,174 @@
     }
   ],
   "rlsCapturedAt": "2026-06-05",
-  "coverage": null,
+  "coverage": {
+    "totals": {
+      "lines": 976,
+      "hit": 861,
+      "pct": 88.2,
+      "files": 14
+    },
+    "dirs": [
+      {
+        "dir": "src/app/actions",
+        "lines": 183,
+        "hit": 162,
+        "files": 2,
+        "pct": 88.5
+      },
+      {
+        "dir": "src/hooks",
+        "lines": 605,
+        "hit": 573,
+        "files": 10,
+        "pct": 94.7
+      },
+      {
+        "dir": "src/lib",
+        "lines": 188,
+        "hit": 126,
+        "files": 2,
+        "pct": 67
+      }
+    ],
+    "files": [
+      {
+        "file": "src/app/actions/fix-player-record.ts",
+        "lines": 41,
+        "hit": 40,
+        "pct": 97.6,
+        "fnPct": 75
+      },
+      {
+        "file": "src/app/actions/matchmaking.ts",
+        "lines": 142,
+        "hit": 122,
+        "pct": 85.9,
+        "fnPct": 92.9
+      },
+      {
+        "file": "src/hooks/use-enriched-matches.ts",
+        "lines": 42,
+        "hit": 36,
+        "pct": 85.7,
+        "fnPct": 90
+      },
+      {
+        "file": "src/hooks/use-fix-record.ts",
+        "lines": 44,
+        "hit": 44,
+        "pct": 100,
+        "fnPct": 100
+      },
+      {
+        "file": "src/hooks/use-leaderboard.ts",
+        "lines": 111,
+        "hit": 105,
+        "pct": 94.6,
+        "fnPct": 87
+      },
+      {
+        "file": "src/hooks/use-match-alerts.ts",
+        "lines": 75,
+        "hit": 74,
+        "pct": 98.7,
+        "fnPct": 92.3
+      },
+      {
+        "file": "src/hooks/use-match-history.ts",
+        "lines": 36,
+        "hit": 36,
+        "pct": 100,
+        "fnPct": 100
+      },
+      {
+        "file": "src/hooks/use-organizer-dashboard.ts",
+        "lines": 92,
+        "hit": 79,
+        "pct": 85.9,
+        "fnPct": 86.7
+      },
+      {
+        "file": "src/hooks/use-player-match.ts",
+        "lines": 65,
+        "hit": 64,
+        "pct": 98.5,
+        "fnPct": 91.7
+      },
+      {
+        "file": "src/hooks/use-queue.ts",
+        "lines": 50,
+        "hit": 48,
+        "pct": 96,
+        "fnPct": 89.5
+      },
+      {
+        "file": "src/hooks/use-score-form.ts",
+        "lines": 21,
+        "hit": 21,
+        "pct": 100,
+        "fnPct": 100
+      },
+      {
+        "file": "src/hooks/use-swap-state.ts",
+        "lines": 69,
+        "hit": 66,
+        "pct": 95.7,
+        "fnPct": 94.4
+      },
+      {
+        "file": "src/lib/matchmaking-core.ts",
+        "lines": 184,
+        "hit": 122,
+        "pct": 66.3,
+        "fnPct": 80
+      },
+      {
+        "file": "src/lib/score-input.ts",
+        "lines": 4,
+        "hit": 4,
+        "pct": 100,
+        "fnPct": 100
+      }
+    ]
+  },
   "schemaDrift": {
     "capturedAt": "2026-06-05",
     "ok": false,
     "tableColumnDrift": [
       {
         "table": "matches",
+        "dbOnly": ["origin"],
+        "codeOnly": [
+          "created_method",
+          "modification_count",
+          "final_classification",
+          "provenance_backfilled",
+          "pulled_player_ids",
+          "pulled_from_match_id",
+          "held_ready_at",
+          "is_held"
+        ]
+      },
+      {
+        "table": "player_partnerships",
         "dbOnly": [],
-        "codeOnly": ["pulled_player_ids", "pulled_from_match_id", "held_ready_at", "is_held"]
+        "codeOnly": ["club_id"]
+      },
+      {
+        "table": "player_rivalries",
+        "dbOnly": [],
+        "codeOnly": ["club_id"]
       },
       {
         "table": "profiles",
         "dbOnly": [],
         "codeOnly": ["needs_rename", "collided_name", "flagged_at"]
+      },
+      {
+        "table": "sessions",
+        "dbOnly": [],
+        "codeOnly": ["club_id", "auto_publish", "is_hidden"]
       }
     ],
     "columnNullabilityDrift": [],
@@ -3594,7 +5669,7 @@
       }
     ],
     "functions": {
-      "dbOnly": [],
+      "dbOnly": ["elevate_to_organizer"],
       "dbOnlyExpected": [
         "_fix_record_partnership_delta",
         "handle_new_session",
@@ -3604,7 +5679,26 @@
         "set_updated_at",
         "touch_push_subscription_updated_at"
       ],
-      "codeOnly": ["create_held_cross_court_match", "rename_player_identity"]
+      "codeOnly": [
+        "auth_attempt_mark_succeeded",
+        "auto_publish_match",
+        "can_read_profile",
+        "club_member_deactivate",
+        "club_member_set_role",
+        "cojoin_record_and_check",
+        "count_completed_matches_by_session",
+        "create_held_cross_court_match",
+        "get_leaderboard_months",
+        "get_monthly_leaderboard",
+        "get_primary_club_slug",
+        "get_session_leaderboard_public",
+        "get_session_player_streaks",
+        "reconnect_record_and_check",
+        "record_match_event",
+        "rename_player_identity",
+        "reorder_on_deck_matches",
+        "requeue_finished_players"
+      ]
     },
     "views": {
       "dbOnly": [],
@@ -3612,7 +5706,15 @@
     },
     "tables": {
       "dbOnly": [],
-      "codeOnly": ["player_renames"]
+      "codeOnly": [
+        "club_invites",
+        "club_members",
+        "club_milestones",
+        "clubs",
+        "co_organizer_join_attempts",
+        "match_events",
+        "player_renames"
+      ]
     }
   },
   "actionDetails": [
@@ -3631,7 +5733,27 @@
       "name": "isSessionOrganizer",
       "signature": "isSessionOrganizer(userId: string, sessionId: string): Promise<boolean>",
       "auth": ["createServiceClient"],
-      "tables": ["session_organizers", "sessions"],
+      "tables": ["club_members", "session_organizers", "sessions"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "_shared.ts",
+      "name": "isPlayerInSessionScope",
+      "signature": "isPlayerInSessionScope( targetUserId: string, sessionId: string ): Promise<boolean>",
+      "auth": ["createServiceClient"],
+      "tables": ["queue_entries"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "_shared.ts",
+      "name": "getActorContext",
+      "signature": "getActorContext( userId: string ): Promise<",
+      "auth": [],
+      "tables": [],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3649,10 +5771,15 @@
     {
       "file": "auth.ts",
       "name": "reconnectPlayer",
-      "signature": "reconnectPlayer(playerName: string, pin: string): Promise<ReconnectResult>",
+      "signature": "reconnectPlayer( playerName: string, pin: string, clubSlug?: string | null ): Promise<ReconnectResult>",
       "auth": ["createServiceClient"],
       "tables": ["match_players", "matches", "profiles", "queue_entries", "session_wrapped_stats"],
-      "rpcs": ["migrate_player_identity", "refresh_alltime_leaderboard"],
+      "rpcs": [
+        "auth_attempt_mark_succeeded",
+        "migrate_player_identity",
+        "reconnect_record_and_check",
+        "refresh_alltime_leaderboard"
+      ],
       "broadcasts": [],
       "pushes": false
     },
@@ -3683,6 +5810,76 @@
       "auth": [],
       "tables": ["profiles"],
       "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "clubs.ts",
+      "name": "createClub",
+      "signature": "createClub(opts:",
+      "auth": [],
+      "tables": [],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "clubs.ts",
+      "name": "createClubInvite",
+      "signature": "createClubInvite(opts:",
+      "auth": [],
+      "tables": [],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "clubs.ts",
+      "name": "acceptClubInvite",
+      "signature": "acceptClubInvite(token: string): Promise<AcceptInviteResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": ["club_invites", "club_members", "clubs"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "clubs.ts",
+      "name": "leaveClub",
+      "signature": "leaveClub(clubId: string, clubSlug: string): Promise<LeaveClubResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": ["club_members"],
+      "rpcs": ["club_member_deactivate"],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "clubs.ts",
+      "name": "removeMember",
+      "signature": "removeMember( clubId: string, memberId: string, clubSlug: string ): Promise<MemberActionResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": ["club_members"],
+      "rpcs": ["club_member_deactivate"],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "clubs.ts",
+      "name": "restoreMember",
+      "signature": "restoreMember( clubId: string, memberId: string, clubSlug: string ): Promise<MemberActionResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": ["club_members"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "clubs.ts",
+      "name": "changeMemberRole",
+      "signature": "changeMemberRole( clubId: string, memberId: string, newRole: ClubRole, clubSlug: string ): Promise<MemberActionResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": ["club_members"],
+      "rpcs": ["club_member_set_role"],
       "broadcasts": [],
       "pushes": false
     },
@@ -3761,7 +5958,7 @@
       "name": "getH2HRecord",
       "signature": "getH2HRecord( teamAIds: string[], teamBIds: string[], sessionId: string ): Promise<H2HRecord | null>",
       "auth": ["isSessionOrganizer", "createServiceClient"],
-      "tables": ["queue_entries"],
+      "tables": ["queue_entries", "sessions"],
       "rpcs": ["get_h2h_record"],
       "broadcasts": [],
       "pushes": false
@@ -3770,7 +5967,7 @@
       "file": "history.ts",
       "name": "getMatchHistory",
       "signature": "getMatchHistory( playerId: string, sessionId?: string, limit?: number ): Promise<MatchHistoryResult | MatchHistoryError>",
-      "auth": [],
+      "auth": ["createServiceClient"],
       "tables": ["v_match_history"],
       "rpcs": [],
       "broadcasts": [],
@@ -3780,8 +5977,8 @@
       "file": "history.ts",
       "name": "getAllSessionsHistory",
       "signature": "getAllSessionsHistory( playerId: string ): Promise<AllSessionsHistoryResult | MatchHistoryError>",
-      "auth": [],
-      "tables": ["sessions", "v_match_history"],
+      "auth": ["createServiceClient"],
+      "tables": ["clubs", "session_wrapped_stats", "sessions", "v_match_history"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false
@@ -3790,17 +5987,17 @@
       "file": "leaderboard.ts",
       "name": "getSessionLeaderboard",
       "signature": "getSessionLeaderboard( sessionId: string ): Promise<GetSessionLeaderboardResult>",
-      "auth": [],
-      "tables": ["v_session_leaderboard"],
-      "rpcs": ["get_player_streaks"],
+      "auth": ["createServiceClient"],
+      "tables": [],
+      "rpcs": ["get_player_streaks", "get_session_leaderboard_public"],
       "broadcasts": [],
       "pushes": false
     },
     {
       "file": "leaderboard.ts",
       "name": "getAllTimeLeaderboard",
-      "signature": "getAllTimeLeaderboard(): Promise<GetAllTimeLeaderboardResult>",
-      "auth": [],
+      "signature": "getAllTimeLeaderboard( clubSlug?: string | null // when set, scope to that club; omitted = every club the caller belongs to ): Promise<GetAllTimeLeaderboardResult>",
+      "auth": ["createServiceClient"],
       "tables": ["v_alltime_leaderboard_mat"],
       "rpcs": ["get_alltime_snapshot_before", "get_player_streaks"],
       "broadcasts": [],
@@ -3808,11 +6005,41 @@
     },
     {
       "file": "leaderboard.ts",
-      "name": "getPlayerStats",
-      "signature": "getPlayerStats( playerId: string, sessionId: string | null // null = all-time scope ): Promise<GetPlayerStatsResult>",
+      "name": "getMonthlyLeaderboard",
+      "signature": "getMonthlyLeaderboard( year: number, month: number, clubSlug?: string | null ): Promise<GetMonthlyLeaderboardResult>",
       "auth": [],
-      "tables": ["v_alltime_leaderboard_mat", "v_session_leaderboard"],
-      "rpcs": [],
+      "tables": [],
+      "rpcs": ["get_monthly_leaderboard"],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "leaderboard.ts",
+      "name": "getLeaderboardMonths",
+      "signature": "getLeaderboardMonths( clubSlug?: string | null ): Promise<GetLeaderboardMonthsResult>",
+      "auth": [],
+      "tables": [],
+      "rpcs": ["get_leaderboard_months"],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "leaderboard.ts",
+      "name": "getPlayerMonthlyStats",
+      "signature": "getPlayerMonthlyStats( playerId: string, year: number, month: number, clubSlug?: string | null ): Promise<GetPlayerStatsResult>",
+      "auth": [],
+      "tables": [],
+      "rpcs": ["get_monthly_leaderboard"],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "leaderboard.ts",
+      "name": "getPlayerStats",
+      "signature": "getPlayerStats( playerId: string, sessionId: string | null, // null = all-time scope clubSlug?: string | null // scopes the all-time branch; session branch is club-implicit ): Promise<GetPlayerStatsResult>",
+      "auth": ["createServiceClient"],
+      "tables": ["v_alltime_leaderboard_mat"],
+      "rpcs": ["get_session_leaderboard_public"],
       "broadcasts": [],
       "pushes": false
     },
@@ -3871,7 +6098,7 @@
       "name": "clearAllUnpublishedDrafts",
       "signature": "clearAllUnpublishedDrafts(sessionId: string): Promise<ClearAllDraftsResult>",
       "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
-      "tables": [],
+      "tables": ["matches"],
       "rpcs": ["clear_all_unpublished_drafts"],
       "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": false
@@ -3881,8 +6108,8 @@
       "name": "reorderOnDeckMatches",
       "signature": "reorderOnDeckMatches( sessionId: string, orderedMatchIds: string[] ): Promise<MatchActionResult>",
       "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
-      "tables": ["matches"],
-      "rpcs": [],
+      "tables": [],
+      "rpcs": ["reorder_on_deck_matches"],
       "broadcasts": [],
       "pushes": false
     },
@@ -3907,10 +6134,30 @@
       "pushes": false
     },
     {
+      "file": "match-events.ts",
+      "name": "getMatchEvents",
+      "signature": "getMatchEvents( matchId: string, sessionId: string ): Promise<GetMatchEventsResult>",
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["match_events"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "match-events.ts",
+      "name": "getSessionProvenance",
+      "signature": "getSessionProvenance(sessionId: string): Promise<GetSessionProvenanceResult>",
+      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
+      "tables": ["matches"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
       "file": "match-lifecycle.ts",
       "name": "submitMatchScore",
       "signature": "submitMatchScore( matchId: string, teamAScore: number, teamBScore: number ): Promise<MatchActionResult>",
-      "auth": ["getAuthenticatedUser"],
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
       "tables": ["match_players"],
       "rpcs": [],
       "broadcasts": [],
@@ -3920,9 +6167,9 @@
       "file": "match-lifecycle.ts",
       "name": "endMatchAction",
       "signature": "endMatchAction( matchId: string, teamAScore: number, teamBScore: number ): Promise<MatchActionResult>",
-      "auth": ["getAuthenticatedUser", "isSessionOrganizer", "createServiceClient"],
-      "tables": ["courts", "match_players", "matches", "queue_entries"],
-      "rpcs": ["refresh_alltime_leaderboard"],
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": [],
+      "rpcs": [],
       "broadcasts": [],
       "pushes": false
     },
@@ -3982,7 +6229,7 @@
       "signature": "promoteOnDeckMatchInternal( supabase: ReturnType<typeof createServiceClient>, sessionId: string, courtId: string ): Promise<MatchmakingResult>",
       "auth": [],
       "tables": ["courts", "match_players", "matches", "profiles", "queue_entries"],
-      "rpcs": [],
+      "rpcs": ["clear_on_deck_match_atomic"],
       "broadcasts": [],
       "pushes": true
     },
@@ -3991,15 +6238,15 @@
       "name": "recomputeHeldReadiness",
       "signature": "recomputeHeldReadiness( supabase: ReturnType<typeof createServiceClient>, sessionId: string ): Promise<void>",
       "auth": [],
-      "tables": ["match_players", "matches"],
-      "rpcs": ["clear_on_deck_match_atomic"],
+      "tables": ["match_players", "matches", "sessions"],
+      "rpcs": ["auto_publish_match", "clear_on_deck_match_atomic"],
       "broadcasts": [],
-      "pushes": false
+      "pushes": true
     },
     {
       "file": "notifications.ts",
       "name": "sendPlayerNotification",
-      "signature": "sendPlayerNotification( userId: string, type: NotificationType ): Promise<",
+      "signature": "sendPlayerNotification( userId: string, type: NotificationType, sessionId?: string ): Promise<",
       "auth": [],
       "tables": [],
       "rpcs": [],
@@ -4009,7 +6256,7 @@
     {
       "file": "oauth.ts",
       "name": "signInWithGoogle",
-      "signature": "signInWithGoogle(next?: string): Promise<OAuthStart>",
+      "signature": "signInWithGoogle(next?: string, clubSlug?: string): Promise<OAuthStart>",
       "auth": [],
       "tables": [],
       "rpcs": [],
@@ -4101,7 +6348,7 @@
       "name": "removePlayerFromQueue",
       "signature": "removePlayerFromQueue( sessionId: string, playerId: string ): Promise<RemovePlayerFromQueueResult>",
       "auth": ["isSessionOrganizer", "createServiceClient"],
-      "tables": ["match_players", "queue_entries"],
+      "tables": ["match_players", "matches", "queue_entries"],
       "rpcs": ["remove_player_from_queue_organizer"],
       "broadcasts": ["broadcastOrganizerIntervention"],
       "pushes": false
@@ -4127,6 +6374,26 @@
       "pushes": false
     },
     {
+      "file": "repeat-pairing.ts",
+      "name": "getSessionPairCounts",
+      "signature": "getSessionPairCounts(sessionId: string): Promise<GetSessionPairCountsResult>",
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": [],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "repeat-pairing.ts",
+      "name": "getPairMatches",
+      "signature": "getPairMatches( sessionId: string, playerA: string, playerB: string ): Promise<GetPairMatchesResult>",
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["matches"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
       "file": "sessions.ts",
       "name": "createSession",
       "signature": "createSession(opts:",
@@ -4141,8 +6408,8 @@
       "name": "joinAsCoOrganizer",
       "signature": "joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganizerResult>",
       "auth": ["createServiceClient"],
-      "tables": ["session_organizers", "sessions"],
-      "rpcs": [],
+      "tables": ["co_organizer_join_attempts", "session_organizers", "sessions"],
+      "rpcs": ["cojoin_record_and_check"],
       "broadcasts": [],
       "pushes": false
     },
@@ -4168,12 +6435,22 @@
     },
     {
       "file": "sessions.ts",
-      "name": "setCapAndClearDrafts",
-      "signature": "setCapAndClearDrafts( sessionId: string, cap: number | null ): Promise<SetCapResult>",
+      "name": "applyDraftCapOverride",
+      "signature": "applyDraftCapOverride( sessionId: string, cap: number | null, opId: string ): Promise<ApplyDraftCapResult>",
       "auth": ["isSessionOrganizer", "createServiceClient"],
       "tables": ["sessions"],
       "rpcs": [],
       "broadcasts": ["broadcastDraftCapPhase"],
+      "pushes": false
+    },
+    {
+      "file": "sessions.ts",
+      "name": "toggleAutoPublish",
+      "signature": "toggleAutoPublish( sessionId: string, enabled: boolean ): Promise<ToggleAutoPublishResult>",
+      "auth": ["isSessionOrganizer", "createServiceClient"],
+      "tables": ["sessions"],
+      "rpcs": [],
+      "broadcasts": ["broadcastAutoPublishToggled"],
       "pushes": false
     },
     {
@@ -4227,11 +6504,31 @@
       "pushes": false
     },
     {
+      "file": "upcoming-match.ts",
+      "name": "getUpcomingHeldDraft",
+      "signature": "getUpcomingHeldDraft(sessionId: string): Promise<UpcomingHeldDraftResult>",
+      "auth": ["getAuthenticatedUser", "createServiceClient"],
+      "tables": ["matches"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
       "file": "wrapped.ts",
       "name": "dismissWrappedIntro",
       "signature": "dismissWrappedIntro( sessionId: string, playerId: string ): Promise<DismissWrappedIntroResult>",
       "auth": [],
       "tables": ["session_wrapped_stats"],
+      "rpcs": [],
+      "broadcasts": [],
+      "pushes": false
+    },
+    {
+      "file": "wrapped.ts",
+      "name": "getWrappedData",
+      "signature": "getWrappedData(sessionId: string, playerId: string): Promise<WrappedData>",
+      "auth": ["createServiceClient"],
+      "tables": ["profiles", "session_wrapped_stats", "sessions", "v_match_history"],
       "rpcs": [],
       "broadcasts": [],
       "pushes": false

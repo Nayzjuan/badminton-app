@@ -18,8 +18,6 @@
 // IDs: LSB-PLAYER · LSB-TEAMS · LSB-ONDECK · LSB-UNDO · LSB-HELPER
 // ============================================================
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
@@ -35,6 +33,7 @@ vi.mock("next/server", () => ({ after: (fn: () => unknown) => fn() }));
 
 import { createServiceClient } from "@/utils/supabase/service";
 import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
+import { allMatchesInSession } from "@/lib/match-session-binding";
 import {
   swapPlayerInActiveMatch,
   swapTeamsInActiveMatch,
@@ -476,16 +475,25 @@ describe("LSB-HELPER: allMatchesInSession edge cases", () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("refuses an empty id list rather than treating it as vacuously authorized", () => {
+  it("refuses an empty id list rather than treating it as vacuously authorized", async () => {
     // Unreachable from the five call sites today — all pass literal 1- or
-    // 2-element arrays — so there is no runtime path to drive it through an
-    // exported action. Guarding the source text instead of exporting the helper
-    // is deliberate: this is a `"use server"` module, and every export in one
-    // becomes a dispatchable endpoint (see MEMORY.md, the PR3 review blocker).
-    const src = readFileSync(join(process.cwd(), "src/app/actions/live-match-swap.ts"), "utf8");
-    const helper = src.slice(src.indexOf("async function allMatchesInSession"));
-    const body = helper.slice(0, helper.indexOf("\n}"));
-    expect(body).toMatch(/if\s*\(\s*ids\.length\s*===\s*0\s*\)\s*return\s+false\s*;/);
+    // 2-element arrays — so there is no path to it through an exported action.
+    // This used to be asserted by regex over the module's SOURCE TEXT, because
+    // exporting the helper from a `"use server"` module would have published it
+    // as a dispatchable cross-tenant oracle (MEMORY.md, the PR3 review blocker).
+    // It now lives in `src/lib/`, so the guard can be driven for real.
+    const db = { from: vi.fn() };
+
+    const authorized = await allMatchesInSession(
+      db as unknown as ReturnType<typeof createServiceClient>,
+      SESSION_A,
+      []
+    );
+
+    expect(authorized).toBe(false);
+    // The refusal must precede the query, not be arrived at by `0 === 0`
+    // happening to compare unequal against an empty result set.
+    expect(db.from).not.toHaveBeenCalled();
   });
 
   it("does not miscount when the same match id is supplied twice", async () => {

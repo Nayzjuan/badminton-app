@@ -151,6 +151,8 @@ vi.mock("@/utils/supabase/client", async (importOriginal) => ({
 
 let matchCallback: (() => void) | null = null;
 let playerCallback: (() => void) | null = null; // eslint-disable-line @typescript-eslint/no-unused-vars
+let queueCallback: (() => void) | null = null;
+let queuePrefix: string | undefined;
 
 vi.mock("@/lib/realtime", () => ({
   subscribeToMatches: (_client: unknown, _sessionId: string, cb: () => void) => {
@@ -163,6 +165,22 @@ vi.mock("@/lib/realtime", () => ({
     playerCallback = cb;
     return () => {
       playerCallback = null;
+    };
+  },
+  // Third stream — see the comment in use-player-match.ts. A held cross-court
+  // draft is pending+unpublished, so the draft firewall hides both its `matches`
+  // row and its `match_players` rows from the very player it reserves; the
+  // `queue_entries` flip to 'drafted' is the only event that reaches them.
+  subscribeToQueue: (
+    _client: unknown,
+    _sessionId: string,
+    cb: () => void,
+    channelPrefix?: string
+  ) => {
+    queueCallback = cb;
+    queuePrefix = channelPrefix;
+    return () => {
+      queueCallback = null;
     };
   },
 }));
@@ -178,6 +196,8 @@ describe("usePlayerMatch — Unit Suite", () => {
     authChangeCallback = null;
     matchCallback = null;
     playerCallback = null;
+    queueCallback = null;
+    queuePrefix = undefined;
   });
 
   afterEach(() => {
@@ -285,6 +305,39 @@ describe("usePlayerMatch — Unit Suite", () => {
     // Simulate a realtime event that clears the assignment
     mockResponseQueue.match_players = [[], []];
     matchCallback?.();
+
+    await waitFor(() => expect(result.current.currentMatch).toBeNull());
+  });
+
+  // ── U-HELD-1 ───────────────────────────────────────────────
+  it("U-HELD-1: a queue_entries event re-fetches (the pulled player's only held-draft signal)", async () => {
+    mockResponseQueue.match_players = [
+      [{ match_id: MATCH_ID, team: "a", matches: { session_id: SESSION_ID } }],
+      [
+        { player_id: PLAYER_ID, team: "a" },
+        { player_id: "player-t1", team: "a" },
+        { player_id: "player-o1", team: "b" },
+        { player_id: "player-o2", team: "b" },
+      ],
+    ];
+    mockResponses.matches = [mockMatch];
+    mockResponses.courts = [mockCourt];
+    mockResponses.profiles = mockProfiles;
+
+    const { result } = renderHook(() => usePlayerMatch(SESSION_ID, PLAYER_ID));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.currentMatch).not.toBeNull();
+
+    // The subscription exists at all, and carries a channelPrefix so it cannot
+    // collide with the other queue subscribers in the same session.
+    expect(queueCallback).toBeTypeOf("function");
+    expect(queuePrefix).toBe("player-match");
+
+    // create_held_cross_court_match flips three queue_entries rows to 'drafted'
+    // in the same transaction as the (firewalled) match insert. That event —
+    // and only that event — must still drive a re-fetch.
+    mockResponseQueue.match_players = [[], []];
+    queueCallback?.();
 
     await waitFor(() => expect(result.current.currentMatch).toBeNull());
   });

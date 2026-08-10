@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Toggle Feedback — Design Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:    oklch(0.07 0.012 245);
+  --cc-bg:  oklch(0.14 0.018 238);
+  --cc-bg-2:oklch(0.19 0.02 238);
+  --cc-bg-3:oklch(0.23 0.022 240);
+  --cc-border:oklch(0.3 0.025 240);
+  --cc-border-hi:oklch(0.44 0.032 240);
+  --cc-accent:oklch(0.79 0.18 188);
+  --cc-accent-dim:oklch(0.79 0.18 188 / 0.14);
+  --cc-accent-glow:oklch(0.79 0.18 188 / 0.28);
+  --cc-amber:oklch(0.78 0.17 62);
+  --cc-amber-dim:oklch(0.78 0.17 62 / 0.14);
+  --cc-t1:oklch(0.94 0.008 238);
+  --cc-t2:oklch(0.68 0.014 238);
+  --cc-t3:oklch(0.48 0.016 238);
+  --cc-btn-on-accent:oklch(0.11 0.016 238);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Inter',sans-serif;
+  background:var(--bg);
+  color:var(--cc-t1);
+  min-height:100vh;
+  padding:32px 20px;
+}
+.fc{font-family:'Chakra Petch',sans-serif}
+
+/* ── Clip-cut ── */
+.clip-cut-sm{clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px))}
+
+/* ── Page structure ── */
+.page-title{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--cc-t3);margin-bottom:36px;text-align:center;
+}
+
+.section{margin-bottom:48px}
+.section-label{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:8.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--cc-t3);margin-bottom:16px;
+  display:flex;align-items:center;gap:8px;
+}
+.section-label::after{content:'';flex:1;height:1px;background:var(--cc-border)}
+
+.row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px}
+.state-label{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:8px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--cc-t3);width:80px;flex-shrink:0;
+}
+
+/* ── Toggle button — OFF ── */
+.toggle{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:0 12px;min-height:44px;
+  font-family:'Chakra Petch',sans-serif;
+  font-size:10px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;
+  border:1px solid;cursor:pointer;transition:all .15s;
+  position:relative;overflow:hidden;
+}
+.toggle-off{
+  background:var(--cc-bg-3);border-color:var(--cc-border);color:var(--cc-t3);
+}
+.toggle-on{
+  background:var(--cc-accent-dim);border-color:oklch(0.79 0.18 188 / 0.45);color:var(--cc-accent);
+}
+.toggle-saving{
+  background:var(--cc-bg-3);border-color:var(--cc-border);
+  color:var(--cc-t2);opacity:.85;cursor:not-allowed;
+}
+
+/* ── Status dot ── */
+.dot{
+  width:8px;height:8px;border-radius:50%;flex-shrink:0;
+}
+.dot-off{background:var(--cc-t3)}
+.dot-on{background:var(--cc-accent)}
+
+/* ── Arc spinner ── */
+.arc{
+  width:10px;height:10px;flex-shrink:0;
+  position:relative;
+}
+.arc svg{
+  animation:arc-spin .7s linear infinite;
+  transform-origin:center;
+}
+@keyframes arc-spin{
+  from{transform:rotate(0deg)}
+  to{transform:rotate(360deg)}
+}
+
+/* ── Mobile pill toggle ── */
+.toggle-pill{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:6px 10px;border-radius:999px;border:1px solid;cursor:pointer;
+  font-family:'Chakra Petch',sans-serif;
+  font-size:11px;font-weight:600;letter-spacing:.06em;
+  transition:all .15s;
+}
+.pill-off{background:var(--cc-bg-3);border-color:var(--cc-border);color:var(--cc-t3)}
+.pill-on{background:var(--cc-accent-dim);border-color:oklch(0.79 0.18 188 / 0.4);color:var(--cc-accent)}
+.pill-saving{background:var(--cc-bg-3);border-color:var(--cc-border);color:var(--cc-t2);opacity:.85}
+
+/* ── Toast designs ── */
+.toast-stack{display:flex;flex-direction:column;gap:10px;max-width:320px}
+
+.toast{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:10px 14px;
+  border:1px solid;
+  animation:toast-in .2s cubic-bezier(.22,.68,0,1.2) both;
+}
+@keyframes toast-in{
+  from{opacity:0;transform:translateY(6px) scale(.97)}
+  to{opacity:1;transform:none}
+}
+
+.toast-engine-on{
+  background:oklch(0.79 0.18 188 / 0.1);
+  border-color:oklch(0.79 0.18 188 / 0.35);
+}
+.toast-engine-off{
+  background:var(--cc-bg-3);
+  border-color:var(--cc-border-hi);
+}
+.toast-draft{
+  background:var(--cc-amber-dim);
+  border-color:oklch(0.78 0.17 62 / 0.35);
+}
+.toast-error{
+  background:oklch(0.65 0.21 25 / 0.1);
+  border-color:oklch(0.65 0.21 25 / 0.35);
+}
+
+.toast-icon{
+  width:14px;height:14px;flex-shrink:0;margin-top:1px;
+}
+
+.toast-title{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:9px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;
+  line-height:1.3;margin-bottom:2px;
+}
+.toast-body{
+  font-size:11.5px;color:var(--cc-t2);line-height:1.45;
+}
+.toast-dismiss{
+  margin-left:auto;flex-shrink:0;
+  font-size:10px;color:var(--cc-t3);cursor:pointer;
+  background:none;border:none;padding:0;line-height:1;
+  align-self:flex-start;margin-top:1px;
+}
+.toast-dismiss:hover{color:var(--cc-t2)}
+
+.color-accent{color:var(--cc-accent)}
+.color-amber{color:var(--cc-amber)}
+.color-red{color:oklch(0.65 0.21 25)}
+.color-muted{color:var(--cc-t2)}
+
+/* ── On-deck panel header — new draft pulse ── */
+.deck-header{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 12px 8px 0;
+  border-bottom:1px solid var(--cc-border);
+  margin-bottom:12px;
+}
+.deck-title{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--cc-t2);
+}
+.deck-count{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:9px;font-weight:700;
+  background:var(--cc-bg-3);border:1px solid var(--cc-border);
+  padding:2px 7px;color:var(--cc-t3);
+}
+
+/* NEW badge — fades in, stays 3s, fades out */
+.new-badge{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:8.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--cc-accent);
+  display:flex;align-items:center;gap:4px;
+  padding:2px 7px;
+  background:var(--cc-accent-dim);
+  border:1px solid oklch(0.79 0.18 188 / 0.4);
+  animation:new-pulse 3s ease-out both;
+}
+@keyframes new-pulse{
+  0%{opacity:0;transform:scale(.9)}
+  8%{opacity:1;transform:scale(1)}
+  75%{opacity:1}
+  100%{opacity:0}
+}
+.new-dot{
+  width:5px;height:5px;border-radius:50%;
+  background:var(--cc-accent);
+  animation:dot-blink .6s step-end infinite;
+}
+@keyframes dot-blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* Live indicator on section header */
+.live-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--cc-accent);
+  position:relative;
+}
+.live-dot::before{
+  content:'';
+  position:absolute;inset:-3px;
+  border-radius:50%;
+  background:var(--cc-accent);
+  opacity:.4;
+  animation:live-ping 1.4s cubic-bezier(0,0,.2,1) infinite;
+}
+@keyframes live-ping{
+  0%{transform:scale(1);opacity:.4}
+  100%{transform:scale(2.2);opacity:0}
+}
+
+/* ── Comparison: before vs after ── */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media(max-width:640px){.compare{grid-template-columns:1fr}}
+
+.compare-col{}
+.compare-heading{
+  font-family:'Chakra Petch',sans-serif;
+  font-size:8px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  margin-bottom:12px;display:flex;align-items:center;gap:6px;
+}
+.dot-bad{width:6px;height:6px;border-radius:50%;background:oklch(0.65 0.21 25);flex-shrink:0}
+.dot-good{width:6px;height:6px;border-radius:50%;background:oklch(0.72 0.18 155);flex-shrink:0}
+
+.panel{
+  background:var(--cc-bg);
+  border:1px solid var(--cc-border);
+  padding:16px;
+}
+
+.note{
+  font-size:11px;color:var(--cc-t3);
+  margin-top:8px;line-height:1.6;
+  font-style:italic;
+}
+</style>
+</head>
+<body>
+
+<p class="page-title">Toggle Feedback & Generation Notification — Design Preview</p>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SECTION 1: Toggle states                                   -->
+<!-- ══════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-label">1 — Toggle States (Desktop clip-cut-sm)</div>
+
+  <div class="row">
+    <span class="state-label">OFF</span>
+    <button class="toggle toggle-off clip-cut-sm">
+      <span class="dot dot-off"></span>
+      Auto Off
+    </button>
+    <span style="font-size:11px;color:var(--cc-t3)">← current (no change needed)</span>
+  </div>
+
+  <div class="row">
+    <span class="state-label">Saving…</span>
+    <button class="toggle toggle-saving clip-cut-sm" disabled>
+      <!-- Arc spinner replaces dot -->
+      <span class="arc">
+        <svg viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.2"
+                  stroke-dasharray="14 8" stroke-linecap="round" opacity=".9"/>
+        </svg>
+      </span>
+      Saving…
+    </button>
+    <span style="font-size:11px;color:var(--cc-t3)">← NEW: arc spins while server confirms</span>
+  </div>
+
+  <div class="row">
+    <span class="state-label">ON</span>
+    <button class="toggle toggle-on clip-cut-sm">
+      <span class="dot dot-on"></span>
+      Auto On
+    </button>
+    <span style="font-size:11px;color:var(--cc-t3)">← current (no change needed)</span>
+  </div>
+
+  <p class="note">Only the label and dot change during `togglingAuto`. The arc spinner is a 10px SVG — no external dependency. A success toast fires after the server confirms.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SECTION 2: Mobile pill toggle states                        -->
+<!-- ══════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-label">2 — Mobile Pill Toggle States</div>
+
+  <div class="row">
+    <span class="state-label">OFF</span>
+    <button class="toggle-pill pill-off">
+      <span class="dot dot-off" style="width:6px;height:6px"></span>
+      Off
+    </button>
+  </div>
+
+  <div class="row">
+    <span class="state-label">Saving…</span>
+    <button class="toggle-pill pill-saving" disabled>
+      <span class="arc" style="width:8px;height:8px">
+        <svg viewBox="0 0 10 10" fill="none">
+          <circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.4"
+                  stroke-dasharray="14 8" stroke-linecap="round" opacity=".9"/>
+        </svg>
+      </span>
+      …
+    </button>
+  </div>
+
+  <div class="row">
+    <span class="state-label">ON</span>
+    <button class="toggle-pill pill-on">
+      <span class="dot dot-on" style="width:6px;height:6px"></span>
+      Auto
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SECTION 3: Toast notifications                             -->
+<!-- ══════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-label">3 — Toast Notifications</div>
+
+  <div class="toast-stack">
+
+    <!-- Engine turned ON -->
+    <div class="toast toast-engine-on clip-cut-sm">
+      <svg class="toast-icon color-accent" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="3" fill="currentColor" opacity=".3"/>
+        <circle cx="8" cy="8" r="1.5" fill="currentColor"/>
+        <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1" stroke-dasharray="3 2" opacity=".5"/>
+      </svg>
+      <div style="flex:1;min-width:0">
+        <div class="toast-title color-accent">Engine running</div>
+        <div class="toast-body">Auto-matchmaking is ON — drafts will appear as courts open.</div>
+      </div>
+      <button class="toast-dismiss">✕</button>
+    </div>
+
+    <!-- Engine turned OFF -->
+    <div class="toast toast-engine-off clip-cut-sm">
+      <svg class="toast-icon color-muted" viewBox="0 0 16 16" fill="none">
+        <rect x="5" y="4" width="2.5" height="8" rx="1" fill="currentColor"/>
+        <rect x="8.5" y="4" width="2.5" height="8" rx="1" fill="currentColor"/>
+      </svg>
+      <div style="flex:1;min-width:0">
+        <div class="toast-title color-muted">Engine paused</div>
+        <div class="toast-body">Auto-matchmaking is OFF — create matches manually.</div>
+      </div>
+      <button class="toast-dismiss">✕</button>
+    </div>
+
+    <!-- New draft match generated -->
+    <div class="toast toast-draft clip-cut-sm">
+      <svg class="toast-icon color-amber" viewBox="0 0 16 16" fill="none">
+        <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <rect x="1.5" y="1.5" width="13" height="13" rx="1" stroke="currentColor" stroke-width="1" opacity=".4"/>
+      </svg>
+      <div style="flex:1;min-width:0">
+        <div class="toast-title color-amber">Draft ready</div>
+        <div class="toast-body">1 new match draft — review and publish to put it on deck.</div>
+      </div>
+      <button class="toast-dismiss">✕</button>
+    </div>
+
+    <!-- Error state (existing pattern, shown for reference) -->
+    <div class="toast toast-error clip-cut-sm">
+      <svg class="toast-icon color-red" viewBox="0 0 16 16" fill="none">
+        <path d="M8 5v4M8 11v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M7.13 2.5L1.5 12.5h13L9.13 2.5A1.3 1.3 0 0 0 7.13 2.5z" stroke="currentColor" stroke-width="1" opacity=".5"/>
+      </svg>
+      <div style="flex:1;min-width:0">
+        <div class="toast-title color-red">Toggle failed</div>
+        <div class="toast-body">Could not update auto-matchmaking. Try again.</div>
+      </div>
+      <button class="toast-dismiss">✕</button>
+    </div>
+
+  </div>
+  <p class="note">All toasts use Sonner's existing instance. The content is custom JSX via toast.custom(). clip-cut-sm + cc-* tokens. Auto-dismiss after 4s.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SECTION 4: On-deck panel header — new draft indicator      -->
+<!-- ══════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-label">4 — On-Deck Panel — New Draft Indicator</div>
+
+  <div class="compare">
+
+    <div class="compare-col">
+      <div class="compare-heading"><span class="dot-bad"></span> Before — no signal</div>
+      <div class="panel">
+        <div class="deck-header">
+          <div class="deck-title">On Deck</div>
+          <div class="deck-count">0</div>
+        </div>
+        <div style="font-size:11.5px;color:var(--cc-t3);font-style:italic">
+          Matches just appear silently. No indication a draft was generated.
+        </div>
+      </div>
+    </div>
+
+    <div class="compare-col">
+      <div class="compare-heading"><span class="dot-good"></span> After — brief ambient signal</div>
+      <div class="panel">
+        <!-- Header with live dot when auto is ON, plus NEW badge when a draft arrives -->
+        <div class="deck-header">
+          <div class="deck-title">On Deck</div>
+          <div class="deck-count">1</div>
+          <!-- Live dot: shown when auto-matchmaking is ON -->
+          <span class="live-dot" title="Auto-matchmaking active"></span>
+          <!-- NEW badge: fades in when a draft appears from 0, then fades out after 3s -->
+          <span class="new-badge">
+            <span class="new-dot"></span>
+            New Draft
+          </span>
+        </div>
+        <div style="font-size:11.5px;color:var(--cc-t3)">
+          • Pulsing dot = engine is ON (persistent, low-noise)<br>
+          • "● New Draft" badge appears for 3s when count goes from 0 → 1
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="note" style="margin-top:16px">The live-dot ping animation uses the existing cc-accent token. The NEW badge runs a 3s keyframe and removes itself via JS (or a React state reset after 3s). No toast spam — only one toast per "0 → new draft" transition.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<!-- SECTION 5: Full context simulation                         -->
+<!-- ══════════════════════════════════════════════════════════ -->
+
+<div class="section">
+  <div class="section-label">5 — Scenario Simulation (Click to animate)</div>
+
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+
+    <!-- Simulated toggle -->
+    <div>
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--cc-t3);margin-bottom:8px">Toggle (click me)</div>
+      <button id="sim-toggle" class="toggle toggle-off clip-cut-sm" onclick="simulateToggle()">
+        <span id="sim-dot" class="dot dot-off"></span>
+        <span id="sim-label">Auto Off</span>
+      </button>
+    </div>
+
+    <!-- Simulated toast area -->
+    <div style="flex:1;min-width:200px">
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:8px;letter-spacing:.12em;text-transform:uppercase;color:var(--cc-t3);margin-bottom:8px">Feedback</div>
+      <div id="sim-toast-area" style="min-height:60px"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let isOn = false;
+let saving = false;
+
+function simulateToggle() {
+  if (saving) return;
+  saving = true;
+  const btn = document.getElementById('sim-toggle');
+  const dot = document.getElementById('sim-dot');
+  const label = document.getElementById('sim-label');
+  const area = document.getElementById('sim-toast-area');
+
+  // Show saving state
+  btn.className = 'toggle toggle-saving clip-cut-sm';
+  btn.disabled = true;
+  dot.outerHTML = `<span id="sim-dot" class="arc"><svg viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.2" stroke-dasharray="14 8" stroke-linecap="round" opacity=".9"/></svg></span>`;
+  label.textContent = 'Saving…';
+
+  // Simulate server round-trip (~500ms)
+  setTimeout(() => {
+    isOn = !isOn;
+    saving = false;
+    btn.disabled = false;
+
+    if (isOn) {
+      btn.className = 'toggle toggle-on clip-cut-sm';
+      document.getElementById('sim-dot').outerHTML = `<span id="sim-dot" class="dot dot-on"></span>`;
+      label.textContent = 'Auto On';
+      showToast('on');
+    } else {
+      btn.className = 'toggle toggle-off clip-cut-sm';
+      document.getElementById('sim-dot').outerHTML = `<span id="sim-dot" class="dot dot-off"></span>`;
+      label.textContent = 'Auto Off';
+      showToast('off');
+    }
+  }, 600);
+}
+
+function showToast(type) {
+  const area = document.getElementById('sim-toast-area');
+  const el = document.createElement('div');
+
+  if (type === 'on') {
+    el.className = 'toast toast-engine-on clip-cut-sm';
+    el.innerHTML = `
+      <svg class="toast-icon color-accent" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="3" fill="currentColor" opacity=".3"/>
+        <circle cx="8" cy="8" r="1.5" fill="currentColor"/>
+        <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1" stroke-dasharray="3 2" opacity=".5"/>
+      </svg>
+      <div style="flex:1;min-width:0">
+        <div class="toast-title color-accent">Engine running</div>
+        <div class="toast-body">Auto-matchmaking is ON.</div>
+      </div>`;
+  } else {
+    el.className = 'toast toast-engine-off clip-cut-sm';
+    el.innerHTML = `
+      <svg class="toast-icon color-muted" viewBox="0 0 16 16" fill="none">
+        <rect x="5" y="4" width="2.5" height="8" rx="1" fill="currentColor"/>
+        <rect x="8.5" y="4" width="2.5" height="8" rx="1" fill="currentColor"/>
+      </svg>
+      <div style="flex:1;min-width:0">
+        <div class="toast-title color-muted">Engine paused</div>
+        <div class="toast-body">Auto-matchmaking is OFF.</div>
+      </div>`;
+  }
+
+  area.innerHTML = '';
+  area.appendChild(el);
+
+  // Auto-dismiss after 4s
+  setTimeout(() => {
+    el.style.transition = 'opacity .3s';
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 300);
+  }, 4000);
+}
+</script>
+
+</body>
+</html>

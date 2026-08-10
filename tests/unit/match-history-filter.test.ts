@@ -115,6 +115,19 @@ const matchDupName = makeMatch("match-5", "completed", [
   { id: PLAYER_ANNE, team: "b", name: "Anne Villanueva" },
 ]);
 
+// Case/whitespace-variant duplicate. `idx_profiles_unique_active_name` blocks
+// this for ordinary profiles, but a `needs_rename = true` profile is exempt
+// from that index — so the flagged half of a duplicate identity can legitimately
+// carry a variant spelling until the organizer resolves it. Both render
+// identically in the picker, so both must get a disambiguator.
+const PLAYER_MARIA_3 = "player-maria-3";
+const matchDupNameVariant = makeMatch("match-6", "completed", [
+  { id: PLAYER_MARIA, team: "a", name: "Maria Santos" },
+  { id: PLAYER_MARIA_3, team: "b", name: "  maria   SANTOS " },
+  { id: PLAYER_CARL, team: "a", name: "Carl Reyes" },
+  { id: PLAYER_ANNE, team: "b", name: "Anne Villanueva" },
+]);
+
 // ── filterMatchesByPlayer ──────────────────────────────────────
 
 describe("filterMatchesByPlayer", () => {
@@ -210,6 +223,20 @@ describe("derivePlayerOptions", () => {
     for (const opt of options) {
       expect(opt.disambiguator).toBeNull();
     }
+  });
+
+  it("MHF-14b: case/whitespace-variant duplicate also collides (normalizeName key)", () => {
+    const options = derivePlayerOptions([matchDupNameVariant]);
+    const marias = options.filter((o) => [PLAYER_MARIA, PLAYER_MARIA_3].includes(o.player_id));
+    expect(marias).toHaveLength(2);
+    // Raw strings differ, so a raw-string key would leave both disambiguators null.
+    expect(marias[0].display_name).not.toBe(marias[1].display_name);
+    expect(marias[0].disambiguator).not.toBeNull();
+    expect(marias[1].disambiguator).not.toBeNull();
+    expect(marias[0].disambiguator).not.toBe(marias[1].disambiguator);
+    // Non-colliding players in the same set are untouched.
+    expect(options.find((o) => o.player_id === PLAYER_CARL)?.disambiguator).toBeNull();
+    expect(options.find((o) => o.player_id === PLAYER_ANNE)?.disambiguator).toBeNull();
   });
 
   it("MHF-15: never-played player (not on any roster) does not appear", () => {

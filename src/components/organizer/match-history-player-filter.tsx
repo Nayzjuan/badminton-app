@@ -7,7 +7,14 @@
 // Match History panel. Pattern lifted from swap-sheet.tsx:
 //   - plain <input> + <ul> of <button aria-pressed> rows
 //   - inline in normal document flow (NOT a floating popover)
-//   - results narrow as the organizer types; Escape clears
+//   - results narrow as the organizer types
+//
+// Escape is deliberately two-stage, innermost-first: it clears the
+// SEARCH QUERY if one is typed, and only clears the SELECTION when the
+// query is already empty. That reads as "two presses" only while the
+// organizer is mid-typing. In the steady post-selection state it is a
+// single press, because handleSelect empties the query on selection —
+// so Escape right after picking a player un-picks them.
 // ============================================================
 
 import { useState, useCallback, useId } from "react";
