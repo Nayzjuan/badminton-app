@@ -204,6 +204,13 @@ run against the production alias. See the next section.
 
 ## 🧪 E2E [R-2] rewritten — it was asserting the contract this fix deliberately replaced
 
+✅ **MERGED + DEPLOYED** — PR #56 → main `1688e95` → Vercel production
+`dpl_EX5zdnYWyPh37V6SfEBtAbSVBANe` READY. Test + docs only, **no `src/` change**, so nothing about
+runtime behaviour moved. (CI note: the PR's first `Vitest Integration` run failed in
+`supabase db reset` — *"error running container: exit 1"* while initialising schema, before a single
+test executed. The push-triggered run on the same SHA passed the full suite in 7 m 37 s; the re-run
+went green. Infra flake, not a regression.)
+
 Found immediately after the deploy. The old single [R-2] seeded `all_waiting` (zero completed matches)
 and asserted the watching player lands on **Wrapped**. Under the shipped code that player has no
 `session_wrapped_stats` row → `hasWrapped: false` → **club lobby**. The test would have failed, and

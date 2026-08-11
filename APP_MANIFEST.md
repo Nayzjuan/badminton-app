@@ -1771,7 +1771,7 @@ Enforced in the actions rather than in the database on purpose: a CHECK or trigg
 
 Three properties of that test worth preserving. (a) **The toast identifies nothing about the delivery path** — `leaveClosedSession` emits the same one on all three; what makes it a fast-path test is suppressing the 20 s poll and bounding elapsed time. (b) **A probe run serially before the thing you are timing poisons it**: the toast probe's own 15 s timeout used to guarantee `elapsed >= 15_000` on a miss, failing with "the redirect was slow" when the redirect was fine. They race in one `Promise.all` now. (c) **These assert the composite destination, not `resolveDestination`**: §3.31 F's `router.refresh()` fires before the push and the RSC's identical per-viewer branch normally wins, so a client probe that always answered "Wrapped" would still pass R-2a. That branch is unit-covered; what only E2E can prove is that a real close over a real socket puts a real browser on the right page.
 
-**Shipped:** PR #55 → main `6592864` → Vercel production `dpl_Du2Sj1D3ac4yArWXbohHiiFTLTyN` READY, zero runtime errors. Full scenario-R run against prod: **7/7**.
+**Shipped:** PR #55 → main `6592864` → Vercel production `dpl_Du2Sj1D3ac4yArWXbohHiiFTLTyN` READY, zero runtime errors. Full scenario-R run against prod: **7/7**. The [R-2a]/[R-2b] rewrite followed as PR #56 → main `1688e95` → `dpl_EX5zdnYWyPh37V6SfEBtAbSVBANe` READY (test + docs only, no `src/` change).
 
 ---
 
