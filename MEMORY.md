@@ -83,7 +83,7 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🚪 SESSION CLOSE — "Wrapped doesn't fire and players get stuck" — 2026-08-11, ✅ **COMMITTED (`11b49c6` on `chore/pending-queue-2026-08-10`) — NOT YET MERGED OR DEPLOYED**
+## 🚪 SESSION CLOSE — "Wrapped doesn't fire and players get stuck" — 2026-08-11, ✅ **SHIPPED + PROD-VERIFIED** (PR #55 → main `6592864`, deploy `dpl_Du2Sj1D3ac4yArWXbohHiiFTLTyN` READY)
 
 Reported symptom: *"it looks like it didn't fire the session wrap right away once the session is
 closed"* + *"I want all players/users to be auto-refreshed and session wrapped is shown."*
@@ -172,10 +172,72 @@ Code Review Gate run **three times**: Needs fixes → Minor issues → **LGTM**.
 > via `mockReturnValue`/`mockResolvedValue`. A never-resolving `getPlayerSessionStatus` from OD-22e
 > leaked into OD-22f and burned a real 1.2 s timeout. Nested `beforeEach` re-establishes the default.
 
-> 🚀 **Deploy note:** committed as `11b49c6`, **not merged and not deployed.** It is pure application
-> code, so a merge ships it — but verify on prod with **two tabs** (organizer + player) that the close
-> moves the player within ~1 s, and confirm the player who never completed a match lands on the
-> **club lobby**, not an all-zero recap.
+### Deploy + prod verification — DONE
+
+Committed `11b49c6` + `2acf28e` → merged `origin/main` into the branch (**9 conflicts**, all from main
+having squash-merged this branch's own earlier work via #53/#54 while it was never rebased; merge
+`e9e1f76`) → PR **#55** (36 files, +4027/−347), all CI green → squash-merged as **`6592864`** →
+Vercel production **`dpl_Du2Sj1D3ac4yArWXbohHiiFTLTyN` READY**.
+
+> ⚠️ **Merge-conflict trap worth keeping.** In `use-organizer-broadcast.ts`, git auto-merged main's
+> **superseded** implementation back in *outside* the conflict markers (`WRAPPED_REDIRECT_DELAY_MS = 800`,
+> `goToWrapped`, `checkClosedRef` survived in a "common" region that HEAD deletes). The merge base
+> predated *both* implementations, so each side read as a pure addition. Resolution was
+> `git checkout --ours <file>` on the whole file, then proving it byte-identical to
+> `git show 2acf28e:<file>` — a region-by-region edit would have silently shipped two closure engines.
+
+Post-deploy, read-only against prod:
+
+- Vercel `get_runtime_errors` over 3 h: **none**.
+- `sessions` is in the `supabase_realtime` publication with both `id` and `is_active` in its column
+  list → **watcher path 2 needs no migration**, confirmed live rather than assumed.
+- `sessions_select` = `(is_session_organizer(id) OR is_club_member(club_id))`.
+- All four `20260810*`/`20260811*` migration stamps present.
+- The post-close-write receipts reproduce **exactly** as recorded (queue entries at +46.7 s and +2.2 s
+  after `ended_at`, both `status=waiting`, **and no third**). That is now the baseline: any *new* row
+  from that query dated after 2026-08-11 means `isSessionActive` regressed.
+
+**Two-tab prod check: DONE, as an executable test** — `tests/e2e/scenario-r-resilience.spec.ts` [R-2],
+run against the production alias. See the next section.
+
+---
+
+## 🧪 E2E [R-2] rewritten — it was asserting the contract this fix deliberately replaced
+
+Found immediately after the deploy. The old single [R-2] seeded `all_waiting` (zero completed matches)
+and asserted the watching player lands on **Wrapped**. Under the shipped code that player has no
+`session_wrapped_stats` row → `hasWrapped: false` → **club lobby**. The test would have failed, and
+failing was *correct* — it encoded the pre-fix behaviour. Playwright is not in CI (`unit-tests.yml`,
+`integration-tests.yml` only), so nothing caught it at merge time.
+
+Split into two cases, both **passing against production**:
+
+- **R-2a** — `all_waiting` + the organizer bot queued, no completed match → asserts `clubBase(slug)`.
+  This is the user's own words (*"they should transition to the lobby page"*) as an assertion.
+- **R-2b** — same, plus a hand-seeded **completed** match containing the organizer bot → asserts
+  `clubWrapped(slug, sessionId, playerId)`. Scores are mandatory in the seed:
+  `compute_session_wrapped`'s `completed_matches` CTE filters on
+  `team_a_score IS NOT NULL AND team_b_score IS NOT NULL`, so a scoreless completed match yields no
+  recap and R-2b would silently degrade into a copy of R-2a.
+
+Three things the review gate corrected in the test itself, worth not re-introducing:
+
+1. **The toast does not identify the delivery path.** `leaveClosedSession` emits the same toast on all
+   three. What makes this a *fast-path* test is suppressing the 20 s poll (`suppressClosurePoll`) plus
+   an elapsed-time bound; the toast is asserted only because it is the user-visible half.
+2. **A serial toast probe poisons the timing assertion.** Probing the toast with its own 15 s timeout
+   *before* `waitForURL` meant a missed toast guaranteed `elapsed >= 15_000` — failing with
+   "the redirect was slow" when the redirect was fine. They now race in one `Promise.all`, with
+   elapsed captured inside the URL continuation.
+3. **These assert the COMPOSITE destination, not the client's probe.** `leaveClosedSession` calls
+   `router.refresh()` before it pushes, and the play page's RSC runs the identical per-viewer branch
+   server-side and normally wins. A `resolveDestination` that always answered "Wrapped" would still
+   pass R-2a. That branch's coverage lives in `use-organizer-broadcast-closure.test.ts`; what only E2E
+   can prove is that a real close over a real socket puts a real browser on the right page.
+
+Full-file run against prod: **7/7 passed (1.6 m)** — which also discharges the outstanding live
+[R-5] check ([[draft-cap-phase-server-side]]: the co-organizer draft-cap lockout, whose `realtime:`
+prefix removal rode along on this deploy).
 
 ---
 

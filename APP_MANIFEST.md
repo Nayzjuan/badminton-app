@@ -1767,6 +1767,12 @@ Enforced in the actions rather than in the database on purpose: a CHECK or trigg
 
 **Coverage:** `use-organizer-broadcast-closure.test.ts` 40 cases (OBC-1…14) · `use-organizer-dashboard.test.ts` 50 cases (adds OD-10b, OD-22a–k, OD-23a–b). Suite **1057 passing / 1 skipped across 58 files**.
 
+**End-to-end, against production** — `tests/e2e/scenario-r-resilience.spec.ts` **[R-2a]** (a viewer with no completed match lands on the club lobby) and **[R-2b]** (a viewer with one lands on their Wrapped page). The single [R-2] they replace asserted the *superseded* contract — always Wrapped — and would have failed correctly; Playwright is not in CI, so nothing caught it at merge time. Assume nothing about E2E coverage after a behaviour change of this kind.
+
+Three properties of that test worth preserving. (a) **The toast identifies nothing about the delivery path** — `leaveClosedSession` emits the same one on all three; what makes it a fast-path test is suppressing the 20 s poll and bounding elapsed time. (b) **A probe run serially before the thing you are timing poisons it**: the toast probe's own 15 s timeout used to guarantee `elapsed >= 15_000` on a miss, failing with "the redirect was slow" when the redirect was fine. They race in one `Promise.all` now. (c) **These assert the composite destination, not `resolveDestination`**: §3.31 F's `router.refresh()` fires before the push and the RSC's identical per-viewer branch normally wins, so a client probe that always answered "Wrapped" would still pass R-2a. That branch is unit-covered; what only E2E can prove is that a real close over a real socket puts a real browser on the right page.
+
+**Shipped:** PR #55 → main `6592864` → Vercel production `dpl_Du2Sj1D3ac4yArWXbohHiiFTLTyN` READY, zero runtime errors. Full scenario-R run against prod: **7/7**.
+
 ---
 
 ## 4. UI/UX Conventions (Impeccable Standards)
