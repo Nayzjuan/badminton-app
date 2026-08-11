@@ -93,6 +93,15 @@ export function WrappedShell({
       setIsDismissing(false); // let player retry
       return;
     }
+    if (result.dismissed === false) {
+      // Nothing to stamp: either already dismissed, or — the case worth
+      // knowing about — there is no stats row for this pair at all, so this
+      // recap is the all-zero fallback and the intro will replay next visit.
+      // Still navigate; the player has nothing to do about it.
+      console.warn(
+        "[WrappedShell] dismissWrappedIntro stamped no row (already dismissed, or no stats row for this session/player)."
+      );
+    }
     router.push(clubSlug ? clubBase(clubSlug) : "/play");
   }, [isDismissing, sessionId, playerId, router, clubSlug]);
 

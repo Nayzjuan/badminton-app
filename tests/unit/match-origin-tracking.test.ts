@@ -37,9 +37,20 @@ vi.mock("next/server", () => ({
 vi.mock("@/lib/notifications/push-server", () => ({
   pushToPlayers: vi.fn().mockResolvedValue({ sent: 0, errors: 0 }),
 }));
+// createManualMatchAction now runs isSessionActive() after the organizer gate
+// (the post-close write guard). Left real it would read sessions.is_active off
+// the table-addressed service mock below, whose "sessions" row answers the
+// organizer check and carries no is_active — every case would fail as "This
+// session has ended." Only that export is replaced; isSessionOrganizer,
+// getAuthenticatedUser and getActorContext stay real.
+vi.mock("@/app/actions/_shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/actions/_shared")>()),
+  isSessionActive: vi.fn(async () => true),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
+import { isSessionActive } from "@/app/actions/_shared";
 import { createManualMatchAction } from "@/app/actions/match-lifecycle";
 
 // ─────────────────────────────────────────────────────────────
@@ -368,6 +379,24 @@ describe("createManualMatchAction — queue status side-effect", () => {
     const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
 
     expect(result.success).toBe(false);
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it("does NOT call the RPC once the session is closed (post-close write guard)", async () => {
+    const { svcClient, rpcCalls } = makeCapturingServiceClient({ data: "match-xyz", error: null });
+    vi.mocked(createServiceClient).mockReturnValue(svcClient as never);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue({
+      auth: {
+        getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
+      },
+      from: vi.fn(),
+    } as never);
+    vi.mocked(isSessionActive).mockResolvedValueOnce(false);
+
+    const result = await createManualMatchAction(SESSION_ID, TEAM_A, TEAM_B);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/session has ended/i);
     expect(rpcCalls).toHaveLength(0);
   });
 });

@@ -83,6 +83,102 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
+## 🚪 SESSION CLOSE — "Wrapped doesn't fire and players get stuck" — 2026-08-11, **CODE COMPLETE, UNCOMMITTED, UNDEPLOYED**
+
+Reported symptom: *"it looks like it didn't fire the session wrap right away once the session is
+closed"* + *"I want all players/users to be auto-refreshed and session wrapped is shown."*
+Architecture + full rationale: **APP_MANIFEST §3.31**. **No migrations.** 23 modified files + 2 new
+(`src/hooks/use-session-closed-watcher.ts`, `src/lib/with-timeout.ts`).
+
+### The five things that will bite the next person
+
+1. **The headline bug was not latency — it was a bricked socket.** `disconnect(); connect();` on the
+   anon→real auth transition left the tab with **no socket and every phoenix recovery path disarmed**
+   (`closeWasClean = true` suppresses the reconnect timer, the `visibilitychange` rescue and the
+   `pageshow` rescue). `disconnect()` is async; `connect()` early-returns while `isDisconnecting()`.
+   The old code comment claiming "worst case equals the status quo" was **false and is now retracted
+   in place**. If you ever touch `recycleRealtimeSocket()`, the `await` is the whole fix.
+2. **`WRAPPED_REDIRECT_DELAY_MS` was the bigger half of the delay.** Prod `pg_stat_statements`
+   (123 days): `compute_session_wrapped` 68/237/827 ms, `refresh_cross_session_stats` 8.5/109/604 ms
+   — ~346 ms mean of server pre-work, against a **client-side 800 ms toast delay**. Now 250 ms.
+   Measure before optimising the server here; the numbers are in the section above.
+3. **The audit's P3 prescription was deliberately NOT followed, and this will look like an
+   oversight.** It wanted the flip+broadcast first with both RPCs in `after()`. Implemented instead:
+   compute stays *before* the flip, **cleanups moved to after the broadcast**. Reasons: `after()`
+   buys ~346 ms; it destroys the invariant that makes `broadcastSessionClosed(id, wrappedReady)`
+   meaningful (`wrappedReady` must be *known* at emit time); and an `after()` failure can never be
+   reported to the organizer. The reviewer independently endorsed this. **The reordering that
+   actually mattered** was the cleanups — ~30 postgres_changes teardown events fanning to ~40 phones
+   *while the session still read ACTIVE*. **That is the "I got kicked out of the queue" report.**
+4. **`intro_dismissed_at` is NOT a bug — do not "fix" it.** One writer (`dismissWrappedIntro` ←
+   `WrappedShell.handleDone`), NULL for everyone at close time. It is a correct re-entry guard. The
+   user's lobby-vs-Wrapped premise was investigated and is not what was broken.
+5. **Do NOT wire `subscribeToSessionRow`'s `onStatus` into `useOrganizerSession.handleChannelStatus`.**
+   That counter asserts an exact `REALTIME_CHANNEL_COUNT = 5` of postgres_changes channels; a sixth
+   pegs the board's "live" indicator to disconnected forever. Same trap as `OrganizerBroadcastHandlers.onStatus`.
+
+### What shipped, in one line each
+
+- **Three independent delivery paths**, all converging on one destination decision in the new
+  `useSessionClosedWatcher` (mounted by both the player dashboard and the organizer board): broadcast
+  (retried once — the only sender that opts in, because the receiver latches) · `sessions` row
+  postgres_changes (`subscribeToSessionRow`, no migration needed) · 20 s status poll + visibility +
+  channel-status re-checks.
+- **`getPlayerSessionStatus` now returns `hasWrapped`** (scoped to `user.id`, never a caller-supplied
+  id). No recap → club lobby, not an all-zero Wrapped. `compute_session_wrapped` builds from
+  *completed* matches, so walk-ins, late arrivals and the board-only organizer have **no row**.
+- **`closeSession` returns `delivered` + `alreadyClosed`.** `delivered: false` surfaces a **Re-send**
+  toast action calling `renotifySessionClosed` — the only remedy for "closed in the DB, nobody's
+  phone was told" short of walking the gym. `alreadyClosed` is an explicit flag, *not* a message
+  match, so re-wording the copy cannot turn a double-submit back into a red toast.
+- **`isSessionActive` gates 4 actions** (`joinQueueAction`, `callNextMatch`,
+  `createManualMatchAction`, `toggleAutoMatchmaking`). Prod receipts: queue entries created **46.7 s**
+  and **2.2 s** after `ended_at`. **Fails OPEN** by design — an unreadable session row returns `true`.
+- **`AlertDialogAction` IS Radix's `Dialog.Close`** — needs `e.preventDefault()`, or the dialog
+  dismisses on the same click and "Closing session…" paints onto a node already fading out. That is
+  most of what "it didn't fire" *looked* like. Pairs with `{(!isClosed || closing) && …}` (the
+  organizer hears their own close echo) and a derived `effectiveTab` (the tab set drops 5→2 live).
+- **Both destination probes in `handleCloseSession` are bounded + caught** (`withTimeout`, 1.2 s).
+  Unguarded, a rejection reports **failure for a close that succeeded**, and a hang means `finally`
+  never runs → `closing` latched, no push, `suppressCloseWatcher(false)` never reached, **all three
+  watcher paths dead** with nothing left to recover the board.
+
+### Explicitly out of scope — user's decision, not an oversight
+
+**The TV board.** A gym screen stays on its last frame until someone reloads it. The user chose
+"Leave the TV board alone" when asked.
+
+### Booked minors (review-agent "Minor issues" pass, per CLAUDE.md gate rule 3)
+
+- Redundant second `getPlayerSessionStatus` when the poll already resolved `hasWrapped === true`.
+- Two postgres_changes subscriptions on the same `sessions` row on the organizer board
+  (`session-settings:{id}` + `session-row:{id}`). Justified — `session-settings:` carries other
+  columns, and collapsing them would couple the watcher's lifetime to the board's.
+- `closeSession` returns `alreadyClosed` **before** the organizer check (pre-existing; leaks one bit).
+- Cleanup UPDATE errors unchecked while the success message asserts counts (pre-existing). Cancel and
+  complete are **not** behind the new `isSessionActive` gate, so an organizer can still repair
+  leftover rows by hand — which is why this stayed out of scope.
+- No `maxDuration` anywhere, against a ~23 s worst-case action budget.
+- `isSessionActive`'s fail-open contract has no direct test.
+
+### Validation + gate
+
+`npx tsc --noEmit` exit 0 · `npx vitest run` → **58 files, 1057 passed / 1 skipped** (+22 new cases:
+OD-10b, OD-22a–k, OD-23a–b, OBC-12a–d, OBC-13a–b, OBC-14a–b) · `npm run lint` → **62 errors,
+byte-identical to the pre-existing baseline**, none in touched files · `npm run build` compiled.
+Code Review Gate run **three times**: Needs fixes → Minor issues → **LGTM**.
+
+> ⚠️ **Test gotcha banked:** `vi.clearAllMocks()` clears call history but **NOT implementations** set
+> via `mockReturnValue`/`mockResolvedValue`. A never-resolving `getPlayerSessionStatus` from OD-22e
+> leaked into OD-22f and burned a real 1.2 s timeout. Nested `beforeEach` re-establishes the default.
+
+> 🚀 **Deploy note:** nothing here is committed or deployed. It is pure application code, so a merge
+> ships it — but verify on prod with **two tabs** (organizer + player) that the close moves the player
+> within ~1 s, and confirm the player who never completed a match lands on the **club lobby**, not an
+> all-zero recap.
+
+---
+
 ## 🏆 SESSION WRAPPED — six "milestone" awards were re-firing every session — 2026-08-11, ✅ **APPLIED + PROD-VERIFIED + COMMITTED** (`15acdaa` on `chore/pending-queue-2026-08-10`)
 
 Reported symptom: *"the 100 games award [is] given to more than one person."* Architecture + full

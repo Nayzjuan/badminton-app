@@ -105,7 +105,7 @@ describe("private session-events broadcast", () => {
   // ── Server half ─────────────────────────────────────────────
 
   it("RPB-1 marks every emitted message private", async () => {
-    await broadcastSessionClosed(SESSION_ID);
+    await broadcastSessionClosed(SESSION_ID, true);
     expect(lastFetchBody().messages[0].private).toBe(true);
 
     await broadcastOrganizerIntervention(SESSION_ID, "match_cancelled", ["p1"], {
@@ -127,7 +127,7 @@ describe("private session-events broadcast", () => {
     // wrong value, so it is only safe while RPB-3 still pins the client's
     // channel name to the literal `session-events:{id}`. Do not relax that
     // assertion without replacing the anchor here.
-    await broadcastSessionClosed(SESSION_ID);
+    await broadcastSessionClosed(SESSION_ID, true);
     const msg = lastFetchBody().messages[0];
 
     const { client, channelCalls } = makeFakeClient();
@@ -140,7 +140,7 @@ describe("private session-events broadcast", () => {
 
     expect(msg.topic).toBe(channelCalls[0].name);
     expect(msg.event).toBe("session_closed");
-    expect(msg.payload).toEqual({ sessionId: SESSION_ID });
+    expect(msg.payload).toEqual({ sessionId: SESSION_ID, wrappedReady: true });
   });
 
   // ── Client half ─────────────────────────────────────────────

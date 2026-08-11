@@ -154,6 +154,41 @@ export async function isPlayerInSessionScope(
 }
 
 /**
+ * Returns true when `sessionId` names a session that is still running.
+ *
+ * Post-close writes are not hypothetical. Two production rows prove it: queue
+ * entries created 46.7 s and 2.2 s AFTER their session's `ended_at`, both from
+ * the player dashboard's Join Queue button, both by non-organizers. The
+ * mechanism is a client that never learned the session closed — a stale board,
+ * a missed broadcast, a resumed tab — still holding live-looking controls.
+ *
+ * This is enforced in the server actions rather than the database on purpose.
+ * A CHECK or trigger would reject the write with a Postgres error string that
+ * every action would then have to pattern-match to say anything human, and it
+ * would also fire on `closeSession`'s own teardown UPDATEs. The actions know
+ * what the user was trying to do and can say "this session has ended".
+ *
+ * Fails OPEN: an unreadable session row returns true. A transient read failure
+ * must not block a legitimate write in a live session — the close path has its
+ * own guards, and the cost of a rare late row is far below the cost of the
+ * queue refusing to work mid-session.
+ *
+ * Service client: the check must not itself be blocked by RLS.
+ */
+export async function isSessionActive(sessionId: string): Promise<boolean> {
+  const svc = createServiceClient();
+
+  const { data, error } = await svc
+    .from("sessions")
+    .select("is_active")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (error || !data) return true;
+  return data.is_active;
+}
+
+/**
  * Resolves the actor context for a match audit event: the organizer's profile
  * id (= auth user id) and their current display_name snapshot. The name is
  * looked up via the service client (the auth user carries no display_name).

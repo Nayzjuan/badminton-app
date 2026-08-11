@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { EnrichedMatch } from "@/hooks/use-enriched-matches";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
-import type { CapSaturationPayload } from "@/lib/broadcast";
+import type { CapSaturationPayload, SessionClosedPayload } from "@/lib/broadcast";
 import type { CapPhaseSignal } from "@/hooks/use-organizer-session";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
 import type { SwapResult, SwapMatchPlayersResult } from "@/app/actions/swap-player";
@@ -131,7 +131,12 @@ export function useOrganizerData(
   initialSession: Session,
   /** The viewing organizer's own id — threaded to useOrganizerSession so a
    *  co-organizer's clear/cancel toast is suppressed on the actor's own screen. */
-  currentUserId: string
+  currentUserId: string,
+  /** Passed straight through to useOrganizerSession — see its `closeHooks`. */
+  closeHooks?: {
+    onSessionClosed?: (payload: SessionClosedPayload) => void;
+    onBroadcastStatus?: () => void;
+  }
 ): UseOrganizerDataResult {
   // Single Supabase client shared across all sub-hooks.
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -146,7 +151,7 @@ export function useOrganizerData(
     dismissCapSaturation,
     handleChannelStatus,
     capSignal,
-  } = useOrganizerSession(sessionId, initialSession, supabase, currentUserId);
+  } = useOrganizerSession(sessionId, initialSession, supabase, currentUserId, closeHooks);
 
   // ── Courts sub-hook ───────────────────────────────────────────
   // Needs setSession for the updateTimeLimit optimistic update.

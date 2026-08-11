@@ -35,6 +35,17 @@ vi.mock("@/app/actions/matchmaking", () => ({
   runEngineForSession: vi.fn().mockResolvedValue(undefined),
 }));
 
+// joinQueueAction now runs isSessionActive() before any join work (the
+// post-close write guard). Left real it would read sessions.is_active off the
+// SAME ordered service-client mock the join steps consume, stealing the
+// existing-row response and failing every case as "This session has ended."
+// Only that one export is replaced — isSessionOrganizer and getActorContext
+// stay real and are still exercised through the DB mock.
+vi.mock("@/app/actions/_shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/actions/_shared")>()),
+  isSessionActive: vi.fn(async () => true),
+}));
+
 // after() from next/server throws "called outside a request scope" in unit
 // tests. Replace it with a synchronous pass-through so tests can exercise
 // code paths that call after(() => runEngineForSession(...)).
@@ -44,6 +55,7 @@ vi.mock("next/server", () => ({
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
+import { isSessionActive } from "@/app/actions/_shared";
 import { joinQueueAction } from "@/app/actions/queue";
 
 // ── Valid UUID that passes isValidUUID ─────────────────────────
@@ -362,5 +374,27 @@ describe("joinQueueAction — auth guard", () => {
     // isValidUUID check fires before createServerSupabaseClient, so no mock needed
     const result = await joinQueueAction("not-a-uuid");
     expect(result.error).toMatch(/invalid session/i);
+  });
+});
+
+// ── Closed-session guard ──────────────────────────────────────
+//
+// The gate sits between the needs_rename check and every DB write, so a
+// player whose tab missed the close broadcast cannot re-queue into a session
+// that has already been wrapped.
+
+describe("joinQueueAction — closed-session guard", () => {
+  it("refuses to queue a player once the session is closed", async () => {
+    const mock = makeMockClient([]);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    mockServiceClient.from = mock.from;
+    vi.mocked(isSessionActive).mockResolvedValueOnce(false);
+
+    const result = await joinQueueAction(SESSION_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/session has ended/i);
+    // Only the needs_rename gate ran — no existing-row fetch, no insert.
+    expect(mock.from).toHaveBeenCalledTimes(1);
   });
 });

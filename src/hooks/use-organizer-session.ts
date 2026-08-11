@@ -27,6 +27,7 @@ import type {
   CapSaturationPayload,
   DraftCapPhasePayload,
   OrganizerInterventionPayload,
+  SessionClosedPayload,
 } from "@/lib/broadcast";
 import type { Session } from "@/types/database";
 
@@ -120,7 +121,22 @@ export function useOrganizerSession(
   initialSession: Session,
   supabase: SupabaseClient<Database>,
   /** The viewing organizer's own id — used to suppress their own intervention toast. */
-  currentUserId: string
+  currentUserId: string,
+  /**
+   * Optional hooks into the session broadcast channel, so the board can react
+   * to a CO-ORGANIZER closing the session (or its own close in another tab).
+   * Wired to useSessionClosedWatcher at the call site.
+   *
+   * `onBroadcastStatus` is deliberately NOT `handleChannelStatus`: that counter
+   * asserts an exact REALTIME_CHANNEL_COUNT of *postgres_changes* channels, so
+   * feeding a sixth into it would peg the "live" indicator to disconnected
+   * forever. It exists to tell the watcher the channel flapped and a
+   * `session_closed` may have been missed.
+   */
+  closeHooks?: {
+    onSessionClosed?: (payload: SessionClosedPayload) => void;
+    onBroadcastStatus?: () => void;
+  }
 ): {
   liveSession: Session;
   setSession: React.Dispatch<React.SetStateAction<Session>>;
@@ -165,6 +181,13 @@ export function useOrganizerSession(
   const currentUserIdRef = useRef(currentUserId);
   useEffect(() => {
     currentUserIdRef.current = currentUserId;
+  });
+
+  // Same reason: the watcher's callbacks change identity whenever it re-renders,
+  // and the broadcast channel must be registered once per session.
+  const closeHooksRef = useRef(closeHooks);
+  useEffect(() => {
+    closeHooksRef.current = closeHooks;
   });
 
   // ── Session refresh ───────────────────────────────────────────
@@ -223,10 +246,14 @@ export function useOrganizerSession(
     // Not included in the health counter — it's a metadata channel, not
     // a player-data channel, so we don't need it to be "live" for gameplay.
     //
-    // NOTE: is_auto_matchmaking_on is intentionally NOT synced through
-    // this channel. The sessions table RLS SELECT policy only grants access
-    // to the session creator, so co-organizers would never receive this
-    // UPDATE event. Auto-toggle state is synced via the Broadcast channel.
+    // NOTE: is_auto_matchmaking_on is intentionally NOT synced through this
+    // channel — auto-toggle state goes over the Broadcast channel instead.
+    // This used to be justified as "sessions RLS only grants the creator",
+    // which is no longer true: the multi-tenant policy is
+    // `is_session_organizer(id) OR is_club_member(club_id)`, so co-organizers
+    // AND players do receive these UPDATEs (useSessionClosedWatcher's path 2
+    // depends on exactly that). Keeping the split anyway: broadcast is the
+    // faster, prefix-namespaced path the toggle UI already reads.
     // Defer the join until the Realtime JWT is set (see whenRealtimeAuthReady
     // in src/utils/supabase/client.ts): postgres_changes RLS binds to the
     // socket's role at join time, and the club-scoped sessions SELECT policy
@@ -274,6 +301,16 @@ export function useOrganizerSession(
           duration: 5_000,
           closeButton: true,
         });
+      },
+      // A co-organizer (or this organizer, from another tab) closed the
+      // session. The board has no meaning any more; the watcher decides where
+      // this organizer goes and gets them there.
+      onSessionClosed: (payload: SessionClosedPayload) => {
+        setSession((prev) => ({ ...prev, is_active: false }));
+        closeHooksRef.current?.onSessionClosed?.(payload);
+      },
+      onStatus: () => {
+        closeHooksRef.current?.onBroadcastStatus?.();
       },
       onAutoMatchmakingToggled: (payload: AutoMatchmakingToggledPayload) => {
         // Invalidate any in-flight fetchSession poll (F3 fix).

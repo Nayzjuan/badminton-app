@@ -56,7 +56,8 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
   // land on a guaranteed notFound() (a hand-crafted /c/club-a/play/<club-b-id>).
   await enforceRenameGate(profile, clubPlay(clubSlug, sessionId));
 
-  // Session ended → Wrapped (unless the intro was already dismissed → club lobby).
+  // Session ended → Wrapped (unless there is nothing to show, or the intro was
+  // already dismissed → club lobby).
   if (!session.is_active) {
     const { data: wrappedStats } = await supabase
       .from("session_wrapped_stats")
@@ -65,7 +66,19 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
       .eq("player_id", user.id)
       .maybeSingle();
 
-    if (wrappedStats?.intro_dismissed_at) {
+    // No row at all → the lobby. compute_session_wrapped builds its rows from
+    // completed matches, so anyone who never finished one has none: walk-ins,
+    // late arrivals, and the organizer who only ran the board. Falling through
+    // to Wrapped would render them an all-zero recap — and this branch now runs
+    // far more often than it used to, because the close watcher calls
+    // router.refresh() the moment the session ends. Without this the watcher's
+    // own carefully-probed push to the lobby loses: the server redirect
+    // unmounts the dashboard first, which cancels it.
+    if (!wrappedStats) {
+      redirect(clubBase(clubSlug));
+    }
+
+    if (wrappedStats.intro_dismissed_at) {
       redirect(clubBase(clubSlug));
     }
     // Club-namespaced Wrapped variant (mirrors the TV board's dual-path
