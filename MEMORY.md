@@ -83,7 +83,7 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🏆 SESSION WRAPPED — six "milestone" awards were re-firing every session — 2026-08-11, ✅ **APPLIED + PROD-VERIFIED** (working tree still uncommitted)
+## 🏆 SESSION WRAPPED — six "milestone" awards were re-firing every session — 2026-08-11, ✅ **APPLIED + PROD-VERIFIED + COMMITTED** (`15acdaa` on `chore/pending-queue-2026-08-10`)
 
 Reported symptom: *"the 100 games award [is] given to more than one person."* Architecture + full
 rationale: **APP_MANIFEST §3.7.1**.
@@ -251,14 +251,12 @@ hidden `🤖 E2E SANDBOX` (0 matches, 39 days stale, excluded by `is_hidden` any
 
 ### Next steps
 
-1. **Commit the working tree** — untracked: the two migration SQL files and the generator (now with
-   `--apply-sql` + the `flag_dest` guard). Modified: `APP_MANIFEST.md`, `MEMORY.md`, and
-   `src/lib/wrapped-awards.ts` (comment-only — documents which awards are now one-time and why the
-   `the_veteran` subtitle was left alone). **Prod is ahead of git right now.**
-   ⚠️ `src/hooks/use-player-match.ts` is also modified but is **not part of this work** — it is a
-   comment-only correction from the 2026-08-10 draft-firewall task ("once the firewall reaches
-   match_players" → "since the firewall reached match_players on 2026-08-10"). Commit it separately
-   or with that work, not as part of the awards change.
+1. ✅ **Committed 2026-08-11 — repo and prod now agree.** `15acdaa` carries both migration files, the
+   generator (with `--apply-sql` + the `flag_dest` guard), `src/lib/wrapped-awards.ts` (comment-only)
+   and the two living docs. The unrelated draft-firewall comment fix in `src/hooks/use-player-match.ts`
+   went out separately as `52a14f0` — though note the *prose* half of that same draft-firewall
+   correction rode along inside `15acdaa`, so the split is clean in code but not in docs.
+   **Neither commit is pushed or merged yet.**
 2. Watch the **next real session close**: it is the first live exercise of the new gate and of the
    per-club advisory lock. Expect no player to receive a milestone award they already hold.
 3. `the_veteran`'s per-night subtitle ("The OG showed up tonight") still reads as a tonight-award
@@ -319,6 +317,201 @@ hidden `🤖 E2E SANDBOX` (0 matches, 39 days stale, excluded by `is_hidden` any
      byte-identical (body md5 `e3689008fe20a015421a0c69afc49375`, 49438) and `--apply-sql` still
      emits md5 `264aa1e37e92209be5f578515524be2c` / 12441 chars, the exact statement recorded in
      `schema_migrations` under stamp `20260810173410`. Only the header comment changed.
+
+---
+
+## 🧮 CROSS-SESSION STATS ARE UNDER-COUNTED CLUB-WIDE — 2026-08-11, JVL repaired on prod; **the rest is open**
+
+Found while closing the last item of the awards work above (JVL's missing `player_rivalries`). The
+hole is far bigger than one player, and it has a single mechanical cause.
+
+**`refresh_cross_session_stats(p_session_id)` is one-shot per session.** It opens with
+
+```sql
+IF EXISTS (SELECT 1 FROM player_rivalries   WHERE last_session_id = p_session_id LIMIT 1)
+OR EXISTS (SELECT 1 FROM player_partnerships WHERE last_session_id = p_session_id LIMIT 1)
+THEN RETURN; END IF;
+```
+
+so the **first** call for a session wins. It is also purely *incremental*
+(`ON CONFLICT … SET wins_vs = wins_vs + EXCLUDED.wins_vs`), never a rebuild. Any match completed
+**after** that first call — a late score entry, a `fix_record_swap_player` correction, a match
+re-opened and re-finished — is therefore never counted.
+
+🚨 **The guard DECAYS — a later call is not reliably a no-op.** `last_session_id` is overwritten
+whenever a pair meets again, so once every pair from an old session has played a newer one, nothing
+points at the old session, the `EXISTS` fails, and the RPC runs again **adding its matches a second
+time**. Prod has exactly one such session today: `Chillax Thursday 4/23`
+(`d820efea-d3ff-4ca3-9c0a-6a76de6090dc`, 20 completed matches, zero ledger rows referencing it).
+So the two failure modes are *silent no-op* early and *silent double-count* later. Never "just re-run
+it" on a historical session.
+
+**Measured on prod 2026-08-11** (expected state rebuilt from `match_players` history, restricted to
+`status='completed'` + both scores non-null + `sessions.club_id IS NOT NULL`, i.e. exactly the
+function's own filters):
+
+| | rows |
+|---|---|
+| expected `player_rivalries` | 3504 |
+| actually stored | 2300 (2342 after the JVL repair) |
+| **missing entirely** | **1204** (1162 after the JVL repair) |
+| **stored too LOW** | **370** |
+| total above history | **0** |
+| rivalry rows with a W/L COMPONENT above history | **6** |
+| partnership rows with a W/L COMPONENT above history | **4** |
+| partnership rows above history on games/sessions_together | **0** |
+| partnership orphans (stored, no history) | **2** |
+
+⚠️ **I first wrote "strictly one-directional — nothing is over-counted anywhere". That was wrong**, and
+the reason matters: my check was `r.wins_vs + r.losses_vs > e.wins_vs + e.losses_vs`, a **totals-only**
+comparison, and both tables happen to have clean totals. Three rivalry pairs are inverted —
+`Bianca v`↔`Howell` (2W-1L stored, 1W-2L true) and `Glenn`↔`JV Cutiepatootie` invert with the total
+intact; `Jackie B`↔`Miggy` is stored 3W-0L against a true 2W-4L, so it is over-counted on wins *and*
+under-counted overall at the same time. Four partnership rows do the same (`Maya`↔`Howell` 0W-2L vs
+1W-1L; `Bianca v`↔`Jackie B` 2W-0L vs 1W-2L), plus 2 orphans, `Says`↔`Emman`
+(`games_together=0, sessions_together=1`). All predate 2026-08-11 — none came from the JVL backfill.
+**Always compare components, not sums.** (I made this same mistake twice: the second time by writing
+"no partnership row is over-counted", which is true of `games_together`/`sessions_together` and false
+of `wins_together`/`losses_together`.)
+
+🚨 **Consequence: a rebuild is NOT a monotone repair and CAN revoke awards.** What is genuinely safe
+is narrower than "raw `>=` count". Enumerating all seven `_prior_awards` slugs from live `prosrc`:
+`century_club` / `first_to_100` / `the_veteran` **never read the ledgers** (they source
+`v_alltime_leaderboard_mat` + `club_milestones`) — *that* is what makes them safe here, not their gate
+shape; `the_veteran` is in fact `is_alltime_top3 AND alltime_games >= 20`, a relative rank, so it is
+non-monotone for unrelated reasons. The other **four** do read the ledgers — `serial_rivals`,
+`soulmates`, `winning_formula` and `the_dynasty` (`cs_dynasty_victim_id` ← `dynasty_victim` ←
+`rivalry_with_tonight`) — and of those only **`serial_rivals`** is
+add-only safe (`cs_max_sessions_faced >= 3`, and 0 rows store `sessions_faced` above history).
+`soulmates` looks safe (`games_together >= 20 AND sessions_together >= 2`, both raw counts) but is
+structurally exposed, because a top-partner re-point can drop `sessions_together` below 2 — **0 grants
+and 0 qualifiers on prod today**, so latent, not live. And note `_prior_awards` adds **nothing**: it is
+keyed `sws.session_id <> p_session_id`, so it blocks duplication, never revocation. Measured on prod:
+- `the_dynasty` (`wins_vs >= 5 AND ratio >= 0.70`): **10 qualifiers → 18**, but **1 loses it** —
+  `Barts` v `Veejay Banda` is stored 6-2 (0.750) and truly 6-3 (0.667), and no other rival qualifies him.
+- 🔥 **`winning_formula` is revoked by a PURE RAISE** — the counter-example that kills "raising the
+  ledger can only help". Gate: `cs_alltime_games_together >= 6 AND cs_alltime_partner_win_rate >= 60
+  AND cs_alltime_sessions_together >= 2`, on the top partner from the **`partnership_alltime`** CTE
+  (`DISTINCT ON(pp.player_id) … ORDER BY pp.player_id, pp.games_together DESC, …`). Adding a *game* without adding a *win*
+  lowers the rate. `Lei` and `Aim` each hold exactly one grant, both on a partnership stored
+  **6g-4w (66.7%)** that is truly **7g-4w (57.1%)** → both revoked. **6 qualifiers → 11, 2 losers.**
+  And because that CTE ranks on `games_together`, a rebuild re-points many players' top partner.
+- The **nemesis target moves for 77 players** (47 swap rival, 29 gain one they never had, 1 loses
+  one). ⚠️ Rank by the *right* statistic: `alltime_nemesis` is
+  `DISTINCT ON(player_id) … WHERE losses_vs > wins_vs ORDER BY player_id, (losses_vs - wins_vs) DESC,
+  losses_vs DESC, rival_id` — **max net deficit**, not top `wins_vs` (my first pass used top-`wins_vs`
+  and got 67, a number that gates nothing). It drives `nemesis_slayer`; `settled_the_score` shares the
+  primary key on the pre-tonight split (`score_settled`: `WHERE pre_losses_vs > pre_wins_vs AND
+  wins_vs >= losses_vs AND tonight_wins > 0 ORDER BY player_id, (pre_losses_vs - pre_wins_vs) DESC,
+  rival_id` — no `losses_vs` tiebreak, two extra tonight-gates) and moves **160 (session, player)
+  targets, 45 of them losing the award**.
+- **`my_nemesis` is NOT affected.** It gates on `nemesis_id` from the `h2h_losses` CTE over
+  `player_match_results` — *tonight only*. A ledger rebuild changes the all-time numbers it displays
+  but never who it names.
+Fix the 6 rivalry + 4 partnership inverted rows and the 2 orphans *before* any club-wide rebuild.
+
+**24 players with completed match history had ZERO rivalry rows** (21 after JVL's repair; the
+27-with-zeroed-partnerships figure is likewise pre-repair) — only 6 of them identity merges,
+so this is *not* mainly a merge artifact. 7 merged identities had holes (`Arvin` partnerships only,
+`Chrishia`, `Jocelle`, `JVL`, `Michael`, `Ronnie`, `Tristan`); merges before `20260701000015` lost
+their derived rows outright because `migrate_player_identity` did not re-point them back then.
+⚠️ Their `match_players` rows **were** re-pointed correctly — all 22 of JVL's sit on her new id — so
+this is a lost-derived-data problem, not a broken-identity problem.
+
+### What was actually repaired (prod write, user-authorized)
+
+Only **JVL** (`317ee635-a7a0-48cb-9675-a79b45273500`), because that was the authorized scope.
+One statement, absolute values (not deltas) so re-running is a no-op, both directions of each pair:
+**42 `player_rivalries` rows + 32 `player_partnerships` rows** written. Verified after: her stored
+rows equal history exactly (0 wrong), and club-wide "missing" fell by exactly 42.
+
+**Why it mattered:** proven by a *control* and a *treatment*, both inside rolled-back transactions.
+Recomputing `Saturday 05/23` before the backfill **deleted `serial_rivals`** from a wrap she has
+already seen (her `MAX(sessions_faced)` was 0, and the gate is `cs_max_sessions_faced >= 3`). After
+the backfill it is 3 and the award survives. Note `rivalry_with_tonight` reads `sessions_faced`
+**straight from `player_rivalries` without adding tonight** — so the stored table must already
+include the session being computed; there is no in-flight compensation.
+
+### Findings left OPEN (not touched — they need a scope decision)
+
+1. **The remaining 1162 missing + 370 under-counted rows, plus the 10 inverted rows and 2 orphans.**
+   Same repair statement, unscoped, would fix them — but it is **not** a no-risk monotone repair
+   (see above: `Barts` loses `the_dynasty`, `Lei` and `Aim` lose `winning_formula` to a *pure raise*,
+   77 nemesis targets move), so it needs the user's call, not just their permission. Not run: it rewrites ~1500 rows of live stats the user did not
+   ask about. The real fix is upstream — make `refresh_cross_session_stats` idempotent-by-rebuild
+   (delete-and-recompute that session's contribution, or store per-session rows and aggregate)
+   instead of guard-and-add, which also closes the decaying-guard double-count.
+
+   📝 Three stale migration comments were corrected (precedent: `73888f0`) — two in
+   `20260510000000_cross_session_awards.sql` (the header called the guard "idempotent … prevents
+   double-counting on accidental retry", and the inline banner repeated it plus "this check is
+   reliable in practice"), and one in `20260630000002_rivalries_partnerships_club_id.sql`
+   ("Idempotency guard"). All comment-only — `git diff` on `supabase/migrations/` has zero
+   non-comment changed lines. ⚠️ Two of the three sit **inside the plpgsql body** of
+   `refresh_cross_session_stats`. That is *not* a new divergence: prod's stored `prosrc` for that
+   function is **comment-free** (verified — `prosrc NOT LIKE '%--%'`), so the repo files already
+   differed from it by every comment they carry. Nothing to re-apply; don't read it as schema drift.
+   Note `20260630000002` is the last migration to `CREATE OR REPLACE` this function
+   (`20260702000004` only `ALTER`s `search_path`).
+2. **`deuce_magnet` is a stale grant.** 39 of 40 wraps on 05/23 hold it, but the live rule is
+   `>= 3` completed matches with **both** scores `>= 30`, and that session had only **4** such
+   matches out of 56 — so essentially nobody can re-earn it. Recomputing 05/23 today strips it from
+   all 39. This is unrelated to rivalries (it reads only tonight's `matches`) and predates this
+   work; the definition was evidently tightened after those wraps were written.
+
+⚠️ **Therefore: recomputing an old session is not safe today.** Measured diff for a full recompute of
+05/23 (rolled back): 40 players, **39 lose at least one award**, 13 gain one. The complete slug diff —
+quote it in full, because a trailing `…` is what let a bad tally survive three review rounds:
+
+    LOSS  deuce_magnet ×39 · bounced_back ×3 · consistent_dominator ×2 ·
+          settled_the_score ×2 · nemesis_slayer ×1 · redemption_arc ×1 · the_dynasty ×1
+    GAIN  redemption_arc ×7 · settled_the_score ×4 · bounced_back ×3 ·
+          nemesis_slayer ×3 · momentum ×2 · consistent_dominator ×1 · skill_slayer ×1
+
+⚠️ **Attribute that correctly** — an earlier draft said "most of the churn is the rivalry gap", which
+is backwards, and the correction that replaced it undercounted. The **stale `deuce_magnet` definition
+alone accounts for 39** and by itself explains "39 lose at least one award". The ledger-derived losses
+total **5**, not 3: `settled_the_score ×2`, `nemesis_slayer ×1`, `redemption_arc ×1`, `the_dynasty ×1`
+(plus 14 ledger-derived *gains*). The two I missed were hiding behind that `…`.
+
+**There are five causes, not three** (and not four — I undercounted twice). Beyond the stale
+definition (1) and the incomplete ledger (2):
+
+**(3) The ledger has no as-of date — a *different* bug from being incomplete.** `rivalry_with_tonight`
+computes `pre_wins_vs = pr.wins_vs - COALESCE(tvr.tonight_wins,0)` over the **present-day cumulative**
+row, subtracting tonight and nothing else. Replaying a May night therefore counts June–August H2H
+results as "pre-tonight history", and `score_settled`'s `pre_losses_vs > pre_wins_vs` is tested against
+a rivalry that had not happened yet. Measured with two ledgers both rebuilt **complete** from
+`match_players`, differing only in whether post-05/23 sessions are included: net delta
+`redemption_arc +4 · serial_rivals +4 · settled_the_score +3 · the_dynasty +3 · nemesis_slayer +2`.
+⚠️ **The upstream fix below does not close this** — rebuilding a session's own contribution fixes (2);
+this needs per-session rows or a date-bounded aggregate.
+
+**(4) "Prior session" means most-recently-*computed*, per player.** Drives `bounced_back`,
+`consistent_dominator`, `momentum` (via `prior_sessions` ← `prior_sessions_ranked`, and `prior_carry`).
+The mechanism is *not* "recomputing re-stamps `computed_at`": the CTE is `WHERE session_id !=
+p_session_id`, so a session is excluded from its **own** prior set and re-stamping its rows cannot move
+its own gates. The real cause is the window `ROW_NUMBER() OVER(PARTITION BY player_id ORDER BY
+computed_at DESC)` with `rn<=2` and **no date cutoff** — note `PARTITION BY player_id`, so this is
+*that player's* two most recent nights, **not** one club-wide pair: across 05/23's 40 players the
+windows span **16 distinct sessions** (most common `07/25`, 8 players). Measured: **25 of 40** players'
+`cs_prior_last_win_pct` differs, **7** gained a prior that did not exist when the wrap was written.
+(The re-stamp *is* a real hazard — just a cross-session one: a recomputed old wrap jumps to the head of
+the ordering used by every *other session's* computation, for the players who appear in that wrap.)
+Latent extra: this CTE has **no `is_hidden` filter** (unlike `_prior_awards`), so a hidden session's
+wrap can act as someone's "prior" — 0 of 26 wrap-bearing sessions are hidden today.
+
+**(5) Present-day non-ledger inputs.** `skill_slayer` joins today's `player_skills`
+(`opp_avg_skill >= ps.skill_int + 2`); `the_veteran`/`century_club`/`first_to_100` read
+`v_alltime_leaderboard_mat`, refreshed at the top of the function. That is the `skill_slayer ×1` gain
+above. `APP_MANIFEST.md` §3.7.1 already stated this ("they read present-day state, so replaying an
+April night against August data legitimately produces a different answer"). Fix all five before
+recomputing anything.
+
+All five assume **the session's own input rows are unchanged** — "the rules moved, the night didn't".
+A `fix_record_swap_player` or a late score entry changes tonight's data itself, which is a separate
+sixth way a recompute diverges from the stored wrap; not in play for 05/23 (last match completed
+09:55:06, wrap computed 09:59:25), but it is the usual trigger in practice.
 
 ---
 
@@ -3547,7 +3740,7 @@ was lost.
 
 **⚠️ PENDING — cross-session ledger fixup owed at session close:**
 
-I called `refresh_cross_session_stats('fd243c62…')` as a "dry-run" at **2026-05-14 12:29:54 UTC** without realising the session had 16 completed matches by then. The RPC processed them into `player_rivalries` (+104 rows) and `player_partnerships` (+62 rows), tagging them all with `last_session_id = fd243c62…`. The RPC has an idempotency guard `IF EXISTS (... WHERE last_session_id = p_session_id) RETURN;` — so when `closeSession` runs tonight, `refresh_cross_session_stats` will return early and any matches completed **after 12:29:54 UTC** will NOT be aggregated into rivalries/partnerships.
+I called `refresh_cross_session_stats('fd243c62…')` as a "dry-run" at **2026-05-14 12:29:54 UTC** without realising the session had 16 completed matches by then. The RPC processed them into `player_rivalries` (+104 rows) and `player_partnerships` (+62 rows), tagging them all with `last_session_id = fd243c62…`. The RPC has a one-shot guard `IF EXISTS (... WHERE last_session_id = p_session_id) RETURN;` — so when `closeSession` runs tonight, `refresh_cross_session_stats` will return early and any matches completed **after 12:29:54 UTC** will NOT be aggregated into rivalries/partnerships. *(Called an "idempotency guard" here originally; corrected 2026-08-11 — it is one-shot, and it decays. See the cross-session section above.)*
 
 **Effect:** Session-only awards (51) work normally. The 9 cross-session awards (`nemesis_slayer`, `the_dynasty`, `soulmates`, `winning_formula`, etc.) will be computed from a partial-night snapshot — late matches missing from the lifetime ledger.
 

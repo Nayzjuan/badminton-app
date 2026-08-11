@@ -16,9 +16,21 @@
 --   • carry_forward is a small JSONB payload written by
 --     compute_session_wrapped at session close and read by the
 --     next session's RPC for momentum/streak signals.
---   • refresh_cross_session_stats is idempotent: it exits early
---     if this session_id is already the last_session_id on any
---     existing row (prevents double-counting on accidental retry).
+--   • refresh_cross_session_stats exits early if this session_id
+--     is already the last_session_id on any existing row.
+--     RETRACTED 2026-08-11: this comment called that "idempotent"
+--     and claimed it "prevents double-counting on accidental
+--     retry". Both are false. The body only ever ADDS
+--     (ON CONFLICT ... SET wins_vs = wins_vs + EXCLUDED.wins_vs),
+--     and last_session_id is OVERWRITTEN whenever a pair meets
+--     again -- so once every pair from an old session has played
+--     a newer one, nothing references the old session, the guard
+--     stops firing, and a retry double-counts it. Verified on
+--     prod: session d820efea-d3ff-4ca3-9c0a-6a76de6090dc
+--     ("Chillax Thursday 4/23", 20 completed matches) already has
+--     zero ledger rows pointing at it. One-shot-per-session is
+--     NOT idempotence. See APP_MANIFEST.md, cross-session
+--     persistence section.
 -- ============================================================
 
 -- ═══════════════════════════════════════════════════════════════
@@ -103,10 +115,16 @@ SECURITY DEFINER
 AS $$
 BEGIN
 
-  -- ── Idempotency guard ─────────────────────────────────────────────────────
-  -- Exit early if this session was already processed. Prevents double-counting
-  -- if the caller retries. A real session always produces at least one
-  -- rivalry or partnership row, so this check is reliable in practice.
+  -- ── One-shot guard (NOT an idempotency guard) ─────────────────────────────
+  -- Exit early if this session appears to have been processed already.
+  -- RETRACTED 2026-08-11: "Prevents double-counting if the caller retries. A
+  -- real session always produces at least one rivalry or partnership row, so
+  -- this check is reliable in practice." Both sentences are false. The rows it
+  -- looks for are not stable: last_session_id is OVERWRITTEN every time a pair
+  -- meets again, so the evidence of an old session decays to zero and a retry
+  -- then double-counts. Verified on prod -- session
+  -- d820efea-d3ff-4ca3-9c0a-6a76de6090dc ("Chillax Thursday 4/23", 20 completed
+  -- matches) already has no ledger row referencing it. See the header note.
   IF EXISTS (
     SELECT 1 FROM player_rivalries   WHERE last_session_id = p_session_id LIMIT 1
   ) OR EXISTS (
