@@ -34,6 +34,25 @@ export const ANTI_REPEAT_LOOKBACK = 5;
  */
 export const ROSTER_LOOKBACK_COUNT = 10;
 
+/**
+ * Rejection memory: an organizer clearing a draft means "deal a different
+ * hand", not "deal the same one again". Cleared rosters younger than this
+ * are treated like a diversity violation on the EXACT same four, steering
+ * the swap ladder toward a 3-of-4 recombination. Verified live (08/06
+ * session): without this, the deterministic engine re-dealt an identical
+ * cleared roster three times inside one minute until the organizer gave up
+ * and switched auto-matchmaking off. Kept short so an early-session
+ * rejection doesn't ban a legitimate foursome for the whole night.
+ */
+export const REJECTED_ROSTER_TTL_MINUTES = 30;
+
+/**
+ * Upper bound on cleared-draft events fetched per engine run. Clears arrive
+ * in bursts of ~3 (Clear All on a full review queue); a few burst rounds fit
+ * comfortably inside this cap, and anything older is TTL-expired anyway.
+ */
+export const REJECTED_ROSTER_FETCH_LIMIT = 12;
+
 /** Minutes before the time-based fallback kicks in (bypasses skill windows entirely). */
 export const FALLBACK_WAIT_MINUTES = 15;
 

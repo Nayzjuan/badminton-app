@@ -411,6 +411,26 @@ export function isDiversityViolation(playerIds: string[], recentRosters: string[
 }
 
 // ─────────────────────────────────────────────────────────────
+// EXPORT: isRejectedRoster
+// ─────────────────────────────────────────────────────────────
+// Rejection memory. Returns true only when the proposed four is the EXACT
+// set an organizer recently cleared (order/team-split insensitive).
+//
+// Deliberately stricter than isDiversityViolation's ≥3 overlap: a 3-of-4
+// recombination is precisely the "different hand" the swap ladder should
+// produce after a rejection (observed live: the organizer's own manual fix
+// after a clear kept 3 of the 4 bodies and recombined them). Matching on
+// ≥3 would ban that outcome and stall small pools.
+
+export function isRejectedRoster(playerIds: string[], rejectedRosters: string[][]): boolean {
+  if (rejectedRosters.length === 0) return false;
+  const playerSet = new Set(playerIds);
+  return rejectedRosters.some(
+    (roster) => roster.length === playerSet.size && roster.every((id) => playerSet.has(id))
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // EXPORT: scoreCandidates   [FIX — Audit Rec #2]
 // ─────────────────────────────────────────────────────────────
 // Produces a sorted (ascending score = highest priority first)
@@ -814,7 +834,13 @@ export function runAlgorithm(
   partnershipCounts: Map<string, number>,
   overlapMap: Map<string, number>,
   recentRosters: string[][],
-  opponentCounts: Map<string, number> = new Map()
+  opponentCounts: Map<string, number> = new Map(),
+  // Rejection memory: rosters the organizer recently CLEARED. An exact re-deal
+  // of a cleared four is treated like a diversity violation so the swap ladder
+  // steers to a 3-of-4 recombination. Fail-open by design — every escape hatch
+  // (Red-Zone swap target, Tier-3 rotation, last-resort fallback) still serves
+  // the same four rather than stalling the queue.
+  rejectedRosters: string[][] = []
 ): AlgorithmResult {
   // pool must be pre-scored and pre-sorted (pool[0] = anchor).
   const anchor = pool[0];
@@ -908,10 +934,13 @@ export function runAlgorithm(
     if (group.length === 3) {
       const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
 
-      if (isDiversityViolation(proposedIds, activeRosters)) {
+      if (
+        isDiversityViolation(proposedIds, activeRosters) ||
+        isRejectedRoster(proposedIds, rejectedRosters)
+      ) {
         if (process.env.DEBUG_MATCHMAKING === "true") {
           console.log(
-            `[matchmaking] Diversity violation for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
+            `[matchmaking] Diversity/rejection violation for [${group.map((g) => g.display_name).join(", ")}] — attempting swap`
           );
         }
 
@@ -937,7 +966,10 @@ export function runAlgorithm(
             if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
 
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
-            if (!isDiversityViolation(swappedIds, activeRosters)) {
+            if (
+              !isDiversityViolation(swappedIds, activeRosters) &&
+              !isRejectedRoster(swappedIds, rejectedRosters)
+            ) {
               const draft = snakeDraft(
                 [anchor, ...swapGroup],
                 partnershipCounts,
@@ -981,7 +1013,10 @@ export function runAlgorithm(
                 if (!isGroupValid([anchor, ...swapGroup], SKILL_VARIANCE_MAX)) continue;
 
                 const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
-                if (!isDiversityViolation(swappedIds, activeRosters)) {
+                if (
+                  !isDiversityViolation(swappedIds, activeRosters) &&
+                  !isRejectedRoster(swappedIds, rejectedRosters)
+                ) {
                   const draft = snakeDraft(
                     [anchor, ...swapGroup],
                     partnershipCounts,
@@ -1082,6 +1117,7 @@ export function runAlgorithm(
             if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (isDiversityViolation(swappedIds, activeRosters)) continue;
+            if (isRejectedRoster(swappedIds, rejectedRosters)) continue;
             const altDraft = snakeDraft(
               [anchor, ...swapGroup],
               partnershipCounts,

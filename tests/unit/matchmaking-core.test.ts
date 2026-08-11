@@ -22,6 +22,7 @@ import {
   snakeDraft,
   overlapWithRoster,
   isDiversityViolation,
+  isRejectedRoster,
   scoreCandidates,
   buildCombinationGroup,
   getEffectiveLookback,
@@ -1820,6 +1821,93 @@ describe("runAlgorithm — happy paths (successful match proposals)", () => {
     ];
     // Exactly 4 distinct players in the match
     expect(new Set(allAssigned).size).toBe(4);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Rejection memory — isRejectedRoster + runAlgorithm integration
+// ─────────────────────────────────────────────────────────────
+// An organizer clearing a draft means "deal a different hand". Verified live
+// (08/06): the deterministic engine re-dealt an identical cleared roster 3×
+// inside one minute. These tests pin the fix: an exact rejected four routes
+// into the swap ladder (→ 3-of-4 recombination), while remaining fail-open
+// when no alternative body exists.
+//
+//   RJ-1  isRejectedRoster: exact-set semantics, order-insensitive, no ≥3 match
+//   RJ-2  runAlgorithm swaps in the bench body instead of re-dealing
+//   RJ-3  fail-open: pool of exactly 4, all rejected → still proposes (rotated)
+
+describe("rejection memory (isRejectedRoster + runAlgorithm)", () => {
+  it("RJ-1: isRejectedRoster matches the exact set only — order-insensitive, 3-of-4 is NOT a match", () => {
+    const rejected = [["a", "b", "c", "d"]];
+
+    // Exact four, any order → match.
+    expect(isRejectedRoster(["a", "b", "c", "d"], rejected)).toBe(true);
+    expect(isRejectedRoster(["d", "c", "b", "a"], rejected)).toBe(true);
+
+    // 3-of-4 recombination is the DESIRED outcome — must NOT match.
+    expect(isRejectedRoster(["a", "b", "c", "e"], rejected)).toBe(false);
+
+    // Distinct four / empty memory → no match.
+    expect(isRejectedRoster(["e", "f", "g", "h"], rejected)).toBe(false);
+    expect(isRejectedRoster(["a", "b", "c", "d"], [])).toBe(false);
+  });
+
+  it("RJ-2: runAlgorithm swaps in the bench body instead of re-dealing the cleared four", () => {
+    // 5 same-skill players. Without rejection memory the engine picks the top
+    // four by wait (anchor, p1, p2, p3) — deterministically, every run.
+    const anchor = makePlayer("anchor", { skillInt: 5, waitMinutes: 10 });
+    const p1 = makePlayer("p1", { skillInt: 5, waitMinutes: 9 });
+    const p2 = makePlayer("p2", { skillInt: 5, waitMinutes: 8 });
+    const p3 = makePlayer("p3", { skillInt: 5, waitMinutes: 7 });
+    const p4 = makePlayer("p4", { skillInt: 5, waitMinutes: 6 });
+    const pool = [anchor, p1, p2, p3, p4];
+
+    // Control: no rejection memory → the exact four the organizer just cleared.
+    const control = runAlgorithm(pool, new Map(), new Map(), []);
+    const controlIds = [
+      ...control.proposal!.teamA.map((p) => p.player_id),
+      ...control.proposal!.teamB.map((p) => p.player_id),
+    ].sort();
+    expect(controlIds).toEqual(["anchor", "p1", "p2", "p3"]);
+
+    // With the cleared roster in memory: swap ladder benches the weakest
+    // group member and pulls in p4 — a 3-of-4 recombination, not a re-deal.
+    const result = runAlgorithm(pool, new Map(), new Map(), [], new Map(), [
+      ["anchor", "p1", "p2", "p3"],
+    ]);
+    expect(result.proposal).not.toBeNull();
+    const ids = [
+      ...result.proposal!.teamA.map((p) => p.player_id),
+      ...result.proposal!.teamB.map((p) => p.player_id),
+    ].sort();
+    expect(ids).not.toEqual(["anchor", "p1", "p2", "p3"]);
+    expect(ids).toContain("p4");
+    expect(result.forcedRepeat).toBeUndefined();
+  });
+
+  it("RJ-3: fail-open — pool of exactly 4, all rejected → still proposes rather than stalling", () => {
+    // No bench body exists, so honoring the rejection would leave the court
+    // empty. The ladder exhausts Tiers 1–2 and accepts the same four via
+    // Tier-3 rotation (flagged forcedRepeat) — a different team split is the
+    // best "different hand" available.
+    const anchor = makePlayer("anchor", { skillInt: 5, waitMinutes: 10 });
+    const p1 = makePlayer("p1", { skillInt: 5, waitMinutes: 9 });
+    const p2 = makePlayer("p2", { skillInt: 5, waitMinutes: 8 });
+    const p3 = makePlayer("p3", { skillInt: 5, waitMinutes: 7 });
+    const pool = [anchor, p1, p2, p3];
+
+    const result = runAlgorithm(pool, new Map(), new Map(), [], new Map(), [
+      ["anchor", "p1", "p2", "p3"],
+    ]);
+
+    expect(result.proposal).not.toBeNull();
+    const ids = [
+      ...result.proposal!.teamA.map((p) => p.player_id),
+      ...result.proposal!.teamB.map((p) => p.player_id),
+    ].sort();
+    expect(ids).toEqual(["anchor", "p1", "p2", "p3"]);
+    expect(result.forcedRepeat).toBe(true);
   });
 });
 

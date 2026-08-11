@@ -12,6 +12,7 @@
 //
 // Exports:
 //   fetchActivePool            — waiting players, paused-filtered, unscored
+//   fetchRecentClearedRosters  — READ: organizer-cleared rosters (rejection memory)
 //   fetchSessionMatchSnapshot  — READ: this session's committed matches + rosters
 //   deriveRecentRosters        — pure: recent rosters for diversity checks
 //   derivePairCounts           — pure: same-team + cross-net pair counts
@@ -37,6 +38,8 @@ import {
   OVERLAP_WEIGHT_OPPONENT,
   OVERLAP_WEIGHT_TEAMMATE,
   PLAYERS_PER_MATCH,
+  REJECTED_ROSTER_FETCH_LIMIT,
+  REJECTED_ROSTER_TTL_MINUTES,
   ROSTER_LOOKBACK_COUNT,
   SESSION_MATCH_SNAPSHOT_CEILING,
 } from "@/lib/constants";
@@ -95,6 +98,68 @@ export async function fetchActivePool(
     (p) => p.games_played === 0 || (p.wait_minutes ?? 0) >= MIN_REST_MINUTES
   );
   return rested.length >= PLAYERS_PER_MATCH ? rested : active;
+}
+
+// ─────────────────────────────────────────────────────────────
+// fetchRecentClearedRosters
+// ─────────────────────────────────────────────────────────────
+// Rejection memory (see REJECTED_ROSTER_TTL_MINUTES): the player-ID sets of
+// drafts an organizer recently cleared, read from the match_events audit trail
+// the clear actions already write (reason on_deck_cleared / batch_clear_unpublished,
+// full roster in the payload — the cleared match row itself is deleted). The
+// promote-path taint auto-clear calls the RPC directly without logging an
+// event, so "player left" sweeps never enter rejection memory.
+//
+// Fail OPEN — the opposite posture from the match snapshot, deliberately: a
+// missing snapshot would make repeats look fresh (dangerous), while missing
+// rejection memory merely re-deals a hand the organizer can clear again
+// (annoying). An error here must never stop the engine.
+
+/** Reasons written by the organizer's clear actions in match-drafts.ts. */
+const REJECTION_CLEAR_REASONS = new Set(["on_deck_cleared", "batch_clear_unpublished"]);
+
+export async function fetchRecentClearedRosters(
+  supabase: DbClient,
+  sessionId: string
+): Promise<string[][]> {
+  const cutoff = new Date(Date.now() - REJECTED_ROSTER_TTL_MINUTES * 60_000).toISOString();
+  const { data, error } = await supabase
+    .from("match_events")
+    .select("payload")
+    .eq("session_id", sessionId)
+    .eq("event_type", "cancelled")
+    .eq("phase", "draft")
+    .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .limit(REJECTED_ROSTER_FETCH_LIMIT);
+
+  if (error) {
+    console.warn("[matchmaking-db] fetchRecentClearedRosters: query failed:", error.message);
+    return [];
+  }
+
+  const rosters: string[][] = [];
+  for (const row of data ?? []) {
+    // payload is Json — parse defensively; a malformed event is skipped, never thrown.
+    const payload = row.payload as {
+      reason?: string;
+      roster?: Array<{ player_id?: string }>;
+    } | null;
+    if (!payload?.reason || !REJECTION_CLEAR_REASONS.has(payload.reason)) continue;
+    const rosterField = Array.isArray(payload.roster) ? payload.roster : [];
+    // Dedupe: a corrupt payload with duplicate ids (["a","a","b","c"]) would
+    // otherwise pass the length check with only 3 distinct players, silently
+    // degrading isRejectedRoster's exact-set match into a ≥3-overlap rule.
+    const ids = [
+      ...new Set(
+        rosterField.map((p) => p?.player_id).filter((id): id is string => typeof id === "string")
+      ),
+    ];
+    // Only complete foursomes: isRejectedRoster matches on the exact set, and a
+    // partial roster snapshot could never legitimately equal a proposed four.
+    if (ids.length === PLAYERS_PER_MATCH) rosters.push(ids);
+  }
+  return rosters;
 }
 
 // ═════════════════════════════════════════════════════════════

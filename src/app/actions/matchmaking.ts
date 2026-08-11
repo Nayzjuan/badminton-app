@@ -60,6 +60,7 @@ import {
 } from "@/lib/matchmaking-core";
 import {
   fetchActivePool,
+  fetchRecentClearedRosters,
   fetchSessionMatchSnapshot,
   deriveRecentRosters,
   derivePairCounts,
@@ -349,6 +350,10 @@ async function runEngineInternal(
     { data: waitingRows, error: waitErr },
     { count: draftCountRaw, error: draftErr },
     { data: sessionRow, error: sessionErr },
+    // Rejection memory — per RUN, not per slot: cleared-roster events are only
+    // written by organizer actions, never by the engine's own slot commits, so
+    // one read covers the whole burst. Fail-open (helper returns [] on error).
+    rejectedRosters,
   ] = await Promise.all([
     supabase
       .from("v_queue_with_wait_time")
@@ -366,6 +371,7 @@ async function runEngineInternal(
       .select("max_auto_drafts_override, auto_publish")
       .eq("id", sessionId)
       .single(),
+    fetchRecentClearedRosters(supabase, sessionId),
   ]);
   if (sessionErr) {
     console.warn(`[engine] runEngineInternal: session fetch failed — ${sessionErr.message}`);
@@ -526,7 +532,14 @@ async function runEngineInternal(
     const overlapMap = deriveOverlapMap(snapshot, pool[0].player_id);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
-    const result = runAlgorithm(pool, partnershipCounts, overlapMap, recentRosters, opponentCounts);
+    const result = runAlgorithm(
+      pool,
+      partnershipCounts,
+      overlapMap,
+      recentRosters,
+      opponentCounts,
+      rejectedRosters
+    );
     const { proposal, capSaturation } = result;
 
     if (!proposal) {
@@ -579,7 +592,8 @@ async function runEngineInternal(
           partnershipCounts,
           overlapMap,
           recentRosters,
-          opponentCounts
+          opponentCounts,
+          rejectedRosters
         );
         const augFour = augResult.proposal
           ? [...augResult.proposal.teamA, ...augResult.proposal.teamB]

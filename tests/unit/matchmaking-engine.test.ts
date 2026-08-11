@@ -492,6 +492,7 @@ describe("runEngineForSession", () => {
       { data: [], error: null }, // v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 3, data: null, error: null }, // matches draft count=3 → slotsAvailable=0 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // sessions override (Promise.all[2])
+      { data: [], error: null }, // match_events — rejection memory, empty (Promise.all[3])
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
@@ -504,6 +505,7 @@ describe("runEngineForSession", () => {
       "v_queue_with_wait_time",
       "matches",
       "sessions",
+      "match_events",
     ]);
   });
 
@@ -563,9 +565,10 @@ describe("runEngineForSession", () => {
         { data: fourPlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10 → gateTimedOut (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
         { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
-        { data: [], error: null }, // [5] fetchSessionMatchSnapshot: matches → []
+        { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
+        { data: [], error: null }, // [6] fetchSessionMatchSnapshot: matches → []
         // (match_players not queried since the snapshot short-circuits on empty)
-        { data: fourPlayers, error: null }, // [6] fetchActivePool: v_queue_with_wait_time → 4 players
+        { data: fourPlayers, error: null }, // [7] fetchActivePool: v_queue_with_wait_time → 4 players
         // rpc fails → loop breaks (slot 1 never reached — estimatedWaiting=4 < MIN_POOL=8)
       ],
       [{ data: null, error: { message: "unique constraint violation" } }] // rpc → error
@@ -728,12 +731,13 @@ describe("runEngineForSession", () => {
       { data: cappedPool, error: null }, // [2] v_queue_with_wait_time: maxWait=10≥8 → gateTimedOut=true (Promise.all[0])
       { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
+      { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
       // Slot 1 read phase — snapshot and pool are issued concurrently, so from()
       // sees matches → v_queue_with_wait_time → match_players (the roster read is
       // the snapshot's second hop and lands after the pool's synchronous from()).
-      { data: matchRows, error: null }, // [5] fetchSessionMatchSnapshot: committed match IDs
-      { data: cappedPool, error: null }, // [6] fetchActivePool: v_queue_with_wait_time
-      { data: mpRows, error: null }, // [7] fetchSessionMatchSnapshot: roster rows
+      { data: matchRows, error: null }, // [6] fetchSessionMatchSnapshot: committed match IDs
+      { data: cappedPool, error: null }, // [7] fetchActivePool: v_queue_with_wait_time
+      { data: mpRows, error: null }, // [8] fetchSessionMatchSnapshot: roster rows
       // recentRosters, partnership/opponent counts and the overlap map are all
       // derived from [5]+[7] — no further queries.
     ]);
@@ -758,13 +762,14 @@ describe("runEngineForSession", () => {
     // Pin the read that makes the caps real: the roster hop must have run (proving
     // the snapshot was non-empty), and no match may be created out of a saturated
     // pool. The burst stops after slot 1 because !proposal breaks the loop, so the
-    // sequence is 8 entries even though slotsAvailable is 3.
+    // sequence is 9 entries even though slotsAvailable is 3.
     expect(mock.queriedTables).toEqual([
       "sessions",
       "courts",
       "v_queue_with_wait_time",
       "matches",
       "sessions",
+      "match_events",
       "matches",
       "v_queue_with_wait_time",
       "match_players",
@@ -807,8 +812,9 @@ describe("runEngineForSession", () => {
       { data: eightExtremes, error: null }, // [2] v_queue_with_wait_time: 8 players (Promise.all[0])
       { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=2 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
-      { data: [], error: null }, // [5] fetchSessionMatchSnapshot: matches → [] (short-circuits)
-      { data: eightExtremes, error: null }, // [6] fetchActivePool: pool=8
+      { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
+      { data: [], error: null }, // [6] fetchSessionMatchSnapshot: matches → [] (short-circuits)
+      { data: eightExtremes, error: null }, // [7] fetchActivePool: pool=8
       // runAlgorithm: anchor skill=1, candidates skill=9 → |9-1|=8 > max Red Zone window(4)
       // → { proposal: null, capSaturation: false } → console.error logged
     ]);
@@ -855,8 +861,9 @@ describe("runEngineForSession", () => {
         { data: eightPlayers, error: null }, // [2] v_queue_with_wait_time (estimatedWaiting=8) (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
         { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
-        { data: [], error: null }, // [5] fetchSessionMatchSnapshot: matches → [] (short-circuits)
-        { data: eightPlayers, error: null }, // [6] fetchActivePool: v_queue_with_wait_time → 8 players
+        { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
+        { data: [], error: null }, // [6] fetchSessionMatchSnapshot: matches → [] (short-circuits)
+        { data: eightPlayers, error: null }, // [7] fetchActivePool: v_queue_with_wait_time → 8 players
         // runAlgorithm → proposal → rpc succeeds → estimatedWaiting=8-4=4
         // slot 1: estimatedWaiting(4) < MIN_POOL(8) → cap fires → break
       ],
@@ -914,13 +921,14 @@ describe("runEngineForSession — max_auto_drafts_override ceiling", () => {
 
     // Engine must have stopped without attempting any match creation
     expect(mock.rpc).not.toHaveBeenCalled();
-    // Only 5 tables queried: sessions, courts, v_queue, matches, sessions
+    // Only 6 tables queried: sessions, courts, v_queue, matches, sessions, match_events
     expect(mock.queriedTables).toEqual([
       "sessions",
       "courts",
       "v_queue_with_wait_time",
       "matches",
       "sessions",
+      "match_events",
     ]);
   });
 
@@ -1037,7 +1045,8 @@ describe("callNextMatch", () => {
     // (isSessionOrganizer adds sessions + session_organizers, and the left-player guard adds
     //  match_players + queue_entries inside promote, so the toggle check now lands at index 8.)
     expect(serviceMock.queriedTables[8]).toBe("sessions");
-    // Post-promotion sequence: sessions (toggle) → courts → v_queue → matches → sessions (override).
+    // Post-promotion sequence: sessions (toggle) → courts → v_queue → matches →
+    // sessions (override) → match_events (rejection memory).
     const postPromotionTables = serviceMock.queriedTables.slice(8);
     expect(postPromotionTables).toEqual([
       "sessions",
@@ -1045,6 +1054,7 @@ describe("callNextMatch", () => {
       "v_queue_with_wait_time",
       "matches",
       "sessions",
+      "match_events",
     ]);
   });
 
@@ -1088,10 +1098,11 @@ describe("callNextMatch", () => {
       { data: [], error: null }, // [6] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
       { count: 2, data: null, error: null }, // [7] runEngine: matches draft count=2 → slotsAvailable=1 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [8] runEngine: sessions override (Promise.all[2])
-      { data: [], error: null }, // [9] runEngine: fetchSessionMatchSnapshot matches → []
-      { data: [], error: null }, // [10] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
-      { data: [], error: null }, // [11] promote 2: no published pending
-      { count: 2, data: null, error: null }, // [12] promote 2: 2 drafts → hasDraftsBlocking
+      { data: [], error: null }, // [9] match_events — rejection memory, empty (Promise.all[3])
+      { data: [], error: null }, // [10] runEngine: fetchSessionMatchSnapshot matches → []
+      { data: [], error: null }, // [11] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
+      { data: [], error: null }, // [12] promote 2: no published pending
+      { count: 2, data: null, error: null }, // [13] promote 2: 2 drafts → hasDraftsBlocking
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -1196,9 +1207,10 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
         { data: four, error: null }, // [2] v_queue (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: true }, error: null }, // [4] session (Promise.all[2])
-        { count: 0, data: null, error: null }, // [5] PUBLISHED on-deck count (auto-mode extra)
-        { data: [], error: null }, // [6] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
-        { data: four, error: null }, // [7] fetchActivePool v_queue
+        { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
+        { count: 0, data: null, error: null }, // [6] PUBLISHED on-deck count (auto-mode extra)
+        { data: [], error: null }, // [7] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
+        { data: four, error: null }, // [8] fetchActivePool v_queue
         // No history ⇒ no match_players read, and the rosters / pair counts /
         // overlap map all derive from the empty snapshot with zero further queries.
       ],
@@ -1212,15 +1224,16 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
       expect.objectContaining({ p_is_published: true, p_origin: "auto" })
     );
     // Auto mode counts the published on-deck set: a 2nd matches count query runs in
-    // the cap phase (unpublished [3] + published [5]) before the slot loop starts.
+    // the cap phase (unpublished [3] + published [6]) before the slot loop starts.
     // The whole array is pinned, not a slice, so the merged per-slot read phase
-    // ([6] snapshot + [7] pool, concurrent) can't silently regain a 3rd round trip.
+    // ([7] snapshot + [8] pool, concurrent) can't silently regain a 3rd round trip.
     expect(mock.queriedTables).toEqual([
       "sessions",
       "courts",
       "v_queue_with_wait_time",
       "matches",
       "sessions",
+      "match_events", // rejection memory (Promise.all[3])
       "matches",
       "matches", // slot 1 — fetchSessionMatchSnapshot (empty ⇒ no match_players)
       "v_queue_with_wait_time", // slot 1 — fetchActivePool
@@ -1236,9 +1249,10 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
         { data: four, error: null }, // [2] v_queue (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session (Promise.all[2])
+        { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
         // no published-count query in draft mode
-        { data: [], error: null }, // [5] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
-        { data: four, error: null }, // [6] fetchActivePool v_queue
+        { data: [], error: null }, // [6] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
+        { data: four, error: null }, // [7] fetchActivePool v_queue
       ],
       [{ data: null, error: { message: "stop after one slot" } }]
     );
@@ -1300,18 +1314,19 @@ describe("callNextMatch — bypassGate publish override (ENG-BP)", () => {
         { data: four, error: null }, // [6] v_queue → waitingCount=4 (Promise.all[0])
         { count: 0, data: null, error: null }, // [7] unpublished draft count=0 (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [8] session — DRAFT MODE (Promise.all[2])
+        { data: [], error: null }, // [9] match_events — rejection memory, empty (Promise.all[3])
         // bypassGate → soft gate + pool caps skipped; draft mode → no published-count query
-        { data: [], error: null }, // [9] slot 0: fetchSessionMatchSnapshot (empty ⇒ no match_players)
-        { data: four, error: null }, // [10] slot 0: fetchActivePool
+        { data: [], error: null }, // [10] slot 0: fetchSessionMatchSnapshot (empty ⇒ no match_players)
+        { data: four, error: null }, // [11] slot 0: fetchActivePool
         // rpc[0] succeeds → slot 0 committed PUBLISHED (the fix under test)
-        { data: [], error: null }, // [11] slot 1: fetchSessionMatchSnapshot (empty)
-        { data: [], error: null }, // [12] slot 1: fetchActivePool → pool < 4 → loop breaks
-        { data: [{ ...MOCK_MATCH, id: "new-match-id" }], error: null }, // [13] promote 2: published pending → THE slot-0 match
-        { data: [], error: null }, // [14] promote 2: match_players (left-guard roster)
-        { count: 0, data: null, error: null }, // [15] promote 2: queue_entries left-count
-        { data: { id: "new-match-id" }, error: null }, // [16] promote 2: matches update (CAS)
-        { data: null, error: null }, // [17] promote 2: courts update
-        { data: [], error: null }, // [18] promote 2: profiles
+        { data: [], error: null }, // [12] slot 1: fetchSessionMatchSnapshot (empty)
+        { data: [], error: null }, // [13] slot 1: fetchActivePool → pool < 4 → loop breaks
+        { data: [{ ...MOCK_MATCH, id: "new-match-id" }], error: null }, // [14] promote 2: published pending → THE slot-0 match
+        { data: [], error: null }, // [15] promote 2: match_players (left-guard roster)
+        { count: 0, data: null, error: null }, // [16] promote 2: queue_entries left-count
+        { data: { id: "new-match-id" }, error: null }, // [17] promote 2: matches update (CAS)
+        { data: null, error: null }, // [18] promote 2: courts update
+        { data: [], error: null }, // [19] promote 2: profiles
       ],
       [{ data: "new-match-id", error: null }] // rpc[0]: create_match_with_players succeeds
     );
@@ -1345,14 +1360,15 @@ describe("callNextMatch — bypassGate publish override (ENG-BP)", () => {
         { data: four, error: null }, // [6] v_queue (Promise.all[0])
         { count: 0, data: null, error: null }, // [7] unpublished draft count=0 (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [8] session — DRAFT MODE (Promise.all[2])
-        { data: [], error: null }, // [9] slot 0: snapshot (empty)
-        { data: four, error: null }, // [10] slot 0: pool
+        { data: [], error: null }, // [9] match_events — rejection memory, empty (Promise.all[3])
+        { data: [], error: null }, // [10] slot 0: snapshot (empty)
+        { data: four, error: null }, // [11] slot 0: pool
         // rpc[0] succeeds (published — slot 0)
-        { data: [], error: null }, // [11] slot 1: snapshot (empty)
-        { data: fourMore, error: null }, // [12] slot 1: pool → fresh four → second proposal
+        { data: [], error: null }, // [12] slot 1: snapshot (empty)
+        { data: fourMore, error: null }, // [13] slot 1: pool → fresh four → second proposal
         // rpc[1] errors → loop breaks after asserting the DRAFT write
-        { data: [], error: null }, // [13] promote 2: no published pending
-        { count: 1, data: null, error: null }, // [14] promote 2: draft-blocking check
+        { data: [], error: null }, // [14] promote 2: no published pending
+        { count: 1, data: null, error: null }, // [15] promote 2: draft-blocking check
       ],
       [
         { data: "match-slot0", error: null }, // rpc[0]: slot 0 commit
@@ -1422,8 +1438,9 @@ describe("runEngineForSession — match-snapshot contract (ENG-SNAP)", () => {
       { data: four, error: null }, // [2] v_queue (Promise.all[0])
       { count: 0, data: null, error: null }, // [3] draft count=0 → slots=3 (Promise.all[1])
       { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
-      { data: null, error: { message: "statement timeout" } }, // [5] snapshot matches → FAILS
-      { data: four, error: null }, // [6] fetchActivePool (already in flight — concurrent)
+      { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
+      { data: null, error: { message: "statement timeout" } }, // [6] snapshot matches → FAILS
+      { data: four, error: null }, // [7] fetchActivePool (already in flight — concurrent)
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
 
@@ -1444,6 +1461,7 @@ describe("runEngineForSession — match-snapshot contract (ENG-SNAP)", () => {
       "v_queue_with_wait_time",
       "matches",
       "sessions",
+      "match_events",
       "matches",
       "v_queue_with_wait_time",
     ]);
@@ -1465,10 +1483,11 @@ describe("runEngineForSession — match-snapshot contract (ENG-SNAP)", () => {
         { data: twelve, error: null }, // [2] v_queue (Promise.all[0])
         { count: 0, data: null, error: null }, // [3] draft count=0 (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
-        { data: [], error: null }, // [5] slot 1 snapshot: matches → []
-        { data: twelve, error: null }, // [6] slot 1 pool
-        { data: [], error: null }, // [7] slot 2 snapshot: matches → []
-        { data: twelve, error: null }, // [8] slot 2 pool
+        { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
+        { data: [], error: null }, // [6] slot 1 snapshot: matches → []
+        { data: twelve, error: null }, // [7] slot 1 pool
+        { data: [], error: null }, // [8] slot 2 snapshot: matches → []
+        { data: twelve, error: null }, // [9] slot 2 pool
       ],
       [
         { data: "match-1", error: null },
@@ -1480,7 +1499,7 @@ describe("runEngineForSession — match-snapshot contract (ENG-SNAP)", () => {
     await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
 
     expect(mock.rpc).toHaveBeenCalledTimes(2);
-    expect(mock.queriedTables.slice(5)).toEqual([
+    expect(mock.queriedTables.slice(6)).toEqual([
       "matches", // slot 1 snapshot
       "v_queue_with_wait_time", // slot 1 pool
       "matches", // slot 2 snapshot — re-read, NOT hoisted
