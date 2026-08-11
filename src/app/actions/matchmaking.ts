@@ -609,7 +609,25 @@ async function runEngineInternal(
     if (committedHeld) continue; // held draft created — on to the next slot
 
     // ── Commit the match ─────────────────────────────────────────
-    const execResult = await executeMatch(supabase, sessionId, null, proposal, true, autoPublish);
+    // bypassGate slot 0 must be born PUBLISHED regardless of the session's
+    // draft-mode flag: callNextMatch retries promotion immediately after this
+    // run, and promotion only considers is_published=true (the draft guard).
+    // Without this, the organizer's primary button composes a match it can
+    // never seat and nags "review drafts" instead — the draft-mode dead end
+    // (verified live on 08/06: every Call Next during draft mode failed).
+    // Only slot 0: the promotion retry consumes exactly one match; any extra
+    // slots a bypass run fills are background work and stay in the review flow.
+    // bypassGate=true has a single caller (callNextMatch), which is organizer-
+    // authenticated and court-scoped — keep it that way before adding callers.
+    const effectiveAutoPublish = autoPublish || (bypassGate && i === 0);
+    const execResult = await executeMatch(
+      supabase,
+      sessionId,
+      null,
+      proposal,
+      true,
+      effectiveAutoPublish
+    );
     if (!execResult.success) {
       // "Slot skipped" = TOCTOU guard fired — expected under concurrent load.
       const isExpected = execResult.message?.includes("Slot skipped");
@@ -625,11 +643,14 @@ async function runEngineInternal(
       break;
     }
 
-    // Auto-publish mode: the match went straight to On Deck (is_published=true),
-    // skipping the publish action where ON_DECK_WARNING normally fires. Send it
-    // here so players learn they're on deck. Fire-and-forget; never blocks the
-    // engine. (Draft mode stays silent until the organizer publishes.)
-    if (autoPublish) {
+    // The match went straight to On Deck (is_published=true), skipping the
+    // publish action where ON_DECK_WARNING normally fires. Send it here so
+    // players learn they're on deck. Fire-and-forget; never blocks the engine.
+    // (Draft mode stays silent until the organizer publishes.) Keyed off the
+    // EFFECTIVE flag: a bypassGate slot-0 match is published too, and if its
+    // promotion retry loses a race and it stays on deck, the four players
+    // must still have been warned.
+    if (effectiveAutoPublish) {
       const rosterIds = [...proposal.teamA, ...proposal.teamB].map((p) => p.player_id);
       after(() => pushToPlayers(rosterIds, "ON_DECK_WARNING", sessionId));
     }

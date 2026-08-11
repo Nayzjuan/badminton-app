@@ -1253,6 +1253,133 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
 });
 
 // ═════════════════════════════════════════════════════════════
+// CALL NEXT — bypassGate publish override (ENG-BP)
+// ═════════════════════════════════════════════════════════════
+//
+// The draft-mode dead end (verified live on 08/06): callNextMatch runs the
+// engine with bypassGate=true, but the match inherited the session's
+// auto_publish=false, was born unpublished, and the promotion retry — which
+// only considers is_published=true — found nothing. The primary live-gym
+// button composed a match it could never seat.
+//
+// ENG-BP-1  bypassGate + draft mode → slot 0 RPC gets p_is_published=true
+//           AND the promotion retry seats it (end-to-end acceptance)
+// ENG-BP-2  bypassGate + draft mode → slots 1+ STAY drafts (review flow
+//           governs everything beyond the one match being seated)
+
+describe("callNextMatch — bypassGate publish override (ENG-BP)", () => {
+  const fourWaiting = (offset = 0) =>
+    Array.from({ length: 4 }, (_, i) => ({
+      id: `entry-p${offset + i}`,
+      session_id: SESSION_ID,
+      player_id: `p${offset + i}`,
+      joined_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      games_played: 0,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: `Player ${offset + i}`,
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 10,
+      is_bottleneck: false,
+    }));
+
+  it("ENG-BP-1: draft mode + Call Next → slot-0 match born published and seated by the promotion retry", async () => {
+    const four = fourWaiting();
+    const mock = makeMockClient([]);
+    const serviceMock = makeMockClient(
+      [
+        { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions
+        { data: null, error: null }, // [1] isSessionOrganizer: session_organizers (co-org probe)
+        { data: [], error: null }, // [2] promote 1: no published pending
+        { count: 0, data: null, error: null }, // [3] promote 1: draft-blocking check → none
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [4] toggle → ON
+        { data: [{ id: "c1" }], error: null }, // [5] runEngine: courts
+        { data: four, error: null }, // [6] v_queue → waitingCount=4 (Promise.all[0])
+        { count: 0, data: null, error: null }, // [7] unpublished draft count=0 (Promise.all[1])
+        { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [8] session — DRAFT MODE (Promise.all[2])
+        // bypassGate → soft gate + pool caps skipped; draft mode → no published-count query
+        { data: [], error: null }, // [9] slot 0: fetchSessionMatchSnapshot (empty ⇒ no match_players)
+        { data: four, error: null }, // [10] slot 0: fetchActivePool
+        // rpc[0] succeeds → slot 0 committed PUBLISHED (the fix under test)
+        { data: [], error: null }, // [11] slot 1: fetchSessionMatchSnapshot (empty)
+        { data: [], error: null }, // [12] slot 1: fetchActivePool → pool < 4 → loop breaks
+        { data: [{ ...MOCK_MATCH, id: "new-match-id" }], error: null }, // [13] promote 2: published pending → THE slot-0 match
+        { data: [], error: null }, // [14] promote 2: match_players (left-guard roster)
+        { count: 0, data: null, error: null }, // [15] promote 2: queue_entries left-count
+        { data: { id: "new-match-id" }, error: null }, // [16] promote 2: matches update (CAS)
+        { data: null, error: null }, // [17] promote 2: courts update
+        { data: [], error: null }, // [18] promote 2: profiles
+      ],
+      [{ data: "new-match-id", error: null }] // rpc[0]: create_match_with_players succeeds
+    );
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
+
+    const result = await callNextMatch(SESSION_ID, COURT_ID);
+
+    // The fix: despite auto_publish=false, the bypassGate slot-0 match is born
+    // published — promotable by the retry that follows immediately.
+    expect(serviceMock.rpc).toHaveBeenCalledWith(
+      "create_match_with_players",
+      expect.objectContaining({ p_is_published: true, p_origin: "auto" })
+    );
+    expect(result.success).toBe(true);
+    expect(result.matchId).toBe("new-match-id");
+  });
+
+  it("ENG-BP-2: bypassGate slots 1+ stay drafts — only the match being seated skips review", async () => {
+    const four = fourWaiting();
+    const fourMore = fourWaiting(4);
+    const mock = makeMockClient([]);
+    const serviceMock = makeMockClient(
+      [
+        { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions
+        { data: null, error: null }, // [1] isSessionOrganizer: session_organizers
+        { data: [], error: null }, // [2] promote 1: no published pending
+        { count: 0, data: null, error: null }, // [3] promote 1: draft-blocking check → none
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [4] toggle → ON
+        { data: [{ id: "c1" }], error: null }, // [5] runEngine: courts
+        { data: four, error: null }, // [6] v_queue (Promise.all[0])
+        { count: 0, data: null, error: null }, // [7] unpublished draft count=0 (Promise.all[1])
+        { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [8] session — DRAFT MODE (Promise.all[2])
+        { data: [], error: null }, // [9] slot 0: snapshot (empty)
+        { data: four, error: null }, // [10] slot 0: pool
+        // rpc[0] succeeds (published — slot 0)
+        { data: [], error: null }, // [11] slot 1: snapshot (empty)
+        { data: fourMore, error: null }, // [12] slot 1: pool → fresh four → second proposal
+        // rpc[1] errors → loop breaks after asserting the DRAFT write
+        { data: [], error: null }, // [13] promote 2: no published pending
+        { count: 1, data: null, error: null }, // [14] promote 2: draft-blocking check
+      ],
+      [
+        { data: "match-slot0", error: null }, // rpc[0]: slot 0 commit
+        { data: null, error: { message: "stop after slot 1" } }, // rpc[1]: slot 1 commit
+      ]
+    );
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
+
+    await callNextMatch(SESSION_ID, COURT_ID);
+
+    // Slot 0: published (being seated). Slot 1: back under the review flow.
+    expect(serviceMock.rpc).toHaveBeenCalledTimes(2);
+    expect(serviceMock.rpc).toHaveBeenNthCalledWith(
+      1,
+      "create_match_with_players",
+      expect.objectContaining({ p_is_published: true })
+    );
+    expect(serviceMock.rpc).toHaveBeenNthCalledWith(
+      2,
+      "create_match_with_players",
+      expect.objectContaining({ p_is_published: false })
+    );
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
 // SESSION MATCH SNAPSHOT — fail-closed + per-slot cadence (ENG-SNAP)
 // ═════════════════════════════════════════════════════════════
 //
