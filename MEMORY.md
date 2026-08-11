@@ -5,42 +5,320 @@
 
 ---
 
-## 🚨 UNAPPLIED MIGRATIONS — read this first (as of 2026-08-10)
+## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-11. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
-Merging a PR ships TypeScript only.** Two migration files are in the repo and have **NOT** been run
-against production. Until they are, the repo and prod disagree.
+Merging a PR ships TypeScript only.** All four migrations this section tracks are now **applied and
+verified on production** (`usxftpexoimletqmrggb`). Nothing is pending.
+
+| Applied | Stamp |
+|---|---|
+| `20260810000000_declare_compute_session_wrapped` | `20260810151122` |
+| `20260810000001_extend_draft_firewall_to_match_players` | `20260810151355` |
+| `20260811000000_one_time_milestone_awards` | `20260810173410` |
+| `20260811000001_repair_duplicate_milestone_awards` | `20260810173605` |
 
 | File | What it does | Risk if left unapplied | Risk of applying |
 |---|---|---|---|
-| `supabase/migrations/20260810000000_declare_compute_session_wrapped.sql` | Declares `compute_session_wrapped` exactly as prod defines it (verbatim `pg_get_functiondef` capture, md5 `ec5c724c4fd8705449d0fd014d57b82d`) | None to runtime — the repo just keeps lying about the function's body | **Effectively none.** Convergent, strict no-op against prod today: `CREATE OR REPLACE` with the byte-identical body already installed. Grants re-asserted are exactly the two prod has (`postgres`, `service_role`) — not widened |
-| `supabase/migrations/20260810000001_extend_draft_firewall_to_match_players.sql` | Folds the draft-firewall CASE into `has_match_access`, closing audit finding **#11** | **#11 stays exploitable on prod.** Any club member can read, and is pushed live, the full named roster of an unpublished draft | **Real — this one changes RLS behaviour.** Blast radius is exactly `match_players_select` + `match_games_select`. Apply it **outside a live session** |
+| ~~`supabase/migrations/20260810000000_declare_compute_session_wrapped.sql`~~ | Declares `compute_session_wrapped` exactly as prod defines it (verbatim `pg_get_functiondef` capture, md5 `ec5c724c4fd8705449d0fd014d57b82d`) | ✅ **APPLIED 2026-08-10**, stamp `20260810151122` | Was a **proven** strict no-op: an md5 convergence guard was embedded in the applied file, and the post-apply md5 is still `ec5c724c…` — byte-identical body, ACL untouched |
+| ~~`supabase/migrations/20260810000001_extend_draft_firewall_to_match_players.sql`~~ | Folds the draft-firewall CASE into `has_match_access`, closing audit finding **#11** | ✅ **APPLIED 2026-08-10**, stamp `20260810151355` — **#11 is CLOSED** | Applied after the code deploy reached READY. 4-check `DO $$` block passed; both dependent policies provably untouched. Verified functionally through real `authenticated`/`anon` roles. Zero existing rows lost visibility (every prod match is `completed`/`cancelled`). Revert **only** via `supabase/rollbacks/20260810000001_rollback_has_match_access.sql` — never `DROP FUNCTION` |
+| ~~`supabase/migrations/20260811000000_one_time_milestone_awards.sql`~~ | Makes the six all-time-threshold awards one-time per player via a `_prior_awards` ledger; also stops a recompute from deleting the club's `first_to_100` holder (APP_MANIFEST §3.7.1) | ✅ **APPLIED 2026-08-11**, stamp `20260810173410` | Applied via `--apply-sql` (below). Post-apply verified: live `md5(prosrc)` = `e3689008fe20a015421a0c69afc49375` = the repo file's body byte-for-byte, 49438 B, 7 gates present, advisory lock present, ACL still exactly `postgres=X*/postgres,service_role=X/postgres`, `SECURITY DEFINER` + `search_path` intact |
+| ~~`supabase/migrations/20260811000001_repair_duplicate_milestone_awards.sql`~~ | Strips the 188 historical duplicate grants the RPC fix cannot reach | ✅ **APPLIED 2026-08-11**, stamp `20260810173605` | Rewrote **128 real, player-visible wraps**. Outcome matched the dry-run exactly: 252 grants → **64**, 188 revoked, 48 dup groups → **0**, **0 wraps emptied**, 0 orphaned `award_data` keys across all 638 wraps. Every slug now has `grants == distinct players`. See the applied-form note below |
 
-**Order:** `20260810000000` first (it is inert), then `20260810000001`.
+**Order:** ~~`20260810000000` first (it is inert), then `20260810000001`,~~ **← both done 2026-08-10** —
+~~then `20260811000000`, then `20260811000001`.~~ **← both done 2026-08-11, in that order.** The last
+two were **strictly ordered** for a reason worth keeping: the repair leaves the DB in a state the new
+RPC agrees with on every subsequent recompute, but running the repair while the OLD function is still
+installed means the next session close re-adds duplicates for everyone who plays.
 
-**After applying `20260810000001` you MUST run the post-apply checks** written into the file at
-lines **208-226**: (1) the helper discriminates drafts; (2) still exactly two dependent policies;
-(3) a live check with a real member JWT — during an active draft a member's PostgREST GET on
-`match_players` filtered to a drafted match must return `[]`, and must start returning the roster
-the instant the organizer publishes. The migration also carries its own 4-check `DO $$` assertion
-block, so a drifted schema aborts the apply rather than silently half-applying.
+### 🔧 How the two `20260811*` were actually applied — read before re-running either
 
-**Client half is committed on this branch — it is NOT the same thing as deployed.**
-`use-player-match.ts` gained a third `queue_entries` subscription, because once the firewall hides
-a draft's `match_players` rows from the very player it reserves, the `queue_entries` flip to
-`'drafted'` is the *only* event that still reaches them. That subscription is inert before the
-migration and load-bearing after it — do not remove it.
+There is no `psql`, no Supabase CLI and no DB URL on this host; the **only** channel is the Supabase
+MCP. That forced two deliberate deviations from the repo files. Both are safe, but they are not
+what the files say:
 
-> 🔒 **ORDER LOCK: deploy the code BEFORE applying `20260810000001`.** Code-first is
-> unconditionally safe (the subscription is a no-op under the current, more permissive helper).
-> Migration-first is not: a drafted player would lose *every* signal — their `matches` row and
-> their `match_players` rows are both hidden, and the deployed bundle has no `queue_entries`
-> subscription to fall back on. Verify with
-> `git show main:src/hooks/use-player-match.ts | grep -c subscribeToQueue` — it must return ≥1
-> **and** the Vercel deploy for that commit must be READY before the migration runs.
+1. **`20260811000000` was applied by server-side reconstruction, not by shipping the body.**
+   `python3 scripts/gen-one-time-milestone-awards-migration.py --apply-sql <path>` emits the
+   mutating twin of `--verify-sql`: it reads prod's own `pg_proc.prosrc`, replays the 10 anchored
+   `replace()` calls **on the server**, asserts each anchor matched exactly once, asserts the rebuilt
+   `md5` equals `e3689008fe20a015421a0c69afc49375`, and only then issues the `CREATE OR REPLACE`.
+   Any failed check raises *before* the DDL, so a bad run applies nothing. It short-circuits if the
+   body is already at the target md5, so it is idempotent. **Why:** the alternative was reproducing
+   49 KB of plpgsql character-perfect by hand, where a silent slip still compiles. This makes
+   byte-correctness a *proven precondition* instead of a hope.
+2. **`20260811000001` was applied as ONE `DO $repair$` block**, not as the file's
+   `begin;…commit;` + `_emptied_wraps` temp table. Same logic, same ordering, same fallback payload;
+   the temp table became a `uuid[]` local and the post-conditions moved *inside* the block so a bad
+   result rolls the whole repair back. **Why:** it makes atomicity independent of how the runner
+   batches statements, which the file's form does not guarantee through an MCP.
+
+⚠️ **The repo files are still the reviewed, human-readable artifacts and are what a `psql` apply
+should use.** The applied forms are equivalent, not identical — if you ever diff prod against the
+files, expect the function body to match exactly and the repair to have left no trace beyond its data.
+
+✅ **The `20260810000001` post-apply checks were run and passed.** Its 4-check `DO $$` block passed at
+apply time, and the helper was then verified *functionally* — not just structurally — inside a
+rolled-back transaction against prod, reading `match_players` back through real `authenticated` and
+`anon` roles with real JWT claims:
+
+| actor | pending+unpublished | pending+published | completed | in_progress | orphan `match_id` |
+|---|---|---|---|---|---|
+| plain member | **false** ← the only change | true | true | true | NULL → deny |
+| organizer | true | true | true | true | NULL → deny |
+| anon | false | false | false | false | NULL → deny |
+
+End-to-end `SELECT`: member 6 of 8 roster rows, organizer 8, anon 0. Rolled back clean.
+
+**The `use-player-match.ts` `queue_entries` subscription is now load-bearing — do not remove it.**
+Once the firewall hides a draft's `match_players` rows from the very player it reserves, the
+`queue_entries` flip to `'drafted'` is the *only* event that still reaches them.
+
+> 🔒 ~~**ORDER LOCK: deploy the code BEFORE applying `20260810000001`.**~~ **Satisfied 2026-08-10** —
+> the code deploy (merge `23ced21`) reached Vercel READY before the migration ran. Kept here because
+> the same lock applies to any future revert: you must revert the *migration* first, never the code
+> first, or a drafted player loses every signal.
 
 > ⚠️ Prod migration stamps drift from repo filenames. **Never compare by version number — compare
 > by name suffix, and ultimately by querying the catalog.**
+
+---
+
+## 🏆 SESSION WRAPPED — six "milestone" awards were re-firing every session — 2026-08-11, ✅ **APPLIED + PROD-VERIFIED** (working tree still uncommitted)
+
+Reported symptom: *"the 100 games award [is] given to more than one person."* Architecture + full
+rationale: **APP_MANIFEST §3.7.1**.
+
+**It was not the `first_to_100` bug.** That 2026-07-18 repair is intact and still correct — 1 grant,
+1 holder, 1 `club_milestones` row. The award people were seeing is its unguarded neighbour
+**`century_club`** 💯 "Welcome to the 100 club", whose entire condition was `IF alltime_games>=100`.
+All-time totals only grow, so it re-fired every session forever: **18 grants / 5 players** (one
+player held it 7×, 07/04 → 08/06). Five awards shared the shape — `serial_rivals` 132/34,
+`the_veteran` 55/5, `the_dynasty` 36/13, `winning_formula` 10/6, `soulmates` 0 (never met).
+
+**Scope was the user's call:** all six one-time (they explicitly added `the_veteran`), and duplicates
+stripped retroactively.
+
+### The four things that will bite the next person
+
+1. **The ledger must exclude `p_session_id` AND match in both directions** ("any other wrap of mine
+   in this club"). The two halves fix different bugs and I got this wrong on the first pass — the
+   review caught it:
+   - Excluding `p_session_id` → **recompute-safety**. Otherwise the first recompute of a session
+     sees that session's own grant and *revokes* the award. `fixPlayerRecord` re-runs this RPC on
+     closed sessions unconditionally, so this is normal usage.
+   - Matching *any other* session, not just earlier ones → **idempotence**. The gated conditions are
+     evaluated against **present-day** all-time data (`v_alltime_leaderboard_mat`, refreshed at the
+     top, no session cutoff), so `alltime_games>=100` is equally true of a session played *before*
+     the crossing. A backward-only bound re-grants on every earlier session that gets recomputed.
+     Measured on prod: it would have re-duplicated 217 `serial_rivals`, 111 `the_dynasty`, 81
+     `century_club`, 63 `winning_formula`, 20 `the_veteran`, 15 `first_to_100` — and `first_to_100`
+     was **not** vulnerable to this in the old code, so it would have been a fresh regression.
+   - **Do not put ordering in this predicate.** Which wrap is "first" is settled once, by the repair
+     migration; the RPC only ever asks "does any other wrap already have it?".
+2. **In the REPAIR, order by `sessions.created_at`, NEVER `session_wrapped_stats.computed_at`.**
+   07/04's wrap was computed on 07/05 (and `Thursday 05/07` on 05/08 — two late computes, not one);
+   `computed_at` would crown a repaired computation as the
+   "first" earning. Tiebreak on `sessions.id` — two sessions exist 0.3 s apart on 07/25.
+3. **Exclude `is_hidden` sessions**, matching `v_alltime_leaderboard_mat` (`20260804000000`) which is
+   where `alltime_games` comes from. Otherwise an E2E sandbox wrap burns a real player's one-time award.
+4. **The ledger is an unlocked snapshot, so the RPC must serialize per club.** Two computes for two
+   sessions of the same club, running concurrently, would each read "no prior grant" and both grant —
+   re-creating the duplicate. Reachable via two simultaneous `closeSession` calls, or a close racing
+   `fixPlayerRecord`'s fire-and-forget `after()` recompute. **`refresh_alltime_leaderboard()` does not
+   save you** — it uses `pg_try_advisory_xact_lock` and returns *early* on contention, so the second
+   caller sails straight past it. Closed with
+   `pg_advisory_xact_lock(hashtextextended('wrapped_awards:'||club_id, 0))` taken right after
+   `v_club_id` is resolved, before the refresh (no path takes them in reverse, so no deadlock).
+   `hashtextextended` not `hashtext` — one global bigint space shared with
+   `hashtext('leaderboard_refresh')`; use the 64-bit house pattern from `20260702000000`.
+   **It only works under READ COMMITTED**: the ledger's `CREATE TEMP TABLE … AS SELECT` is a separate
+   statement after the lock, so its snapshot includes the other txn's commit. Under REPEATABLE READ
+   the snapshot would predate the lock and "never twice" breaks silently. Found by review agents
+   (the race by round 2, the hash/isolation details by round 3), not by me.
+
+### Second, unreported defect — found and fixed in the same pass
+
+`first_to_100`'s **award** was gated on the same live crossing arithmetic that guards the **claim**
+(`alltime_games - games_played < 100`). `alltime_games` is read fresh, so recomputing the crossing
+session evaluated it against *today's* total and silently dropped the award. **One organizer record-fix
+on the 07/04 session would have deleted the club's only First to 100.** The award now follows the
+`club_milestones` ledger; only the claim still requires a real crossing, so no recompute can mint a
+new holder.
+
+### Verification — pre-apply (all against prod, all rolled back — nothing was mutated)
+
+- `tsc --noEmit` clean; `eslint src/lib/wrapped-awards.ts` clean. (Repo-wide `npx eslint .` is
+  **62 errors / 2744 warnings**, all pre-existing and none in a file this work touched — concentrated
+  in `digital-twin/`, `.claude/`, `marketing-site/`, with a couple each in `src/` and `tests/`.
+  An earlier draft of this note said "520 errors in `tests/`"; that was wrong on both count and place.)
+- **Function compiles** — and the check is now generated, so it cannot drift from the migration:
+  `python3 scripts/gen-one-time-milestone-awards-migration.py --verify-sql <path>` writes a read-only
+  `DO` block that rebuilds the body **server-side** from prod's own `prosrc` by replaying the same
+  substitutions, asserts each anchor matches exactly once *there*, compares md5 against the repo file,
+  `CREATE`s it into `pg_temp`, then `RAISE EXCEPTION`s to roll back. No 49 KB body has to be shipped
+  to the server. Last run: **10/10 anchors, `md5(prosrc)` = `e3689008fe20a015421a0c69afc49375`,
+  compiles** → also proves prod has not drifted from the `20260810000000` baseline and that the file
+  is exactly *prod + 10 anchor-validated edits*. **Single-use — do not re-run it now that the apply
+  has landed; it aborts on anchor 3 and the error looks like drift.** See next-step 4 below.
+- **Repair dry-run** (of the final 3-step version, `BEGIN`…`ROLLBACK`): precondition passes,
+  252 grants → 64, 188 revoked across 128 wraps, 48 dup groups → 0, **0 wraps emptied, 0 empty
+  wraps left**.
+- **Convergence**: post-repair each `(club, player, slug)` has exactly one grant, and the new
+  predicate agrees with the repair's choice on *every* session, including ones carrying no grant —
+  recomputing a non-holder suppresses outright, recomputing the holder re-checks the award's own
+  condition (which the holder still passes for `century_club` today, and may or may not for the other
+  five — see the monotonicity correction below; **none** of the six is strictly monotone). (The first version of this
+  claim was narrower than stated; the backward-only bound only agreed on wraps that already had a
+  grant. Fixed.)
+  **Say it precisely.** The invariant is "at most one wrap per (club, player), and no recompute adds
+  a second" — *not* "the holder keeps it forever". `the_veteran`, `the_dynasty` and `winning_formula`
+  are non-monotone (top-3 is relative; a 70% rate can fall back; your top partner can change), so
+  recomputing the holding wrap can legitimately drop the badge. Inherited from the old function, not
+  introduced here — but the docs claimed the opposite at first.
+  And "will not hand it back" — which this note said until 2026-08-11 — is also wrong: `_prior_awards`
+  is built from the wraps that *currently* carry the slug, so a dropped grant leaves nothing to gate
+  on and the award **can** be re-earned on a later qualifying night. What a lapse really costs is the
+  original wrap, not the badge: it re-lands on a future session, so the earned-on date moves.
+  Reproduced live (rolled back): recomputing the `the_veteran` holder `Thursday 05/07` goes 64 → 63
+  grants and drops Alvin DG, who sits at rank 6 today.
+  Related: the gate is keyed `(player, slug)`, **not** per rival/partner, so `soulmates` et al. can
+  never be re-earned with someone new. That was the product call.
+
+#### ⚠️ The 6 recompute-fragile grants — check this before any "Fix Player Record" on an old session
+
+All 17 milestone-holding sessions were recomputed in a rolled-back transaction (each restored from a
+snapshot before the next, so no iteration polluted the next one's ledger). **6 of 64 grants would be
+dropped by a record-fix on their own session; 0 would be added anywhere** — the "no recompute adds a
+second" invariant holds board-wide.
+
+| session | lost on recompute |
+|---|---|
+| Thursday 05/07 | Alvin DG — `the_veteran` |
+| Thursday 05/21 | Miggy — `the_veteran` |
+| Saturday 05/23 | JVL — `serial_rivals` · Lexie B — `the_dynasty` |
+| 07/09 Thursday | Kevin DC — `the_dynasty` |
+| 07/23 Thursday | Bea Trix — `the_dynasty` |
+
+Five are ordinary lapses (condition no longer true; re-earnable later). **JVL's is historical damage,
+not a lapse.** She was an identity-merge target **2026-06-10**, back when `migrate_player_identity`
+re-pointed `match_players` but **not** `player_rivalries` / `player_partnerships`. ⚠️ **That gap is
+closed** — `20260701000015` fixed it on 2026-07-01 (live on prod: 4 `UPDATE player_rivalries` + 4
+`UPDATE player_partnerships` in the function today). It just landed *three weeks after her merge*, so
+it never repaired the rows already orphaned. She has 22 match rows and **0** rivalry rows on the new
+id *and* the old one → `cs_max_sessions_faced` = **0** (the projection is
+`COALESCE(msr.cs_max_sessions_faced,0)` — a zero comparison, not the NULL one an earlier draft here
+claimed) → `0 >= 3` fails.
+
+**"Not re-earnable" was too strong** (also corrected in `APP_MANIFEST.md`).
+`refresh_cross_session_stats` upserts `player_rivalries` on every close
+([sessions.ts:1032](src/app/actions/sessions.ts:1032)), so her rows repopulate the next session she
+plays; `serial_rivals` then just needs 3 future nights vs the same rival. What is unrecoverable is her
+**pre-merge accumulated `sessions_faced`** — the history that earned it. Note a "backfill" here means
+recomputing from `match_players`, not re-pointing: the old id has 0 rivalry and 0 partnership rows too.
+Pre-dedup this was invisible because the award re-fired nightly and self-healed; it no longer does.
+Scope: 24 wrap-players have zeroed rivalry rows and 27 zeroed partnership rows, but **JVL is the only
+one holding a pairwise milestone.** Not caused by this work.
+
+**Corrected monotonicity claim.** The docs and the migration header called `century_club`,
+`serial_rivals` and `soulmates` "strictly monotone / can never un-fire" until 2026-08-11. Production
+falsifies all three. `century_club` is **merge-robust** — alone among the six it reads neither
+`player_rivalries` nor `player_partnerships` — but not monotone: `alltime_games` comes from
+`v_alltime_leaderboard_mat`, which filters `is_hidden = false`, so hiding a session or a
+`fix_record_swap_player` that drops a player from a completed match subtracts from it. (No live
+exposure: holders sit at 133/118/111/105/104 games.) `serial_rivals` / `soulmates` are monotone only
+given intact source data. Fixed in all three places (`APP_MANIFEST.md` ×2 and the generator `HEADER`).
+
+### Verification — post-apply (2026-08-11, on the real, mutated production DB)
+
+Applied in order, `20260811000000` then `20260811000001`, with the only live session being the
+hidden `🤖 E2E SANDBOX` (0 matches, 39 days stale, excluded by `is_hidden` anyway).
+
+- **Function**: live `md5(prosrc)` = `e3689008fe20a015421a0c69afc49375` = the repo file's body
+  byte-for-byte; 49438 B; 7 gates; advisory lock present; ACL, `SECURITY DEFINER`, `search_path`,
+  owner all unchanged.
+- **Data**: 252 grants → **64**, duplicates **0**. Per slug, `grants == distinct players` exactly:
+  `serial_rivals` 34, `the_dynasty` 13, `winning_formula` 6, `century_club` 5, `the_veteran` 5,
+  `first_to_100` 1. Integrity across all **638** wraps: 0 empty `earned_awards`, 0 awards missing an
+  `award_data` payload, **0 orphaned `award_data` keys** (proves `award_data - slugs` stayed in sync).
+- **Spot check**: Stelle now holds `century_club` on **07/04 only** — `false` on all 21 other wraps
+  including 08/06. Holders are 5 distinct players, one night each.
+- **Behavioural proof** — two real recomputes inside rolled-back transactions, which is what actually
+  demonstrates the fix rather than the data merely looking right:
+  - *Non-holding session* (08/06): `century_club` **not** re-granted (`before=f after=f`), grants
+    stayed 64, duplicates 0. **This is the exact path that used to re-fire.**
+  - *Holding session* (07/04): holder **kept** it (`before=t after=t`), `first_to_100` holders stayed
+    1 → recompute-safety and the second defect's fix both confirmed live.
+
+### Next steps
+
+1. **Commit the working tree** — untracked: the two migration SQL files and the generator (now with
+   `--apply-sql` + the `flag_dest` guard). Modified: `APP_MANIFEST.md`, `MEMORY.md`, and
+   `src/lib/wrapped-awards.ts` (comment-only — documents which awards are now one-time and why the
+   `the_veteran` subtitle was left alone). **Prod is ahead of git right now.**
+   ⚠️ `src/hooks/use-player-match.ts` is also modified but is **not part of this work** — it is a
+   comment-only correction from the 2026-08-10 draft-firewall task ("once the firewall reaches
+   match_players" → "since the firewall reached match_players on 2026-08-10"). Commit it separately
+   or with that work, not as part of the awards change.
+2. Watch the **next real session close**: it is the first live exercise of the new gate and of the
+   per-club advisory lock. Expect no player to receive a milestone award they already hold.
+3. `the_veteran`'s per-night subtitle ("The OG showed up tonight") still reads as a tonight-award
+   although the badge is now once-per-player. **Copy decision, deliberately not changed** — say the
+   word and it is a one-line edit in `src/lib/wrapped-awards.ts`.
+4. If the body ever needs another edit, edit the substitutions in
+   `scripts/gen-one-time-milestone-awards-migration.py` and re-run it — **never** hand-edit the
+   49 KB body. The generator aborts unless each anchor matches exactly once, and re-running it today
+   reproduces the committed file byte-for-byte.
+
+   🚨 **`<path>` is an OUTPUT destination for both flags — I destroyed the migration with this on
+   2026-08-11.** `--verify-sql <path>` / `--apply-sql <path>` **write** their SQL to `<path>`; neither
+   reads it. `--apply-sql supabase/migrations/20260811000000_….sql` reads naturally as "apply this
+   file" and instead overwrote the 55 KB migration with the 12 KB `DO` block. Recovered only because
+   a bare re-run rebuilds it deterministically from `SRC` (body md5 back to `e3689008…`/49438,
+   non-comment lines byte-identical). ✅ **Now guarded in code** (2026-08-11): `flag_dest()` refuses a
+   `<path>` that is the migration or `SRC` — **two** identity checks, since `resolve()` handles
+   symlinks and relative forms but a **hardlink** defeats it (measured: it clobbered the file), so
+   `(st_dev, st_ino)` closes that — plus a missing path, a `<path>` that is itself a flag
+   (`--verify-sql --apply-sql /tmp/x` used to write a file named `--apply-sql` into the cwd), and a
+   non-existent parent dir (was a raw `FileNotFoundError` traceback). Flag mode also no longer
+   rewrites the migration as a side effect — that unconditional `OUT.write_text` was the other half
+   of the accident: it wrote the correct file, then the flag destroyed it. All five abort paths plus
+   a no-false-positive case are verified. Still: target a scratch path.
+
+   Related trap when checking sizes: `wc -c` counts *bytes*, Python `len(read_text())` counts
+   *characters*, and they differ by 98 here — which looks like corruption and isn't. The cause is
+   **not** em-dashes (there is exactly 1): it is the 46 box-drawing `─` in the section rules
+   (+92), plus 2 bullets `•` (+4) and that 1 em-dash (+2). Measured, not assumed.
+
+   ⚠️ **Also read this: the generator is now spent against production.** Its `SRC` baseline is
+   `20260810000000_declare_compute_session_wrapped.sql`, and prod is that baseline **plus these ten
+   substitutions**. So anchor 3 (the pre-restructure `first_to_100` arithmetic) now matches prod
+   **zero** times, and `--verify-sql` aborts with
+   `ANCHOR 3 … matched 0 times in production, expected 1`. (`--apply-sql` does *not* — its md5
+   short-circuit returns before the anchor replays. Measured anchor counts against live prod:
+   A1=1, A2=1, **A3=0**, A4=1, A10=1.) That message reads like drift; it isn't —
+   it is what "already applied" looks like on this script. Consequences:
+   - **`--verify-sql` is no longer the standing prod check** described above. It was a *pre-apply*
+     instrument and it is single-use. It is read-only and fail-closed, so running it costs nothing
+     but a confusing error. To confirm prod today, just compare the md5 instead:
+     `select md5(prosrc), length(prosrc) from pg_proc where proname='compute_session_wrapped'`
+     → must be `e3689008fe20a015421a0c69afc49375` / `49438`.
+   - **`--apply-sql` is idempotent** — its `IF md5(v_src) = v_want THEN … RETURN` short-circuit runs
+     *before* the anchor replays, so re-running it today is a clean no-op, not an abort. (Note the
+     short-circuit returns without re-issuing the `CREATE OR REPLACE`, so it re-proves the body but
+     not `SECURITY DEFINER` / `search_path`; the trailing ACL assertion still runs.)
+   - **For an 11th edit, re-take the baseline from prod first** — dump the current `prosrc` into a
+     new `SRC` file and rewrite the ten substitutions against it (or keep only the new one). Editing
+     the existing list and re-running will abort and achieve nothing.
+   - **The exactly-once anchor check was never enough on its own, and now there is a second guard.**
+     For the seven gate edits the needle is a *substring of its own replacement*, so running the
+     generator against an already-migrated body (exactly what "re-take the baseline from prod" tells
+     you to do) found the needle once — inside the gate already there — and would have silently
+     **double-gated all seven** rather than aborting. `sub()` now refuses if the replacement text is
+     already present. Self-tested: pointing `SRC` at the generated migration aborts on anchor 1 with
+     `looks ALREADY APPLIED`. Adding it changed no output — the regenerated migration is still
+     byte-identical (body md5 `e3689008fe20a015421a0c69afc49375`, 49438) and `--apply-sql` still
+     emits md5 `264aa1e37e92209be5f578515524be2c` / 12441 chars, the exact statement recorded in
+     `schema_migrations` under stamp `20260810173410`. Only the header comment changed.
 
 ---
 
@@ -82,14 +360,15 @@ testing — their designs were simply wrong:
 
 **Two findings surfaced while doing this:**
 
-1. **Audit finding #11 (NEW, 🟡 medium-low, exploitable today)** — the draft firewall covers `matches` but
+1. **Audit finding #11** ~~(NEW, 🟡 medium-low, exploitable today)~~ **✅ CLOSED on prod 2026-08-10** — the draft firewall covered `matches` but
    **not** `match_players`. `match_players_select` is just `has_match_access(match_id)` → any club member;
    it never asks the draft question. So a member can read (and is **pushed, live**) the full named roster of
    an **unpublished** draft, over a plain PostgREST GET — the rows hand out the `match_id` the hidden
    `matches` row withheld. Verified against prod `pg_policies`. Fix = fold the firewall into
    `has_match_access`; blast radius is exactly `match_players_select` + `match_games_select` (no RPC body
-   references it). ~~**Not shipped** — wants its own migration.~~ 🟠 **MIGRATION WRITTEN 2026-08-10,
-   NOT YET APPLIED — still open on prod.** See "UNAPPLIED MIGRATIONS" below.
+   references it). ~~**Not shipped** — wants its own migration.~~ ~~🟠 **MIGRATION WRITTEN 2026-08-10,
+   NOT YET APPLIED — still open on prod.**~~ ✅ **CLOSED — applied to prod 2026-08-10**, stamp
+   `20260810151355`, after the code deploy reached READY. See the table at the top of this file and
    `TENANCY_AUDIT_2026-07-21.md` §2 #11 + §4 item 7.
 2. **Anon TV realtime is entirely dead** — an anonymous `/tv/{id}` viewer gets **ZERO** events on both
    channels (every `session_access_level` branch tests `auth.uid()` → NULL), so the 15 s poll is
@@ -312,6 +591,9 @@ inside `v_alltime_leaderboard_mat` so sandbox bots can't strand phantom rows on 
 7 pre-existing errors (`organizer-dashboard.tsx`, `share-session-dialog.tsx`, `matchmaking-db.test.ts`) and
 `npm run lint` reports ~520 because `.claude/worktrees/**` and `.agents/skills/**` are gitignored but not
 eslint-ignored. None are ours. Don't read a future "lint is red" as a regression from this work.
+(⚠️ **Figure re-measured 2026-08-11: the baseline is now 2806 problems — 62 errors / 2744 warnings.**
+The "~520" above is the count as it stood when this entry was written; the *shape* of the point still
+holds — repo-wide lint is dirty and not yours — only the number is stale.)
 
 **Behaviour change worth knowing:** `emergency-cleanup.ts` now EXCLUDES `E2E_OrganizerBot` from the bot-profile
 delete (it previously deleted it, unlike `teardown.ts`, which always spared it). Deleting that account
@@ -1186,7 +1468,7 @@ Hiding is a **listing** concern, not access control — the row stays readable b
 
 **✅ LIVE-TESTED 2026-07-21** against the branch's Vercel preview + the `🤖 E2E SANDBOX` session (`tests/e2e/scenario-p-repeat-pairing.spec.ts`, 3/3 green, sandbox verified empty afterwards). This closed the last verification gap: the sticky bar pins at the **real** ~178px header, proving the `--cc-header-h` ResizeObserver measures the real thing (every local check had used a synthetic 56px header). **The live run found a bug 777 unit tests missed:** `PairMatchRow` filtered `team === "A"` but `match_players.team` is the lowercase `Team` enum — both rosters rendered empty in the disclosure. The unit fixture had been invented with `"A"`/`"B"`, so it agreed with the wrong code and proved nothing. Lesson: **fixtures you author yourself cannot validate an assumption you also authored** — pin enum-ish values against `src/types/database.ts` or a real row.
 
-**Gotchas worth keeping:** thresholds MUST come from `MAX_PARTNERSHIP_REPEATS`/`MAX_OPPONENT_REPEATS` (a UI threshold above the engine cap is silent on exactly what the engine refuses) · `cc-accent` is TEAL = _selected_ on this screen, never the warning · adding a 6th realtime channel permanently breaks `realtimeConnected` (`REALTIME_CHANNEL_COUNT = 5`) · happy-dom drops `var()` in an inline `style.top`, so the sticky offset lives in the className instead · repo-wide `npm run lint` has a DIRTY ~520-error baseline — always scope lint to changed files.
+**Gotchas worth keeping:** thresholds MUST come from `MAX_PARTNERSHIP_REPEATS`/`MAX_OPPONENT_REPEATS` (a UI threshold above the engine cap is silent on exactly what the engine refuses) · `cc-accent` is TEAL = _selected_ on this screen, never the warning · adding a 6th realtime channel permanently breaks `realtimeConnected` (`REALTIME_CHANNEL_COUNT = 5`) · happy-dom drops `var()` in an inline `style.top`, so the sticky offset lives in the className instead · repo-wide `npm run lint` has a DIRTY baseline — always scope lint to changed files. (Re-measured 2026-08-11: **62 errors / 2744 warnings**. This line said "~520-error" until then; the guidance stands, the number was stale.)
 
 ---
 
@@ -2638,7 +2920,7 @@ Allows the organizer to correct a completed match's player roster (wrong player 
 
 **Validation:** `npx tsc --noEmit` clean · `npm run lint` clean (changed files only) · `npm run build` clean (all 19 pages) · Code review: LGTM.
 
-**⚠️ Migration not yet applied to Supabase production.** Run `fix_record_swap_player` migration before using the feature in a live session.
+~~**⚠️ Migration not yet applied to Supabase production.**~~ ✅ **Live on prod** (verified against `pg_proc` 2026-08-11). The deployed signature is *wider* than this note records — it gained `p_actor_id uuid, p_actor_name text` from the provenance-audit migration `20260617000000`.
 
 ## SESSION STATE (Last Updated: 2026-05-23 — join queue perf + Jake L merge + DB backup)
 
@@ -3456,7 +3738,7 @@ v_alltime_leaderboard_mat   — materialized all-time stats (same columns, no se
 | `skill_level_to_int(lvl)`                                                           | Enum → numeric 1–6                                                                                                                                                                                                                              |
 | `refresh_alltime_leaderboard()`                                                     | Refreshes materialized view                                                                                                                                                                                                                     |
 | `get_player_streaks(p_session_id?)`                                                 | Win-streak per player                                                                                                                                                                                                                           |
-| `fix_record_swap_player(p_match_id, p_out_player_id, p_in_player_id, p_session_id)` | Historical roster correction — team flip (swap team columns) or full replacement (DELETE+INSERT). Adjusts `queue_entries.games_played`, `player_partnerships`, `is_mixed_level`, `origin`. ⚠️ Migration 20260522 not yet applied to production. |
+| `fix_record_swap_player(p_match_id, p_out_player_id, p_in_player_id, p_session_id, p_actor_id, p_actor_name)` | Historical roster correction — team flip (swap team columns) or full replacement (DELETE+INSERT). Adjusts `queue_entries.games_played`, `player_partnerships`, `is_mixed_level`, `origin`. ✅ Live on prod (verified 2026-08-11); the two `p_actor_*` params came later, via `20260617000000`. |
 
 ---
 
