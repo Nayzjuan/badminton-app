@@ -8,7 +8,6 @@
  */
 
 import {
-  computePriorityScore,
   scoreCandidates,
   buildCombinationGroup,
   snakeDraft,
@@ -336,10 +335,6 @@ console.log(
 
 const OLD = runSim(12, 0, 5); // before: GAME_PENALTY=12, no MIN_REST, LOOKBACK=5
 const NEW = runSim(16, 18, 10); // after:  GAME_PENALTY=16, MIN_REST=18, LOOKBACK=10
-
-function col(val: string, ok: boolean) {
-  return ok ? G(val) : R(val);
-}
 
 // ─── Side-by-side summary ─────────────────────────────────────────────────────
 console.log(

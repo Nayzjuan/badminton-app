@@ -7,7 +7,7 @@
 // and join the session without needing to navigate manually.
 // ============================================================
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Share2, Copy, Check } from "lucide-react";
 import {
@@ -19,6 +19,19 @@ import {
 } from "@/components/ui/dialog";
 import { useClubSlug } from "@/hooks/use-club-slug";
 import { clubJoin } from "@/lib/club-paths";
+
+// `window.location.origin` cannot be read while rendering on the server, and
+// reading it during the hydrating render would desync from the server HTML.
+// useSyncExternalStore is React's sanctioned escape hatch for exactly this: it
+// serves the server snapshot both on the server AND on the hydrating render, so
+// the markup always matches, then swaps in the real origin once hydration ends.
+// The origin is immutable for the life of the document, so nothing ever needs
+// to notify us — `subscribe` hands back a no-op unsubscribe and never fires.
+// (All three live at module scope so their identities stay stable across
+// renders; a fresh `subscribe` on every render would force a resubscribe.)
+const subscribeToOrigin = () => () => {};
+const getOriginSnapshot = () => window.location.origin;
+const getServerOriginSnapshot = () => "";
 
 interface ShareSessionDialogProps {
   sessionId: string;
@@ -37,19 +50,23 @@ export function ShareSessionDialog({
 }: ShareSessionDialogProps) {
   const isControlled = open !== undefined;
   const clubSlug = useClubSlug();
-  const [joinUrl, setJoinUrl] = useState("");
   const [copied, setCopied] = useState(false);
   // Tracks the "copied" reset timer so we can cancel it if the component
   // unmounts before the 2-second window expires (prevents setState on unmounted component).
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Build URL client-side so window.location.origin is available. On a club
+  // Build the URL client-side so window.location.origin is available. On a club
   // route the QR points at /c/[slug]/join; otherwise the legacy /play/join shim
   // (which forwards to the club join) keeps older surfaces working.
-  useEffect(() => {
-    const path = clubSlug ? clubJoin(clubSlug, sessionId) : `/play/join?session=${sessionId}`;
-    setJoinUrl(`${window.location.origin}${path}`);
-  }, [sessionId, clubSlug]);
+  const origin = useSyncExternalStore(
+    subscribeToOrigin,
+    getOriginSnapshot,
+    getServerOriginSnapshot
+  );
+  const path = clubSlug ? clubJoin(clubSlug, sessionId) : `/play/join?session=${sessionId}`;
+  // Stays "" until the origin is known; every consumer below treats "" as
+  // "not generated yet" (skeleton QR, disabled copy button, no-op handleCopy).
+  const joinUrl = origin ? `${origin}${path}` : "";
 
   // Clear the copied reset timer on unmount.
   useEffect(() => {

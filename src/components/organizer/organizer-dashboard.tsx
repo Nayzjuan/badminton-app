@@ -182,52 +182,50 @@ export function OrganizerDashboard({
     suppressCloseWatcher: suppressLocalClose,
   });
 
-  // ── New-draft notification ────────────────────────────────
-  // Show a toast + transient badge the first time unpublished drafts
-  // appear after the queue was empty. Fires only on 0 → ≥1 transitions
-  // so the organizer isn't spammed when the engine generates multiple slots.
-  // Initialised with the current count so a page-load with existing drafts
-  // never triggers a spurious notification.
   // Refs for the --cc-header-h ResizeObserver (see the effect below).
   const rootRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLElement | null>(null);
 
-  const prevDraftCountRef = useRef(draftMatches.length);
-  const [hasNewDraft, setHasNewDraft] = useState(false);
+  // ── New-draft notification ────────────────────────────────
+  // Show a toast + transient badge the first time unpublished drafts appear
+  // after the queue was empty. Fires only on 0 → ≥1 transitions so the
+  // organizer isn't spammed when the engine generates multiple slots, and
+  // `prevDraftCount` is seeded from the current count so a page-load with
+  // existing drafts never triggers a spurious notification.
+  //
+  // The edge itself is detected while rendering, not in an effect: React
+  // supports adjusting state from a changed value during render and re-runs
+  // the component before committing, so the badge lands in the same paint as
+  // the drafts it announces instead of one render behind them.
+  // `draftNotice` carries the whole notification — its presence *is* the
+  // badge, and a fresh object per edge is what re-arms the toast effect below.
+  const [prevDraftCount, setPrevDraftCount] = useState(draftMatches.length);
+  const [draftNotice, setDraftNotice] = useState<{ count: number } | null>(null);
+  if (prevDraftCount !== draftMatches.length) {
+    setPrevDraftCount(draftMatches.length);
+    if (prevDraftCount === 0 && draftMatches.length > 0) {
+      setDraftNotice({ count: draftMatches.length });
+    }
+  }
+  const hasNewDraft = draftNotice !== null;
   // Confirm dialog for enabling auto-publish while unreviewed drafts exist (D9).
   const [autoPublishConfirmOpen, setAutoPublishConfirmOpen] = useState(false);
-  // Holds the active badge-reset timer so rapid 0→1→0→1 transitions
-  // always cancel the previous timer before starting a new one.
-  const newDraftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // The toast is a real external side effect, so it stays in an effect — and
+  // the badge-reset timer rides with it. Keying on the notice (not on the
+  // draft count) means an unrelated count change mid-window can no longer run
+  // the cleanup and strand the badge on forever; only a *new* notice cancels
+  // the pending reset, so rapid 0→1→0→1 transitions never race two timers.
   useEffect(() => {
-    const current = draftMatches.length;
-    const prev = prevDraftCountRef.current;
-    prevDraftCountRef.current = current;
-
-    if (prev === 0 && current > 0) {
-      // Cancel any in-flight reset timer before starting a fresh one.
-      if (newDraftTimerRef.current !== null) {
-        clearTimeout(newDraftTimerRef.current);
-      }
-      setHasNewDraft(true);
-      toast("Draft ready", {
-        description: `${current} new match draft${current !== 1 ? "s" : ""} — review and publish to put on deck.`,
-        duration: TOAST_DISMISS_MS,
-      });
-      newDraftTimerRef.current = setTimeout(() => {
-        setHasNewDraft(false);
-        newDraftTimerRef.current = null;
-      }, 3000);
-    }
-
-    // Always clean up the timer on unmount or before the next effect run.
-    return () => {
-      if (newDraftTimerRef.current !== null) {
-        clearTimeout(newDraftTimerRef.current);
-      }
-    };
-  }, [draftMatches.length]);
+    if (draftNotice === null) return;
+    const { count } = draftNotice;
+    toast("Draft ready", {
+      description: `${count} new match draft${count !== 1 ? "s" : ""} — review and publish to put on deck.`,
+      duration: TOAST_DISMISS_MS,
+    });
+    const timer = setTimeout(() => setDraftNotice(null), 3000);
+    return () => clearTimeout(timer);
+  }, [draftNotice]);
 
   // ── Publish the header height as --cc-header-h ────────────
   // The header is `sticky top-0 z-20`, so anything else that wants to pin

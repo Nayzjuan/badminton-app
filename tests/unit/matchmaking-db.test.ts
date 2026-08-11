@@ -15,7 +15,7 @@
 // ============================================================
 
 import { describe, it, expect, vi } from "vitest";
-import { fetchActivePool } from "@/lib/matchmaking-db";
+import { fetchActivePool, type DbClient } from "@/lib/matchmaking-db";
 import { MIN_REST_MINUTES, PLAYERS_PER_MATCH } from "@/lib/constants";
 
 // ── Mock factory ─────────────────────────────────────────────
@@ -27,7 +27,11 @@ import { MIN_REST_MINUTES, PLAYERS_PER_MATCH } from "@/lib/constants";
 
 type AnyRow = Record<string, unknown>;
 
-function makeSupabaseMock(poolRows: AnyRow[]) {
+// Returned as DbClient via a double cast, once, here. The double cast is the
+// honest signature for a deliberately partial stand-in: this object implements
+// only `from`, which is all fetchActivePool touches, and pretending otherwise
+// by widening the parameter would weaken the real call sites.
+function makeSupabaseMock(poolRows: AnyRow[]): DbClient {
   function makeChain(result: { data: AnyRow[]; error: null }) {
     const chain: Record<string, unknown> = {};
     const self = () => chain;
@@ -46,7 +50,7 @@ function makeSupabaseMock(poolRows: AnyRow[]) {
 
   return {
     from: vi.fn(() => makeChain({ data: poolRows, error: null })),
-  };
+  } as unknown as DbClient;
 }
 
 // ── Player factory ────────────────────────────────────────────
@@ -80,7 +84,7 @@ describe("fetchActivePool — rest filter", () => {
       makeRow("c", 0, 0),
       makeRow("d", 0, 0),
     ];
-    const supabase = makeSupabaseMock(firstTimers) as any;
+    const supabase = makeSupabaseMock(firstTimers);
     const pool = await fetchActivePool(supabase, SESSION_ID);
     expect(pool.map((p) => p.player_id).sort()).toEqual(["a", "b", "c", "d"]);
   });
@@ -92,7 +96,7 @@ describe("fetchActivePool — rest filter", () => {
       makeRow("c", 0, 0), // first-timer — always passes
       makeRow("d", 3, MIN_REST_MINUTES + 1), // above boundary — passes
     ];
-    const supabase = makeSupabaseMock(rows) as any;
+    const supabase = makeSupabaseMock(rows);
     const pool = await fetchActivePool(supabase, SESSION_ID);
     expect(pool.map((p) => p.player_id).sort()).toEqual(["a", "b", "c", "d"]);
   });
@@ -107,7 +111,7 @@ describe("fetchActivePool — rest filter", () => {
       makeRow("rested4", 3, MIN_REST_MINUTES + 1),
       makeRow("fresh", 1, MIN_REST_MINUTES - 1), // under-rested: excluded
     ];
-    const supabase = makeSupabaseMock(rows) as any;
+    const supabase = makeSupabaseMock(rows);
     const pool = await fetchActivePool(supabase, SESSION_ID);
     expect(pool.map((p) => p.player_id)).not.toContain("fresh");
     expect(pool).toHaveLength(4);
@@ -121,7 +125,7 @@ describe("fetchActivePool — rest filter", () => {
       makeRow("rested3", 2, MIN_REST_MINUTES + 2),
       makeRow("fresh", 1, MIN_REST_MINUTES - 1), // would be excluded, but fallback kicks in
     ];
-    const supabase = makeSupabaseMock(rows) as any;
+    const supabase = makeSupabaseMock(rows);
     const pool = await fetchActivePool(supabase, SESSION_ID);
     // Fallback: all 4 returned (filter waived)
     expect(pool).toHaveLength(4);
@@ -137,7 +141,7 @@ describe("fetchActivePool — rest filter", () => {
       makeRow("d", 0, 0),
       { ...makeRow("paused", 2, MIN_REST_MINUTES + 5), is_paused: true },
     ];
-    const supabase = makeSupabaseMock(rows) as any;
+    const supabase = makeSupabaseMock(rows);
     const pool = await fetchActivePool(supabase, SESSION_ID);
     expect(pool.map((p) => p.player_id)).not.toContain("paused");
     expect(pool).toHaveLength(4);

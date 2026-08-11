@@ -37,7 +37,7 @@ function runExtract() {
       cwd: resolve(__dirname, ".."),
       stdio: "inherit",
     });
-  } catch (e) {
+  } catch {
     console.error("[watch] extract failed — showing last good manifest");
   }
 }
@@ -48,7 +48,7 @@ function runSyncTokens() {
       cwd: resolve(__dirname, ".."),
       stdio: "inherit",
     });
-  } catch (e) {
+  } catch {
     console.error("[watch] sync-design-tokens failed");
   }
 }

@@ -20,7 +20,6 @@
  */
 
 import {
-  computePriorityScore,
   scoreCandidates,
   buildCombinationGroup,
   snakeDraft,
@@ -51,7 +50,8 @@ import {
 // Penalty=8: ~8-min disadvantage per extra game → closes gap in ~8 extra
 // minutes of waiting. Keeps max wait under ~40m vs ~51m at penalty=16.
 const GAME_PENALTY_SIM = 8; // matches production constant
-const MIN_REST_SIM = 0; // removed — priority score handles this naturally
+// There is deliberately no MIN_REST knob here: the priority score already
+// spreads games out on its own, so gating on rest minutes was redundant.
 
 // ─── Terminal colours ────────────────────────────────────────────────────────
 const W = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -247,7 +247,7 @@ function tryFormMatch(simTime: number): {
     return { ...p, wait_minutes: wait, priorityScore: ps };
   });
 
-  // (MIN_REST_SIM = 0, so no pool filter needed — priority score handles it)
+  // (no minimum-rest filter here — the priority score handles rest on its own)
   const sorted = [...enriched].sort((a, b) =>
     b.priorityScore !== a.priorityScore
       ? b.priorityScore - a.priorityScore

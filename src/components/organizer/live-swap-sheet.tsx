@@ -22,7 +22,6 @@
 
 import { useMemo } from "react";
 import { AlertTriangle, ArrowLeftRight, Users } from "lucide-react";
-import { SkillBadge } from "@/components/ui/skill-badge";
 import {
   Sheet,
   SheetContent,
