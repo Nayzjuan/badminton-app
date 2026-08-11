@@ -383,6 +383,12 @@ export const AWARD_META: Record<string, AwardMeta> = {
     subtitle: "Both lost to AND beat {opponent_name} tonight. You contain multitudes.",
     rarity: "common",
   },
+  // One-time per player (migration 20260811000000). All-time top-3 by games
+  // played is a standing fact, not a thing you do on a given night, so it used
+  // to re-fire every session — 55 grants across 5 people.
+  // NOTE: the subtitle still reads as a per-night line. Left as-is deliberately;
+  // it is accurate on the night it is earned, and copy changes are a product
+  // call, not a side effect of the award-granting fix.
   the_veteran: {
     slug: "the_veteran",
     emoji: "🎖️",
@@ -392,6 +398,12 @@ export const AWARD_META: Record<string, AwardMeta> = {
   },
 
   // ── SPECIAL / MILESTONE (NEW) ──────────────────────────────
+  // One-time per player: awarded in the first session where the player is past
+  // 100 all-time games, then never again (migration 20260811000000). Before
+  // that it re-fired every session forever, since alltime_games only ever grew
+  // in practice — "Welcome to the 100 club" was handed to the same 5 people 18
+  // times. (It is not strictly monotone: it comes from v_alltime_leaderboard_mat,
+  // which filters is_hidden, so hiding a session can subtract from it.)
   century_club: {
     slug: "century_club",
     emoji: "💯",
@@ -401,7 +413,7 @@ export const AWARD_META: Record<string, AwardMeta> = {
   },
   // One-time, club-wide honor — only ever held by whoever was the FIRST
   // player in the club to ever reach 100 all-time games. Distinct from
-  // century_club (which every player earns on crossing 100, every time).
+  // century_club, which every player in the club earns once on crossing 100.
   first_to_100: {
     slug: "first_to_100",
     emoji: "🥇",
@@ -478,6 +490,19 @@ export const AWARD_META: Record<string, AwardMeta> = {
     subtitle: "You were losing that all-time head-to-head. Tonight you levelled it — or better.",
     rarity: "rare",
   },
+  // ── The four one-time cross-session awards ──────────────────
+  // All four below read all-time ledgers (player_rivalries /
+  // player_partnerships) rather than tonight's play, so their conditions stay
+  // true the next time the player turns up. Each is now awarded once, in the
+  // first session where it holds, and never again (migration 20260811000000).
+  // Before that they re-fired every session: the_dynasty 36 grants / 13
+  // players, serial_rivals 132 / 34, winning_formula 10 / 6.
+  // The gate is keyed on (player, slug), NOT on the partner or rival involved —
+  // a brand-new 20-game partnership does not re-earn soulmates. That is the
+  // product decision, not an oversight.
+  // Their neighbours in this block (nemesis_slayer, settled_the_score, and the
+  // momentum/bounced_back family) are NOT one-time and must not be gated — they
+  // each require something to actually happen tonight.
   the_dynasty: {
     slug: "the_dynasty",
     emoji: "🏛️",

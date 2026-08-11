@@ -24,9 +24,14 @@ import type { CapPhaseSignal } from "@/hooks/use-organizer-session";
 
 // ── Mock next/navigation ──────────────────────────────────────
 const mockRouter = { push: vi.fn() };
+// Mutable so a case can run the club-scoped branch, which is the ONLY one that
+// runs in production — the legacy root path survives for shareable links.
+// The factory is hoisted above this binding, but it only closes over it; the
+// read happens when usePathname() is called, long after initialisation.
+let mockPathname = "/organizer";
 vi.mock("next/navigation", () => ({
   useRouter: () => mockRouter,
-  usePathname: () => "/organizer",
+  usePathname: () => mockPathname,
 }));
 
 // ── Mock sonner ───────────────────────────────────────────────
@@ -34,6 +39,8 @@ vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
   },
 }));
 
@@ -43,6 +50,8 @@ vi.mock("sonner", () => ({
 // the hook would throw the moment that path is exercised.
 vi.mock("@/app/actions/sessions", () => ({
   closeSession: vi.fn(),
+  renotifySessionClosed: vi.fn(),
+  getPlayerSessionStatus: vi.fn(),
   toggleAutoMatchmaking: vi.fn(),
   toggleAutoPublish: vi.fn(),
   applyDraftCapOverride: vi.fn(),
@@ -54,7 +63,13 @@ vi.mock("@/app/actions/queue", () => ({
 }));
 
 import { toast } from "sonner";
-import { closeSession, toggleAutoMatchmaking, applyDraftCapOverride } from "@/app/actions/sessions";
+import {
+  closeSession,
+  renotifySessionClosed,
+  getPlayerSessionStatus,
+  toggleAutoMatchmaking,
+  applyDraftCapOverride,
+} from "@/app/actions/sessions";
 import type { ApplyDraftCapResult } from "@/app/actions/sessions";
 import { joinQueueAction } from "@/app/actions/queue";
 
@@ -65,12 +80,14 @@ const SESSION_ID = "sess-abc";
 function makeParams(
   overrides: Partial<{
     sessionIsActive: boolean;
+    organizerId: string;
     liveAutoMatchmaking: boolean;
     liveAutoPublish: boolean;
     bottleneckCount: number;
     draftCount: number;
     handleCancelSwap: () => void;
     capSignal: CapPhaseSignal;
+    suppressCloseWatcher: (suppressed: boolean) => void;
   }> = {}
 ) {
   return {
@@ -92,6 +109,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockPathname = "/organizer";
 });
 
 describe("useOrganizerDashboard", () => {
@@ -359,6 +377,387 @@ describe("useOrganizerDashboard", () => {
       expect(result.current.closing).toBe(false);
       expect(mockRouter.push).not.toHaveBeenCalled();
       expect(toast.error).toHaveBeenCalledWith("Cannot close: active matches");
+    });
+
+    it("OD-10b: hands the close watcher back when nothing was closed", async () => {
+      // Suppression is armed BEFORE the action (the organizer receives their own
+      // REST broadcast echo mid-flight). If a failed close left it armed, this
+      // board would be permanently deaf: a co-organizer closing the session a
+      // minute later would move all 40 players and leave the organizer sitting
+      // on a live-looking board with all three detection paths latched off.
+      const suppress = vi.fn();
+      vi.mocked(closeSession).mockResolvedValue({ success: false, message: "Nope" });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ suppressCloseWatcher: suppress }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(suppress.mock.calls).toEqual([[true], [false]]);
+    });
+  });
+
+  // ── OD-22: handleCloseSession — the organizer's own destination ──
+  // The organizer played too, so they get the same per-viewer routing as
+  // everyone else. Every one of these branches was unreachable before
+  // `organizerId` was passed, which is why they went untested.
+
+  describe("OD-22: handleCloseSession — destination + notification", () => {
+    const ORGANIZER_ID = "org-123";
+    const CLUB_SLUG = "chillax";
+
+    // `vi.clearAllMocks()` clears call history but NOT implementations, so a
+    // never-resolving probe set by one case would otherwise leak into the next
+    // and burn the real 1.2 s timeout there. Re-establish the default.
+    beforeEach(() => {
+      vi.mocked(getPlayerSessionStatus).mockResolvedValue({
+        success: true,
+        isActive: false,
+        hasWrapped: false,
+      });
+    });
+
+    it("OD-22a: an organizer with a recap goes to their own Wrapped", async () => {
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: true,
+        delivered: true,
+      });
+      vi.mocked(getPlayerSessionStatus).mockResolvedValue({
+        success: true,
+        isActive: false,
+        hasWrapped: true,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(mockRouter.push).toHaveBeenCalledWith(`/wrapped/${SESSION_ID}/${ORGANIZER_ID}`);
+    });
+
+    it("OD-22b: an organizer who only ran the board goes to the lobby", async () => {
+      // No completed match → compute_session_wrapped writes them no row, and
+      // Wrapped would render an all-zero recap that then remembers being seen.
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: true,
+        delivered: true,
+      });
+      vi.mocked(getPlayerSessionStatus).mockResolvedValue({
+        success: true,
+        isActive: false,
+        hasWrapped: false,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(mockRouter.push).toHaveBeenCalledWith("/organizer");
+    });
+
+    it("OD-22c: wrappedReady=false is session-wide and skips the probe", async () => {
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: false,
+        delivered: true,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(getPlayerSessionStatus).not.toHaveBeenCalled();
+      expect(mockRouter.push).toHaveBeenCalledWith("/organizer");
+    });
+
+    it("OD-22d: a probe that rejects does not turn a successful close into a failure", async () => {
+      // The probe runs AFTER the close has committed. Letting its rejection
+      // reach the outer catch would report "Failed to close session" — and
+      // re-probe, and toast twice — for a session that is definitively closed.
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: true,
+        delivered: true,
+      });
+      vi.mocked(getPlayerSessionStatus).mockRejectedValue(new Error("Failed to fetch"));
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledTimes(1);
+      expect(mockRouter.push).toHaveBeenCalledExactlyOnceWith("/organizer");
+      expect(getPlayerSessionStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it("OD-22e: a probe that never answers still lands the organizer somewhere", async () => {
+      // The hang is the dangerous one: an unbounded await here means `finally`
+      // never runs, so `closing` stays true, no push fires, and the close
+      // watcher is never un-suppressed — an organizer stranded on a dead board
+      // with no recovery short of a reload.
+      vi.useFakeTimers();
+      try {
+        const suppress = vi.fn();
+        vi.mocked(closeSession).mockResolvedValue({
+          success: true,
+          message: "Closed",
+          wrappedReady: true,
+          delivered: true,
+        });
+        vi.mocked(getPlayerSessionStatus).mockReturnValue(new Promise(() => {}));
+
+        const { result } = renderHook(() =>
+          useOrganizerDashboard(
+            makeParams({ organizerId: ORGANIZER_ID, suppressCloseWatcher: suppress })
+          )
+        );
+
+        let settled = false;
+        act(() => {
+          void result.current.handleCloseSession().then(() => {
+            settled = true;
+          });
+        });
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_200);
+        });
+
+        expect(settled).toBe(true);
+        expect(mockRouter.push).toHaveBeenCalledWith("/organizer");
+        expect(result.current.closing).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("OD-22f: an already-closed session is a success, not an error", async () => {
+      // Double-submit, or a co-organizer who got there first. The session is in
+      // the state the organizer asked for.
+      vi.mocked(closeSession).mockResolvedValue({
+        success: false,
+        message: "Session is already closed.",
+        alreadyClosed: true,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(toast.info).toHaveBeenCalledWith("This session was already closed.");
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(mockRouter.push).toHaveBeenCalledWith("/organizer");
+    });
+
+    it("OD-22g: an undelivered broadcast offers a re-send that actually re-sends", async () => {
+      // The session is committed closed but no phone was told. This is the one
+      // thing the organizer can act on, so it must be surfaced and it must work.
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: false,
+        delivered: false,
+      });
+      vi.mocked(renotifySessionClosed).mockResolvedValue({ success: true, message: "Sent" });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(toast.warning).toHaveBeenCalledTimes(1);
+      const opts = vi.mocked(toast.warning).mock.calls[0][1] as {
+        action: { label: string; onClick: () => void };
+      };
+      expect(opts.action.label).toBe("Re-send");
+
+      await act(async () => {
+        opts.action.onClick();
+      });
+
+      expect(renotifySessionClosed).toHaveBeenCalledWith(SESSION_ID);
+    });
+
+    it("OD-22h: a delivered broadcast raises no warning at all", async () => {
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: false,
+        delivered: true,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(toast.warning).not.toHaveBeenCalled();
+    });
+
+    // OD-22a/b prove the routing DECISION; these two prove it lands on the
+    // paths production actually uses. Every real board is club-scoped
+    // (/c/<slug>/organizer/<id>), so the legacy strings above exercise the
+    // fallback arm of a ternary whose other arm is the only one that ships.
+    it("OD-22i: a club-scoped organizer with a recap goes to the club Wrapped", async () => {
+      mockPathname = `/c/${CLUB_SLUG}/organizer/${SESSION_ID}`;
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: true,
+        delivered: true,
+      });
+      vi.mocked(getPlayerSessionStatus).mockResolvedValue({
+        success: true,
+        isActive: false,
+        hasWrapped: true,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(mockRouter.push).toHaveBeenCalledWith(
+        `/c/${CLUB_SLUG}/wrapped/${SESSION_ID}/${ORGANIZER_ID}`
+      );
+    });
+
+    it("OD-22j: a club-scoped organizer with no recap goes to the club lobby", async () => {
+      mockPathname = `/c/${CLUB_SLUG}/organizer/${SESSION_ID}`;
+      vi.mocked(closeSession).mockResolvedValue({
+        success: true,
+        message: "Closed",
+        wrappedReady: false,
+        delivered: true,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ organizerId: ORGANIZER_ID }))
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(mockRouter.push).toHaveBeenCalledWith(`/c/${CLUB_SLUG}`);
+    });
+
+    it("OD-22k: a hung probe on the THROW path still releases the board", async () => {
+      // The second probe — the one that asks "did the close land anyway?" after
+      // closeSession itself threw — has the same hang consequence as OD-22e,
+      // and a worse trigger: the thing that put us in the catch is a
+      // misbehaving transport, which is precisely what produces a hang instead
+      // of a rejection. Unbounded, `closing` latches true and the watcher is
+      // never handed back, so nothing on the client can recover this board.
+      vi.useFakeTimers();
+      try {
+        const suppress = vi.fn();
+        vi.mocked(closeSession).mockRejectedValue(new Error("fetch failed"));
+        vi.mocked(getPlayerSessionStatus).mockReturnValue(new Promise(() => {}));
+
+        const { result } = renderHook(() =>
+          useOrganizerDashboard(
+            makeParams({ organizerId: ORGANIZER_ID, suppressCloseWatcher: suppress })
+          )
+        );
+
+        let settled = false;
+        act(() => {
+          void result.current.handleCloseSession().then(() => {
+            settled = true;
+          });
+        });
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_200);
+        });
+
+        expect(settled).toBe(true);
+        expect(result.current.closing).toBe(false);
+        // Unknowable state → assume it did not land, hand the watcher back so
+        // the broadcast/poll/row paths can still move this board if it did.
+        expect(suppress.mock.calls).toEqual([[true], [false]]);
+        expect(mockRouter.push).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── OD-23: the tab set follows a live close ──────────────────
+
+  describe("OD-23: activeTab is clamped to the live tab set", () => {
+    it("OD-23a: a close while sitting on Active Courts falls back to a real tab", () => {
+      // `isClosed` now flips WHILE the board is mounted. The closed board has no
+      // "courts" tab, so a stored "courts" would leave the strip with nothing
+      // selected while a panel of live court controls stayed on screen —
+      // controls that silently no-op against the post-close write guard.
+      const { result, rerender } = renderHook(
+        (props: { sessionIsActive: boolean }) =>
+          useOrganizerDashboard(makeParams({ sessionIsActive: props.sessionIsActive })),
+        { initialProps: { sessionIsActive: true } }
+      );
+
+      expect(result.current.activeTab).toBe("courts");
+
+      rerender({ sessionIsActive: false });
+
+      expect(result.current.tabs.map((t) => t.key)).toEqual(["history", "leaderboard"]);
+      expect(result.current.activeTab).toBe("history");
+    });
+
+    it("OD-23b: a tab that survives the close is kept", () => {
+      const { result, rerender } = renderHook(
+        (props: { sessionIsActive: boolean }) =>
+          useOrganizerDashboard(makeParams({ sessionIsActive: props.sessionIsActive })),
+        { initialProps: { sessionIsActive: true } }
+      );
+
+      act(() => {
+        result.current.setActiveTab("leaderboard");
+      });
+      rerender({ sessionIsActive: false });
+
+      expect(result.current.activeTab).toBe("leaderboard");
     });
   });
 

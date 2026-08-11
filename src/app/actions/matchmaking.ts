@@ -68,7 +68,7 @@ import {
   fetchPullablePlayers,
   executeHeldMatch,
 } from "@/lib/matchmaking-db";
-import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isSessionOrganizer, isSessionActive } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 
 // ── Process-level concurrency guard ──────────────────────────
@@ -148,6 +148,15 @@ export async function callNextMatch(
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
+  }
+
+  // ── Closed-session gate ───────────────────────────────────────
+  // A co-organizer's stale board can still fire this after someone else closed
+  // the session. It is the most damaging of the post-close writes: it re-opens
+  // a court, creates a match, and moves queue entries back to "playing" on a
+  // session whose Wrapped stats have already been computed.
+  if (!(await isSessionActive(sessionId))) {
+    return { success: false, message: "This session has ended." };
   }
 
   const service = createServiceClient();

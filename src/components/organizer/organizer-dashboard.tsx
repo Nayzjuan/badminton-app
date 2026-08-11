@@ -44,6 +44,7 @@ import {
 
 import { LeaderboardPage } from "@/components/leaderboard/leaderboard-page";
 import { useClubSlug } from "@/hooks/use-club-slug";
+import { useSessionClosedWatcher } from "@/hooks/use-session-closed-watcher";
 import { clubBase, clubOrganizer, clubTv } from "@/lib/club-paths";
 import type { Profile, Session } from "@/types/database";
 import { DASHBOARD_GRID_SIZE_PX, TOAST_DISMISS_MS } from "@/lib/constants";
@@ -70,6 +71,19 @@ export function OrganizerDashboard({
   const router = useRouter();
   // Active club slug when rendered under /c/[clubSlug]/… ; null on legacy routes.
   const clubSlug = useClubSlug();
+
+  // Mounted BEFORE useOrganizerData so its callbacks can be handed to the
+  // session broadcast channel. Covers the case the close flow cannot: a
+  // CO-ORGANIZER (or this organizer's other tab) ends the session, leaving this
+  // board live-looking and fully interactive over a session that is gone.
+  const {
+    handleSessionClosed,
+    handleChannelStatus: handleClosedWatcherStatus,
+    suppressLocalClose,
+  } = useSessionClosedWatcher(session.id, profile.id, {
+    fallbackPath: clubSlug ? clubBase(clubSlug) : "/organizer",
+    toastMessage: "This session was closed.",
+  });
 
   const {
     session: liveSession,
@@ -101,7 +115,10 @@ export function OrganizerDashboard({
     capSaturation,
     dismissCapSaturation,
     capSignal,
-  } = useOrganizerData(session.id, session, profile.id);
+  } = useOrganizerData(session.id, session, profile.id, {
+    onSessionClosed: handleSessionClosed,
+    onBroadcastStatus: handleClosedWatcherStatus,
+  });
 
   const {
     swapContext,
@@ -147,7 +164,12 @@ export function OrganizerDashboard({
     isClosed,
   } = useOrganizerDashboard({
     sessionId: session.id,
-    sessionIsActive: session.is_active,
+    // `liveSession`, not the `session` RSC prop: that prop is frozen at the
+    // last server render, so a co-organizer's close (or your own, in another
+    // tab) left this board reading ACTIVE forever — every isClosed-gated
+    // control stayed live on a session that had ended.
+    sessionIsActive: liveSession.is_active,
+    organizerId: profile.id,
     liveAutoMatchmaking: liveSession.is_auto_matchmaking_on,
     liveAutoPublish: liveSession.auto_publish,
     bottleneckCount,
@@ -157,6 +179,7 @@ export function OrganizerDashboard({
     draftCount: draftMatches.length,
     handleCancelSwap,
     capSignal,
+    suppressCloseWatcher: suppressLocalClose,
   });
 
   // ── New-draft notification ────────────────────────────────
@@ -780,8 +803,16 @@ export function OrganizerDashboard({
         </div>
       </header>
 
-      {/* ── Controlled dialogs (shared between desktop + mobile menu) ── */}
-      {!isClosed && (
+      {/* ── Controlled dialogs (shared between desktop + mobile menu) ──
+          `|| closing` is load-bearing and pairs with the preventDefault on the
+          close button below. `isClosed` reads from `liveSession`, and the
+          organizer receives their OWN session_closed echo while closeSession is
+          still in flight (a REST broadcast has no sending socket) — so gating on
+          `!isClosed` alone unmounts this dialog, and the "Closing session…"
+          label with it, a beat BEFORE the action resolves. That is the same
+          no-feedback gap preventDefault exists to close, reintroduced from the
+          other end. */}
+      {(!isClosed || closing) && (
         <>
           {/* Share Session dialog — controlled by shareOpen state */}
           <ShareSessionDialog
@@ -799,13 +830,29 @@ export function OrganizerDashboard({
                 <AlertDialogDescription>
                   This will permanently end the session. All remaining players will be removed from
                   the queue, any in-progress or on-deck matches will be cancelled, and courts will
-                  be closed. Completed match history will be preserved.
+                  be closed. Completed match history will be preserved. Everyone still on the app
+                  gets sent to their session recap.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={handleCloseSession} disabled={closing}>
-                  {closing ? "Closing..." : "Yes, close session"}
+                <AlertDialogCancel disabled={closing}>Cancel</AlertDialogCancel>
+                {/*
+                  preventDefault is load-bearing. AlertDialogAction IS Radix's
+                  Dialog.Close, so without it the dialog dismisses on the same
+                  click that starts the close — the "Closing…" label paints once
+                  onto a node already fading out, and the organizer watches ~1.2 s
+                  of Wrapped pre-compute with no feedback at all. That is the
+                  organizer-side half of "the wrap didn't fire right away".
+                  handleCloseSession closes the dialog itself when it lands.
+                */}
+                <AlertDialogAction
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void handleCloseSession();
+                  }}
+                  disabled={closing}
+                >
+                  {closing ? "Closing session…" : "Yes, close session"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

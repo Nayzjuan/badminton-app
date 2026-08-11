@@ -38,7 +38,7 @@ import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
-import { isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
+import { isSessionOrganizer, isSessionActive, getActorContext } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
 import { logMatchEvent } from "@/lib/match-event-log";
 
@@ -310,6 +310,17 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
       requiresRename: true,
       error: "Please finish setting your name before joining.",
     };
+  }
+
+  // Closed-session gate. `join_queue` has never checked this, and production
+  // carries the receipts: two queue entries created 46.7 s and 2.2 s after
+  // their session's `ended_at`, both from this button, both by non-organizers
+  // whose dashboards had not yet learned the session was over. A late entry is
+  // not harmless — closeSession has already marked every entry "left" and run
+  // the Wrapped computation, so the new row is both invisible to the recap and
+  // permanently stuck in "waiting".
+  if (!(await isSessionActive(sessionId))) {
+    return { success: false, error: "This session has ended." };
   }
 
   const svc = createServiceClient();

@@ -16,7 +16,18 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-const mockRealtime = { setAuth: vi.fn(), disconnect: vi.fn(), connect: vi.fn() };
+// disconnect() is async in the real RealtimeClient and the recycle AWAITS it
+// before connect() — that ordering is the whole point of the fix, so the mock
+// has to be async too or the tests would pass against the broken synchronous
+// pair. isConnected() answers the belt-and-braces re-arm timer that fires
+// REALTIME_RECONNECT_REARM_MS after a recycle; returning true makes it a no-op
+// instead of a TypeError thrown into an empty stack after the test has ended.
+const mockRealtime = {
+  setAuth: vi.fn(),
+  disconnect: vi.fn(async () => {}),
+  connect: vi.fn(),
+  isConnected: vi.fn(() => true),
+};
 let authCallback: ((event: string, session: { access_token: string } | null) => void) | null = null;
 let mockSession: { access_token: string } | null = null;
 let mockChannels: unknown[] = [{}];
@@ -42,6 +53,17 @@ async function wireFreshClient() {
   await mod.whenRealtimeAuthReady();
 }
 
+/**
+ * Drain the microtask queue. The auth callback fires the recycle with `void`,
+ * and the recycle awaits disconnect() before calling connect(), so connect()
+ * lands a tick after the synchronous callback returns. A macrotask hop is the
+ * cheap way to be sure every pending continuation has run — including the ones
+ * that must NOT have run, which is what the negative assertions rely on.
+ */
+function settle() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("realtime auth recycle — Unit Suite", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -56,6 +78,7 @@ describe("realtime auth recycle — Unit Suite", () => {
     await wireFreshClient();
 
     authCallback?.("SIGNED_IN", { access_token: "t1" });
+    await settle();
 
     expect(mockRealtime.setAuth).toHaveBeenCalledWith("t1");
     expect(mockRealtime.disconnect).toHaveBeenCalledTimes(1);
@@ -68,6 +91,7 @@ describe("realtime auth recycle — Unit Suite", () => {
 
     authCallback?.("TOKEN_REFRESHED", { access_token: "t1" });
     authCallback?.("TOKEN_REFRESHED", { access_token: "t2" });
+    await settle();
 
     expect(mockRealtime.setAuth).toHaveBeenCalledWith("t2");
     expect(mockRealtime.disconnect).not.toHaveBeenCalled();
@@ -82,6 +106,7 @@ describe("realtime auth recycle — Unit Suite", () => {
     authCallback?.("TOKEN_REFRESHED", { access_token: "t1" });
     // Later routine refreshes on the now-healthy session must not recycle.
     authCallback?.("TOKEN_REFRESHED", { access_token: "t2" });
+    await settle();
 
     expect(mockRealtime.disconnect).toHaveBeenCalledTimes(1);
     expect(mockRealtime.connect).toHaveBeenCalledTimes(1);
@@ -93,6 +118,7 @@ describe("realtime auth recycle — Unit Suite", () => {
     await wireFreshClient();
 
     authCallback?.("SIGNED_IN", { access_token: "t1" });
+    await settle();
 
     expect(mockRealtime.setAuth).toHaveBeenCalledWith("t1");
     expect(mockRealtime.disconnect).not.toHaveBeenCalled();

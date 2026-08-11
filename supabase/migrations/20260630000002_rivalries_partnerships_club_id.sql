@@ -69,7 +69,10 @@ BEGIN
     RETURN;  -- session missing or not club-scoped; nothing to accumulate
   END IF;
 
-  -- Idempotency guard: this session was already rolled up.
+  -- One-shot guard: this session appears to have been rolled up already.
+  -- NOT an idempotency guard (comment corrected 2026-08-11) -- it decays,
+  -- because last_session_id is overwritten when a pair meets again. See
+  -- 20260510000000_cross_session_awards.sql for the full retraction.
   IF EXISTS (
     SELECT 1 FROM player_rivalries   WHERE last_session_id = p_session_id LIMIT 1
   ) OR EXISTS (

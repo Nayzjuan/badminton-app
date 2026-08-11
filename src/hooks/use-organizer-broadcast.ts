@@ -10,24 +10,23 @@
 //     → shows a toast so the player knows why their card changed
 //
 //   session_closed — organizer closed the session
-//     → redirects the player to their personal Wrapped page
-//        (club-scoped /c/[slug]/wrapped/... when a club slug is
-//        resolvable from the current path, else root /wrapped/...)
+//     → hands off to useSessionClosedWatcher, which decides where
+//        this player goes (their Wrapped recap, or the club lobby
+//        when no recap exists for them) and gets them there.
 //
-// Both are fire-and-forget from the server. The broadcast is the
-// FAST path for closure; because it has no replay and no delivery
-// guarantee, this hook also runs a slow server-action fallback so
-// a player whose channel never joined still reaches Wrapped.
+// The closure logic does NOT live here. It is shared with the
+// organizer board via useSessionClosedWatcher, and it needs two
+// detection paths this channel cannot provide: the session row's own
+// postgres_changes stream, and a status poll for tabs with no live
+// socket. This hook owns exactly one of the three paths — the fast
+// one — and feeds it in.
 // ============================================================
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
-import { useClubSlug } from "@/hooks/use-club-slug";
-import { clubWrapped } from "@/lib/club-paths";
-import { getPlayerSessionStatus } from "@/app/actions/sessions";
+import { useSessionClosedWatcher } from "@/hooks/use-session-closed-watcher";
 import type { OrganizerInterventionPayload } from "@/lib/broadcast";
 
 // Toast copy — friendly, blame-shifting, context-specific.
@@ -38,129 +37,28 @@ const TOAST_MESSAGES: Record<OrganizerInterventionPayload["type"], string> = {
   active_roster_changed: "The organizer updated your court's lineup. Your match continues.",
 };
 
-/** Let the "session's over" toast render before the route changes. */
-const WRAPPED_REDIRECT_DELAY_MS = 800;
-
-/**
- * Safety-net cadence for the closure fallback. Deliberately slow: the
- * broadcast is the real delivery path and the visibility / channel-status
- * triggers below cover the realistic recovery moments, so this only has to
- * catch a tab that is awake, joined, and silently missing messages.
- */
-const SESSION_STATUS_POLL_MS = 120_000;
-
-/** Floor on the gap between two closure checks, whatever triggered them. */
-const SESSION_STATUS_MIN_GAP_MS = 10_000;
-
 export function useOrganizerBroadcast(sessionId: string, playerId: string): void {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
-  const router = useRouter();
-  const clubSlug = useClubSlug();
 
-  // Keep stable refs so the subscription callback always reads
-  // current values without re-registering the channel.
+  // Keep a stable ref so the subscription callback always reads the current
+  // player id without re-registering the channel.
   const playerIdRef = useRef(playerId);
-  const routerRef = useRef(router);
-  const clubSlugRef = useRef(clubSlug);
   useEffect(() => {
     playerIdRef.current = playerId;
   });
+
+  const { handleSessionClosed, handleChannelStatus } = useSessionClosedWatcher(sessionId, playerId);
+
+  // Callbacks are re-created whenever the watcher's identity changes; hold them
+  // in refs so the channel is registered once per session, not once per render.
+  const handleSessionClosedRef = useRef(handleSessionClosed);
+  const handleChannelStatusRef = useRef(handleChannelStatus);
   useEffect(() => {
-    routerRef.current = router;
+    handleSessionClosedRef.current = handleSessionClosed;
   });
   useEffect(() => {
-    clubSlugRef.current = clubSlug;
+    handleChannelStatusRef.current = handleChannelStatus;
   });
-
-  // The broadcast and the fallback poll can both conclude "closed" — for the
-  // same closure — within the same second. This latches on the first one so
-  // the player is navigated exactly once.
-  const navigatedRef = useRef(false);
-
-  // The 800 ms delay means a push can still be pending after this component is
-  // gone. That is a real race, not a theoretical one: the closed session also
-  // makes the RSC redirect the player (the club play page bounces a returning
-  // player to the lobby once the session is inactive), and an uncancelled push
-  // would then yank them off the page they just landed on, 800 ms late.
-  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    return () => {
-      if (redirectTimerRef.current !== null) clearTimeout(redirectTimerRef.current);
-    };
-  }, []);
-
-  /** Toast + redirect to this player's Wrapped page. Idempotent. */
-  const goToWrapped = useCallback(() => {
-    if (navigatedRef.current) return;
-    navigatedRef.current = true;
-
-    // Brief toast so the player knows what's happening, then redirect.
-    toast.info("Session's over — time to see your awards! 🏆", {
-      duration: 2_000,
-    });
-    redirectTimerRef.current = setTimeout(() => {
-      redirectTimerRef.current = null;
-      const slug = clubSlugRef.current;
-      routerRef.current.push(
-        slug
-          ? clubWrapped(slug, sessionId, playerIdRef.current)
-          : `/wrapped/${sessionId}/${playerIdRef.current}`
-      );
-    }, WRAPPED_REDIRECT_DELAY_MS);
-  }, [sessionId]);
-
-  // ── Closure fallback ──────────────────────────────────────────
-  // Set by the poll effect below; called by the channel-status handler in the
-  // subscription effect. A ref (not a dependency) so wiring the two together
-  // cannot re-register the channel.
-  const checkClosedRef = useRef<() => void>(() => {});
-
-  useEffect(() => {
-    let cancelled = false;
-    let lastCheckAt = 0;
-    let inFlight = false;
-
-    async function checkClosed() {
-      if (cancelled || navigatedRef.current || inFlight) return;
-      const now = Date.now();
-      if (now - lastCheckAt < SESSION_STATUS_MIN_GAP_MS) return;
-      lastCheckAt = now;
-      inFlight = true;
-      try {
-        const result = await getPlayerSessionStatus(sessionId);
-        if (cancelled || navigatedRef.current) return;
-        // ONLY a definite "still exists, no longer active" navigates. Every
-        // error path — unauthenticated, transport failure, row unreadable —
-        // holds the dashboard, because a false positive would yank a player
-        // out of a session that is still running.
-        if (result.success && !result.isActive) goToWrapped();
-      } catch {
-        // Server-action transport failure. Hold; the next trigger retries.
-      } finally {
-        inFlight = false;
-      }
-    }
-
-    checkClosedRef.current = () => void checkClosed();
-
-    const interval = setInterval(() => void checkClosed(), SESSION_STATUS_POLL_MS);
-
-    // Phone unlock / tab restore is the realistic recovery moment: the socket
-    // was killed while the screen was off, so the missed message (if any) is
-    // waiting to be discovered right here. Separate from useVisibilityRefresh
-    // — that hook also calls router.refresh(), which the dashboard already
-    // does; this listener only asks the one question.
-    function onVisibilityChange() {
-      if (document.visibilityState === "visible") void checkClosed();
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [sessionId, goToWrapped]);
 
   useEffect(() => {
     // `onStatus` carries no user-visible signal on purpose: transient
@@ -188,14 +86,14 @@ export function useOrganizerBroadcast(sessionId: string, playerId: string): void
         });
       },
       // ── session_closed ────────────────────────────────────
-      onSessionClosed: () => {
-        goToWrapped();
+      onSessionClosed: (payload) => {
+        handleSessionClosedRef.current(payload);
       },
       onStatus: () => {
-        checkClosedRef.current();
+        handleChannelStatusRef.current();
       },
     });
 
     return () => unsub();
-  }, [supabase, sessionId, goToWrapped]);
+  }, [supabase, sessionId]);
 }

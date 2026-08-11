@@ -17,14 +17,12 @@ snapshot, so the next session does not have to re-derive it.
   `20260810000000` was a proven strict no-op (function md5 unchanged); `20260810000001` closed audit
   finding #11 and was verified functionally through real `authenticated`/`anon` roles. The
   authoritative record is `TENANCY_AUDIT_2026-07-21.md` §2 #11.
-- ⚠️ **Owed reconciliation — two documents still contradict the line above.** They were left alone
-  deliberately: a concurrent session was mid-write on both when this landed, so editing them would
-  have clobbered its work. They are stale in the *safe* direction (they claim more is outstanding
-  than actually is), and re-applying `20260810000001` would be a benign no-op, but fix them on the
-  next pass: **`MEMORY.md:8`** ("🚨 UNAPPLIED MIGRATIONS — read this first" — note `20260810000000`
-  and `20260810000001` are applied; its own 2026-08-11 entries are a separate matter),
-  **`MEMORY.md:92`**, and **`APP_MANIFEST.md:1582`** ("Finding #11 stays exploitable until
-  `20260810000001` is applied" — it no longer does). Until then, prefer this file and the audit.
+- ✅ **Owed reconciliation — DONE 2026-08-11.** The two documents that contradicted the line above
+  (`MEMORY.md`'s "🚨 UNAPPLIED MIGRATIONS" header and `APP_MANIFEST.md`'s "Finding #11 stays
+  exploitable" note) were being rewritten by a concurrent session at the time; both were reconciled
+  when that work merged. `MEMORY.md` now opens with "✅ MIGRATION QUEUE — EMPTY" and tracks all
+  **four** applied stamps (`20260810151122`, `20260810151355`, `20260810173410`, `20260810173605`),
+  and `APP_MANIFEST.md` §3.30 carries the post-apply record. No document disagrees any more.
 - **Full audit context:** [TENANCY_AUDIT_2026-07-21.md](TENANCY_AUDIT_2026-07-21.md)
 
 > ⚠️ **Migrations in this project are applied by hand.** There is no deploy automation for the

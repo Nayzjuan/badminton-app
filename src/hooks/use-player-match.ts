@@ -291,8 +291,8 @@ export function usePlayerMatch(sessionId: string, playerId: string): UsePlayerMa
     const unsubPlayers = subscribeToMatchPlayers(supabase, sessionId, matchDeb.run);
     // Third stream, for the held-reservation badge only. A held cross-court
     // draft is `status='pending', is_published=false`, so the draft firewall
-    // hides BOTH its `matches` row and (once the firewall reaches match_players)
-    // its roster rows from the very player it reserves — leaving the two streams
+    // hides BOTH its `matches` row and — since the firewall reached match_players
+    // on 2026-08-10 — its roster rows from the very player it reserves, leaving the two streams
     // above with nothing to deliver at the moment the reservation is created.
     // `create_held_cross_court_match` flips exactly three `queue_entries` rows to
     // 'drafted' in the same transaction, and queue_entries is not firewalled, so

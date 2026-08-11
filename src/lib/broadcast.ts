@@ -86,12 +86,32 @@ export interface OrganizerInterventionPayload {
 // ── Internal REST helper ──────────────────────────────────────
 
 /**
+ * Hard ceiling on a single broadcast POST.
+ *
+ * Without one, `fetch` inherits the platform default (effectively the whole
+ * request budget on Vercel). Every sender is awaited inside a server action, so
+ * a Realtime endpoint that accepts the connection and then stalls would hold
+ * the organizer's "Close Session" spinner open for as long as the platform
+ * allows — for a message whose entire contract is fire-and-forget.
+ */
+const BROADCAST_TIMEOUT_MS = 3_000;
+
+/** Backoff before the single retry (only for senders that opt in). */
+const BROADCAST_RETRY_DELAY_MS = 300;
+
+/**
  * POST a single broadcast message to the Supabase Realtime REST
  * endpoint. Requires the service-role key so any caller can emit
  * without being subscribed first.
  *
- * Never throws — failures are silently logged so the calling
- * server action can return success regardless.
+ * Never throws — failures are logged and reported through the return value so
+ * the calling server action can decide what to tell the user, and still return
+ * success regardless.
+ *
+ * @returns `true` only when the Realtime API accepted the message. `false`
+ *   means the event definitively did not go out (missing config, non-2xx,
+ *   timeout, transport error) — the caller's fallback paths are the only thing
+ *   that will deliver it.
  *
  * `private: true` is load-bearing and must stay in lockstep with the client:
  * subscribeToOrganizerBroadcast() joins `session-events:{id}` as a private
@@ -105,35 +125,66 @@ export interface OrganizerInterventionPayload {
  * the server can still emit without any INSERT policy existing — which is
  * deliberate, since an INSERT policy would let browsers forge these events.
  */
-async function postBroadcast(topic: string, event: string, payload: object): Promise<void> {
+async function postBroadcast(
+  topic: string,
+  event: string,
+  payload: object,
+  /**
+   * Send twice on failure. OFF by default: Realtime fans every message to every
+   * subscriber with no dedupe, so a retry after a request that actually
+   * succeeded but timed out client-side is a *duplicate delivery*. Only enable
+   * it for events whose handlers are idempotent — `session_closed` latches on
+   * the receiver, `organizer_intervention` would raise a second toast.
+   */
+  options?: { retry?: boolean }
+): Promise<boolean> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !key) {
     console.warn("[broadcast] Missing SUPABASE_URL or service role key — skipping broadcast.");
-    return;
+    return false;
   }
 
-  try {
-    const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-        apikey: key,
-      },
-      body: JSON.stringify({
-        messages: [{ topic, event, payload, private: true }],
-      }),
-    });
+  // `url`/`key` are passed in rather than captured: a hoisted function
+  // declaration is reachable before the guard above as far as TS is concerned,
+  // so the narrowing to `string` would not survive the closure.
+  async function attempt(baseUrl: string, serviceKey: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${baseUrl}/realtime/v1/api/broadcast`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${serviceKey}`,
+          apikey: serviceKey,
+        },
+        body: JSON.stringify({
+          messages: [{ topic, event, payload, private: true }],
+        }),
+        signal: AbortSignal.timeout(BROADCAST_TIMEOUT_MS),
+      });
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "(no body)");
-      console.warn(`[broadcast] Realtime API responded ${res.status}: ${text}`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "(no body)");
+        console.warn(`[broadcast] ${event} → Realtime API responded ${res.status}: ${text}`);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn(`[broadcast] ${event} → failed to emit:`, err);
+      return false;
     }
-  } catch (err) {
-    console.warn("[broadcast] Failed to emit broadcast:", err);
   }
+
+  if (await attempt(url, key)) return true;
+  if (!options?.retry) return false;
+
+  await new Promise((r) => setTimeout(r, BROADCAST_RETRY_DELAY_MS));
+  const delivered = await attempt(url, key);
+  if (!delivered) {
+    console.error(`[broadcast] ${event} → giving up after retry; topic=${topic}`);
+  }
+  return delivered;
 }
 
 // ── Public API ────────────────────────────────────────────────
@@ -142,6 +193,16 @@ async function postBroadcast(topic: string, event: string, payload: object): Pro
 
 export interface SessionClosedPayload {
   sessionId: string;
+  /**
+   * Whether compute_session_wrapped succeeded before this event was emitted,
+   * i.e. whether `session_wrapped_stats` rows exist for the session.
+   *
+   * Optional for rolling-deploy compatibility: a client that receives an older
+   * payload without it must treat `undefined` as "unknown", not as `false`.
+   * Receivers use it to skip the wasted navigation to a Wrapped page that
+   * would render an all-zero recap — see useSessionClosedWatcher.
+   */
+  wrappedReady?: boolean;
 }
 
 /**
@@ -149,12 +210,26 @@ export interface SessionClosedPayload {
  * closed by the organizer. The client-side hook uses this to
  * redirect each player to their personal Wrapped page.
  *
+ * Retried once, unlike every other sender here, because this is the only
+ * event with no cheap alternative: it is what moves ~40 phones off a dead
+ * board. The receiver latches on `navigatedRef`, so a duplicate delivery is a
+ * no-op. Its non-broadcast fallbacks (the `sessions` row subscription and the
+ * status poll) still exist and still matter — this just stops a single flaky
+ * POST from handing the whole room to them.
+ *
  * Broadcast on channel: session-events:{sessionId}
  * Event name:           session_closed
+ *
+ * @returns whether the Realtime API accepted the message.
  */
-export async function broadcastSessionClosed(sessionId: string): Promise<void> {
-  const payload: SessionClosedPayload = { sessionId };
-  await postBroadcast(`session-events:${sessionId}`, "session_closed", payload);
+export async function broadcastSessionClosed(
+  sessionId: string,
+  wrappedReady: boolean
+): Promise<boolean> {
+  const payload: SessionClosedPayload = { sessionId, wrappedReady };
+  return await postBroadcast(`session-events:${sessionId}`, "session_closed", payload, {
+    retry: true,
+  });
 }
 
 // ── auto_matchmaking_toggled ──────────────────────────────

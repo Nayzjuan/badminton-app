@@ -33,6 +33,23 @@ import type { WrappedStats } from "@/components/wrapped/wrapped-shell";
 export interface DismissWrappedIntroResult {
   success: boolean;
   error?: string;
+  /**
+   * Whether a row was actually stamped.
+   *
+   * `success: true, dismissed: false` is the silent failure this field exists
+   * to surface: there is no `session_wrapped_stats` row for this pair, so the
+   * dismissal has nowhere to land and the intro will replay on every future
+   * visit. It happens when compute_session_wrapped never ran (or failed) for
+   * the session, or when this player never completed a match. It is NOT an
+   * error the player can act on — the UI still navigates away — but it is the
+   * signal that the viewer should have been sent to the lobby instead of here
+   * (see useSessionClosedWatcher's destination probe).
+   *
+   * Note: an already-dismissed row also reports `false`, because the update is
+   * filtered `intro_dismissed_at IS NULL`. Both mean "nothing changed", which
+   * is all any caller needs.
+   */
+  dismissed?: boolean;
 }
 
 /**
@@ -41,7 +58,8 @@ export interface DismissWrappedIntroResult {
  *
  * Idempotent — safe to call multiple times.  If no stats row
  * exists yet (rare race on session close), does nothing and
- * returns success so the UI still navigates away cleanly.
+ * returns success so the UI still navigates away cleanly — but
+ * reports `dismissed: false` so the no-op is not invisible.
  */
 export async function dismissWrappedIntro(
   sessionId: string,
@@ -52,9 +70,9 @@ export async function dismissWrappedIntro(
   }
   const supabase = await createServerSupabaseClient();
 
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("session_wrapped_stats")
-    .update({ intro_dismissed_at: new Date().toISOString() })
+    .update({ intro_dismissed_at: new Date().toISOString() }, { count: "exact" })
     .eq("session_id", sessionId)
     .eq("player_id", playerId)
     .is("intro_dismissed_at", null); // no-op if already dismissed
@@ -64,7 +82,7 @@ export async function dismissWrappedIntro(
     return { success: false, error: error.message };
   }
 
-  return { success: true };
+  return { success: true, dismissed: (count ?? 0) > 0 };
 }
 
 // ── getWrappedData ────────────────────────────────────────────

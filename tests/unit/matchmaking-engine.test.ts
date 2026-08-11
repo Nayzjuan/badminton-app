@@ -73,6 +73,15 @@ vi.mock("@/lib/notifications/push-server", () => ({
 // Unmocked, postBroadcast would hit its missing-env guard and warn, not fetch.
 // Keep that true: if anyone ever wires dotenv into the unit config, this mock
 // becomes the only thing standing between a unit run and a live prod broadcast.
+// callNextMatch now runs isSessionActive() between the organizer gate and the
+// service client (the post-close write guard). Left real it would read
+// sessions.is_active off the SAME ordered service-client mock every case below
+// consumes by index, shifting all of them by one. Only that export is replaced —
+// isSessionOrganizer stays real and is still driven by responses [0] and [1].
+vi.mock("@/app/actions/_shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/app/actions/_shared")>()),
+  isSessionActive: vi.fn(async () => true),
+}));
 vi.mock("@/lib/broadcast", () => ({
   broadcastSessionClosed: vi.fn().mockResolvedValue(undefined),
   broadcastAutoMatchmakingToggled: vi.fn().mockResolvedValue(undefined),
@@ -84,6 +93,7 @@ vi.mock("@/lib/broadcast", () => ({
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
+import { isSessionActive } from "@/app/actions/_shared";
 import {
   promoteOnDeckMatchInternal,
   runEngineForSession,
@@ -1124,6 +1134,27 @@ describe("callNextMatch", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toMatch(/not enough players/i);
+  });
+
+  it("refuses to promote once the session is closed (post-close write guard)", async () => {
+    // A co-organizer's stale board firing Call Next after someone else closed
+    // the session: it must stop at the gate, before any court re-opens or any
+    // queue entry moves back to "playing".
+    const mock = makeMockClient([]);
+    const serviceMock = makeMockClient([
+      { data: { created_by: "test-user" }, error: null }, // [0] isSessionOrganizer: sessions
+      { data: null, error: null }, // [1] isSessionOrganizer: session_organizers
+    ]);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
+    vi.mocked(isSessionActive).mockResolvedValueOnce(false);
+
+    const result = await callNextMatch(SESSION_ID, COURT_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/session has ended/i);
+    // Only the organizer gate touched the DB — no promote, no engine refill.
+    expect(serviceMock.queriedTables).toEqual(["sessions", "session_organizers"]);
   });
 });
 

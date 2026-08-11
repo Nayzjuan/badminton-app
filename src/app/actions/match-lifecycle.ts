@@ -24,6 +24,7 @@ import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 import {
   getAuthenticatedUser,
   isSessionOrganizer,
+  isSessionActive,
   getActorContext,
   type MatchActionResult,
 } from "@/app/actions/_shared";
@@ -709,6 +710,14 @@ export async function createManualMatchAction(
   if (!organizer) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
+
+  // Closed-session gate — same reasoning as callNextMatch: a stale
+  // co-organizer board must not create a new match on a session that has
+  // already had its Wrapped stats computed.
+  if (!(await isSessionActive(sessionId))) {
+    return { success: false, message: "This session has ended." };
+  }
+
   const actor = await getActorContext(user.id);
 
   const allPlayerIds = [...teamAPlayerIds, ...teamBPlayerIds];

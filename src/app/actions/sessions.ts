@@ -23,7 +23,7 @@ import {
 } from "@/lib/broadcast";
 import type { DraftCapPhase } from "@/lib/broadcast";
 import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
-import { isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
+import { isSessionOrganizer, isSessionActive, getActorContext } from "@/app/actions/_shared";
 import { isClubAdmin } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
 import { getClientIp } from "@/lib/client-ip";
@@ -457,6 +457,13 @@ export async function toggleAutoMatchmaking(
   const isOrganizer = await isSessionOrganizer(user.id, sessionId);
   if (!isOrganizer) {
     return { success: false, isOn: false, message: "Not authorized. Organizer access required." };
+  }
+
+  // A co-organizer whose board never learned the session closed can still hit
+  // this toggle. Flipping it ON would then run the engine against a closed
+  // session, drafting matches for players who have already gone home.
+  if (!(await isSessionActive(sessionId))) {
+    return { success: false, isOn: false, message: "This session has ended." };
   }
 
   // Atomic flip via DB function — eliminates the read→write
@@ -894,7 +901,18 @@ export async function getSessionForOrganizer(sessionId: string): Promise<GetSess
 // ── getPlayerSessionStatus ────────────────────────────────────
 
 export type PlayerSessionStatusResult =
-  | { success: true; isActive: boolean }
+  | {
+      success: true;
+      isActive: boolean;
+      /**
+       * Whether THIS caller has a `session_wrapped_stats` row for the session,
+       * i.e. whether a redirect to Wrapped would render a real recap.
+       *
+       * Only meaningful when `isActive` is false — it is always false while the
+       * session is still running, because the rows are written at close.
+       */
+      hasWrapped: boolean;
+    }
   | { success: false; error: string };
 
 /**
@@ -967,7 +985,23 @@ export async function getPlayerSessionStatus(
   // rather than yanking a player out of a session that is still live.
   if (!data) return { success: false, error: "Session not found." };
 
-  return { success: true, isActive: data.is_active };
+  // Still running: nothing has been computed yet, so skip the second read.
+  if (data.is_active) return { success: true, isActive: true, hasWrapped: false };
+
+  // Closed: does a recap actually exist for this caller? Scoped to
+  // `user.id` — never a caller-supplied player id — so this cannot be used to
+  // probe whether some other player attended.
+  const { data: wrapped, error: wrappedError } = await service
+    .from("session_wrapped_stats")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("player_id", user.id)
+    .maybeSingle();
+
+  // A failed lookup must not strand the player on a dead board. Fall back to
+  // "no recap", which routes them to the club lobby — a page that always
+  // renders — instead of a Wrapped page that may be all zeros.
+  return { success: true, isActive: false, hasWrapped: !wrappedError && Boolean(wrapped) };
 }
 
 export type CloseSessionResult = {
@@ -975,6 +1009,27 @@ export type CloseSessionResult = {
   message: string;
   /** true when compute_session_wrapped succeeded and Wrapped pages are ready. */
   wrappedReady?: boolean;
+  /**
+   * true when the Realtime API accepted the `session_closed` broadcast.
+   *
+   * false does NOT mean the close failed — the session row is committed either
+   * way. It means the fast path to every connected phone did not go out, so
+   * players will be moved by the slower fallbacks (their `sessions` row
+   * subscription, or the status poll) instead of instantly. The organizer's UI
+   * uses this to say so, and to offer `renotifySessionClosed`.
+   */
+  delivered?: boolean;
+  /**
+   * true when the close was refused because the session was ALREADY closed.
+   *
+   * The organizer's UI treats this as a success — a double-submit, or a
+   * co-organizer who closed it first, is not an error the organizer can act on,
+   * and showing "Session is already closed." in red next to a board that is
+   * genuinely finished is the wrong story. An explicit flag rather than
+   * matching on `message`, so re-wording the copy cannot silently turn this
+   * back into a red toast.
+   */
+  alreadyClosed?: boolean;
 };
 
 export async function closeSession(sessionId: string): Promise<CloseSessionResult> {
@@ -1010,7 +1065,7 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     return { success: false, message: "Session not found." };
   }
   if (!session.is_active) {
-    return { success: false, message: "Session is already closed." };
+    return { success: false, message: "Session is already closed.", alreadyClosed: true };
   }
 
   // ── Organizer check ──────────────────────────────────────────
@@ -1044,40 +1099,90 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   //
   // NOTE: supabase.rpc() resolves with { data, error } — it never
   // throws. The old try/catch only caught network-level exceptions,
-  // not Supabase-level errors. We now check { error } explicitly
-  // and retry once before giving up.
+  // not Supabase-level errors. We check { error } explicitly and
+  // retry once, EXCEPT when retrying is provably pointless (below).
   let wrappedReady = false;
   {
     const { error: rpcError } = await supabase.rpc("compute_session_wrapped", {
       p_session_id: sessionId,
     });
     if (rpcError) {
-      console.warn(
-        "[closeSession] compute_session_wrapped failed, retrying in 600 ms:",
-        rpcError.message
-      );
-      await new Promise((r) => setTimeout(r, 600));
-      const { error: retryError } = await supabase.rpc("compute_session_wrapped", {
-        p_session_id: sessionId,
-      });
-      if (retryError) {
+      // 57014 = statement timeout, 55P03 = lock_not_available. Both mean the
+      // 8 s budget was spent waiting on the per-club advisory lock this RPC
+      // takes; an immediate retry queues behind the same holder and burns
+      // another 8 s (plus the 600 ms sleep) before failing identically. The
+      // organizer is holding a spinner for all of it, so we stop here and let
+      // wrappedReady=false drive the fallback instead.
+      if (rpcError.code === "57014" || rpcError.code === "55P03") {
         console.error(
-          "[closeSession] compute_session_wrapped retry also failed — Wrapped pages will show empty stats:",
-          retryError.message
+          `[closeSession] compute_session_wrapped timed out (${rpcError.code}) — not retrying; Wrapped will be empty until recomputed:`,
+          rpcError.message
         );
       } else {
-        wrappedReady = true;
+        console.warn(
+          "[closeSession] compute_session_wrapped failed, retrying in 600 ms:",
+          rpcError.message
+        );
+        await new Promise((r) => setTimeout(r, 600));
+        const { error: retryError } = await supabase.rpc("compute_session_wrapped", {
+          p_session_id: sessionId,
+        });
+        if (retryError) {
+          console.error(
+            "[closeSession] compute_session_wrapped retry also failed — Wrapped pages will show empty stats:",
+            retryError.message
+          );
+        } else {
+          wrappedReady = true;
+        }
       }
     } else {
       wrappedReady = true;
     }
   }
 
-  // ── 1–3. Independent cleanups (different tables, no interdependency) run
-  //         in parallel: cancel lingering matches, mark queue entries "left"
-  //         (preserving history), and close courts. Direct filtered UPDATEs —
-  //         skipping the SELECTs avoids the gap where new rows could be
-  //         inserted between SELECT and UPDATE. 3 serial round trips → 1.
+  // ── 1. Mark session as inactive ────────────────────────────
+  // ORDERING (changed 2026-08-11): the flip and the broadcast now come BEFORE
+  // the cleanups, not after. The cleanups below cancel every live match, mark
+  // every queue entry "left" and close every court — on a full night that is
+  // ~30 postgres_changes events fanned out to ~40 phones. Running them first
+  // meant players watched their queue position and their in-progress match
+  // evaporate while the session still read ACTIVE and nothing had told them
+  // why. That is the "I got kicked out of the queue" report. Announcing the
+  // close first makes the teardown legible: every client has already latched
+  // onto "session over" before the first row disappears.
+  //
+  // Wrapped is still computed above, so the invariant the old order existed to
+  // protect — rows exist before anyone is sent to /wrapped — is unchanged.
+  //
+  // The failure mode also improves. Before: cleanups applied but the session
+  // left active if the flip failed (a half-torn-down session nobody was told
+  // about). Now: session closed but rows possibly stale — invisible, because a
+  // closed session's board is unreachable, and joinQueueAction refuses to add
+  // anything back.
+  const { error: updateError } = await supabase
+    .from("sessions")
+    .update({
+      is_active: false,
+      ended_at: new Date().toISOString(),
+    })
+    .eq("id", sessionId);
+
+  if (updateError) {
+    return { success: false, message: `Failed to close session: ${updateError.message}` };
+  }
+
+  // ── 2. Broadcast session_closed to all connected players ───
+  // Emitted the instant the session row is committed. Retried once inside the
+  // helper; `delivered` is reported back so the organizer's UI can say so
+  // rather than claiming a clean close that no phone heard.
+  const delivered = await broadcastSessionClosed(sessionId, wrappedReady);
+
+  // ── 3. Independent cleanups (different tables, no interdependency) run
+  //       in parallel: cancel lingering matches, mark queue entries "left"
+  //       (preserving history), and close courts. Direct filtered UPDATEs —
+  //       skipping the SELECTs avoids the gap where new rows could be
+  //       inserted between SELECT and UPDATE. 3 serial round trips → 1.
   const [cancelResult] = await Promise.all([
     supabase
       .from("matches")
@@ -1096,26 +1201,71 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   ]);
   const cancelledCount = cancelResult.count;
 
-  // ── 4. Mark session as inactive ────────────────────────────
-  const { error: updateError } = await supabase
-    .from("sessions")
-    .update({
-      is_active: false,
-      ended_at: new Date().toISOString(),
-    })
-    .eq("id", sessionId);
-
-  if (updateError) {
-    return { success: false, message: `Failed to close session: ${updateError.message}` };
-  }
-
-  // ── 5. Broadcast session_closed to all connected players ───
-  // Fire-and-forget after the session row is committed.
-  await broadcastSessionClosed(sessionId);
-
   return {
     success: true,
     message: `Session closed. ${cancelledCount ?? 0} match(es) cancelled, all players removed from queue.`,
     wrappedReady,
+    delivered,
   };
+}
+
+/**
+ * Re-emit `session_closed` for an ALREADY-CLOSED session.
+ *
+ * The escape hatch for the one failure the close flow cannot self-heal: the
+ * broadcast POST failed (both attempts), so the session is closed in the
+ * database but nobody's phone was told. Without this the organizer's only
+ * remedy is to wait out each player's 20 s status poll — or to walk the gym.
+ *
+ * Deliberately a SEPARATE action rather than loosening closeSession's
+ * `is_active` guard. That guard is what makes closeSession non-repeatable, and
+ * re-running it on a closed session would re-run compute_session_wrapped over
+ * a *changed* club-wide ledger — which is not idempotent and can silently
+ * revoke awards it previously granted (see the cross-session-stats notes in
+ * APP_MANIFEST). This action only re-sends a message.
+ */
+export async function renotifySessionClosed(
+  sessionId: string
+): Promise<{ success: boolean; message: string }> {
+  if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
+
+  const userClient = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await userClient.auth.getUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
+  }
+
+  let supabase: ReturnType<typeof createServiceClient>;
+  try {
+    supabase = createServiceClient();
+  } catch (err) {
+    return { success: false, message: err instanceof Error ? err.message : String(err) };
+  }
+
+  const { data: session, error: sessionError } = await supabase
+    .from("sessions")
+    .select("is_active")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (sessionError || !session) return { success: false, message: "Session not found." };
+  // Only ever announces a fact that is already true.
+  if (session.is_active) {
+    return { success: false, message: "Session is still open — nothing to re-announce." };
+  }
+
+  const { count } = await supabase
+    .from("session_wrapped_stats")
+    .select("id", { count: "exact", head: true })
+    .eq("session_id", sessionId);
+
+  const delivered = await broadcastSessionClosed(sessionId, (count ?? 0) > 0);
+  return delivered
+    ? { success: true, message: "Players notified." }
+    : { success: false, message: "Realtime is unreachable — players will catch up on their own." };
 }

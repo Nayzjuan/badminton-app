@@ -240,6 +240,72 @@ export function subscribeToMatchPlayers(
 }
 
 /**
+ * Subscribe to the session's OWN row (`sessions.id = sessionId`).
+ *
+ * This exists as a second, independent delivery path for "the organizer closed
+ * the session". The broadcast on `session-events:{sessionId}` is the fast path,
+ * but it is fire-and-forget: `postBroadcast` swallows every failure, the
+ * Realtime broadcast API does not queue for absent subscribers, and a tab that
+ * was backgrounded or mid-reconnect at close time simply never hears it. The
+ * `is_active` flip, by contrast, is a committed row change — so any tab holding
+ * a live postgres_changes join gets it, and the two paths fail independently.
+ *
+ * No migration is needed: `sessions` is already in the `supabase_realtime`
+ * publication, and `sessions_select` admits both the organizer
+ * (`is_session_organizer(id)`) and every club member (`is_club_member(club_id)`),
+ * which is a superset of the audience that can already see the board.
+ *
+ * ⚠️ Do NOT wire this channel's `onStatus` into useOrganizerSession's
+ * `handleChannelStatus`. That counter asserts an EXACT
+ * REALTIME_CHANNEL_COUNT (use-organizer-session.ts:48) of *postgres_changes*
+ * channels, so a sixth would peg the board's "live" indicator to disconnected
+ * forever — the same trap documented on OrganizerBroadcastHandlers.onStatus.
+ *
+ * Note the filter column: `id`, not `session_id`, which is why this cannot go
+ * through subscribeToTable.
+ */
+export function subscribeToSessionRow(
+  supabase: TypedClient,
+  sessionId: string,
+  onChange: ChangeHandler<Database["public"]["Tables"]["sessions"]["Row"]>,
+  channelPrefix?: string,
+  onStatus?: StatusHandler
+): () => void {
+  const channelName = channelPrefix
+    ? `${channelPrefix}:session-row:${sessionId}`
+    : `session-row:${sessionId}`;
+
+  // Defer the join until the Realtime JWT is set (see whenRealtimeAuthReady):
+  // `sessions_select` is club-scoped, so an `anon`-bound join delivers nothing.
+  let channel: RealtimeChannel | null = null;
+  let cancelled = false;
+
+  void whenRealtimeAuthReady().then(() => {
+    if (cancelled) return;
+    channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "sessions",
+          filter: `id=eq.${sessionId}`,
+        },
+        (payload) => {
+          onChange(castPayload<Database["public"]["Tables"]["sessions"]["Row"]>(payload));
+        }
+      )
+      .subscribe(createStatusHandler(channelName, onStatus));
+  });
+
+  return () => {
+    cancelled = true;
+    if (channel) supabase.removeChannel(channel);
+  };
+}
+
+/**
  * Handlers for the session-level broadcast channel.
  * `onIntervention` is required; all others are optional so callers can
  * subscribe only to the events they actually handle.
