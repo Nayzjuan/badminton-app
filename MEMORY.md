@@ -83,7 +83,7 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🚪 SESSION CLOSE — "Wrapped doesn't fire and players get stuck" — 2026-08-11, **CODE COMPLETE, UNCOMMITTED, UNDEPLOYED**
+## 🚪 SESSION CLOSE — "Wrapped doesn't fire and players get stuck" — 2026-08-11, ✅ **COMMITTED (`11b49c6` on `chore/pending-queue-2026-08-10`) — NOT YET MERGED OR DEPLOYED**
 
 Reported symptom: *"it looks like it didn't fire the session wrap right away once the session is
 closed"* + *"I want all players/users to be auto-refreshed and session wrapped is shown."*
@@ -172,10 +172,10 @@ Code Review Gate run **three times**: Needs fixes → Minor issues → **LGTM**.
 > via `mockReturnValue`/`mockResolvedValue`. A never-resolving `getPlayerSessionStatus` from OD-22e
 > leaked into OD-22f and burned a real 1.2 s timeout. Nested `beforeEach` re-establishes the default.
 
-> 🚀 **Deploy note:** nothing here is committed or deployed. It is pure application code, so a merge
-> ships it — but verify on prod with **two tabs** (organizer + player) that the close moves the player
-> within ~1 s, and confirm the player who never completed a match lands on the **club lobby**, not an
-> all-zero recap.
+> 🚀 **Deploy note:** committed as `11b49c6`, **not merged and not deployed.** It is pure application
+> code, so a merge ships it — but verify on prod with **two tabs** (organizer + player) that the close
+> moves the player within ~1 s, and confirm the player who never completed a match lands on the
+> **club lobby**, not an all-zero recap.
 
 ---
 
