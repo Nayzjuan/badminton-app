@@ -95,27 +95,35 @@ export function CourtCard({
   // critical → red glow (limit + 10 min exceeded)
   const [alertTier, setAlertTier] = useState<AlertTier>("normal");
 
+  // Hoisted so the effect closes over the primitive it actually reads. The deps
+  // below are unchanged in VALUE — `startedAt` is the same `match?.started_at`
+  // that was already listed — this only makes the array honest to exhaustive-deps
+  // without taking the fix it suggests, which is to depend on `match` wholesale.
+  // Realtime hands us a fresh EnrichedMatch identity on every re-fetch, so that
+  // would tear down and rebuild the interval each time: pointless churn, since
+  // the tier it recomputes off the same `started_at` is the one already showing.
+  const startedAt = match?.started_at;
+
   useEffect(() => {
     // Skip entirely when there is nothing to track — available / closed courts
     // and active courts without a time limit never need a timer.
-    if (!isActive || !timeLimitMinutes || !match?.started_at) {
+    if (!isActive || !timeLimitMinutes || !startedAt) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setAlertTier("normal");
       return;
     }
 
     function computeTier(): AlertTier {
-      const elapsed = (Date.now() - new Date(match!.started_at!).getTime()) / 60_000;
+      const elapsed = (Date.now() - new Date(startedAt!).getTime()) / 60_000;
       if (elapsed >= timeLimitMinutes! + COURT_ALERT_CRITICAL_OFFSET_MINUTES) return "critical";
       if (elapsed >= timeLimitMinutes!) return "warning";
       return "normal";
     }
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAlertTier(computeTier());
     const id = setInterval(() => setAlertTier(computeTier()), COURT_ALERT_RECOMPUTE_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [isActive, timeLimitMinutes, match?.started_at]);
+  }, [isActive, timeLimitMinutes, startedAt]);
 
   // Status badge config per state
   const badgeCfg: Record<CardState, { cls: string; label: string }> = {

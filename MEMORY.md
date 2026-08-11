@@ -83,6 +83,72 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
+## 🧹 LINT IS CLEAN — `npm run lint` exits 0 — 2026-08-11, branch `chore/lint-clean`
+
+Was **62 errors / 2744 warnings across 703 files**. Now **0 / 0 across 410**. 13 files changed, no
+migrations. `eslint.config.mjs` did 47 errors and ~2700 warnings of the work by itself.
+
+### The root cause, and the thing to remember
+
+**ESLint flat config does NOT read `.gitignore`.** `eslint.config.mjs` only listed
+`eslint-config-next`'s four defaults, so eslint was linting `digital-twin/dist`, `marketing-site/dist`,
+both `.astro/` type caches, `coverage/`, a stale `.claude/worktrees` checkout of *this repo* (so every
+finding in it was a duplicate of a real one) and the vendored `.agents/skills/impeccable` bundle.
+Nobody can fix a finding in a file the next build regenerates.
+
+The test for belonging in `globalIgnores`: **if git does not track it, a fix there cannot survive.**
+`.agents/**` is the one entry that breaks that rule and earns its place differently — it is a
+third-party skill checked in wholesale, it contributes **0 errors / 95 warnings**, and any edit is
+overwritten on the next upstream skill update. Globs are anchored per-sub-project
+(`digital-twin/dist/**`, not `**/dist/**`) so a future hand-written `dist` is not silently skipped.
+
+### Two behavioural fixes rode along — one is a REAL user-visible change
+
+The four React-rule errors could not be fixed mechanically. None used an `eslint-disable`.
+
+1. ⚠️ **`organizer-dashboard.tsx` — the transient "New" chip was almost certainly pinned ON forever
+   in production.** The old effect was keyed `[draftMatches.length]`, so its cleanup ran before
+   *every* re-run, not just unmount — and the cleanup cleared the 3 s reset timer without ever
+   calling `setHasNewDraft(false)`. Two drafts arriving as two realtime INSERTs (0→1, then 1→2) is
+   enough to strand the badge lit indefinitely. The rewrite detects the 0 → ≥1 edge **during render**
+   (React's sanctioned adjust-state-on-changed-value pattern) and keys the toast effect on the
+   `draftNotice` *object identity*, so an unrelated count change can no longer cancel the reset.
+   **The organizer will see the chip start disappearing after ~3 s and may report it as a regression.
+   It is the fix.** A future memoization/hoist of `draftNotice` that compares counts instead of
+   identity silently breaks re-arming on a second edge with the same count.
+2. **`share-session-dialog.tsx`** — `useState("") + useEffect(setJoinUrl)` → `useSyncExternalStore`
+   with **module-scope** callbacks (a fresh `subscribe` each render forces a resubscribe). Server
+   snapshot is `""`, which React serves on the server *and* on the hydrating render, so markup is
+   byte-identical to before. Post-hydration the "Generating…" skeleton no longer flashes for a frame.
+3. **`court-card.tsx`** — hoisted `const startedAt = match?.started_at`. Dep **values** are unchanged;
+   this only makes the array honest without taking exhaustive-deps' suggested fix, which is to depend
+   on `match` wholesale. That would be a live regression: realtime hands a fresh `EnrichedMatch`
+   identity on every refetch, so the interval would restart and snap an amber/red court to normal.
+   One `eslint-disable react-hooks/set-state-in-effect` (the early-return `setAlertTier("normal")`)
+   is still live and correct; its sibling was stale and is gone.
+4. **`digital-twin/.../PlayerPhone.tsx`** — `LightRow`/`DarkRow` were declared inside
+   `CourtTeamsGrid`'s render, so every sandbox tick minted a new component type and remounted all
+   four rows. Hoisted to module scope as `CourtSlotLight`/`CourtSlotDark`; they capture nothing.
+
+### Booked minors (review-agent "Minor issues" pass, per CLAUDE.md gate rule 3)
+
+- **Coverage gap, pre-existing:** neither behavioural change has a component-level test.
+  `OrganizerDashboard` has only hook tests (`use-organizer-dashboard.test.ts`); `ShareSessionDialog`
+  has none. The 3 s badge window and the QR hydration path are covered only by E2E (`scenario-f`,
+  `scenario-l`), which was **not** run for this change.
+- **Manual check worth doing on the next real session:** let drafts appear from an empty board,
+  confirm exactly one toast and a chip that clears after ~3 s, then add a second draft inside that
+  window and confirm the chip still clears.
+
+### Validation
+
+`npx eslint` **exit 0** · `npx tsc --noEmit` **exit 0** · digital-twin `npx tsc --noEmit -p
+tsconfig.json` **exit 0** (root tsconfig `exclude`s `digital-twin` — the app typecheck does **not**
+cover it, you must run it separately) · `npx vitest run` **1057 passed / 1 skipped, 58 files** ·
+`npm run build` **exit 0** · all three `scripts/simulate-*.ts` still run end-to-end.
+
+---
+
 ## 🚪 SESSION CLOSE — "Wrapped doesn't fire and players get stuck" — 2026-08-11, ✅ **SHIPPED + PROD-VERIFIED** (PR #55 → main `6592864`, deploy `dpl_Du2Sj1D3ac4yArWXbohHiiFTLTyN` READY)
 
 Reported symptom: *"it looks like it didn't fire the session wrap right away once the session is

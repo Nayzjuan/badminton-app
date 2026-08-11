@@ -143,7 +143,9 @@ function tryFormGroup(
   tolerance: number,
   cfg: SimConfig,
   partnerCounts: Map<string, number>,
-  opponentCounts: Map<string, number>
+  // Accepted for symmetry with partnerCounts and so callers can pass both
+  // maps positionally; group formation only penalises repeat PARTNERS.
+  _opponentCounts: Map<string, number>
 ): string[] | null {
   const eligible = candidates.filter(
     (p) => p.name !== anchor.name && Math.abs(p.skill - anchor.skill) <= tolerance
@@ -221,7 +223,6 @@ function getTeamSplits(skills: number[]): Array<[[number, number], [number, numb
   ];
   // Sort by team skill balance (smaller difference = better)
   return splits.sort((a, b) => {
-    const diff = (s: [number, number]) => Math.abs(skills[s[0]] - skills[s[1]]);
     const balance = (s: [[number, number], [number, number]]) =>
       Math.abs(skills[s[0][0]] + skills[s[0][1]] - skills[s[1][0]] - skills[s[1][1]]);
     return balance(a) - balance(b);
@@ -331,8 +332,8 @@ function simulate(scenario: { name: string; players: SimPlayer[]; config: SimCon
   const partnerCounts = new Map<string, number>();
   const opponentCounts = new Map<string, number>();
 
-  // Court availability: time when each court next frees
-  const courtFreeAt = cfg.courts.map(() => 0); // all free at T=0
+  // Court availability is not tracked as an array here — the event loop below
+  // is what knows when each court frees (COURT_FREE events carry the index).
   const matches: MatchRecord[] = [];
   let matchNum = 0;
 

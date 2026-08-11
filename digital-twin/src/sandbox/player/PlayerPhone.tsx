@@ -504,6 +504,27 @@ function CourtPlayerRowDark({ name, abbr, isMe }: { name: string; abbr: string; 
   );
 }
 
+// A roster slot: a player row, or an empty placeholder of the same height so the
+// 2×2 grid keeps its shape when a team is short. Hoisted to module scope — when
+// these lived inside CourtTeamsGrid every render minted a fresh component type,
+// so React unmounted and rebuilt each row on every sandbox tick. They capture
+// nothing from that scope, so the move is a pure relocation.
+function CourtSlotLight({ p }: { p: Player | undefined }) {
+  return p ? (
+    <CourtPlayerRowLight name={p.name} abbr={SKILL_CFG[p.skill].abbr} isMe={p.id === YOU_ID} />
+  ) : (
+    <div className="h-10 clip-cut-tr" style={{ background: "oklch(0.91 0.014 235)" }} />
+  );
+}
+
+function CourtSlotDark({ p }: { p: Player | undefined }) {
+  return p ? (
+    <CourtPlayerRowDark name={p.name} abbr={SKILL_CFG[p.skill].abbr} isMe={p.id === YOU_ID} />
+  ) : (
+    <div className="h-10 clip-cut-tr" style={{ background: "oklch(0.23 0.022 240)" }} />
+  );
+}
+
 function CourtVsBadge({ dark }: { dark: boolean }) {
   return (
     <div className="flex flex-col items-center gap-1" aria-hidden="true">
@@ -541,19 +562,6 @@ function CourtTeamsGrid({
   const b0 = teamB[0];
   const b1 = teamB[1];
 
-  const LightRow = ({ p }: { p: Player | undefined }) =>
-    p ? (
-      <CourtPlayerRowLight name={p.name} abbr={SKILL_CFG[p.skill].abbr} isMe={p.id === YOU_ID} />
-    ) : (
-      <div className="h-10 clip-cut-tr" style={{ background: "oklch(0.91 0.014 235)" }} />
-    );
-  const DarkRow = ({ p }: { p: Player | undefined }) =>
-    p ? (
-      <CourtPlayerRowDark name={p.name} abbr={SKILL_CFG[p.skill].abbr} isMe={p.id === YOU_ID} />
-    ) : (
-      <div className="h-10 clip-cut-tr" style={{ background: "oklch(0.23 0.022 240)" }} />
-    );
-
   return (
     <div className="grid gap-y-2 px-3 py-3" style={{ gridTemplateColumns: "1fr 40px 1fr" }}>
       <div style={{ gridColumn: 1, gridRow: 1 }}>
@@ -580,16 +588,16 @@ function CourtTeamsGrid({
         <CourtVsBadge dark={dark} />
       </div>
       <div style={{ gridColumn: 1, gridRow: 2 }}>
-        {dark ? <DarkRow p={a0} /> : <LightRow p={a0} />}
+        {dark ? <CourtSlotDark p={a0} /> : <CourtSlotLight p={a0} />}
       </div>
       <div style={{ gridColumn: 3, gridRow: 2 }}>
-        {dark ? <DarkRow p={b0} /> : <LightRow p={b0} />}
+        {dark ? <CourtSlotDark p={b0} /> : <CourtSlotLight p={b0} />}
       </div>
       <div style={{ gridColumn: 1, gridRow: 3 }}>
-        {dark ? <DarkRow p={a1} /> : <LightRow p={a1} />}
+        {dark ? <CourtSlotDark p={a1} /> : <CourtSlotLight p={a1} />}
       </div>
       <div style={{ gridColumn: 3, gridRow: 3 }}>
-        {dark ? <DarkRow p={b1} /> : <LightRow p={b1} />}
+        {dark ? <CourtSlotDark p={b1} /> : <CourtSlotLight p={b1} />}
       </div>
     </div>
   );
