@@ -256,7 +256,10 @@ hidden `🤖 E2E SANDBOX` (0 matches, 39 days stale, excluded by `is_hidden` any
    and the two living docs. The unrelated draft-firewall comment fix in `src/hooks/use-player-match.ts`
    went out separately as `52a14f0` — though note the *prose* half of that same draft-firewall
    correction rode along inside `15acdaa`, so the split is clean in code but not in docs.
-   **Neither commit is pushed or merged yet.**
+   A third commit, `0452d20`, carries the documentation corrections that came out of the review gate
+   (the "idempotent" retraction in both migration headers, the not-one-directional retraction, the
+   `_prior_awards`/pure-raise retraction, and the five-causes enumeration) — docs and SQL comments
+   only, zero executable lines. **None of the three is pushed or merged yet.**
 2. Watch the **next real session close**: it is the first live exercise of the new gate and of the
    per-club advisory lock. Expect no player to receive a milestone award they already hold.
 3. `the_veteran`'s per-night subtitle ("The OG showed up tonight") still reads as a tonight-award
