@@ -15,9 +15,41 @@
 //         the sessions RLS SELECT policy would never deliver that
 //         UPDATE to a co-organizer.
 //
-//   [R-2] Session close → the player is redirected to Wrapped.
-//         Also broadcast-only: there is no polling fallback, so
-//         if the private channel fails to join, nothing happens.
+//   [R-2] Session close → the player is redirected, and WHERE
+//         depends on the player. Since 2026-08-11 the destination
+//         is decided per viewer: compute_session_wrapped builds
+//         its rows from completed matches, so a player who never
+//         finished one has no recap and must land on the club
+//         lobby rather than an all-zero Wrapped. Both branches are
+//         covered below.
+//
+//         Close now has THREE independent delivery paths (the
+//         broadcast, a postgres_changes UPDATE on the session row,
+//         and a status poll — APP_MANIFEST §3.31), so unlike the
+//         rest of this file it is no longer broadcast-only. It
+//         still belongs here because only a real socket against a
+//         real RLS-gated channel can show that a FAST path is the
+//         one doing the work: the 20s poll is suppressed and the
+//         elapsed time is bounded, so a run that only recovers on
+//         the safety net fails instead of passing slow. (The toast
+//         does NOT identify the path — leaveClosedSession emits the
+//         same one whichever signal fired. It is asserted because
+//         it is the user-visible half of the contract.)
+//
+//         SCOPE: these two assert the COMPOSITE destination, not
+//         the client's own probe. leaveClosedSession calls
+//         router.refresh() before it pushes, and the play page's
+//         RSC runs the identical per-viewer branch server-side and
+//         normally wins the race — by design, see the comment in
+//         c/[clubSlug]/(full)/play/[sessionId]/page.tsx. So a
+//         resolveDestination that always answered "Wrapped" would
+//         still pass R-2a — and the mirror holds for R-2b, where
+//         one hard-coded to the lobby would pass just the same.
+//         That branch is covered exhaustively in
+//         tests/unit/use-organizer-broadcast-closure.test.ts; what
+//         cannot be unit-tested, and is what these cover, is that
+//         a real close over a real socket puts a real browser on
+//         the right page.
 //
 //   [R-3] Auth-loss HOLD — the core of the 07/25 fix. Destroy a
 //         live client's auth cookies, force a refetch, and prove
@@ -51,7 +83,7 @@ import path from "path";
 
 import { adminDb } from "../helpers/admin-db";
 import { resetSandboxSession, seedSession, getSandboxClubSlug } from "../helpers/teardown";
-import { clubOrganizer, clubPlay, clubWrapped } from "../../src/lib/club-paths";
+import { clubBase, clubOrganizer, clubPlay, clubWrapped } from "../../src/lib/club-paths";
 import {
   ensureOrganizerAccount,
   signInOrganizerBot,
@@ -90,6 +122,28 @@ async function organizerContext(browser: Browser): Promise<BrowserContext> {
 }
 
 /**
+ * Blind `window.setInterval` to ONE cadence, before the app loads.
+ *
+ * Every polling fallback in this app is a bare `setInterval` with a literal
+ * period, so the period is the only handle a test has on it. Matching on the
+ * exact millisecond value is crude but precise: it takes out the timer under
+ * test and nothing else. Callers below name the cadence they are suppressing
+ * and say why.
+ *
+ * The zero handle is safe — the app's `clearInterval(0)` is a no-op.
+ */
+async function suppressInterval(
+  page: import("@playwright/test").Page,
+  periodMs: number
+): Promise<void> {
+  await page.addInitScript((target: number) => {
+    const real = window.setInterval.bind(window);
+    window.setInterval = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) =>
+      timeout === target ? 0 : real(handler, timeout, ...rest)) as typeof window.setInterval;
+  }, periodMs);
+}
+
+/**
  * Neutralise the observer's polling fallback BEFORE the app loads.
  *
  * useOrganizerSession re-fetches the whole session every 15s, which means a
@@ -111,11 +165,7 @@ async function organizerContext(browser: Browser): Promise<BrowserContext> {
  * use-leaderboard.ts and use-tv-board.ts — none of which these tests read.
  */
 async function suppressPollingFallback(page: import("@playwright/test").Page): Promise<void> {
-  await page.addInitScript(() => {
-    const real = window.setInterval.bind(window);
-    window.setInterval = ((handler: TimerHandler, timeout?: number, ...rest: unknown[]) =>
-      timeout === 15000 ? 0 : real(handler, timeout, ...rest)) as typeof window.setInterval;
-  });
+  await suppressInterval(page, 15_000);
 }
 
 test.beforeAll(async ({ browser }) => {
@@ -207,33 +257,66 @@ test.describe("Resilience — [R-1] private broadcast reaches a second client", 
 });
 
 // ─────────────────────────────────────────────────────────────
-// [R-2] Session close broadcast → player lands on Wrapped
+// [R-2] Session close → the player is routed, per viewer
 // ─────────────────────────────────────────────────────────────
-test.describe("Resilience — [R-2] session close reaches the player", () => {
-  test("closing the session redirects a watching player to their Wrapped page", async ({
-    browser,
-  }) => {
-    const seeded = await seedSession("all_waiting");
-    const organizerId = await getOrganizerUserId();
 
-    // Put the organizer bot in the queue so the player dashboard has a
-    // player identity to build the Wrapped URL from.
-    await adminDb().from("queue_entries").insert({
+/**
+ * Kill the closure watcher's 20s safety-net poll, so only the two FAST paths
+ * (the private broadcast and the `sessions` row postgres_changes stream) can
+ * move the player.
+ *
+ * Same reasoning as suppressPollingFallback: the reported symptom was "the
+ * wrap didn't fire right away", and a test that accepts a poll-covered
+ * redirect 20s later would have passed on the very bug this fixes. The
+ * event-driven triggers inside the same effect (visibilitychange, channel
+ * status) are deliberately left alone — they are fast paths too, and
+ * neutralising them would mean disabling the reconnect recovery itself.
+ *
+ * Targets SESSION_STATUS_POLL_MS (20000) in use-session-closed-watcher.ts.
+ */
+async function suppressClosurePoll(page: import("@playwright/test").Page): Promise<void> {
+  await suppressInterval(page, 20_000);
+}
+
+test.describe("Resilience — [R-2] session close reaches the player", () => {
+  /**
+   * Put the organizer bot in the queue. `seedSession` only queues the five
+   * player bots, and the bot is the identity both tabs are signed in as.
+   */
+  async function queueOrganizerBot(organizerId: string): Promise<void> {
+    const { error } = await adminDb().from("queue_entries").insert({
       session_id: SESSION_ID,
       player_id: organizerId,
       status: "waiting",
     });
+    if (error) throw new Error(`[R-2] Failed to queue the organizer bot: ${error.message}`);
+  }
 
+  /**
+   * Open a player tab and an organizer tab on the sandbox session, close the
+   * session from the organizer, and assert the player is moved to
+   * `expectedPath`.
+   *
+   * The toast is probed CONCURRENTLY with the URL, never before it. Serially,
+   * a missed toast burns its own timeout and then poisons the elapsed-time
+   * assertion below — the test would fail claiming the redirect was slow when
+   * the redirect was fine and the toast was the casualty. Racing them keeps
+   * each failure reported as itself.
+   *
+   * Both are asserted, because they fail differently: no toast means no close
+   * signal reached this client at all, whereas a toast with no navigation means
+   * the handler ran and the destination probe or router.push behind it is what
+   * broke. The diagnostic carries every URL the player visited and their
+   * console — a private-channel authorization refusal only ever surfaces there.
+   */
+  async function expectPlayerRoutedOnClose(browser: Browser, expectedPath: string): Promise<void> {
     const playerCtx = await organizerContext(browser);
     const organizerCtx = await organizerContext(browser);
     const playerPage = await playerCtx.newPage();
     const organizerPage = await organizerCtx.newPage();
 
-    // The only delivery path for session_closed is the private broadcast
-    // channel, and a failed join is reported solely through console.error in
-    // createStatusHandler. Without capturing it, a miss here is
-    // indistinguishable from a redirect that fired to some other URL — so
-    // record both.
+    await suppressClosurePoll(playerPage);
+
     const playerConsole: string[] = [];
     playerPage.on("console", (m) => playerConsole.push(`${m.type()}: ${m.text()}`));
     const playerUrls: string[] = [];
@@ -250,49 +333,61 @@ test.describe("Resilience — [R-2] session close reaches the player", () => {
         timeout: 25_000,
       });
 
-      // Let the player's private channel finish joining — this broadcast has
-      // no polling fallback, so an early close is simply missed forever.
+      // Let the player's private channel finish its join. `session_closed` is
+      // fire-and-forget with no replay, so a close sent before the join
+      // completes is missed on that path forever.
       await playerPage.waitForTimeout(3_000);
 
+      const closedAt = Date.now();
       await organizerPage.getByRole("button", { name: "Close Session" }).click();
       await organizerPage.getByRole("button", { name: "Yes, close session" }).click();
 
-      // onSessionClosed toasts immediately, then routes 800ms later. Probing
-      // the toast first splits the two failure modes that otherwise look
-      // identical from the URL alone: no toast means the broadcast never
-      // reached this client, whereas a toast without a navigation means the
-      // handler ran and the router.push is what failed.
-      let toastSeen = true;
-      try {
-        await expect(playerPage.getByText(/time to see your awards/i)).toBeVisible({
-          timeout: 15_000,
-        });
-      } catch {
-        toastSeen = false;
-      }
+      // The handler toasts, then routes WRAPPED_REDIRECT_DELAY_MS (250ms)
+      // later — after resolving where THIS viewer belongs. `.first()` because
+      // a re-render can leave two live sonner nodes with the same copy, which
+      // would otherwise trip strict mode and read as "no toast".
+      const [arrival, toastSeen] = await Promise.all([
+        playerPage.waitForURL(`**${expectedPath}`, { timeout: 25_000 }).then(
+          () => ({ ok: true as const, elapsedMs: Date.now() - closedAt }),
+          (err: Error) => ({ ok: false as const, err })
+        ),
+        expect(playerPage.getByText(/time to see your awards/i).first())
+          .toBeVisible({ timeout: 15_000 })
+          .then(
+            () => true,
+            () => false
+          ),
+      ]);
 
-      // The player's handler toasts, waits 800ms, then routes to
-      // /c/{slug}/wrapped/{sessionId}/{playerId}.
-      try {
-        await playerPage.waitForURL(`**${clubWrapped(CLUB_SLUG, SESSION_ID, organizerId)}`, {
-          timeout: 25_000,
-        });
-      } catch (err) {
+      if (!arrival.ok) {
         throw new Error(
-          `Player never reached Wrapped. Toast seen: ${toastSeen} ` +
-            `(false => broadcast never arrived; true => handler ran but push failed)\n` +
+          `Player never reached ${expectedPath}. Toast seen: ${toastSeen} ` +
+            `(false => no close signal arrived; true => handler ran but the ` +
+            `destination probe or push failed)\n` +
             `URLs visited: ${JSON.stringify(playerUrls, null, 2)}\n` +
             `Player console:\n${playerConsole.join("\n")}\n` +
-            `Original: ${(err as Error).message}`
+            `Original: ${arrival.err.message}`
         );
       }
 
-      // Sanity-check the DB agrees the session actually closed, so a
-      // redirect caused by anything else cannot make this test pass.
+      // The user-visible half: they are told why the page moved under them.
+      expect(toastSeen, "the close toast never appeared on the player's screen").toBe(true);
+
+      // The whole point of the fix is that this is immediate. Server-side
+      // pre-work inside closeSession measured ~346ms mean / ~1.4s tail, so
+      // anything beyond a few seconds means the fast paths did not deliver and
+      // something slower covered — the original production symptom.
+      expect(
+        arrival.elapsedMs,
+        `player moved only after ${arrival.elapsedMs}ms — the fast paths did not deliver`
+      ).toBeLessThan(15_000);
+
+      // Sanity-check the DB agrees the session actually closed, so a redirect
+      // caused by anything else cannot make this pass.
       const { data: session } = await adminDb()
         .from("sessions")
         .select("is_active, ended_at")
-        .eq("id", seeded.sessionId)
+        .eq("id", SESSION_ID)
         .single();
       expect(session?.is_active).toBe(false);
       expect(session?.ended_at).not.toBeNull();
@@ -300,6 +395,71 @@ test.describe("Resilience — [R-2] session close reaches the player", () => {
       await playerCtx.close();
       await organizerCtx.close();
     }
+  }
+
+  // ── R-2a: no recap → the club lobby ─────────────────────────
+  test("a player with no completed match is sent to the club lobby", async ({ browser }) => {
+    await seedSession("all_waiting");
+    const organizerId = await getOrganizerUserId();
+
+    // Queue the organizer bot so the dashboard shows them as a participant
+    // rather than a bystander. Not load-bearing for the assertion — the
+    // recap comes from completed matches, not from the queue — but it makes
+    // this the shape the complaint described.
+    //
+    // `all_waiting` creates no completed match, so compute_session_wrapped
+    // writes no session_wrapped_stats row for anyone: exactly the "walk-in
+    // who never got on court" case. Wrapped would render them an all-zero
+    // recap AND stamp intro_dismissed_at, so the lobby is correct.
+    await queueOrganizerBot(organizerId);
+
+    await expectPlayerRoutedOnClose(browser, clubBase(CLUB_SLUG));
+  });
+
+  // ── R-2b: has a recap → their Wrapped page ──────────────────
+  test("a player who completed a match is sent to their Wrapped page", async ({ browser }) => {
+    const seeded = await seedSession("all_waiting");
+    const organizerId = await getOrganizerUserId();
+
+    await queueOrganizerBot(organizerId);
+
+    // Give the organizer bot a finished match so compute_session_wrapped has
+    // something to build a row from. Scores are mandatory: its
+    // completed_matches CTE filters on `team_a_score IS NOT NULL AND
+    // team_b_score IS NOT NULL`, so a completed match without them yields no
+    // recap and this test would silently become a duplicate of R-2a.
+    const { data: completedMatch, error: completedErr } = await adminDb()
+      .from("matches")
+      .insert({
+        session_id: SESSION_ID,
+        court_id: null,
+        status: "completed",
+        is_mixed_level: false,
+        sort_order: 0,
+        team_a_score: 21,
+        team_b_score: 19,
+        started_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+        completed_at: new Date(Date.now() - 60_000).toISOString(),
+      })
+      .select("id")
+      .single();
+    if (completedErr || !completedMatch) {
+      throw new Error(`[R-2b] Failed to seed completed match: ${completedErr?.message}`);
+    }
+
+    const { error: mpErr } = await adminDb()
+      .from("match_players")
+      .insert([
+        { match_id: completedMatch.id, player_id: organizerId, team: "a" as const },
+        { match_id: completedMatch.id, player_id: seeded.players.alice.userId, team: "a" as const },
+        { match_id: completedMatch.id, player_id: seeded.players.bob.userId, team: "b" as const },
+        { match_id: completedMatch.id, player_id: seeded.players.cara.userId, team: "b" as const },
+      ]);
+    if (mpErr) {
+      throw new Error(`[R-2b] Failed to seed completed match players: ${mpErr.message}`);
+    }
+
+    await expectPlayerRoutedOnClose(browser, clubWrapped(CLUB_SLUG, SESSION_ID, organizerId));
   });
 });
 
