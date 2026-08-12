@@ -193,7 +193,7 @@ migrations exist — this is TypeScript only.
 |---|---|---|
 | **P3** | Call Next seats a court in draft mode — `bypassGate` slot 0 born published | ✅ committed `597e425` |
 | **P1** | Rejection memory — clearing a draft means "deal a different hand" | ✅ committed `c81a898` |
-| **harness** | `scripts/replay-sessions.ts` + `scripts/replay/` — discrete-event replay of the CURRENT engine over 5 real prod sessions | ✅ **untracked**, needs `git add` |
+| **harness** | `scripts/replay-sessions.ts` + `scripts/replay/` — discrete-event replay of the CURRENT engine over 5 real prod sessions | ✅ committed `081599d` (rode along with P2) |
 | **P2** | Consecutive-opponent recency in group selection | ✅ committed `081599d` |
 | **P4** | FRESH chips + the false opponent headline | ✅ built + validated, **work tree only** |
 
@@ -373,9 +373,9 @@ reverting the hook to `candidateIds.length` would still pass the whole suite —
 
 ### Next steps
 
-1. `git add scripts/replay-sessions.ts scripts/replay/` — the harness is still **untracked** (see the
-   status table above). It is the only way to A/B a future engine change against real history, and it
-   is currently one `rm -rf` away from gone.
+1. **P1–P4 are all committed on `feat/engine-improvements` and NONE of it is deployed.** Four engine
+   changes the owner asked for are sitting on a branch. Merging + deploying is the highest-value
+   remaining action; everything below is optional next to it.
 2. The cross-court hot-path slice deletion (`src/app/actions/upcoming-match.ts`, ~150 LOC, 0 held
    rows ever). ⚠️ Touches the same player-facing files as the 07/25 de-auth incident. DB columns/RPC stay.
 3. Nothing in P1–P4 is deployed. **Fixtures stay gitignored: they carry real member names and skill
