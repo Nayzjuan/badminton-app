@@ -1527,7 +1527,7 @@ sixth way a recompute diverges from the stored wrap; not in play for 05/23 (last
 
 ---
 
-## 🧩 Engine diversity reads merged 9 → 3; the other three deferred DB items KILLED — 2026-08-04, **working tree, uncommitted**
+## 🧩 Engine diversity reads merged 9 → 3; the other three deferred DB items KILLED — 2026-08-04, ✅ **SHIPPED `main` `23ced21` (PR #53)**
 
 Closes the last open line from `DB_OPTIMIZATION_AUDIT.md`. Full verdicts: **`PENDING_WORK_2026-07-23.md` §6**.
 Architecture: **APP_MANIFEST §"Session match snapshot"**.
@@ -1610,7 +1610,7 @@ change does. (It would become a real safety control if anyone wires dotenv into 
 
 ---
 
-## 🎞️ `useFlipList` — a gated commit was wiping the FLIP baseline — 2026-08-04, **working tree, uncommitted**
+## 🎞️ `useFlipList` — a gated commit was wiping the FLIP baseline — 2026-08-04, ✅ **SHIPPED `main` `23ced21` (PR #53)**
 
 Full write-up: **APP_MANIFEST §3.29**. Closes the long-standing `test.fixme` in
 `tests/e2e/scenario-r-resilience.spec.ts` (the [R-4] "320ms translateY move" test) — the fixme is now an
@@ -1977,7 +1977,45 @@ success-empty while `getSession()` is null/expired; surface a "reconnecting" sta
 disable + server idempotency); (4) transitions polish (separate task — app has near-zero animation infra:
 framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion tokens).
 
-## 📋 STANDING TO-DO (as of 2026-07-29)
+## 📋 STANDING TO-DO (as of 2026-08-12)
+
+**Everything code-side is merged and deployed. `main` is `fe98587`, the working tree is clean, the
+migration queue is empty, and there are no open PRs carrying unshipped work.** What is left is three
+things that cannot be done from here — two need a live session, one needs an owner decision.
+
+**A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
+evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
+structurally cannot exercise it. Watch (i) whether held drafts appear at all, and (ii) whether any
+hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15` — the cancel is event-driven off match end/cancel,
+not a timer, so a court that goes quiet strands its hold. Item **C** below folds into the same night.
+
+**B. `player_rivalries` / `player_partnerships` club-wide rebuild — 🚫 BLOCKED ON AN OWNER DECISION,
+do not execute unasked.** 1162 rows missing + 370 stored low (43.7% wrong club-wide). The rebuild is
+**not** award-neutral and **not** monotone, so it is a judgement call, not a repair:
+
+  - `the_dynasty`: 10 → 18 qualifiers, but **revoked from `Barts`** (stored 6-2 = .750, true 6-3 = .667).
+  - `winning_formula`: 6 → 11 qualifiers, but **revoked from `Lei` and `Aim`** — both gate on a
+    *ratio*, and each holds a partnership stored 6g-4w (66.7%) that is truly 7g-4w (57.1%). **A pure
+    raise lowers a ratio.**
+  - **77 players** move nemesis target (47 swaps, 29 gains, 1 loss).
+
+  Fix the 10 inverted rows + 2 orphans **first** — they are what makes the rebuild award-negative —
+  then the upstream RPC (`refresh_cross_session_stats` must rebuild its session's contribution
+  instead of guard-and-add, which also closes a live double-count on `Chillax Thursday 4/23`).
+  Full analysis in the §"CROSS-SESSION STATS" section below. **Three real players lose a badge they
+  currently hold; that is the owner's call to make, not a maintenance task.**
+
+**C. Live #7 broadcast-delivery smoke-test** (tenancy audit) — two organizer boards, toggle
+propagates; close → Wrapped. Also covers the resilience fixes and queue/courts transitions.
+
+**D. Optional, unscheduled:** project-wide Realtime "Allow public access" OFF (needs every
+`postgres_changes` channel private first); and **9 stale remote branches** whose PRs are all merged
+(`chore/pending-queue-2026-08-10`, `claude/pull-latest-main-EpwqL`, `docs/close-audit-11-applied`,
+`fix/audit-organizer-remove`, `fix/clear-cancel-audit-trail`, `fix/matchmaking-balanced-teams`,
+`fix/respect-rotation-lock`, `fix/ui-transitions-and-refresh`, `fix/vapid-key-urlsafe`) — pure
+cleanup, no unshipped content in any of them.
+
+### Historical (2026-07-29 list, kept for the record)
 
 1. ~~Merge PR #45~~ ✅ MERGED 2026-07-29 (`52e30b1`) — migration-file drift closed; prod deploy READY.
 2. ~~USER: enable leaked-password protection~~ ❌ **CLOSED — WON'T DO (user decision, reconfirmed 2026-08-04).**
