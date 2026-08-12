@@ -690,8 +690,8 @@ export async function hasFeedableCapacity(supabase: DbClient, sessionId: string)
     // `src/types/database.ts` is consistent with that (is_held: plain
     // `boolean`), and all 945 production rows read false.
     //
-    // ⚠️ Two earlier revisions of this comment each got the schema counterfactual
-    // wrong in a different direction, so state both halves separately — they do
+    // ⚠️ Earlier revisions of this comment got the schema counterfactual wrong in
+    // two different directions, so state both halves separately — they do
     // NOT share an antecedent. For a NULL to appear AT ALL takes only the NOT
     // NULL dropped plus something writing one. For EVERY ordinary pending match
     // to read NULL takes the default dropped as well, because the ordinary

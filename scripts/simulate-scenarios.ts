@@ -102,7 +102,7 @@ type Zone = "hard" | "red" | "normal";
  * A score that *encodes* a tier is not a test *for* it, in both directions:
  * the Red Zone arm returns `1000 + wait - gamePenalty`, so a wait-22 / 3-games
  * player scores 998 and a `score >= 1000` test misses them; the hard-cap arm
- * returns `2000 + (wait - hardCap) * 10`, so a `score === 2000` test only
+ * returns `2000 + Math.round((wait - hardCap) * 10)`, so a `score === 2000` test only
  * matches a player at *exactly* the cap and misses everyone past it. Both
  * fallacies were live in this file's flag logic — the second one badly: on the
  * standard fixture it labelled 12 matches `[HARD]` where 70 qualified, in a
