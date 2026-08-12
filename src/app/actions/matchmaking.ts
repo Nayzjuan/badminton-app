@@ -612,9 +612,12 @@ async function runEngineInternal(
     // games played. See the ⚠️ on anchorBlocksReach.) Full rationale, and the
     // MIN_REST_MINUTES interaction, live there.
     //
-    // ⚠️ This covers the ANCHOR ONLY — the two seated waiters are guarded
-    // separately, inside buildCrossCourtProposal's search loop, because the
-    // sort order provably does not carry a wait bound down the pool.
+    // ⚠️ This covers the ANCHOR ONLY. There is deliberately NO seat-level
+    // guard inside buildCrossCourtProposal's loop — one was tried and is
+    // unreachable dead code (a Tier-2 player always outranks any Tier-1 player,
+    // so a Red-Zone seat below pool[0] cannot exist); see the ⚠️ on
+    // anchorBlocksReach, which says "Do not re-add it". The two seated waiters
+    // are covered by the hold-age cancel instead — see the next paragraph.
     //
     // Residual, accepted — and NOT what the margin bounds. The guard bounds the
     // anchor's wait when the hold is CREATED; it does not bound how long the
@@ -631,7 +634,7 @@ async function runEngineInternal(
     // crossing CRITICAL_WAIT_MINUTES in 5.3% of holds and HARD_WAIT_CAP_MINUTES
     // in 2.1%. ⚠️ That model measures the ANCHOR, i.e. 1 of the 3 held waiters,
     // so it understates the true residual — do not quote it as the figure for
-    // the hold as a whole. A hold-age cancel is the fix if it ever reads high.
+    // the hold as a whole. The hold-age cancel named above is what bounds it.
     const anchorBlocked = anchorBlocksReach(pool[0].priorityScore, pool[0].wait_minutes ?? 0);
 
     // The courts-stay-fed guard, formerly the `i > 0` proxy. A held draft seats

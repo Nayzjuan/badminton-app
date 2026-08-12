@@ -457,11 +457,20 @@ export const CROSS_COURT_REST_FALLBACK_MINUTES = 3;
  * is p50 4.7 min / p90 12.7 / p99 18.1. At 15 the median hold is untouched and
  * only the long tail is cancelled, so the reach rate is essentially preserved.
  *
- * ⚠️ What this does NOT promise: it bounds the HOLD, not the total wait. A seat
- * that entered the hold at 12 minutes can still finish at 27. The strictly
- * correct version cancels on the parked players' actual `wait_minutes` rather
- * than on hold age; that costs a query per held draft and is the follow-up if
- * this reads too loose. Do not describe this constant as a Red-Zone guarantee.
+ * ⚠️ Two things this does NOT promise. Do not describe it as a Red-Zone
+ * guarantee on either count.
+ *
+ * 1. It bounds the HOLD, not the total wait. A seat that entered the hold at
+ *    12 minutes can still finish at 27. The strictly correct version cancels on
+ *    the parked players' actual `wait_minutes` rather than on hold age; that
+ *    costs a query per held draft and is the follow-up if this reads too loose.
+ * 2. It is BEST-EFFORT, evaluated on an event, not on a timer. The cancel lives
+ *    in `recomputeHeldReadiness`, which is only invoked from match-lifecycle.ts
+ *    when a match ends or is cancelled — never from the engine loop. If no
+ *    match ends, a hold outlives this cap indefinitely. That coupling is benign
+ *    in practice (a court freeing is the same event that makes a hold
+ *    resolvable at all), but the cap is an upper bound on ATTENTION, not on
+ *    elapsed time.
  */
 export const CROSS_COURT_MAX_HOLD_MINUTES = 15;
 

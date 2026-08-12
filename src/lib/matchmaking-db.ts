@@ -676,6 +676,22 @@ export async function hasFeedableCapacity(supabase: DbClient, sessionId: string)
   let feedable = 0;
   let held = 0;
   for (const row of data) {
+    // ⚠️ This deliberately does NOT fail closed, unlike the error path above.
+    // A reviewer read that as an inconsistency, so: `is_held` is
+    // `GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0)` and the column
+    // is NULLABLE — `cardinality(NULL)` is NULL, so an explicit NULL in
+    // pulled_player_ids yields a NULL flag. (It cannot happen today: the column
+    // defaults to '{}', and all 945 production rows read is_held = false.)
+    //
+    // But a NULL flag MEANS pulled_player_ids is NULL, which means the row is
+    // not a held draft — so counting it feedable is the semantically correct
+    // reading, not merely the permissive one. Fail-closed here would be
+    // actively wrong: if anything ever dropped that default, every ordinary
+    // pending match would read NULL, `feedable > held` would be `0 > N`, and
+    // cross-court would silently ship dead a second time. That is the exact
+    // failure this whole feature exists to undo — a transient read error
+    // costing one skipped reach is not the same risk as a persistent schema
+    // condition killing the feature outright. CCT-FEED-7 pins this.
     if (row.is_held === true) held++;
     else feedable++;
   }

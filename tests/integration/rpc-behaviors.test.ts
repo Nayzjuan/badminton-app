@@ -569,12 +569,18 @@ describe("clear_on_deck_match_atomic — Suite J", () => {
     db: pg.PoolClient,
     sessionId: string,
     waiting: string[],
-    body: string
+    body: string,
+    sourceStatus: "in_progress" | "completed" = "in_progress"
   ): Promise<{ heldId: string }> {
     const { rows: srcRows } = await db.query(
-      `INSERT INTO matches (session_id, status, started_at)
-       VALUES ($1, 'in_progress', now()) RETURNING id`,
-      [sessionId]
+      // `completed` is passed as its own boolean param rather than reusing $2:
+      // $2 lands in a match_status column, so a second `$2 = 'completed'` makes
+      // Postgres deduce text AND match_status for one parameter and fail with
+      // 42P08 ("inconsistent types deduced").
+      `INSERT INTO matches (session_id, status, started_at, completed_at)
+       VALUES ($1, $2, now(), CASE WHEN $3 THEN now() ELSE NULL END)
+       RETURNING id`,
+      [sessionId, sourceStatus, sourceStatus === "completed"]
     );
     const sourceId = srcRows[0].id;
     // ⚠️ team is lowercase 'a'/'b' — that is what create_match_with_players and
@@ -644,6 +650,48 @@ describe("clear_on_deck_match_atomic — Suite J", () => {
       expect(byId.get(body.id)).toBe("playing");
 
       // The draft itself is gone either way.
+      const { rows: gone } = await db.query(`SELECT id FROM matches WHERE id = $1`, [heldId]);
+      expect(gone).toHaveLength(0);
+    });
+  });
+
+  // ── J-1b: same held shape, but the body's game already ended ─
+
+  it("J-1b restores ALL FOUR when the pulled body's source match has completed", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+
+    const waiting: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const p = await makeProfile({ faker });
+      await makeQueueEntry({ sessionId: session.id, playerId: p.id, status: "drafted" });
+      waiting.push(p.id);
+    }
+    // The body has come off court, so its queue row is 'drafted' like the
+    // others — this is the shape a held draft takes once isHeldMatchReady
+    // has resolved and before it is promoted.
+    const body = await makeProfile({ faker });
+    await makeQueueEntry({ sessionId: session.id, playerId: body.id, status: "drafted" });
+
+    await withTx(async (db) => {
+      const { heldId } = await seedHeldDraft(db, session.id, waiting, body.id, "completed");
+
+      await db.query(`SELECT public.clear_on_deck_match_atomic($1, $2)`, [heldId, session.id]);
+
+      const { rows } = await db.query(
+        `SELECT player_id, status FROM queue_entries
+          WHERE session_id = $1 AND player_id = ANY($2)`,
+        [session.id, [...waiting, body.id]]
+      );
+      const byId = new Map(rows.map((r) => [r.player_id, r.status]));
+
+      // The NOT EXISTS guard tests PHYSICAL truth — "is this player in an
+      // in_progress match right now" — not "is this a held draft". So once
+      // the source game is over the body is an ordinary member of the four
+      // and must come back with the rest. A guard keyed on is_held or on
+      // pulled_player_ids would have stranded them here.
+      for (const pid of [...waiting, body.id]) expect(byId.get(pid)).toBe("waiting");
+
       const { rows: gone } = await db.query(`SELECT id FROM matches WHERE id = $1`, [heldId]);
       expect(gone).toHaveLength(0);
     });

@@ -1433,6 +1433,15 @@ export function buildCrossCourtProposal(
         const fourIds = [...result.proposal.teamA, ...result.proposal.teamB].map(
           (p) => p.player_id
         );
+        // The caller writes pulled_player_ids / pulled_from_match_id from the
+        // loop's `body`, NOT from the returned proposal — so a proposal that
+        // dropped the body would stamp a held draft with a puller who is not in
+        // it. runAlgorithm cannot currently do that on a 4-player pool (every
+        // rung that could substitute a player either has an empty candidate set
+        // or returns forcedRepeat, which is discarded above), but that is an
+        // emergent property of a function this one does not own. Enforce it.
+        if (!fourIds.includes(body.player_id)) continue;
+
         if (isDiversityViolation(fourIds, activeRosters)) continue;
         if (isRejectedRoster(fourIds, args.rejectedRosters)) continue;
 

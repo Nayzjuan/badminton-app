@@ -467,9 +467,25 @@ rule the surrounding code depends on.
    passing tests, because every test hand-built a 4-player pool where `getEffectiveLookback` collapses
    to 2 and the slot-loop gate never runs. `CCT-LOOK-1..4` uses a **12-player** pool for exactly this
    reason, and `CC-REACH-4` drives the real slot loop with an 11-waiting fixture.
-3. **`hasFeedableCapacity` fails CLOSED.** An unreadable count returns `false`. Skipping the reach
-   costs a slightly staler match; wrongly authorising it costs an **idle court**, which is the one
-   thing the gate exists to prevent.
+3. **`hasFeedableCapacity` fails CLOSED — on the ERROR path only.** An unreadable count returns
+   `false`. Skipping the reach costs a slightly staler match; wrongly authorising it costs an **idle
+   court**, which is the one thing the gate exists to prevent.
+   ⚠️ **The row loop deliberately does NOT fail closed, and review round 5 flagged that as an
+   inconsistency. It is not.** `is_held` is `GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0)`
+   and is **nullable** — `cardinality(NULL)` is NULL. (Verified on prod 2026-08-12: `is_held` is
+   `is_nullable = YES`, but `pulled_player_ids` defaults to `'{}'`, so all 945 rows read `false` and
+   0 read NULL.) A NULL flag *means* `pulled_player_ids IS NULL`, i.e. **not** a held draft, so
+   counting it feedable is semantically correct. Failing closed would be actively wrong: drop that
+   default and every ordinary pending match reads NULL, `feedable > held` becomes `0 > N`, and
+   cross-court **ships dead a second time**. A transient read error costing one skipped reach is a
+   different risk class from a persistent schema condition killing the feature. `CCT-FEED-7` pins it.
+   ⚠️ **Accepted risk, logged here rather than left only in a code comment** (review round 5): in
+   **draft mode** the count treats an *unpublished* draft as feedable, even though it cannot promote
+   without organizer review. So a single unpublished draft authorises a held draft, and if the
+   organizer then publishes it the session can reach zero promotable matches one step earlier than
+   before. Accepted because the alternative — filtering on `is_published` — would make the reach
+   almost never fire in draft mode, which is 5 of 7 recent sessions. Revisit if a court ever idles
+   with a held draft pending.
 4. **Dropping `i > 0` changed who the anchor is** — from the 5th-highest-priority waiter to the
    **highest-priority** one. A held draft marks its three waiting members `drafted`, removing them
    from `fetchActivePool`, so the Red-Zone and Hard-Wait escalations in `computePriorityScore` can no
