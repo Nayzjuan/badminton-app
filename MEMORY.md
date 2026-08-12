@@ -97,6 +97,90 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
+## 📡 THE BROADCAST POLICY WAS ONLY EVER TESTED FOR WHAT IT *ALLOWS* — 2026-08-12, Suite RB
+
+**Trigger.** The last open runtime handoff from the tenancy audit was "live #7 broadcast-delivery
+smoke-test", carried as a user to-do since 2026-07-24 — 19 days. Two findings came out of doing it.
+
+**1. It never needed to be a user handoff.** `tests/e2e/scenario-r-resilience.spec.ts` already drives
+two real organizer browser contexts against **production**. `[R-1] [R-2] [R-5]` → **4 passed (1.2m)**:
+the auto-matchmaking toggle propagates board-to-board, a close routes a player with no completed match
+to the club lobby and one with a completed match to Wrapped, and a draft-cap change locks then releases
+the second board. `[R-1]` and `[R-5]` call `suppressPollingFallback()` first, killing the 15 s poll so
+the **private broadcast is the expected path** — which matters, because the `realtime:` topic-prefix
+bug survived months of green runs precisely because `[R-1]` passed *on the poll* (§3.27). ⚠️ Not
+"the only path", and the helper says so itself: the `visibilitychange` handler and the Layer-3 refetch
+on `realtimeConnected` false→true both survive the suppression, so a reconnect inside the assertion
+window could still carry the state across. Sandbox `c858fa1e-a5b2-495f-970e-c6ac5a73207c` only, reset
+in `beforeEach` and once in `afterAll`.
+
+**2. The real gap was the other direction.** Every existing test of finding #7 is a **positive path**:
+`[R-1]` proves an authorized organizer *receives*, and the seven `RPB-*` unit tests mock the Supabase
+client outright. **Nothing anywhere asserted that the policy refuses anyone.** Drop
+`session_events_broadcast_read`, or widen its `using` to `true`, and all of it stays green while the
+topic is world-readable again. That is the exact shape of the bug the audit closed.
+
+**Fix: Suite RB** —
+[tests/integration/realtime-broadcast-rls.test.ts](tests/integration/realtime-broadcast-rls.test.ts),
+8 tests, green. **Realtime's authorization decision is reproducible in plain SQL**: to authorize a
+join it opens a transaction, sets the caller's role and JWT claims, sets `realtime.topic`, and asks
+Postgres whether the caller can `SELECT` from `realtime.messages`. The suite does exactly that, so it
+exercises the real policy, the real `realtime_topic_session_id()` and the real `session_access_level()`
+over real rows — not a mock. Covered: a plain club **member** may read (deliberately — players
+subscribe too, so gating on `'organizer'` would be a regression), an organizer may read, **a signed-in
+stranger is refused**, belonging to one club does not open another club's topic, a deactivated member
+goes dark, `anon` is refused, malformed topics deny without raising, and **nobody may INSERT — not even
+the organizer** (the forgery half).
+
+**Mutation-tested, not merely green.** Four mutated policy sets were installed in turn and the suite
+re-run against each; every one of the 8 tests is killed by at least one. ⚠️ Recorded honestly in the
+file header: **RB-6 (`anon`) is a pin, not a discriminator** — it survives M1–M3, because none of them
+gives `anon` a read arm. ⚠️ And the mutants are only reproducible as **verbatim DDL**: M2 is written
+`for all TO AUTHENTICATED using (true)`, and dropping that `to` clause makes the policy apply to
+`PUBLIC` — which includes `anon` — so RB-6 would fail too and the table would be wrong. The table
+lives in the test file header, next to the DDL it was measured from. Do not paraphrase it here.
+
+**Three facts worth keeping:**
+- **`anon` and `authenticated` both hold the INSERT table GRANT on `realtime.messages`**, so the
+  forgery half is closed by the **empty policy set**, not by a missing grant. ⚠️ But SQLSTATE `42501`
+  does **not** distinguish those: it is `ERRCODE_INSUFFICIENT_PRIVILEGE` and Postgres raises it
+  identically for "permission denied for table messages" and for "new row violates row-level security
+  policy". A code-only assertion would stay green if a future migration swapped one closure for the
+  other, silently falsifying the manifest. RB-8 therefore asserts three things: `has_table_privilege`
+  is true for both roles, the insert failed, and the message matches `/row-level security/`.
+- **`pg_policies` reports a `for all` policy as `cmd='ALL'`**, which confers INSERT just the same. A
+  guard that only looks for `'INSERT'` would let the forgery hole back in silently.
+- **`auth.uid()` reads `current_setting('request.jwt.claim.sub')` first**, then falls back to
+  `request.jwt.claims->>'sub'`. A stale singular setting silently outranks the JSON claims, so the
+  actor helper clears it explicitly on every switch. Also: `realtime.messages` is **partitioned by
+  day**; an idle local stack can be missing today's partition and the insert fails **23514**.
+
+**Prod parity, which is what lets a local suite speak for production:** the predicate hashes
+identically on both — `qual_md5 = b71440dd4933b587be11431d4465e374`, one SELECT policy, no INSERT/ALL
+policy on either side.
+
+**Scope:** this is a **coverage** fix. No production code or policy changed. It does not cover the
+WebSocket layer itself or the project-wide "Allow public access" dashboard toggle (still open, still
+optional). See APP_MANIFEST §3.35.
+
+⚠️ **Unrelated, found while reading and NOT changed.** `TENANCY_AUDIT_2026-07-21.md:88` prescribes
+**three** things for #7: declare the channel private, add the `realtime.messages` policy, *and* "stop
+putting display names in payloads — send only ids and let each client resolve names it is authorized
+to read." Only the first two shipped. [src/lib/broadcast.ts:83](src/lib/broadcast.ts:83) still sends
+`actorName` and [:293](src/lib/broadcast.ts:293) `anchorPlayerName`. Now that the topic is private and
+member-scoped, those names reach only people who can already read the board and every name on it — so
+the residual leak is ~nil, which is plausibly why it was dropped. Note APP_MANIFEST is **not** wrong
+here: §Broadcast System lists both fields as current payload members and cites the names only as part
+of the *pre-migration* leak. What overclaims is the closure language around finding #7. Two places said
+it; one is now fixed. **Still overclaiming:** this file's own
+`**✅ ALL CLOSED 2026-07-24:** PR4a=#41 merged (4bc5cfc) + migration applied` (left uncorrected on
+purpose — it is an accurate record of what that day's PR did, and rewriting history to hide a later
+discovery is the wrong repair). **Corrected 2026-08-12:** the assistant memory index outside the repo,
+whose `every code finding fixed in prod` now carries an inline caveat naming this exact clause. Owner's
+call whether to strip the names or amend the audit; **do not silently re-scope it as done.**
+
+---
+
 ## 📖 MATCHMAKING ENGINE AUDIT (docs only, no code changed) — 2026-08-12
 
 Owner asked for a plain-English audit of how the engine works + the match-setup hierarchy.
@@ -2105,11 +2189,12 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 
 ## 📋 STANDING TO-DO (as of 2026-08-12)
 
-**`main` is `fe98587`, with work in flight.** PR #61 (Suite XC — the cross-court real-DB proof) is
-open and unmerged, and the cross-session ledger work in **B** is on its own branch. Migration
-`20260812100000` is applied to prod (stamp `20260812144342`); the queue is otherwise empty. What is
-left that cannot be done from here is **A** and **C**, both needing a live session, plus the optional
-dashboard toggle **D**. **B is done** — kept below because its consequences are worth carrying.
+**`main` is `fe98587`, with work in flight.** PR #61 (Suite XC — the cross-court real-DB proof) and
+PR #62 (the cross-session ledger rebuild, **B**) are both open and unmerged. Migration
+`20260812100000` is applied to prod (stamp `20260812144342`); the queue is otherwise empty. The only
+thing left that cannot be done from here is **A**, which needs a live session, plus the optional
+dashboard toggle **D**. **B and C are done** — kept below because their consequences are worth
+carrying.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
@@ -2143,8 +2228,31 @@ record — **do not re-run this as if it were pending**:
   Its first live exercise is still ahead — fold it into the same night as **A**. Full analysis in
   §"CROSS-SESSION STATS".
 
-**C. Live #7 broadcast-delivery smoke-test** (tenancy audit) — two organizer boards, toggle
-propagates; close → Wrapped. Also covers the resilience fixes and queue/courts transitions.
+**C. Live #7 broadcast-delivery smoke-test — ✅ DONE 2026-08-12.** It sat as a user to-do from
+2026-07-24; it never needed to be one. `tests/e2e/scenario-r-resilience.spec.ts`
+already drives two real organizer contexts against **production**, and running `[R-1] [R-2] [R-5]`
+there went 4/4 green: the auto-matchmaking toggle propagates to a second organizer board over the
+private broadcast, a close routes a player with no completed match to the club lobby and one with a
+completed match to Wrapped, and a draft-cap change locks then releases the second board. `[R-1]`
+and `[R-5]` suppress the 15 s polling fallback first, so the broadcast is the **expected** path —
+which is the point: the `realtime:` topic-prefix bug survived for months because `[R-1]` passed **on
+the poll** (§3.27). Not the *only* path, and the helper's own comment says so: the `visibilitychange`
+handler and the Layer-3 refetch on reconnect both survive the suppression. ⚠️ The run mutates the
+hidden sandbox session `c858fa1e-a5b2-495f-970e-c6ac5a73207c` on prod; `resetSandboxSession()` wipes
+it in `beforeEach` and once in `afterAll`, and no real session or member is touched.
+
+  ⚠️ **What the E2E run does not prove, and what now does.** `[R-1]` is a positive path — it shows an
+  authorized organizer *receives*. Nothing anywhere asserted that finding #7's policy *refuses*, so a
+  dropped or unscoped `session_events_broadcast_read` would have left it, and all seven `RPB-*` mocked
+  unit tests, green. Closed by **Suite RB**
+  ([tests/integration/realtime-broadcast-rls.test.ts](tests/integration/realtime-broadcast-rls.test.ts),
+  §3.35): 8 tests reproducing exactly what Realtime runs to authorize a join (set role + JWT claims +
+  `realtime.topic`, then ask Postgres). Each is killed by at least one of four mutated policy sets, and
+  the prod predicate hashes byte-identically to the local one (`b71440dd…`). Also newly covered: the
+  **forgery** half — no caller may INSERT. What closes it is the empty policy set, not a missing GRANT
+  (`anon` and `authenticated` both hold INSERT on `realtime.messages`); since SQLSTATE `42501` is
+  raised for *either*, RB-8 asserts the grant is present **and** that the error names row-level
+  security. Details in the top-of-file §"THE BROADCAST POLICY…".
 
 **D. Optional, unscheduled:** project-wide Realtime "Allow public access" OFF (needs every
 `postgres_changes` channel private first); and **9 stale remote branches** whose PRs are all merged
@@ -2161,8 +2269,11 @@ cleanup, no unshipped content in any of them.
    nothing real: every `auth.users` row signs in via Google OAuth and walk-in players are anonymous+PIN, so no
    email+password credential exists for HIBP to check. The advisor WARN `auth_leaked_password_protection` will
    keep appearing — **accepted noise**. Re-open only if the app adds password sign-up _or_ the org upgrades to Pro.
-3. **USER: live #7 smoke-test** next session (two organizer boards → toggle propagates; close → Wrapped) —
-   doubles as live verification of the resilience fixes + queue/courts transitions.
+3. ~~USER: live #7 smoke-test~~ ✅ **DONE 2026-08-12 — and it never needed to be a user handoff.**
+   `tests/e2e/scenario-r-resilience.spec.ts` already drives two real organizer contexts against
+   **production**; `[R-1] [R-2] [R-5]` ran 4/4 green (toggle propagates with the polling fallback
+   suppressed, close → lobby vs Wrapped, draft-cap lock/release). Negative coverage — that the policy
+   *refuses* an outsider, and that nobody may forge a broadcast — is Suite RB (§3.35). See **C** above.
 4. Optional hardening: project-wide Realtime "Allow public access" OFF (needs every postgres_changes channel
    private first — scoped project).
 5. ~~Fix auth-loss resilience~~ ✅ MERGED 2026-07-29 (PR #46 `90766f7`, prod READY).
@@ -2501,10 +2612,13 @@ optional) · the `p_session_id` NULL-rejecting follow-up.
 - migration applied; the NULL-reject follow-up = `20260724000000` applied+verified. **#9 FORMALLY ACCEPTED**
   (opaque-UUID `match_players` DELETE leak; no policy fix is possible — RLS can't read a PK-only DELETE row, which
   is also why it's harmless; the only fix touches prod realtime infra + 5 hooks for negligible benefit — fix
-  design banked in the `tenancy-audit-findings` memory). Remaining = **2** runtime/dashboard handoffs (live #7
-  delivery smoke-test, optional project-wide "Allow public access" OFF). _(Was 3 — the leaked-password toggle was
-  closed as WON'T DO on 2026-08-04: Pro-plan-gated on a Free org, and there are no email+password credentials for
-  HIBP to check. See the STANDING TO-DO at the top of this file.)_
+  design banked in the `tenancy-audit-findings` memory). Remaining = **1** dashboard handoff: the optional
+  project-wide "Allow public access" OFF. _(Was 3. The leaked-password toggle was closed as WON'T DO on
+  2026-08-04: Pro-plan-gated on a Free org, and there are no email+password credentials for HIBP to check. The
+  live #7 delivery smoke-test was closed on **2026-08-12** — it was never actually a user handoff: the
+  resilience E2E suite already drives two organizer contexts against prod, and `[R-1] [R-2] [R-5]` ran 4/4
+  green. Its missing half — proof the policy **refuses** — is now Suite RB, §3.35. See the STANDING TO-DO at
+  the top of this file.)_
 
 ---
 
