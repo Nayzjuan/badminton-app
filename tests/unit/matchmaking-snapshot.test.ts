@@ -40,6 +40,7 @@ import {
   deriveRecentRosters,
   derivePairCounts,
   deriveOverlapMap,
+  deriveLastOpponents,
   fetchPartnershipCounts,
   type DbClient,
   type SessionMatchSnapshot,
@@ -534,5 +535,181 @@ describe("fetchPartnershipCounts", () => {
     const { partnershipCounts, opponentCounts } = await fetchPartnershipCounts(db, SESSION_ID);
     expect(partnershipCounts.get(pairKey("p1", "p2"))).toBe(1);
     expect(opponentCounts.get(pairKey("p1", "p3"))).toBe(1);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+// deriveLastOpponents — the split-aware consecutive-opponent input
+// ═════════════════════════════════════════════════════════════
+//
+// Unlike the three derivations above, this one has NO lookback window: "last
+// match" is per-player, and a fixed window silently reports a stale set for
+// anyone who has not played inside it. These pin the properties the engine's
+// freshness term actually depends on.
+
+describe("deriveLastOpponents", () => {
+  it("SNAP-14: reports only CROSS-NET players — a teammate is never an opponent", () => {
+    const snapshot = snapshotOf([
+      {
+        id: "m1",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "b"],
+          ["p4", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastOpponents(snapshot);
+    expect([...(last.get("p1") ?? [])].sort()).toEqual(["p3", "p4"]);
+    expect([...(last.get("p3") ?? [])].sort()).toEqual(["p1", "p2"]);
+    // p2 is p1's teammate, so p1 must not list them.
+    expect(last.get("p1")?.has("p2")).toBe(false);
+  });
+
+  it("SNAP-15: the NEWEST match wins per player — matchIds is created_at DESC", () => {
+    // m0 is newest. p1 faced p3/p4 there and p5/p6 in the older m1.
+    const snapshot = snapshotOf([
+      {
+        id: "m0",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "b"],
+          ["p4", "b"],
+        ],
+      },
+      {
+        id: "m1",
+        roster: [
+          ["p1", "a"],
+          ["p7", "a"],
+          ["p5", "b"],
+          ["p6", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastOpponents(snapshot);
+    expect([...(last.get("p1") ?? [])].sort()).toEqual(["p3", "p4"]);
+    // p5 only played m1, so their last opponents come from there.
+    expect([...(last.get("p5") ?? [])].sort()).toEqual(["p1", "p7"]);
+  });
+
+  it("SNAP-16: takes no lookback window — a player who last played long ago is still reported", () => {
+    // p9's only match is the OLDEST of 12 — well past ROSTER_LOOKBACK_COUNT (10)
+    // and ANTI_REPEAT_LOOKBACK (5), the windows the other derivations use.
+    const filler = Array.from({ length: 11 }, (_, i) => ({
+      id: `m${i}`,
+      roster: [
+        [`f${i}a`, "a"],
+        [`f${i}b`, "a"],
+        [`f${i}c`, "b"],
+        [`f${i}d`, "b"],
+      ] as [string, string][],
+    }));
+    const snapshot = snapshotOf([
+      ...filler,
+      {
+        id: "old",
+        roster: [
+          ["p9", "a"],
+          ["p10", "a"],
+          ["p11", "b"],
+          ["p12", "b"],
+        ],
+      },
+    ]);
+
+    expect(snapshot.matchIds.length).toBeGreaterThan(ROSTER_LOOKBACK_COUNT);
+    const last = deriveLastOpponents(snapshot);
+    expect([...(last.get("p9") ?? [])].sort()).toEqual(["p11", "p12"]);
+  });
+
+  it("SNAP-17: a malformed roster marks its players SEEN with an empty set, not skipped", () => {
+    // One team bucket only (a 4-0 roster) — walking past it to the older match
+    // would report a stale, wrong opponent set for p1.
+    const snapshot = snapshotOf([
+      {
+        id: "m0",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "a"],
+          ["p4", "a"],
+        ],
+      },
+      {
+        id: "m1",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p5", "b"],
+          ["p6", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastOpponents(snapshot);
+    expect(last.has("p1")).toBe(true);
+    expect(last.get("p1")?.size).toBe(0);
+  });
+
+  it("SNAP-17b: a 3-1 roster is malformed too — two buckets is not enough", () => {
+    // Checking only the bucket COUNT passed this as well-formed and recorded
+    // three players as p4's genuine last opponents. PLAYERS_PER_MATCH is 4 with
+    // no singles mode, so a lopsided roster is corrupt data, not a variant.
+    const snapshot = snapshotOf([
+      {
+        id: "m0",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "a"],
+          ["p4", "b"],
+        ],
+      },
+      {
+        id: "m1",
+        roster: [
+          ["p4", "a"],
+          ["p7", "a"],
+          ["p5", "b"],
+          ["p6", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastOpponents(snapshot);
+    // Seen, but with nothing recorded — and crucially NOT walked past to m1,
+    // which would have reported p5/p6 as p4's most recent opponents.
+    expect(last.has("p4")).toBe(true);
+    expect(last.get("p4")?.size).toBe(0);
+    expect(last.get("p1")?.size).toBe(0);
+  });
+
+  it("SNAP-18: an empty snapshot yields an empty map (t=0 — the engine runs unchanged)", () => {
+    expect(deriveLastOpponents(snapshotOf([])).size).toBe(0);
+  });
+
+  it("SNAP-19: a match id with no roster rows is skipped without masking the next one", () => {
+    const snapshot: SessionMatchSnapshot = {
+      matchIds: ["ghost", "m1"],
+      rowsByMatch: new Map([
+        [
+          "m1",
+          [
+            { player_id: "p1", team: "a" },
+            { player_id: "p2", team: "a" },
+            { player_id: "p3", team: "b" },
+            { player_id: "p4", team: "b" },
+          ],
+        ],
+      ]),
+    };
+
+    const last = deriveLastOpponents(snapshot);
+    expect([...(last.get("p1") ?? [])].sort()).toEqual(["p3", "p4"]);
   });
 });

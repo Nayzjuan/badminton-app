@@ -14,6 +14,9 @@ import {
   deriveTeams,
   derivePairWarnings,
   deriveCandidateMarkers,
+  deriveFreshCandidates,
+  eligibleCandidates,
+  freshMarkersAreInformative,
   hasCleanAlternative,
   filledCount,
   DEFAULT_REPEAT_THRESHOLDS,
@@ -262,5 +265,171 @@ describe("repeat-pairing — exclusion + disjointness", () => {
       );
       for (const k of markerKeys) expect(panelKeys.has(k)).toBe(false);
     }
+  });
+});
+
+// ============================================================
+// RP-F*  FRESH chips — deriveFreshCandidates + the discrimination gate
+// ============================================================
+// The chip exists because the amber marker CANNOT answer this question: it
+// only fires at count >= cap, so the unmarked bench silently mixes "never
+// played with them" (0) and "played with them once" (1). Every test below
+// that uses P4 as the once-played body is guarding exactly that gap.
+
+const P6 = "p6";
+
+describe("repeat-pairing — deriveFreshCandidates", () => {
+  it("RP-F1: zero history with the would-be PARTNER is required (1 prior is not fresh)", () => {
+    // One selected -> the next tap fills A2, so P1 is the referent as a teammate.
+    const c = counts([[P1, P4, 1]]);
+    // P4 has ONE prior partnership: under the cap, so no amber marker...
+    expect(deriveCandidateMarkers([P1], [P4], c, T)).toEqual([]);
+    // ...and that is precisely why it must not be green either.
+    expect(deriveFreshCandidates([P1], [P4, P5], c)).toEqual([P5]);
+  });
+
+  it("RP-F2: zero history with EVERY would-be opponent is required", () => {
+    // Two selected -> next tap fills B1, opposing both A players.
+    const c = counts([], [[P2, P4, 1]]);
+    expect(deriveFreshCandidates([P1, P2], [P4, P5], c)).toEqual([P5]);
+  });
+
+  it("RP-F3: BOTH MAPS count, not just the role this pick would create", () => {
+    // Three selected -> next tap fills B2: teammate of P3, opponent of P1/P2.
+    // P4 has never PARTNERED anyone, but has faced P1 once.
+    const c = counts([], [[P1, P4, 1]]);
+    expect(deriveFreshCandidates([P1, P2, P3], [P4, P5], c)).toEqual([P5]);
+    // The mirror: a partnership-only history against the B2 teammate.
+    expect(deriveFreshCandidates([P1, P2, P3], [P4, P5], counts([[P3, P4, 1]]))).toEqual([P5]);
+    // And the case that pins the cross-role rule: P4 has PARTNERED P1 once,
+    // while this pick would make them OPPONENTS. Role-specific logic would
+    // call that fresh; the chip's copy ("no games with P1") would then be a
+    // lie, so it must not.
+    expect(deriveFreshCandidates([P1, P2, P3], [P4, P5], counts([[P1, P4, 1]]))).toEqual([P5]);
+    // Mirror again: faced the would-be TEAMMATE.
+    expect(deriveFreshCandidates([P1, P2, P3], [P4, P5], counts([], [[P3, P4, 1]]))).toEqual([P5]);
+  });
+
+  it("RP-F4: history with a player the next pick does NOT touch is irrelevant", () => {
+    // Next tap fills A2: referent is P1 alone. Slots 2/3 are empty, so P3 is
+    // not in the picture at all — a fat history with P3 must not disqualify.
+    const c = counts([[P3, P4, 9]], [[P3, P4, 9]]);
+    expect(deriveFreshCandidates([P1], [P4], c)).toEqual([P4]);
+  });
+
+  it("RP-F5: same guards as the markers — full selection and empty selection", () => {
+    const c = counts();
+    expect(deriveFreshCandidates([], [P5], c)).toEqual([]);
+    expect(deriveFreshCandidates([P1, P2, P3, P4], [P5], c)).toEqual([]);
+  });
+
+  it("RP-F6: never returns an already-selected player, even if the caller passes one", () => {
+    const c = counts();
+    expect(deriveFreshCandidates([P1, P2], [P1, P2, P5], c)).toEqual([P5]);
+  });
+
+  it("RP-F7: post-deselect — freeing A2 re-targets freshness at the TEAMMATE", () => {
+    // Slots [P1, null, P3, P4]: three selected, and the next tap is a
+    // TEAMMATE of P1 rather than of P3 — but A2 also opposes the whole B side,
+    // so P3 and P4 are touched too. P5 is clean against P1 and dirty against
+    // P3, and the both-maps rule means dirty against ANY touched player loses
+    // the chip.
+    expect(deriveFreshCandidates([P1, null, P3, P4], [P5], counts([[P3, P5, 4]]))).toEqual([]);
+    // Whereas history with a body in NO slot cannot disqualify: with only A1
+    // filled, P3 and P4 are not in the picture at all.
+    expect(deriveFreshCandidates([P1], [P5], counts([[P3, P5, 4]]))).toEqual([P5]);
+    // Remove the history and the deselect case is fresh again:
+    expect(deriveFreshCandidates([P1, null, P3, P4], [P5], counts())).toEqual([P5]);
+  });
+
+  it("RP-F8: fresh and marked are mutually exclusive at every selection size", () => {
+    const all = [P1, P2, P3, P4, P5, P6];
+    const c = counts(
+      [
+        [P1, P5, 3],
+        [P2, P6, 1],
+      ],
+      [
+        [P1, P6, 2],
+        [P3, P5, 1],
+      ]
+    );
+    for (let n = 1; n <= 3; n++) {
+      const ordered = all.slice(0, n);
+      const candidates = all.filter((id) => !ordered.includes(id));
+      const marked = new Set(
+        deriveCandidateMarkers(ordered, candidates, c, T).map((m) => m.playerId)
+      );
+      const fresh = deriveFreshCandidates(ordered, candidates, c);
+      // Both sides must be non-empty at every n, or the disjointness below is
+      // satisfied by a deriver that simply returned nothing.
+      expect(marked.size).toBeGreaterThan(0);
+      expect(fresh.length).toBeGreaterThan(0);
+      for (const id of fresh) expect(marked.has(id)).toBe(false);
+    }
+  });
+
+  it("RP-F9: FRESH implies no consecutive rematch — the property the chip leans on", () => {
+    // The engine's consecutive-opponent term (APP_MANIFEST §3.32) can only
+    // charge a pair that has met at all. Zero total meetings therefore also
+    // means zero LAST-GAME meetings, whatever the match history looked like.
+    // Encoded as: any candidate with a non-zero opponent count is excluded,
+    // so the fresh set can never contain a just-faced pair.
+    const c = counts([], [[P1, P4, 1]]);
+    const fresh = deriveFreshCandidates([P1, P2], [P4, P5], c);
+    // Exact, not `not.toContain`: an always-empty deriver would satisfy both
+    // the exclusion and the property loop below.
+    expect(fresh).toEqual([P5]);
+    for (const id of fresh) {
+      expect(c.opponents.get(pairKey(P1, id)) ?? 0).toBe(0);
+      expect(c.opponents.get(pairKey(P2, id)) ?? 0).toBe(0);
+    }
+  });
+});
+
+describe("repeat-pairing — eligibleCandidates (one basis for the ratio)", () => {
+  it("RP-F14: drops ids that already hold a slot, and keeps caller order", () => {
+    expect(eligibleCandidates([P1, P3], [P1, P2, P3, P4])).toEqual([P2, P4]);
+    expect(eligibleCandidates([], [P2, P1])).toEqual([P2, P1]);
+  });
+
+  it("RP-F15: it is the deriver's own denominator — a loose pool cannot fake a signal", () => {
+    // Everyone is fresh, so the gate must stay SILENT. Measured against the
+    // raw pool (which still holds the two selected players) 3 < 5 would read
+    // as "discriminating" and paint the whole bench green.
+    const c = counts();
+    const raw = [P1, P2, P3, P4, P5];
+    const pool = eligibleCandidates([P1, P2], raw);
+    const fresh = deriveFreshCandidates([P1, P2], pool, c);
+    expect(fresh).toEqual([P3, P4, P5]);
+    expect(freshMarkersAreInformative(fresh.length, pool.length)).toBe(false);
+    expect(freshMarkersAreInformative(fresh.length, raw.length)).toBe(true); // the bug it prevents
+  });
+});
+
+describe("repeat-pairing — freshMarkersAreInformative (discrimination gate)", () => {
+  it("RP-F10: silent when EVERY candidate is fresh — a chip on every row says nothing", () => {
+    expect(freshMarkersAreInformative(5, 5)).toBe(false);
+  });
+
+  it("RP-F11: silent when NO candidate is fresh — the absence is the message", () => {
+    expect(freshMarkersAreInformative(0, 5)).toBe(false);
+    expect(freshMarkersAreInformative(0, 0)).toBe(false);
+  });
+
+  it("RP-F12: speaks only when the chips actually discriminate", () => {
+    expect(freshMarkersAreInformative(1, 5)).toBe(true);
+    expect(freshMarkersAreInformative(4, 5)).toBe(true);
+  });
+
+  it("RP-F13: the two gates are independent, not merely co-firing", () => {
+    const c = counts([[P1, P5, 5]], [[P1, P5, 5]]);
+    const candidates = [P5, P6];
+    // Warnings would be suppressed only if NOTHING is clean; here P6 is clean,
+    // so this asserts the two gates are independent, not merely co-firing.
+    expect(hasCleanAlternative([P1], candidates, c, T)).toBe(true);
+    const fresh = deriveFreshCandidates([P1], candidates, c);
+    expect(fresh).toEqual([P6]);
+    expect(freshMarkersAreInformative(fresh.length, candidates.length)).toBe(true);
   });
 });

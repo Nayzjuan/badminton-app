@@ -18,6 +18,8 @@ import {
   announcementFor,
   joinWithAnd,
   markerLabel,
+  freshLabel,
+  freshTitle,
   markerLegend,
   markerTitle,
   ordinal,
@@ -97,6 +99,24 @@ describe("repeat-pairing-copy — headlines", () => {
     const text = pairHeadline(warning("p1", "p2", "opponent", 3), nameOf);
     expect(text).toContain("have been opponents 3×");
     expect(text).not.toMatch(/faced/i);
+  });
+
+  it("RPC-H2b: the opponent headline must NOT promise the engine will refuse", () => {
+    // MAX_OPPONENT_REPEATS is a SOFT preference — snakeDraft only PREFERS
+    // splits under it and never blocks, so the engine will happily re-run the
+    // pairing when nothing better exists. The old copy said "won't match them
+    // again", which made every such rematch look like a bug to the organizer.
+    const text = pairHeadline(warning("p1", "p2", "opponent", 3), nameOf);
+    expect(text).toBe(
+      "Alice & Bob have been opponents 3× tonight — auto-matchmaking avoids this, but won't refuse it"
+    );
+    expect(text).not.toMatch(/won't match them again/);
+    // The TEAMMATE claim is the one that is literally true (hard cap), so it
+    // must survive untouched — asserting both together is what stops a future
+    // edit from "harmonising" the two lines in the wrong direction.
+    expect(pairHeadline(warning("p1", "p2", "teammate", 2), nameOf)).toContain(
+      "won't pair them again"
+    );
   });
 
   it("RPC-H3: relation nouns are Teammates / Opponents", () => {
@@ -215,5 +235,71 @@ describe("repeat-pairing-copy — legend", () => {
     expect(markerLegend("A", null, [], nameOf)).toBe(
       "Marked players would repeat a pairing if picked next (Team A)."
     );
+  });
+
+  it("RPC-L4: the default families argument reproduces the pre-FRESH string", () => {
+    // Callers that predate the FRESH chips must be unaffected by the new
+    // parameter — same call, same bytes.
+    expect(markerLegend("B", "p3", ["p1", "p2"], nameOf)).toBe(
+      markerLegend("B", "p3", ["p1", "p2"], nameOf, { repeats: true, fresh: false })
+    );
+  });
+
+  it("RPC-L5: a fresh-only screen is not described as a repeat warning", () => {
+    const text = markerLegend("B", "p3", ["p1", "p2"], nameOf, { repeats: false, fresh: true });
+    expect(text).toBe(
+      "Fresh players have no games yet with whoever the next pick joins (Team B, alongside Carol, against Alice and Bob)."
+    );
+    expect(text).not.toMatch(/repeat a pairing/);
+  });
+
+  it("RPC-L6: both families live — the legend explains both, and keeps the referent", () => {
+    const text = markerLegend("A", "p1", ["p3"], nameOf, { repeats: true, fresh: true });
+    expect(text).toBe(
+      "Marked players would repeat a pairing if picked next; Fresh players have no games yet with whoever the next pick joins (Team A, alongside Alice, against Carol)."
+    );
+  });
+
+  it("RPC-L7: the fresh clause is WORD-FOR-WORD the same in both branches", () => {
+    // A shortened combined form ("…no games with them yet") reads as "them =
+    // the Marked players", which is false — a fresh player may well have played
+    // with a marked one. Pinning the two against each other is what stops a
+    // future tightening pass from reintroducing that.
+    const freshOnly = markerLegend("A", "p1", ["p3"], nameOf, { repeats: false, fresh: true });
+    const clause = freshOnly.slice(0, freshOnly.indexOf(" (Team"));
+    expect(markerLegend("A", "p1", ["p3"], nameOf, { repeats: true, fresh: true })).toContain(
+      clause
+    );
+  });
+});
+
+describe("repeat-pairing-copy — FRESH chip", () => {
+  it("RPC-F1: the tooltip names everyone the pick touches", () => {
+    expect(freshTitle("p1", ["p3", "p4"], nameOf)).toBe(
+      "No games with Alice, Carol and Dave yet tonight"
+    );
+  });
+
+  it("RPC-F2: partner-only and opponent-only referents both read correctly", () => {
+    expect(freshTitle("p1", [], nameOf)).toBe("No games with Alice yet tonight");
+    expect(freshTitle(null, ["p3", "p4"], nameOf)).toBe("No games with Carol and Dave yet tonight");
+  });
+
+  it("RPC-F3: the spoken register spells out that BOTH roles are covered", () => {
+    // "no games with Alice" alone leaves a listener unable to tell whether
+    // that means never partnered, never faced, or neither.
+    expect(freshLabel("p1", ["p3"], nameOf)).toBe(
+      "Fresh pick: no games with Alice and Carol yet tonight, as teammates or opponents."
+    );
+  });
+
+  it("RPC-F4: an empty referent degrades rather than rendering an empty list", () => {
+    expect(freshTitle(null, [], nameOf)).toBe("No games yet tonight");
+    expect(freshLabel(null, [], nameOf)).toBe("Fresh pick: no games yet tonight.");
+  });
+
+  it("RPC-F5: unknown ids degrade to 'Unknown', never 'undefined'", () => {
+    expect(freshTitle("ghost", [], nameOf)).toBe("No games with Unknown yet tonight");
+    expect(freshLabel("ghost", [], nameOf)).not.toContain("undefined");
   });
 });

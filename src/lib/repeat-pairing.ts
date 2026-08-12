@@ -218,6 +218,112 @@ export function deriveCandidateMarkers(
 }
 
 /**
+ * The POSITIVE inverse of deriveCandidateMarkers: who has NO shared history at
+ * all with anyone the next pick touches.
+ *
+ * This is not "the players without an amber marker". A marker only fires at
+ * `count >= cap` (2), so the unmarked bench silently mixes never-played-with
+ * (0) and played-with-once (1). The organizer hand-building a match after a
+ * clear cannot tell those apart, which is exactly the gap that sends them
+ * scrolling through Wrapped mid-session to check.
+ *
+ * ZERO, not "under the cap", on purpose — it is the only threshold that needs
+ * no explaining on a chip two words long, and it gives the chip a property
+ * worth relying on: a player who has never faced someone cannot have faced
+ * them LAST GAME either, so a FRESH pick is also free of the consecutive-
+ * opponent penalty the engine now applies (APP_MANIFEST §3.32). A "1 prior"
+ * tier would carry neither guarantee.
+ *
+ * BOTH MAPS, not just the role this pick would create. A candidate who has
+ * partnered the would-be opponent four times is not "fresh" against them in
+ * any sense the organizer means, and the chip's own copy — "no games with
+ * Alice, Bob and Carol yet tonight" — would be a plain lie. This is the one
+ * place the feature deliberately diverges from the engine's role-specific
+ * caps: the amber marker mirrors the engine because it predicts what the
+ * engine will refuse, while the green chip answers a human question about who
+ * has shared a court. Strictness is the safe direction — it can only ever
+ * withhold a chip, never over-promise on one.
+ *
+ * Same targeting and same exclusion contract as deriveCandidateMarkers: the
+ * next tap fills the FIRST FREE SLOT, and `candidateIds` must already exclude
+ * selected / locked / paused rows. Returns [] when the selection is full (no
+ * next pick) or empty (no referent — "fresh against nobody" is meaningless).
+ *
+ * The selected-id filter below re-applies that contract defensively. Callers
+ * measuring the pool for `freshMarkersAreInformative` must use
+ * `eligibleCandidates` so the numerator and denominator share one basis.
+ */
+export function deriveFreshCandidates(
+  slots: Slots,
+  candidateIds: string[],
+  counts: PairCounts
+): string[] {
+  const s = normalize(slots);
+  const target = s.findIndex((x) => x === null);
+  if (target === -1 || filledCount(s) === 0) return [];
+
+  // Everyone the next pick would share a court with — the partner slot and
+  // both opposing slots. Roles are not tracked past this point, by design.
+  const partner = s[partnerSlotIndex(target)] ?? null;
+  const touched = [
+    ...(partner ? [partner] : []),
+    ...opposingSlotIndices(target)
+      .map((i) => s[i])
+      .filter((x): x is string => !!x),
+  ];
+
+  const selectedSet = new Set(s.filter((x): x is string => !!x));
+
+  return candidateIds.filter(
+    (candidate) =>
+      !selectedSet.has(candidate) &&
+      touched.every(
+        (other) =>
+          countFor(counts, "teammate", candidate, other) === 0 &&
+          countFor(counts, "opponent", candidate, other) === 0
+      )
+  );
+}
+
+/**
+ * The rows a FRESH chip could legitimately land on — `candidateIds` minus
+ * anyone already holding a slot. It exists so the fresh count and the pool it
+ * is compared against are computed from ONE basis: measuring the numerator
+ * post-exclusion and the denominator pre-exclusion would make an all-fresh
+ * bench (correctly silent) look like a discriminating one, which is a wall of
+ * green produced by the very gate meant to prevent it.
+ */
+export function eligibleCandidates(slots: Slots, candidateIds: string[]): string[] {
+  const selectedSet = new Set(normalize(slots).filter((x): x is string => !!x));
+  return candidateIds.filter((id) => !selectedSet.has(id));
+}
+
+/**
+ * Whether the FRESH chips are worth rendering at all.
+ *
+ * Render only when the chips DISCRIMINATE — some eligible candidate is fresh
+ * and some is not. The two silent ends are the ones that carry no information
+ * at all: a chip on EVERY row says nothing (the first half of a session, when
+ * nobody has played anybody), and zero fresh players has nothing to point at.
+ *
+ * Deliberately an all-or-nothing test, NOT a ratio floor. 12 of 15 rows green
+ * is lopsided but still says something true about the other 3, and any floor
+ * would be a number invented here with no evidence behind it — while the two
+ * degenerate ends are provably information-free. The lopsided case also
+ * self-corrects: the touched set grows from 1 referent to 3 by the fourth
+ * pick, and each one can only remove players from the fresh set.
+ *
+ * Note this is deliberately NOT the avoidability gate that governs the amber
+ * warnings. That gate suppresses a warning the organizer could not have
+ * avoided; a FRESH chip is most useful precisely when options are scarce,
+ * including while the engine's own cap-saturation notice is up telling them to
+ * override by hand.
+ */
+export function freshMarkersAreInformative(freshCount: number, candidateCount: number): boolean {
+  return freshCount > 0 && freshCount < candidateCount;
+}
+
+/**
  * Avoidability gate. A warning is only worth showing if the organizer could
  * plausibly have done better: if EVERY selectable alternative for that slot is
  * also over the cap, the repeat is forced and the warning is noise.

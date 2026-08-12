@@ -64,3 +64,6 @@ supabase/.temp/
 # Production snapshots from scripts/prod-snapshot.ts — full table dumps of REAL
 # member data (names, emails, PINs). Never commit these.
 .prod-baseline/
+# Engine replay fixtures from scripts/replay-sessions.ts — real session rosters
+# (member names + skill levels) and the saved metric runs derived from them.
+.replay-cache/

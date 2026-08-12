@@ -12,10 +12,12 @@
 //
 // Exports:
 //   fetchActivePool            — waiting players, paused-filtered, unscored
+//   fetchRecentClearedRosters  — READ: organizer-cleared rosters (rejection memory)
 //   fetchSessionMatchSnapshot  — READ: this session's committed matches + rosters
 //   deriveRecentRosters        — pure: recent rosters for diversity checks
 //   derivePairCounts           — pure: same-team + cross-net pair counts
 //   deriveOverlapMap           — pure: per-anchor co-player familiarity weights
+//   deriveLastOpponents        — pure: who each player faced in their LAST match
 //   fetchPartnershipCounts     — snapshot + derivePairCounts, for non-engine callers
 //   executeMatch               — write: commit a MatchProposal via RPC
 //
@@ -37,6 +39,8 @@ import {
   OVERLAP_WEIGHT_OPPONENT,
   OVERLAP_WEIGHT_TEAMMATE,
   PLAYERS_PER_MATCH,
+  REJECTED_ROSTER_FETCH_LIMIT,
+  REJECTED_ROSTER_TTL_MINUTES,
   ROSTER_LOOKBACK_COUNT,
   SESSION_MATCH_SNAPSHOT_CEILING,
 } from "@/lib/constants";
@@ -95,6 +99,68 @@ export async function fetchActivePool(
     (p) => p.games_played === 0 || (p.wait_minutes ?? 0) >= MIN_REST_MINUTES
   );
   return rested.length >= PLAYERS_PER_MATCH ? rested : active;
+}
+
+// ─────────────────────────────────────────────────────────────
+// fetchRecentClearedRosters
+// ─────────────────────────────────────────────────────────────
+// Rejection memory (see REJECTED_ROSTER_TTL_MINUTES): the player-ID sets of
+// drafts an organizer recently cleared, read from the match_events audit trail
+// the clear actions already write (reason on_deck_cleared / batch_clear_unpublished,
+// full roster in the payload — the cleared match row itself is deleted). The
+// promote-path taint auto-clear calls the RPC directly without logging an
+// event, so "player left" sweeps never enter rejection memory.
+//
+// Fail OPEN — the opposite posture from the match snapshot, deliberately: a
+// missing snapshot would make repeats look fresh (dangerous), while missing
+// rejection memory merely re-deals a hand the organizer can clear again
+// (annoying). An error here must never stop the engine.
+
+/** Reasons written by the organizer's clear actions in match-drafts.ts. */
+const REJECTION_CLEAR_REASONS = new Set(["on_deck_cleared", "batch_clear_unpublished"]);
+
+export async function fetchRecentClearedRosters(
+  supabase: DbClient,
+  sessionId: string
+): Promise<string[][]> {
+  const cutoff = new Date(Date.now() - REJECTED_ROSTER_TTL_MINUTES * 60_000).toISOString();
+  const { data, error } = await supabase
+    .from("match_events")
+    .select("payload")
+    .eq("session_id", sessionId)
+    .eq("event_type", "cancelled")
+    .eq("phase", "draft")
+    .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
+    .limit(REJECTED_ROSTER_FETCH_LIMIT);
+
+  if (error) {
+    console.warn("[matchmaking-db] fetchRecentClearedRosters: query failed:", error.message);
+    return [];
+  }
+
+  const rosters: string[][] = [];
+  for (const row of data ?? []) {
+    // payload is Json — parse defensively; a malformed event is skipped, never thrown.
+    const payload = row.payload as {
+      reason?: string;
+      roster?: Array<{ player_id?: string }>;
+    } | null;
+    if (!payload?.reason || !REJECTION_CLEAR_REASONS.has(payload.reason)) continue;
+    const rosterField = Array.isArray(payload.roster) ? payload.roster : [];
+    // Dedupe: a corrupt payload with duplicate ids (["a","a","b","c"]) would
+    // otherwise pass the length check with only 3 distinct players, silently
+    // degrading isRejectedRoster's exact-set match into a ≥3-overlap rule.
+    const ids = [
+      ...new Set(
+        rosterField.map((p) => p?.player_id).filter((id): id is string => typeof id === "string")
+      ),
+    ];
+    // Only complete foursomes: isRejectedRoster matches on the exact set, and a
+    // partial roster snapshot could never legitimately equal a proposed four.
+    if (ids.length === PLAYERS_PER_MATCH) rosters.push(ids);
+  }
+  return rosters;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -343,6 +409,90 @@ export function deriveOverlapMap(
 }
 
 // ─────────────────────────────────────────────────────────────
+// deriveLastOpponents (pure)
+// ─────────────────────────────────────────────────────────────
+// Map<player_id, Set<player_id>> — for every player in the session, the people
+// they faced ACROSS THE NET in their single most recent match.
+//
+// This is the exact shape of the complaint the engine is judged on: "I faced
+// them again, immediately." A repeat is only a repeat if the previous meeting
+// was cross-net AND it was the previous game. Two blind spots in
+// deriveOverlapMap above make that invisible to the engine otherwise:
+//
+//   (a) no recency gradient — a meeting 5 matches ago weighs exactly as much
+//       as the immediately-previous match, so "again, right now" is
+//       indistinguishable from "earlier tonight";
+//   (b) anchor-relative only — relationships AMONG the three non-anchor
+//       candidates are not represented at all, so three players who just
+//       faced each other can be drafted together freely. Measured: 79.3% of
+//       consecutive-opponent repeats are between two NON-anchor co-players,
+//       which is why reweighting deriveOverlapMap cannot fix this at any
+//       weight, and why this map is whole-pool rather than anchor-relative.
+//
+// Deliberately NOT a weighted count: the metric is binary per player, so this
+// is too.
+//
+// Ordering invariant: snapshot.matchIds is newest-first (created_at DESC), so
+// the FIRST match containing a player is that player's most recent. Pending and
+// in-progress matches are in the snapshot, so a player currently on court — or
+// sitting in an unreviewed draft — already has their "last" opponents recorded
+// and the engine will not re-serve them.
+//
+// A malformed roster — anything that is not exactly two teams of TWO, so a 4-0
+// and a 3-1 alike — still marks its players as seen, with an EMPTY opponent set:
+// it IS their most recent match, and walking past it to an older one would
+// report a stale, wrong set of opponents.
+//
+// Cost: unlike deriveOverlapMap (ANTI_REPEAT_LOOKBACK) and deriveRecentRosters
+// (ROSTER_LOOKBACK_COUNT) this takes no lookback window, because "last match"
+// is per-player and a bounded window can miss a player who has not played
+// recently. It is not unbounded work: fetchSessionMatchSnapshot refuses any
+// session above SESSION_MATCH_SNAPSHOT_CEILING (200) matches, so this is
+// O(≤200 × 4) with a per-player early-out.
+
+export function deriveLastOpponents(snapshot: SessionMatchSnapshot): Map<string, Set<string>> {
+  const lastOpponents = new Map<string, Set<string>>();
+
+  for (const id of snapshot.matchIds) {
+    const rows = snapshot.rowsByMatch.get(id);
+    if (!rows || rows.length === 0) continue;
+
+    const byTeam = new Map<string, string[]>();
+    for (const row of rows) {
+      const bucket = byTeam.get(row.team);
+      if (bucket) bucket.push(row.player_id);
+      else byTeam.set(row.team, [row.player_id]);
+    }
+
+    const buckets = [...byTeam.values()];
+    // Exactly two teams AND two bodies per team. Checking only the bucket COUNT
+    // let a corrupt 3v1 roster through as well-formed, recording three players
+    // as one player's genuine "last opponent" set — which contradicts the
+    // malformed-roster contract documented above. PLAYERS_PER_MATCH is 4 and
+    // there is no singles mode, so any other shape is bad data, not a variant.
+    if (buckets.length === 2 && buckets[0].length === 2 && buckets[1].length === 2) {
+      const [teamA, teamB] = buckets;
+      for (const [own, other] of [
+        [teamA, teamB],
+        [teamB, teamA],
+      ] as const) {
+        for (const playerId of own) {
+          // First (newest) match wins — later iterations are older matches.
+          if (lastOpponents.has(playerId)) continue;
+          lastOpponents.set(playerId, new Set(other));
+        }
+      }
+    } else {
+      for (const row of rows) {
+        if (!lastOpponents.has(row.player_id)) lastOpponents.set(row.player_id, new Set());
+      }
+    }
+  }
+
+  return lastOpponents;
+}
+
+// ─────────────────────────────────────────────────────────────
 // fetchPartnershipCounts
 // ─────────────────────────────────────────────────────────────
 // Snapshot + derive, for callers OUTSIDE the engine loop (the organizer's
@@ -463,13 +613,114 @@ export type PullableBody = QueueWithWaitTime & {
 };
 
 // ─────────────────────────────────────────────────────────────
+// hasFeedableCapacity — the courts-stay-fed guard
+// ─────────────────────────────────────────────────────────────
+// A held draft cannot take a court when it is created: it waits for its pulled
+// body to finish and rest. So it must never be the ONLY thing standing between
+// a freeing court and a match, or that court idles until the next engine tick.
+//
+// This replaces the `i > 0` proxy that previously guarded the cross-court
+// branch. That proxy asked "did we already commit something this run?", which
+// is far stricter than the invariant it was protecting — 91% of production
+// engine runs commit exactly one draft, so it made the whole branch
+// unreachable (0 held drafts in 945 matches). The real question is whether a
+// promotable match already EXISTS, from this run or any earlier one, and 60.8%
+// of auto matches were created while one did.
+//
+// Deliberately counts pending non-held matches regardless of is_published:
+//   * auto-publish mode — pending non-held matches are published, so the count
+//     is exactly the set a freeing court can promote.
+//   * draft mode — nothing promotes without organizer review anyway, and the
+//     failure this guards against there is a review queue holding nothing but
+//     un-promotable held drafts, which reads as "the engine did nothing".
+//
+// Read fresh at the moment a held draft is about to commit rather than cached
+// per run: a concurrent promotion can consume the spare mid-run, and erring
+// permissive here is precisely the idle court this exists to prevent.
+//
+// CAPACITY, not existence. Asking only "does a feedable match exist?" lets held
+// drafts STACK: a held draft is is_held, so it is excluded from the feedable
+// side and never consumes the spare it was authorised against. One pending
+// match would then authorise every slot in the run — 12 waiting with a cap of 3
+// yields 1 promotable match + 2 held drafts holding 6 players. Requiring
+// strictly more feedable than held bounds that to at most one held draft per
+// feedable match.
+//
+// ⚠️ Be precise about what this does NOT promise. The count is read PRE-commit,
+// so `feedable > held` permits post-commit parity: 1 feedable + 0 held passes,
+// and commits to 1 + 1. An earlier version of this comment claimed the guard
+// prevents "one court promotes and the other idles" outright — it does not, and
+// that example was misleading for a second reason too: a held draft is not dead
+// capacity. It becomes promotable precisely when the pulled body's source court
+// frees, so the two-courts-free case only strands a court when the second court
+// to free is NOT that source. Tightening to `feedable > held + 1` would close
+// the parity window, but it would also demand two spare matches before any
+// reach — a real narrowing of a feature whose whole history is never firing —
+// to fix a case that is not established as reachable. Left as stacking control.
+export async function hasFeedableCapacity(supabase: DbClient, sessionId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("matches")
+    .select("is_held")
+    .eq("session_id", sessionId)
+    .eq("status", "pending");
+
+  // Fail CLOSED: an unreadable count must not authorise a held draft. Skipping
+  // the cross-court reach costs a slightly staler match; wrongly authorising it
+  // costs an idle court, which is the one thing this gate exists to prevent.
+  if (error) {
+    console.warn(`[matchmaking] hasFeedableCapacity: read failed — ${error.message}`);
+    return false;
+  }
+  if (!data) return false;
+
+  let feedable = 0;
+  let held = 0;
+  for (const row of data) {
+    // ⚠️ This deliberately does NOT fail closed, unlike the error path above.
+    // A reviewer read that as an inconsistency, so, precisely:
+    //
+    // `is_held` is `GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0)`,
+    // and information_schema reports the generated column itself as nullable —
+    // `cardinality(NULL)` is NULL. A NULL still cannot arrive, and the reason is
+    // the SOURCE column: `pulled_player_ids` is `uuid[] NOT NULL DEFAULT '{}'`
+    // (migration 20260607000000, verified identical on prod). The NOT NULL is
+    // what forbids it; the default is not, since a default applies only when the
+    // column is OMITTED, so with NOT NULL gone an explicit `VALUES (..., NULL)`
+    // or a plain `UPDATE ... SET pulled_player_ids = NULL` would reach NULL.
+    // `src/types/database.ts` is consistent with that (is_held: plain
+    // `boolean`), and all 945 production rows read false.
+    //
+    // ⚠️ Earlier revisions of this comment got the schema counterfactual wrong in
+    // two different directions, so state both halves separately — they do
+    // NOT share an antecedent. For a NULL to appear AT ALL takes only the NOT
+    // NULL dropped plus something writing one. For EVERY ordinary pending match
+    // to read NULL takes the default dropped as well, because the ordinary
+    // writer — `create_match_with_players` — does not name this column, so while
+    // the default stands it keeps filling in '{}'.
+    //
+    // Given all that, the branch is unreachable and the choice is academic — but
+    // `else feedable++` is still the semantically correct arm rather than merely
+    // the permissive one: a NULL flag would mean pulled_player_ids is NULL, i.e.
+    // the row is not a held draft, i.e. it is feedable. Fail-closed inverts that,
+    // and in the both-dropped case it would read `0 > N` for every ordinary
+    // pending match and ship cross-court dead a second time. A transient read
+    // error costing one skipped reach is not the same risk as a schema condition
+    // killing the feature outright. CCT-FEED-7 pins this arm.
+    if (row.is_held === true) held++;
+    else feedable++;
+  }
+  return feedable > held;
+}
+
+// ─────────────────────────────────────────────────────────────
 // fetchPullablePlayers
 // ─────────────────────────────────────────────────────────────
 // Returns the playing bodies eligible to be CONSIDERED for a held draft. The
 // engine still filters these through isPullEligible (streak/cooldown/already-held)
 // and the algorithm's skill window — this helper just gathers the candidate set.
-// Called lazily (only when the waiting pool produced a forced repeat), so its
-// handful of queries don't run on every engine tick.
+// Called lazily — only once the waiting-only four has already been judged stale
+// (a forced repeat, or at least one player facing a last-game opponent again) —
+// so its handful of queries don't run on every engine tick.
 export async function fetchPullablePlayers(
   supabase: DbClient,
   sessionId: string

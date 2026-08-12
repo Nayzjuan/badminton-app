@@ -65,6 +65,8 @@
   --color-cc-streak-dim: var(--cc-streak-dim);
   --color-cc-live: var(--cc-live);
   --color-cc-live-dim: var(--cc-live-dim);
+  --color-cc-fresh: var(--cc-fresh);
+  --color-cc-fresh-dim: var(--cc-fresh-dim);
 
   --color-cc-t1: var(--cc-t1);
   --color-cc-t2: var(--cc-t2);
@@ -134,6 +136,15 @@
     --cc-streak-dim: oklch(0.64 0.22 38 / 0.22);
     --cc-live: oklch(0.62 0.2 48);
     --cc-live-dim: oklch(0.62 0.2 48 / 0.14);
+    /* "No shared history yet" identity for the manual-match FRESH chip — the
+       positive counterpart to cc-amber's repeat warning. Green, not teal:
+       cc-accent (hue 188) already means SELECTED on that exact screen, and two
+       cyan-family chips in the same row would read as two states of one thing.
+       Hue 150 sits 38° off accent, which stays distinguishable under the
+       common red-green deficiencies precisely BECAUSE it is a lightness and
+       label difference too — the chip always carries the word "Fresh". */
+    --cc-fresh: oklch(0.52 0.15 150);
+    --cc-fresh-dim: oklch(0.52 0.15 150 / 0.12);
 
     --cc-t1: oklch(0.18 0.02 238);
     --cc-t2: oklch(0.4 0.018 238);
@@ -203,6 +214,9 @@
     --cc-streak-dim: oklch(0.72 0.22 38 / 0.22);
     --cc-live: oklch(0.76 0.2 48);
     --cc-live-dim: oklch(0.76 0.2 48 / 0.14);
+    /* See the light-mode block for why this is green and not teal. */
+    --cc-fresh: oklch(0.78 0.16 150);
+    --cc-fresh-dim: oklch(0.78 0.16 150 / 0.14);
 
     --cc-t1: oklch(0.94 0.008 238);
     --cc-t2: oklch(0.68 0.014 238);

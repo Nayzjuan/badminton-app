@@ -26,6 +26,7 @@ import {
   rotatedDraft,
   getEffectiveLookback,
   isDiversityViolation,
+  isRedZonePlayer,
   pairKey,
   type ScoredPlayer,
 } from "../src/lib/matchmaking-core";
@@ -262,7 +263,7 @@ function tryFormMatch(simTime: number): {
   if (sorted.length <= GATE_POOL_THRESHOLD && activeCt > 0 && !gateExpired) return null;
 
   const anchor = sorted[0];
-  const isRedZone = anchor.priorityScore >= 1000;
+  const isRedZone = isRedZonePlayer(anchor);
   const isFallback = anchor.wait_minutes >= FALLBACK_WAIT_MINUTES;
   const maxVar = isFallback ? SKILL_VARIANCE_MAX : SKILL_VARIANCE_TARGET;
 
