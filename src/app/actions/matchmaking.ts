@@ -623,9 +623,14 @@ async function runEngineInternal(
     // anchor's wait when the hold is CREATED; it does not bound how long the
     // hold lasts. isHeldMatchReady returns false until pulledFreedAt is set, so
     // the hold runs for the remainder of the source game plus up to
-    // CROSS_COURT_REST_FALLBACK_MINUTES. That duration is now capped by
-    // recomputeHeldReadiness' hold-age cancel (CROSS_COURT_MAX_HOLD_MINUTES),
-    // which is what covers the two seated waiters this guard does not see.
+    // CROSS_COURT_REST_FALLBACK_MINUTES. That duration is bounded — BEST-EFFORT,
+    // not guaranteed — by recomputeHeldReadiness' hold-age cancel
+    // (CROSS_COURT_MAX_HOLD_MINUTES), which is what covers the two seated
+    // waiters this guard does not see. Best-effort because the cancel is
+    // evaluated on an event, not on a timer: its only callers are in
+    // match-lifecycle.ts, when a match on a court ends or is cancelled. On a
+    // session that goes quiet, a hold can outlive the cap until the next such
+    // event. See the doc on CROSS_COURT_MAX_HOLD_MINUTES in constants.ts.
     // Measured on production, the soonest
     // court to free at draft time is p50 4.7 min / p90 12.7 / p99 18.1, so most
     // holds outlast the 3-minute fallback by a wide margin. What makes that
@@ -634,7 +639,8 @@ async function runEngineInternal(
     // crossing CRITICAL_WAIT_MINUTES in 5.3% of holds and HARD_WAIT_CAP_MINUTES
     // in 2.1%. ⚠️ That model measures the ANCHOR, i.e. 1 of the 3 held waiters,
     // so it understates the true residual — do not quote it as the figure for
-    // the hold as a whole. The hold-age cancel named above is what bounds it.
+    // the hold as a whole. The hold-age cancel named above is what bounds it,
+    // on the best-effort terms stated there.
     const anchorBlocked = anchorBlocksReach(pool[0].priorityScore, pool[0].wait_minutes ?? 0);
 
     // The courts-stay-fed guard, formerly the `i > 0` proxy. A held draft seats

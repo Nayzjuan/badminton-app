@@ -677,21 +677,30 @@ export async function hasFeedableCapacity(supabase: DbClient, sessionId: string)
   let held = 0;
   for (const row of data) {
     // ⚠️ This deliberately does NOT fail closed, unlike the error path above.
-    // A reviewer read that as an inconsistency, so: `is_held` is
-    // `GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0)` and the column
-    // is NULLABLE — `cardinality(NULL)` is NULL, so an explicit NULL in
-    // pulled_player_ids yields a NULL flag. (It cannot happen today: the column
-    // defaults to '{}', and all 945 production rows read is_held = false.)
+    // A reviewer read that as an inconsistency, so, precisely: `is_held` is
+    // `GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0)`, and
+    // information_schema reports the generated column itself as nullable —
+    // `cardinality(NULL)` is NULL. But a NULL can never arrive, and the reason
+    // is the SOURCE column, not the generated one: `pulled_player_ids` is
+    // `uuid[] NOT NULL DEFAULT '{}'` (migration 20260607000000, verified
+    // identical on prod). The NOT NULL is the whole guarantee and the default
+    // is irrelevant to it in both directions: dropping only the default makes a
+    // bare INSERT raise rather than write NULL, and conversely, with NOT NULL
+    // gone the default would not save us — a default applies only when the
+    // column is omitted, so an explicit `VALUES (..., NULL)` — or a plain
+    // `UPDATE ... SET pulled_player_ids = NULL`, which involves no default at
+    // all — reaches NULL. `src/types/database.ts` is consistent with that
+    // (is_held: plain `boolean`), and all 945 production rows read false.
     //
-    // But a NULL flag MEANS pulled_player_ids is NULL, which means the row is
-    // not a held draft — so counting it feedable is the semantically correct
-    // reading, not merely the permissive one. Fail-closed here would be
-    // actively wrong: if anything ever dropped that default, every ordinary
-    // pending match would read NULL, `feedable > held` would be `0 > N`, and
-    // cross-court would silently ship dead a second time. That is the exact
-    // failure this whole feature exists to undo — a transient read error
-    // costing one skipped reach is not the same risk as a persistent schema
-    // condition killing the feature outright. CCT-FEED-7 pins this.
+    // Given that, the branch is unreachable and the choice is academic — but
+    // `else feedable++` is still the semantically correct arm rather than
+    // merely the permissive one: a NULL flag would mean pulled_player_ids is
+    // NULL, i.e. the row is not a held draft, i.e. it is feedable. Fail-closed
+    // would invert that, and if the NOT NULL were ever dropped it would read
+    // `0 > N` for every ordinary pending match and ship cross-court dead a
+    // second time. A transient read error costing one skipped reach is not the
+    // same risk as a schema condition killing the feature outright.
+    // CCT-FEED-7 pins this arm.
     if (row.is_held === true) held++;
     else feedable++;
   }

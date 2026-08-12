@@ -250,9 +250,11 @@ describe("hasFeedableCapacity — the courts-stay-fed gate", () => {
   });
 
   it("CCT-FEED-7: a NULL is_held row counts as feedable, not held", async () => {
-    // is_held is generated from cardinality(pulled_player_ids) and the column is
-    // NOT NULL, so this should be unreachable — but a null must not be read as
-    // "held" and silently tighten the gate into never authorising.
+    // is_held is generated from cardinality(pulled_player_ids), and that SOURCE
+    // column is `uuid[] NOT NULL DEFAULT '{}'` — so a NULL flag is unreachable
+    // and this row cannot occur. Pinned anyway because the arm it exercises is a
+    // deliberate choice: a null must not be read as "held" and silently tighten
+    // the gate into never authorising. See the comment in hasFeedableCapacity.
     const { client } = makeCountMock({ data: [{ is_held: null }], error: null });
     expect(await hasFeedableCapacity(client, SESSION_ID)).toBe(true);
   });

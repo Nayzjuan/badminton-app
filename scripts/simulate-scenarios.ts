@@ -34,7 +34,12 @@ interface SimConfig {
   courts: number[]; // game duration per court in minutes
   penalty: number; // GAME_PENALTY
   critWait: number; // CRITICAL_WAIT_MINUTES
-  hardCap: number; // HARD_WAIT_CAP_MINUTES (0 = disabled)
+  // HARD_WAIT_CAP_MINUTES. ⚠️ This said "0 = disabled" and that was never
+  // implemented — computeScore has no `hardCap > 0` guard, so 0 does not
+  // disable the cap, it makes EVERY cap-eligible player take the hard-cap arm
+  // at `2000 + wait * 10`. Every scenario passes 25; if you ever want the
+  // disable, add the guard rather than trusting this comment.
+  hardCap: number;
   targetGames: number; // for hard-cap eligibility gating
   skillVarianceMax: number; // normal match tolerance
   skillFallbackMax: number; // fallback tolerance when no group found
@@ -86,6 +91,47 @@ function pad(s: string, n: number) {
 
 // ─── Priority Scoring ─────────────────────────────────────────────────────────
 
+type Zone = "hard" | "red" | "normal";
+
+/**
+ * Which tier a player is in.
+ *
+ * ⚠️ Derive this from the INPUTS, never by testing the score's numeric band.
+ * A score that *encodes* a tier is not a test *for* it, in both directions:
+ * the Red Zone arm returns `1000 + wait - gamePenalty`, so a wait-22 / 3-games
+ * player scores 998 and a `score >= 1000` test misses them; the hard-cap arm
+ * returns `2000 + (wait - hardCap) * 10`, so a `score === 2000` test only
+ * matches a player at *exactly* the cap and misses everyone past it. Both
+ * fallacies were live in this file's flag logic — the second one badly: on the
+ * standard fixture it labelled 12 matches `[HARD]` where 70 qualified, in a
+ * script whose stated purpose is validating the hard-cap mechanism. Same bug,
+ * same shape, as the production one `isRedZonePlayer` fixed in
+ * src/lib/matchmaking-core.ts.
+ *
+ * This file cannot import that predicate: it is a standalone parametric
+ * simulator carrying its own `SimConfig` thresholds, so the production
+ * predicate would silently ignore `cfg.critWait` / `cfg.hardCap`. Mirror the
+ * scorer's own branch order instead, and keep the two in step by hand.
+ */
+function zoneOf(
+  waitFromEligible: number,
+  gamesPlayed: number,
+  currentTime: number,
+  cfg: SimConfig
+): Zone {
+  if (isHardCapEligible(gamesPlayed, currentTime, cfg) && waitFromEligible >= cfg.hardCap) {
+    return "hard";
+  }
+  return waitFromEligible >= cfg.critWait ? "red" : "normal";
+}
+
+function isHardCapEligible(gamesPlayed: number, currentTime: number, cfg: SimConfig): boolean {
+  const sessionProgress = Math.min(currentTime / cfg.sessionDuration, 1.0);
+  const expectedGames = sessionProgress * cfg.targetGames;
+  const capThreshold = Math.floor(expectedGames) + 1;
+  return gamesPlayed < cfg.targetGames && gamesPlayed <= capThreshold;
+}
+
 function computeScore(
   waitFromEligible: number,
   gamesPlayed: number,
@@ -98,10 +144,7 @@ function computeScore(
   //     scoring and Red Zone, not the absolute override).
   //  2. Player must be at/below their expected pace + 1 buffer (progressive threshold).
   //     This prevents players who burst early from claiming the cap over slower ones.
-  const sessionProgress = Math.min(currentTime / cfg.sessionDuration, 1.0);
-  const expectedGames = sessionProgress * cfg.targetGames;
-  const capThreshold = Math.floor(expectedGames) + 1;
-  const isCapEligible = gamesPlayed < cfg.targetGames && gamesPlayed <= capThreshold;
+  const isCapEligible = isHardCapEligible(gamesPlayed, currentTime, cfg);
 
   if (isCapEligible && waitFromEligible >= cfg.hardCap) {
     // Progressive hard cap: score grows with additional wait beyond the threshold.
@@ -251,6 +294,7 @@ function formMatch(
         name: p.name,
         skill: p.skill,
         score,
+        zone: zoneOf(waitFromEligible, s.games, currentTime, cfg),
         arrivedAt: p.arrivedAt,
         games: s.games,
         waitFromEligible,
@@ -260,6 +304,7 @@ function formMatch(
     name: string;
     skill: Skill;
     score: number;
+    zone: Zone;
     arrivedAt: number;
     games: number;
     waitFromEligible: number;
@@ -292,12 +337,9 @@ function formMatch(
       const bNames: [string, string] = [p[teamBIdx[0]].name, p[teamBIdx[1]].name];
 
       // Determine flag
-      const anyHardCap = pool
-        .filter((pl) => group.includes(pl.name))
-        .some((pl) => pl.score === 2000);
-      const anyRedZone = pool
-        .filter((pl) => group.includes(pl.name))
-        .some((pl) => pl.score >= 1000 && pl.score < 2000);
+      const inGroup = pool.filter((pl) => group.includes(pl.name));
+      const anyHardCap = inGroup.some((pl) => pl.zone === "hard");
+      const anyRedZone = inGroup.some((pl) => pl.zone === "red");
       const flag = anyHardCap
         ? "[HARD]"
         : tolerance > cfg.skillVarianceMax
