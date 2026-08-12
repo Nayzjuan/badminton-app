@@ -83,6 +83,225 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
+## 📖 MATCHMAKING ENGINE AUDIT (docs only, no code changed) — 2026-08-12
+
+Owner asked for a plain-English audit of how the engine works + the match-setup hierarchy.
+Produced `MATCHMAKING_ENGINE_AUDIT_2026-08-12.md` + same-name `.pdf` (repo root, untracked —
+commit or discard at will). Method: 4 parallel code readers over `matchmaking-core.ts` /
+`matchmaking-db.ts` / `actions/matchmaking.ts` / trigger call-sites → synthesis → 3 adversarial
+verifiers re-checking every claim against source. **54/55 claims CONFIRMED, 0 wrong** (1 imprecise:
+the trigger list also includes unpause, `applyDraftCapOverride`, and toggleAutoPublish-ON — folded in).
+
+Verified quirks worth remembering (all by-design or accepted, none crashing — see §6 of the audit doc):
+Hard Cap excludes `games_played >= 5`; Red Zone perks key off `score >= 1000` not `wait >= 20`;
+cap-saturation banner can misattribute (fires on `capWasActive` even when skill-window exhaustion
+was the blocker); a diversity violation whose swap target is Red Zone is accepted silently and does
+NOT set `forcedRepeat` (cross-court pull never fires there); rest-filter fallback is all-or-nothing;
+held drafts become promotable only via `recomputeHeldReadiness` from match-lifecycle events — the
+engine never re-checks them itself.
+
+### Follow-up: freshness vs. the partner cap, measured on prod (audit doc §7)
+
+Owner asked whether snakeDraft goes fresh-first or waits for rule 7 (`MAX_PARTNERSHIP_REPEATS=2`).
+**Fresh-first, confirmed in code and in prod data.** Order is never-partnered → partnered-once →
+refuse at twice (`matchmaking-core.ts:310-344`, passes 1a/1b require BOTH pairs at `count === 0`).
+The heavier lever is upstream though: `scoreCandidates` (:445-473) charges **+10,000/overlap unit**,
+and teammate+opponent both weight 2, so one recent shared game = +20,000 — the four is already fresh
+before snakeDraft picks among its 3 splits. Cap is a backstop, never a trigger.
+
+Measured on the four 18-player Thursdays (`f22c021f`, `69d8a21b`, `bcf19499`, `6882186a`):
+**engine produced exactly 1 repeat partnership total; 0 pairs ever reached the cap.** C(18,2)=153
+possible pairs vs ~42–56 consumed per session — **rule 7 effectively never binds at 18 players.**
+
+⚠️ Two facts worth remembering for future engine questions:
+1. **Opponent repeats are 23–35/session, max 4 faces.** `MAX_OPPONENT_REPEATS=2` is soft AND manual
+   matches ignore it. Any "I keep playing the same people" complaint is cross-net, not partner-side.
+2. **Thursday sessions are mostly MANUAL** — auto was only 8/21, 3/22, 5/28, 6/21. Every engine
+   guarantee applies to that minority only. Do not reason about session outcomes as if the engine
+   produced them.
+
+### Follow-up 2: improvement-design workflow (4 lenses → 3 judges → synthesis) — 2026-08-12
+
+Key reframe, **all three load-bearing claims re-verified by hand** (SQL + source) before accepting:
+- **Thursdays run 2 COURTS, not 3** (every 18p session has court_count=2; 3–4 courts = the 29–40p
+  sessions). Any gate arithmetic must use 8-on-court / ~10-off, not 12/6.
+- **`is_auto_matchmaking_on` defaults TRUE, reads FALSE at rest on 24/25 sessions** (only 07/16
+  true). Sole writer = explicit organizer toggle; nothing resets it on close. The engine isn't
+  failing to produce — **the organizer switches it OFF mid-session nearly every week**, and nothing
+  records when/why. This is the #1 open question only the owner can answer.
+- **VERIFIED BUG — draft-mode Call Next dead end:** `callNextMatch` step 3 runs the engine with
+  `bypassGate=true` (`matchmaking.ts:194`) but `executeMatch` gets the session's `autoPublish`
+  (`:612`), so in draft mode (`auto_publish=false`, 5 of 7 recent sessions) the match is born
+  unpublished; `promoteOnDeckMatchInternal` filters `.eq("is_published", true)` (`:663`) → finds
+  nothing → organizer gets a "review drafts" nag from the primary live-gym button. Fix = thread an
+  autoPublish override when `bypassGate===true` (single caller, auth-gated). This is ranked #1.
+
+Ranked plan (full detail in the workflow output, task `w2otu20fm`): (1) fix the Call Next dead end;
+(2) instrument toggle flips + one row per engine run (grep Vercel logs for one session FIRST — the
+engine already console.logs mode/courts/waiting/cap and all four defer reasons); (3) opponent-repeat
+fixes belong on the MANUAL path (manual owns ~77% of cross-net instances, 80% of repeats; auto repeat
+rate 26.0% vs manual 29.8% — engine barely better) + fix the FALSE copy in `repeat-pairing-copy.ts:71`
+claiming auto "won't match them again" (opponent cap is soft); (4) make `buildCombinationGroup`
+opponent-aware (it never reads opponentCounts; first-skill-valid-triple greedy exit) — durable fix,
+gated on extracting a shared balanced-split function + a replay harness; (5) delete cross-court
+held-draft subsystem in stages — player hot-path slice now (`upcoming-match.ts` + unthreading, ~150
+LOC, provably invisible), engine bulk later, **DDL never** (clear_drafts' live body references
+`is_held`; migrations are hand-applied); (6) draft-cap/gate arithmetic reconciliation BLOCKED on #2's
+telemetry (two proposals contradict; 07/18 30p/3c produced 0 auto vs 05/30 same shape 30/49 — no
+capacity formula explains that, it's the toggle); (7) five proposals CLOSED as wrong: cross-court
+retrigger-on-opponent-saturation (arms inside a branch needing ≥12 waiting — impossible at 18p/2c),
+rest-constant retune (12,000 > the 10,000 equity quantum it claimed to sit below), 2/2→1/3 overlap
+weight split, opponent-cap hard enforcement, balanced-widening (parked pending owner's answer on
+beginner+upper_int pairings). DO-NOT-REGRESS: partner freshness (both paths: engine 2/74, manual
+4/178 repeats), game equity (1–2 spread; the 10,000 quantum — new penalties must be sub-quantum),
+07/25 Saturday 39p/4c behaviour (48/57 auto, the one shape that demonstrably works), TOCTOU guards.
+
+### Follow-up 3: owner answered the 5 open questions + the re-deal smoking gun — 2026-08-12
+
+**Owner's answers (verbatim intent, kills the telemetry project — the "why" is answered):**
+1. Toggle-off = quality response: drafts show repeats / consecutive opponents, and better matchups
+   exist among *currently-playing* players, so owner reshuffles by hand mid-session.
+2. Draft review is a deliberate optional feature — do NOT flip `auto_publish` defaults.
+3. Clear-burst flow confirmed: clear all → manual match(es) → re-enable auto "to check if it gives
+   a good one" → pause again. The toggle is being used as a missing REGENERATE button.
+4. Opponent complaints are about **consecutive** meetings; owner manually prevents them today.
+5. Skill window stays. Balanced-widening (beginner+upper_int pairs) permanently CLOSED.
+
+**Smoking gun, traced in `match_events` (08/06 session, t=43–49):** after each organizer clear, the
+engine re-dealt the IDENTICAL roster (same 4, same teams) up to **3× within the same minute** —
+Stelle/Howell vs KevinDC/Carlo at t=43, Miggy/Carlo vs Benson/Barts at t=48 — because the engine is
+deterministic and cancelled drafts vanish from the history it reads. Owner's t=49 manual match kept
+3 of the rejected 4 bodies recombined — the exact "vary it" gesture the engine can't express.
+
+**Re-ranked plan:** P1 rejection memory (penalize cleared foursomes, mild pair penalty; rosters
+already in `on_deck_cleared` event payloads — no schema change; soft penalty since clears also mean
+"player left") · P2 consecutive-opponent recency in `buildCombinationGroup` (steep last-match term,
+behind a replay harness on prod history) · P3 Call Next publish-on-bypassGate fix (unchanged) ·
+P4 FRESH chips + fix false copy at `repeat-pairing-copy.ts:71` · cross-court: hot-path slice delete
+stands; future "suggest considering on-court players" = explicit organizer action, only after P1/P2.
+Telemetry (#2) DOWNGRADED to optional. Awaiting owner's green-light on scope.
+
+---
+
+## 🎾 ENGINE IMPROVEMENTS P1–P3 BUILT — 2026-08-12, branch `feat/engine-improvements`, **uncommitted work tree for P2**
+
+Executing the re-ranked plan above, in the owner's stated sequence. **P3, P1, replay harness are
+committed; P2 is complete and validated in the work tree.** Nothing is deployed and no migrations
+exist — this is TypeScript only.
+
+| | What | State |
+|---|---|---|
+| **P3** | Call Next seats a court in draft mode — `bypassGate` slot 0 born published | ✅ committed `597e425` |
+| **P1** | Rejection memory — clearing a draft means "deal a different hand" | ✅ committed `c81a898` |
+| **harness** | `scripts/replay-sessions.ts` + `scripts/replay/` — discrete-event replay of the CURRENT engine over 5 real prod sessions | ✅ **untracked**, needs `git add` |
+| **P2** | Consecutive-opponent recency in group selection | ✅ built + validated, **work tree only** |
+| **P4** | FRESH chips + false opponent copy at `repeat-pairing-copy.ts:71` | ⬜ next |
+
+### P2 — what it does, in one paragraph
+
+The engine had no notion of "last match". `deriveLastOpponents` (new, in `matchmaking-db.ts`) derives
+who each player faced **across the net in their last game only**, whole-pool rather than anchor-relative
+— because **79.3% of back-to-back repeats are between two NON-anchor co-players**, which
+`deriveOverlapMap` structurally cannot see at any weight. That map then feeds two decisions: the
+**split** (`selectSplit`, shared by `snakeDraft`/`rotatedDraft` — fewest rematches **within** a
+partnership-freshness rung) and the **group** (`buildCombinationGroup` argmin over
+`fairness + 3 × repeats`). Full design in **APP_MANIFEST §3.32**.
+
+### Measured (replay, 5 prod sessions, A/B'd against `REPLAY_NO_LAST_OPPONENTS=true`)
+
+```
+                    repeats/pairs    rate    partner  3-of-4  o/cap
+REAL (as played)      170 / 479      35.5%      4        0      33
+ENGINE before         244 / 550      44.4%      4       32      52
+ENGINE after          186 / 550      33.8%      4       28      36
+```
+
+The engine now beats the owner's own hand-run night. **Repeats improve 5 of 5 sessions; partner
+variety improves 2, unchanged 3, regresses 0.**
+
+⚠️ **Per-session regressions — say these out loud when shipping, the aggregate hides them:**
+07/30 near-identical foursomes **8 → 12** and consecutive-partner **2 → 4**; 07/25 games spread
+widens **4–7 → 3–7**. The flat aggregate partner figure of 4 is a redistribution, not a wash
+(06/25 goes 2 → 0 while 07/30 goes 2 → 4).
+
+### The five things that will bite the next person
+
+1. **`lastOpponents` is `runAlgorithm` param 7, after `rejectedRosters` (param 6).** An earlier draft
+   of P2 branched before P1 landed and put it at 6. That merges textually, compiles clean, passes
+   `tsc` — and **silently drops rejection memory**. Append any future optional param.
+2. **The `previewing` gate must test for a NON-EMPTY map, not just a present one.** Argmin and
+   first-valid are not equivalent even at zero penalty — lexicographic-first is not score-sum-minimal.
+   The gate is the only thing guaranteeing the no-preview path is byte-identical to the old engine,
+   and `REPLAY_NO_LAST_OPPONENTS=true` is the control that proves it (must reproduce 244/550 exactly).
+3. **An unsplittable four must score WORST, not neutral.** `snakeDraft` returns `null` when every
+   split is partnership-capped; scoring that `0` made "unseatable" the *best* preview, so the argmin
+   preferred fours the seater couldn't seat — and `runAlgorithm`'s `if (!draft) continue` then
+   abandoned the whole skill window, seating **nobody** with `capSaturation: false`. Caught by the
+   review gate, not by the replay (the five fixtures never exercise it). Now
+   `MAX_CONSECUTIVE_OPPONENT_REPEATS + 1` — **`+ 1`, not `MAX`**: at exactly `MAX` an unsplittable
+   four *ties* a seatable four carrying 4 repeats at the same fairness, and the argmin's strict `<`
+   then keeps the earlier one, which is the unsplittable one. Pinned by `CCO-11/12`, with `CCO-13`
+   guarding that it stays a tie-break and never outranks games-owed.
+4. **Never hoist the repeat count above the partnership predicates in `selectSplit`.** A rival design
+   did exactly that and regressed partner variety in 5 of 5 sessions. Within-rung tie-break only
+   (`CCO-7`).
+5. **`SPLIT_PREVIEW_BUDGET` was very nearly a silent cliff.** At the originally-proposed 600, a
+   17-candidate window (C(17,3) = 680) blew it on the *first* anchor and reverted that slot to
+   baseline with no signal. Now 4,096 (covers C(30,3) = 4,060) + a `DEBUG_MATCHMAKING` line.
+   Verified 0 exhaustion events across all five sessions.
+
+### Also fixed in passing (latent, zero measured trajectory impact)
+
+`forcedRepeat` is now recomputed from the roster **actually served** rather than tracked per-branch.
+The Red-Zone escape hatch re-emits a four that just failed the diversity/rejection check — exactly
+like Tier-3 and the last-resort fallback — but returned with the flag **absent**. Cross-court
+augmentation and rejection memory both read that flag, so the one path where the engine *knew* it was
+repeating was the one path that stayed silent. Unexercised by the fixtures (replay diagnostics were
+byte-identical after the fix), hence `FR-1/2/3`.
+
+### Validation
+
+`npx tsc --noEmit` clean · `npm run lint` exit 0 · `npm run build` green ·
+`npx vitest run tests/unit` → **58 files, 1089 passed / 1 skipped**.
+New tests: `CCO-1..13`, `FR-1..3` (`matchmaking-core.test.ts`, 173) · `SNAP-14..19` + `SNAP-17b`
+(`matchmaking-snapshot.test.ts`, 29). Every new test was verified **non-vacuous** by reverting the
+fix in a scratchpad copy and confirming it fails.
+
+### Review gate — round 1 "Needs fixes" → round 2 **"Minor issues — passing"**
+
+Round 1 was the blocking unsplittable-four bug (#3 above) plus five minors, all fixed. Round 2's two
+minors were **fixed in code, not merely logged** — recorded here per CLAUDE.md gate rule 3:
+
+1. **Stale comment at `matchmaking-db.ts:441`** described the malformed-roster rule as covering only a
+   4-0, after the guard had been tightened to reject a 3-1 as well. Comment now names both shapes.
+2. **The `MAX + 1` sentinel.** The reviewer flagged the exact-`MAX` tie as *"genuinely optional"* —
+   adopted anyway, because it serves the blocking fix's own intent. Replay re-measured in both
+   directions afterward: **unchanged**, so the sentinel is non-contaminating on these fixtures.
+
+⚠️ **A correction the next person should not re-litigate:** the reviewer also claimed no test pinned
+the sub-quantum bound. `CCO-3b` already asserted `4 × P < GAMES_AHEAD_PENALTY` (⇒ `P < 2500`), so that
+finding was wrong *as stated* — **but the `+ 1` sentinel widened the real bound to `5 × P < 10 000`
+(⇒ `P < 2000`)**, opening a genuine `[2000, 2500)` window where the sentinel would breach the quantum
+with the whole suite green. `CCO-3b` now asserts both bounds. The lesson is the general one: when you
+raise a worst-case sentinel, the test pinning the old worst case no longer pins the new one.
+
+Also deliberately **out of scope**: the identical-looking `buckets.length === 2` at
+`matchmaking-db.ts:344` is pre-existing `derivePairCounts` and was left alone (confirmed correct by
+the reviewer — a 3-1 there only *inflates* counts, which biases conservative). Separate ticket at most.
+
+### Next steps
+
+1. `git add scripts/replay-sessions.ts scripts/replay/` — the harness is still untracked. **Fixtures
+   stay gitignored: they carry real member names and skill levels.** Never run the script with
+   `--refresh`/`--save` from a subagent; `--refresh` hits production.
+2. Commit P2 + the doc updates, then **P4** (FRESH chips; and `repeat-pairing-copy.ts:71` promises
+   "auto-matchmaking won't match them again" when `MAX_OPPONENT_REPEATS` is a **soft** preference —
+   the copy is simply false).
+3. Then the cross-court hot-path slice deletion (`src/app/actions/upcoming-match.ts`, ~150 LOC, 0 held
+   rows ever). ⚠️ Touches the same player-facing files as the 07/25 de-auth incident. DB columns/RPC stay.
+
+---
+
 ## 🧹 LINT IS CLEAN — `npm run lint` exits 0 — 2026-08-11, branch `chore/lint-clean`
 
 Was **62 errors / 2744 warnings across 703 files**. Now **0 / 0 across 410**. 13 files changed, no

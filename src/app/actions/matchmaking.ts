@@ -65,6 +65,7 @@ import {
   deriveRecentRosters,
   derivePairCounts,
   deriveOverlapMap,
+  deriveLastOpponents,
   executeMatch,
   fetchPullablePlayers,
   executeHeldMatch,
@@ -530,6 +531,11 @@ async function runEngineInternal(
     // reorders, so it is derived here rather than alongside the rosters.
     const { partnershipCounts, opponentCounts } = derivePairCounts(snapshot);
     const overlapMap = deriveOverlapMap(snapshot, pool[0].player_id);
+    // Whole-pool, not anchor-relative: 79% of back-to-back opponent repeats are
+    // between two NON-anchor co-players, which the anchor-relative overlapMap
+    // structurally cannot see. Re-derived per slot because the match just
+    // committed above is a new "last match" for four players.
+    const lastOpponents = deriveLastOpponents(snapshot);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
     const result = runAlgorithm(
@@ -538,7 +544,8 @@ async function runEngineInternal(
       overlapMap,
       recentRosters,
       opponentCounts,
-      rejectedRosters
+      rejectedRosters,
+      lastOpponents
     );
     const { proposal, capSaturation } = result;
 
@@ -593,7 +600,8 @@ async function runEngineInternal(
           overlapMap,
           recentRosters,
           opponentCounts,
-          rejectedRosters
+          rejectedRosters,
+          lastOpponents
         );
         const augFour = augResult.proposal
           ? [...augResult.proposal.teamA, ...augResult.proposal.teamB]

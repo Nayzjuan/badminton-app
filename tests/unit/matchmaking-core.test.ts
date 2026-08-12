@@ -34,6 +34,7 @@ import {
   isPullEligible,
   isHeldMatchReady,
   pickEarliestFinishing,
+  countConsecutiveOpponentRepeats,
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
@@ -48,6 +49,9 @@ import {
   FALLBACK_WAIT_MINUTES,
   MAX_CONSECUTIVE_GAMES_FOR_PULL,
   CROSS_COURT_REST_FALLBACK_MINUTES,
+  CONSECUTIVE_OPPONENT_PENALTY,
+  GAMES_AHEAD_PENALTY,
+  MAX_CONSECUTIVE_OPPONENT_REPEATS,
 } from "@/lib/constants";
 import type { ScoredPlayer } from "@/lib/matchmaking-core";
 import type { QueueWithWaitTime } from "@/types/database";
@@ -2381,5 +2385,411 @@ describe("shouldAutoPublishMatch — auto-publish decision", () => {
 
   it("AP-2: false → false (draft mode, organizer reviews)", () => {
     expect(shouldAutoPublishMatch(false)).toBe(false);
+  });
+});
+
+// ============================================================
+// countConsecutiveOpponentRepeats — split-aware freshness (pure)
+// ============================================================
+//
+// The engine's answer to "I faced them AGAIN, right after". Two facts make
+// this the right shape and both are asserted below:
+//
+//   CCO-1/2  a repeat is only a repeat ACROSS THE NET — the same pair drafted
+//            as TEAMMATES is the fix, not the offence, and scores 0
+//   CCO-3    per-player and binary — facing two of your last opponents at once
+//            is ONE bad game, not two (this is what bounds the term at 4, which
+//            is what makes CONSECUTIVE_OPPONENT_PENALTY provably sub-quantum)
+//   CCO-4/5  absent or empty map ⇒ 0 for every split, which is what makes every
+//            caller behaviour-identical to the pre-freshness engine
+
+describe("countConsecutiveOpponentRepeats — cross-net only, per player", () => {
+  const [a, b, c, d] = ["a", "b", "c", "d"].map((id) => makePlayer(id, { skillInt: 3 }));
+
+  it("CCO-1: charges each player who would face a previous-game opponent across the net", () => {
+    // a and c faced each other last game; this split puts them on opposite
+    // sides again → both are charged.
+    const lastOpponents = new Map([
+      ["a", new Set(["c"])],
+      ["c", new Set(["a"])],
+    ]);
+    const split = { teamA: [a, b], teamB: [c, d] };
+    expect(countConsecutiveOpponentRepeats(split, lastOpponents)).toBe(2);
+  });
+
+  it("CCO-2: the SAME pair drafted as teammates scores 0 — pairing them up is the fix", () => {
+    const lastOpponents = new Map([
+      ["a", new Set(["c"])],
+      ["c", new Set(["a"])],
+    ]);
+    const split = { teamA: [a, c], teamB: [b, d] };
+    expect(countConsecutiveOpponentRepeats(split, lastOpponents)).toBe(0);
+  });
+
+  it("CCO-3: binary per player — facing TWO previous opponents still counts once for that player", () => {
+    // a faced both c and d last game. a is charged once; c and d are each
+    // charged for facing a. Total 3, not 4.
+    const lastOpponents = new Map([
+      ["a", new Set(["c", "d"])],
+      ["c", new Set(["a"])],
+      ["d", new Set(["a"])],
+    ]);
+    const split = { teamA: [a, b], teamB: [c, d] };
+    expect(countConsecutiveOpponentRepeats(split, lastOpponents)).toBe(3);
+  });
+
+  it("CCO-3b: the maximum is 4 — one per seat, which is the sub-quantum bound", () => {
+    const lastOpponents = new Map([
+      ["a", new Set(["c", "d"])],
+      ["b", new Set(["c", "d"])],
+      ["c", new Set(["a", "b"])],
+      ["d", new Set(["a", "b"])],
+    ]);
+    const split = { teamA: [a, b], teamB: [c, d] };
+    const repeats = countConsecutiveOpponentRepeats(split, lastOpponents);
+    expect(repeats).toBe(4);
+    // The constant must track the measured maximum, not drift from it — every
+    // bound below is stated in terms of the constant.
+    expect(MAX_CONSECUTIVE_OPPONENT_REPEATS).toBe(repeats);
+
+    // The guardrail this exists to protect: even at maximum, the term cannot
+    // reach one games-ahead quantum, so fairness tiers are never reordered.
+    expect(repeats * CONSECUTIVE_OPPONENT_PENALTY).toBeLessThan(GAMES_AHEAD_PENALTY);
+
+    // The REAL ceiling is one higher: buildCombinationGroup scores an unseatable
+    // four at MAX + 1 so it sorts strictly below every real split. Asserting only
+    // the 4× bound above leaves a window (penalty in [2000, 2500)) where the
+    // sentinel breaches the quantum while the whole suite stays green. This is
+    // the assertion that actually pins CONSECUTIVE_OPPONENT_PENALTY < 2000.
+    expect((MAX_CONSECUTIVE_OPPONENT_REPEATS + 1) * CONSECUTIVE_OPPONENT_PENALTY).toBeLessThan(
+      GAMES_AHEAD_PENALTY
+    );
+  });
+
+  it("CCO-4: an absent map scores 0 (the pre-freshness engine's behaviour)", () => {
+    expect(countConsecutiveOpponentRepeats({ teamA: [a, b], teamB: [c, d] })).toBe(0);
+  });
+
+  it("CCO-5: an empty map scores 0 — t=0, before any match has been played", () => {
+    expect(countConsecutiveOpponentRepeats({ teamA: [a, b], teamB: [c, d] }, new Map())).toBe(0);
+  });
+});
+
+// ============================================================
+// The split preview — snakeDraft / buildCombinationGroup wiring
+// ============================================================
+//
+// CCO-6/7  snakeDraft prefers the fresher split WITHIN a rung, and never
+//          promotes across one (the regression that sank the rival variant:
+//          buying opponent freshness by re-teaming a used partnership)
+// CCO-8/9  buildCombinationGroup only changes its selection when the map is
+//          non-empty — this gate is what makes REPLAY_NO_LAST_OPPONENTS an
+//          exact baseline control rather than an approximation
+
+describe("snakeDraft — consecutive-opponent tie-break inside a rung", () => {
+  it("CCO-6: with several fresh splits available, picks the one with no rematch", () => {
+    // Equal skills → all three splits are balanced and every pair is fresh, so
+    // all of them qualify in pass 1a and the repeat count is the only separator.
+    const players = ["a", "b", "c", "d"].map((id) => makePlayer(id, { skillInt: 3 }));
+    // a just faced b. The default [0,3] vs [1,2] split (a+d vs b+c) would
+    // re-serve it; a+b vs c+d does not.
+    const lastOpponents = new Map([
+      ["a", new Set(["b"])],
+      ["b", new Set(["a"])],
+    ]);
+
+    const draft = snakeDraft(
+      players,
+      new Map(),
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      lastOpponents
+    );
+
+    expect(draft).not.toBeNull();
+    expect(countConsecutiveOpponentRepeats(draft!, lastOpponents)).toBe(0);
+    // Specifically: a and b end up as TEAMMATES.
+    const teamOfA = draft!.teamA.some((p) => p.player_id === "a") ? draft!.teamA : draft!.teamB;
+    expect(teamOfA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
+  });
+
+  it("CCO-7: never promotes a used partnership up the ladder to dodge a rematch", () => {
+    // a+b have already partnered. The ONLY rematch-free split is a+b vs c+d —
+    // but that split is not fresh, so pass 1a/1b must still win. Freshness of
+    // PARTNERSHIPS outranks freshness of opponents; the preference is a
+    // within-rung tie-break, never a rung promotion.
+    const players = ["a", "b", "c", "d"].map((id) => makePlayer(id, { skillInt: 3 }));
+    const partnershipCounts = new Map([[pairKey("a", "b"), 1]]);
+    const lastOpponents = new Map([
+      ["a", new Set(["c", "d"])],
+      ["c", new Set(["a"])],
+      ["d", new Set(["a"])],
+    ]);
+
+    const draft = snakeDraft(
+      players,
+      partnershipCounts,
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      lastOpponents
+    );
+
+    expect(draft).not.toBeNull();
+    const teamOfA = draft!.teamA.some((p) => p.player_id === "a") ? draft!.teamA : draft!.teamB;
+    // a is NOT paired with b — the used partnership was not resurrected.
+    expect(teamOfA.map((p) => p.player_id)).not.toEqual(["a", "b"]);
+    expect(partnershipCounts.get(pairKey(teamOfA[0].player_id, teamOfA[1].player_id)) ?? 0).toBe(0);
+  });
+});
+
+describe("buildCombinationGroup — the split-preview gate", () => {
+  // Six equal-skill candidates, all valid together, with distinct wait times so
+  // the score order is unambiguous.
+  const anchor = makePlayer("anchor", { skillInt: 3, waitMinutes: 30 });
+  const candidates = ["c1", "c2", "c3", "c4", "c5"].map((id, i) =>
+    makePlayer(id, { skillInt: 3, waitMinutes: 20 - i })
+  );
+
+  it("CCO-8: an EMPTY lastOpponents map leaves the first-valid selection untouched", () => {
+    const scored = scoreCandidates(candidates, new Map());
+    const baseline = buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX);
+    const withEmptyPreview = buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX, {
+      partnershipCounts: new Map(),
+      cap: MAX_PARTNERSHIP_REPEATS,
+      opponentCounts: new Map(),
+      opponentCap: MAX_OPPONENT_REPEATS,
+      lastOpponents: new Map(),
+    });
+
+    expect(withEmptyPreview.map((p) => p.player_id)).toEqual(baseline.map((p) => p.player_id));
+  });
+
+  it("CCO-9: a non-empty map moves the selection off the top-3 to avoid an immediate rematch", () => {
+    // The top-3 by score are c1/c2/c3. Make every one of those foursomes a
+    // rematch for the anchor, and leave c4 clean.
+    const lastOpponents = new Map([
+      ["anchor", new Set(["c1", "c2", "c3"])],
+      ["c1", new Set(["anchor"])],
+      ["c2", new Set(["anchor"])],
+      ["c3", new Set(["anchor"])],
+    ]);
+    const scored = scoreCandidates(candidates, new Map());
+    const group = buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX, {
+      partnershipCounts: new Map(),
+      cap: MAX_PARTNERSHIP_REPEATS,
+      opponentCounts: new Map(),
+      opponentCap: MAX_OPPONENT_REPEATS,
+      lastOpponents,
+    });
+
+    expect(group).toHaveLength(3);
+    // The selection actually MOVED — this is the claim the title makes, and
+    // asserting only `repeats === 0` below would pass even if it had not.
+    const baseline = buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX);
+    expect(group.map((p) => p.player_id)).not.toEqual(baseline.map((p) => p.player_id));
+
+    const draft = snakeDraft(
+      [anchor, ...group],
+      new Map(),
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      lastOpponents
+    );
+    // Whatever it picked, the anchor is not re-served the same opponents.
+    expect(countConsecutiveOpponentRepeats(draft!, lastOpponents)).toBe(0);
+  });
+
+  it("CCO-10: fairness still dominates — a games-ahead candidate is never pulled in to dodge a rematch", () => {
+    // c5 has played 3 more games than the pool minimum, so it carries
+    // 3 × GAMES_AHEAD_PENALTY. Make EVERY foursome without c5 a rematch: the
+    // engine must still refuse to draft c5, because 12 can never buy 10_000.
+    const aheadPool = [
+      ...candidates.slice(0, 4),
+      makePlayer("c5", { skillInt: 3, waitMinutes: 16, gamesPlayed: 3 }),
+    ];
+    const lastOpponents = new Map([
+      ["anchor", new Set(["c1", "c2", "c3", "c4"])],
+      ["c1", new Set(["anchor"])],
+      ["c2", new Set(["anchor"])],
+      ["c3", new Set(["anchor"])],
+      ["c4", new Set(["anchor"])],
+    ]);
+    const scored = scoreCandidates(aheadPool, new Map(), 0);
+    const group = buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX, {
+      partnershipCounts: new Map(),
+      cap: MAX_PARTNERSHIP_REPEATS,
+      opponentCounts: new Map(),
+      opponentCap: MAX_OPPONENT_REPEATS,
+      lastOpponents,
+    });
+
+    expect(group.map((p) => p.player_id)).not.toContain("c5");
+  });
+});
+
+// ============================================================
+// The unsplittable-four trap  [regression — review gate, blocking]
+// ============================================================
+//
+// snakeDraft returns null when EVERY team assignment for a four is partnership-
+// capped. The preview first scored that as `repeats = 0` — the best possible
+// value — so the argmin did not merely tolerate an unseatable four, it PREFERRED
+// one over a seatable four whenever fairness was within 4 × 3 = 12 points.
+//
+// Nothing downstream recovers it: runAlgorithm's `if (!draft) continue` abandons
+// the whole skill window, so the observable failure is a court that seats nobody
+// while a perfectly good four was available — and with capSaturation false, so
+// it does not even read as saturation to the caller.
+//
+// The setup below is the real precondition, not a contrivance: three players
+// mutually at the partnership cap while none of them is capped WITH the anchor.
+// That combination is what slips past the anchor-pair pre-filter and is ordinary
+// late-session state. Every wait time is identical so fairness is a constant and
+// the selection is decided purely by the repeats term.
+
+describe("buildCombinationGroup — an unsplittable four is scored worst, not best", () => {
+  const anchor = makePlayer("anchor", { skillInt: 3, waitMinutes: 20 });
+  const candidates = ["c1", "c2", "c3", "c4"].map((id) =>
+    makePlayer(id, { skillInt: 3, waitMinutes: 20 })
+  );
+  // c1/c2/c3 are mutually capped, so {anchor,c1,c2,c3} has no legal split: every
+  // arrangement leaves two of them partnered. The anchor is capped with nobody.
+  const cappedTrio = () =>
+    new Map([
+      [pairKey("c1", "c2"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("c1", "c3"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("c2", "c3"), MAX_PARTNERSHIP_REPEATS],
+    ]);
+  // Anything containing c4 is seatable but IS a rematch (anchor just faced c4),
+  // so the buggy scoring ranked the unseatable trio strictly ahead of it.
+  const lastOpponents = () =>
+    new Map([
+      ["anchor", new Set(["c4"])],
+      ["c4", new Set(["anchor"])],
+    ]);
+
+  const preview = () => ({
+    partnershipCounts: cappedTrio(),
+    cap: MAX_PARTNERSHIP_REPEATS,
+    opponentCounts: new Map<string, number>(),
+    opponentCap: MAX_OPPONENT_REPEATS,
+    lastOpponents: lastOpponents(),
+  });
+
+  it("CCO-11: the group it returns can actually be seated", () => {
+    const scored = scoreCandidates(candidates, new Map());
+    const group = buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX, preview());
+
+    expect(group).toHaveLength(3);
+    // The bug returned exactly [c1,c2,c3] — the first triple in score order.
+    expect(group.map((p) => p.player_id).sort()).not.toEqual(["c1", "c2", "c3"]);
+
+    const draft = snakeDraft(
+      [anchor, ...group],
+      cappedTrio(),
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      lastOpponents()
+    );
+    expect(draft).not.toBeNull();
+  });
+
+  it("CCO-12: runAlgorithm still seats a court instead of returning no match", () => {
+    // Equal wait times, so pool order is the array order and anchor is pool[0].
+    const pool = [anchor, ...candidates];
+    const result = runAlgorithm(pool, cappedTrio(), new Map(), [], new Map(), [], lastOpponents());
+
+    // Pre-fix this was `{ proposal: null, capSaturation: false }` — a silently
+    // empty court, indistinguishable from "nobody is available".
+    expect(result.proposal).not.toBeNull();
+    const served = [...result.proposal!.teamA, ...result.proposal!.teamB].map((p) => p.player_id);
+    expect(served).toHaveLength(4);
+    expect(served).toContain("c4");
+  });
+
+  it("CCO-13: the preference is a tie-break, not a second partnership gate", () => {
+    // Same capped trio, but now c4 is 3 games ahead of the pool: 3 ×
+    // GAMES_AHEAD_PENALTY dwarfs the 12-point ceiling, so fairness must win and
+    // the engine must go back to preferring the trio — and then legitimately
+    // fail to split it. Scoring an unsplittable four at MAX must not turn this
+    // term into a hard constraint that outranks games-owed.
+    const aheadCandidates = [
+      ...candidates.slice(0, 3),
+      makePlayer("c4", { skillInt: 3, waitMinutes: 20, gamesPlayed: 3 }),
+    ];
+    const scored = scoreCandidates(aheadCandidates, new Map(), 0);
+    const group = buildCombinationGroup(anchor, scored, SKILL_VARIANCE_MAX, preview());
+
+    expect(group.map((p) => p.player_id).sort()).toEqual(["c1", "c2", "c3"]);
+  });
+});
+
+// ============================================================
+// forcedRepeat — the Red-Zone escape hatch used to stay silent
+// ============================================================
+//
+// When the diversity/rejection check fails, the engine tries to swap out
+// group[2]. If that player is in the Red Zone it refuses to bench them and
+// falls through, serving the violating four anyway. That is a forced repeat by
+// every definition the flag uses — but the fall-through returned with the flag
+// absent, so cross-court augmentation never fired for the one case where the
+// engine KNEW it was repeating. The flag is now decided from the roster
+// actually served, not from which branch produced it.
+
+describe("forcedRepeat — Red-Zone fall-through (silent-repeat fix)", () => {
+  // Installed in beforeAll, NOT in the describe body: a describe body runs at
+  // COLLECTION time, so a spy created there silences console.warn for every
+  // test in the file, not just this block.
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeAll(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterAll(() => warn.mockRestore());
+
+  // Everyone Red Zone (wait ≥ CRITICAL_WAIT_MINUTES) so group[2] is Red Zone
+  // and the diversity swap is refused. Only four players exist, so there is no
+  // alternative body to swap in either way.
+  const redZonePool = () => [
+    makePlayer("a", { skillInt: 3, waitMinutes: CRITICAL_WAIT_MINUTES + 4 }),
+    makePlayer("b", { skillInt: 3, waitMinutes: CRITICAL_WAIT_MINUTES + 3 }),
+    makePlayer("c", { skillInt: 3, waitMinutes: CRITICAL_WAIT_MINUTES + 2 }),
+    makePlayer("d", { skillInt: 3, waitMinutes: CRITICAL_WAIT_MINUTES + 1 }),
+  ];
+  const ids = ["a", "b", "c", "d"];
+
+  it("FR-1: a diversity-violating four served past a Red-Zone swap target is flagged", () => {
+    const pool = redZonePool();
+    expect(pool.every((p) => p.priorityScore >= RED_ZONE_SCORE_FLOOR)).toBe(true);
+
+    const res = runAlgorithm(pool, new Map(), new Map(), [ids, ids, ids, ids, ids]);
+    expect(res.proposal).not.toBeNull();
+    expect(res.forcedRepeat).toBe(true);
+  });
+
+  it("FR-2: a REJECTED roster served past a Red-Zone swap target is flagged too", () => {
+    const pool = redZonePool();
+    const res = runAlgorithm(
+      pool,
+      new Map(),
+      new Map(),
+      [], // no diversity history — the rejection memory is what fires
+      new Map(),
+      [ids]
+    );
+    expect(res.proposal).not.toBeNull();
+    expect(res.forcedRepeat).toBe(true);
+  });
+
+  it("FR-3: a clean four is still NOT flagged — the flag tracks the served roster", () => {
+    const pool = redZonePool();
+    const res = runAlgorithm(pool, new Map(), new Map(), [], new Map(), [
+      ["w", "x", "y", "z"], // a rejection for some other four
+    ]);
+    expect(res.proposal).not.toBeNull();
+    expect(res.forcedRepeat).toBeFalsy();
   });
 });

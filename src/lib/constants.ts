@@ -289,6 +289,121 @@ export const GAMES_AHEAD_PENALTY = 10_000;
  */
 export const GAMES_AHEAD_PENALTY_RED_ZONE = 100;
 
+// ── Split-aware consecutive-opponent freshness ────────────────────────────────
+// The complaint the engine actually loses on is "I faced them AGAIN, right
+// after" — not "twice all night". Two players in a proposed foursome are only
+// opponents if the team split puts them on opposite sides, and that split is
+// decided AFTER the group is fixed (snakeDraft / rotatedDraft). So the group
+// search previews the split it would produce and scores the CROSS-NET pairs it
+// would actually create: a pair who just faced each other and would face each
+// other again is charged; the same pair drafted as TEAMMATES is not — putting
+// them together is the fix, not the repeat.
+//
+// Measured over the five-session replay harness (scripts/replay-sessions.ts):
+// back-to-back opponent repeats 244/550 (44.4%) → 186/550 (33.8%), which is
+// better than the 35.5% the organizer achieved intervening by hand. Near-
+// identical foursomes 32 → 28, opponent pairs over cap 52 → 36, and partner
+// variety IMPROVED (94.9% → 96.9%) rather than being traded away.
+
+/**
+ * Penalty charged per PLAYER in a proposed foursome who would face, across the
+ * net, someone they faced in their immediately-previous game. Counted per
+ * player (max 4 per match), exactly mirroring how the complaint is measured.
+ *
+ * ── Sub-quantum proof (fairness stays strictly dominant) ──
+ * The magnitude is bounded BY CONSTRUCTION, not by convention:
+ * countConsecutiveOpponentRepeats visits each of the PLAYERS_PER_MATCH seats
+ * exactly once and increments at most once per seat, so its range is [0, 4] and
+ * the term's ceiling is 4 × 3 = 12. That is:
+ *   • < GAMES_AHEAD_PENALTY (10_000) by 833× → cannot reorder a candidate who
+ *     is a game closer to the pool minimum behind one who is a game further
+ *     away. Games-ahead tiers are never reordered, so no one can be starved.
+ *   • < one overlap unit (10_000; a single prior encounter with the anchor is
+ *     already 2 units = 20_000) → cannot reorder across anchor-familiarity.
+ *   • < GAMES_AHEAD_PENALTY_RED_ZONE (100) and < one Red Zone overlap unit
+ *     (100) by 8.3×; and because RED_ZONE_SCORE_FLOOR is 1000, substituting a
+ *     Red Zone candidate for a Normal one moves the group's cost by ≳1000,
+ *     which 12 can never buy back. A Red Zone or Hard Cap player therefore
+ *     cannot be benched by this term.
+ * The anchor is not a search variable at all (anchor = pool[0]), so the
+ * longest-waiting player cannot be displaced by this term under any input.
+ *
+ * ── What it CAN reorder ──
+ * Only triples with the same games-above-minimum and the same anchor overlap —
+ * inside one fairness tier, where the remaining separator is wait time. There
+ * its reach is up to 12 summed priority-minutes across the three non-anchor
+ * slots, i.e. roughly 4 minutes per displaced seat. That is well inside the
+ * guardrail but it is NOT merely "players who re-queued in the same instant":
+ * at MIN_REST_MINUTES = 18 with staggered court finishes, a 4-minute gap is
+ * routine, so this term does bench a slightly-longer-waiting player to avoid an
+ * immediate rematch. That trade is the intended behaviour; it is recorded here
+ * so the next person to tune it knows the true reach.
+ *
+ * ── Why 3 and not 60 ──
+ * Swept {1,2,3,4,5,6,8,10,12,15,30,60,120,240,600} over the replay harness.
+ * EVERY value beats the baseline's 244 repeats, so the win does not depend on
+ * this number; the range is 186–201 (33.8%–36.5% vs 44.4%). The best plateau is
+ * {2,3,4,5} → 186, degrading above it (6 → 200, 15–240 → 199, 600 → 201).
+ * Bigger is worse because a larger term stops being a tie-break and starts
+ * pulling a materially lower-priority player in ahead of a higher-priority one
+ * to dodge a repeat NOW; that player re-queues off-beat, desynchronising the
+ * rotation and producing worse pools later. The signature is visible in the
+ * 07/25 replay, where near-identical foursomes jump 4 → 24 once the penalty
+ * crosses 5. 3 is the middle of the winning plateau.
+ *
+ * Treat the exact value as noise-level tuning over five fixed trajectories, and
+ * "any positive sub-quantum value helps" as the robust finding.
+ */
+export const CONSECUTIVE_OPPONENT_PENALTY = 3;
+
+/**
+ * Structural maximum of `countConsecutiveOpponentRepeats` for one foursome: the
+ * term is charged once per SEAT, and there are four seats, so no split can score
+ * above 4. Two things lean on that ceiling:
+ *
+ *   1. The sub-quantum proof. 4 × CONSECUTIVE_OPPONENT_PENALTY = 12, which is
+ *      833× below GAMES_AHEAD_PENALTY — so the term can only ever reorder
+ *      candidates already tied on fairness, never promote one across a tier.
+ *   2. buildCombinationGroup's null-split score. A four the seater cannot seat
+ *      at all is scored at this maximum PLUS ONE rather than at 0, so the argmin
+ *      does not treat "unsplittable" as "perfectly fresh". Scoring it 0 was a
+ *      real bug: the search preferred unseatable fours, and the caller's
+ *      `if (!draft) continue` then discarded the whole skill window. The +1 is
+ *      what keeps it strictly worse than a real split scoring the full 4 —
+ *      at exactly 4 the two tie and the argmin's strict `<` keeps the earlier,
+ *      unsplittable one. 5 × 3 = 15 is still far below the quantum.
+ *
+ * If the term ever becomes per-PAIR rather than per-seat this must move to 8,
+ * and the sub-quantum proof needs re-checking (8 × 3 = 24, still sub-quantum).
+ */
+export const MAX_CONSECUTIVE_OPPONENT_REPEATS = PLAYERS_PER_MATCH;
+
+/**
+ * Ceiling on how many team-splits buildCombinationGroup may preview while
+ * searching for the group with the fewest consecutive-opponent repeats. Purely
+ * a runtime guard: exhausting it is CORRECT but degraded — the search returns
+ * the best group found so far, which is never worse than the first-valid group
+ * the pre-freshness engine returned.
+ *
+ * Sized from the real worst case rather than a round number. The search is
+ * C(n,3) over the skill-filtered candidate window, so:
+ *   n = 16 →   560 previews   n = 20 → 1_140
+ *   n = 24 → 2_024            n = 30 → 4_060  (the ~30-player session ceiling
+ *                                              already documented on
+ *                                              buildCombinationGroup)
+ * A preview is one snakeDraft (sort 4, build 3 splits, walk the ladder),
+ * measured at ~1.4 µs, so 4_060 previews ≈ 5.7 ms — well inside a single
+ * on-deck fill and paid at most once per slot. 4_096 therefore covers the
+ * largest session the engine claims to support, with headroom.
+ *
+ * The previous value of 600 was a silent cliff: a 17-candidate window is
+ * C(17,3) = 680 and blew it on the FIRST anchor, reverting that slot to
+ * baseline behaviour with no signal. Branch-and-bound prunes most of this in
+ * practice — the budget only binds under near-total score ties — but when it
+ * does bind, DEBUG_MATCHMAKING now says so instead of failing quiet.
+ */
+export const SPLIT_PREVIEW_BUDGET = 4_096;
+
 // ── Cross-Court Diversity Drafting (held drafts) ──────────────────────────────
 // See CROSS_COURT_DRAFTING_PLAN.md. The engine may pre-build an on-deck "held"
 // draft of 3 waiting players + 1 player still PLAYING on another court, to force

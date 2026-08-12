@@ -413,7 +413,16 @@ Sorted ascending (lowest score = highest priority). Red Zone overlap penalty is 
 
 #### Group Assembly (`buildCombinationGroup`) — N-choose-3 Combination Search
 
-Replaced the former greedy algorithm. Iterates all C(n,3) triples of scored candidates and returns the first triple where all 3 + the anchor form a valid group (`isGroupValid`). Breaks immediately — the first valid combo found IS the optimal one since candidates are pre-sorted by priority. Worst case: C(30,3) = 4,060 iterations.
+Replaced the former greedy algorithm. Iterates all C(n,3) triples of scored candidates looking for one where all 3 + the anchor form a valid group (`isGroupValid`). Worst case: C(30,3) = 4,060 iterations.
+
+**Two modes, and the gate between them is load-bearing** (2026-08-12, see §3.32):
+
+- **Baseline** (no `lastOpponents`, or an empty one): returns the **first** valid triple and breaks immediately — pre-sorted candidates mean the first valid combo IS optimal.
+- **Split preview** (`lastOpponents` non-empty): cost is `fairness + CONSECUTIVE_OPPONENT_PENALTY × repeats`, so first-valid is no longer optimal and the search becomes a **branch-and-bound argmin**. Bounded by `SPLIT_PREVIEW_BUDGET` (4,096 — sized to cover C(30,3); exhaustion is logged under `DEBUG_MATCHMAKING` and degrades to best-so-far, never below baseline).
+
+⚠️ The two are **not** equivalent at zero penalty: lexicographic-first is not score-sum-minimal (`(0,1,5)` precedes `(0,2,3)` but may cost more). The `previewing` boolean — which requires a **non-empty** map — is what guarantees the baseline path is byte-identical to the pre-2026-08-12 engine. Do not relax it into a null check.
+
+⚠️ A triple whose every team split is partnership-capped (`snakeDraft` → `null`) is scored at `MAX_CONSECUTIVE_OPPONENT_REPEATS + 1` — strictly **worse** than any real split, not 0. (The `+1` matters: at exactly `MAX` an unseatable four ties a seatable four carrying 4 repeats, and the argmin's strict `<` then keeps the earlier, unseatable one.) Scoring it 0 made "unseatable" the best possible preview, so the argmin preferred fours the seater could not seat; `runAlgorithm`'s `if (!draft) continue` then abandoned the whole skill window and the court seated **nobody** with `capSaturation: false`. Regression-tested by `CCO-11/12`, with `CCO-13` pinning that this stays a tie-break and never outranks games-owed.
 
 #### Partnership Cap Enforcement
 
@@ -461,8 +470,9 @@ The three derivations below are **pure** and cost no further round trips:
 - `isDiversityViolation(playerIds, recentRosters)` — flags true if ≥3 of the proposed 4 players appeared together in any single recent match roster.
 - `getEffectiveLookback(eligiblePoolSize)` — scales lookback window to pool size (≤5 → 2, ≤9 → 3, ≤15 → 4, 16+ → **7**) to prevent small-tier starvation. The 16+ tier was increased from 5 to 7 now that `deriveRecentRosters` yields 10 matches (sufficient headroom).
 - `derivePairCounts(snapshot)` — returns **`{ partnershipCounts, opponentCounts }`** (both maps built in one pass over the snapshot). `opponentCounts` = cross-net (opponent) pair counts, used by snakeDraft/rotatedDraft as a soft preference.
+- `deriveLastOpponents(snapshot)` — who each player faced **across the net in their LAST match only** (2026-08-12, §3.32). Whole-pool, not anchor-relative, which is the entire point: **79.3% of back-to-back opponent repeats are between two NON-anchor co-players**, which `deriveOverlapMap` structurally cannot see at any weight. Newest-first (first write wins, relying on the snapshot's `created_at DESC, id DESC` contract) with **no lookback window** — a player's last match counts however long ago it was. A malformed roster (not exactly two teams of two) marks its players **seen with an empty set** rather than being skipped, so an older match can never leak in as someone's "last". Bounded by `SESSION_MATCH_SNAPSHOT_CEILING`, so O(≤200 × 4) with a per-player early-out.
 
-⚠️ **Test-authoring trap.** The engine unit suite's mock client is a FIFO queue keyed on `from()` order, and the snapshot **short-circuits on an empty `matches` response** — so a fixture whose history is `{ data: [] }` never issues the `match_players` read and shifts every later response by one. Supply a non-empty `matches` fixture only together with the `match_players` response that follows it. `ME-new-1` was silently vacuous for exactly this reason after the merge (its seeded history landed on a slot nothing read, and its only assertion was negative). It was vacuous a **second** time for an unrelated reason: its 3-player fixture tripped `pool.length < PLAYERS_PER_MATCH` at `matchmaking.ts:503`, which returns before `derivePairCounts`/`runAlgorithm` — so `capSaturation` could never be reached and `queriedTables`/`rpc`-not-called passed on the abort path instead. It now uses 4 players whose every anchor pairing sits at the cap, and asserts `broadcastCapSaturation` was **called** (positive assertions cannot go vacuous), which is why `@/lib/broadcast` is mocked in that suite. That mock is for determinism, **not** credential safety: `vitest.config.ts` loads no dotenv and Vite surfaces only `VITE_`-prefixed vars, so `NEXT_PUBLIC_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` are unset under `vitest run` (probed on 4.1.5) and `postBroadcast` would hit its missing-env guard. See `tests/unit/matchmaking-snapshot.test.ts` (22 tests) and `ENG-SNAP-1/2`.
+⚠️ **Test-authoring trap.** The engine unit suite's mock client is a FIFO queue keyed on `from()` order, and the snapshot **short-circuits on an empty `matches` response** — so a fixture whose history is `{ data: [] }` never issues the `match_players` read and shifts every later response by one. Supply a non-empty `matches` fixture only together with the `match_players` response that follows it. `ME-new-1` was silently vacuous for exactly this reason after the merge (its seeded history landed on a slot nothing read, and its only assertion was negative). It was vacuous a **second** time for an unrelated reason: its 3-player fixture tripped `pool.length < PLAYERS_PER_MATCH` at `matchmaking.ts:503`, which returns before `derivePairCounts`/`runAlgorithm` — so `capSaturation` could never be reached and `queriedTables`/`rpc`-not-called passed on the abort path instead. It now uses 4 players whose every anchor pairing sits at the cap, and asserts `broadcastCapSaturation` was **called** (positive assertions cannot go vacuous), which is why `@/lib/broadcast` is mocked in that suite. That mock is for determinism, **not** credential safety: `vitest.config.ts` loads no dotenv and Vite surfaces only `VITE_`-prefixed vars, so `NEXT_PUBLIC_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` are unset under `vitest run` (probed on 4.1.5) and `postBroadcast` would hit its missing-env guard. See `tests/unit/matchmaking-snapshot.test.ts` (29 tests) and `ENG-SNAP-1/2`.
 
 #### Engine Constants (`src/lib/constants.ts`)
 
@@ -486,6 +496,9 @@ The three derivations below are **pure** and cost no further round trips:
 | `MIN_REST_MINUTES`             | 18    | Minimum wait minutes before a returning player (games_played > 0) can be drafted again. Prevents 0-min back-to-back. Falls back to unfiltered pool if fewer than `PLAYERS_PER_MATCH` survive the filter.                                                                                                                                           |
 | `GAMES_AHEAD_PENALTY`          | 10,000 | Fresh-first rule: scoreCandidates penalty per game a candidate is above the waiting-pool minimum (= 1 overlap unit). Pulled bodies exempt.                                                                       |
 | `GAMES_AHEAD_PENALTY_RED_ZONE` | 100   | Red Zone variant of the fresh-first penalty (capped small, like the overlap cap, so urgency always outranks freshness).                                                                                             |
+| `CONSECUTIVE_OPPONENT_PENALTY` | 3     | Per-player cost of facing someone you faced in your **last** match (§3.32). Cross-net only — a just-faced pair drafted as teammates is free. Sub-quantum by construction: 4 × 3 = 12, i.e. 833× below `GAMES_AHEAD_PENALTY`, so it can only break ties **within** a fairness tier. |
+| `MAX_CONSECUTIVE_OPPONENT_REPEATS` | 4 (`PLAYERS_PER_MATCH`) | Structural max of `countConsecutiveOpponentRepeats` — the term is charged once per seat. Anchors the sub-quantum proof, and is the score given to an **unseatable** four so the argmin cannot prefer one. A future per-PAIR term would make this 8. |
+| `SPLIT_PREVIEW_BUDGET`         | 4,096 | Ceiling on split previews per `buildCombinationGroup` call. Sized from C(30,3) = 4,060, the documented session ceiling (a preview is ~1.4 µs, so the worst case is ~5.7 ms, paid at most once per slot). Exhaustion is **correct but degraded** — returns best-so-far, never worse than baseline — and logs under `DEBUG_MATCHMAKING`. The prior value of 600 was a silent cliff: C(17,3) = 680 blew it on the first anchor. |
 | `GATE_POOL_THRESHOLD`          | 4     | Pool size that triggers cross-court mixing deferral                                                                                                                                                                                                                                                                                                |
 | `GATE_HOLD_MINUTES`            | 8     | Minutes before gate auto-releases                                                                                                                                                                                                                                                                                                                  |
 | `MIN_FREE_POOL_FOR_ON_DECK`    | 4     | Minimum waiting players remaining after each on-deck fill (pool diversity cap, applies from 2nd slot onwards)                                                                                                                                                                                                                                      |
@@ -1775,6 +1788,44 @@ Three properties of that test worth preserving. (a) **The toast identifies nothi
 
 ---
 
+### 3.32 Consecutive-opponent freshness — the engine now previews the split before choosing the four (2026-08-12)
+
+**Files:** `src/lib/matchmaking-db.ts` (`deriveLastOpponents`), `src/lib/matchmaking-core.ts` (`countConsecutiveOpponentRepeats`, `selectSplit`, `TeamSplit`/`LastOpponents`/`SplitPreviewContext`, argmin in `buildCombinationGroup`, `runAlgorithm` param 7), `src/lib/constants.ts` (`CONSECUTIVE_OPPONENT_PENALTY`, `MAX_CONSECUTIVE_OPPONENT_REPEATS`, `SPLIT_PREVIEW_BUDGET`), `src/app/actions/matchmaking.ts`, `scripts/replay/simulate.ts`.
+
+**The complaint this closes.** Players were not objecting to *seeing* the same opponents over a night — they were objecting to facing them in **back-to-back** games. The engine had no notion of "last match" at all: `MAX_OPPONENT_REPEATS` is a whole-session count with no recency gradient, and `deriveOverlapMap` is anchor-relative. Measured on five real sessions, **79.3% of back-to-back opponent repeats are between two NON-anchor co-players** — invisible to the anchor-relative map at any weight, which is why re-tuning `OVERLAP_WEIGHT_OPPONENT` was a dead end.
+
+**The mechanism.** Rematch avoidance is applied at two points, both strictly *inside* an existing fairness tier:
+
+1. **Split choice** (`selectSplit`, shared by `snakeDraft` and `rotatedDraft`). The 4-pass partnership-freshness ladder is unchanged; within **each rung** the split with the fewest consecutive-opponent repeats now wins, ties keeping the earliest (most balanced) split. Only **cross-net** pairs count — two players who just faced each other and are now drafted as **teammates** cost nothing, which is where most of the gain comes from.
+2. **Group choice** (`buildCombinationGroup`). The four is chosen by argmin over `fairness + 3 × repeats` rather than first-valid. See §3.1 for the `previewing` gate and the unseatable-four rule.
+
+⚠️ **Never hoist the repeat count above the partnership predicates in `selectSplit`.** Promoting it out of the rung was tried and regressed partner variety in 5 of 5 sessions. Opponent freshness is a tie-break *within* a partnership-freshness rung, never a rung promotion (pinned by `CCO-7`).
+
+**Why the penalty is 3.** `GAMES_AHEAD_PENALTY` is 10,000 per game owed — "the quantum". Any new term must be provably sub-quantum so it can only reorder candidates already tied on fairness. Max magnitude here is `MAX_CONSECUTIVE_OPPONENT_REPEATS × CONSECUTIVE_OPPONENT_PENALTY` = 4 × 3 = **12**, i.e. 833× below the quantum; the reach is ~12 summed priority-minutes ≈ 4 minutes per displaced seat, and at `MIN_REST_MINUTES = 18` a 4-minute gap is routine. A sweep of {2,3,4,5} put 3 in the middle of the winning plateau; past 5 the engine starts pulling materially lower-priority players in to dodge a repeat, desynchronising the rotation (near-identical foursomes jump 4 → 24 on 07/25). Treat the exact value as noise-level tuning and *"any positive sub-quantum value helps"* as the robust finding.
+
+**Measured** by `scripts/replay-sessions.ts` over five real production sessions, A/B'd against `REPLAY_NO_LAST_OPPONENTS=true` (which feeds an empty map and must reproduce the baseline exactly — the control for porting bugs):
+
+| Metric                        | Engine before | Engine after | Organizer's own night |
+| ----------------------------- | ------------- | ------------ | --------------------- |
+| Back-to-back opponent repeats | 244/550 (44.4%) | **186/550 (33.8%)** | 170/479 (35.5%) |
+| Near-identical foursomes      | 32            | **28**       | 0                     |
+| Opponent pairs over soft cap  | 52            | **36**       | 33                    |
+| Partnerships over hard cap    | 0             | **0**        | 0                     |
+
+The engine now beats the organizer's hand-run rate. **Repeats improve in 5 of 5 sessions; partner variety improves in 2, is unchanged in 3, and regresses in 0.**
+
+⚠️ **Per-session regressions worth naming rather than burying** — the flat aggregates hide a redistribution:
+
+- **07/30**: near-identical foursomes **8 → 12**, and consecutive-*partner* repeats **2 → 4**.
+- **07/25**: games-played spread widens **4–7 → 3–7** (one player ends a game further behind).
+- The aggregate consecutive-partner figure is flat at 4 only because 06/25 improves 2 → 0 while 07/30 worsens 2 → 4.
+
+**Replay caveats** (all stated in `scripts/replay/simulate.ts`): the draft queue is collapsed to the bypassGate path at 100% court occupancy, nobody leaves early or pauses, there is no cross-court augmentation, and rejection memory is empty. Compare **rates**, never absolute counts.
+
+**Wiring note — parameter order is a trap.** `lastOpponents` is `runAlgorithm` **param 7**, deliberately *after* `rejectedRosters` (param 6). An earlier draft of this feature branched before rejection memory landed and put it at 6; that merges textually, compiles clean, passes type-check — and **silently drops rejection memory**. If you add another optional param, append it.
+
+---
+
 ## 4. UI/UX Conventions (Impeccable Standards)
 
 ### 4.1 Design System — "Court Nights" Theme
@@ -2046,7 +2097,7 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 
 | File                            | Covers                                                                                                                                      |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `matchmaking-core.test.ts`      | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation` — regression suite |
+| `matchmaking-core.test.ts`      | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation`, `countConsecutiveOpponentRepeats` — regression suite (173) |
 | `matchmaking-engine.test.ts`    | Full engine flow integration (mocked DB), anti-repeat, Red Zone, partner cap                                                                |
 | `early-diversity.test.ts`       | Early-session diversity (ED-SC / ED-OPP / ED-RN) — `scoreCandidates` fresh-first `GAMES_AHEAD_PENALTY`, opponent-vs-teammate overlap weighting (`OVERLAP_WEIGHT_OPPONENT` / `_TEAMMATE`), `deriveReuseNotice` equity thresholds |
 | `session-simulation.test.ts`    | Multi-round session simulations — 30-player load, diversity saturation                                                                      |

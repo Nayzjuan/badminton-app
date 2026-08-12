@@ -17,6 +17,7 @@
 //   deriveRecentRosters        — pure: recent rosters for diversity checks
 //   derivePairCounts           — pure: same-team + cross-net pair counts
 //   deriveOverlapMap           — pure: per-anchor co-player familiarity weights
+//   deriveLastOpponents        — pure: who each player faced in their LAST match
 //   fetchPartnershipCounts     — snapshot + derivePairCounts, for non-engine callers
 //   executeMatch               — write: commit a MatchProposal via RPC
 //
@@ -405,6 +406,90 @@ export function deriveOverlapMap(
   }
 
   return overlapMap;
+}
+
+// ─────────────────────────────────────────────────────────────
+// deriveLastOpponents (pure)
+// ─────────────────────────────────────────────────────────────
+// Map<player_id, Set<player_id>> — for every player in the session, the people
+// they faced ACROSS THE NET in their single most recent match.
+//
+// This is the exact shape of the complaint the engine is judged on: "I faced
+// them again, immediately." A repeat is only a repeat if the previous meeting
+// was cross-net AND it was the previous game. Two blind spots in
+// deriveOverlapMap above make that invisible to the engine otherwise:
+//
+//   (a) no recency gradient — a meeting 5 matches ago weighs exactly as much
+//       as the immediately-previous match, so "again, right now" is
+//       indistinguishable from "earlier tonight";
+//   (b) anchor-relative only — relationships AMONG the three non-anchor
+//       candidates are not represented at all, so three players who just
+//       faced each other can be drafted together freely. Measured: 79.3% of
+//       consecutive-opponent repeats are between two NON-anchor co-players,
+//       which is why reweighting deriveOverlapMap cannot fix this at any
+//       weight, and why this map is whole-pool rather than anchor-relative.
+//
+// Deliberately NOT a weighted count: the metric is binary per player, so this
+// is too.
+//
+// Ordering invariant: snapshot.matchIds is newest-first (created_at DESC), so
+// the FIRST match containing a player is that player's most recent. Pending and
+// in-progress matches are in the snapshot, so a player currently on court — or
+// sitting in an unreviewed draft — already has their "last" opponents recorded
+// and the engine will not re-serve them.
+//
+// A malformed roster — anything that is not exactly two teams of TWO, so a 4-0
+// and a 3-1 alike — still marks its players as seen, with an EMPTY opponent set:
+// it IS their most recent match, and walking past it to an older one would
+// report a stale, wrong set of opponents.
+//
+// Cost: unlike deriveOverlapMap (ANTI_REPEAT_LOOKBACK) and deriveRecentRosters
+// (ROSTER_LOOKBACK_COUNT) this takes no lookback window, because "last match"
+// is per-player and a bounded window can miss a player who has not played
+// recently. It is not unbounded work: fetchSessionMatchSnapshot refuses any
+// session above SESSION_MATCH_SNAPSHOT_CEILING (200) matches, so this is
+// O(≤200 × 4) with a per-player early-out.
+
+export function deriveLastOpponents(snapshot: SessionMatchSnapshot): Map<string, Set<string>> {
+  const lastOpponents = new Map<string, Set<string>>();
+
+  for (const id of snapshot.matchIds) {
+    const rows = snapshot.rowsByMatch.get(id);
+    if (!rows || rows.length === 0) continue;
+
+    const byTeam = new Map<string, string[]>();
+    for (const row of rows) {
+      const bucket = byTeam.get(row.team);
+      if (bucket) bucket.push(row.player_id);
+      else byTeam.set(row.team, [row.player_id]);
+    }
+
+    const buckets = [...byTeam.values()];
+    // Exactly two teams AND two bodies per team. Checking only the bucket COUNT
+    // let a corrupt 3v1 roster through as well-formed, recording three players
+    // as one player's genuine "last opponent" set — which contradicts the
+    // malformed-roster contract documented above. PLAYERS_PER_MATCH is 4 and
+    // there is no singles mode, so any other shape is bad data, not a variant.
+    if (buckets.length === 2 && buckets[0].length === 2 && buckets[1].length === 2) {
+      const [teamA, teamB] = buckets;
+      for (const [own, other] of [
+        [teamA, teamB],
+        [teamB, teamA],
+      ] as const) {
+        for (const playerId of own) {
+          // First (newest) match wins — later iterations are older matches.
+          if (lastOpponents.has(playerId)) continue;
+          lastOpponents.set(playerId, new Set(other));
+        }
+      }
+    } else {
+      for (const row of rows) {
+        if (!lastOpponents.has(row.player_id)) lastOpponents.set(row.player_id, new Set());
+      }
+    }
+  }
+
+  return lastOpponents;
 }
 
 // ─────────────────────────────────────────────────────────────

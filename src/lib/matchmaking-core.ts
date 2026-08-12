@@ -18,6 +18,8 @@
 // ============================================================
 
 import {
+  CONSECUTIVE_OPPONENT_PENALTY,
+  MAX_CONSECUTIVE_OPPONENT_REPEATS,
   CRITICAL_WAIT_MINUTES,
   DRAFT_CAP_LARGE_THRESHOLD,
   DRAFT_CAP_XLARGE_THRESHOLD,
@@ -39,6 +41,7 @@ import {
   ROSTER_LOOKBACK_COUNT,
   SKILL_VARIANCE_MAX,
   SKILL_VARIANCE_TARGET,
+  SPLIT_PREVIEW_BUDGET,
 } from "@/lib/constants";
 import type { QueueWithWaitTime } from "@/types/database";
 
@@ -243,8 +246,19 @@ export type SnakeDraftResult = {
   usedLopsidedFallback?: boolean;
 };
 
+/** A candidate team assignment for one foursome. */
+export type TeamSplit = { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] };
+
+/**
+ * Who each player faced ACROSS THE NET in their immediately-previous game.
+ * Produced by deriveLastOpponents (matchmaking-db.ts). An empty map is always
+ * safe and reproduces the pre-freshness behaviour exactly, which is what makes
+ * every consumer below opt-in.
+ */
+export type LastOpponents = ReadonlyMap<string, ReadonlySet<string>>;
+
 // Skill gap between the two teams of a split — 0 means perfectly balanced.
-function splitSkillGap(split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }): number {
+function splitSkillGap(split: TeamSplit): number {
   return Math.abs(
     split.teamA[0].skill_level_int +
       split.teamA[1].skill_level_int -
@@ -252,12 +266,133 @@ function splitSkillGap(split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }):
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// EXPORT: countConsecutiveOpponentRepeats
+// ─────────────────────────────────────────────────────────────
+// How many of the four players would face, ACROSS THE NET, someone they faced
+// in their own immediately-previous game. Range 0–4 — each seat is visited once
+// and increments at most once, which is what bounds CONSECUTIVE_OPPONENT_PENALTY
+// at a provably sub-quantum 12 (see the constant's proof).
+//
+// Split-aware by design, and that is the whole idea: co-presence is not a
+// repeat, a shared NET is. A pair who just faced each other and land on the
+// SAME team here score zero — putting them together is the fix, not the
+// offence. Per-player and binary because that is how the pain is felt (and how
+// metrics.ts measures it): facing two of your last opponents at once is one bad
+// game, not two.
+//
+// An absent / empty map returns 0 for every split, so every caller is
+// behaviour-identical when the engine runs without it.
+
+export function countConsecutiveOpponentRepeats(
+  split: TeamSplit,
+  lastOpponents?: LastOpponents
+): number {
+  if (!lastOpponents || lastOpponents.size === 0) return 0;
+  let repeats = 0;
+  for (const [own, other] of [
+    [split.teamA, split.teamB],
+    [split.teamB, split.teamA],
+  ] as const) {
+    for (const player of own) {
+      const faced = lastOpponents.get(player.player_id);
+      if (!faced || faced.size === 0) continue;
+      if (other.some((o) => faced.has(o.player_id))) repeats++;
+    }
+  }
+  return repeats;
+}
+
+// ─────────────────────────────────────────────────────────────
+// selectSplit — the shared freshness ladder
+// ─────────────────────────────────────────────────────────────
+// Extracted verbatim from what snakeDraft's `findSplit` closure and
+// rotatedDraft's four hand-inlined loops each implemented separately. Same four
+// passes, same order, same predicates:
+//
+//   1a: both team pairs fresh (count=0) AND no cross-net pair at cap.
+//   1b: both team pairs fresh — relax opponent cap.
+//   2a: below partnership cap AND no cross-net pair at cap.
+//   2b: below partnership cap only — last resort to prevent stalls.
+//
+// The ONE addition: within a pass, when several splits qualify, prefer the one
+// creating the fewest consecutive-opponent repeats, ties broken by pool order
+// (which carries the callers' own balance / rotation preference).
+//
+// That this is a tie-break INSIDE a rung — never a promotion BETWEEN rungs — is
+// load-bearing, and it is the difference between this design and the
+// rung-promoting variant it was measured against. Promoting a split up the
+// ladder to buy opponent freshness re-teams already-used partnerships: measured
+// at a partner-variety regression in 5 of 5 replayed sessions, landing below
+// both the current engine and the organizer's own hand-run nights. Keeping the
+// preference inside a rung improves partner variety instead (94.9% → 96.9%).
+// Do not "simplify" this by hoisting the repeat count above the partnership
+// predicates.
+type SplitConstraints = {
+  partnershipCounts: Map<string, number>;
+  cap: number;
+  opponentCounts?: Map<string, number>;
+  opponentCap?: number;
+  lastOpponents?: LastOpponents;
+};
+
+function selectSplit(pool: TeamSplit[], c: SplitConstraints): TeamSplit | null {
+  const pairCount = (a: ScoredPlayer, b: ScoredPlayer): number =>
+    c.partnershipCounts.get(pairKey(a.player_id, b.player_id)) ?? 0;
+
+  // True when no cross-net pair is at or above the opponent cap.
+  // Always true when opponentCounts / opponentCap are absent.
+  const crossNetOk = (split: TeamSplit): boolean => {
+    if (!c.opponentCounts || c.opponentCap === undefined) return true;
+    const counts = c.opponentCounts;
+    const cap = c.opponentCap;
+    return !split.teamA.some((a) =>
+      split.teamB.some((b) => (counts.get(pairKey(a.player_id, b.player_id)) ?? 0) >= cap)
+    );
+  };
+
+  const bothPairsFresh = (split: TeamSplit): boolean =>
+    pairCount(split.teamA[0], split.teamA[1]) === 0 &&
+    pairCount(split.teamB[0], split.teamB[1]) === 0;
+
+  const bothPairsUnderCap = (split: TeamSplit): boolean =>
+    pairCount(split.teamA[0], split.teamA[1]) < c.cap &&
+    pairCount(split.teamB[0], split.teamB[1]) < c.cap;
+
+  const passes: Array<(s: TeamSplit) => boolean> = [
+    (s) => bothPairsFresh(s) && crossNetOk(s),
+    bothPairsFresh,
+    (s) => bothPairsUnderCap(s) && crossNetOk(s),
+    bothPairsUnderCap,
+  ];
+
+  for (const qualifies of passes) {
+    let best: TeamSplit | null = null;
+    let bestRepeats = Infinity;
+    for (const split of pool) {
+      if (!qualifies(split)) continue;
+      const repeats = countConsecutiveOpponentRepeats(split, c.lastOpponents);
+      // Strict `<` keeps the earliest (most balanced / natural rotation) split
+      // on a tie — i.e. the exact split the pre-freshness code returned.
+      if (repeats < bestRepeats) {
+        best = split;
+        bestRepeats = repeats;
+        if (repeats === 0) break; // cannot do better within this pass
+      }
+    }
+    if (best) return best;
+  }
+
+  return null;
+}
+
 export function snakeDraft(
   allFour: ScoredPlayer[],
   partnershipCounts?: Map<string, number>,
   cap?: number,
   opponentCounts?: Map<string, number>,
-  opponentCap?: number
+  opponentCap?: number,
+  lastOpponents?: LastOpponents
 ): SnakeDraftResult | null {
   const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
@@ -270,7 +405,7 @@ export function snakeDraft(
   }
 
   // Try splits from most to least skill-balanced.
-  const splits: Array<{ teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }> = [
+  const splits: TeamSplit[] = [
     { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] },
     { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] },
     { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] },
@@ -288,68 +423,25 @@ export function snakeDraft(
   const balancedSplits = splits.filter((s) => splitSkillGap(s) <= minGap + SKILL_VARIANCE_MAX);
   const lopsidedSplits = splits.filter((s) => splitSkillGap(s) > minGap + SKILL_VARIANCE_MAX);
 
-  // Helper: true when no cross-net pair is at or above the opponent cap.
-  // Always returns true when opponentCounts / opponentCap are absent.
-  const crossNetOk = (split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }): boolean => {
-    if (!opponentCounts || opponentCap === undefined) return true;
-    return !split.teamA.some((a) =>
-      split.teamB.some(
-        (b) => (opponentCounts.get(pairKey(a.player_id, b.player_id)) ?? 0) >= opponentCap
-      )
-    );
+  // The 4-pass freshness ladder now lives in selectSplit (above), shared with
+  // rotatedDraft. Within a pass it additionally prefers the split creating the
+  // fewest consecutive-opponent repeats; with lastOpponents absent that count
+  // is always 0, so the first qualifying split wins exactly as before.
+  const constraints: SplitConstraints = {
+    partnershipCounts,
+    cap,
+    opponentCounts,
+    opponentCap,
+    lastOpponents,
   };
 
-  const pairCount = (a: ScoredPlayer, b: ScoredPlayer): number =>
-    partnershipCounts.get(pairKey(a.player_id, b.player_id)) ?? 0;
-
-  // 4-pass freshness search over one pool of splits (ordered most→least balanced):
-  //   1a: both team pairs fresh (count=0) AND no cross-net pair at cap.
-  //   1b: both team pairs fresh — relax opponent cap.
-  //   2a: below partnership cap AND no cross-net pair at cap.
-  //   2b: below partnership cap only — last resort to prevent stalls.
-  const findSplit = (
-    pool: Array<{ teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }>
-  ): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null => {
-    for (const split of pool) {
-      if (
-        pairCount(split.teamA[0], split.teamA[1]) === 0 &&
-        pairCount(split.teamB[0], split.teamB[1]) === 0 &&
-        crossNetOk(split)
-      )
-        return split;
-    }
-    for (const split of pool) {
-      if (
-        pairCount(split.teamA[0], split.teamA[1]) === 0 &&
-        pairCount(split.teamB[0], split.teamB[1]) === 0
-      )
-        return split;
-    }
-    for (const split of pool) {
-      if (
-        pairCount(split.teamA[0], split.teamA[1]) < cap &&
-        pairCount(split.teamB[0], split.teamB[1]) < cap &&
-        crossNetOk(split)
-      )
-        return split;
-    }
-    for (const split of pool) {
-      if (
-        pairCount(split.teamA[0], split.teamA[1]) < cap &&
-        pairCount(split.teamB[0], split.teamB[1]) < cap
-      )
-        return split;
-    }
-    return null;
-  };
-
-  const balanced = findSplit(balancedSplits);
+  const balanced = selectSplit(balancedSplits, constraints);
   if (balanced) return balanced;
 
   // Every balanced split is partnership-capped — fall through to a less
   // balanced split rather than stalling, but flag it so the caller can
   // try a different 4th body first.
-  const lopsided = findSplit(lopsidedSplits);
+  const lopsided = selectSplit(lopsidedSplits, constraints);
   if (lopsided) return { ...lopsided, usedLopsidedFallback: true };
 
   return null;
@@ -456,8 +548,8 @@ export function isRejectedRoster(playerIds: string[], rejectedRosters: string[][
 // supplied, each candidate is additionally penalised per game they are
 // AHEAD of the pool minimum. Post-round-1 this pushes never-played (or
 // least-played) waiting players to the front of the candidate order, so
-// buildCombinationGroup — which takes the first skill-valid triple —
-// naturally drafts the freshest cohort instead of recycling just-played
+// buildCombinationGroup — which prefers the lowest-scoring skill-valid
+// triple — naturally drafts the freshest cohort instead of recycling just-played
 // alumni. Red Zone candidates use the small capped variant so urgency
 // still outranks freshness. Omitting poolMinGames (or a pool where all
 // games are equal, e.g. t=0) leaves behaviour exactly as before.
@@ -500,6 +592,12 @@ export function scoreCandidates(
 // best-priority-first, the very first valid combination found
 // IS the optimal group — so we break immediately on success.
 //
+// That early break still holds on the baseline path (no lastOpponents).
+// With a split preview active it does NOT: cost is fairness plus a
+// sub-quantum rematch term, so the search runs a branch-and-bound argmin
+// instead. See the `previewing` gate below — it is what keeps the two
+// paths from diverging when the preview is unavailable.
+//
 // Why this fixes greedy trapping:
 //   Greedy locks in the top-scored candidate immediately, then
 //   fails to fill the group when that candidate is skill-
@@ -513,18 +611,99 @@ export function scoreCandidates(
 //   Worst case: C(30,3) = 4,060 iterations — still negligible at
 //   runtime. If sessions grow beyond ~50 players, consider adding
 //   a candidate pre-filter before this search.
+//
+// ── Split-aware freshness (optional; `splitPreview`) ──────────────
+// Whether two players are OPPONENTS is decided by snakeDraft AFTER
+// this function has fixed the foursome — so "don't re-serve the
+// matchup they just played" cannot be enforced downstream: by then
+// the four bodies are already chosen and every split may contain a
+// repeat. When splitPreview carries a NON-EMPTY lastOpponents map,
+// each candidate triple therefore previews the split snakeDraft
+// would actually produce for it and scores the cross-net pairs that
+// split would create.
+//
+// SEMANTICS CHANGE, deliberate and scoped: with the preview active
+// this returns the ARGMIN over
+//     s[i].score + s[j].score + s[k].score
+//       + CONSECUTIVE_OPPONENT_PENALTY × repeats(previewed split)
+// instead of the first valid triple in priority order. Those differ
+// even at zero penalty — lexicographic-first is not score-sum-
+// minimal (e.g. (0,1,5) precedes (0,2,3) but may cost more) — so
+// the preview is gated on a non-empty map rather than on
+// splitPreview being supplied. That gate is what makes the change
+// provably inert at t=0 (no matches yet ⇒ empty map ⇒ byte-identical
+// first-valid behaviour) and what lets the replay harness reproduce
+// the pre-freshness baseline exactly via REPLAY_NO_LAST_OPPONENTS.
+//
+// Fairness is untouched: the penalty is bounded at 4 × 3 = 12,
+// three orders of magnitude below GAMES_AHEAD_PENALTY (10_000), so
+// the argmin can only reorder triples that already tie on
+// games-above-minimum AND anchor overlap. See the proof on
+// CONSECUTIVE_OPPONENT_PENALTY. The anchor is not a search variable
+// here at all.
+//
+// The search is branch-and-bound on the fairness lower bound (the
+// score sums are ascending, and the penalty is non-negative, so a
+// prefix already at or above the incumbent cost can be cut whole),
+// plus a hard SPLIT_PREVIEW_BUDGET on previews. Budget exhaustion
+// returns the best group found so far — degraded, never wrong.
+
+/** Everything needed to preview the split snakeDraft would produce for a triple. */
+export type SplitPreviewContext = {
+  partnershipCounts: Map<string, number>;
+  cap: number;
+  opponentCounts?: Map<string, number>;
+  opponentCap?: number;
+  lastOpponents?: LastOpponents;
+};
 
 export function buildCombinationGroup(
   anchor: ScoredPlayer,
   scoredCandidates: ScoredCandidate[],
-  maxVariance: number
+  maxVariance: number,
+  splitPreview?: SplitPreviewContext
 ): ScoredPlayer[] {
   const n = scoredCandidates.length;
   if (n < 3) return [];
 
+  const lastOpponents = splitPreview?.lastOpponents;
+  const previewing = !!splitPreview && !!lastOpponents && lastOpponents.size > 0;
+
+  // Cheapest fairness cost any triple could possibly reach. Once the incumbent
+  // matches it, nothing left to find.
+  const globalFloor =
+    scoredCandidates[0].score + scoredCandidates[1].score + scoredCandidates[2].score;
+
+  let best: ScoredPlayer[] | null = null;
+  let bestCost = Infinity;
+  let firstValid: ScoredPlayer[] | null = null;
+  let previewsLeft = SPLIT_PREVIEW_BUDGET;
+  let budgetExhausted = false;
+
   for (let i = 0; i < n - 2; i++) {
+    // Prefix bound: the cheapest triple starting at i.
+    if (
+      previewing &&
+      best &&
+      scoredCandidates[i].score + scoredCandidates[i + 1].score + scoredCandidates[i + 2].score >=
+        bestCost
+    )
+      break;
+
     for (let j = i + 1; j < n - 1; j++) {
+      if (
+        previewing &&
+        best &&
+        scoredCandidates[i].score + scoredCandidates[j].score + scoredCandidates[j + 1].score >=
+          bestCost
+      )
+        break;
+
       for (let k = j + 1; k < n; k++) {
+        const fairness =
+          scoredCandidates[i].score + scoredCandidates[j].score + scoredCandidates[k].score;
+        if (previewing && best && fairness >= bestCost) break;
+
         const combo: ScoredPlayer[] = [
           scoredCandidates[i].candidate,
           scoredCandidates[j].candidate,
@@ -533,15 +712,77 @@ export function buildCombinationGroup(
         // Cross-court (N-1): at most ONE pulled (still-playing) body per match.
         // The anchor is never pulled (C-3), so capping the triple caps the four.
         if (combo.filter((c) => c.isPulled).length > 1) continue;
-        if (isGroupValid([anchor, ...combo], maxVariance)) {
+        if (!isGroupValid([anchor, ...combo], maxVariance)) continue;
+
+        if (!previewing) {
           // Early exit — first valid triple in priority order IS optimal.
           return combo;
         }
+
+        if (!firstValid) firstValid = combo;
+
+        if (previewsLeft <= 0) {
+          budgetExhausted = true;
+          break;
+        }
+        previewsLeft--;
+
+        // What would the seater do with these four? Only cross-net pairs count,
+        // so a just-faced pair drafted as TEAMMATES here is free — that IS the fix.
+        const split = snakeDraft(
+          [anchor, ...combo],
+          splitPreview.partnershipCounts,
+          splitPreview.cap,
+          splitPreview.opponentCounts,
+          splitPreview.opponentCap,
+          lastOpponents
+        );
+        // A null split means every team assignment for this four is
+        // partnership-capped — the seater CANNOT seat it. Score it as the worst
+        // case, never as neutral: scoring it 0 made "unsplittable" the best
+        // possible preview, so the argmin actively PREFERRED an unseatable four
+        // over a seatable one whenever fairness was within 4 × 3 = 12 points.
+        // Nothing downstream repairs that — runAlgorithm's `if (!draft)` below
+        // does `continue`, which abandons the whole skill window, so the group
+        // this function "won" with is a group the caller then throws away. The
+        // measured failure is a court that seats nobody with capSaturation
+        // false, i.e. it does not even read as saturation to the caller.
+        //
+        // MAX + 1, not MAX: at exactly MAX an unsplittable four TIES a seatable
+        // four that carries 4 repeats at the same fairness, and the strict `<`
+        // below then keeps the earlier one — which is the unsplittable one. The
+        // sentinel makes unseatable strictly worse than every real split, so the
+        // tie cannot resolve the wrong way. Still sub-quantum at 5 × 3 = 15.
+        //
+        // This stays a tie-break against unsplittable fours, not a second
+        // partnership gate: a group that is 16+ fairness points better still
+        // wins and still gets its `continue`, exactly as before this feature.
+        const repeats = split
+          ? countConsecutiveOpponentRepeats(split, lastOpponents)
+          : MAX_CONSECUTIVE_OPPONENT_REPEATS + 1;
+        const cost = fairness + CONSECUTIVE_OPPONENT_PENALTY * repeats;
+
+        // Strict `<` — ties keep the earlier (higher-priority) triple, which is
+        // the one the pre-freshness search would have returned.
+        if (cost < bestCost) {
+          best = combo;
+          bestCost = cost;
+          if (bestCost <= globalFloor) break; // provably optimal
+        }
       }
+      if (budgetExhausted || (best && bestCost <= globalFloor)) break;
     }
+    if (budgetExhausted || (best && bestCost <= globalFloor)) break;
   }
 
-  return []; // No valid combination found within this skill window.
+  if (budgetExhausted && process.env.DEBUG_MATCHMAKING === "true") {
+    console.log(
+      `[MATCHMAKING] split-preview budget exhausted (${SPLIT_PREVIEW_BUDGET}) for anchor ${anchor.player_id} over ${n} candidates — returning best-so-far`
+    );
+  }
+
+  // No valid combination found within this skill window → [].
+  return best ?? firstValid ?? [];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -580,8 +821,9 @@ export function rotatedDraft(
   partnershipCounts?: Map<string, number>,
   cap?: number,
   opponentCounts?: Map<string, number>,
-  opponentCap?: number
-): { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] } | null {
+  opponentCap?: number,
+  lastOpponents?: LastOpponents
+): TeamSplit | null {
   const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
   // Count recent rosters that contained ALL 4 of these players.
@@ -594,7 +836,7 @@ export function rotatedDraft(
   const splitIndex = repeatCount % 3;
 
   // All 3 splits indexed to match the original switch semantics.
-  const splits: Array<{ teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }> = [
+  const splits: TeamSplit[] = [
     { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] }, // 0: snake default
     { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] }, // 1: top vs bottom
     { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] }, // 2: cross-split
@@ -605,57 +847,19 @@ export function rotatedDraft(
     return splits[splitIndex];
   }
 
-  // Helper: true when no cross-net pair is at or above opponentCap.
-  const crossNetOk = (split: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }): boolean => {
-    if (!opponentCounts || opponentCap === undefined) return true;
-    return !split.teamA.some((a) =>
-      split.teamB.some(
-        (b) => (opponentCounts.get(pairKey(a.player_id, b.player_id)) ?? 0) >= opponentCap
-      )
-    );
-  };
+  // Rotate the pool so the natural split for this repeatCount is first, then run
+  // the same 4-pass ladder snakeDraft uses. Pool order carries the rotation
+  // preference, and selectSplit's strict `<` tie-break preserves it whenever the
+  // consecutive-opponent counts are equal (always, without lastOpponents).
+  const rotationOrdered = [0, 1, 2].map((i) => splits[(splitIndex + i) % 3]);
 
-  // Pass 1a: both team pairs fresh AND no cross-net pair at cap, from natural rotation.
-  for (let i = 0; i < 3; i++) {
-    const split = splits[(splitIndex + i) % 3];
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA === 0 && countB === 0 && crossNetOk(split)) return split;
-  }
-
-  // Pass 1b: both team pairs fresh — relax opponent cap.
-  for (let i = 0; i < 3; i++) {
-    const split = splits[(splitIndex + i) % 3];
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA === 0 && countB === 0) return split;
-  }
-
-  // Pass 2a: below partnership cap AND no cross-net pair at cap.
-  for (let i = 0; i < 3; i++) {
-    const split = splits[(splitIndex + i) % 3];
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA < cap && countB < cap && crossNetOk(split)) return split;
-  }
-
-  // Pass 2b: below partnership cap only — last resort to prevent stalls.
-  for (let i = 0; i < 3; i++) {
-    const split = splits[(splitIndex + i) % 3];
-    const countA =
-      partnershipCounts.get(pairKey(split.teamA[0].player_id, split.teamA[1].player_id)) ?? 0;
-    const countB =
-      partnershipCounts.get(pairKey(split.teamB[0].player_id, split.teamB[1].player_id)) ?? 0;
-    if (countA < cap && countB < cap) return split;
-  }
-
-  return null;
+  return selectSplit(rotationOrdered, {
+    partnershipCounts,
+    cap,
+    opponentCounts,
+    opponentCap,
+    lastOpponents,
+  });
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -840,7 +1044,13 @@ export function runAlgorithm(
   // steers to a 3-of-4 recombination. Fail-open by design — every escape hatch
   // (Red-Zone swap target, Tier-3 rotation, last-resort fallback) still serves
   // the same four rather than stalling the queue.
-  rejectedRosters: string[][] = []
+  rejectedRosters: string[][] = [],
+  // Who each player faced across the net in their LAST game (deriveLastOpponents).
+  // Appended as param 7 rather than inserted: rejectedRosters shipped at 6 and a
+  // silent positional shift would drop rejection memory while still compiling.
+  // Defaulting to an empty map keeps every existing caller — and every test —
+  // byte-identical to the pre-freshness engine.
+  lastOpponents: LastOpponents = new Map()
 ): AlgorithmResult {
   // pool must be pre-scored and pre-sorted (pool[0] = anchor).
   const anchor = pool[0];
@@ -904,6 +1114,18 @@ export function runAlgorithm(
       ]
     : [SKILL_VARIANCE_TARGET, SKILL_VARIANCE_MAX];
 
+  // Constant across every skill window: lets buildCombinationGroup preview the
+  // split the seater below would produce, so it can prefer a foursome that does
+  // not re-serve a matchup someone just played. Inert while lastOpponents is
+  // empty (t=0, or the replay harness's REPLAY_NO_LAST_OPPONENTS baseline).
+  const splitPreview: SplitPreviewContext = {
+    partnershipCounts,
+    cap: MAX_PARTNERSHIP_REPEATS,
+    opponentCounts,
+    opponentCap: MAX_OPPONENT_REPEATS,
+    lastOpponents,
+  };
+
   // ── 3. Progressive expansion ──────────────────────────────
   for (const maxVariance of skillWindows) {
     const eligible = candidates.filter(
@@ -929,11 +1151,25 @@ export function runAlgorithm(
     }
 
     const scored = scoreCandidates(eligible, overlapMap, poolMinGames);
-    const group = buildCombinationGroup(anchor, scored, maxVariance);
+    const group = buildCombinationGroup(anchor, scored, maxVariance, splitPreview);
 
     if (group.length === 3) {
       const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
 
+      // ── Scope note: the repair ladder discards the split preview ──────
+      // buildCombinationGroup chose `group` as the argmin against a PREVIEWED
+      // split. From here down, Tier-1 / Tier-2 / balance-swap and Tier-3 may
+      // substitute a body and re-draft — and none of them re-consults that
+      // charge, so the preview no longer describes the match they emit.
+      //
+      // Not a correctness defect: every re-draft below still receives
+      // `lastOpponents`, so the SPLIT it picks remains freshness-aware and the
+      // fewest-repeats tie-break inside selectSplit still applies. What is lost
+      // is only freshness-awareness in the choice of WHICH bodies to swap in —
+      // and these paths exist to escape a diversity violation or a
+      // partnership-cap stall, where not stalling outranks not repeating.
+      // Making the ladder preview-aware is a measurable follow-up, not an
+      // assumption a reader should make about the code as it stands.
       if (
         isDiversityViolation(proposedIds, activeRosters) ||
         isRejectedRoster(proposedIds, rejectedRosters)
@@ -975,7 +1211,8 @@ export function runAlgorithm(
                 partnershipCounts,
                 MAX_PARTNERSHIP_REPEATS,
                 opponentCounts,
-                MAX_OPPONENT_REPEATS
+                MAX_OPPONENT_REPEATS,
+                lastOpponents
               );
               if (!draft) {
                 if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1022,7 +1259,8 @@ export function runAlgorithm(
                     partnershipCounts,
                     MAX_PARTNERSHIP_REPEATS,
                     opponentCounts,
-                    MAX_OPPONENT_REPEATS
+                    MAX_OPPONENT_REPEATS,
+                    lastOpponents
                   );
                   if (!draft) {
                     if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1054,7 +1292,8 @@ export function runAlgorithm(
             partnershipCounts,
             MAX_PARTNERSHIP_REPEATS,
             opponentCounts,
-            MAX_OPPONENT_REPEATS
+            MAX_OPPONENT_REPEATS,
+            lastOpponents
           );
           if (!rotatedResult) {
             if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1086,7 +1325,8 @@ export function runAlgorithm(
         partnershipCounts,
         MAX_PARTNERSHIP_REPEATS,
         opponentCounts,
-        MAX_OPPONENT_REPEATS
+        MAX_OPPONENT_REPEATS,
+        lastOpponents
       );
       if (!draft) {
         if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1123,7 +1363,8 @@ export function runAlgorithm(
               partnershipCounts,
               MAX_PARTNERSHIP_REPEATS,
               opponentCounts,
-              MAX_OPPONENT_REPEATS
+              MAX_OPPONENT_REPEATS,
+              lastOpponents
             );
             if (altDraft && !altDraft.usedLopsidedFallback) {
               if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1152,9 +1393,32 @@ export function runAlgorithm(
             (isMixed ? " (mixed level)" : "")
         );
       }
+      // forcedRepeat, decided from the roster ACTUALLY being served rather than
+      // from which branch produced it. The Red-Zone escape hatch above ("swap
+      // target is Red Zone — fall through to snakeDraft with the original
+      // group") re-emits a four that just failed the diversity / rejection
+      // check, exactly like Tier-3 and the last-resort fallback do — but it
+      // used to return with the flag absent. Cross-court augmentation and the
+      // organizer's rejection memory both read that flag, so the one path where
+      // the engine KNOWS it is repeating was the one path that stayed silent.
+      //
+      // Recomputed here instead of tracked through the branches because the
+      // balance swap below may already have replaced a body with a clean one,
+      // in which case the served four is not a repeat at all.
+      const servedIds = [...draft.teamA, ...draft.teamB].map((p) => p.player_id);
+      const servedIsRepeat =
+        isDiversityViolation(servedIds, activeRosters) ||
+        isRejectedRoster(servedIds, rejectedRosters);
+      if (servedIsRepeat) {
+        console.warn(
+          "[matchmaking] Serving a group that failed the diversity/rejection check " +
+            "(Red-Zone swap target) — flagged as a forced repeat"
+        );
+      }
       return {
         proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: isMixed },
         capSaturation: false,
+        ...(servedIsRepeat ? { forcedRepeat: true } : {}),
       };
     }
 
@@ -1185,7 +1449,8 @@ export function runAlgorithm(
         partnershipCounts,
         MAX_PARTNERSHIP_REPEATS,
         opponentCounts,
-        MAX_OPPONENT_REPEATS
+        MAX_OPPONENT_REPEATS,
+        lastOpponents
       );
       if (draft) {
         return {
