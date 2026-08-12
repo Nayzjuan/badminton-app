@@ -713,6 +713,56 @@ New: **`tests/unit/cross-court-trigger.test.ts`** (30 tests — `CCT-FEED-1..7`,
 `CCT-ACC-1..4`, `CCT-WIRE-1`, `CCT-BUILD-1..6`, `CCT-LOOK-1..4`, `CCT-ANCH-1..4`) ·
 **`CC-REACH-4`**, **`CC-REACH-5`** and a tightened `CC-REACH-1` in `matchmaking-engine.test.ts`.
 
+### ✅ Suite XC — the reach is now proven end-to-end against a REAL database (2026-08-12)
+
+The P5 section above closed with *"never yet run in a live session; nothing in the suite can prove it
+works"*. That gap is closed at the DB level: **`tests/integration/cross-court-realdb.test.ts`** drives
+the real engine through the real server action (`endMatchAction` → `runEngineForSession`) against local
+Supabase and asserts a held draft row actually lands. 3 tests, all green; integration total 258 → **261**.
+
+- **XC-1** — auto ON, a stale waiting-only four, one live court ⇒ the engine commits a HELD draft.
+  Asserts `is_held`, `created_method='held'`, `pulled_from_match_id`, `court_id NULL`,
+  `held_ready_at NULL`, `is_published false`, roster = anchor + exactly 2 of 3 waiters + exactly 1
+  playing body, the three seated as `'drafted'`, and the body still `'playing'`.
+- **XC-2** — a hold older than `CROSS_COURT_MAX_HOLD_MINUTES` ⇒ cancelled, three waiters released,
+  body untouched (the `20260812000000` invariant, now covered by a test and not just a migration header).
+- **XC-3** — control: the identical lifecycle event on a *fresh* hold leaves it alone, so the cancel is
+  age-gated rather than "any recompute kills holds".
+
+**Why XC-1 cannot pass for the wrong reason.** `matches.is_held` is
+`GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0)`, and the only writer of `pulled_player_ids`
+is `create_held_cross_court_match`, whose only caller is `executeHeldMatch`, reachable only from the
+cross-court branch. The engine's own log seals it: `estimatedWaiting=5` from `waiting=8` is a
+decrement of 3 — `PLAYERS_PER_MATCH - 1`, which **only** a held commit produces; a normal draft
+consumes 4.
+
+**Four things that will bite the next person writing one of these:**
+
+1. **`withTx` cannot seed a Server Action.** It always rolls back, and Server Actions run on the
+   Supabase JS client's own pool. New escape hatch `queryCommitted` in `tests/integration/helpers/withTx.ts`
+   commits a single raw statement — needed because `matches.created_at` is deliberately absent from
+   `MatchUpdate`, and backdating it is the only way to age a hold without faking the clock for the
+   action under test (which would also move the timestamps the action itself writes).
+2. **`fetchPullablePlayers` silently returns `[]` for an `in_progress` match with a NULL `started_at`,**
+   and `makeMatch` leaves it NULL. Hence the local `startMatch` helper. This one failure mode looks
+   exactly like "the feature doesn't work".
+3. **The rest filter WAIVES itself below four survivors.** Waiters sit in `[18, 20)` — above
+   `MIN_REST_MINUTES` so `fetchActivePool` keeps the filter, below `CRITICAL_WAIT_MINUTES` so nobody
+   jumps to Tier 2 and out-anchors the anchor. Slip under 18 and the pool becomes all 8 rows, a four
+   with staleness 0 exists, and the reach never arms — a green-looking failure with nothing to do with
+   cross-court. Margins were widened to 18.5/18.4/18.3 for exactly this.
+4. **`hasFeedableCapacity` is capacity, not existence** — a spare pending non-held draft must exist or
+   the engine refuses to hold anybody.
+
+**Review gate — round 1 "Minor issues" → round 2 "Minor issues", every item applied.** Both rounds
+found **zero** behavioural defects; all nine findings across the two rounds were false statements in
+comments explaining why correct test code is correct — three of them third or fourth revisions of the
+same sentence. Round 2 killed a round-1 *fix*: "a flipped body would score ≈ 0 — the BOTTOM" is wrong,
+because the three players `clear_on_deck_match_atomic` restores keep their original `joined_at`, so
+they also score ≈ 0, while the requeued four score −8. The right contrast was never rank; it was
+magnitude of wait (≈0 in the fixture vs 15-20 in production). Same lesson, ninth time: re-derive from
+the source lines. See root-memory `comments-that-explain-why-rot`.
+
 ---
 
 ## 🚨 RED ZONE was being UNDER-REPORTED — `score >= 1000` is not the Red Zone test — ✅ SHIPPED 2026-08-12, `main` `fe98587`

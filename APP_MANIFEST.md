@@ -628,6 +628,8 @@ When the four the waiting pool can form is **stale** — someone would face a pl
 
 New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (FK `ON DELETE SET NULL`), `held_ready_at timestamptz`, `is_held boolean GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0) STORED`. New constants: `CROSS_COURT_REST_FALLBACK_MINUTES=3`, `MAX_CONSECUTIVE_GAMES_FOR_PULL=2`, `MATCH_REST_GAP_MINUTES=5`, `CROSS_COURT_MAX_HOLD_MINUTES=15`, `CROSS_COURT_SEAT_CANDIDATES=7`. New token: `cc-violet`. **Deferred items** (UI 3-state track, swap auto-downgrade trigger, publish/callNextMatch recompute, staleness escape, RPC `search_path`) tracked in `MEMORY.md`.
 
+**Proven end-to-end against a real database (Suite XC, 2026-08-12).** The unit suite pins each predicate and the replay harness structurally cannot see the feature at all (`scripts/replay/simulate.ts`, simplification 3), so until now nothing proved the whole chain fires. `tests/integration/cross-court-realdb.test.ts` drives the real engine through the real server action (`endMatchAction` → `runEngineForSession`) against local Supabase: **XC-1** asserts a held draft row actually lands (`is_held`, `created_method='held'`, `pulled_from_match_id`, roster = anchor + 2 waiters + 1 still-playing body, the three seated `'drafted'` and the body left `'playing'`); **XC-2** ages a hold past `CROSS_COURT_MAX_HOLD_MINUTES` and asserts the cancel releases the three waiters *without* unseating the body (the `20260812000000` invariant); **XC-3** is the age-gate control. XC-1 cannot pass spuriously — `is_held` is generated from `pulled_player_ids`, whose only writer is `create_held_cross_court_match`, reachable only from this branch. ⚠️ Still not observed in a **live session**; this is DB-level proof, not field proof.
+
 ---
 
 ### 3.2 On-Deck Queue
@@ -2258,7 +2260,12 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `auth.real.test.ts`        | —     | Supabase auth API integration                                                                                                   |
 | `close-session.test.ts`    | B     | `closeSession`: co-org access, idempotency, match cancellation, queue drain, wrapped stats computation                          |
 | `concurrency.test.ts`      | D     | 5 concurrent publish calls; 5 concurrent engine runs; concurrent `callNextMatch` — each produces exactly one match              |
+| `cross-court-realdb.test.ts`| XC   | **The cross-court reach, end-to-end against a real DB** (§3.1): `endMatchAction` → `runEngineForSession` commits a HELD draft (XC-1); the hold-age cancel releases the 3 waiters without unseating the still-playing body (XC-2); a fresh hold survives the same event (XC-3) |
+| `draft-cap-override.test.ts`| DCINT| `applyDraftCapOverride` persistence, reset-to-Dynamic → NULL, `clear_all_unpublished_drafts` re-queue                            |
 | `drafted-status.test.ts`   | —     | Drafted queue status transitions                                                                                                 |
+| `engine-trigger-realdb.test.ts`| ET | Which lifecycle events actually run the engine against a real DB                                                                 |
+| `health.test.ts`           | —     | Integration harness smoke test (env, service client, truncation)                                                                 |
+| `live-match-swap.test.ts`  | LMS   | `swap_player_in_active_match`: replace + queue update, and its rejection guards                                                  |
 | `manual-and-swap.test.ts`  | M     | `createManualMatchAction` origin/auth/rejection; swap origin sticky rules (`auto→modified→manual`)                              |
 | `match-update.test.ts`     | —     | Score edit and match revert flows                                                                                                |
 | `matchmaking.test.ts`      | —     | Engine integration against real DB                                                                                               |

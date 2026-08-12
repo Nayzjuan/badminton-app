@@ -110,6 +110,33 @@ export async function withTx<T>(fn: (db: pg.PoolClient) => Promise<T>): Promise<
 }
 
 /**
+ * Runs a single statement OUTSIDE any transaction, so the write COMMITS and is
+ * therefore visible to Server Actions — which use the Supabase JS client on its
+ * own connection pool and cannot see anything withTx does.
+ *
+ * This is the escape hatch for the few columns the typed Supabase client refuses
+ * to write. `matches.created_at` is not in `MatchUpdate` (by design — nothing in
+ * the app backdates a row), and backdating it is the only way to age a held
+ * cross-court draft past CROSS_COURT_MAX_HOLD_MINUTES without faking the clock
+ * for the server action under test.
+ *
+ * Writes to tables on truncate.ts's list are cleaned up by Layer B
+ * (truncateTracked in afterEach), exactly like the factories' writes. That list
+ * is fixed and does not cover the whole schema, and it deliberately preserves
+ * the bootstrap rows — so a write outside it survives the test and is yours to
+ * undo.
+ *
+ * ⚠️ Not an isolation helper — it is the opposite of withTx. Reach for withTx
+ * first; use this only when the write must survive the callback.
+ */
+export async function queryCommitted(
+  text: string,
+  params: unknown[] = []
+): Promise<pg.QueryResult> {
+  return getPool().query(text, params);
+}
+
+/**
  * Closes the shared pg.Pool. Call this in a globalTeardown if
  * you want clean shutdown rather than relying on process exit.
  */
