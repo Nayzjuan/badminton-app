@@ -465,12 +465,12 @@ export const CROSS_COURT_REST_FALLBACK_MINUTES = 3;
  *    the parked players' actual `wait_minutes` rather than on hold age; that
  *    costs a query per held draft and is the follow-up if this reads too loose.
  * 2. It is BEST-EFFORT, evaluated on an event, not on a timer. The cancel lives
- *    in `recomputeHeldReadiness`, which is only invoked from match-lifecycle.ts
- *    when a match ends or is cancelled — and from inside `if (match.court_id)`
- *    at both call sites, so an off-court match does not even count as
- *    attention — never from the engine loop. If no match ends on a court, a
- *    hold outlives this cap indefinitely. That coupling is benign
- *    in practice (a court freeing is the same event that makes a hold
+ *    in `recomputeHeldReadiness`, which is never invoked from the engine loop —
+ *    its only callers are in match-lifecycle.ts, when a match ends or is
+ *    cancelled. Both of those sit inside `if (match.court_id)`, so a match with
+ *    no court does not even count as attention. Until one of those two events
+ *    fires on a court, a hold outlives this cap indefinitely. That coupling is
+ *    benign in practice (a court freeing is the same event that makes a hold
  *    resolvable at all), but the cap is an upper bound on ATTENTION, not on
  *    elapsed time.
  */

@@ -37,8 +37,10 @@ interface SimConfig {
   // HARD_WAIT_CAP_MINUTES. ⚠️ This said "0 = disabled" and that was never
   // implemented — computeScore has no `hardCap > 0` guard, so 0 does not
   // disable the cap, it makes EVERY cap-eligible player take the hard-cap arm
-  // at `2000 + wait * 10`. Every scenario passes 25; if you ever want the
-  // disable, add the guard rather than trusting this comment.
+  // at `2000 + Math.round(wait * 10)`. (Every, not merely most: waitFromEligible
+  // is clamped at `Math.max(0, ...)`, so `wait >= 0` is universally true.) Every
+  // scenario passes 25; if you ever want the disable, add the guard rather than
+  // trusting this comment.
   hardCap: number;
   targetGames: number; // for hard-cap eligibility gating
   skillVarianceMax: number; // normal match tolerance
