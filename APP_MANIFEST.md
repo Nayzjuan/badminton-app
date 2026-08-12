@@ -2741,9 +2741,14 @@ npx tsx scripts/extract.ts  # One-shot extraction
 
 ## 11. Multi-Tenant (Clubs)
 
-> **STATUS:** Built on branch `feat/multi-tenant` (NOT merged to main, app NOT deployed). The **schema
-> is LIVE on prod** (Phase 0 applied + Legacy backfill). The full design lives in `MULTI_TENANT_PLAN.md`
+> **STATUS: ✅ SHIPPED.** Merged to `main` as `f3aae17` (2026-07-02) and deployed; the schema was
+> already live on prod (Phase 0 + Legacy backfill). The platform-owner model followed on 2026-07-05
+> (`1bd4769`, deployed + prod-verified). The full design lives in `MULTI_TENANT_PLAN.md`
 > + `MULTI_TENANT_PHASE2_PLAN.md`; this is the architecture summary.
+>
+> ⚠️ This block read *"NOT merged to main, app NOT deployed"* until 2026-08-12 — six weeks after it
+> shipped. A status line in a long-lived architecture doc goes stale silently, because nothing that
+> reads the section depends on it being right. Prefer stating the merge commit over the branch state.
 
 **Model.** Shared-schema multi-tenancy. New tables `clubs` / `club_members` (role `owner`/`admin`/`member`,
 `is_active` soft-offboard) / `club_invites`. Every `sessions` row (and the rivalry/partnership ledgers)
