@@ -613,13 +613,84 @@ export type PullableBody = QueueWithWaitTime & {
 };
 
 // ─────────────────────────────────────────────────────────────
+// hasFeedableCapacity — the courts-stay-fed guard
+// ─────────────────────────────────────────────────────────────
+// A held draft cannot take a court when it is created: it waits for its pulled
+// body to finish and rest. So it must never be the ONLY thing standing between
+// a freeing court and a match, or that court idles until the next engine tick.
+//
+// This replaces the `i > 0` proxy that previously guarded the cross-court
+// branch. That proxy asked "did we already commit something this run?", which
+// is far stricter than the invariant it was protecting — 91% of production
+// engine runs commit exactly one draft, so it made the whole branch
+// unreachable (0 held drafts in 945 matches). The real question is whether a
+// promotable match already EXISTS, from this run or any earlier one, and 60.8%
+// of auto matches were created while one did.
+//
+// Deliberately counts pending non-held matches regardless of is_published:
+//   * auto-publish mode — pending non-held matches are published, so the count
+//     is exactly the set a freeing court can promote.
+//   * draft mode — nothing promotes without organizer review anyway, and the
+//     failure this guards against there is a review queue holding nothing but
+//     un-promotable held drafts, which reads as "the engine did nothing".
+//
+// Read fresh at the moment a held draft is about to commit rather than cached
+// per run: a concurrent promotion can consume the spare mid-run, and erring
+// permissive here is precisely the idle court this exists to prevent.
+//
+// CAPACITY, not existence. Asking only "does a feedable match exist?" lets held
+// drafts STACK: a held draft is is_held, so it is excluded from the feedable
+// side and never consumes the spare it was authorised against. One pending
+// match would then authorise every slot in the run — 12 waiting with a cap of 3
+// yields 1 promotable match + 2 held drafts holding 6 players. Requiring
+// strictly more feedable than held bounds that to at most one held draft per
+// feedable match.
+//
+// ⚠️ Be precise about what this does NOT promise. The count is read PRE-commit,
+// so `feedable > held` permits post-commit parity: 1 feedable + 0 held passes,
+// and commits to 1 + 1. An earlier version of this comment claimed the guard
+// prevents "one court promotes and the other idles" outright — it does not, and
+// that example was misleading for a second reason too: a held draft is not dead
+// capacity. It becomes promotable precisely when the pulled body's source court
+// frees, so the two-courts-free case only strands a court when the second court
+// to free is NOT that source. Tightening to `feedable > held + 1` would close
+// the parity window, but it would also demand two spare matches before any
+// reach — a real narrowing of a feature whose whole history is never firing —
+// to fix a case that is not established as reachable. Left as stacking control.
+export async function hasFeedableCapacity(supabase: DbClient, sessionId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("matches")
+    .select("is_held")
+    .eq("session_id", sessionId)
+    .eq("status", "pending");
+
+  // Fail CLOSED: an unreadable count must not authorise a held draft. Skipping
+  // the cross-court reach costs a slightly staler match; wrongly authorising it
+  // costs an idle court, which is the one thing this gate exists to prevent.
+  if (error) {
+    console.warn(`[matchmaking] hasFeedableCapacity: read failed — ${error.message}`);
+    return false;
+  }
+  if (!data) return false;
+
+  let feedable = 0;
+  let held = 0;
+  for (const row of data) {
+    if (row.is_held === true) held++;
+    else feedable++;
+  }
+  return feedable > held;
+}
+
+// ─────────────────────────────────────────────────────────────
 // fetchPullablePlayers
 // ─────────────────────────────────────────────────────────────
 // Returns the playing bodies eligible to be CONSIDERED for a held draft. The
 // engine still filters these through isPullEligible (streak/cooldown/already-held)
 // and the algorithm's skill window — this helper just gathers the candidate set.
-// Called lazily (only when the waiting pool produced a forced repeat), so its
-// handful of queries don't run on every engine tick.
+// Called lazily — only once the waiting-only four has already been judged stale
+// (a forced repeat, or at least one player facing a last-game opponent again) —
+// so its handful of queries don't run on every engine tick.
 export async function fetchPullablePlayers(
   supabase: DbClient,
   sessionId: string

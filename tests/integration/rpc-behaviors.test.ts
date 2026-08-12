@@ -1,5 +1,5 @@
 // ============================================================
-// Suite H + I — RPC Behavioral Tests
+// Suite H + I + J — RPC Behavioral Tests
 // ============================================================
 // Verifies the two RPCs added by migration 20260511000002_missing_rpcs:
 //
@@ -10,6 +10,12 @@
 //   • rejoin_queue(p_session_id) → void
 //     User-facing re-entry after leaving a session.
 //     Called by browser clients (SECURITY DEFINER).
+//
+// …plus Suite J for clear_on_deck_match_atomic (service_role only),
+// which is the ONLY level at which the held-draft cancel can be
+// tested: the unit tests (CC-HOLD-1..6) cover the pure predicate
+// heldDraftExpired, but the defect this suite pins lives entirely in
+// the RPC's UPDATE statement.
 //
 // How auth context is injected:
 //   Both RPCs use auth.uid() internally. In production, PostgREST
@@ -528,5 +534,194 @@ describe("rejoin_queue — Suite I", () => {
         expect(rows[0].status).toBe("playing");
       }
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Suite J — clear_on_deck_match_atomic never unseats a live body
+// ─────────────────────────────────────────────────────────────
+//
+// Regression cover for migration
+// 20260812000000_clear_on_deck_never_unseats_a_playing_body.
+//
+// A HELD cross-court draft is (3 waiting + 1 still-playing body).
+// The cross-court hold-age cancel (CROSS_COURT_MAX_HOLD_MINUTES) is
+// the first routine caller of this RPC that fires while the body is
+// genuinely mid-game, so step 5's old `status != 'left'` guard would
+// have flipped a player on court to 'waiting' — the same hazard
+// 20260624000000 fixed for the BULK clear.
+//
+// ⚠️ These are not unit-testable. heldDraftExpired is a pure
+// predicate and returns the same boolean either way; the whole defect
+// is in what the SQL then writes.
+
+describe("clear_on_deck_match_atomic — Suite J", () => {
+  /**
+   * Builds a held cross-court draft in-transaction: an in_progress
+   * source match holding `body`, plus a pending draft whose roster is
+   * the 3 waiting players AND `body`.
+   *
+   * Written as raw SQL on the withTx client (not the service client)
+   * so every row rolls back with the savepoint — matches/match_players
+   * have no factory, and Layer B only truncates factory-made setup.
+   */
+  async function seedHeldDraft(
+    db: pg.PoolClient,
+    sessionId: string,
+    waiting: string[],
+    body: string
+  ): Promise<{ heldId: string }> {
+    const { rows: srcRows } = await db.query(
+      `INSERT INTO matches (session_id, status, started_at)
+       VALUES ($1, 'in_progress', now()) RETURNING id`,
+      [sessionId]
+    );
+    const sourceId = srcRows[0].id;
+    // ⚠️ team is lowercase 'a'/'b' — that is what create_match_with_players and
+    // create_held_cross_court_match actually write. `team char(1)` has no CHECK,
+    // so uppercase would insert fine and the assertions would still hold; the
+    // fixture just would not be a faithful stand-in for a real roster.
+    await db.query(`INSERT INTO match_players (match_id, player_id, team) VALUES ($1, $2, 'a')`, [
+      sourceId,
+      body,
+    ]);
+
+    // created_method 'held' mirrors what create_held_cross_court_match stamps,
+    // so the row is self-documenting as a held draft rather than relying on the
+    // 'auto' default. ('auto' | 'manual' | 'held' are the only values the
+    // CHECK in 20260617000000 permits.) clear_on_deck_match_atomic never reads it.
+    const { rows: heldRows } = await db.query(
+      `INSERT INTO matches (session_id, status, pulled_player_ids, pulled_from_match_id, created_method)
+       VALUES ($1, 'pending', ARRAY[$2::uuid], $3, 'held') RETURNING id`,
+      [sessionId, body, sourceId]
+    );
+    const heldId = heldRows[0].id;
+    for (const [i, pid] of [...waiting, body].entries()) {
+      await db.query(`INSERT INTO match_players (match_id, player_id, team) VALUES ($1, $2, $3)`, [
+        heldId,
+        pid,
+        i < 2 ? "a" : "b",
+      ]);
+    }
+    return { heldId };
+  }
+
+  // ── J-1: the body stays on court; the 3 parked players are freed ──
+
+  it("J-1 leaves a still-playing pulled body alone while restoring the 3 parked waiters", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+
+    const waiting: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const p = await makeProfile({ faker });
+      await makeQueueEntry({ sessionId: session.id, playerId: p.id, status: "drafted" });
+      waiting.push(p.id);
+    }
+    const body = await makeProfile({ faker });
+    await makeQueueEntry({ sessionId: session.id, playerId: body.id, status: "playing" });
+
+    await withTx(async (db) => {
+      const { heldId } = await seedHeldDraft(db, session.id, waiting, body.id);
+
+      await db.query(`SELECT public.clear_on_deck_match_atomic($1, $2)`, [heldId, session.id]);
+
+      const { rows } = await db.query(
+        `SELECT player_id, status FROM queue_entries
+          WHERE session_id = $1 AND player_id = ANY($2)`,
+        [session.id, [...waiting, body.id]]
+      );
+      const byId = new Map(rows.map((r) => [r.player_id, r.status]));
+
+      // The three parked players re-enter the pool — that is the whole
+      // point of the hold-age cancel.
+      for (const pid of waiting) expect(byId.get(pid)).toBe("waiting");
+
+      // ⚠️ THE decisive assertion. Before the migration this read
+      // "waiting": the body would appear in the queue and on a court at
+      // the same time, and every later engine tick would stall on
+      // create_match_with_players' Guard 2.
+      expect(byId.get(body.id)).toBe("playing");
+
+      // The draft itself is gone either way.
+      const { rows: gone } = await db.query(`SELECT id FROM matches WHERE id = $1`, [heldId]);
+      expect(gone).toHaveLength(0);
+    });
+  });
+
+  // ── J-2: an ordinary draft is completely unaffected ──────────
+
+  it("J-2 still restores every member of an ordinary (non-held) draft", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+
+    const players: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p = await makeProfile({ faker });
+      await makeQueueEntry({ sessionId: session.id, playerId: p.id, status: "drafted" });
+      players.push(p.id);
+    }
+
+    await withTx(async (db) => {
+      const { rows: mRows } = await db.query(
+        `INSERT INTO matches (session_id, status) VALUES ($1, 'pending') RETURNING id`,
+        [session.id]
+      );
+      const matchId = mRows[0].id;
+      for (const [i, pid] of players.entries()) {
+        await db.query(
+          `INSERT INTO match_players (match_id, player_id, team) VALUES ($1, $2, $3)`,
+          [matchId, pid, i < 2 ? "a" : "b"]
+        );
+      }
+
+      await db.query(`SELECT public.clear_on_deck_match_atomic($1, $2)`, [matchId, session.id]);
+
+      const { rows } = await db.query(
+        `SELECT status FROM queue_entries WHERE session_id = $1 AND player_id = ANY($2)`,
+        [session.id, players]
+      );
+      // Nobody here holds an in_progress match, so the new NOT EXISTS
+      // clause must be a no-op. If this fails, the fix over-reached.
+      expect(rows).toHaveLength(4);
+      for (const r of rows) expect(r.status).toBe("waiting");
+    });
+  });
+
+  // ── J-3: a checked-out player is still never pulled back ─────
+
+  it("J-3 preserves the pre-existing 'left' guard", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+
+    const stayer = await makeProfile({ faker });
+    await makeQueueEntry({ sessionId: session.id, playerId: stayer.id, status: "drafted" });
+    const leaver = await makeProfile({ faker });
+    await makeQueueEntry({ sessionId: session.id, playerId: leaver.id, status: "left" });
+
+    await withTx(async (db) => {
+      const { rows: mRows } = await db.query(
+        `INSERT INTO matches (session_id, status) VALUES ($1, 'pending') RETURNING id`,
+        [session.id]
+      );
+      const matchId = mRows[0].id;
+      for (const [i, pid] of [stayer.id, leaver.id].entries()) {
+        await db.query(
+          `INSERT INTO match_players (match_id, player_id, team) VALUES ($1, $2, $3)`,
+          [matchId, pid, i === 0 ? "a" : "b"]
+        );
+      }
+
+      await db.query(`SELECT public.clear_on_deck_match_atomic($1, $2)`, [matchId, session.id]);
+
+      const { rows } = await db.query(
+        `SELECT player_id, status FROM queue_entries
+          WHERE session_id = $1 AND player_id = ANY($2)`,
+        [session.id, [stayer.id, leaver.id]]
+      );
+      const byId = new Map(rows.map((r) => [r.player_id, r.status]));
+      expect(byId.get(stayer.id)).toBe("waiting");
+      expect(byId.get(leaver.id)).toBe("left");
+    });
   });
 });

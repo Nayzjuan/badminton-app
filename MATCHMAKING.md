@@ -3,6 +3,17 @@
 > **Last updated:** 2026-04-24  
 > **Source files:** `src/app/actions/matchmaking.ts` · `src/lib/matchmaking-core.ts` · `src/lib/constants.ts`
 
+> ## ⚠️ THIS DOCUMENT IS STALE (flagged 2026-08-12) — trust `APP_MANIFEST.md` §3.1 and `src/lib/constants.ts`
+>
+> It has not been maintained since 2026-04-24 and several constants below are simply
+> wrong now: `CRITICAL_WAIT_MINUTES` is **20**, not 25, and `GAME_PENALTY_MINUTES` is
+> **8**, not 12. It also predates the fresh-first rule, the consecutive-opponent term,
+> rejection memory and cross-court drafting entirely.
+>
+> The two Red Zone passages have been corrected in place (2026-08-12) because they
+> stated a **known bug** as fact — `priorityScore ≥ 1000` is not the Red Zone test.
+> Nothing else here has been re-verified. Read it as history.
+
 ---
 
 ## Table of Contents
@@ -190,7 +201,9 @@ All swap paths exhausted. The same 4 players must play again. Instead of always 
 
 ### Red Zone immunity (swap exception)
 
-If the **3rd companion** (the swap target) has `priorityScore ≥ 1000`, they are in the Red Zone themselves and **cannot be benched** for diversity reasons. Urgency always wins. The original group is accepted with `snakeDraft` — no swap attempted.
+If the **3rd companion** (the swap target) is in the Red Zone themselves — tested with `isRedZonePlayer(swapTarget)`, i.e. `wait ≥ CRITICAL_WAIT_MINUTES` OR `priorityScore ≥ RED_ZONE_SCORE_FLOOR` — they **cannot be benched** for diversity reasons. Urgency always wins. The original group is accepted with `snakeDraft` — no swap attempted.
+
+⚠️ **Corrected 2026-08-12.** This passage used to say the test was `priorityScore ≥ 1000` alone. It is not: `RED_ZONE_SCORE_FLOOR` is an *addend* inside the Tier 2 formula (`1000 + wait − games × 8`), so a genuine Red-Zone player with heavy game debt scores **below** 1000 and was being benched. See APP_MANIFEST §3.34.
 
 ---
 
@@ -344,7 +357,7 @@ The core filler loop. Not exported to the client. Checks capacity, soft gate, th
 | `SKILL_VARIANCE_MAX` | 2 | Hard max skill gap for normal matches (±2 levels) |
 | `GAME_PENALTY_MINUTES` | 12 | Virtual minutes deducted per game played in priority score |
 | `CRITICAL_WAIT_MINUTES` | 25 | Wait threshold for Red Zone (priority = 1000 + wait) |
-| `RED_ZONE_SCORE_FLOOR` | 1000 | Minimum priority score that signals Red Zone |
+| `RED_ZONE_SCORE_FLOOR` | 1000 | Tier 2 **addend**, not a floor and not a test. `score ≥ 1000` ⇒ Red Zone, but **not** the converse — call `isRedZonePlayer()` (§3.34) |
 | `FALLBACK_WAIT_MINUTES` | 15 | Wait threshold for last-resort skill bypass |
 | `ANTI_REPEAT_LOOKBACK` | 5 | Max recent matches examined for diversity checks |
 | `BOTTLENECK_THRESHOLD_MINUTES` | 20 | Wait time at which the Wait Monitor flags a player |

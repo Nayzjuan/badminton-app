@@ -26,10 +26,18 @@
 //      tugs the session floor down: production's floor query excludes 'left'
 //      rows, so a low-games player who goes home stops holding it, while in the
 //      replay they hold it all night.
-//   3. No cross-court draft augmentation. When the engine forces a repeat it
-//      may pull a body from another court's held draft to break it — a path
-//      gated on `!bypassGate`, so the replay never takes it. Forced repeats are
-//      counted in the diagnostics; production would have tried to fix some.
+//   3. No cross-court draft augmentation. Production may pull a body off a
+//      still-playing court to compose a fresher four. The trigger is NOT
+//      forced-repeat-only — it also fires when the reach simply makes the match
+//      fresher — but the whole path is gated on `!bypassGate`, and (1) puts the
+//      replay permanently on the bypassGate branch, so it never runs here.
+//      Forced repeats are counted in the diagnostics; production would have
+//      tried to fix some, and would additionally have improved some matches that
+//      the replay records as merely acceptable.
+//      ⚠️ The replay therefore cannot measure this feature at all — it has no
+//      notion of a HELD draft, so it can neither count reaches nor observe the
+//      hold-age cancel. Do not read "0 cross-court events" off a replay as
+//      evidence about production.
 //   4. Rejection memory is empty: no organizer clears drafts in a replay, so
 //      this measures what the engine does unaided.
 //

@@ -21,6 +21,7 @@ import {
   CONSECUTIVE_OPPONENT_PENALTY,
   MAX_CONSECUTIVE_OPPONENT_REPEATS,
   CRITICAL_WAIT_MINUTES,
+  CROSS_COURT_REST_FALLBACK_MINUTES,
   DRAFT_CAP_LARGE_THRESHOLD,
   DRAFT_CAP_XLARGE_THRESHOLD,
   FALLBACK_WAIT_MINUTES,
@@ -139,14 +140,43 @@ export function pairKey(a: string, b: string): string {
 // │  Score: RED_ZONE_SCORE_FLOOR (1000) + wait − (games × PENALTY)      │
 // │  Game penalty still differentiates within Red Zone — fewer-games    │
 // │  players preferred even when both are urgent.                        │
-// │  ⚠ When game debt > wait, the actual score can fall below 1000       │
-// │  (e.g. wait=20, games=5 → 1000+20−40=980). Downstream consumers     │
-// │  (scoreCandidates, runAlgorithm) re-detect Red Zone by testing       │
-// │  priorityScore ≥ RED_ZONE_SCORE_FLOOR, so those players receive      │
-// │  Normal treatment (10_000× overlap penalty, tight skill window).     │
-// │  This is intentional: players well above the fair-share games target │
-// │  benefit less from Red Zone urgency because their wait is self-      │
-// │  caused by dense play rather than queue starvation.                  │
+// │  ⚠ When game debt > wait, the actual score falls below 1000          │
+// │  (e.g. wait=20, games=5 → 1000+20−40=980). Downstream consumers      │
+// │  USED TO re-detect Red Zone as priorityScore ≥ RED_ZONE_SCORE_FLOOR, │
+// │  which silently gave those players Normal treatment. They now call   │
+// │  isRedZonePlayer, which tests the wait directly. See that function.  │
+// │                                                                      │
+// │  This comment previously called that "intentional: their wait is     │
+// │  self-caused by dense play rather than queue starvation". That       │
+// │  rationale is preserved here because it is real, but it does not     │
+// │  cover the sites it was cited at. It reaches only the two SCORING    │
+// │  sites (scoreCandidates and the widened skill window); it cannot     │
+// │  argue that such a player may be benched by a diversity or balance   │
+// │  swap ("never bench a Red-Zone player" is a fairness floor, not a    │
+// │  boost), nor that a cap-saturation broadcast should say "general"    │
+// │  when CapSaturationPayload defines "red_zone" as wait ≥ 20 and the   │
+// │  UI renders "waiting over 20 min".                                   │
+// │                                                                      │
+// │  ⚠ Where it DOES have real force, be honest about the size of it:    │
+// │  scoreCandidates' isRedZone flag gates TWO terms, and the second is  │
+// │  the fresh-first GAMES_AHEAD_PENALTY (10_000 → 100). So the fix      │
+// │  hands this exact cohort a 100× discount on the anti-starvation      │
+// │  lever — a wait-22 / 3-games candidate goes from 29_002 (sorted      │
+// │  last) to −698 (sorted ahead of a 0-game / 19-min waiter). That is   │
+// │  accepted, and it is the designed behaviour rather than a side       │
+// │  effect: Tier 2 deliberately has NO games ceiling (unlike Tier 3's   │
+// │  HARD_CAP_GAMES_CEILING), and GAMES_AHEAD_PENALTY_RED_ZONE exists    │
+// │  precisely so urgency outranks freshness once someone crosses 20     │
+// │  minutes. The bug was that the promise silently excluded the         │
+// │  high-games players it was written for.                              │
+// │                                                                      │
+// │  It also double-counts: the game penalty is ALREADY subtracted       │
+// │  inside Tier 2, so a dense-play player already sorts below a         │
+// │  starved one within the Red Zone. Dropping them out of the tier      │
+// │  entirely charges them twice.                                        │
+// │  If the urgency argument is ever revived, revive it as an explicit   │
+// │  games test at the two scoring sites — not as a score threshold      │
+// │  that silently also removes their fairness protections.              │
 // ├─────────────────────────────────────────────────────────────────────┤
 // │  TIER 1 — NORMAL  (score unbounded below 1000)                      │
 // │  Score: wait − (games × GAME_PENALTY_MINUTES)                       │
@@ -185,6 +215,60 @@ export function computePriorityScore(player: QueueWithWaitTime): number {
   // Unbounded below — game count can push score negative, letting players
   // with fewer games naturally rise above burst players at the same wait.
   return wait - gamePenalty;
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: isRedZonePlayer
+// ─────────────────────────────────────────────────────────────
+// The ONLY sound test for "this player is in the Red Zone". Use it; never
+// re-derive the condition from the score.
+//
+// `priorityScore >= RED_ZONE_SCORE_FLOOR` reads like the same question and is
+// not. RED_ZONE_SCORE_FLOOR is an ADDEND in Tier 2, not a floor on the result:
+// the tier returns `1000 + wait - games × GAME_PENALTY_MINUTES`, which dips
+// below 1000 whenever the game penalty outruns the wait. A player at wait 22
+// with 3 games scores `1000 + 22 - 24 = 998` — unambiguously in the Red Zone by
+// the only definition that exists (`wait >= CRITICAL_WAIT_MINUTES`), and
+// invisible to the score test.
+//
+// Two cohorts are missed, and they are the wrong two to miss:
+//   • wait ∈ [20, 25) with `games × 8 > wait` (games >= 3 at wait 20–23,
+//     games >= 4 at wait 24) — Tier 2, below the addend.
+//   • wait >= 25 with games >= HARD_CAP_GAMES_CEILING (5) and `wait < games × 8`
+//     — the Hard Cap ceiling excludes them from Tier 3, so they fall THROUGH to
+//     Tier 2 and score below 1000 (wait 30 / 5 games → `1000 + 30 - 40 = 990`).
+//     This is the most-served-but-longest-waiting player, and every consequence
+//     compounds on them at once.
+// Measured on production (project usxftpexoimletqmrggb, read-only
+// reconstruction of 318 auto-created matches): of the matches whose anchor had a
+// reconstructed wait >= CRITICAL_WAIT_MINUTES, 20 had a reconstructed
+// priorityScore below RED_ZONE_SCORE_FLOOR — i.e. the score test silently
+// disagreed with the definition on 20 real matches.
+//
+// The wait arm essentially SUBSUMES the score arm (reaching 1000 through Tier 1
+// would take a 1000-minute wait; Tier 3 already implies wait >= 25). The score
+// arm is kept anyway as a constant-drift guard, matching `anchorBlocksReach`,
+// which is where this two-armed shape was first used.
+//
+// `isPulled` is excluded deliberately. A still-playing body is not waiting, so
+// it cannot be in the Red Zone by definition. Today this is a strict no-op, but
+// note that the two hardcodes it relies on live in DIFFERENT files:
+// `fetchPullablePlayers` sets `wait_minutes: 0` (matchmaking-db.ts) while
+// `priorityScore: -1` is applied by the CALLER when it augments the pool
+// (matchmaking.ts — `PullableBody` has no priorityScore field at all). Both arms
+// are false today only because those two agree. That split is exactly why the
+// guard is worth writing down: either hardcode can move without the other, and
+// a pulled body that acquired a real wait would silently become un-benchable in
+// the balance-preserving swap below — not a decision anyone would have made on
+// purpose. RZ-5 pins it.
+export function isRedZonePlayer(
+  player: Pick<ScoredPlayer, "wait_minutes" | "priorityScore" | "isPulled">
+): boolean {
+  if (player.isPulled) return false;
+  return (
+    (player.wait_minutes ?? 0) >= CRITICAL_WAIT_MINUTES ||
+    player.priorityScore >= RED_ZONE_SCORE_FLOOR
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -301,6 +385,119 @@ export function countConsecutiveOpponentRepeats(
     }
   }
   return repeats;
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: wantsFresherFour / pullImprovesFreshness
+// ─────────────────────────────────────────────────────────────
+// The cross-court reach policy, in two predicates. They live here, beside the
+// metric they are built on, because the engine's copy of them sits inside a
+// server action where they cannot be tested without a full Supabase fixture —
+// and an untestable trigger is exactly how the original one shipped dead
+// (0 held drafts across 945 production matches).
+//
+// Both take `forcedRepeat` first because it is the older, stricter path and it
+// short-circuits: when the waiting pool can produce nothing but a repeat, any
+// non-repeat four is an improvement by definition.
+
+/**
+ * Should the engine spend the extra queries to look for a fresher four?
+ *
+ * `forcedRepeat` alone — the original sole trigger — is self-defeating: it arms
+ * only when the engine has already failed (22/550 replayed matches, 4%), and
+ * every improvement to waiting-pool selection makes it arm less often. The
+ * second arm is the condition players actually complain about: at least one of
+ * the four would face someone from their immediately-previous game.
+ */
+export function wantsFresherFour(
+  forcedRepeat: boolean | undefined,
+  baseStaleness: number
+): boolean {
+  return forcedRepeat === true || baseStaleness > 0;
+}
+
+/**
+ * Did the reach actually buy anything? Pulling a body off a live court is a real
+ * cost, so on the freshness path the augmented four must strictly REDUCE
+ * consecutive-opponent staleness. `!forcedRepeat` — the acceptance test the
+ * forced-repeat path uses — is far too weak here: most stale fours are not
+ * forced repeats, so it would happily accept an augmented four no fresher than
+ * the one already in hand.
+ */
+export function pullImprovesFreshness(
+  forcedRepeat: boolean | undefined,
+  baseStaleness: number,
+  augStaleness: number
+): boolean {
+  return forcedRepeat === true || augStaleness < baseStaleness;
+}
+
+/**
+ * Is the anchor too close to needing service to be held?
+ *
+ * A held draft marks its three waiting members `drafted`, which removes them
+ * from `fetchActivePool` — so once held, the Red-Zone and Hard-Wait escalations
+ * in `computePriorityScore` can no longer reach them.
+ *
+ * ⚠️ This guards the ANCHOR ONLY. An earlier version of this doc claimed
+ * "checking `pool[0]` covers all three seated waiters, since `scoreAndSortPool`
+ * sorts descending" — **false**, and false in the exact way §3.34 exists to
+ * eradicate. The sort key is `priorityScore`, which subtracts
+ * `games_played × GAME_PENALTY_MINUTES`; it is not wait. A wait-19 / 3-games
+ * seat candidate scores −5 and sorts BELOW a wait-16 / 0-games anchor scoring
+ * 16, so the anchor clears this guard (16 < 17) while the seat is held straight
+ * past the Red-Zone line — precisely the harm the guard is written to prevent.
+ *
+ * The seats are covered instead by the **hold-age cancel**: `heldDraftExpired`
+ * +`CROSS_COURT_MAX_HOLD_MINUTES`, enforced in `recomputeHeldReadiness`. That
+ * bounds how long all three parked players can be held rather than restricting
+ * which reaches are allowed. Two alternatives were considered and rejected:
+ *   - Extending this 17-minute margin to the seats. Strictly more correct, but
+ *     on `fetchActivePool`'s rested branch every player with >= 1 game is at
+ *     `wait >= 18 >= 17`, so it would force all three waiters to be zero-games
+ *     players — plausibly returning a feature with a measured history of "0 held
+ *     drafts in 945 production matches" to never firing.
+ *   - A seat-level `isRedZonePlayer` block in `buildCrossCourtProposal`'s search
+ *     loop. **Unreachable dead code**: a Tier-2 player always outranks any
+ *     Tier-1 player (Tier 2 floors at `1000 + 20 − 8g`; falling below a Tier-1
+ *     max of 19 needs g > 125), so a Red-Zone seat implies `pool[0]` is Red Zone
+ *     too and the wait arm here has already refused. It also would not have
+ *     caught the motivating case, since a wait-19 seat is *below* the Red-Zone
+ *     line. Do not re-add it.
+ *
+ * The WAIT arm is the operative one. It refuses at
+ * `CRITICAL_WAIT_MINUTES - CROSS_COURT_REST_FALLBACK_MINUTES` (17) rather than
+ * at 20, so a player is not seated at 19 minutes and held straight past the
+ * Red-Zone line. Note what this does and does NOT bound: it bounds the anchor's
+ * wait at the moment the hold is CREATED. It does not bound the hold's
+ * duration — `isHeldMatchReady` returns false until `pulledFreedAt` is set, so
+ * the hold runs for the rest of the source game plus up to the fallback. See
+ * the residual note at the call site.
+ *
+ * The SCORE arm is presently redundant: `computePriorityScore` only reaches
+ * `RED_ZONE_SCORE_FLOOR` via the `wait >= CRITICAL_WAIT_MINUTES` (20) and
+ * `wait >= HARD_WAIT_CAP_MINUTES` (25) tiers, both above 17, so the wait arm
+ * subsumes it (measured on production: 66 refusals by score, 136 by wait,
+ * union 136). It is kept as a constant-drift guard — if the margin constant
+ * ever grows past `CRITICAL_WAIT_MINUTES` the arms stop being nested.
+ *
+ * ⚠️ Interaction with `MIN_REST_MINUTES = 18`: when at least
+ * `PLAYERS_PER_MATCH` players clear the rest filter, `fetchActivePool` returns
+ * only players at `wait >= 18` OR `games_played === 0`. On that branch every
+ * anchor who has already played is >= 18 >= 17 and the reach is refused *by
+ * construction*. The only escape is an anchor with zero games — and even that is
+ * necessary, not sufficient, since it must still clear the wait and score arms.
+ * Zero-games anchors are 3.8% of production auto-matches overall; that is a
+ * base rate, NOT the escape rate conditional on this branch (zero-games players
+ * are over-represented here, being the only cohort exempt from the wait >= 18
+ * cut), so do not subtract it from 100 and quote the remainder. This is the
+ * first thing to check if held drafts go quiet again.
+ */
+export function anchorBlocksReach(priorityScore: number, waitMinutes: number): boolean {
+  return (
+    priorityScore >= RED_ZONE_SCORE_FLOOR ||
+    waitMinutes >= CRITICAL_WAIT_MINUTES - CROSS_COURT_REST_FALLBACK_MINUTES
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -534,10 +731,12 @@ export function isRejectedRoster(playerIds: string[], rejectedRosters: string[][
 //   Red Zone candidate: score = -priorityScore + overlapCount × 100
 //                               + gamesAhead × GAMES_AHEAD_PENALTY_RED_ZONE
 //
-// Red Zone candidates (priorityScore ≥ 1000) have their overlap
-// penalty capped at 100× instead of 10_000×. This guarantees that
-// a Red Zone candidate with 1 overlap still sorts before a fresh
-// Normal candidate:
+// Red Zone candidates — `isRedZonePlayer(c)`: wait ≥ CRITICAL_WAIT_MINUTES,
+// OR score ≥ RED_ZONE_SCORE_FLOOR, and never a pulled body. NOT the score
+// test alone; see isRedZonePlayer for why that under-reported the cohort.
+// They have their overlap penalty capped at 100× instead of 10_000×. This
+// guarantees that a Red Zone candidate with 1 overlap still sorts before a
+// fresh Normal candidate:
 //   Red Zone, 1 overlap:  -1030 + 100   = -930  → sorts first ✓
 //   Normal,   0 overlap:  -2   + 0      = -2    → sorts after ✓
 //
@@ -562,8 +761,9 @@ export function scoreCandidates(
   return candidates
     .map((c) => {
       const overlap = overlapMap.get(c.player_id) ?? 0;
-      // Red Zone: cap overlap penalty so urgency always wins.
-      const isRedZone = c.priorityScore >= RED_ZONE_SCORE_FLOOR;
+      // Red Zone: cap BOTH the overlap penalty and the fresh-first
+      // games-ahead penalty (100 vs 10_000) so urgency always wins.
+      const isRedZone = isRedZonePlayer(c);
       const overlapPenalty = isRedZone ? overlap * 100 : overlap * 10_000;
       // Fresh-first: penalise games above the pool minimum (never negative —
       // a candidate below the supplied minimum simply gets no penalty).
@@ -635,7 +835,8 @@ export function scoreCandidates(
 // first-valid behaviour) and what lets the replay harness reproduce
 // the pre-freshness baseline exactly via REPLAY_NO_LAST_OPPONENTS.
 //
-// Fairness is untouched: the penalty is bounded at 4 × 3 = 12,
+// Fairness is untouched: the penalty is bounded at 4 × 3 = 12 for a
+// real split and 5 × 3 = 15 with the unsplittable sentinel below,
 // three orders of magnitude below GAMES_AHEAD_PENALTY (10_000), so
 // the argmin can only reorder triples that already tie on
 // games-above-minimum AND anchor overlap. See the proof on
@@ -915,6 +1116,34 @@ export function isHeldMatchReady(input: HeldReadinessInput): boolean {
 }
 
 /**
+ * Hold-age cancel: has a held draft been parked so long that its three waiting
+ * players should be released back into the queue?
+ *
+ * Only ever true while the body is STILL PLAYING (`pulledFreedAt === null`).
+ * Once the body frees, `isHeldMatchReady` resolves within
+ * `CROSS_COURT_REST_FALLBACK_MINUTES` on its own, and cancelling a draft that is
+ * about to become promotable would throw away the pull for nothing.
+ *
+ * This is the guard for the two seated waiters that `anchorBlocksReach` provably
+ * does NOT cover — see `CROSS_COURT_MAX_HOLD_MINUTES` for why the alternative
+ * (extending the anchor's 17-minute margin to the seats) is not viable, and for
+ * the honest limit of what an age cap can promise.
+ */
+export function heldDraftExpired(input: {
+  createdAt: string;
+  pulledFreedAt: string | null;
+  now: number;
+  maxHoldMs: number;
+}): boolean {
+  if (input.pulledFreedAt !== null) return false;
+  const createdMs = new Date(input.createdAt).getTime();
+  // A malformed timestamp must not cancel a healthy draft (NaN comparisons are
+  // false, but be explicit — this decides whether real players lose their seat).
+  if (Number.isNaN(createdMs)) return false;
+  return input.now - createdMs >= input.maxHoldMs;
+}
+
+/**
  * Court-preference tiebreak (N-3): among equally-good pulled candidates, prefer
  * the one whose current game STARTED EARLIEST (closest to finishing). This is a
  * tiebreak used when composing the single pulled slot — NOT a global pre-sort
@@ -988,6 +1217,256 @@ export type AlgorithmResult = {
 };
 
 // ─────────────────────────────────────────────────────────────
+// EXPORT: buildCrossCourtProposal
+// ─────────────────────────────────────────────────────────────
+// The third reason cross-court drafting produced ZERO held matches in 945
+// production games — and the one that survived fixing the other two.
+//
+// The old producer appended the pulled bodies to the waiting pool at
+// `priorityScore: -1` and asked runAlgorithm to choose:
+//
+//     runAlgorithm([...pool, ...bodies.map(b => ({...b, priorityScore: -1}))])
+//
+// scoreCandidates scores every candidate as
+//
+//     -priorityScore + overlap×10_000 + gamesAhead×10_000
+//
+// and `isPulled` exempts ONLY the gamesAhead term (scoreCandidates' `gamesAhead`
+// ternary — no line number, it has already drifted once). So the body scores
+// `1 + overlap_b×10_000` and a waiting candidate scores
+// `-P_w + overlap_w×10_000 + gamesAhead_w×10_000`. Note which way those two
+// exempted/unexempted terms actually push: BOTH favour the body. Its gamesAhead
+// is forced to 0 while a waiter one game above the pool minimum pays 10_000, and
+// its overlap is usually 0 while a waiter who has recently shared a court with
+// the anchor pays 20_000 (OVERLAP_WEIGHT_* = 2 each). Neither term is a moat
+// around the waiting pool — they are the two ways the body can win.
+//
+// But the comparison that actually decides is NOT per-candidate. On the
+// previewing path buildCombinationGroup is an argmin over TRIPLES of
+// `fairness + CONSECUTIVE_OPPONENT_PENALTY × repeats`, where `fairness` is the
+// sum of three scores and `repeats` depends on the whole four through
+// snakeDraft. So "does the body beat this waiter" is not a well-formed question:
+// the body displaces the third-cheapest waiter `w3` iff
+//
+//     s_body - s_w3  <  CONSECUTIVE_OPPONENT_PENALTY × (r_waiting - r_body)
+//
+// i.e. — substituting `s_body = 1 + overlap_b × 10_000` and TAKING overlap_b = 0,
+// the usual case for a body drawn off another court — iff
+// `s_w3 > 1 - 3·Δrepeats`. (With overlap_b > 0 the threshold moves by a full
+// 10_000 per unit and the repeats term stops mattering; do not drop that term
+// silently, which is how this paragraph went wrong before.) Repeats run 0–4 plus the unsplittable
+// sentinel 5, so Δrepeats spans [-5, 5] and that threshold slides ±15 around
+// `+1`. Three waiters cheaper than the body is therefore neither necessary nor
+// sufficient for the body to lose — the repeats term routinely decides it.
+//
+// What IS true, and is the whole reason for the rewrite: when the repeats term
+// is a wash between the two triples the body loses whenever three waiters are
+// simultaneously at the pool's game minimum, overlap-free with the anchor, and
+// above `priorityScore -1` — the ordinary mid-session pool, and precisely the
+// pool cross-court exists to improve. When it is not a wash the outcome turns on
+// a property of the whole four that the body's score cannot express at all.
+// Either way, `priorityScore: -1` is not a control surface.
+//
+// CCT-BUILD-1 is a worked instance of the wash: waits 14/12/10/8, one game each,
+// no anchor overlap; the waiting-only four costs -6 + 3×1 = -3 and the best four
+// containing the body costs -3 + 3×0 = -3 — a dead tie, resolved for the
+// incumbent by the strict `<`, pull silently dropped. Note WHY it ties: the
+// fairness gap (3) happens to equal the repeat saving (3×1). That cancellation
+// is the tie; the three pool conditions alone do not produce it. Give the
+// waiting four one more repeat and the body wins on a pool that still satisfies
+// all three. Where the body reliably won was a waiting four that was ILLEGAL, and
+// such a four comes back flagged forcedRepeat, which the caller's acceptance
+// test then rejected. That is the deadlock.
+//
+// ⚠️ This paragraph has been wrong THREE times, each time by reaching for a
+// tidy universal, so re-derive it from the source lines — never paraphrase the
+// sentence above it. The three dead versions, so they stay dead: (1) "the body
+// trails by 11–15 unbridgeable points" — fiction; (2) "pinned at +1, and the
+// overlap term can only widen the gap" — overlap is charged to BOTH sides and
+// Tier 1 is unbounded below, so `1 + priorityScore` bounds nothing (a waiter at
+// wait 10 / 2 games scores +6 and the body's +1 beats them outright); (3) "the
+// body loses exactly when three waiters beat +1" — an iff that ignores the
+// repeats term in the argmin, and so is neither necessary nor sufficient.
+// Likewise do not restate any of this as "the augmented run got the waiting-only
+// four back every time."
+//
+// Scope, honestly: blockers 1 and 2 (the `i > 0` slot gate and the 4%
+// forcedRepeat-only trigger) are what produced 0 held drafts in 945 matches.
+// This third blocker is what would have kept the feature near-useless after
+// fixing them — it is not independently evidenced by that zero.
+//
+// So the pull is FORCED here instead of competed for: every candidate four is
+// built as three waiting players plus one body (C-1's "a held draft consumes 3
+// waiting players"), and runAlgorithm is invoked on that exact four so the
+// partnership caps, the skill window, the diversity check and the freshness
+// ladder all still apply unchanged.
+//
+// Fairness is preserved partly by construction and partly by the ranking below.
+// Be precise about which is which — an earlier version of this comment claimed
+// all of it was structural and was wrong twice over:
+//   * pool[0] is in EVERY candidate four, so the reach can never skip the
+//     queue's front. This is the app's #1 invariant. ⚠️ pool[0] is the
+//     HIGHEST-PRIORITY player, **not** necessarily the longest waiter —
+//     `scoreAndSortPool` sorts by `priorityScore`, and that score subtracts
+//     `games_played × GAME_PENALTY_MINUTES`. A wait-19 / 3-games player
+//     (score −5) sorts BELOW a wait-16 / 0-games player (score 16). Do not
+//     re-derive a wait guarantee from the sort order; that is the exact
+//     score-encodes-a-tier fallacy §3.34 exists to eradicate.
+//   * BECAUSE of that, `anchorBlocksReach(pool[0])` does NOT cover the two
+//     seated waiters, which is what the old comment assumed. There is NO
+//     seat-level guard in the loop below — a Red-Zone one would be unreachable
+//     (see `anchorBlocksReach`'s JSDoc: a Tier-2 player always outranks any
+//     Tier-1 player, so a Red-Zone seat implies a Red-Zone `pool[0]`). The
+//     seats are covered instead by the hold-age cancel — `heldDraftExpired` +
+//     `CROSS_COURT_MAX_HOLD_MINUTES`, enforced in `recomputeHeldReadiness` —
+//     which bounds how long they can be parked rather than who may be seated.
+//   * the two seat slots are NOT structurally fair — with exactly 4 players,
+//     the inner `buildCombinationGroup` has no choice to make, so no fairness
+//     term participates in it at all. Fairness among seat pairs is imposed
+//     HERE, by the lexicographic ranking below, and nowhere else.
+//   * a four that runAlgorithm flags forcedRepeat is discarded, never served.
+//   * the result is returned only if it STRICTLY beats `baseStaleness`, so a
+//     player is pulled off a live court only to buy a measurably fresher game.
+
+/** Waiting candidates (beyond the anchor) considered for the two open seats. */
+const CROSS_COURT_SEAT_CANDIDATES = 7;
+
+export type CrossCourtPick = {
+  proposal: MatchProposal;
+  /** The single pulled body seated in `proposal`. */
+  pulledPlayerId: string;
+  /**
+   * Consecutive-opponent repeats in `proposal`. Strictly below `baseStaleness`
+   * on the freshness path; UNCONSTRAINED when `forcedRepeat` — that path has no
+   * staleness floor to beat, so the pick can tie or exceed it (see CCT-BUILD-5).
+   */
+  staleness: number;
+  /**
+   * Combined `games_played` of the two seated waiters above the seat pool's
+   * minimum. The PRIMARY ranking key — lexicographically ahead of `staleness`,
+   * mirroring how GAMES_AHEAD_PENALTY dominates CONSECUTIVE_OPPONENT_PENALTY in
+   * `scoreCandidates`. Always 0 when both seats are at the pool minimum.
+   */
+  gamesAhead: number;
+};
+
+export function buildCrossCourtProposal(
+  pool: ScoredPlayer[],
+  bodies: ScoredPlayer[],
+  args: {
+    partnershipCounts: Map<string, number>;
+    overlapMap: Map<string, number>;
+    recentRosters: string[][];
+    opponentCounts: Map<string, number>;
+    rejectedRosters: string[][];
+    lastOpponents: LastOpponents;
+    /** Staleness of the waiting-only four this reach has to beat. */
+    baseStaleness: number;
+    /**
+     * Whether the waiting-only four was a forced repeat. Kept separate from
+     * baseStaleness because the two paths accept differently, and
+     * pullImprovesFreshness owns that distinction: a forced repeat has no
+     * staleness floor to beat (it can be 0 and still be unservable), so any
+     * legal four clears it, while the freshness path demands a strict drop.
+     */
+    forcedRepeat: boolean | undefined;
+  }
+): CrossCourtPick | null {
+  if (pool.length < 3 || bodies.length === 0) return null;
+
+  const anchor = pool[0];
+  const seatPool = pool.slice(1, 1 + CROSS_COURT_SEAT_CANDIDATES);
+  if (seatPool.length < 2) return null;
+
+  let best: CrossCourtPick | null = null;
+
+  // The inner runAlgorithm calls below each get a pool of exactly 4, and
+  // getEffectiveLookback(4) is 2 — far shorter than the 4–7 the real waiting
+  // pool earns. Left alone, the reach would enforce a WEAKER anti-repeat rule
+  // than the plain draft it is replacing, which is backwards for a feature
+  // whose entire justification is freshness: a four sharing ≥3 players with the
+  // 3rd-most-recent roster would sail through. So the diversity verdict is
+  // re-taken out here, against the pool the engine actually drew from.
+  //
+  // `pool.length` is the right key, and it is never LOOSER than the outer
+  // engine's. runAlgorithm keys on `eligible.length + 1`, where `eligible` is
+  // the pool minus the anchor, minus everyone outside the skill window, minus
+  // everyone partner-capped — so `eligible.length + 1 <= pool.length` always,
+  // and getEffectiveLookback is monotonically non-decreasing. Using the whole
+  // pool therefore yields an equal-or-LONGER lookback, i.e. an equal-or-stricter
+  // anti-repeat rule. Erring strict is the safe direction here: the reach may
+  // refuse a four the plain draft would have taken, but it can never wave
+  // through one the plain draft would have rejected.
+  const activeRosters = args.recentRosters.slice(0, getEffectiveLookback(pool.length));
+
+  // Fresh-first baseline for the two seats. The engine's own weighting makes
+  // games-ahead dominate staleness by 833× (GAMES_AHEAD_PENALTY 10_000 vs
+  // CONSECUTIVE_OPPONENT_PENALTY 3 × 4 seats = 12 — gotcha 28), so the discrete
+  // analogue here is LEXICOGRAPHIC, not a weighted sum: a seat pair that is a
+  // game closer to the pool minimum wins outright, and staleness only separates
+  // pairs inside the same games-ahead tier. Ranking on staleness alone — which
+  // this did before — inverted that invariant, letting a pair several games
+  // ahead take the seats to buy a single unit of freshness.
+  const seatMinGames = Math.min(...seatPool.map((p) => p.games_played));
+
+  // `bodies` arrives sorted earliest-finishing-first (N-3) and `seatPool` by
+  // priority, so iteration order is already the fairest tie-break: the strict
+  // comparison below keeps the first-found winner on an exact tie.
+  for (const body of bodies) {
+    for (let i = 0; i < seatPool.length; i++) {
+      for (let j = i + 1; j < seatPool.length; j++) {
+        const four = [anchor, seatPool[i], seatPool[j], body];
+        const result = runAlgorithm(
+          four,
+          args.partnershipCounts,
+          args.overlapMap,
+          args.recentRosters,
+          args.opponentCounts,
+          args.rejectedRosters,
+          args.lastOpponents
+        );
+        // forcedRepeat here means runAlgorithm had to re-serve a group that
+        // failed the diversity / rejection check. Never worth a pull.
+        if (!result.proposal || result.forcedRepeat) continue;
+
+        // The real diversity gate — see activeRosters above.
+        const fourIds = [...result.proposal.teamA, ...result.proposal.teamB].map(
+          (p) => p.player_id
+        );
+        if (isDiversityViolation(fourIds, activeRosters)) continue;
+        if (isRejectedRoster(fourIds, args.rejectedRosters)) continue;
+
+        const staleness = countConsecutiveOpponentRepeats(result.proposal, args.lastOpponents);
+        if (!pullImprovesFreshness(args.forcedRepeat, args.baseStaleness, staleness)) continue;
+
+        const gamesAhead =
+          seatPool[i].games_played - seatMinGames + (seatPool[j].games_played - seatMinGames);
+        if (
+          best &&
+          (gamesAhead > best.gamesAhead ||
+            (gamesAhead === best.gamesAhead && staleness >= best.staleness))
+        ) {
+          continue;
+        }
+
+        best = {
+          proposal: result.proposal,
+          pulledPlayerId: body.player_id,
+          staleness,
+          gamesAhead,
+        };
+        // A perfectly fresh four on the fairest possible seats cannot be
+        // improved on — stop the search. Staleness 0 ALONE is not enough any
+        // more: a later pair may tie it at a lower games-ahead tier.
+        if (staleness === 0 && gamesAhead === 0) return best;
+      }
+    }
+  }
+
+  return best;
+}
+
+// ─────────────────────────────────────────────────────────────
 // EXPORT: scoreAndSortPool
 // ─────────────────────────────────────────────────────────────
 // Enriches each raw QueueWithWaitTime player with a priorityScore,
@@ -1056,7 +1535,7 @@ export function runAlgorithm(
   const anchor = pool[0];
   const anchorSkill = anchor.skill_level_int;
   const anchorWaitMinutes = anchor.wait_minutes ?? 0;
-  const anchorIsRedZone = anchor.priorityScore >= RED_ZONE_SCORE_FLOOR;
+  const anchorIsRedZone = isRedZonePlayer(anchor);
 
   // Fresh-first baseline: the fewest games played by any WAITING player in
   // the pool. scoreCandidates penalises candidates per game ABOVE this
@@ -1181,7 +1660,7 @@ export function runAlgorithm(
         }
 
         const swapTarget = group[2];
-        if (swapTarget.priorityScore >= RED_ZONE_SCORE_FLOOR) {
+        if (isRedZonePlayer(swapTarget)) {
           if (process.env.DEBUG_MATCHMAKING === "true") {
             console.warn(
               `[matchmaking] Swap target ${swapTarget.display_name} is Red Zone ` +
@@ -1351,7 +1830,7 @@ export function runAlgorithm(
           // Evict lowest-priority members first, and never bench a Red-Zone
           // player (mirrors the diversity-swap fairness guard).
           for (let i = group.length - 1; i >= 0; i--) {
-            if (group[i].priorityScore >= RED_ZONE_SCORE_FLOOR) continue;
+            if (isRedZonePlayer(group[i])) continue;
             const swapGroup = group.map((g, idx) => (idx === i ? candidate : g));
             if (swapGroup.filter((c) => c.isPulled).length > 1) continue;
             if (!isGroupValid([anchor, ...swapGroup], maxVariance)) continue;

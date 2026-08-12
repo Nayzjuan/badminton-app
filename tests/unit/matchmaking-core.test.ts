@@ -33,8 +33,10 @@ import {
   shouldAutoPublishMatch,
   isPullEligible,
   isHeldMatchReady,
+  heldDraftExpired,
   pickEarliestFinishing,
   countConsecutiveOpponentRepeats,
+  isRedZonePlayer,
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
@@ -49,6 +51,7 @@ import {
   FALLBACK_WAIT_MINUTES,
   MAX_CONSECUTIVE_GAMES_FOR_PULL,
   CROSS_COURT_REST_FALLBACK_MINUTES,
+  CROSS_COURT_MAX_HOLD_MINUTES,
   CONSECUTIVE_OPPONENT_PENALTY,
   GAMES_AHEAD_PENALTY,
   MAX_CONSECUTIVE_OPPONENT_REPEATS,
@@ -258,6 +261,108 @@ describe("computePriorityScore", () => {
     //   RED_ZONE_SCORE_FLOOR is the addend, not a guaranteed floor for the result.
     expect(score).toBeLessThan(HARD_CAP_SCORE_FLOOR);
     expect(score).toBe(RED_ZONE_SCORE_FLOOR + 35 - HARD_CAP_GAMES_CEILING * GAME_PENALTY_MINUTES);
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // isRedZonePlayer — the score threshold is NOT the Red Zone condition
+  // ─────────────────────────────────────────────────────────────
+  // Regression cover for a bug that lived at five call sites: they each asked
+  // `priorityScore >= RED_ZONE_SCORE_FLOOR`, which is not the Red Zone
+  // condition. Tier 2 returns `1000 + wait - games×8`, so the score drops below
+  // the addend whenever game debt outruns the wait. Verified against production
+  // (318 auto-created matches; 20 anchors at wait >= 20 reconstructed below
+  // 1000). These tests are written against computePriorityScore's real output —
+  // makePlayer derives priorityScore rather than accepting one — so they cannot
+  // pass by asserting a hand-set score.
+  describe("isRedZonePlayer", () => {
+    it("[RZ-1] wait 22 / 3 games scores 998 yet IS in the Red Zone", () => {
+      const p = makePlayer("rz", { skillInt: 3, waitMinutes: 22, gamesPlayed: 3 });
+
+      // The headline case: below the addend, above the condition.
+      expect(p.priorityScore).toBe(RED_ZONE_SCORE_FLOOR + 22 - 3 * GAME_PENALTY_MINUTES);
+      expect(p.priorityScore).toBe(998);
+      expect(p.priorityScore).toBeLessThan(RED_ZONE_SCORE_FLOOR);
+
+      expect(p.wait_minutes).toBeGreaterThanOrEqual(CRITICAL_WAIT_MINUTES);
+      expect(isRedZonePlayer(p)).toBe(true);
+      // Pin the divergence itself, so a "simplification" back to the score test
+      // fails here rather than silently in the engine.
+      expect(p.priorityScore >= RED_ZONE_SCORE_FLOOR).toBe(false);
+    });
+
+    it("[RZ-2] the Hard-Cap games ceiling drops long waiters INTO the gap", () => {
+      // HARD_CAP_GAMES_CEILING excludes games >= 5 from Tier 3, so a player at
+      // wait 30 with 5 games falls through to Tier 2 and lands below the addend.
+      // This is the most-served-but-longest-waiting player — the compounding
+      // case, since they lose the widened skill window AND their swap
+      // protection AND the capped overlap penalty simultaneously.
+      const p = makePlayer("ceil", {
+        skillInt: 3,
+        waitMinutes: 30,
+        gamesPlayed: HARD_CAP_GAMES_CEILING,
+      });
+      expect(p.priorityScore).toBe(990);
+      expect(p.priorityScore).toBeLessThan(RED_ZONE_SCORE_FLOOR);
+      expect(p.priorityScore).toBeLessThan(HARD_CAP_SCORE_FLOOR); // not Tier 3
+      expect(isRedZonePlayer(p)).toBe(true);
+    });
+
+    it("[RZ-3] the boundary: wait 19 is out, wait 20 is in, at any game count", () => {
+      for (const games of [0, 3, 5, 9]) {
+        expect(
+          isRedZonePlayer(
+            makePlayer("b", {
+              skillInt: 3,
+              waitMinutes: CRITICAL_WAIT_MINUTES - 1,
+              gamesPlayed: games,
+            })
+          )
+        ).toBe(false);
+        expect(
+          isRedZonePlayer(
+            makePlayer("b", { skillInt: 3, waitMinutes: CRITICAL_WAIT_MINUTES, gamesPlayed: games })
+          )
+        ).toBe(true);
+      }
+    });
+
+    it("[RZ-4] the score arm still fires — kept as a constant-drift guard", () => {
+      // The wait arm subsumes the score arm today (Tier 1 would need a
+      // 1000-minute wait; Tier 3 already implies wait >= 25). The score arm
+      // exists so that if the tiers are ever re-cut, a high-scoring player is
+      // still caught. Assert it independently of the wait arm.
+      expect(isRedZonePlayer({ wait_minutes: 0, priorityScore: RED_ZONE_SCORE_FLOOR })).toBe(true);
+      expect(isRedZonePlayer({ wait_minutes: 0, priorityScore: RED_ZONE_SCORE_FLOOR - 1 })).toBe(
+        false
+      );
+    });
+
+    it("[RZ-5] a pulled body is never Red Zone", () => {
+      // fetchPullablePlayers hardcodes wait_minutes 0 / priorityScore -1, so
+      // this is a no-op today. It is asserted so that changing that hardcode
+      // cannot silently make still-playing bodies un-benchable in the
+      // balance-preserving swap.
+      expect(isRedZonePlayer({ wait_minutes: 0, priorityScore: -1, isPulled: true })).toBe(false);
+      expect(isRedZonePlayer({ wait_minutes: 99, priorityScore: 9999, isPulled: true })).toBe(
+        false
+      );
+      // Same player, not pulled → Red Zone. Isolates isPulled as the cause.
+      expect(isRedZonePlayer({ wait_minutes: 99, priorityScore: 9999 })).toBe(true);
+    });
+
+    it("[RZ-6] a null wait_minutes falls back to 0, not to Red Zone", () => {
+      // QueueWithWaitTime types wait_minutes as `number`, but computePriorityScore
+      // has always guarded it with `?? 0` and isRedZonePlayer matches that idiom.
+      // The cast is the point of the test: it pins the defensive branch so the
+      // `??` cannot be "cleaned up" on the strength of the type alone. If the
+      // view really can never return null, delete the `??` and this test
+      // together — not one without the other.
+      const nullWait = { wait_minutes: null, priorityScore: 0 } as unknown as Pick<
+        ScoredPlayer,
+        "wait_minutes" | "priorityScore"
+      >;
+      expect(isRedZonePlayer(nullWait)).toBe(false);
+    });
   });
 
   it("hard cap does NOT fire below HARD_WAIT_CAP_MINUTES even for eligible player", () => {
@@ -625,6 +730,61 @@ describe("scoreCandidates", () => {
     const scored = scoreCandidates([rz, normal], overlapMap);
     // -1850 < -920 → Hard Cap candidate ranks first despite 2 overlaps
     expect(scored[0].candidate.player_id).toBe("rz");
+  });
+
+  // ── RZ-SC1 / RZ-SC2 — the BELOW-FLOOR Red Zone cohort, through scoreCandidates.
+  //
+  // These pin the largest behavioural change in the isRedZonePlayer fix. Every
+  // test above reaches Red Zone through the SCORE arm (wait 20+ with 0 games, or
+  // the Hard Cap tier), so all of them pass identically with the old score-only
+  // test. Nothing exercised the cohort the fix actually adds: wait >= 20 with
+  // games × 8 > wait, whose priorityScore lands BELOW RED_ZONE_SCORE_FLOOR.
+  //
+  // That cohort is, by definition, the high-games cohort — so it is exactly the
+  // cohort that pays GAMES_AHEAD_PENALTY. Both terms flip at once.
+
+  it("RZ-SC1: below-floor Red Zone candidate gets the CAPPED games-ahead penalty (100, not 10_000)", () => {
+    // wait 22 / 3 games → 1000 + 22 − 24 = 998. In the Red Zone (22 >= 20) but
+    // BELOW the floor, which is the whole point of the fixture.
+    const dense = makePlayer("dense", { skillInt: 4, waitMinutes: 22, gamesPlayed: 3 });
+    expect(dense.priorityScore).toBe(998);
+    expect(dense.priorityScore >= RED_ZONE_SCORE_FLOOR).toBe(false);
+
+    // A never-played waiter just under the threshold — Normal by any test.
+    const fresh = makePlayer("fresh", { skillInt: 4, waitMinutes: 19, gamesPlayed: 0 });
+    expect(fresh.priorityScore).toBe(19);
+
+    const scored = scoreCandidates([dense, fresh], new Map(), 0);
+
+    // Red Zone → gamesAhead 3 × GAMES_AHEAD_PENALTY_RED_ZONE (100) = 300.
+    // Under the old score-only test this was 3 × 10_000 = 30_000 → +29_002,
+    // which sorted the candidate DEAD LAST instead of first.
+    expect(scored.find((s) => s.candidate.player_id === "dense")!.score).toBe(-998 + 300);
+    expect(scored.find((s) => s.candidate.player_id === "fresh")!.score).toBe(-19);
+    expect(scored[0].candidate.player_id).toBe("dense");
+  });
+
+  it("RZ-SC2: below-floor Red Zone candidate gets the CAPPED overlap penalty (100, not 10_000)", () => {
+    const dense = makePlayer("dense", { skillInt: 4, waitMinutes: 22, gamesPlayed: 3 });
+    expect(dense.priorityScore).toBe(998);
+    expect(dense.priorityScore >= RED_ZONE_SCORE_FLOOR).toBe(false);
+
+    // poolMinGames omitted so gamesAhead is 0 and this isolates the overlap term.
+    const [result] = scoreCandidates([dense], new Map([["dense", 1]]));
+    expect(result.score).toBe(-998 + 100); // was -998 + 10_000 = 9_002
+  });
+
+  it("RZ-SC3: the second cohort — wait >= 25 with games >= 5 falls through Tier 3 and is still Red Zone", () => {
+    // HARD_CAP_GAMES_CEILING (5) excludes this player from Tier 3, so they land
+    // in Tier 2 and score 1000 + 30 − 40 = 990 — below the floor despite having
+    // the longest wait in the pool. Worst-affected group in the app.
+    const stranded = makePlayer("stranded", { skillInt: 4, waitMinutes: 30, gamesPlayed: 5 });
+    expect(stranded.priorityScore).toBe(990);
+    expect(stranded.priorityScore >= RED_ZONE_SCORE_FLOOR).toBe(false);
+
+    const [result] = scoreCandidates([stranded], new Map([["stranded", 1]]), 0);
+    // Red Zone on both terms: overlap 1 × 100, gamesAhead 5 × 100.
+    expect(result.score).toBe(-990 + 100 + 500); // was -990 + 10_000 + 50_000
   });
 
   it("results are sorted ascending by score (best first) with concrete expected values", () => {
@@ -1805,6 +1965,104 @@ describe("runAlgorithm — happy paths (successful match proposals)", () => {
     expect(result.capSaturation).toBe(false);
   });
 
+  // ── RA-2b / RA-3b — the same two guards, reached through the WAIT arm ──
+  //
+  // RA-2 and RA-3 both build their Red Zone players with 0 games, so both reach
+  // the tier through the SCORE arm and pass identically under the old score-only
+  // test. These clones use the below-floor cohort (wait >= 20, games × 8 > wait)
+  // so they fail without isRedZonePlayer. Fixtures use wait 26–30 with 5 games:
+  // HARD_CAP_GAMES_CEILING (5) drops them out of Tier 3 into Tier 2, where they
+  // score 1000 + wait − 40 — under the floor, with the longest waits in the pool.
+
+  it("RA-2b: below-floor Red Zone anchor still gets the expanded ±3 window — and does NOT arm forcedRepeat", () => {
+    const anchor = makePlayer("anchor", { skillInt: 3, waitMinutes: 30, gamesPlayed: 5 });
+    // Premise guard: Red Zone by wait, but the score test would say no.
+    expect(anchor.priorityScore).toBe(990);
+    expect(anchor.priorityScore >= RED_ZONE_SCORE_FLOOR).toBe(false);
+    expect(anchor.wait_minutes).toBeGreaterThanOrEqual(CRITICAL_WAIT_MINUTES);
+
+    // Skill 6 vs anchor 3 → spread 3: fails ±2, passes ±3.
+    const p1 = makePlayer("p1", { skillInt: 6, waitMinutes: 5 });
+    const p2 = makePlayer("p2", { skillInt: 6, waitMinutes: 4 });
+    const p3 = makePlayer("p3", { skillInt: 6, waitMinutes: 3 });
+
+    const result = runAlgorithm([anchor, p1, p2, p3], new Map(), new Map(), []);
+
+    expect(result.proposal).not.toBeNull();
+    expect(result.proposal!.isMixedLevel).toBe(true);
+
+    // ⚠️ THE decisive assertion, and it is NOT "a match was formed".
+    // FALLBACK_WAIT_MINUTES (15) is BELOW CRITICAL_WAIT_MINUTES (20), so every
+    // Red Zone anchor is already past the last-resort fallback threshold — the
+    // fallback seats this four either way and "proposal !== null" proves nothing.
+    // What differs is HOW: the fallback returns forcedRepeat: true, which is the
+    // engine telling the caller it served a compromised roster and is what arms
+    // the cross-court reach. Reaching ±3 legitimately leaves it unset.
+    expect(result.forcedRepeat).toBeFalsy();
+
+    const allAssigned = [
+      ...result.proposal!.teamA.map((p) => p.player_id),
+      ...result.proposal!.teamB.map((p) => p.player_id),
+    ];
+    expect(new Set(allAssigned).size).toBe(4);
+  });
+
+  it("RA-3b: below-floor Red Zone swap target is still protected from the diversity swap", () => {
+    // Every Red Zone player carries 5 games and so does `alt`, which pins
+    // poolMinGames at 5 and zeroes every gamesAhead term. That matters: it keeps
+    // the candidate ORDER identical with and without the fix, so this test
+    // isolates the swap guard instead of accidentally re-testing RZ-SC1.
+    const anchorRZ = makePlayer("anchorRZ", { skillInt: 5, waitMinutes: 30, gamesPlayed: 5 }); // 990
+    const g0 = makePlayer("g0", { skillInt: 5, waitMinutes: 29, gamesPlayed: 5 }); // 989
+    const g1 = makePlayer("g1", { skillInt: 5, waitMinutes: 28, gamesPlayed: 5 }); // 988
+    const g2 = makePlayer("g2", { skillInt: 5, waitMinutes: 26, gamesPlayed: 5 }); // 986
+    // The swap candidate the guard must refuse to use. Without a 5th player the
+    // swap has nowhere to go and fires-vs-doesn't-fire are indistinguishable.
+    const alt = makePlayer("alt", { skillInt: 5, waitMinutes: 5, gamesPlayed: 5 }); // −35
+
+    for (const p of [anchorRZ, g0, g1, g2]) {
+      expect(p.wait_minutes).toBeGreaterThanOrEqual(CRITICAL_WAIT_MINUTES);
+      expect(p.priorityScore >= RED_ZONE_SCORE_FLOOR).toBe(false);
+    }
+    expect(g2.priorityScore).toBe(986);
+
+    // ⚠️ REJECTION memory, not diversity — and the difference is what makes this
+    // test decisive. The Tier-1 swap only ever replaces group[2], so it can only
+    // clear a diversity violation whose overlapping trio INCLUDES group[2].
+    // The natural fixture here — put the original four in activeRosters — is
+    // exactly the case it cannot clear: the overlapping trio
+    // anchor + group[0] + group[1] survives the substitution untouched, so the
+    // swapped four is still at overlap 3 and still a violation. The guard firing
+    // and the guard not firing then produce the same roster and nothing is
+    // proven. (FR-1's own comment records the sibling version of this trap.)
+    //
+    // A violation on a roster like {anchor, group[0], group[2]} WOULD be
+    // clearable — but building one is fiddly and the rejection path is simpler:
+    // isRejectedRoster is an EXACT set match, so any one substitution clears it
+    // and the swap genuinely goes through when the guard is absent.
+    const rejected = [[anchorRZ.player_id, g0.player_id, g1.player_id, g2.player_id]];
+    const result = runAlgorithm(
+      [anchorRZ, g0, g1, g2, alt],
+      new Map(),
+      new Map(),
+      [], // no diversity history — the rejection memory is what fires
+      new Map(),
+      rejected
+    );
+
+    expect(result.proposal).not.toBeNull();
+    expect(result.capSaturation).toBe(false);
+    const allAssigned = [
+      ...result.proposal!.teamA.map((p) => p.player_id),
+      ...result.proposal!.teamB.map((p) => p.player_id),
+    ];
+    // Guard fired → the Red-Zone player keeps their seat and the repeat is
+    // served. Without it, `alt` is here instead of g2.
+    expect(new Set(allAssigned)).toEqual(new Set(["anchorRZ", "g0", "g1", "g2"]));
+    // …and the engine says so, rather than serving the repeat silently.
+    expect(result.forcedRepeat).toBe(true);
+  });
+
   // ── RA-4 ──────────────────────────────────────────────────
   it("RA-4: larger pool — correct 4 players selected, rest unused", () => {
     // 8 players at the same skill, no diversity violations.
@@ -2269,6 +2527,90 @@ describe("Cross-Court Diversity Drafting (pure)", () => {
           restFallbackMs: FALLBACK_MS,
         })
       ).toBe(true);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // heldDraftExpired — the hold-age cancel
+  // ─────────────────────────────────────────────────────────────
+  // This is the guard for the two SEATED waiters. `anchorBlocksReach` bounds
+  // only pool[0], and only at creation time — the review that produced this
+  // helper showed the sort order carries no wait bound down the pool
+  // (priorityScore nets off games played, so a wait-19 / 3-games seat sits
+  // BELOW a wait-16 / 0-games anchor). Extending the anchor's 17-minute margin
+  // to the seats would have forced all three waiters to be zero-games players
+  // once the rest filter is active, i.e. re-killed the feature; capping the
+  // hold bounds the harm for all three without narrowing the reach.
+  describe("heldDraftExpired (hold-age cancel)", () => {
+    const MAX_MS = CROSS_COURT_MAX_HOLD_MINUTES * 60_000;
+    const now = FIXED_NOW.getTime();
+    const createdMsAgo = (ms: number) => new Date(now - ms).toISOString();
+
+    it("CC-HOLD-1: body still playing past the cap → expired", () => {
+      expect(
+        heldDraftExpired({
+          createdAt: createdMsAgo(MAX_MS + 1),
+          pulledFreedAt: null,
+          now,
+          maxHoldMs: MAX_MS,
+        })
+      ).toBe(true);
+    });
+
+    it("CC-HOLD-2: exactly at the cap → expired (boundary is >=, matching isHeldMatchReady)", () => {
+      expect(
+        heldDraftExpired({
+          createdAt: createdMsAgo(MAX_MS),
+          pulledFreedAt: null,
+          now,
+          maxHoldMs: MAX_MS,
+        })
+      ).toBe(true);
+    });
+
+    it("CC-HOLD-3: under the cap → not expired", () => {
+      expect(
+        heldDraftExpired({
+          createdAt: createdMsAgo(MAX_MS - 1),
+          pulledFreedAt: null,
+          now,
+          maxHoldMs: MAX_MS,
+        })
+      ).toBe(false);
+    });
+
+    it("CC-HOLD-4: ⚠️ ONCE FREED it never expires, however old — isHeldMatchReady resolves it within the rest fallback, and cancelling then would throw away the pull for nothing", () => {
+      expect(
+        heldDraftExpired({
+          createdAt: createdMsAgo(MAX_MS * 10),
+          pulledFreedAt: createdMsAgo(0),
+          now,
+          maxHoldMs: MAX_MS,
+        })
+      ).toBe(false);
+    });
+
+    it("CC-HOLD-5: a malformed created_at never cancels a healthy draft", () => {
+      // NaN comparisons are already false, but this decides whether three real
+      // players lose their seat — pin it rather than rely on the coercion.
+      expect(
+        heldDraftExpired({ createdAt: "not-a-date", pulledFreedAt: null, now, maxHoldMs: MAX_MS })
+      ).toBe(false);
+    });
+
+    it("CC-HOLD-6: the cap sits above the p90 court-free time, so the median hold is untouched", () => {
+      // Calibration guard, not a tautology: production p50 4.7 min / p90 12.7.
+      // If someone tightens the constant below p90 the reach rate collapses.
+      const P90_COURT_FREE_MS = 12.7 * 60_000;
+      expect(MAX_MS).toBeGreaterThan(P90_COURT_FREE_MS);
+      expect(
+        heldDraftExpired({
+          createdAt: createdMsAgo(P90_COURT_FREE_MS),
+          pulledFreedAt: null,
+          now,
+          maxHoldMs: MAX_MS,
+        })
+      ).toBe(false);
     });
   });
 

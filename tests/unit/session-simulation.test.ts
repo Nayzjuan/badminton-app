@@ -28,6 +28,7 @@ import {
   buildCombinationGroup,
   getEffectiveLookback,
   pairKey,
+  isRedZonePlayer,
   type ScoredPlayer,
 } from "@/lib/matchmaking-core";
 import {
@@ -195,7 +196,10 @@ function simRunAlgorithm(
   });
 
   const anchor = sorted[0];
-  const anchorIsRedZone = anchor.priorityScore >= RED_ZONE_SCORE_FLOOR;
+  // Mirrors runAlgorithm — call the engine's own predicate rather than
+  // re-deriving it, so a below-floor Red-Zone anchor (wait 22 / 3 games → 998)
+  // widens the skill window here exactly as it does in the engine.
+  const anchorIsRedZone = isRedZonePlayer(anchor);
   const anchorWaitMinutes = anchor.wait_minutes ?? 0;
   const anchorSkill = anchor.skill_level_int;
 

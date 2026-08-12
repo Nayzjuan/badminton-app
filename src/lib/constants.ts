@@ -128,12 +128,22 @@ export const HARD_CAP_GAMES_CEILING = 5;
 export const GAME_PENALTY_MINUTES = 8;
 
 /**
- * Sentinel score floor for Red Zone players.
- * Any player with priorityScore >= RED_ZONE_SCORE_FLOOR is in the Red Zone,
- * meaning their urgency overrides normal-queue ordering — but game debt still
- * applies within the Red Zone so fewer-games players are preferred.
+ * Sentinel score ADDEND for Red Zone players — read the next paragraph before
+ * using it as a threshold.
+ *
  * Score formula: 1000 + waitMinutes - (gamesPlayed × GAME_PENALTY_MINUTES).
- * The +1000 ensures all Red Zone scores outrank any Normal-queue score.
+ * Being in the Red Zone means `wait >= CRITICAL_WAIT_MINUTES`; urgency then
+ * overrides normal-queue ordering, but game debt still applies within the Red
+ * Zone so fewer-games players are preferred. The +1000 keeps Red Zone scores
+ * above Normal-queue ones (Tier 1 requires wait < 20, so it tops out at 19).
+ *
+ * ⚠️ `priorityScore >= RED_ZONE_SCORE_FLOOR` is NOT the Red Zone condition and
+ * must not be used as one. The 1000 is an addend, not a floor on the result:
+ * subtract the game penalty and the score drops below 1000 whenever
+ * `games × GAME_PENALTY_MINUTES > wait` (wait 22 / 3 games → 998). Use
+ * `isRedZonePlayer` from matchmaking-core, which tests the wait directly; this
+ * doc comment previously asserted the equivalence and five call sites believed
+ * it, under-reporting the Red Zone on 20 of 318 sampled production matches.
  */
 export const RED_ZONE_SCORE_FLOOR = 1000;
 
@@ -328,6 +338,13 @@ export const GAMES_AHEAD_PENALTY_RED_ZONE = 100;
  * The anchor is not a search variable at all (anchor = pool[0]), so the
  * longest-waiting player cannot be displaced by this term under any input.
  *
+ * ⚠️ One caller exceeds that ceiling deliberately: buildCombinationGroup scores
+ * an UNSPLITTABLE four as MAX_CONSECUTIVE_OPPONENT_REPEATS + 1 = 5 rather than
+ * as a real repeat count, so the term reaches 5 × 3 = 15 inside that argmin and
+ * the max swing between two triples is 15, not 12. Every bound above still
+ * holds at 15 (the tightest, the Red Zone pair, goes from 8.3× to 6.7×) — but
+ * quote 15, not 12, when reasoning about that argmin specifically.
+ *
  * ── What it CAN reorder ──
  * Only triples with the same games-above-minimum and the same anchor overlap —
  * inside one fairness tier, where the remaining separator is wait time. There
@@ -416,6 +433,37 @@ export const SPLIT_PREVIEW_BUDGET = 4_096;
  * meantime. (The primary readiness signal is ≥1 intervening promotion.)
  */
 export const CROSS_COURT_REST_FALLBACK_MINUTES = 3;
+
+/**
+ * Hold-age cancel: a held draft whose pulled body is STILL PLAYING after this
+ * many minutes is cancelled, returning all three parked waiters to the queue.
+ *
+ * Why this exists. A held draft seats nobody when it is created — it parks
+ * three waiting players until the body's court frees. `anchorBlocksReach`
+ * bounds only the ANCHOR's wait, and only at the moment the hold is CREATED;
+ * it bounds neither the hold's duration nor the two other seats. Those seats
+ * are genuinely unguarded: `scoreAndSortPool` sorts by `priorityScore`, not
+ * wait, so a wait-19 / 3-games seat (score −5) sits below a wait-16 / 0-games
+ * anchor (score 16) and is held straight past `CRITICAL_WAIT_MINUTES`.
+ *
+ * Extending the anchor's 17-minute margin to the seats would close that, but
+ * once `fetchActivePool`'s rest filter is active every player with ≥1 game has
+ * `wait >= MIN_REST_MINUTES` (18) ≥ 17, so all three waiters would have to be
+ * zero-games players — which would return the feature to almost never firing.
+ * Capping the hold instead bounds the damage for ALL THREE parked players
+ * without narrowing which reaches are allowed.
+ *
+ * Calibration. Measured on production, the soonest court to free at draft time
+ * is p50 4.7 min / p90 12.7 / p99 18.1. At 15 the median hold is untouched and
+ * only the long tail is cancelled, so the reach rate is essentially preserved.
+ *
+ * ⚠️ What this does NOT promise: it bounds the HOLD, not the total wait. A seat
+ * that entered the hold at 12 minutes can still finish at 27. The strictly
+ * correct version cancels on the parked players' actual `wait_minutes` rather
+ * than on hold age; that costs a query per held draft and is the follow-up if
+ * this reads too loose. Do not describe this constant as a Red-Zone guarantee.
+ */
+export const CROSS_COURT_MAX_HOLD_MINUTES = 15;
 
 /**
  * Max consecutive back-to-back games before a playing body is excluded from

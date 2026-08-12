@@ -42,12 +42,12 @@ import { broadcastCapSaturation } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import {
   PLAYERS_PER_MATCH,
-  RED_ZONE_SCORE_FLOOR,
   CRITICAL_WAIT_MINUTES,
   GATE_POOL_THRESHOLD,
   GATE_HOLD_MINUTES,
   MIN_FREE_POOL_FOR_ON_DECK,
   CROSS_COURT_REST_FALLBACK_MINUTES,
+  CROSS_COURT_MAX_HOLD_MINUTES,
 } from "@/lib/constants";
 import {
   getDynamicDraftCap,
@@ -55,8 +55,13 @@ import {
   runAlgorithm,
   scoreAndSortPool,
   isHeldMatchReady,
+  heldDraftExpired,
   isPullEligible,
-  type ScoredPlayer,
+  countConsecutiveOpponentRepeats,
+  wantsFresherFour,
+  anchorBlocksReach,
+  buildCrossCourtProposal,
+  isRedZonePlayer,
 } from "@/lib/matchmaking-core";
 import {
   fetchActivePool,
@@ -68,6 +73,7 @@ import {
   deriveLastOpponents,
   executeMatch,
   fetchPullablePlayers,
+  hasFeedableCapacity,
   executeHeldMatch,
 } from "@/lib/matchmaking-db";
 import { isSessionOrganizer, isSessionActive } from "@/app/actions/_shared";
@@ -555,7 +561,12 @@ async function runEngineInternal(
       if (capSaturation) {
         const anchor = pool[0];
         broadcastCapSaturation(sessionId, {
-          type: anchor.priorityScore >= RED_ZONE_SCORE_FLOOR ? "red_zone" : "general",
+          // isRedZonePlayer, not a score test: CapSaturationPayload documents
+          // "red_zone" as "anchor has waited >= CRITICAL_WAIT_MINUTES" and the
+          // UI copy in sortable-card.tsx says "waiting over 20 min", so a score
+          // test made the payload disagree with both (a wait-22 / 3-games anchor
+          // scores 998 and was broadcast as "general").
+          type: isRedZonePlayer(anchor) ? "red_zone" : "general",
           anchorPlayerId: anchor.player_id,
           anchorPlayerName: anchor.display_name,
         }).catch((err) => {
@@ -571,14 +582,70 @@ async function runEngineInternal(
     }
 
     // ── Cross-court augmented composition (Phase 4) ──────────────
-    // Fires only when the waiting pool could manage no better than a FORCED
-    // REPEAT, this is NOT a bypass run (M-4), we're past slot 0 (keep-courts-fed:
-    // slot 0 always seats a ready waiting-only match), and the anchor is not in
-    // the Red Zone (decision 4 — a Red-Zone player is seated now, never held).
-    // Reach into a live court for ONE fresh body to break the repeat.
+    // Reach into a live court for ONE fresh body when the waiting pool alone
+    // can only produce a STALE four. Requires: not a bypass run (M-4), the
+    // anchor is not in the Red Zone (decision 4 — a Red-Zone player is seated
+    // now, never held), and a courts-stay-fed guard (see below).
+    //
+    // "Stale" is two conditions, not one:
+    //   * forcedRepeat — the pool could manage no better than a repeat. This
+    //     was the ORIGINAL sole trigger, and on its own it is self-defeating:
+    //     it fires only when the engine fails, measured at 22/550 replayed
+    //     matches (4%), and P2 made repeats rarer still. The better the engine
+    //     gets at avoiding repeats with waiting players, the less often the
+    //     cross-court escape hatch could ever arm.
+    //   * consecutive-opponent staleness — at least one of the four would face
+    //     someone they faced in their immediately-previous game. This is the
+    //     condition the owner actually complains about, and it is true far more
+    //     often than forcedRepeat. Same metric P2 optimises, so the two agree
+    //     on what "fresher" means.
+    const baseSplit = { teamA: proposal.teamA, teamB: proposal.teamB };
+    const baseStaleness = countConsecutiveOpponentRepeats(baseSplit, lastOpponents);
+
     let committedHeld = false;
-    const anchorIsRedZone = pool[0].priorityScore >= RED_ZONE_SCORE_FLOOR;
-    if (result.forcedRepeat && !bypassGate && i > 0 && !anchorIsRedZone) {
+
+    // Never hold the front of the queue when it is close to needing service.
+    // Dropping the old `i > 0` proxy changed who this anchor is: it used to be
+    // the 5th-highest-priority waiter and is now the HIGHEST-priority one.
+    // (Not "the longest waiter" — an earlier revision of this comment said so
+    // and was wrong; scoreAndSortPool sorts by priorityScore, which nets off
+    // games played. See the ⚠️ on anchorBlocksReach.) Full rationale, and the
+    // MIN_REST_MINUTES interaction, live there.
+    //
+    // ⚠️ This covers the ANCHOR ONLY — the two seated waiters are guarded
+    // separately, inside buildCrossCourtProposal's search loop, because the
+    // sort order provably does not carry a wait bound down the pool.
+    //
+    // Residual, accepted — and NOT what the margin bounds. The guard bounds the
+    // anchor's wait when the hold is CREATED; it does not bound how long the
+    // hold lasts. isHeldMatchReady returns false until pulledFreedAt is set, so
+    // the hold runs for the remainder of the source game plus up to
+    // CROSS_COURT_REST_FALLBACK_MINUTES. That duration is now capped by
+    // recomputeHeldReadiness' hold-age cancel (CROSS_COURT_MAX_HOLD_MINUTES),
+    // which is what covers the two seated waiters this guard does not see.
+    // Measured on production, the soonest
+    // court to free at draft time is p50 4.7 min / p90 12.7 / p99 18.1, so most
+    // holds outlast the 3-minute fallback by a wide margin. What makes that
+    // acceptable is not the fallback but WHO passes this guard: modelled over
+    // 94 allowed reaches, the anchor's wait at release is p50 13.5 / p90 18.5,
+    // crossing CRITICAL_WAIT_MINUTES in 5.3% of holds and HARD_WAIT_CAP_MINUTES
+    // in 2.1%. ⚠️ That model measures the ANCHOR, i.e. 1 of the 3 held waiters,
+    // so it understates the true residual — do not quote it as the figure for
+    // the hold as a whole. A hold-age cancel is the fix if it ever reads high.
+    const anchorBlocked = anchorBlocksReach(pool[0].priorityScore, pool[0].wait_minutes ?? 0);
+
+    // The courts-stay-fed guard, formerly the `i > 0` proxy. A held draft seats
+    // nobody when it is created, so it is only safe while pending FEEDABLE
+    // matches still outnumber pending held drafts — capacity, not mere
+    // existence, or successive slots in this same run would stack held drafts
+    // against one spare. Checked AFTER the cheap predicates so the extra round
+    // trip only happens on the path that actually wants a pull.
+    if (
+      wantsFresherFour(result.forcedRepeat, baseStaleness) &&
+      !bypassGate &&
+      !anchorBlocked &&
+      (await hasFeedableCapacity(supabase, sessionId))
+    ) {
       const pullable = await fetchPullablePlayers(supabase, sessionId);
       const eligible = pullable
         .filter((b) => isPullEligible(b, { streak: b.streak, alreadyHeld: b.alreadyHeld }))
@@ -590,37 +657,46 @@ async function runEngineInternal(
         );
       if (eligible.length > 0) {
         const pulledMatchId = new Map(eligible.map((b) => [b.player_id, b.currentMatchId]));
-        const augmented: ScoredPlayer[] = [
-          ...pool,
-          ...eligible.map((b) => ({ ...b, priorityScore: -1, isPulled: true as const })),
-        ];
-        const augResult = runAlgorithm(
-          augmented,
-          partnershipCounts,
-          overlapMap,
-          recentRosters,
-          opponentCounts,
-          rejectedRosters,
-          lastOpponents
+
+        // The pull is FORCED into every candidate four rather than competed for.
+        // Appending bodies at priorityScore -1 and letting runAlgorithm choose —
+        // what this did before — does not work, because the body's score is not
+        // what decides: buildCombinationGroup's argmin ranks whole TRIPLES by
+        // `fairness + 3 × repeats`, and the repeats term depends on the four, not
+        // the candidate. `priorityScore: -1` is not a control surface.
+        // Full derivation (and the three wrong versions of it) lives on
+        // buildCrossCourtProposal — read it there rather than paraphrasing.
+        const pick = buildCrossCourtProposal(
+          pool,
+          eligible.map((b) => ({ ...b, priorityScore: -1, isPulled: true as const })),
+          {
+            partnershipCounts,
+            overlapMap,
+            recentRosters,
+            opponentCounts,
+            rejectedRosters,
+            lastOpponents,
+            baseStaleness,
+            forcedRepeat: result.forcedRepeat,
+          }
         );
-        const augFour = augResult.proposal
-          ? [...augResult.proposal.teamA, ...augResult.proposal.teamB]
-          : [];
-        const pulledInFour = augFour.filter((p) => p.isPulled);
-        // Take it only if it's a genuinely FRESH match with exactly ONE pulled body (N-1).
-        if (augResult.proposal && !augResult.forcedRepeat && pulledInFour.length === 1) {
-          const fromMatchId = pulledMatchId.get(pulledInFour[0].player_id);
+
+        if (pick) {
+          const fromMatchId = pulledMatchId.get(pick.pulledPlayerId);
           if (fromMatchId) {
             const heldExec = await executeHeldMatch(
               supabase,
               sessionId,
-              augResult.proposal,
-              pulledInFour[0].player_id,
+              pick.proposal,
+              pick.pulledPlayerId,
               fromMatchId
             );
             if (heldExec.success) {
               committedHeld = true;
-              // A held draft consumes 3 waiting players, not 4 (C-1).
+              // A held draft consumes 3 waiting players, not 4 (C-1). The
+              // enclosing branch already requires !bypassGate, so this is
+              // unconditional in practice — left explicit as a guard against
+              // the branch condition being relaxed without revisiting this.
               if (!bypassGate) estimatedWaiting -= PLAYERS_PER_MATCH - 1;
             }
           }
@@ -893,7 +969,7 @@ export async function recomputeHeldReadiness(
 ): Promise<void> {
   const { data: heldMatches, error } = await supabase
     .from("matches")
-    .select("id, pulled_player_ids, pulled_from_match_id, held_ready_at")
+    .select("id, pulled_player_ids, pulled_from_match_id, held_ready_at, created_at")
     .eq("session_id", sessionId)
     .eq("is_held", true)
     .eq("status", "pending")
@@ -955,6 +1031,33 @@ export async function recomputeHeldReadiness(
     // 3. Readiness — the body is free only once its source match ended.
     const freed = srcMatch.status === "completed" || srcMatch.status === "cancelled";
     const pulledFreedAt = freed ? srcMatch.completed_at : null;
+
+    // 3a. Hold-age cancel — the guard for the two seated waiters that
+    // anchorBlocksReach does not cover (it bounds the ANCHOR's wait, at
+    // creation time only). A body that is still playing this far in is not
+    // worth parking three people for: release them so the engine can seat them
+    // in a normal draft. Only fires while still Holding — once the body frees,
+    // isHeldMatchReady resolves on its own within the rest fallback.
+    if (
+      heldDraftExpired({
+        createdAt: held.created_at,
+        pulledFreedAt,
+        now: Date.now(),
+        maxHoldMs: CROSS_COURT_MAX_HOLD_MINUTES * 60_000,
+      })
+    ) {
+      console.warn(
+        `[matchmaking] recomputeHeldReadiness: held draft ${held.id} exceeded ` +
+          `CROSS_COURT_MAX_HOLD_MINUTES (${CROSS_COURT_MAX_HOLD_MINUTES}m) with its body ` +
+          `still playing — cancelling so the three parked players re-enter the pool.`
+      );
+      await supabase.rpc("clear_on_deck_match_atomic", {
+        p_match_id: held.id,
+        p_session_id: sessionId,
+      });
+      continue;
+    }
+
     if (!pulledFreedAt) continue; // still Holding (body playing)
 
     // promotionsSinceFreed = matches that got a started_at after the body freed (C-5,

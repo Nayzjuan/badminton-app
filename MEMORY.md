@@ -183,11 +183,11 @@ Telemetry (#2) DOWNGRADED to optional. Awaiting owner's green-light on scope.
 
 ---
 
-## 🎾 ENGINE IMPROVEMENTS P1–P4 BUILT — 2026-08-12, branch `feat/engine-improvements`, **uncommitted work tree for P4**
+## 🎾 ENGINE IMPROVEMENTS P1–P5 BUILT — 2026-08-12, branch `feat/engine-improvements`, **uncommitted work tree for P5**
 
-Executing the re-ranked plan above, in the owner's stated sequence. **P3, P1, the replay harness and
-P2 are committed; P4 is complete and validated in the work tree.** Nothing is deployed and no
-migrations exist — this is TypeScript only.
+Executing the re-ranked plan above, in the owner's stated sequence. **P3, P1, the replay harness, P2
+and P4 are committed and are the content of open PR #59; P5 is complete and validated in the work
+tree.** Nothing is deployed and no migrations exist — this is TypeScript only.
 
 | | What | State |
 |---|---|---|
@@ -195,7 +195,8 @@ migrations exist — this is TypeScript only.
 | **P1** | Rejection memory — clearing a draft means "deal a different hand" | ✅ committed `c81a898` |
 | **harness** | `scripts/replay-sessions.ts` + `scripts/replay/` — discrete-event replay of the CURRENT engine over 5 real prod sessions | ✅ committed `081599d` (rode along with P2) |
 | **P2** | Consecutive-opponent recency in group selection | ✅ committed `081599d` |
-| **P4** | FRESH chips + the false opponent headline | ✅ built + validated, **work tree only** |
+| **P4** | FRESH chips + the false opponent headline | ✅ committed `345e60f` |
+| **P5** | Cross-court reach repaired — the feature had shipped DEAD | ✅ built + validated, **work tree only** |
 
 ### P2 — what it does, in one paragraph
 
@@ -374,13 +375,448 @@ reverting the hook to `candidateIds.length` would still pass the whole suite —
 ### Next steps
 
 1. **P1–P4 are all committed on `feat/engine-improvements` and NONE of it is deployed.** Four engine
-   changes the owner asked for are sitting on a branch. Merging + deploying is the highest-value
-   remaining action; everything below is optional next to it.
-2. The cross-court hot-path slice deletion (`src/app/actions/upcoming-match.ts`, ~150 LOC, 0 held
-   rows ever). ⚠️ Touches the same player-facing files as the 07/25 de-auth incident. DB columns/RPC stay.
-3. Nothing in P1–P4 is deployed. **Fixtures stay gitignored: they carry real member names and skill
+   changes the owner asked for are sitting on a branch, now open as **PR #59** awaiting the owner's
+   merge decision. Merging + deploying is the highest-value remaining action.
+2. ~~The cross-court hot-path slice deletion.~~ **SUPERSEDED by P5 below** — the owner's answer was
+   "our objective is to make it work … when auto-matchmaking is on", so the dead feature was
+   repaired, not deleted. `src/app/actions/upcoming-match.ts` stays.
+3. Nothing in P1–P5 is deployed. **Fixtures stay gitignored: they carry real member names and skill
    levels.** Never run `scripts/replay-sessions.ts` with `--refresh`/`--save` from a subagent;
    `--refresh` hits production.
+
+---
+
+## P5 — cross-court drafting had shipped DEAD, and it took three fixes to start a heartbeat
+
+Full design in **APP_MANIFEST §3.1**. The owner's scope call is the whole framing: this was going to
+be an explicit organizer button, and they rejected that — _"our objective is to make it work so that
+it would be done when auto-matchmaking is on"_. Two design calls followed: **pull trigger = "when it
+makes the match fresher"** (not only when the engine is cornered into a repeat) and **rest floor =
+"keep the current rest rule"**.
+
+**The evidence that it was dead: 0 held drafts across 945 production matches.** Not rare — zero. The
+feature had a DB column, an RPC, a readiness recomputer and a hot-path UI slice, and none of it had
+ever run.
+
+### Three independent blockers, each sufficient on its own
+
+1. **`i > 0`** — the reach was gated on being past slot 0 of the engine's slot loop. 91% of engine
+   runs commit exactly one draft, so the gate excluded almost every run. It was a proxy for
+   "courts stay fed"; now it is the real thing (`hasFeedableCapacity`).
+2. **`forcedRepeat`-only trigger** — armed only when the waiting pool could manage nothing but a
+   repeat: 22/550 replayed matches, **4%** — and P2 makes it rarer still. A rescue hatch that only
+   opens when the engine has already failed gets less reachable with every improvement to the
+   engine. Now `wantsFresherFour` also arms on consecutive-opponent staleness > 0.
+3. **The sub-quantum selection deadlock.** The producer appended pulled bodies at
+   `priorityScore: -1` and asked `runAlgorithm` to choose. `scoreCandidates` scores every candidate
+   `-priorityScore + overlap×10_000 + gamesAhead×10_000`, and `isPulled` exempts the **games-ahead
+   term only** — so a body scores `+1 + overlap_b×10_000` against a waiter's
+   `-P_w + overlap_w×10_000 + gamesAhead_w×10_000`. Both asymmetric terms favour the **body**: its
+   games-ahead is forced to 0 while a waiter one game above the pool minimum pays 10_000, and its
+   overlap is normally 0 where a waiter who recently shared a court with the anchor pays 20_000
+   (`OVERLAP_WEIGHT_* = 2`). But the body's score is **not what decides**: `buildCombinationGroup`
+   argmins over whole **triples** on `fairness + 3 × repeats`, and `repeats` is a property of the
+   assembled four (via `snakeDraft`), not of a candidate. The body displaces the third-cheapest
+   waiter iff `s_body − s_w3 < 3 × (r_waiting − r_body)`, i.e. `s_w3 > 1 − 3·Δrepeats` — and with
+   repeats 0–4 plus the unsplittable sentinel 5, that threshold slides **±15 around +1**. So "three
+   waiters cheaper than the body" is neither necessary nor sufficient. What holds: **when the repeats
+   term is a wash**, the body loses whenever three waiters are simultaneously at the game minimum,
+   overlap-free with the anchor, and above `priorityScore -1` — the ordinary mid-session pool, which
+   is precisely the pool this feature exists to improve; when it is not a wash, the outcome turns on
+   something the score cannot express. `CCT-BUILD-1` is a worked instance of the wash: waiting-only
+   four `-6 + 3×1 = -3`, best four containing the body `-3 + 3×0 = -3` — a **dead tie**, resolved for
+   the incumbent, pull silently dropped. It ties because the fairness gap (3) exactly cancels the
+   repeat saving (3×1), not because of the three conditions alone.
+   ⚠️ **This paragraph has now been wrong THREE times — re-derive it, do not paraphrase it.** v1: the
+   body "sits ~11 unbridgeable points behind" (fiction). v2: "pinned at exactly +1", seating it
+   "costs at least `1 + priorityScore`, the overlap term can only widen that gap" (overlap is charged
+   to *both* sides so it routinely reverses the gap; Tier 1 is unbounded below, so a waiter at wait
+   10 / 2 games scores `+6` and the body's `+1` beats them outright — `1 + priorityScore` bounds
+   nothing). v3: "loses exactly when three waiters beat +1" — an iff that silently drops the repeats
+   term, false in both directions. The pattern every time: an absolutism that is wrong precisely on
+   the path in question. Canonical derivation now lives in ONE place (`buildCrossCourtProposal`); the
+   other five sites point at it instead of restating it.
+   The body reliably won only when the waiting four was illegal — and an illegal four is flagged
+   `forcedRepeat`, which the caller then rejected. Deadlock. Fixed by **forcing** the pull:
+   `buildCrossCourtProposal` builds anchor + 2 waiters + 1 body and runs the real algorithm on that
+   exact four. *Scope, honestly: blockers 1 and 2 are what produced the 0/945; this third one is
+   what would have kept the feature near-useless after fixing them.*
+
+### The repair introduced two defects of its own — both caught by the review gate
+
+Worth remembering because both are the same shape: a fix that looks local but silently changes a
+rule the surrounding code depends on.
+
+4. **Lookback collapse.** The inner `runAlgorithm` calls receive a pool of exactly 4, and
+   `getEffectiveLookback(4)` is **2** — against the 4–7 the real waiting pool earns. So the reach
+   would have enforced a **weaker** anti-repeat rule than the plain draft it replaces, on a feature
+   whose entire justification is freshness. Fixed by re-taking the diversity/rejection verdict
+   outside the loop against `getEffectiveLookback(pool.length)`.
+5. **Held drafts stacked.** The courts-stay-fed gate first asked "does a feedable match exist?" — but
+   a held draft **is** a pending match, and `is_held` means it never consumes its own spare. Two
+   slots in one run could therefore both hold against one feedable match. The invariant is capacity,
+   not existence: **`feedable > held`**.
+
+### The five things that will bite the next person
+
+1. **Never price a candidate into the sort to make it win.** Blocker 3 is the general lesson: the
+   fairness quantum dominates every tie-break term in this engine on purpose. If you want a specific
+   player considered, **force them into the candidate set** and let the legality checks judge the
+   result — do not give them a score and hope.
+2. **A green helper suite proves nothing about reachability.** All three blockers coexisted with
+   passing tests, because every test hand-built a 4-player pool where `getEffectiveLookback` collapses
+   to 2 and the slot-loop gate never runs. `CCT-LOOK-1..4` uses a **12-player** pool for exactly this
+   reason, and `CC-REACH-4` drives the real slot loop with an 11-waiting fixture.
+3. **`hasFeedableCapacity` fails CLOSED.** An unreadable count returns `false`. Skipping the reach
+   costs a slightly staler match; wrongly authorising it costs an **idle court**, which is the one
+   thing the gate exists to prevent.
+4. **Dropping `i > 0` changed who the anchor is** — from the 5th-highest-priority waiter to the
+   **highest-priority** one. A held draft marks its three waiting members `drafted`, removing them
+   from `fetchActivePool`, so the Red-Zone and Hard-Wait escalations in `computePriorityScore` can no
+   longer reach them once held. Hence `anchorBlocksReach` now also refuses at
+   `CRITICAL_WAIT_MINUTES - CROSS_COURT_REST_FALLBACK_MINUTES` (17 min), not just the Red-Zone floor
+   — otherwise it would seat someone at 19 minutes and hold them straight past the line.
+   ⚠️ On the `MIN_REST_MINUTES = 18` branch of `fetchActivePool` every anchor with `games_played ≥ 1`
+   is ≥18 ≥17, so the reach is refused **by construction**; the escape is a zero-games anchor (3.8%
+   of prod auto-matches). The score arm is presently *subsumed* by the wait arm (66 refusals by
+   score, 136 by wait, union 136) and is kept only as a guard against constant drift.
+5. **🚨 `pool[0]` is NOT the longest waiter, and this doc said it was.** `scoreAndSortPool` sorts by
+   `priorityScore`, which subtracts `games_played × GAME_PENALTY_MINUTES`; a wait-19 / 3-games player
+   (score −5) sorts BELOW a wait-16 / 0-games player (16). So `anchorBlocksReach(pool[0])` guards the
+   **anchor only** — the two other seated waiters carry no wait bound at all, and the seat at wait
+   18–19 that motivated the fix is *below* the Red-Zone line anyway. Caught by the review gate, and it
+   is the **same class of error as the P6 bug this whole session exists to fix**: a score that
+   *encodes* a property reused as the *test* for that property.
+   - **Fixed by a hold-age cancel** — `heldDraftExpired` + `CROSS_COURT_MAX_HOLD_MINUTES = 15`,
+     enforced in `recomputeHeldReadiness`, which cancels via `clear_on_deck_match_atomic` and returns
+     all three parked players to the pool. Fires only while the body is still playing
+     (`pulledFreedAt === null`); a malformed `created_at` never cancels. Calibrated above p90 (12.7)
+     of prod's soonest-court-free distribution so it clips only the tail. `CC-HOLD-1..6`.
+   - 🚨 **The cancel needed a MIGRATION, and the second review round is what caught it.**
+     `clear_on_deck_match_atomic` step 5 restored the *whole* roster to `waiting` under only
+     `status != 'left'`. For an ordinary draft that is right (all four are `drafted`, and
+     `create_match_with_players` Guard 2 makes a playing member impossible). A held draft is
+     `3 waiting + 1 PLAYING` by design — and the hold-age cancel is the first **routine** caller that
+     fires while the body is genuinely mid-game. Symptom: body flipped to `waiting` with `joined_at`
+     untouched → reads wait ≈ 15–20 → sorts to the top of `fetchActivePool` → every engine tick
+     composes a four with them → Guard 2 returns NULL → `executeMatch` fails → **slot loop breaks and
+     the engine produces ZERO matches** until their real game ends, while they show in the queue and
+     on a court at once. `20260624000000` had already fixed this exact hazard for the *bulk* clear and
+     said so in its header; the single-match clear was never audited for it because no routine path
+     had ever called it on a still-Holding draft.
+     - Fix `20260812000000_clear_on_deck_never_unseats_a_playing_body`: test **physical truth**, not
+       the status string — `NOT EXISTS (an in_progress match for this player in this session)`. Strictly
+       more precise than `status != 'playing'`, and a no-op for ordinary drafts *and* for the R3-B
+       purged-source path (body has no in_progress match there, so it still gets restored).
+     - The lock set in step 2 deliberately stays the FULL roster even though the write set is now
+       smaller — shrinking it would reintroduce the lock-order inversion `20260512200004` exists to
+       prevent.
+     - ✅ **APPLIED TO PROD 2026-08-12**, stamp **`20260812092029`** (name
+       `clear_on_deck_never_unseats_a_playing_body` — another instance of the stamp-vs-filename drift).
+       Pre-flight: prod's `prosrc` was byte-equal to `20260512200004` (no prod-only hotfix to clobber)
+       and `already_has_guard` was false. Post-apply verified: guard present, locks present,
+       `prosecdef` true, `search_path=public`, **ACL still `{postgres, service_role}` with no PUBLIC**
+       (which is why `CREATE OR REPLACE` and not DROP+CREATE — `20260723000000` narrowed this ACL and
+       a DROP would silently reset it to `EXECUTE TO PUBLIC`), single overload.
+       The schema is now ahead of the code, which is the safe ordering: the guard is a strict
+       narrowing and a no-op for every caller that exists on deployed `main`.
+     - ✅ Covered by integration `J-1`/`J-2`/`J-3` in `rpc-behaviors.test.ts` (new Suite J) — **RUN and
+       green 2026-08-12**: full suite **21 files / 257 tests passed**. The local DB was 7 migrations
+       stale (`20260724000000` was its head); `supabase migration up --local` brought it current
+       without a reset.
+     - **Injection-verified, not just green.** Replacing the local RPC with the pre-fix body failed
+       **exactly `J-1`** — `expected 'waiting' to be 'playing'`, the literal unseating symptom — while
+       `J-2`/`J-3` stayed green, which is the proof that the `NOT EXISTS` clause is a no-op on the
+       ordinary-draft and `left`-guard paths. Restored from the migration file; guard + ACL re-verified;
+       full suite re-run green. Worktree confirmed unmutated afterwards.
+       The `seedHeldDraft` fixture writes lowercase `'a'`/`'b'` teams and `created_method = 'held'`
+       to match what `create_held_cross_court_match` actually stamps — `team char(1)` has no CHECK
+       so uppercase would have passed, but the fixture would not have been a faithful roster; and
+       `created_method` only accepts `'auto' | 'manual' | 'held'` (`20260617000000`).
+     - **Lesson:** `CC-HOLD-1..6` are green and prove nothing about this. A pure predicate can be
+       perfectly correct while the side effect it triggers is destructive — when a predicate's whole
+       job is to fire an RPC, test the RPC.
+   - **Owner's call** when the fork was escalated. The rejected alternative — extend the 17-min margin
+     to the seats — is strictly more correct but on the rested branch would force all three waiters to
+     be zero-games players, plausibly re-killing a feature whose history is *0 held drafts in 945
+     matches*; and the replay harness cannot measure held drafts, so that cost was unmeasurable.
+   - ⚠️ **My own first fix was fake and I caught it before validation:** a seat-level
+     `isRedZonePlayer` block in the search loop. **Unreachable** — a Tier-2 player always outranks any
+     Tier-1 player (Tier 2 floors at `1000 + 20 − 8g`; beating a Tier-1 max of 19 needs g > 125), so a
+     Red-Zone seat implies `pool[0]` is Red Zone and the wait arm already refused. Reverted; the
+     `anchorBlocksReach` JSDoc now says **do not re-add it**.
+6. **Seat selection argmin'd on staleness ALONE** — it would seat two 4-game players over two 1-game
+   players to save one repeat, inverting the fresh-first invariant. With exactly 4 players the inner
+   `buildCombinationGroup` has no choice to make, so **no fairness term participates in seat choice at
+   all**; it has to be imposed in the search loop. Now lexicographic: minimise `gamesAhead` (combined
+   `games_played` above the **seat pool's** minimum) first, then `staleness` — mirroring
+   `GAMES_AHEAD_PENALTY` (10 000) ≫ `CONSECUTIVE_OPPONENT_PENALTY` (3) in `scoreCandidates`. The early
+   return now needs `staleness === 0 && gamesAhead === 0`. `CCT-BUILD-7` / `CCT-BUILD-8`.
+7. **Accepted residual — and the 3-minute fallback is NOT what bounds it.** The earlier write-up
+   claimed the margin keeps "the whole hold window on the safe side of the line". False, and provable
+   from the code alone: `isHeldMatchReady` returns `false` while `pulledFreedAt === null`, so the
+   fallback timer only **starts** once the source game frees the body. The guard bounds the anchor's
+   wait at hold **creation**; hold *duration* is now capped by the hold-age cancel in #5. Prod: the
+   soonest court to free at draft time is p50 4.7 min / p90 12.7 / p99 18.1, so most holds outlast the
+   fallback by a wide margin. What makes it acceptable is **who passes the guard** — over 94 modelled
+   reaches the anchor's wait at release is p50 13.5 / p90 18.5, crossing `CRITICAL_WAIT_MINUTES` in
+   5.3% and `HARD_WAIT_CAP_MINUTES` in 2.1%. ⚠️ That model measures **1 of the 3** held waiters, so it
+   understates the residual. And note the cancel bounds the HOLD, not the total wait: a seat that
+   entered at 12 min can still be released at 27. *(This is the second time a headline in these docs
+   was flatly false rather than merely imprecise — see the P4 opponent-cap entry. Re-derive the claim,
+   do not paraphrase the intent.)*
+
+### The replay harness structurally CANNOT measure this feature
+
+`scripts/replay/simulate.ts:29` says so in its own header — _"No cross-court draft augmentation"_ —
+and it runs the `bypassGate` path at 100% court occupancy, the exact path where the reach is skipped.
+**Do not ask it for a before/after on P5; it will report "no change" and be wrong.** The only
+evidence is unit/engine-level. What baseline.json *can* say is how often the new trigger **arms**:
+5 sessions, 165 matches, **244 consecutive-opponent repeats** (~1.5/match, per-session rate
+0.42–0.50). So the widened trigger arms on the large majority of matches vs the old 4% — but arming
+is not firing: the capacity gate, an eligible body and a strict freshness gain must all follow.
+
+### Every new regression test was proven decisive by bug injection
+
+Not "they pass" — each bug was re-introduced, the specific test was confirmed to fail, then the file
+was restored and the sha compared byte-for-byte:
+
+- disable the diversity re-check (`if (false && isDiversityViolation(...))`) ⇒ **`CCT-LOOK-2` fails**,
+  LOOK-1/3/4 still pass (LOOK-1 is the positive control)
+- `PLAYERS_PER_MATCH - 1` → `PLAYERS_PER_MATCH` ⇒ **`CC-REACH-4` fails**
+- weaken the wait arm to `CRITICAL_WAIT_MINUTES + 5` ⇒ **`CCT-ANCH-1/-3/-4` fail** (3 of 30)
+- delete `!anchorBlocked` from the engine's gate condition ⇒ **`CC-REACH-5` fails**, and only it
+- force the gate's first term true (`wantsFresherFour(...)` → `true`) ⇒ **`CC-REACH-3` fails**, on the
+  `matches`-read count and *only* on it. Worth noting why the older assertions miss it: with the mock
+  responses exhausted, `hasFeedableCapacity` fails closed, so the pullable scan never runs and
+  `not.toContain("profiles")` still passes. A cost guard phrased as table-absence cannot see a
+  regression in a table the happy path already reads — count the reads.
+
+Two more from the review-gate round, both decisive on re-injection (sha verified after each restore):
+
+- revert the seat ranking to staleness-only ⇒ **`CCT-BUILD-7` fails** (1 failed | 31 passed)
+- make `heldDraftExpired` a no-op `return false` ⇒ **exactly `CC-HOLD-1` and `CC-HOLD-2` fail**
+  (2 failed | 188 passed)
+
+⚠️ `CCT-BUILD-7` **passed under injection on its first draft** — worthless as a regression. None of
+`f1/f2/h1/h2` appeared in the shared `lastOpponents`, so every candidate four had staleness 0 and both
+rankings picked the same pair via the early return. Fixed by giving both *fresh* seats a prior
+encounter with the body (`f1↔p4`, `f2↔p4`) so the fresh four scores 2 against the heavy four's 0 —
+i.e. the heavy pair is made **strictly fresher**, and fairness has to win anyway — plus
+`baseStaleness: 3` so both clear the freshness floor. **Third test this session that looked right and
+wasn't until injection was actually run.** Injection is not a formality.
+
+`CCT-BUILD-1` is the other one to keep: it runs the OLD augmented-pool approach and asserts it
+**excludes** the pulled body, then asserts the new search includes it. Its wait spread
+(14/12/10/8) is **load-bearing** — and the first version of that fixture (everyone at wait 5) did
+worse than hide the bug, it **inverted** it: at one game each, Tier 1 scores `wait − 8`, so a flat
+pool put every waiter at −3 and the body at −1 sorted *ahead* of them. The old code picked the body
+for the wrong reason and the test "passed" against a fixture that could not express the defect.
+
+`CC-REACH-4`'s fixture carried a subtler version of the same disease and was rewritten too: slot 1
+re-read the **same 11 waiting players**, including the three the held draft had just marked
+`drafted`, and re-anchored on an already-held player. Not a false green — `estimatedWaiting` is an
+in-memory counter — but a fixture that lies about the DB is one bug away from being one. It now
+reads the 8 who are actually left, and the slot-1 assertion names `b0`/`b1` so it fails if slot 1
+ever re-picks a drafted player. (The padding must stay **beginners**: intermediates flip slot 0's
+pick, because `scoreCandidates` charges 10,000 per shared recent roster and the entanglement that
+makes the four stale is the same thing that makes its members expensive.)
+
+### Review gate — four rounds: Needs fixes → Minor issues → Minor issues → **Needs fixes (all applied)**
+
+Round 1 caught the two real defects above (lookback collapse, existence-vs-capacity). Rounds 3 and 4
+found **no behavioural bugs at all** — every item was a doc or comment asserting something the code
+does not do. Round 4 is the one to remember, because **two of round 3's own "fixes" were themselves
+wrong**, and the reviewer caught it by re-deriving from `scoreCandidates` instead of reading my prose:
+
+1. A comment in `matchmaking-engine.test.ts`'s mock builder described `hasFeedableMatch` and
+   `.not("is_held","is",true)` — a function and an operator that the capacity-gate rewrite deleted.
+   Removed; the `"not"` entry stays in the builder's generic method list (harmless, and the list is
+   not a claim about call sites).
+2. `anchorBlocksReach`'s doc said "the escape is an anchor with zero games. Measured at 3.8% … a real
+   but minority branch", which reads as though *blocking* were the minority. My round-3 rewrite
+   flipped it to "blocked ~96% of the time" — ❌ **round 4 killed that too, correctly.** `100 − 3.8`
+   is a base-rate substitution twice over: a zero-games anchor is *necessary but not sufficient* to
+   escape (it must still clear the wait and score arms), and 3.8% is measured over **all** auto-
+   matches while the sentence applies it to the conditional subpopulation "runs where ≥4 clear the
+   rest filter" — where zero-games players are over-represented, being the only cohort exempt from
+   the `wait ≥ 18` cut. The number is now stated as a base rate with an explicit "do not subtract
+   this from 100" note.
+3. `cross-court-trigger.test.ts`'s mini-index attributed CCT-ANCH-1's description to CCT-ANCH-4.
+4. ❌ **"pinned at exactly +1" was an over-claim, and my round-3 replacement was worse** — see the
+   ⚠️ note under blocker 3 above for the real arithmetic. Three errors in one sentence: overlap is
+   charged to *both* sides so it does not "only widen" anything; the games-ahead exemption I cited as
+   a narrowing qualifier is the single largest term pushing **for** the body (10 000); and
+   `1 + priorityScore` is a lower bound on nothing because Tier 1 is unbounded below. Round 3 also
+   **missed a fifth site** — the comment above the `buildCrossCourtProposal` call in
+   `matchmaking.ts` still carried the original unqualified version, and
+   my own inventory ("four places") is how it survived. All five rewritten to state the identity plus
+   its scoping condition. Round 4 additionally caught a **new** false claim I introduced in gotcha 28
+   ("smaller than the smallest fairness gap") — the constant's own proof scopes dominance to
+   games-ahead, overlap units and Red-Zone substitution, and explicitly documents that it *does*
+   reorder waiters ~4 min apart, which is its purpose.
+5. `CC-REACH-3`'s header promised "no gate query" and asserted only table-absence. Now counts the
+   `matches` reads — and the injection above proves that was the only assertion that could see it.
+
+> **The transferable lesson, third time asked:** when a doc paragraph is *about* arithmetic, every
+> revision must be re-derived from the source lines, never edited toward what the previous sentence
+> was trying to say. Both bad rewrites here were locally plausible paraphrases of a true intuition
+> ("the body is disadvantaged") that the actual expression does not support.
+
+### Validation
+
+`npx tsc --noEmit` clean · `npm run lint` exit 0 · `npm run build` green (3.6s) ·
+`npx prettier --check` clean on every changed file ·
+`npx vitest run tests/unit` → **59 files, 1164 passed / 1 skipped** (+35 over P4).
+New: **`tests/unit/cross-court-trigger.test.ts`** (30 tests — `CCT-FEED-1..7`, `CCT-TRIG-1..4`,
+`CCT-ACC-1..4`, `CCT-WIRE-1`, `CCT-BUILD-1..6`, `CCT-LOOK-1..4`, `CCT-ANCH-1..4`) ·
+**`CC-REACH-4`**, **`CC-REACH-5`** and a tightened `CC-REACH-1` in `matchmaking-engine.test.ts`.
+
+---
+
+## 🚨 RED ZONE was being UNDER-REPORTED — `score >= 1000` is not the Red Zone test — 2026-08-12, branch `feat/engine-improvements`, **uncommitted**
+
+Reported by the owner with production evidence, then extended in build. APP_MANIFEST **§3.34**, gotcha **32**.
+
+**The whole bug in one line.** `RED_ZONE_SCORE_FLOOR` is an **addend inside Tier 2's formula, not a
+floor under it**: `computePriorityScore` returns `1000 + wait − games × 8`. Five call sites read it as
+a floor and used `priorityScore >= RED_ZONE_SCORE_FLOOR` as the Red Zone test. Whenever
+`games × 8 > wait` a player who genuinely satisfies `wait >= CRITICAL_WAIT_MINUTES (20)` scores
+**below 1000** and was silently demoted to Normal-queue treatment. **Wait 22 / 3 games → 998.**
+
+**Owner's production measurement:** read-only reconstruction of 318 auto-created matches on
+`usxftpexoimletqmrggb` → **20** anchors with reconstructed wait ≥ 20 min scored below 1000.
+
+### The fix
+
+One exported predicate in `matchmaking-core.ts`, substituted at all five sites — explicitly *not*
+five copies of `anchorBlocksReach`'s local workaround, which was the owner's instruction:
+
+```ts
+export function isRedZonePlayer(p) {
+  if (p.isPulled) return false;
+  return (p.wait_minutes ?? 0) >= CRITICAL_WAIT_MINUTES || p.priorityScore >= RED_ZONE_SCORE_FLOOR;
+}
+```
+
+Sites, by symbol — **deliberately not by line number**, because the first draft of this note carried
+line numbers and four of the five went stale inside the same working session:
+`scoreCandidates`'s `isRedZone` local (overlap penalty ×100 vs ×10 000) · `runAlgorithm`'s
+`anchorIsRedZone` (→ skill windows ±3/±4) · the diversity-swap guard `isRedZonePlayer(swapTarget)`
+("never bench a Red-Zone player") · the balance-swap guard `isRedZonePlayer(group[i])` (same) ·
+`matchmaking.ts`'s `cap_saturation` payload `type`. Sixth site `anchorBlocksReach` was already
+correct and is now the documented precedent, not a template to copy.
+
+### The seven things that will bite the next person
+
+1. **The score arm is NOT redundant.** The wait arm is the definition; the score arm is what still
+   catches the **Hard Cap tier** (2000 ≫ 1000). Delete it and Tier 3 stops registering as Red Zone.
+2. **A second cohort the owner's report did not mention.** `HARD_CAP_GAMES_CEILING = 5` excludes
+   `games >= 5` from Tier 3, so **wait ≥ 25 with games ≥ 5 falls THROUGH into Tier 2** and scores
+   below 1000 there — **wait 30 / 5 games → 990**. Worst-affected group in the app: longest wait of
+   anyone, denied *both* overrides at once. Covered by `RZ-2`.
+3. **`isPulled` is an addition beyond the literal tier condition** — not in the owner's suggested
+   predicate. A cross-court-pulled body is mid-game, so its wait is not queue starvation, and the
+   `buildCrossCourtProposal` **call site** scores it `-1` deliberately (the function does not —
+   `PullableBody` has no `priorityScore` field at all, so the two hardcodes live in different files;
+   that split is exactly what `RZ-5` guards). Without this arm the new *wait* arm would
+   newly promote a long-waiting pulled body into protections the feature never granted. `RZ-5` pins it.
+4. **The five sites are not the same kind of site — which is why one rationale cannot cover them.**
+   Two are *scoring/urgency* (overlap penalty, skill window), two are *fairness floors* ("never bench
+   a Red-Zone player"), one is a *documented broadcast contract*. Any future argument for narrowing
+   Red Zone must be made per-category, never as a single score threshold.
+5. **A documented design rationale argued FOR the bug. It was preserved, not overwritten.** The tier
+   diagram called the under-reporting intentional — game-heavy players' waits are "self-caused by
+   dense play rather than queue starvation". Kept in place and scoped, with the three reasons it does
+   not carry: it speaks only to urgency; it cannot touch a fairness floor or a payload's meaning; and
+   it **double-counts**, since Tier 2 already subtracts `games × 8` before the threshold subtracts it
+   again. If revived, revive it as an explicit `games_played` test at the two scoring sites.
+6. **The clamp alternative is a trap.** `1000 + Math.max(0, wait − gamePenalty)` collapses every
+   below-floor Red-Zone player to exactly **1000**, destroying intra-tier ordering — a fairness bug
+   traded for a detection bug. The predicate changes no score at all. `RZ-1` fails if anyone tries it.
+7. **⚠️ This is a real fairness tradeoff, not a pure bug fix — surface it if seating order looks odd.**
+   The predicate changes no score, but it changes which *penalty constant* the newly-detected cohort
+   gets: `GAMES_AHEAD_PENALTY` **10 000 → `GAMES_AHEAD_PENALTY_RED_ZONE` 100**. A wait-22 / 3-games
+   candidate moves from candidateScore `29 002` (effectively last) to `−698`, which sorts it **ahead
+   of** a fresh 0-game / 19-min waiter at `−19` — all three assuming **overlap 0** and
+   `poolMinGames = 0`, since `candidateScore = −priorityScore + overlap×k + gamesAhead×k` and only
+   the two `k`s move here. Bounded, and judged defensible: *inside* Tier 2 the
+   effective per-game weight is `8 + 100 = 108` against 1 per minute of wait, so fresh-first still
+   dominates within the tier; the only inversion is **across the 20-minute line**, and the starved
+   0-game waiter crosses it at 20 min and enters Tier 3 at 25. That is exactly what pinning the
+   under-20 waiter behind a 22-minute waiter is *supposed* to mean — but it is a behaviour change
+   the owner's bug report did not ask for, and `RZ-SC1` is the test that will fail if it is reverted.
+
+### Contract violation repaired
+
+`broadcast.ts` defines `CapSaturationPayload.type === "red_zone"` as wait ≥ `CRITICAL_WAIT_MINUTES`,
+and `sortable-card.tsx:105` renders **"waiting over 20 min"** — while the implementation used a score
+test. A wait-22 / 3-games anchor was broadcast `"general"`: the payload disagreed with its own doc
+comment *and* with the string on screen. Note `matchmaking.ts` already had the correct precedent a
+few lines up (`const hasRedZone = maxWait >= CRITICAL_WAIT_MINUTES`), so the query sequence is
+unchanged.
+
+### Tests + bug injection (both decisive) — 12 tests
+
+**Predicate (6).** `RZ-1`–`RZ-6` in `matchmaking-core.test.ts` (RZ-1 pins the divergence itself;
+RZ-2 the fall-through cohort; RZ-3 the 19/20 boundary at games ∈ {0,3,5,9}; RZ-4 score arm; RZ-5
+pulled; RZ-6 the `?? 0` branch via a documented cast).
+
+**Call sites (5)** — added after review finding #3 flagged that *every* pre-existing test reaches
+Red Zone through the **score** arm, so the whole suite passed identically under the bug. `RZ-SC1`
+(games-ahead penalty capped: `−998 + 300`, sorting the dense-play candidate ahead of a fresh
+0-game / 19-min waiter at `−19`) · `RZ-SC2` (overlap term isolated, `poolMinGames` omitted →
+`−998 + 100`) · `RZ-SC3` (the wait-30 / 5-games cohort at both terms) · `RA-2b` (widened ±3 window) ·
+`RA-3b` (swap-target protection).
+
+**End-to-end (1).** `ME-new-1b` in `matchmaking-engine.test.ts`: clones the cap-saturation fixture at
+wait 22 / 3 games, **guards its own premise** (score is exactly 998, below floor, past 20 min, still
+pool-highest) then asserts `"red_zone"`. `makePlayer` derives `priorityScore` through
+`computePriorityScore`, so no test can pass on a hand-set score.
+
+- score-only predicate injected → **exactly** RZ-1, RZ-2, RZ-3, RZ-SC1, RZ-SC2, RZ-SC3, RA-2b,
+  RA-3b, ME-new-1b failed (**9 / 244**); RZ-4/5/6 correctly stayed green.
+- `isPulled` arm removed → **exactly** RZ-5 failed (1 / 178).
+- Restored; `shasum -a 256 -c` **OK** on both source files, byte-identical, after every cycle.
+
+⚠️ **`RA-2b` and `RA-3b` both PASSED under injection on their first drafts** — i.e. they were worth
+nothing as regressions, and were only caught because injection was run rather than assumed. Two
+structural engine facts came out of fixing them, now recorded in the test comments and §3.34:
+
+1. **`FALLBACK_WAIT_MINUTES` (15) < `CRITICAL_WAIT_MINUTES` (20)** — every Red Zone anchor is already
+   past `runAlgorithm`'s last-resort fallback, which seats the four regardless of skill window. So
+   `proposal !== null` proves nothing about the widened window; the fallback returns
+   `forcedRepeat: true` and the legitimate ±3 path doesn't. That is RA-2b's real assertion.
+2. **The Tier-1 diversity swap cannot clear a violation whose overlapping trio is
+   anchor + `group[0]` + `group[1]`.** It only ever replaces `group[2]`, so it can only break an
+   overlap that *includes* `group[2]`. The obvious fixture — put the proposed four into
+   `activeRosters` — is therefore unusable: the trio survives, the swap fails with or without the
+   guard, nothing is proven. (A {anchor, `group[0]`, `group[2]`} roster *would* be clearable, just
+   fiddlier.) So the guard is tested on the rejection path (`isRejectedRoster` is an exact set match,
+   cleared by any one substitution). RA-3b runs there, with all five players on 5 games so
+   `poolMinGames` zeroes `gamesAhead` — otherwise it re-tests RZ-SC1.
+
+⚠️ `wait_minutes` is typed `number` (non-nullable) in `database.ts:320` but every consumer guards
+`?? 0`. RZ-6 tests that branch through a deliberate cast. **If the view really cannot return null,
+delete the `??` and RZ-6 together — one without the other is worse than either.**
+
+### Validation
+
+`npx tsc --noEmit` exit **0** · `npm run lint` exit **0** · `npm run build` exit **0** ·
+`npx prettier --check` **clean on every touched file** · `npx vitest run` → **59 files,
+1184 passed / 1 skipped** (+20 over P5: 12 Red Zone, 6 `CC-HOLD`, 2 `CCT-BUILD`; 0 regressions).
+
+⚠️ `npx prettier --check` over a *repo-wide* glob reports 29 dirty files. That is pre-existing drift,
+not this change — check the touched files explicitly rather than widening the glob and panicking.
+
+⚠️ `npm run build` failed once here with 42 `module-not-found` errors under `next/font/google` — a
+transient **`fonts.gstatic.com` 404** in the sandbox, not a code fault. Clean on retry with zero font
+errors. If you see that signature, retry before debugging.
+
+Also regenerated `digital-twin/src/data/manifest.json` (`cd digital-twin && npm run extract`) — it
+carried the old `RED_ZONE_SCORE_FLOOR` JSDoc verbatim. ⚠️ The generator had not been run in a long
+time, so the re-run also swept in **~1 500 lines of unrelated repo drift** (tables, functions,
+migrations, coverage). **Commit it separately** or it will bury the six-file logic fix.
 
 ---
 
