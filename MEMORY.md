@@ -8,8 +8,10 @@
 ## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-12. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
-Merging a PR ships TypeScript only.** All five migrations this section tracks are now **applied and
-verified on production** (`usxftpexoimletqmrggb`). Nothing is pending.
+Merging a PR ships TypeScript only.** All six migrations this section tracks are now **applied and
+verified on production** (`usxftpexoimletqmrggb`). Nothing is pending. **Every new migration must be
+added to this table with its prod stamp** — the stamps drift from the filenames, and this table is
+the only place that records the mapping.
 
 | Applied | Stamp |
 |---|---|
@@ -18,6 +20,16 @@ verified on production** (`usxftpexoimletqmrggb`). Nothing is pending.
 | `20260811000000_one_time_milestone_awards` | `20260810173410` |
 | `20260811000001_repair_duplicate_milestone_awards` | `20260810173605` |
 | `20260812000000_clear_on_deck_never_unseats_a_playing_body` | `20260812092029` |
+| `20260812100000_refresh_cross_session_stats_absolute_rebuild` | `20260812144342` |
+
+⚠️ **`apply_migration` strips non-ASCII from stored function bodies.** The `── section ──` rules this
+repo decorates SQL with are safe in a migration *header* (never stored) but not inside a function
+body: the two in-body rules in `20260812100000` came back as plain `-- player_rivalries`, leaving
+prod's `prosrc` **253 bytes shorter than the repo file** while every SQL line stayed byte-identical.
+Cosmetic, but it silently defeats the md5-equality check `20260810000000` uses to *prove* a body
+matches. Both lines are now written the way prod stores them; the body is byte-identical again —
+**6412 bytes, md5 `2cdfc65fd399c295f26425b388aa0bb8`**, verified against `btrim(prosrc, E'\n')`.
+Keep in-body comments ASCII.
 
 | File | What it does | Risk if left unapplied | Risk of applying |
 |---|---|---|---|
@@ -1382,12 +1394,58 @@ hidden `🤖 E2E SANDBOX` (0 matches, 39 days stale, excluded by `is_hidden` any
 
 ---
 
-## 🧮 CROSS-SESSION STATS ARE UNDER-COUNTED CLUB-WIDE — 2026-08-11, JVL repaired on prod; **the rest is open**
+## 🧮 CROSS-SESSION STATS WERE UNDER-COUNTED CLUB-WIDE — found 2026-08-11, ✅ **CLOSED 2026-08-12** (data rebuilt + upstream fix shipped)
 
 Found while closing the last item of the awards work above (JVL's missing `player_rivalries`). The
 hole is far bigger than one player, and it has a single mechanical cause.
 
-**`refresh_cross_session_stats(p_session_id)` is one-shot per session.** It opens with
+> ✅ **Both halves are done as of 2026-08-12, and the analysis below is the evidence — read it as the
+> record of what was wrong, not as a live to-do.**
+> 1. **Data.** The club-wide rebuild was executed on prod with the user's explicit call on the award
+>    consequences: `player_rivalries` 2342 → **3504**, `player_partnerships` 1610 → **2400**, drift 0
+>    against history, both orphans gone. Qualifiers: `the_dynasty` 10 → 18 (**Barts** loses it),
+>    `serial_rivals` 34 → 47, `winning_formula` 6 → 11 (**Lei** and **Aim** lose it), `soulmates`
+>    0 → 0 — exactly the numbers predicted below. Reversible: `public.player_rivalries_prerebuild_20260812`
+>    and `public.player_partnerships_prerebuild_20260812` hold the pre-rebuild rows (revoked from
+>    `anon`/`authenticated`).
+> 2. **Upstream.** `refresh_cross_session_stats` is now an **absolute club-wide rebuild + prune**
+>    ([20260812100000](supabase/migrations/20260812100000_refresh_cross_session_stats_absolute_rebuild.sql),
+>    applied to prod). Guard gone, `SET wins_vs = EXCLUDED.wins_vs` instead of `+`, `is_hidden`
+>    sessions excluded, per-club advisory xact lock. Pinned by Suite XS
+>    ([tests/integration/cross-session-ledger.test.ts](tests/integration/cross-session-ledger.test.ts));
+>    XS-1/2/4 were run against the restored additive function and fail there.
+>
+> 🔎 **The check worth remembering:** after applying it, invoking the new function on the
+> double-counted session `Chillax Thursday 4/23` changed **0 rows on every semantic column** —
+> including `last_session_id` and `last_faced_at`. Two independently-written truth definitions (the
+> hand-run repair and the shipped function) agreeing on all of them is stronger evidence than either
+> alone. ⚠️ Do **not** restate this as "0 columns" or "a no-op": the upsert sets `updated_at = now()`
+> with no `WHERE` on the conflict action, so all 5 904 rows were physically rewritten. `updated_at`
+> is excluded from the comparison **by construction**, not because it happened to match — and every
+> future close rewrites every ledger row the same way.
+>
+> ⏱️ **Where the time goes, measured on prod the same day** — because the migration header used to
+> quote only the cheap half: rivalry truth CTE **23.7 ms**, rivalry prune **173.5 ms**, partnership
+> prune **128.6 ms**. Those three are a **partial sum (~330 ms)** — they omit the partnership truth
+> CTE and both upserts — but they are the best number available *for the new body*, because they were
+> run against it directly. Treat ~330 ms as a measured floor. ⚠️ **Do not complete it from
+> `pg_stat_statements`**: its 47-call PostgREST entry (8.5 / 109 / **604 ms**) is entirely the *old*
+> one-session body — **0 sessions have closed since the apply** and the last close was 2026-08-06 —
+> and `APP_MANIFEST.md:1790` already attributes that same accumulating row to the pre-migration
+> function. The 5-call manual entry (max 633 ms) does contain at least one run of the new body (the
+> post-apply invocation is the only thing that could stamp all 5904 rows with a single `updated_at`),
+> but its max can't be pinned to that call. **The new function has never run through a real
+> `closeSession()`.** Within the call the prunes
+> dominate, and they are not the club-history term: each is a correlated `NOT EXISTS` re-evaluated
+> once per *stored ledger row* (3504 / 2400 loops), so cost is ledger rows × per-player match rows.
+> Both factors grow with history, making the prune **superlinear in history**; roster² is the eventual
+> ceiling, not today's driver (192 players ⇒ 36 672 dense rows vs 3504 actual, **9.6% density** — rows
+> are still match-bound). A few hundred ms against an 8 s non-fatal budget is fine now; the fix when
+> it isn't is to point each prune at its own truth CTE rather than re-deriving from base tables.
+
+**`refresh_cross_session_stats(p_session_id)` was one-shot per session** (fixed 2026-08-12 by
+`20260812100000` — the ✅ box above is the current state; this section is the historical record of the
+defect). It opened with
 
 ```sql
 IF EXISTS (SELECT 1 FROM player_rivalries   WHERE last_session_id = p_session_id LIMIT 1)
@@ -1395,18 +1453,27 @@ OR EXISTS (SELECT 1 FROM player_partnerships WHERE last_session_id = p_session_i
 THEN RETURN; END IF;
 ```
 
-so the **first** call for a session wins. It is also purely *incremental*
+so the **first** call for a session won. It was also purely *incremental*
 (`ON CONFLICT … SET wins_vs = wins_vs + EXCLUDED.wins_vs`), never a rebuild. Any match completed
 **after** that first call — a late score entry, a `fix_record_swap_player` correction, a match
-re-opened and re-finished — is therefore never counted.
+re-opened and re-finished — was therefore never counted.
 
 🚨 **The guard DECAYS — a later call is not reliably a no-op.** `last_session_id` is overwritten
 whenever a pair meets again, so once every pair from an old session has played a newer one, nothing
 points at the old session, the `EXISTS` fails, and the RPC runs again **adding its matches a second
-time**. Prod has exactly one such session today: `Chillax Thursday 4/23`
-(`d820efea-d3ff-4ca3-9c0a-6a76de6090dc`, 20 completed matches, zero ledger rows referencing it).
-So the two failure modes are *silent no-op* early and *silent double-count* later. Never "just re-run
-it" on a historical session.
+time**. Prod had exactly one such session when this was found: `Chillax Thursday 4/23`
+(`d820efea-d3ff-4ca3-9c0a-6a76de6090dc`, 20 completed matches, zero ledger rows referencing it) — it
+is the session the post-migration re-run was verified against, and under the absolute rebuild it no
+longer double-counts.
+So the two failure modes **were** *silent no-op* early and *silent double-count* later, and "just
+re-run it" on a historical session was never safe. ✅ Both are gone under the absolute rebuild —
+re-running now leaves every semantic column unchanged **when no match has been completed or corrected
+since the last run**, which is the condition the shipped function was verified under. ⚠️ Do not drop
+that clause: when history *has* moved, a re-run absolutely does change semantic columns, and that is
+the entire point — it is the self-healing property, not a violation of idempotence. The warning
+survives as the reason the design had to change, **not** as a live prohibition; a *recompute of the
+wrap* remains unsafe — see "Therefore: recomputing an old session is not safe today" below, which
+counts five causes and then names a sixth (changed input rows) as the usual trigger in practice.
 
 **Measured on prod 2026-08-11** (expected state rebuilt from `match_players` history, restricted to
 `status='completed'` + both scores non-null + `sessions.club_id IS NOT NULL`, i.e. exactly the
@@ -1496,13 +1563,16 @@ include the session being computed; there is no in-flight compensation.
 
 ### Findings left OPEN (not touched — they need a scope decision)
 
-1. **The remaining 1162 missing + 370 under-counted rows, plus the 10 inverted rows and 2 orphans.**
-   Same repair statement, unscoped, would fix them — but it is **not** a no-risk monotone repair
-   (see above: `Barts` loses `the_dynasty`, `Lei` and `Aim` lose `winning_formula` to a *pure raise*,
-   77 nemesis targets move), so it needs the user's call, not just their permission. Not run: it rewrites ~1500 rows of live stats the user did not
-   ask about. The real fix is upstream — make `refresh_cross_session_stats` idempotent-by-rebuild
-   (delete-and-recompute that session's contribution, or store per-session rows and aggregate)
-   instead of guard-and-add, which also closes the decaying-guard double-count.
+1. ✅ **CLOSED 2026-08-12 — The remaining 1162 missing + 370 under-counted rows, plus the 10 inverted
+   rows and 2 orphans.** This was **not** a no-risk monotone repair (see above: `Barts` loses
+   `the_dynasty`, `Lei` and `Aim` lose `winning_formula` to a *pure raise*, 77 nemesis targets move),
+   so it was put to the user with those names attached and run only after they said proceed. Executed
+   as absolute upserts + orphan prune inside a fail-closed transaction, after a full dry-run that a
+   `RAISE EXCEPTION` rolled back, with both ledgers backed up first. Numbers in the ✅ box at the top
+   of this section. The upstream half shipped in the same day — see `20260812100000`; the design that
+   won was a **club-wide absolute rebuild**, not the delete-then-re-add this line originally proposed,
+   because subtracting one session's contribution requires trusting the running total to contain it
+   exactly once, which is the very thing that was false.
 
    📝 Three stale migration comments were corrected (precedent: `73888f0`) — two in
    `20260510000000_cross_session_awards.sql` (the header called the guard "idempotent … prevents
@@ -1510,11 +1580,17 @@ include the session being computed; there is no in-flight compensation.
    reliable in practice"), and one in `20260630000002_rivalries_partnerships_club_id.sql`
    ("Idempotency guard"). All comment-only — `git diff` on `supabase/migrations/` has zero
    non-comment changed lines. ⚠️ Two of the three sit **inside the plpgsql body** of
-   `refresh_cross_session_stats`. That is *not* a new divergence: prod's stored `prosrc` for that
-   function is **comment-free** (verified — `prosrc NOT LIKE '%--%'`), so the repo files already
-   differed from it by every comment they carry. Nothing to re-apply; don't read it as schema drift.
-   Note `20260630000002` is the last migration to `CREATE OR REPLACE` this function
-   (`20260702000004` only `ALTER`s `search_path`).
+   `refresh_cross_session_stats`. That was *not* a new divergence: **as of that edit** prod's stored
+   `prosrc` for the function was comment-free (verified then — `prosrc NOT LIKE '%--%'`), so the repo
+   files already differed from it by every comment they carried. Nothing to re-apply; it was not
+   schema drift. ⚠️ **That sentence is now historical.** `20260812100000` replaced the body later the
+   same day, and prod's `prosrc` today carries **11 comment lines** of its own and matches the repo
+   file byte-for-byte (see the hash note under the stamp table). Do not re-quote "comment-free" as a
+   present-tense fact about this function.
+   `20260630000002` was the last migration to `CREATE OR REPLACE` this function until
+   **`20260812100000`** superseded it (`20260702000004` only `ALTER`s `search_path` — and note that a
+   `CREATE OR REPLACE` **resets** SET clauses it does not restate, which is why `20260812100000`
+   re-pins `search_path` in its own header).
 2. **`deuce_magnet` is a stale grant.** 39 of 40 wraps on 05/23 hold it, but the live rule is
    `>= 3` completed matches with **both** scores `>= 30`, and that session had only **4** such
    matches out of 56 — so essentially nobody can re-earn it. Recomputing 05/23 today strips it from
@@ -2029,9 +2105,11 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 
 ## 📋 STANDING TO-DO (as of 2026-08-12)
 
-**Everything code-side is merged and deployed. `main` is `fe98587`, the working tree is clean, the
-migration queue is empty, and there are no open PRs carrying unshipped work.** What is left is three
-things that cannot be done from here — two need a live session, one needs an owner decision.
+**`main` is `fe98587`, with work in flight.** PR #61 (Suite XC — the cross-court real-DB proof) is
+open and unmerged, and the cross-session ledger work in **B** is on its own branch. Migration
+`20260812100000` is applied to prod (stamp `20260812144342`); the queue is otherwise empty. What is
+left that cannot be done from here is **A** and **C**, both needing a live session, plus the optional
+dashboard toggle **D**. **B is done** — kept below because its consequences are worth carrying.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
@@ -2039,21 +2117,31 @@ structurally cannot exercise it. Watch (i) whether held drafts appear at all, an
 hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15` — the cancel is event-driven off match end/cancel,
 not a timer, so a court that goes quiet strands its hold. Item **C** below folds into the same night.
 
-**B. `player_rivalries` / `player_partnerships` club-wide rebuild — 🚫 BLOCKED ON AN OWNER DECISION,
-do not execute unasked.** 1162 rows missing + 370 stored low (43.7% wrong club-wide). The rebuild is
-**not** award-neutral and **not** monotone, so it is a judgement call, not a repair:
+**B. `player_rivalries` / `player_partnerships` club-wide rebuild — ✅ DONE 2026-08-12, both halves.**
+The owner was shown the three names below and said proceed. Data rebuilt on prod (rivalries 2342 →
+**3504**, partnerships 1610 → **2400**, drift 0, both orphans gone; pre-state preserved in
+`player_{rivalries,partnerships}_prerebuild_20260812`), and the upstream RPC replaced by migration
+`20260812100000`. The badge losses below are real and were accepted, not hypothetical. Kept for the
+record — **do not re-run this as if it were pending**:
 
-  - `the_dynasty`: 10 → 18 qualifiers, but **revoked from `Barts`** (stored 6-2 = .750, true 6-3 = .667).
-  - `winning_formula`: 6 → 11 qualifiers, but **revoked from `Lei` and `Aim`** — both gate on a
-    *ratio*, and each holds a partnership stored 6g-4w (66.7%) that is truly 7g-4w (57.1%). **A pure
+  - `the_dynasty`: 10 → 18 qualifiers, **revoked from `Barts`** (stored 6-2 = .750, true 6-3 = .667).
+  - `winning_formula`: 6 → 11 qualifiers, **revoked from `Lei` and `Aim`** — both gate on a
+    *ratio*, and each held a partnership stored 6g-4w (66.7%) that is truly 7g-4w (57.1%). **A pure
     raise lowers a ratio.**
-  - **77 players** move nemesis target (47 swaps, 29 gains, 1 loss).
+  - **77 players** moved nemesis target (47 swaps, 29 gains, 1 loss).
 
-  Fix the 10 inverted rows + 2 orphans **first** — they are what makes the rebuild award-negative —
-  then the upstream RPC (`refresh_cross_session_stats` must rebuild its session's contribution
-  instead of guard-and-add, which also closes a live double-count on `Chillax Thursday 4/23`).
-  Full analysis in the §"CROSS-SESSION STATS" section below. **Three real players lose a badge they
-  currently hold; that is the owner's call to make, not a maintenance task.**
+  ⚠️ The upstream design this item used to prescribe — "rebuild its session's contribution instead of
+  guard-and-add" — **lost**. Subtracting one session requires trusting the running total to contain it
+  exactly once, which is precisely the assumption that was false. What shipped is an **absolute
+  club-wide rebuild + prune**, self-healing by construction. Pinned by Suite XS
+  ([tests/integration/cross-session-ledger.test.ts](tests/integration/cross-session-ledger.test.ts)).
+
+  ⚠️ **Two things this did NOT close.** (1) The ledger still has no **as-of date**, so replaying an old
+  session counts later results as pre-tonight history — a separate defect the rebuild does not touch.
+  (2) The new function **has never run through a real `closeSession()`**: 0 sessions have closed since
+  the apply and the last close was 2026-08-06, so every production invocation so far has been manual.
+  Its first live exercise is still ahead — fold it into the same night as **A**. Full analysis in
+  §"CROSS-SESSION STATS".
 
 **C. Live #7 broadcast-delivery smoke-test** (tenancy audit) — two organizer boards, toggle
 propagates; close → Wrapped. Also covers the resilience fixes and queue/courts transitions.
