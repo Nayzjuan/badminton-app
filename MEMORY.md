@@ -5,10 +5,10 @@
 
 ---
 
-## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-11. Repo and prod agree.
+## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-12. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
-Merging a PR ships TypeScript only.** All four migrations this section tracks are now **applied and
+Merging a PR ships TypeScript only.** All five migrations this section tracks are now **applied and
 verified on production** (`usxftpexoimletqmrggb`). Nothing is pending.
 
 | Applied | Stamp |
@@ -17,6 +17,7 @@ verified on production** (`usxftpexoimletqmrggb`). Nothing is pending.
 | `20260810000001_extend_draft_firewall_to_match_players` | `20260810151355` |
 | `20260811000000_one_time_milestone_awards` | `20260810173410` |
 | `20260811000001_repair_duplicate_milestone_awards` | `20260810173605` |
+| `20260812000000_clear_on_deck_never_unseats_a_playing_body` | `20260812092029` |
 
 | File | What it does | Risk if left unapplied | Risk of applying |
 |---|---|---|---|
@@ -24,6 +25,7 @@ verified on production** (`usxftpexoimletqmrggb`). Nothing is pending.
 | ~~`supabase/migrations/20260810000001_extend_draft_firewall_to_match_players.sql`~~ | Folds the draft-firewall CASE into `has_match_access`, closing audit finding **#11** | ✅ **APPLIED 2026-08-10**, stamp `20260810151355` — **#11 is CLOSED** | Applied after the code deploy reached READY. 4-check `DO $$` block passed; both dependent policies provably untouched. Verified functionally through real `authenticated`/`anon` roles. Zero existing rows lost visibility (every prod match is `completed`/`cancelled`). Revert **only** via `supabase/rollbacks/20260810000001_rollback_has_match_access.sql` — never `DROP FUNCTION` |
 | ~~`supabase/migrations/20260811000000_one_time_milestone_awards.sql`~~ | Makes the six all-time-threshold awards one-time per player via a `_prior_awards` ledger; also stops a recompute from deleting the club's `first_to_100` holder (APP_MANIFEST §3.7.1) | ✅ **APPLIED 2026-08-11**, stamp `20260810173410` | Applied via `--apply-sql` (below). Post-apply verified: live `md5(prosrc)` = `e3689008fe20a015421a0c69afc49375` = the repo file's body byte-for-byte, 49438 B, 7 gates present, advisory lock present, ACL still exactly `postgres=X*/postgres,service_role=X/postgres`, `SECURITY DEFINER` + `search_path` intact |
 | ~~`supabase/migrations/20260811000001_repair_duplicate_milestone_awards.sql`~~ | Strips the 188 historical duplicate grants the RPC fix cannot reach | ✅ **APPLIED 2026-08-11**, stamp `20260810173605` | Rewrote **128 real, player-visible wraps**. Outcome matched the dry-run exactly: 252 grants → **64**, 188 revoked, 48 dup groups → **0**, **0 wraps emptied**, 0 orphaned `award_data` keys across all 638 wraps. Every slug now has `grants == distinct players`. See the applied-form note below |
+| ~~`supabase/migrations/20260812000000_clear_on_deck_never_unseats_a_playing_body.sql`~~ | `CREATE OR REPLACE clear_on_deck_match_atomic` — narrows its `match_players` delete so it can only touch bodies whose match is still on deck. Without it the P5 hold-age cancel unseats a body that is **mid-game** on another court | ✅ **APPLIED 2026-08-12**, stamp `20260812092029` | This one is a **hard prerequisite for P5, not an optional companion**: unapplied, cross-court produces **zero** matches, i.e. it re-ships the feature dead. Injection-verified after apply (Suite J). Function-body-only change; no table, column, policy or grant touched |
 
 **Order:** ~~`20260810000000` first (it is inert), then `20260810000001`,~~ **← both done 2026-08-10** —
 ~~then `20260811000000`, then `20260811000001`.~~ **← both done 2026-08-11, in that order.** The last
@@ -183,11 +185,12 @@ Telemetry (#2) DOWNGRADED to optional. Awaiting owner's green-light on scope.
 
 ---
 
-## 🎾 ENGINE IMPROVEMENTS P1–P5 BUILT — 2026-08-12, branch `feat/engine-improvements`, **uncommitted work tree for P5**
+## 🎾 ENGINE IMPROVEMENTS P1–P6 — ✅ SHIPPED 2026-08-12, `main` `fe98587`, prod deploy READY
 
-Executing the re-ranked plan above, in the owner's stated sequence. **P3, P1, the replay harness, P2
-and P4 are committed and are the content of open PR #59; P5 is complete and validated in the work
-tree.** Nothing is deployed and no migrations exist — this is TypeScript only.
+Executed the re-ranked plan below, in the owner's stated sequence. **All six landed via PR #59
+(14 commits, merged `2026-08-12T12:05:19Z`), and the Vercel production deploy of `fe98587` reached
+success.** The one migration the work needs — `20260812000000` — was applied by hand **before** the
+merge; see the migration queue at the top.
 
 | | What | State |
 |---|---|---|
@@ -196,7 +199,23 @@ tree.** Nothing is deployed and no migrations exist — this is TypeScript only.
 | **harness** | `scripts/replay-sessions.ts` + `scripts/replay/` — discrete-event replay of the CURRENT engine over 5 real prod sessions | ✅ committed `081599d` (rode along with P2) |
 | **P2** | Consecutive-opponent recency in group selection | ✅ committed `081599d` |
 | **P4** | FRESH chips + the false opponent headline | ✅ committed `345e60f` |
-| **P5** | Cross-court reach repaired — the feature had shipped DEAD | ✅ built + validated, **work tree only** |
+| **P5** | Cross-court reach repaired — the feature had shipped DEAD | ✅ committed `463542b`, + migration `20260812000000` |
+| **P6** | Red Zone under-reporting — `isRedZonePlayer` replaces the band test | ✅ committed `463542b` (same commit as P5) |
+
+Three review rounds followed P5/P6 and are part of the shipped state: `e516af4` (round 5 — false
+comments, an enforced invariant, J-1b), `5e510e9` (round 6 — name the right constraint, a third band
+test), `d932ae1` + `2cafe67` (round 7 — the counterfactual needed a different antecedent).
+
+⚠️ **Rounds 5, 6 and 7 each found a different false statement in the same comment block, and the code
+it describes was correct and untouched the whole time.** The block explains why one unreachable
+branch in `hasFeedableCapacity` is written the way it is. Three consecutive rounds of "locally
+plausible paraphrase that has drifted from the source" is the single most repeated failure mode of
+this whole work stream — the round-7 example is the sharpest: having correctly dropped "and the
+default" from the claim about *reaching NULL at all*, the fix then reused that same NOT-NULL-only
+antecedent for a claim about *what fail-closed would read*, where it is false, because
+`create_match_with_players` omits `pulled_player_ids` entirely and the surviving default keeps
+filling `'{}'`. **When a comment states a schema counterfactual, open the migration and read the
+INSERT's column list — do not reason it out.**
 
 ### P2 — what it does, in one paragraph
 
@@ -374,15 +393,21 @@ reverting the hook to `candidateIds.length` would still pass the whole suite —
 
 ### Next steps
 
-1. **P1–P4 are all committed on `feat/engine-improvements` and NONE of it is deployed.** Four engine
-   changes the owner asked for are sitting on a branch, now open as **PR #59** awaiting the owner's
-   merge decision. Merging + deploying is the highest-value remaining action.
+1. ~~**P1–P4 are all committed on `feat/engine-improvements` and NONE of it is deployed.**~~
+   ✅ **DONE 2026-08-12** — PR #59 merged to `main` as `fe98587`, and the Vercel production deploy
+   reached success. All of P1–P6 is live.
 2. ~~The cross-court hot-path slice deletion.~~ **SUPERSEDED by P5 below** — the owner's answer was
    "our objective is to make it work … when auto-matchmaking is on", so the dead feature was
    repaired, not deleted. `src/app/actions/upcoming-match.ts` stays.
-3. Nothing in P1–P5 is deployed. **Fixtures stay gitignored: they carry real member names and skill
-   levels.** Never run `scripts/replay-sessions.ts` with `--refresh`/`--save` from a subagent;
-   `--refresh` hits production.
+3. **The one thing P1–P6 has NOT had is a real session.** Every check so far is unit tests, the
+   replay harness and a fixture simulator — and the replay harness **structurally cannot exercise
+   cross-court** (it replays recorded outcomes, and the recording has 0 held drafts in 945 matches).
+   So the first live session with auto-matchmaking on is the first genuine evidence P5 works. Watch
+   for held drafts appearing at all, and for a hold that outlives `CROSS_COURT_MAX_HOLD_MINUTES`
+   because the cancel is event-driven, not on a timer.
+4. **Fixtures stay gitignored: they carry real member names and skill levels.** Never run
+   `scripts/replay-sessions.ts` with `--refresh`/`--save` from a subagent; `--refresh` hits
+   production and `--save` writes shared results.
 
 ---
 
@@ -690,7 +715,7 @@ New: **`tests/unit/cross-court-trigger.test.ts`** (30 tests — `CCT-FEED-1..7`,
 
 ---
 
-## 🚨 RED ZONE was being UNDER-REPORTED — `score >= 1000` is not the Red Zone test — 2026-08-12, branch `feat/engine-improvements`, **uncommitted**
+## 🚨 RED ZONE was being UNDER-REPORTED — `score >= 1000` is not the Red Zone test — ✅ SHIPPED 2026-08-12, `main` `fe98587`
 
 Reported by the owner with production evidence, then extended in build. APP_MANIFEST **§3.34**, gotcha **32**.
 
