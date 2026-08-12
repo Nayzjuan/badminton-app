@@ -183,19 +183,19 @@ Telemetry (#2) DOWNGRADED to optional. Awaiting owner's green-light on scope.
 
 ---
 
-## 🎾 ENGINE IMPROVEMENTS P1–P3 BUILT — 2026-08-12, branch `feat/engine-improvements`, **uncommitted work tree for P2**
+## 🎾 ENGINE IMPROVEMENTS P1–P4 BUILT — 2026-08-12, branch `feat/engine-improvements`, **uncommitted work tree for P4**
 
-Executing the re-ranked plan above, in the owner's stated sequence. **P3, P1, replay harness are
-committed; P2 is complete and validated in the work tree.** Nothing is deployed and no migrations
-exist — this is TypeScript only.
+Executing the re-ranked plan above, in the owner's stated sequence. **P3, P1, the replay harness and
+P2 are committed; P4 is complete and validated in the work tree.** Nothing is deployed and no
+migrations exist — this is TypeScript only.
 
 | | What | State |
 |---|---|---|
 | **P3** | Call Next seats a court in draft mode — `bypassGate` slot 0 born published | ✅ committed `597e425` |
 | **P1** | Rejection memory — clearing a draft means "deal a different hand" | ✅ committed `c81a898` |
 | **harness** | `scripts/replay-sessions.ts` + `scripts/replay/` — discrete-event replay of the CURRENT engine over 5 real prod sessions | ✅ **untracked**, needs `git add` |
-| **P2** | Consecutive-opponent recency in group selection | ✅ built + validated, **work tree only** |
-| **P4** | FRESH chips + false opponent copy at `repeat-pairing-copy.ts:71` | ⬜ next |
+| **P2** | Consecutive-opponent recency in group selection | ✅ committed `081599d` |
+| **P4** | FRESH chips + the false opponent headline | ✅ built + validated, **work tree only** |
 
 ### P2 — what it does, in one paragraph
 
@@ -289,16 +289,98 @@ Also deliberately **out of scope**: the identical-looking `buckets.length === 2`
 `matchmaking-db.ts:344` is pre-existing `derivePairCounts` and was left alone (confirmed correct by
 the reviewer — a 3-1 there only *inflates* counts, which biases conservative). Separate ticket at most.
 
+## P4 — FRESH chips, and the sentence that was simply false
+
+Full design in **APP_MANIFEST §3.33**. Two shipments, one defect seen from two sides: the manual-match
+screen only ever spoke about what was *wrong*, and one of the things it said was untrue.
+
+**The false headline is the part that matters.** `pairHeadline` told the organizer an opponent repeat
+means "auto-matchmaking won't match them again". Verified against the engine, not the audit note:
+`crossNetOk` appears only in `selectSplit`'s passes 1a/2a and is explicitly dropped in 1b/2b, so
+`MAX_OPPONENT_REPEATS` **can never block a pairing**. `bothPairsUnderCap` is required in all four
+passes and every call site passes the teammate cap (including the last-resort fallback at
+`matchmaking-core.ts:1447`), so the teammate wording is true and was left alone. Now:
+*"auto-matchmaking avoids this, but won't refuse it."* An organizer who trusted the old line would
+read every legitimate engine rematch as a bug — on a screen they open **because** they already
+distrust the drafts.
+
+**The chips.** A green `FreshMarker` on any bench row with ZERO shared history against the next pick's
+referents. It answers what the amber family structurally cannot: a marker fires only at
+`count >= cap`, so an *unmarked* row mixes "never played" with "played once" — exactly the distinction
+the organizer is hand-building a match to act on.
+
+### The four things that will bite the next person
+
+1. **ZERO in BOTH maps, not the role this pick would create.** This is the one place the feature
+   deliberately diverges from the engine's role-specific caps. Justification: the chip's own copy says
+   "no games with Alice, Bob and Carol yet tonight", which is a plain lie under role-specific
+   checking. A test written the role-specific way (`RP-F7`) *looked* like a bug and was actually an
+   underspecified definition — the definition changed, not the test. Strictness only ever withholds a
+   chip; it can never over-promise.
+2. **The discrimination gate is NOT the avoidability gate.** `freshMarkersAreInformative` renders only
+   when `0 < fresh < pool`. `hasCleanAlternative` asks whether the organizer could have done better —
+   the question a *warning* must justify itself against; a FRESH chip is the answer, not the
+   accusation. It is also **not** suppressed by `capSaturationActive`, which literally tells the
+   organizer to override by hand; hiding the only positive signal at that moment inverts the feature.
+3. **One basis for the ratio.** `eligibleCandidates` exists because measuring the fresh count
+   post-exclusion against a pool measured pre-exclusion turns a correctly-silent all-fresh bench into
+   the wall of green the gate was written to prevent. Numerator and denominator must come from the
+   same filtered pool (`RP-F15` pins the bug).
+4. **The counts freeze mid-build, by design.** A first attempt at `QRP-X6` drove a refetch through
+   `matchesRevision` mid-selection and expected the chips to change. They correctly did not — the
+   episode snapshot froze the counts at the first pick. The test now clears and rebuilds, which is
+   both the real organizer flow and the only way to adopt new counts.
+
+### Validation
+
+`npx tsc --noEmit` clean · `npm run lint` exit 0 · `npm run build` green ·
+`npx vitest run tests/unit` → **58 files, 1129 passed / 1 skipped** (+40 over P2).
+New: `RP-F1..F15` · `RPC-F1..F5`, `RPC-L4..L7`, `RPC-H2b` · `RPH-F1..F5`, `RPH-C3` ·
+**`QRP-X1..X9`**.
+
+### Review gate — round 1 **"Minor issues"**, all seven fixed → round 2 **"Minor issues — passing"**
+
+Per CLAUDE.md gate rule 3, minors are documented rather than blocking — but all seven were fixed
+anyway. The three worth remembering:
+
+1. **Ambiguous pronoun in the combined legend.** "…Fresh players have no games with them yet" — the
+   nearest plural antecedent is *Marked players*, and that reading is false. On a change whose whole
+   premise is that the copy must not assert something untrue, the longer unambiguous clause wins.
+   `RPC-L7` now pins the two branches word-for-word against each other.
+2. **The gate's doc comment over-claimed.** It said the all-or-nothing test prevents a wall of green;
+   at 12 of 15 rows it does not. Kept the code and fixed the comment: a ratio floor would be a number
+   invented with no evidence, while the two degenerate ends are provably information-free, and the
+   lopsided case self-corrects as the referent set grows from 1 to 3 by the fourth pick.
+3. **Three weakly-anchored tests** (`RP-F8`, `RP-F9`, `QRP-X2`) would have passed on an always-empty
+   deriver or on chips landing on the *wrong* three rows. `not.toContain` and a `for…of` over the
+   result are both no-ops on `[]` — always pin the positive set too.
+
+Round 2 re-verified all seven independently (it hand-computed the RP-F8 fixture at n=1/2/3 rather than
+trusting green, and recomputed the oklch→sRGB contrast figures) and raised two more, both fixed:
+
+4. **`npm run lint` does not check formatting.** The lint script is bare `eslint`; `format:check` is a
+   separate script. Two files this task touched failed `prettier --check` while lint sat at exit 0.
+   That matters because lint-staged runs `prettier --write` on commit — so an unformatted file gets
+   silently reformatted and re-staged, and **the committed diff stops matching the reviewed one**.
+   Run `npx prettier --check $(git diff --name-only)` before committing, not just lint.
+5. **A renumbered list dropped an action item.** Editing "Next steps" left a stranded "Then" on item 1
+   and deleted the `git add scripts/replay-sessions.ts scripts/replay/` step outright, while the
+   status table 160 lines above still flagged the harness as untracked. Restored.
+
+One accepted non-finding: the one-basis invariant is pinned only at the library level (RP-F15), so
+reverting the hook to `candidateIds.length` would still pass the whole suite — production
+`candidateIds` already excludes selected players, so there is no observable regression to guard yet.
+
 ### Next steps
 
-1. `git add scripts/replay-sessions.ts scripts/replay/` — the harness is still untracked. **Fixtures
-   stay gitignored: they carry real member names and skill levels.** Never run the script with
-   `--refresh`/`--save` from a subagent; `--refresh` hits production.
-2. Commit P2 + the doc updates, then **P4** (FRESH chips; and `repeat-pairing-copy.ts:71` promises
-   "auto-matchmaking won't match them again" when `MAX_OPPONENT_REPEATS` is a **soft** preference —
-   the copy is simply false).
-3. Then the cross-court hot-path slice deletion (`src/app/actions/upcoming-match.ts`, ~150 LOC, 0 held
+1. `git add scripts/replay-sessions.ts scripts/replay/` — the harness is still **untracked** (see the
+   status table above). It is the only way to A/B a future engine change against real history, and it
+   is currently one `rm -rf` away from gone.
+2. The cross-court hot-path slice deletion (`src/app/actions/upcoming-match.ts`, ~150 LOC, 0 held
    rows ever). ⚠️ Touches the same player-facing files as the 07/25 de-auth incident. DB columns/RPC stay.
+3. Nothing in P1–P4 is deployed. **Fixtures stay gitignored: they carry real member names and skill
+   levels.** Never run `scripts/replay-sessions.ts` with `--refresh`/`--save` from a subagent;
+   `--refresh` hits production.
 
 ---
 

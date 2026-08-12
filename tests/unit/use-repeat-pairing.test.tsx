@@ -298,6 +298,104 @@ describe("useRepeatPairing — marker referent", () => {
     });
     expect(result.current.markerContext).toBeNull();
   });
+
+  it("RPH-C3: a FRESH-only screen still gets a referent", () => {
+    // p2 is at 1 prior — under the cap, so NO amber marker — while p3 is
+    // untouched. Nothing is marked, but a green chip is on screen, and
+    // keying the referent on `markers` alone would leave it unanchored.
+    const { result } = setup({
+      slots: ["p1", null, null, null],
+      candidateIds: ["p2", "p3"],
+      liveCounts: counts([["p1", "p2", 1]]),
+    });
+    expect(result.current.markers.size).toBe(0);
+    expect(result.current.fresh).toEqual(new Set(["p3"]));
+    expect(result.current.markerContext).toEqual({
+      team: "A",
+      partnerId: "p1",
+      opponentIds: [],
+    });
+    expect(result.current.legendFamilies).toEqual({ repeats: false, fresh: true });
+  });
+});
+
+describe("useRepeatPairing — FRESH chips", () => {
+  it("RPH-F1: the discrimination gate silences an all-fresh bench", () => {
+    const { result } = setup({
+      slots: ["p1", null, null, null],
+      candidateIds: ["p2", "p3", "p4"],
+      liveCounts: counts(),
+    });
+    expect(result.current.fresh.size).toBe(0);
+    expect(result.current.legendFamilies).toEqual({ repeats: false, fresh: false });
+  });
+
+  it("RPH-F2: chips survive cap-saturation suppression — the warnings do not", () => {
+    // `suppressed` is the engine broadcasting "every combination is capped,
+    // override by hand". That is the moment the organizer most needs to see
+    // who is clean, so the two families must NOT share a gate.
+    const { result } = setup({
+      slots: ["p1", null, null, null],
+      candidateIds: ["p2", "p3"],
+      liveCounts: counts([["p1", "p2", 5]]),
+      suppressed: true,
+    });
+    expect(result.current.warnings).toEqual([]);
+    expect(result.current.markers.size).toBe(0);
+    expect(result.current.fresh).toEqual(new Set(["p3"]));
+  });
+
+  it("RPH-F3: chips ride the same episode snapshot as the warnings", () => {
+    const before = counts([["p1", "p2", 1]]);
+    const after = counts();
+
+    const { result, rerender } = setup({
+      slots: ["p1", null, null, null],
+      candidateIds: ["p2", "p3"],
+      liveCounts: before,
+    });
+    expect(result.current.fresh).toEqual(new Set(["p3"]));
+
+    // A background draft completing mid-build must not repaint the bench.
+    rerender({
+      ...BASE,
+      slots: ["p1", null, null, null],
+      candidateIds: ["p2", "p3"],
+      liveCounts: after,
+    });
+    expect(result.current.fresh).toEqual(new Set(["p3"]));
+  });
+
+  it("RPH-F4: nothing before the first counts load, and nothing with 0 selected", () => {
+    const { result: noCounts } = setup({
+      slots: ["p1", null, null, null],
+      candidateIds: ["p2", "p3"],
+      liveCounts: null,
+    });
+    expect(noCounts.current.fresh.size).toBe(0);
+
+    const { result: noSelection } = setup({
+      slots: EMPTY_SLOTS,
+      candidateIds: ["p2", "p3"],
+      liveCounts: counts([["p1", "p2", 1]]),
+    });
+    expect(noSelection.current.fresh.size).toBe(0);
+  });
+
+  it("RPH-F5: fresh and markers never name the same player", () => {
+    const { result } = setup({
+      slots: ["p1", null, null, null],
+      candidateIds: ["p2", "p3", "p4"],
+      liveCounts: counts([
+        ["p1", "p2", 3],
+        ["p1", "p3", 1],
+      ]),
+    });
+    expect(result.current.markers.has("p2")).toBe(true);
+    expect(result.current.fresh).toEqual(new Set(["p4"]));
+    for (const id of result.current.fresh) expect(result.current.markers.has(id)).toBe(false);
+    expect(result.current.legendFamilies).toEqual({ repeats: true, fresh: true });
+  });
 });
 
 describe("useRepeatPairing — live region", () => {

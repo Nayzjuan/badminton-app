@@ -10,6 +10,7 @@
 //
 // IDs: QRP-S slot model · QRP-P team preview / swap · QRP-M markers
 //      QRP-W warning surface · QRP-D disclosure · QRP-A a11y
+//      QRP-X the FRESH chip family (the green counterpart to QRP-M)
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -952,5 +953,193 @@ describe("QRP-F: the newly-triggered flash", () => {
     expect((await screen.findByRole("button", { name: /details/i })).className).toContain(
       "cc-repeat-pulse"
     );
+  });
+});
+
+describe("QRP-X: the FRESH chip family", () => {
+  /**
+   * Alice has met everyone: Bob at the partnership cap, the other three once
+   * as opponents. Nobody is fresh, but the amber family still has something
+   * to say — so a fresh-count of zero must not take the markers down with it.
+   */
+  const ALICE_HAS_MET_EVERYONE = {
+    success: true as const,
+    data: {
+      partnerships: [["p1:p2", 2]] as [string, number][],
+      opponents: [
+        ["p1:p3", 1],
+        ["p1:p4", 1],
+        ["p1:p5", 1],
+      ] as [string, number][],
+    },
+  };
+
+  it("QRP-X1: green chips land on the bench players with no shared history, in the List lens", async () => {
+    renderQueue();
+    await countsLoaded();
+
+    expect(screen.queryAllByTestId("fresh-marker")).toHaveLength(0);
+    tapRow("Alice");
+
+    // Carol, Dave and Eve have never met Alice; Bob is at the cap.
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3));
+    for (const name of ["Carol", "Dave", "Eve"]) {
+      expect(within(row(name)).getByTestId("fresh-marker")).toBeInTheDocument();
+    }
+    // The referent is spelled out, not left to the glyph — same rule as QRP-M1.
+    expect(
+      within(row("Carol")).getByText(/no games with Alice yet tonight, as teammates or opponents/i)
+    ).toBeInTheDocument();
+  });
+
+  it("QRP-X2: the SAME chips ship in the By Skill lens", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3));
+
+    fireEvent.click(screen.getByRole("button", { name: "By Skill" }));
+    // A chip that appears in one lens and not the other reads as a bug — and a
+    // bare count of 3 would also pass if the chips landed on the WRONG three,
+    // so each card is named. Scoped via the checkbox: the team preview renders
+    // the same names too (the QRP-B convention).
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3));
+    for (const name of ["Carol", "Dave", "Eve"]) {
+      const card = screen.getByLabelText(`Select ${name} for a match`).closest("div.clip-cut-tr")!;
+      expect(within(card as HTMLElement).getByTestId("fresh-marker")).toBeInTheDocument();
+    }
+    // Bob is the amber one here too, in both lenses.
+    const bobCard = screen.getByLabelText("Select Bob for a match").closest("div.clip-cut-tr")!;
+    expect(within(bobCard as HTMLElement).getByTestId("repeat-marker")).toBeInTheDocument();
+    expect(within(bobCard as HTMLElement).queryByTestId("fresh-marker")).toBeNull();
+  });
+
+  it("QRP-X3: no row ever carries both a repeat marker and a fresh chip", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3));
+    // Bob is the marked one, and he must be marked ONLY.
+    const bobRow = row("Bob");
+    expect(within(bobRow).getByTestId("repeat-marker")).toBeInTheDocument();
+    expect(within(bobRow).queryByTestId("fresh-marker")).toBeNull();
+
+    // …and the converse, across every rendered row: the two families are
+    // mutually exclusive by construction (>= cap vs exactly 0), so a row
+    // holding both means the membership test drifted from the derivation.
+    for (const tr of screen.getAllByRole("row")) {
+      const both =
+        within(tr).queryAllByTestId("repeat-marker").length > 0 &&
+        within(tr).queryAllByTestId("fresh-marker").length > 0;
+      expect(both).toBe(false);
+    }
+  });
+
+  it("QRP-X4: the legend names BOTH families when both are on screen", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("repeat-marker-legend")).toHaveTextContent(
+        /Marked players would repeat a pairing if picked next; Fresh players have no games yet with whoever the next pick joins/i
+      )
+    );
+    expect(screen.getByTestId("repeat-marker-legend")).toHaveTextContent(
+      /Team A, alongside Alice/i
+    );
+  });
+
+  it("QRP-X5: a fresh-only screen still gets a legend — worded for green, not amber", async () => {
+    // One prior meeting: under the cap so nothing is marked, but non-zero so
+    // Bob is not fresh either. Exactly the split the discrimination gate wants.
+    vi.mocked(getSessionPairCounts).mockResolvedValue({
+      success: true,
+      data: { partnerships: [], opponents: [["p1:p2", 1]] },
+    });
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3));
+    expect(screen.queryAllByTestId("repeat-marker")).toHaveLength(0);
+    expect(screen.getByTestId("repeat-marker-legend")).toHaveTextContent(
+      /Fresh players have no games yet with whoever the next pick joins/i
+    );
+    // Not the amber sentence — a green-only screen must not be labelled a warning.
+    expect(screen.getByTestId("repeat-marker-legend")).not.toHaveTextContent(/Marked players/i);
+  });
+
+  it("QRP-X6: silent when EVERYONE is fresh — a wall of green says nothing", async () => {
+    // Asserting an absence proves nothing unless the chips could have been
+    // there, so this drives ONE mounted component from chips-present to
+    // chips-gone with nothing changing but the data. It also pins the FRESH
+    // family to the episode snapshot on the way through.
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3));
+
+    vi.mocked(getSessionPairCounts).mockResolvedValue({
+      success: true,
+      data: { partnerships: [], opponents: [] },
+    });
+    rerenderQueue({ matchesRevision: 1 });
+    await waitFor(() => expect(vi.mocked(getSessionPairCounts)).toHaveBeenCalledTimes(2));
+    await act(async () => {});
+
+    // Mid-build the refetch is deliberately IGNORED: the episode snapshot froze
+    // the counts at the first pick, and chips that move under the organizer's
+    // finger are worse than chips that are one match stale.
+    expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3);
+
+    // Clearing ends the episode, so the next build adopts the new counts — and
+    // now every single candidate is fresh, which distinguishes nobody.
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    tapRow("Alice");
+    await act(async () => {});
+
+    expect(screen.queryAllByTestId("fresh-marker")).toHaveLength(0);
+    // Amber is the control: under the STALE counts this same tap marked Bob.
+    expect(screen.queryAllByTestId("repeat-marker")).toHaveLength(0);
+    // With neither family on screen there is nothing for a legend to explain.
+    expect(screen.queryByTestId("repeat-marker-legend")).toBeNull();
+  });
+
+  it("QRP-X7: silent when NOBODY is fresh — and the amber family survives it", async () => {
+    vi.mocked(getSessionPairCounts).mockResolvedValue(ALICE_HAS_MET_EVERYONE);
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+
+    await waitFor(() => expect(screen.getAllByTestId("repeat-marker")).toHaveLength(1));
+    expect(screen.queryAllByTestId("fresh-marker")).toHaveLength(0);
+    // The legend falls back to the amber-only wording rather than disappearing.
+    expect(screen.getByTestId("repeat-marker-legend")).toHaveTextContent(
+      /Marked players would repeat a pairing if picked next/i
+    );
+    expect(screen.getByTestId("repeat-marker-legend")).not.toHaveTextContent(/Fresh players/i);
+  });
+
+  it("QRP-X8: an already-selected player is never chipped", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+    tapRow("Carol");
+
+    // Carol was fresh a tap ago; now she is on the court being built.
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(2));
+    expect(within(row("Carol")).queryByTestId("fresh-marker")).toBeNull();
+  });
+
+  it("QRP-X9: the chips clear with the selection", async () => {
+    renderQueue();
+    await countsLoaded();
+    tapRow("Alice");
+    await waitFor(() => expect(screen.getAllByTestId("fresh-marker")).toHaveLength(3));
+
+    fireEvent.click(screen.getByRole("button", { name: /^clear$/i }));
+    await waitFor(() => expect(screen.queryAllByTestId("fresh-marker")).toHaveLength(0));
   });
 });

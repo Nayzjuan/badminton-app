@@ -22,7 +22,8 @@
 
 import { LogOut, PauseCircle, PlayCircle } from "lucide-react";
 import { VipTag } from "@/components/ui/vip-tag";
-import { RepeatMarker } from "@/components/organizer/repeat-marker";
+import { FreshMarker, RepeatMarker } from "@/components/organizer/repeat-marker";
+import type { FreshContext } from "@/components/organizer/repeat-marker";
 import { useFlipList } from "@/hooks/use-flip-list";
 import type { CandidateMarker } from "@/lib/repeat-pairing";
 import type { NameLookup } from "@/lib/repeat-pairing-copy";
@@ -57,6 +58,12 @@ interface QueueSkillGroupsProps {
    */
   markers: Map<string, CandidateMarker>;
   /**
+   * The positive counterpart, same both-lenses rule. `null` when the family is
+   * gated off — which is most of a session, by design (see
+   * `freshMarkersAreInformative`).
+   */
+  freshContext: FreshContext | null;
+  /**
    * player_id -> display name, for the marker's screen-reader text. Required
    * alongside `markers`: making either optional lets a caller pass markers
    * with no name lookup and silently render nothing.
@@ -83,6 +90,7 @@ export function QueueSkillGroups({
   onToggleSelect,
   isFull,
   markers,
+  freshContext,
   nameOf,
   onSkillChange,
   updatingSkill,
@@ -167,6 +175,7 @@ export function QueueSkillGroups({
                     isSelected={selected.has(entry.player_id)}
                     isFull={isFull}
                     marker={markers.get(entry.player_id)}
+                    freshContext={freshContext?.ids.has(entry.player_id) ? freshContext : undefined}
                     nameOf={nameOf}
                     isLongest={isLongest}
                     onToggleSelect={onToggleSelect}
@@ -197,6 +206,8 @@ interface PlayerRowProps {
   isSelected: boolean;
   isFull: boolean;
   marker?: CandidateMarker;
+  /** Present only when THIS row is fresh — the row does no membership test. */
+  freshContext?: FreshContext;
   nameOf: NameLookup;
   isLongest: boolean;
   onToggleSelect: (playerId: string) => void;
@@ -215,6 +226,7 @@ function PlayerRow({
   isSelected,
   isFull,
   marker,
+  freshContext,
   nameOf,
   isLongest,
   onToggleSelect,
@@ -323,6 +335,13 @@ function PlayerRow({
           <span className="truncate font-medium text-cc-t1">{entry.display_name}</span>
           {/* Inline, immediately after the name — parity with the List lens. */}
           {marker && <RepeatMarker marker={marker} nameOf={nameOf} />}
+          {!marker && freshContext && (
+            <FreshMarker
+              partnerId={freshContext.partnerId}
+              opponentIds={freshContext.opponentIds}
+              nameOf={nameOf}
+            />
+          )}
           {profile?.vip_tag && profile?.vip_theme && (
             <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
           )}

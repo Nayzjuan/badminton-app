@@ -23,9 +23,16 @@
 // ("TEAM" / "OPP"), never on hue alone.
 // ============================================================
 
-import { Swords, Users } from "lucide-react";
-import { markerLabel, markerLegend, markerTitle, ordinal } from "@/lib/repeat-pairing-copy";
-import type { NameLookup } from "@/lib/repeat-pairing-copy";
+import { Sparkles, Swords, Users } from "lucide-react";
+import {
+  freshLabel,
+  freshTitle,
+  markerLabel,
+  markerLegend,
+  markerTitle,
+  ordinal,
+} from "@/lib/repeat-pairing-copy";
+import type { LegendFamilies, NameLookup } from "@/lib/repeat-pairing-copy";
 import type { CandidateMarker } from "@/lib/repeat-pairing";
 
 interface RepeatMarkerProps {
@@ -67,31 +74,100 @@ export function RepeatMarker({ marker, nameOf }: RepeatMarkerProps) {
   );
 }
 
-interface RepeatMarkerLegendProps {
-  team: "A" | "B";
+/**
+ * The fresh set bundled WITH the referent it was computed against.
+ *
+ * One prop rather than three for the same reason `markers` and `nameOf` are
+ * both required together: the set is meaningless without the slot context, and
+ * separate props let a renderer drift a stale referent against a fresh set —
+ * which would label rows "no games with Alice" while pointing at Bob.
+ * `null` means the family is gated off; renderers show nothing.
+ */
+export type FreshContext = {
+  ids: ReadonlySet<string>;
+  partnerId: string | null;
+  opponentIds: string[];
+};
+
+interface FreshMarkerProps {
+  /** Same referent the legend names — a chip saying only "Fresh" is unanchored. */
   partnerId: string | null;
   opponentIds: string[];
   nameOf: NameLookup;
 }
 
 /**
+ * FreshMarker — the positive counterpart to RepeatMarker.
+ *
+ * Answers the question the amber chip structurally cannot: an unmarked row is
+ * either "never played with any of them" or "played with one of them once",
+ * and those are very different picks when you are hand-building a match after
+ * clearing the engine's draft.
+ *
+ * Occupies the SAME inline position as RepeatMarker, immediately after the
+ * name. They never collide — a marker needs count >= 2 and a fresh chip needs
+ * count === 0 against the same referent set — so at most one renders per row.
+ *
+ * Colour: `cc-fresh`, added for this chip. Not `cc-accent` (teal), which means
+ * SELECTED on this screen, and not `cc-live`/`cc-streak` (orange), which read
+ * as urgency. Per the house rule the meaning is carried on the LABEL too, so
+ * the chip survives being seen in greyscale or by a red-green-deficient eye.
+ */
+export function FreshMarker({ partnerId, opponentIds, nameOf }: FreshMarkerProps) {
+  return (
+    <span
+      data-testid="fresh-marker"
+      title={freshTitle(partnerId, opponentIds, nameOf)}
+      className="clip-cut-badge inline-flex shrink-0 items-center gap-1 border border-cc-fresh/40
+                 bg-cc-fresh-dim px-1.5 py-0.5 font-command text-[9px] uppercase
+                 tracking-[0.10em] text-cc-fresh"
+    >
+      <Sparkles className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+      <span data-testid="fresh-marker-label" aria-hidden="true">
+        Fresh
+      </span>
+      <span className="sr-only">{freshLabel(partnerId, opponentIds, nameOf)}</span>
+    </span>
+  );
+}
+
+interface RepeatMarkerLegendProps {
+  team: "A" | "B";
+  partnerId: string | null;
+  opponentIds: string[];
+  nameOf: NameLookup;
+  /** Which chip families are actually on screen. Both are independently gated. */
+  families: LegendFamilies;
+}
+
+/**
  * Resolves what the row glyphs refer to. Without it the markers are
  * unanchored — "a repeat with *whom*?" — because the relevant partner is
  * whichever slot the next tap happens to fill.
+ *
+ * The leading icon follows `families` rather than being fixed amber: on a
+ * fresh-only screen an amber glyph would be the only warning-coloured thing
+ * present, labelling a line that is not a warning.
  */
 export function RepeatMarkerLegend({
   team,
   partnerId,
   opponentIds,
   nameOf,
+  families,
 }: RepeatMarkerLegendProps) {
+  const freshOnly = families.fresh && !families.repeats;
+  const Icon = freshOnly ? Sparkles : Users;
   return (
     <p
       data-testid="repeat-marker-legend"
       className="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-cc-t2"
     >
-      <Users className="mt-0.5 h-3 w-3 shrink-0 text-cc-amber" aria-hidden="true" />
-      <span>{markerLegend(team, partnerId, opponentIds, nameOf)}</span>
+      <Icon
+        className={`mt-0.5 h-3 w-3 shrink-0 ${freshOnly ? "text-cc-fresh" : "text-cc-amber"}`}
+        aria-hidden="true"
+      />
+      <span>{markerLegend(team, partnerId, opponentIds, nameOf, families)}</span>
     </p>
   );
 }

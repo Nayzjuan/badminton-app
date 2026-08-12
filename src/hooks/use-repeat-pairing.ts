@@ -36,8 +36,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_REPEAT_THRESHOLDS,
   deriveCandidateMarkers,
+  deriveFreshCandidates,
   derivePairWarnings,
+  eligibleCandidates,
   filledCount,
+  freshMarkersAreInformative,
   hasCleanAlternative,
   opposingSlotIndices,
   partnerSlotIndex,
@@ -47,7 +50,7 @@ import {
   type PairWarning,
   type Slots,
 } from "@/lib/repeat-pairing";
-import { announcementFor, type NameLookup } from "@/lib/repeat-pairing-copy";
+import { announcementFor, type LegendFamilies, type NameLookup } from "@/lib/repeat-pairing-copy";
 
 /** Trailing debounce before the live region is written. */
 export const ANNOUNCE_DEBOUNCE_MS = 500;
@@ -66,12 +69,20 @@ export type RepeatPairingState = {
   warnings: PairWarning[];
   /** playerId → marker for the still-selectable bench. Already gated. */
   markers: Map<string, CandidateMarker>;
+  /**
+   * Bench players with ZERO shared history against the next pick's referents.
+   * Already gated — and by a DIFFERENT gate than `markers`, so the two are
+   * independently empty. Never overlaps `markers`: a marker needs count >= 2.
+   */
+  fresh: ReadonlySet<string>;
   /** Stable headline for this build episode (never re-ranked mid-build). */
   headline: PairWarning | null;
   /** Debounced screen-reader string. "" means "say nothing". */
   announcement: string;
-  /** Referent for the markers; null when nothing is marked. */
+  /** Referent for the chips; null when NEITHER family has anything to show. */
   markerContext: MarkerContext | null;
+  /** Which chip families are live — the legend has to describe both. */
+  legendFamilies: LegendFamilies;
   /**
    * Pairs that started repeating on the MOST RECENT user tap — the ones worth
    * a one-shot flash. Scoped to a single build episode and never re-issued for
@@ -83,6 +94,7 @@ export type RepeatPairingState = {
 const NO_MARKERS: Map<string, CandidateMarker> = new Map();
 const NO_WARNINGS: PairWarning[] = [];
 const NO_PULSE: ReadonlySet<string> = new Set();
+const NO_FRESH: ReadonlySet<string> = new Set();
 
 type Episode = { active: boolean; counts: PairCounts | null };
 
@@ -171,6 +183,32 @@ export function useRepeatPairing(params: {
     return new Map(list.map((m) => [m.playerId, m]));
   }, [gateOpen, counts, slots, candidateIds]);
 
+  // FRESH chips ride the episode snapshot (same freeze, same reason: a
+  // background draft must not re-paint the bench mid-tap) but NOT `gateOpen`.
+  // Both of that gate's inputs are wrong for this family:
+  //
+  //   * `hasCleanAlternative` asks "could the organizer have avoided a
+  //     repeat" — the question a warning has to justify itself against. A
+  //     FRESH chip is the answer, not the accusation.
+  //   * `suppressed` is the engine's cap-saturation notice, which literally
+  //     tells the organizer to override by hand. Hiding the only positive
+  //     signal at that exact moment inverts the feature's purpose.
+  //
+  // What replaces it is the discrimination gate, which self-suppresses in
+  // both directions anyway: nobody fresh (late, saturated) and everybody
+  // fresh (early, empty history) both render nothing.
+  const fresh = useMemo(() => {
+    if (!counts) return NO_FRESH;
+    // One basis for both halves of the ratio. `candidateIds` already excludes
+    // selected rows in production, but measuring the fresh count after that
+    // exclusion and the pool before it would turn a silent all-fresh bench
+    // into a wall of green the moment a caller passed a looser pool.
+    const pool = eligibleCandidates(slots, candidateIds);
+    const list = deriveFreshCandidates(slots, pool, counts);
+    if (!freshMarkersAreInformative(list.length, pool.length)) return NO_FRESH;
+    return new Set(list);
+  }, [counts, slots, candidateIds]);
+
   // ── 3. Stable headline ───────────────────────────────────────
   const [headlineKey, setHeadlineKey] = useState<string | null>(null);
   const stillPresent = headlineKey !== null && warnings.some((w) => w.pairKey === headlineKey);
@@ -180,9 +218,13 @@ export function useRepeatPairing(params: {
   const headline = warnings.find((w) => w.pairKey === nextHeadlineKey) ?? null;
 
   // ── 4. Marker referent ───────────────────────────────────────
+  // Gated on EITHER family. Keying it on `markers` alone was correct while
+  // amber was the only chip; it would now strand a bench full of green with
+  // nothing saying who they are fresh against — the exact "a repeat with
+  // *whom*?" defect this legend exists to prevent, in the other colour.
   const markerContext = useMemo<MarkerContext | null>(() => {
-    if (markers.size === 0) return null;
-    // deriveCandidateMarkers targets the FIRST free slot; mirror that here.
+    if (markers.size === 0 && fresh.size === 0) return null;
+    // Both derivers target the FIRST free slot; mirror that here.
     let target = -1;
     for (let i = 0; i < SLOT_COUNT; i++) {
       if ((slots[i] ?? null) === null) {
@@ -198,7 +240,12 @@ export function useRepeatPairing(params: {
         .map((i) => slots[i] ?? null)
         .filter((x): x is string => !!x),
     };
-  }, [markers, slots]);
+  }, [markers, fresh, slots]);
+
+  const legendFamilies = useMemo(
+    () => ({ repeats: markers.size > 0, fresh: fresh.size > 0 }),
+    [markers, fresh]
+  );
 
   // ── 5. Live region (trailing debounce, user-gated) ───────────
   const message = useMemo(() => announcementFor(warnings, nameOf), [warnings, nameOf]);
@@ -269,5 +316,14 @@ export function useRepeatPairing(params: {
   }
   const pulsedPairKeys = currentPulse.fresh;
 
-  return { warnings, markers, headline, announcement, markerContext, pulsedPairKeys };
+  return {
+    warnings,
+    markers,
+    fresh,
+    headline,
+    announcement,
+    markerContext,
+    legendFamilies,
+    pulsedPairKeys,
+  };
 }

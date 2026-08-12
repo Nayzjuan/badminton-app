@@ -60,15 +60,26 @@ export function relationNoun(relation: PairRelation): string {
 
 /**
  * The one-line headline for a triggered pair (visible register).
- * Deliberately explains WHY it matters: the engine itself refuses this
- * pairing at the cap, so the organizer is knowingly overriding it.
+ * Deliberately explains WHY it matters — but the two relations do not mean
+ * the same thing to the engine, and the copy must not pretend they do:
+ *
+ *   * TEAMMATE is a HARD cap. `snakeDraft` returns null when every split puts
+ *     a team pair at MAX_PARTNERSHIP_REPEATS, and every call site passes that
+ *     cap — including the last-resort fallback. So "won't pair them again" is
+ *     literally true, and the organizer is knowingly overriding it.
+ *   * OPPONENT is a SOFT preference. `MAX_OPPONENT_REPEATS` only ranks splits
+ *     ("PREFERS splits where no cross-net pair is at the opponent cap — never
+ *     a hard block so the engine cannot stall on small sessions"). This line
+ *     used to promise "won't match them again", which is simply false: the
+ *     engine will absolutely re-run the pairing when nothing better exists.
+ *     An organizer who trusted it would read every such rematch as a bug.
  */
 export function pairHeadline(w: PairWarning, nameOf: NameLookup): string {
   const a = nameOf(w.playerIds[0]);
   const b = nameOf(w.playerIds[1]);
   return w.relation === "teammate"
     ? `${a} & ${b} have partnered ${w.count}× tonight — auto-matchmaking won't pair them again`
-    : `${a} & ${b} have been opponents ${w.count}× tonight — auto-matchmaking won't match them again`;
+    : `${a} & ${b} have been opponents ${w.count}× tonight — auto-matchmaking avoids this, but won't refuse it`;
 }
 
 /** Compact per-pair row tail, e.g. "2 prior matches". */
@@ -126,16 +137,29 @@ export function markerTitle(m: CandidateMarker, nameOf: NameLookup): string {
   return joinWithAnd(parts);
 }
 
+/** Which chip families are on screen — the legend must describe all of them. */
+export type LegendFamilies = { repeats: boolean; fresh: boolean };
+
+/** Amber only, the behaviour before FRESH chips existed. */
+const REPEATS_ONLY: LegendFamilies = { repeats: true, fresh: false };
+
 /**
  * Resolves the referent for the row markers: which slot the next tap
  * fills, and who that makes the candidate a teammate / opponent of.
  * Without this the glyphs are unanchored ("a repeat with *whom*?").
+ *
+ * `families` matters because the two chip families are independently gated —
+ * the amber markers sit behind the avoidability gate and the FRESH chips
+ * behind the discrimination gate, so either can be on screen alone. A legend
+ * that only ever mentions repeats would leave a screen full of green chips
+ * unexplained, which is the same defect this line was written to fix.
  */
 export function markerLegend(
   team: "A" | "B",
   partnerId: string | null,
   opponentIds: string[],
-  nameOf: NameLookup
+  nameOf: NameLookup,
+  families: LegendFamilies = REPEATS_ONLY
 ): string {
   const bits: string[] = [];
   if (partnerId) bits.push(`alongside ${nameOf(partnerId)}`);
@@ -143,5 +167,51 @@ export function markerLegend(
     bits.push(`against ${joinWithAnd(opponentIds.map(nameOf))}`);
   }
   const where = bits.length > 0 ? ` (Team ${team}, ${bits.join(", ")})` : ` (Team ${team})`;
-  return `Marked players would repeat a pairing if picked next${where}.`;
+
+  // The combined line repeats the fresh-only phrasing verbatim rather than
+  // shortening it to "…no games with them yet": the nearest plural antecedent
+  // for "them" is *Marked players*, and that reading is false — a fresh player
+  // may well have played with a marked one. On a change whose whole premise is
+  // that the copy must not assert something untrue, the longer clause wins.
+  const FRESH_CLAUSE = "Fresh players have no games yet with whoever the next pick joins";
+  const REPEATS_CLAUSE = "Marked players would repeat a pairing if picked next";
+  const subject =
+    families.repeats && families.fresh
+      ? `${REPEATS_CLAUSE}; ${FRESH_CLAUSE}`
+      : families.fresh
+        ? FRESH_CLAUSE
+        : REPEATS_CLAUSE;
+  return `${subject}${where}.`;
+}
+
+/**
+ * Visible tooltip for a FRESH chip. Names everyone the pick touches, because
+ * "fresh" is only meaningful relative to a referent — and unlike the amber
+ * chip there is no count to carry the meaning.
+ */
+export function freshTitle(
+  partnerId: string | null,
+  opponentIds: string[],
+  nameOf: NameLookup
+): string {
+  const ids = [...(partnerId ? [partnerId] : []), ...opponentIds];
+  if (ids.length === 0) return "No games yet tonight";
+  return `No games with ${joinWithAnd(ids.map(nameOf))} yet tonight`;
+}
+
+/**
+ * Screen-reader register for the same chip. Spells out that BOTH roles are
+ * covered — a listener who hears only "no games with Alice" cannot tell
+ * whether that means never partnered, never faced, or neither.
+ */
+export function freshLabel(
+  partnerId: string | null,
+  opponentIds: string[],
+  nameOf: NameLookup
+): string {
+  const ids = [...(partnerId ? [partnerId] : []), ...opponentIds];
+  if (ids.length === 0) return "Fresh pick: no games yet tonight.";
+  return `Fresh pick: no games with ${joinWithAnd(
+    ids.map(nameOf)
+  )} yet tonight, as teammates or opponents.`;
 }

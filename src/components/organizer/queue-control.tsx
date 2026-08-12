@@ -17,10 +17,17 @@
 //
 // REPEAT-PAIRING WARNING (advisory, never blocking): when the picks would
 // re-create a pairing the engine itself has stopped making, the sticky bar
-// headlines it and the bench rows get markers. It never disables a row it
-// warns about, never disables the CTA, and never rejects creation — see
+// headlines it and the bench rows get amber markers. It never disables a row
+// it warns about, never disables the CTA, and never rejects creation — see
 // use-repeat-pairing.ts for the avoidability gate that keeps it quiet when
 // the organizer has no better option.
+//
+// FRESH CHIPS (the positive counterpart): green chips on bench players with
+// ZERO shared history against whoever the next pick joins. Not derivable from
+// the absence of an amber marker — that only fires at the cap, so an unmarked
+// row is "never played with them" or "played once" and the organizer cannot
+// tell which. Independently gated (see freshMarkersAreInformative), so either
+// family can be on screen alone; the legend describes whichever are live.
 // ============================================================
 
 import { useId, useMemo, useState } from "react";
@@ -32,7 +39,12 @@ import { SKILL_LEVELS } from "@/types/database";
 import { QueueSkillGroups } from "@/components/organizer/queue-skill-groups";
 import { ManualMatchBar } from "@/components/organizer/manual-match-bar";
 import { RepeatPairDetails } from "@/components/organizer/repeat-pair-details";
-import { RepeatMarker, RepeatMarkerLegend } from "@/components/organizer/repeat-marker";
+import {
+  FreshMarker,
+  RepeatMarker,
+  RepeatMarkerLegend,
+} from "@/components/organizer/repeat-marker";
+import type { FreshContext } from "@/components/organizer/repeat-marker";
 import { useFlipList } from "@/hooks/use-flip-list";
 import { usePairCounts } from "@/hooks/use-pair-counts";
 import { useRepeatPairing } from "@/hooks/use-repeat-pairing";
@@ -341,15 +353,38 @@ export function QueueControl({
   );
 
   const liveCounts = usePairCounts(sessionId, matchesRevision);
-  const { warnings, markers, headline, announcement, markerContext, pulsedPairKeys } =
-    useRepeatPairing({
-      slots,
-      candidateIds,
-      liveCounts,
-      selectionEpoch,
-      suppressed: capSaturationActive,
-      nameOf,
-    });
+  const {
+    warnings,
+    markers,
+    fresh,
+    headline,
+    announcement,
+    markerContext,
+    legendFamilies,
+    pulsedPairKeys,
+  } = useRepeatPairing({
+    slots,
+    candidateIds,
+    liveCounts,
+    selectionEpoch,
+    suppressed: capSaturationActive,
+    nameOf,
+  });
+
+  // The fresh set travels WITH the referent it was computed against, so the
+  // two lenses cannot render green chips anchored to a stale slot context.
+  // `markerContext` is non-null whenever either family has anything to show.
+  const freshContext = useMemo<FreshContext | null>(
+    () =>
+      fresh.size > 0 && markerContext
+        ? {
+            ids: fresh,
+            partnerId: markerContext.partnerId,
+            opponentIds: markerContext.opponentIds,
+          }
+        : null,
+    [fresh, markerContext]
+  );
 
   const detailsId = useId();
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -473,15 +508,17 @@ export function QueueControl({
             </div>
           </div>
 
-          {/* Resolves what the row markers refer to. The relevant partner is
-              whichever slot the next tap fills, so without this line the
-              glyphs are unanchored ("a repeat with whom?"). */}
+          {/* Resolves what the row chips — amber AND green — refer to. The
+              relevant partner is whichever slot the next tap fills, so without
+              this line they are unanchored ("a repeat with whom?", "fresh
+              against whom?"). Rendered whenever EITHER family is on screen. */}
           {markerContext && (
             <RepeatMarkerLegend
               team={markerContext.team}
               partnerId={markerContext.partnerId}
               opponentIds={markerContext.opponentIds}
               nameOf={nameOf}
+              families={legendFamilies}
             />
           )}
 
@@ -493,6 +530,7 @@ export function QueueControl({
               onToggleSelect={togglePlayer}
               isFull={isFull}
               markers={markers}
+              freshContext={freshContext}
               nameOf={nameOf}
               onSkillChange={handleSkillChange}
               updatingSkill={updatingSkill}
@@ -651,6 +689,13 @@ export function QueueControl({
                                   min-w-[640px] inside overflow-x-auto, so a
                                   right-aligned marker is off-screen on a phone. */}
                               {marker && <RepeatMarker marker={marker} nameOf={nameOf} />}
+                              {!marker && freshContext?.ids.has(entry.player_id) && (
+                                <FreshMarker
+                                  partnerId={freshContext.partnerId}
+                                  opponentIds={freshContext.opponentIds}
+                                  nameOf={nameOf}
+                                />
+                              )}
                               {(() => {
                                 const p = profiles?.get(entry.player_id);
                                 return p?.vip_tag && p?.vip_theme ? (
