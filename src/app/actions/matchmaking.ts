@@ -169,6 +169,28 @@ export async function callNextMatch(
 
   const service = createServiceClient();
 
+  // ── Court-ownership gate ──────────────────────────────────────
+  // The gate above proves the caller organizes `sessionId`; it says nothing
+  // about where `courtId` lives, and both ids arrive from the client
+  // independently. promoteOnDeckMatchInternal writes `matches.court_id =
+  // courtId` and flips that court to "in_use", so without this an organizer
+  // of session A could seize a court belonging to another club's session —
+  // blocking its board and leaving its own match pointing at a foreign court.
+  // Same defect shape as the swap fix in swap-player.ts guard 3b, and the one
+  // updateCourtStatusAction/removeCourtAction already guard by appending
+  // `.eq("session_id", sessionId)` to their writes. `service` bypasses RLS,
+  // so nothing downstream re-checks this.
+  const { data: court } = await service
+    .from("courts")
+    .select("id")
+    .eq("id", courtId)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+
+  if (!court) {
+    return { success: false, message: "That court does not belong to this session." };
+  }
+
   // 1. Try to promote an existing on-deck match.
   let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
   if (promoted.success) {
@@ -778,6 +800,36 @@ export async function promoteOnDeckMatchInternal(
   sessionId: string,
   courtId: string
 ): Promise<MatchmakingResult> {
+  // ── Court-ownership gate (audit #12) ──────────────────────────
+  // Authorize BEFORE any lookup. `sessionId` and `courtId` arrive as two
+  // independent arguments, and `supabase` here is always the service client,
+  // so RLS re-checks nothing downstream.
+  //
+  // 🪤 The `.eq("session_id", …)` on the courts UPDATE further down CANNOT do
+  // this job, and an earlier draft of this branch wrongly implied it could.
+  // By the time that predicate runs, the CAS has already committed the match
+  // row `in_progress` with `court_id = courtId`: a foreign court would still
+  // be stamped onto the match and the caller would still get `success: true`.
+  // Only the `courts.status` flip would have been blocked. A guard placed
+  // after the write it is meant to prevent is not a guard.
+  //
+  // For every in-repo caller this is redundant — callNextMatch validates the
+  // pair at :183-192, and endMatch/cancelMatch pass `match.court_id` +
+  // `match.session_id` off the same row behind an `if (match.court_id)`. It is
+  // here for reason #0 on the courts UPDATE below: this helper is an export of
+  // a `"use server"` module, so it is one client-side import away from being
+  // dispatchable with no auth gate of its own.
+  const { data: ownedCourt } = await supabase
+    .from("courts")
+    .select("id")
+    .eq("id", courtId)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+
+  if (!ownedCourt) {
+    return { success: false, message: "That court does not belong to this session." };
+  }
+
   // Order by sort_order first (drag-and-drop priority), fall back to
   // created_at for new matches that haven't been manually reordered yet
   // (sort_order is NULL until the organizer drags a card).
@@ -908,10 +960,56 @@ export async function promoteOnDeckMatchInternal(
     };
   }
 
-  await supabase
+  // `.eq("session_id", …)` is redundant for every in-repo caller as things
+  // stand — callNextMatch validates `courtId` against `sessionId` before it
+  // gets here, and endMatch/cancelMatch pass `match.court_id` +
+  // `match.session_id` off the same row. It is here so the invariant is
+  // enforced at the write itself, for three reasons the callers cannot supply:
+  //   0. In-repo callers are not the only thing that decides reachability.
+  //      This module is `"use server"` and this function is exported, so the
+  //      build DOES mint it an action id (`registerServerReference`). What
+  //      stops a hand-crafted POST is not this signature and not any gate in
+  //      here — it is that the id is absent from `server-reference-manifest`'s
+  //      `node` map, because no CLIENT component imports it. Next rejects at
+  //      the `serverModuleMap[actionId]` lookup (next/dist/server/app-render/
+  //      action-handler.js:932-934) before it deserializes any argument.
+  //      Same for `recomputeHeldReadiness`. Verified on the 2026-08-13 build:
+  //      of this module's four exports only `callNextMatch` is in the manifest.
+  //      ⚠ That is a BUILD-DERIVED property and it flips the first time a
+  //      client component imports either helper — at which point they become
+  //      dispatchable with no auth gate of their own. This predicate is the
+  //      defence-in-depth for that day.
+  //      🪤 An earlier draft of this note claimed they fail closed "because
+  //      argument 1 is a Supabase client that cannot be serialized". Plausible,
+  //      and wrong: the request never reaches argument binding. Do not restate
+  //      it — check the manifest.
+  //   1. A future caller could reach this helper without the gate.
+  //   2. The invariant is code-maintained, NOT schema-enforced — `matches`
+  //      has `court_id uuid REFERENCES courts(id)` (initial_schema:223), a
+  //      single-column FK, so nothing in the DB stops a match from pointing
+  //      at a court in another session.
+  // Scope, precisely: this predicate is the SECOND half of the pair. The
+  // cross-session write is stopped by the gate at the top of this function,
+  // which runs before the CAS; by the time we get here the match row is
+  // already committed pointing at `courtId`, so all this can still protect is
+  // the `courts.status` flip. Do not describe it as what closes audit #12.
+  // It is not vacuous, though — because of (2) it can genuinely match 0 rows,
+  // so that is reported rather than swallowed: otherwise the caller would see
+  // success with the match `in_progress` while the court stayed `available` —
+  // a board showing a free court under a live match, with nothing logged.
+  const { error: courtError, count: courtCount } = await supabase
     .from("courts")
-    .update({ status: "in_use" as const })
-    .eq("id", courtId);
+    .update({ status: "in_use" as const }, { count: "exact" })
+    .eq("id", courtId)
+    .eq("session_id", sessionId);
+
+  if (courtError || courtCount === 0) {
+    console.error(
+      `[promoteOnDeckMatch] court ${courtId} was not marked in_use for session ${sessionId}: ${
+        courtError?.message ?? "no matching court row"
+      }`
+    );
+  }
 
   // matchPlayers was fetched during candidate selection above — reused here
   // instead of re-querying.

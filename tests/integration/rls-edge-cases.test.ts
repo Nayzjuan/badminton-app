@@ -550,7 +550,7 @@ describe("profiles_select scope — finding #8", () => {
 
   // ── Arm 3 — target played a match in a session I can reach ──
 
-  it("arm 3: players who checked out stay readable through their completed match", async () => {
+  it("arm 3: players whose queue row is gone stay readable through their completed match", async () => {
     const organizer = await makeProfile({ faker });
     const session = await makeSession({ faker, organizer: organizer.id });
     const [p1, p2, p3, p4] = await Promise.all([
@@ -570,9 +570,30 @@ describe("profiles_select scope — finding #8", () => {
       teamB: [p3.id, p4.id],
     });
 
-    // Checkout DELETEs the queue row (queue_delete_own / queue_delete_organizer)
-    // but leaves match_players behind. Arm 2 can no longer fire for these four;
-    // if arm 3 were missing, useMatchHistory would render blank names.
+    // Delete the queue rows so arm 2 cannot fire and this test isolates arm 3:
+    // if arm 3 were missing, useMatchHistory would render blank names here.
+    //
+    // NOTE: this state is MANUFACTURED, and an earlier version of this comment
+    // claimed checkout produces it. It does not — checkout UPDATEs the row to
+    // status='left' (queue.ts:166), and queue_delete_own / queue_delete_organizer
+    // are DELETE *policies*, not code paths. Because arm 2 carries no status
+    // filter, a checked-out player is still covered by arm 2 (measured on prod
+    // 2026-08-13: of 638 (player, session) pairs holding a completed match, 0
+    // lacked a queue_entries row in that same session).
+    // No application or hand-run path in this repo actually produces the state
+    // below: clearSessionData deletes match_players and matches BEFORE
+    // queue_entries (dev.ts:465-477), so arm 3 dies first; and the hand-run
+    // duplicate-merge fix reassigns match rows to the winner AND moves the
+    // loser's queue row to the winner too (guarded NOT EXISTS, at :113-116 of
+    // supabase/data-fixes/20260608_duplicate_name_data_fix.sql — spell the path
+    // out: three migrations also start `20260608`, and 113-116 of
+    // 20260608000000 is unrelated RETURN/EXCEPTION code)
+    // before deleting the remainder and the loser's profile, so the winner ends
+    // up holding a queue row wherever they gained match rows — that is what
+    // forecloses this state there. This test manufactures the state on
+    // purpose. Arm 3 is retained as fail-safe depth — it is the one arm that
+    // would survive a queue row being removed on its own — and this is its only
+    // coverage.
     await serviceClient().from("queue_entries").delete().eq("session_id", session.id);
 
     const visible = await visibleProfileIds(organizer);

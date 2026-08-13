@@ -165,12 +165,23 @@ async function endMatchInternal(
     .eq("id", matchId)
     .single();
 
-  if (matchFetchError || !match) {
-    return { success: false, message: `Match not found: ${matchFetchError?.message ?? "unknown"}` };
-  }
+  // Every pre-authorization rejection returns this one object. A missing row
+  // carries no session_id and so cannot be authorized at all, which means "no
+  // such match" and "not your match" have to answer identically — otherwise the
+  // difference between them is itself the answer, and this read goes through
+  // the service client, so RLS is no backstop. Audit #12.
+  const DENIED = {
+    success: false,
+    message: "Not authorized. You must be a session organizer or a player in this match.",
+  };
 
-  if (match.status === "completed" || match.status === "cancelled") {
-    return { success: false, message: `Match is already ${match.status}.` };
+  if (matchFetchError || !match) {
+    // `participantVerified` means submitMatchScore already proved this caller
+    // is in this match, so it already knows the row existed — telling it the
+    // row is gone reveals nothing it did not have. Every other caller is still
+    // unauthenticated for this match and gets the indistinguishable answer.
+    if (matchFetchError) console.error("[endMatch] match fetch failed:", matchFetchError.message);
+    return participantVerified ? { success: false, message: "Match not found." } : DENIED;
   }
 
   // 1b. JS-level authorization: organizer OR player in this match.
@@ -178,6 +189,10 @@ async function endMatchInternal(
   //    is in this match. Otherwise run both checks in parallel to avoid serial
   //    round-trips — isSessionOrganizer checks sessions.created_by FIRST (fast
   //    path), then falls back to session_organizers membership.
+  //
+  //    ORDER: this runs before the status check below, not after. The status
+  //    check answers `Match is already completed.` for a row the caller may
+  //    have no business reading; only an authorized caller may learn that.
   if (!participantVerified) {
     const [isOrg, playerSlot] = await Promise.all([
       isSessionOrganizer(user.id, match.session_id),
@@ -190,11 +205,12 @@ async function endMatchInternal(
     ]);
 
     if (!isOrg && !playerSlot.data) {
-      return {
-        success: false,
-        message: "Not authorized. You must be a session organizer or a player in this match.",
-      };
+      return DENIED;
     }
+  }
+
+  if (match.status === "completed" || match.status === "cancelled") {
+    return { success: false, message: `Match is already ${match.status}.` };
   }
 
   // 2. P0-1: Atomic UPDATE — only succeeds if status is still "in_progress".
@@ -365,6 +381,13 @@ export async function updateMatchDetails(
   // way (auth + participation, then validate); endMatchAction gets only
   // authentication in first, because its organizer-OR-player gate is inside
   // endMatchInternal, which needs the parsed scores as arguments.
+  //
+  // ⚠️ This paragraph reasoned only about what runs after the gate, and for a
+  // while that made it read as a clean bill of health for the whole function.
+  // It was not: the match fetch below ran ABOVE the gate and answered "Match
+  // not found." to any authenticated caller, for any match UUID, through the
+  // service client. Reasoning carefully about a guard's PRESENCE says nothing
+  // about its POSITION. Fixed under audit #12; see the fetch below.
 
   // All writes use the service client so the primary organizer
   // (sessions.created_by) is never silently blocked by write-side RLS.
@@ -383,13 +406,14 @@ export async function updateMatchDetails(
     .eq("id", matchId)
     .single();
 
-  if (fetchErr || !match) {
-    return { success: false, message: "Match not found." };
-  }
-
-  // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(user.id, match.session_id);
-  if (!organizer) {
+  // One reply for "no such match" and "not your match". The comment above this
+  // function argues about the ORDER of the score validation and the gate; it
+  // said nothing about this fetch, which sat above the gate and answered
+  // "Match not found." to any authenticated caller for any match UUID, through
+  // the service client. A missing row has no session_id to authorize against,
+  // so the two cases cannot be told apart without leaking the first. Audit #12.
+  if (fetchErr) console.error("[updateMatchDetails] match fetch failed:", fetchErr.message);
+  if (fetchErr || !match || !(await isSessionOrganizer(user.id, match.session_id))) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 
@@ -565,13 +589,18 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
     .eq("id", matchId)
     .single();
 
-  if (matchFetchError || !match) {
-    return { success: false, message: `Match not found: ${matchFetchError?.message ?? "unknown"}` };
+  // One reply for "no such match" and "not your match" — a missing row has no
+  // session_id to authorize against, and this read bypasses RLS, so answering
+  // them differently is an existence oracle over match UUIDs. The raw
+  // PostgREST error text is logged rather than returned: it went to the caller
+  // before any authorization ran. Audit #12.
+  //
+  // ONE condition and ONE return, not two adjacent `if`s holding the same
+  // string: two of them drift apart under a later edit and one cannot.
+  if (matchFetchError) {
+    console.error("[cancelMatch] match fetch failed:", matchFetchError.message);
   }
-
-  // Verify caller is an organizer for this session.
-  const organizer = await isSessionOrganizer(user.id, match.session_id);
-  if (!organizer) {
+  if (!match || !(await isSessionOrganizer(user.id, match.session_id))) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 

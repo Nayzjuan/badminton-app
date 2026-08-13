@@ -441,6 +441,61 @@ describe("Matchmaking Engine — Suite A", () => {
     }
   });
 
+  // ── Test 8b: cross-session court is rejected ─────────────
+  // callNextMatch takes `sessionId` and `courtId` as two independent
+  // client-supplied arguments, gates on isSessionOrganizer(sessionId),
+  // and then writes through the service client (RLS bypassed). Without
+  // the court-ownership gate an organizer of session A could hand it a
+  // courtId from session B: the promote path stamps
+  // matches.court_id = courtId and flips that court to "in_use",
+  // taking another club's court out of service.
+
+  it("Test 8b: callNextMatch rejects a court belonging to another session", async () => {
+    const a = await baseSetup();
+    const b = await baseSetup();
+
+    // Session A has a publishable, promotable match ready to go, so the
+    // ONLY thing that can stop the promotion is the court gate.
+    const { players } = await seedPlayers(a.session.id, 4);
+    await makeMatch({
+      sessionId: a.session.id,
+      teamA: [players[0].id, players[1].id],
+      teamB: [players[2].id, players[3].id],
+      isPublished: true,
+    });
+
+    const restore = mockAuthAs(a.organizer.id);
+    try {
+      const result = await callNextMatch(a.session.id, b.court.id);
+      expect(result.success).toBe(false);
+
+      // Session B's court was not seized.
+      const { data: victimCourt } = await serviceClient()
+        .from("courts")
+        .select("status")
+        .eq("id", b.court.id)
+        .single();
+      expect(victimCourt?.status).not.toBe("in_use");
+
+      // ...and no match in session A was pointed at it.
+      const { data: aMatches } = await serviceClient()
+        .from("matches")
+        .select("court_id, status")
+        .eq("session_id", a.session.id);
+      for (const m of aMatches ?? []) {
+        expect(m.court_id).not.toBe(b.court.id);
+      }
+
+      // Control: the same call with A's own court does promote, proving
+      // the rejection above came from the court gate and not from the
+      // match being unpromotable for some unrelated reason.
+      const ok = await callNextMatch(a.session.id, a.court.id);
+      expect(ok.success).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
   // ── Test 9: Paused-player exclusion ──────────────────────
   // Soft-paused players (queue_entries.is_paused=true) MUST be invisible
   // to the matchmaking engine even when they would otherwise satisfy
