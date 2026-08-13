@@ -97,7 +97,7 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🔓 TWO UNBOUND CROSS-TENANT WRITES + EIGHT UNORDERED GUARDS ACROSS SEVEN SITES — audit **#12**, found + fixed 2026-08-13, branch `fix/bind-draft-swap-to-session`
+## 🔓 TWO UNBOUND CROSS-TENANT WRITES + EIGHT UNORDERED GUARDS ACROSS SEVEN SITES — audit **#12**, ✅ **SHIPPED + DEPLOYED 2026-08-13** (PR #64 → `main` `8f4cb78`; Vercel Production `success`; CI green on the PR and again on `main`)
 
 **⚠️ NOT YET ON PROD.** TypeScript-only, **no migration** — it ships with the merge + Vercel deploy.
 Nothing to add to the migration queue above.
