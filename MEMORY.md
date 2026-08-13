@@ -97,7 +97,391 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
+## 🔓 TWO UNBOUND CROSS-TENANT WRITES + EIGHT UNORDERED GUARDS ACROSS SEVEN SITES — audit **#12**, found + fixed 2026-08-13, branch `fix/bind-draft-swap-to-session`
+
+**⚠️ NOT YET ON PROD.** TypeScript-only, **no migration** — it ships with the merge + Vercel deploy.
+Nothing to add to the migration queue above.
+
+**What happened.** The pass that closed `TENANCY_AUDIT_2026-07-21.md` (§3.37) finished by asserting
+every finding was dispositioned. True — and it says nothing about whether the *defect class* is
+exhausted. Findings #1, #4 and #10 are all one bug — **authorize on A, operate on B** — and each was
+found by chasing a symptom. Enumerating all **40** `isSessionOrganizer(` call sites and classifying
+each `sessionId` as derived-from-the-row vs supplied-by-the-caller found **two more live instances**:
+
+1. **`swapMatchPlayers`** (`src/app/actions/swap-player.ts`) — the draft-path sibling of the live
+   swaps that `20260723000001` bound. The RPC `swap_match_players(...)` takes **no session argument
+   at all**. 🪤 The TS layer *already had* the answer and threw it away: the existence guard `SELECT`ed
+   `id, status, session_id` for both matches and **discarded `session_id`**. That is precisely why
+   the hole survived multiple readings — the code looked like it was checking. Fix: **guard 3b**
+   (both matches must carry `session_id === sessionId`, reusing the already-fetched rows, no extra
+   round-trip) + guard 4 narrowed to `.in("match_id", matchIds)`.
+   🪤 **The first version of this fix put the new guard ABOVE the organizer gate and gave it its own
+   `CROSS_SESSION_SWAP` code. Both were wrong, and a review caught them.** Match-id questions
+   ("exists? pending? yours?") must sit **behind** authorization or any authenticated caller who
+   organizes nothing can probe them — so the organizer gate moved up, which also closes a
+   *pre-existing* pre-auth leak (missing vs already-started). And a distinct code is an existence
+   oracle: `live-match-swap.ts:123-126` had already decided this explicitly, so the rejection now
+   reports `MATCH_STARTED` with the not-found wording and logs the detail server-side. That wording
+   is **API-level only** — `use-swap-state.ts:227` renders a hardcoded toast and drops `message`.
+   **Check the sibling file for a recorded decision before inventing a new error code.**
+   🪤 **Then the *second* review found the same oracle re-entering through the back door.** Sharing
+   one `errorCode` is not enough — the guards must also **run in the right order**. The fix's first
+   version checked `status` before `session_id`, so a cross-session id whose match was **not**
+   pending answered `"A match has already started…"` while a nonexistent id answered
+   `"One or both matches could not be found."` — distinguishable again. Final order is exists (3) →
+   **session (3b)** → pending (3c), which is exactly what `live-match-swap.ts` does (session bound at
+   `:127`, immediately after the organizer gate at `:120`, **before** any status read). Proven by
+   execution: swapping 3b/3c back makes **only** `M-14b` fail, on `message`. ⚠️ `errorCode` alone
+   cannot detect this regression — it is `MATCH_STARTED` in every branch a foreign match id can
+   reach (the two `PLAYER_NOT_IN_MATCH` returns sit behind guard 3b), so **the pin has to assert
+   on `message`, and carry a positive control proving the two wordings differ.**
+2. **`callNextMatch`** (`src/app/actions/matchmaking.ts`) — `(sessionId, courtId)` are two
+   independent client-supplied args and only the first was gated;
+   `promoteOnDeckMatchInternal` then flipped `courtId` to `in_use` with no session predicate. An
+   organizer of session A could take another session's court out of service. `courts.ts:98` already
+   did this; this path never got it. Fix: **two** court-ownership gates plus `.eq("session_id",
+   sessionId)` on the UPDATE — gate 1 in `callNextMatch` (`:184`), gate 2 at the **top of
+   `promoteOnDeckMatchInternal`** (`:823`), before any lookup. `callNextMatch` calls the helper
+   twice (`:195`, then `:225` after the engine runs), so gate 2 is read once per attempt.
+   🪤 **Gate 2 is what actually closes this, and the branch's first version did not have it —
+   a review round caught that.** It had gate 1 + the UPDATE predicate, and *described the predicate
+   as what stopped the cross-session write*. It cannot be: the CAS at `:937` commits the match row
+   `in_progress` with `court_id = courtId` **before** the courts UPDATE at `:1001` runs. Without
+   gate 2 the foreign court still lands in `matches.court_id` and the caller still gets
+   `success: true` — only the `courts.status` flip is blocked. **A guard placed after the write it
+   defends is not a guard**, and the natural instinct is to put the `.eq()` where the write already
+   lives, which is exactly how this happens. ⚠️ The predicate is still worth keeping: redundant for
+   all three of today's **in-repo** callers but **not vacuous**, because `matches.court_id` is a
+   single-column FK (`initial_schema:223`), no composite `(id, session_id)`, so the invariant is
+   code-maintained and a row written through this hole would break it. The UPDATE checks its
+   rowcount — a silent 0-row would return `success: true` with the match `in_progress` over a court
+   still marked `available`.
+   🪤 **"Every caller" is not "every entry point."** `matchmaking.ts` is `"use server"`, and
+   `promoteOnDeckMatchInternal` / `recomputeHeldReadiness` are **exported**, so the build mints each
+   an action id. Neither is **dispatchable**: both ids are absent from
+   `.next/server/server-reference-manifest.json`'s `node` map (of the module's four exports only
+   `callNextMatch` is there) because no *client* component imports them, and Next rejects at the
+   `serverModuleMap[actionId]` lookup (`action-handler.js:932-934`) **before deserializing any
+   argument**. ⚠️ Build-derived, not a gate — it flips the first time a client component imports
+   either one, and neither has an auth check.
+   🪤🪤 **This note was WRONG when first written, and the wrongness is the lesson.** Round 3 wrote
+   "they fail closed only because argument 1 is a Supabase client that cannot be serialized" —
+   plausible, confident, false: the request never gets as far as argument binding. Round 4 caught it
+   by **reading the built manifest** rather than reasoning from the signature. A security comment
+   that names the wrong protective mechanism is worse than no comment, because the next reader
+   removes the thing it credits and thinks they have done nothing. **Verify a "fails closed because
+   X" claim by finding where X is enforced — in the framework's source or the build output — not by
+   arguing that X sounds sufficient.**
+
+3. **`closeSession`** (`src/app/actions/sessions.ts`) — 🔵 LOW, and **not** an unbound write: the
+   organizer gate was present and did block the close. It ran **below** the session fetch, so any
+   authenticated caller holding a session UUID got three distinguishable answers —
+   `"Session not found."` / `"Session is already closed."` **+ `alreadyClosed: true`** /
+   `"Not authorized. Organizer access required."` — a session-UUID existence-and-status oracle
+   across tenants. Fix: gate moved above the session fetch — above every lookup keyed on
+   `sessionId`. 🪤 The service client is still built FIRST, deliberately, and this line claimed
+   the opposite for two rounds: `isSessionOrganizer` calls `createServiceClient()` itself, so
+   gating ahead of it would throw past the documented `{ success, message }` shape and leave the
+   `try/catch` that exists for exactly that case unreachable (reasoning at `sessions.ts:1048`).
+   So it is NOT the order `renotifySessionClosed` uses — that one gates at `:1253` and builds its
+   client at `:1260`. The two share gate-before-LOOKUP, not gate-before-CLIENT, and the old
+   wording named the sibling as proof of the half it disproves. **A doc that describes a rejected
+   alternative as the shipped fix is worse than no doc — the next reader closes the gap by
+   reintroducing the bug.**
+   Dropped `created_by` from the `SELECT` — 🪤 its comment said it
+   was fetched *"for the organizer check below"*, false at HEAD: `isSessionOrganizer` does its own
+   lookup and never received it.
+   🪤 **This is the part worth carrying forward.** (i) **The repo had already written the rule down
+   and not applied it here** — `sessions.ts`, above `applyDraftCapOverride`'s `Promise.all`, says
+   verbatim that a distinct message *"would turn this into a session-UUID existence oracle"*, and
+   `renotifySessionClosed` obeys it. `closeSession` — older and more consequential — did not.
+   (ii) **The shape audit that found #1/#4/#10/#12(a)(b) structurally could not find this.** It asks
+   "which id does the write use?"; ordering is invisible to that question, so all seven `sessions.ts`
+   call sites passed it *correctly*. **Unbound writes and unordered guards are two different sweeps.**
+   (iii) 🪤 **The review gate did NOT find this on this branch — it found it two days earlier and
+   the finding was filed instead of fixed.** An earlier draft of this entry credited "the independent
+   review agent on this branch", which reads as a win for the gate. It is the opposite. `git log -S`
+   puts the sentence *"`closeSession` returns `alreadyClosed` **before** the organizer check
+   (pre-existing; leaks one bit)"* in commit `6592864` (**2026-08-11**, PR #55) — it is still sitting
+   under **"Booked minors (review-agent 'Minor issues' pass, per CLAUDE.md gate rule 3)"** —
+   `MEMORY.md:1147` as measured at the merge base `c9f2337`. 🪤 Pinned to a commit, not to "HEAD",
+   because this same commit moves it — and the first fix here named the new line number, which its
+   own two added lines invalidated before the edit finished. Cite the heading plus the revision the
+   number was read at; a line cite into a file the same change edits is false on arrival. So the gate ran, the agent saw it, the verdict was written down, and
+   nothing happened for two days. **The gate did not fail; the follow-through did.** The transferable
+   rule: **a booked minor with no owner is not a disposition.** CLAUDE.md gate rule 3 lets "Minor
+   issues" pass *provided the issues are documented in MEMORY.md* — that clause buys a deferral, not
+   a closure, and a deferral with no name and no date is indistinguishable from a drop. When a review
+   books a minor, either fix it in the same PR or give the entry an explicit owner and trigger; see
+   the stamped entry at the "Booked minors" heading below.
+
+4. **Five more of exactly the same ordering defect — 🔵 LOW each, found by sweeping the CLASS rather
+   than shipping (c) alone.** (c) was about to be written up as "the same defect, in a file the sweep
+   never opened". That framing is a confession that the sweep was scoped to a symptom, so instead:
+   scan every action file for a service-client row fetch whose failure branch **returns** above the
+   authorization gate. Five real sites, no sixth (three near-misses eliminated by reading:
+   `sessions.ts:380-388` belongs to `joinAsCoOrganizer` where the caller is *supposed* to be a
+   stranger — the passcode lookup returns `INVALID` above every gate, the sweep's shape exactly,
+   and is kept on purpose (🪤 this cite read `:418` for two rounds: the `session_organizers`
+   INSERT-failure branch, which is neither a row fetch nor pre-authorization. The elimination was
+   right and its evidence pointed at the wrong line — an anchor is a claim too);
+   `publishMatchAction` reads through `createServerSupabaseClient()`, so RLS **is** the backstop;
+   `fix-player-record.ts:77` is pure input validation on the caller's own arguments):
+
+   | Site | File | Leaked to any authenticated caller |
+   | --- | --- | --- |
+   | `endMatchInternal` | `match-lifecycle.ts` | `"Match not found."` **and** `Match is already ${status}.` — the status check also sat above the gate |
+   | `updateMatchDetails` | `match-lifecycle.ts` | `"Match not found."` |
+   | `cancelMatchAction` | `match-lifecycle.ts` | `"Match not found."` |
+   | `clearOnDeckMatch` | `match-drafts.ts` | `` `Match not found: ${raw PostgREST error}` `` |
+   | `swapPlayerInMatch` | `swap-player.ts` | three-way: not-found / already-started / not-authorized |
+
+   All five read through `createServiceClient()`, so **RLS is no backstop** — the probe answers for
+   any match UUID in any club. Fixed in four of the five by collapsing missing-row and not-authorized
+   into **one condition and one return** (`if (!match || !(await isSessionOrganizer(...)))`), moving
+   every status check below the gate, and `console.error`-ing the PostgREST text instead of returning
+   it. Model already in-repo: `live-match-swap.ts:453-460`. `endMatchInternal` is the deliberate
+   exception — `submitMatchScore` reaches it having already proved the caller is a player in this
+   match, so that caller has itself established the row exists and `"Match not found."` tells it
+   nothing new; its missing-row branch stays separate and the anti-drift property comes instead from
+   one shared `DENIED` object that every pre-auth rejection in the function returns.
+   🪤 **Two of the four merged sites shipped as two adjacent `if`s returning the same literal**
+   (`cancelMatchAction`, `clearOnDeckMatch`) — the exact configuration the rule exists to prevent,
+   inside the change that states the rule. The branch's review gate caught it, not the author.
+   **Writing a rule into the write-up is not applying it in the diff**: grep the diff for the
+   literal and count the `return`s.
+   🪤 **`swapPlayerInMatch` broke a rule written down 92 lines above it, in its own file** —
+   `swap-player.ts:62-67` records it for the sibling `swapMatchPlayers`; the guard site that broke
+   it is at `:159`, which now holds the fix. **A rule written down in a file is not a rule applied
+   in that file.**
+   🪤 **Review round 4 found two more rotted cites and then the fix rotted a third set.** (i) the
+   `submitMatchScore` "not a player" cite read `match-lifecycle.ts:82`, the `if`, not `:83`, the
+   `return` — the very rule spelled out at `swap-player.ts:84`; (ii) the `joinAsCoOrganizer`
+   near-miss was anchored at `sessions.ts:418`, an INSERT-failure branch that is neither a row
+   fetch nor pre-authorization, so it could not have been a near-miss for this sweep at all (the
+   line that fits is the passcode lookup `:380-385` → `INVALID` at `:388`). The elimination was
+   right; its evidence was not. **An anchor is a claim, checked separately from the sentence it
+   anchors.** (iii) Fixing `swap-player.ts`'s header — "three pre-write guards" over a list of
+   four, never mentioning guard 1b, which THIS branch added — shifted every line below it and
+   re-staled the four return cites a **fourth** time (`:333/:340/:348/:454` now), plus
+   `:145`→`:159`, `54-59`→`62-67`, 86→92 lines, `M-14b`'s `:406/:434`→`:420/:448`. **Add a guard,
+   recount the header. Make every edit first, THEN read the numbers, THEN write them down.**
+   🪤 **Review round 8: not a false claim written, but a TRUE rule INVALIDATED by an edit
+   elsewhere.** Round 7 unified two cites onto the statement start (`:183`/`:822`) in three files.
+   Sixteen lines below one of them, `matchmaking-engine.test.ts:1135` still said *"every cite
+   above is the line of the `.from(` call itself"* and prescribed a `grep` returning `:184`/`:823` —
+   so it told the next reader to "correct" four cites that were right, **inside the change that
+   standardised them**, while contradicting itself (`:822` in the list, `:823` in its own note).
+   **Changing a convention means grepping for the RULE that describes it, not only the cites that
+   follow it** — only one of a convention's two dependant kinds is greppable as a number, and the
+   other (prose) is worse, because it reaches the next reader as an instruction. When a rule has an
+   exception, put the exception IN the rule; anchor such prose to doc sections, not line numbers.
+   🪤 **Review round 7: the round-6 fix wrote a fresh instance of the class it was fixing.** Round 6
+   removed the false conjunction *"and the same order `closeSession` uses"* (it welds two
+   independent axes, gate-before-LOOKUP and gate-before-CLIENT) from three docs — and the
+   correction, in the same edit, wrote it into a FOURTH place, in code, at `swap-player.ts:158`,
+   where it is false for a different reason: `swapPlayerInMatch` **cannot** gate before its lookup,
+   the gate needs `match.session_id`. **Fixing every flagged instance of a class is not fixing the
+   class — grep for the PHRASE afterwards, and read your own replacement as if a reviewer wrote
+   it.** Corollary: a cite-precision rule applied at one site must be swept to its siblings —
+   correcting `:1258` (a `let` declaration) to `:1260` (the `createServiceClient()` call) left the
+   identical slip live at `:1055` vs `:1057` for the sibling named in the same paragraph.
+   🪤 **Review round 5: the note warning that line numbers rot carried two rotted numbers of its
+   own.** `swap-player.ts:84` said its cites had been "11 too low", then "10 too low". The real
+   shifts were **+15** and **+14**, and neither had ever been checked against a second source —
+   both re-typed from memory *inside the paragraph forbidding exactly that*. Now re-derived AND
+   corroborated against an independent record: `M-14b`'s 🪤 in `manual-and-swap.test.ts` tracks a
+   DIFFERENT pair of lines through the same two edits (`:391/:419` → `:406/:434` → `:420/:448`;
+   the 🪤 carries the first two, the cite it annotates carries the current one) and yields the
+   same +15 / +14. 🪤 Both records are new on THIS branch — two independent derivations agreeing,
+   not an older source vouching for a newer one. Real evidence, not provenance; an earlier draft
+   called it "written down at the time by a different hand", which it is not.
+   **A delta with no second witness does not belong in a comment.**
+   Same round: "every errorCode-less FAILURE return" read file-wide when it holds only for
+   `swapMatchPlayers` — now scoped, with `swapPlayerInMatch`'s consumers named
+   (`swap-sheet.tsx:234`; `handleUndoSwap`'s hardcoded toast at `use-swap-state.ts:282-283`, which
+   drops `message`). **A sentence wider than the fact it rests on is wrong even when nothing it
+   protects is broken.**
+   🪤 **`updateMatchDetails` carried a careful, correct, and irrelevant ordering argument.** Its
+   header paragraph reasons at length about score-validation-vs-gate order — and reads as a clean
+   bill of health for the whole function while the fetch above the gate leaked. **Reasoning carefully
+   about a guard's PRESENCE says nothing about its POSITION**; the paragraph now carries a ⚠️ saying
+   so, rather than being deleted.
+   🪤 **Message text is not the contract — check the second channel first.** Unifying the swap
+   messages was only safe because `use-swap-state.ts:175/227/280` and `swap-sheet.tsx:220` branch on
+   `result.errorCode === "MATCH_STARTED"`, which is preserved. Grepped every consumer of all four
+   changed strings before touching them; **no test asserted any of them**, which is itself the
+   finding — five state-revealing replies that nothing pinned.
+   ✅ Pinned by new **Suite PA** (`tests/integration/preauth-oracles.test.ts`, 5 tests), each probing
+   the three inputs that separate the orderings — foreign match / state-revealing match / valid-but-
+   nonexistent UUID — plus a cross-tenant caller who organizes a *different* session, plus a positive
+   control so none can pass by flattening every answer.
+
+**No migration, on purpose — and the reasoning has an expiry.** `swap_match_players` is
+service_role-only (prod 2026-08-13: `EXECUTE` `false` for anon **and** authenticated, `true` for
+service_role), so the server action is the whole boundary. A body-only `CREATE OR REPLACE` adding
+`v_session_a IS DISTINCT FROM v_session_b` would be **strictly weaker than guard 3b** — it misses two
+matches that both belong to the victim. Adding `p_session_id` needs `DROP` + re-`GRANT`, which strips
+`service_role` (#10's trap), plus a hand-apply. **If that grant ever changes, bind the RPC.**
+
+**Every pin proven by perturbation** — guard patched out → re-run → watch the cross-tenant write
+actually succeed (or the oracle actually reopen) → restore, verify clean. **Ten pins:**
+
+| Pin | File | Perturbation | Result |
+| --- | --- | --- | --- |
+| `M-14` | `manual-and-swap` | guard 3b deleted | cross-session swap succeeded |
+| `M-14b` | `manual-and-swap` | 3c moved above 3b | only `M-14b` failed |
+| `M-14c` | `manual-and-swap` | organizer gate below match-exists | **only `M-14c` failed — `M-14`/`M-14b` green** |
+| `Test 8b` | `matchmaking` | court gate deleted | cross-session court seizure succeeded |
+| `Test 1b` | `close-session` | organizer gate below session fetch | **only `Test 1b` failed — the other 7 green** |
+| `PA-1` | `preauth-oracles` | status check hoisted above the organizer-OR-player gate | failed on the **status** leak, not the missing row |
+| `PA-2` | `preauth-oracles` | merged condition split back into two returns | failed |
+| `PA-3` | `preauth-oracles` | missing-row branch restored to `"Match not found."` | failed |
+| `PA-4` | `preauth-oracles` | missing-row branch restored to `` `Match not found: ${err}` `` | failed |
+| `PA-5` | `preauth-oracles` | three-way oracle restored in full | failed |
+
+The five `PA-*` perturbations were applied **together, from a script** (`perturb.py`, exact-match
+replacement asserting each pattern occurs exactly once) and the **whole** integration suite re-run:
+`Test Files 1 failed | 24 passed`, `Tests 5 failed | 278 passed` — the five failures are exactly
+`PA-1`…`PA-5`. Then the three files were restored **from a pre-perturbation copy and re-hashed
+byte-for-byte** — `shasum -a 256 -c` equality, not "looks right" — and re-run green. 🪤 The repo has already been bitten by review agents leaving
+unreverted worktree mutations; a perturbation run is self-inflicted mutation, so it needs the same
+proof of restoration as anything an agent does.
+
+⚠️ **`M-14c` and `Test 1b` are the two rows that matter.** `M-14`/`M-14b` are both driven by an
+*organizer*, so they pin ordering only *among* the match guards — neither notices when the
+authorization gate itself sinks below them. **A guard-ordering test written from one seat is blind to
+a hole that opens in a lower seat.** And `close-session.test.ts` already had a test literally named
+`"rejects non-organizer callers"` that stayed green through the perturbation, because it only ever
+probes an existing **active** session — the single input on which both orderings agree. **A test that
+asserts a guard rejects is not a test that the guard rejects *first*.** All **eight** ordering pins
+(`M-14b`, `M-14c`, `Test 1b`, `PA-1`…`PA-5` — `M-14` and `Test 8b` are *binding* pins, not ordering
+ones) were proven by perturbations that left every pre-existing authorization test green.
+`Test 8b`, `M-14b`, `M-14c`, `Test 1b` and all five `PA-*` assert a positive control, so none can
+pass by rejecting everything.
+🪤 **A positive control is not enough on its own — the NEGATIVE assertion has to be able to fail too.**
+`PA-2` reads the row back to prove no rejected edit landed, and that line was vacuous in two
+successive drafts: first every caller sent the same 21-15 and the read-back ran *after* the owner's
+own successful write (so it could not tell "rejected" from "overwritten"); then the strangers were
+given 99-0, which exceeds `MAX_BADMINTON_SCORE` and would have been refused by `scoreSchema` **with
+no gate at all**. Shipped version: three distinct *valid* pairs (seed 21-15, strangers 25-23, owner
+30-28), proven falsifiable by perturbation (`expected 25 to be 21`). The out-of-bounds probe was kept
+as its own assertion, pinning that score validation still runs *below* the gate. **Ask of every "and
+it did not happen" line: what would mechanically have had to happen for this to fail?**
+⚠️ **The five `PA-*` sites make this the rule, not the anecdote — and the measurement is blunter
+than the anecdote was.** All five pre-fix orderings were restored **at once** and the **entire**
+integration suite re-run: **24 files / 278 tests all green, only the 5 `PA-*` failed.** Not one
+pre-existing test in the repo could see five simultaneously reordered authorization gates.
+🪤 The first draft of this paragraph claimed "every one of those five already had a *rejects
+non-organizer* test — six for six". **Measured, it is four of six**: `updateMatchDetails` (`N-3`),
+`clearOnDeckMatch` (`N-8`), `cancelMatchAction` (`G-3b` + `F-cancel-3`) and `closeSession`
+(`"rejects non-organizer callers"`) had one and all four stayed green; `endMatchAction`'s only auth
+test is *unauthenticated* (`score-submission.test.ts:220` — the `submitMatchScore` "not a player"
+test returns at `match-lifecycle.ts:83`, before `endMatchInternal` is ever reached), and
+`swapPlayerInMatch` had **no** authorization test at all (`M-8`/`M-9`/`M-10` are organizer-driven
+state guards). That is worse than the tidy claim, not better: two of the five leaks sat under
+actions with no authorization coverage there to be blind. **A count asserted inside a lesson about
+unverified counts is not exempt from being counted.**
+Any future authorization test that does not probe a *nonexistent* id and a *state-revealing* id is
+not testing the ordering.
+🪤 **The mocked identity is one module-level global** (`authState.currentUserId`, `helpers/mock-auth.ts`).
+Batching multi-caller probes through `Promise.all` interleaves the writes, every in-flight probe runs
+as whichever caller set it last, and the suite then passes **because all four probes were the same
+caller and trivially agreed**. Suite PA's probes are deliberately sequential; the first draft was not.
+
+🪤 **`tests/unit/matchmaking-engine.test.ts` positional mocks.** `makeMockClient([...])` answers the
+*N*th `from()` call with the *N*th entry, so the two new courts queries shifted every later index:
+**12** direct-promote fixtures took a `[0] courts` slot, **8** `callNextMatch` fixtures took a
+`[3] courts` slot, **4** of those a second row for the `:225` retry, and **6** `queriedTables`
+equality assertions gained a leading `"courts"`. **A `null` at a gate's slot is a REJECTION, not a
+neutral no-op**, so a mis-indexed mock returns early and downstream assertions pass vacuously.
+🪤 **The converse is worse, and it bit twice here.** `if (!ownedCourt)` accepts anything **truthy**,
+so a stray `{data: []}` sitting at a gate's slot *satisfies* the gate — the test stays green while
+every slot beneath it is off by one. Two fixtures (`ENG-BP-2` and `"returns 'not enough players'…"`)
+were in exactly that state after the first insertion pass. Found by dumping `queriedTables` at
+runtime and diffing against the labels; **not** findable by reading, and not findable from a green
+suite.
+🪤 **My own renumber script had the same class of bug.** `makeMockClient([...], [rpc])` ends its
+first array with `],` rather than `]);`, so a forward scan that only stops at `]);` ran out of one
+fixture into the next and double-bumped its labels. Renumber **positionally** (entry *k* → `// [k]`),
+with a scan that stops at either terminator.
+🪤 **The slot-layout header above those tests was already stale, and the first version of this change
+shifted it `+1` instead of re-deriving it** — shipping a newly-wrong list (it dropped
+`session_organizers` and the left-guard's `queue_entries`, and put the CAS before `match_players`).
+A review caught it. **Renumbering a comment is not maintaining it** — re-read the source.
+🪤 **And a third round found two more of exactly that.** (a) `"returns 'not enough players' when
+toggle is ON but queue is empty"` had **14 fixture entries for 15 `from()` calls** — the
+`match_events` slot (rejection memory, `matchmaking-db.ts:128`, `Promise.all[3]`, issued
+unconditionally) was missing, so every label from `[10]` down named the wrong table and the last
+read fell off the end onto `makeMockClient`'s `?? {data: null}` default. It passed the whole time,
+because every response in that band is `{data: []}`. (b) The prose header on
+`"toggle respected: …"` was **already wrong by 2 at HEAD** (it said the toggle lands at `[6]`; HEAD's
+own assertion read `queriedTables[8]`) and this change shifted it `+1` to `[7]` — renumbering a
+comment that was never right. Both re-derived by **dumping `serviceMock.queriedTables` and reading
+the actual order**, not by counting `from()` calls by eye. **A green suite is not evidence a
+positional fixture is aligned; only the dumped order is.**
+🪤 **A *fourth* round made that same header wrong a third time.** Adding gate 2 inserted a second
+`courts` read that the header did not have, so the whole list was re-derived from the source one more
+time — `[0] sessions` / `[1] session_organizers` / `[2] courts :184` / `[3] courts :823` /
+`[4] matches :839` / `[5] match_players :874` / `[6] queue_entries :880` / `[7] CAS :937` /
+`[8] courts :1001` / `[9] profiles :1037` / `[10] sessions` — plus three shape notes it had always
+been missing (`[5]`/`[6]` repeat per rejected candidate; a non-empty roster inserts the `:1022`
+`queue_entries` UPDATE before `profiles`; with no ready candidate the `:910` draft count fires
+**instead of** the CAS). **Three separate revisions, three separate wrong versions, all by the same
+mechanism** — the header was adjusted rather than re-read, every time.
+🪤🪤 **And then the same commit did it AGAIN, 550 lines below the paragraph warning against it.**
+`ENG-SNAP-1`'s eight fixture labels were bumped `+2` (`[0][1][2]` then `[5][6][7][8][9]`) with **no
+entry inserted** — `[8]` and `[9]` past the end of an 8-element array. They were **correct at HEAD**;
+this branch made them false. Causally impossible, too: `ENG-SNAP-1` drives `runEngineForSession`,
+which has **no court gate**, so nothing in it could have shifted. Caught by the review agent, not by
+me, not by the suite — the labels are comments, so all 61 tests passed either way.
+✅ **The fix is to stop checking this by eye: the invariant is machine-checkable.** But the first two
+attempts at mechanising it were themselves wrong, in a way worth keeping:
+🪤 **The invariant is NOT "label _k_ = array index _k_".** `makeMockClient([…])` answers the *N*th
+`from()` call with the *N*th **runtime slot**, and a spread advances the counter by its own length —
+`...preamble(x)` is **10** slots, `...PULLABLE` is **7**. Index and slot coincide only in arrays with
+no spread, which is why the wrong invariant still reported plausible numbers. Two parser bugs rode
+along: the labels are **trailing** comments (they sit *after* the comma), so a naive comma-splitter
+attributes each label to the **following** element; and a comment after the final comma is a
+**phantom element** that inflates the measured length (`preamble` measured 11, `PULLABLE` 8).
+✅ **Corrected auditor** (`audit_slots.py` — tracks runtime slots, resolves spread widths, and reads
+`// [11..17]` range labels): across the **two** files that call `makeMockClient` —
+`matchmaking-engine.test.ts` **HEAD 49 arrays / 197 labeled slots / 0 mislabeled**, **working tree
+50 arrays / 244 labeled slots / 0 mislabeled**; `queue-actions.test.ts` **9 arrays / 0 labels**, so
+there is nothing there to verify. The 5 `ENG-SNAP-1` labels were already fixed by hand before this
+run, which is why the tree reads 0 and not 5.
+🪤 **A resolver that silently assumes a width is the same bug one level up.** Six names are spread
+into arrays in the engine file; **four cannot be measured reliably** — `cappedPool` is declared
+**twice** (L635, L839) so a by-name lookup picks an arbitrary one, and `padding`/`readyRoster`/
+`waitingFour` are arrow bodies whose first `[` need not be the returned array (`waitingFour`
+measures as **0**, certainly wrong). Those four are **not** load-bearing, and that was *checked, not
+assumed*: a direct scan confirms **zero labeled arrays contain any of the four**, at HEAD and in the
+tree. Only `PULLABLE` and `preamble` sit inside labeled arrays and each is declared once. The
+auditor now prints `UNRESOLVED` for an unmeasurable spread instead of defaulting it to one slot. **When a convention is mechanical,
+verify it mechanically** — three rounds of careful re-reading missed what one diff of the two counts
+found immediately.
+🪤 **Two doc line-cites went stale inside this very branch.** `matchmaking.ts:562-571`
+(`const anchor = pool[0]`) was correct at HEAD and the branch's own `+22`-line insertion moved it to
+`584-593` — **a raw line cite into a file the same commit edits invalidates itself**, so re-check
+every cite into a touched file before merging, and name the anchoring symbol next to the number.
+The other was a wrong number (`:122`, actually `:125`) sitting in the very clause that explained why
+line numbers drift.
+🪤 **The 0-row `courts` UPDATE branch this change added had no test at all**: every existing
+courts-update mock returns no `count`, so `courtCount` was `undefined` and the arm was unreachable.
+Now pinned by `"a 0-row courts update is logged, not swallowed…"` (asserts `success: true` **and**
+the `console.error`), and proven non-vacuous by patching the condition out.
+
+**The transferable lesson:** a closed *finding list* is not a closed *defect class*. Audit the
+shape — enumerate every call site of the authorization helper and ask, per site, "which id is this
+gate about, and which id does the write use?"
+
+---
+
 ## 📡 THE BROADCAST POLICY WAS ONLY EVER TESTED FOR WHAT IT *ALLOWS* — 2026-08-12, Suite RB
+
+*(Session-date header, per this file's convention. The commits land just after midnight: `04c0062`
+is 2026-08-13 00:24 +08 and PR #63 merged as `c9f2337` at 00:59 — which is why APP_MANIFEST §3.35 and
+the audit both date Suite RB 2026-08-13. Not a contradiction; do not "fix" either one.)*
 
 **Trigger.** The last open runtime handoff from the tenancy audit was "live #7 broadcast-delivery
 smoke-test", carried as a user to-do since 2026-07-24 — 19 days. Two findings came out of doing it.
@@ -163,7 +547,10 @@ policy on either side.
 WebSocket layer itself or the project-wide "Allow public access" dashboard toggle (still open, still
 optional). See APP_MANIFEST §3.35.
 
-⚠️ **Unrelated, found while reading and NOT changed.** `TENANCY_AUDIT_2026-07-21.md:88` prescribes
+⚠️ **Unrelated, found while reading and NOT changed.** `TENANCY_AUDIT_2026-07-21.md` §2 #7's **Fix**
+bullet (was `:88`; now `:125` — the 2026-08-13 banner and status boxes shifted it, which is why this
+cites by anchor; the first pass at this sentence wrote `:122`, i.e. put a wrong number in the very
+clause explaining that numbers drift) prescribes
 **three** things for #7: declare the channel private, add the `realtime.messages` policy, *and* "stop
 putting display names in payloads — send only ids and let each client resolve names it is authorized
 to read." Only the first two shipped. [src/lib/broadcast.ts:83](src/lib/broadcast.ts:83) still sends
@@ -176,8 +563,25 @@ it; one is now fixed. **Still overclaiming:** this file's own
 `**✅ ALL CLOSED 2026-07-24:** PR4a=#41 merged (4bc5cfc) + migration applied` (left uncorrected on
 purpose — it is an accurate record of what that day's PR did, and rewriting history to hide a later
 discovery is the wrong repair). **Corrected 2026-08-12:** the assistant memory index outside the repo,
-whose `every code finding fixed in prod` now carries an inline caveat naming this exact clause. Owner's
-call whether to strip the names or amend the audit; **do not silently re-scope it as done.**
+whose `every code finding fixed in prod` now carries an inline caveat naming this exact clause.
+
+**✅ RESOLVED 2026-08-13 — the clause is DECLINED, not deferred.** 🪤 The paragraph above guesses at a
+motive — *"which is plausibly why it was dropped"* — for a decision that was **written down**:
+`PENDING_WORK_2026-07-23.md` §2.4 ("Reversed from the original PR4 spec — do NOT strip display names")
+recorded it with this same reasoning **in `4bc5cfc` itself** (`git log -S`), the commit that shipped
+clauses 1–2 — i.e. 2026-07-24, the date the `**✅ ALL CLOSED 2026-07-24:**` line quoted above already
+gets right (don't cite it by line number; this file shifts). The guess
+happened to be right, which is exactly why it went unchallenged; what was false was the implied
+"nobody recorded a disposition". **Grep the runbooks before inferring why something was dropped.**
+"~nil residual leak" was the right instinct but was not evidence; it is now **derived from the
+deployed policy text** (`profiles_select` + `can_read_profile`'s five arms + the broadcast join
+predicate) — a derivation, not a measurement, and stated as such. The join
+predicate makes every recipient someone `can_read_profile()` already clears for the anchor (**arm 2**,
+"queued in a session I can reach"), and the sole uncovered actor case is a co-organizer of the very
+session being acted on. Implementing it would have *regressed* the toast to "A co-organizer". Full
+derivation in **D1** of the STANDING TO-DO, APP_MANIFEST §3.36, and a new status box under §2 #7 of
+`TENANCY_AUDIT_2026-07-21.md` — so the audit is amended rather than silently re-scoped. **Re-open if
+the join predicate is ever widened beyond `session_access_level(...) IS NOT NULL`.**
 
 ---
 
@@ -1144,7 +1548,11 @@ Architecture + full rationale: **APP_MANIFEST §3.31**. **No migrations.** 23 mo
 - Two postgres_changes subscriptions on the same `sessions` row on the organizer board
   (`session-settings:{id}` + `session-row:{id}`). Justified — `session-settings:` carries other
   columns, and collapsing them would couple the watcher's lifetime to the board's.
-- `closeSession` returns `alreadyClosed` **before** the organizer check (pre-existing; leaks one bit).
+- ✅ **CLOSED 2026-08-13 — see audit #12(c)** (was: booked 2026-08-11 in `6592864` / PR #55, and left
+  unowned for two days). `closeSession` returns `alreadyClosed` **before** the organizer check
+  (pre-existing; leaks one bit). Kept in place rather than deleted: this line **is** the evidence
+  that the gate caught it and the follow-through dropped it, which is the whole lesson. Fixed on
+  branch `fix/bind-draft-swap-to-session`, pinned by `close-session.test.ts` Test 1b.
 - Cleanup UPDATE errors unchecked while the success message asserts counts (pre-existing). Cancel and
   complete are **not** behind the new `isSessionActive` gate, so an organizer can still repair
   leftover rows by hand — which is why this stayed out of scope.
@@ -2187,14 +2595,28 @@ success-empty while `getSession()` is null/expired; surface a "reconnecting" sta
 disable + server idempotency); (4) transitions polish (separate task — app has near-zero animation infra:
 framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion tokens).
 
-## 📋 STANDING TO-DO (as of 2026-08-12)
+## 📋 STANDING TO-DO (as of 2026-08-13)
 
-**`main` is `fe98587`, with work in flight.** PR #61 (Suite XC — the cross-court real-DB proof) and
-PR #62 (the cross-session ledger rebuild, **B**) are both open and unmerged. Migration
-`20260812100000` is applied to prod (stamp `20260812144342`); the queue is otherwise empty. The only
-thing left that cannot be done from here is **A**, which needs a live session, plus the optional
-dashboard toggle **D**. **B and C are done** — kept below because their consequences are worth
-carrying.
+**`main` is `c9f2337`; nothing is in flight.** PRs #61 (Suite XC — the cross-court real-DB proof),
+#62 (the cross-session ledger rebuild, **B**) and #63 (Suite RB — the broadcast refusal proof) are
+all merged; `gh pr list --state open` is empty. Migration `20260812100000` is applied to prod (stamp
+`20260812144342`); the migration queue is otherwise empty. **B and C are done**; **D is decided but
+not finished** — D2 schedules a mandatory prod DROP on **2026-09-12**, which is the only thing that
+closes an untracked-object drift. So three things remain: **A** (needs a live session), **D2's
+2026-09-12 expiry**, and **E** (the optional dashboard toggle *and* the 15 stale-branch cleanup).
+Everything else below is kept because its consequences are worth carrying.
+
+> **D1 grew a sequel the same day — `TENANCY_AUDIT_2026-07-21.md` is now fully dispositioned (APP_MANIFEST §3.37).** Chasing #7's missing status box exposed **ten stale headings** with the same defect — nine findings (#1–#8, #10) whose only heading read live, plus #11's older duplicate entry: fixed, in some cases weeks earlier, but still carrying an as-found severity that read as current (`🔴 CRITICAL · EXPLOITABLE TODAY` on #1 and `🔴 CRITICAL · UNAUTHENTICATED WRITE TODAY` on #10; `🟠 HIGH · EXPLOITABLE TODAY` on #2/#3, `🟠 HIGH (privacy) · EXPLOITABLE TODAY, unauthenticated` on #6, `🟠 HIGH · club boundary void TODAY, cross-club at 2nd club` on #5; `🟡 MEDIUM-LOW · EXPLOITABLE TODAY, within-club` on #11's duplicate, and plainer 🟡 MEDIUM variants on #4/#7/#8 — so the **five** carrying the literal `EXPLOITABLE TODAY` are #1, #2, #3, #6 and #11's duplicate, and #8's `mostly latent until 2nd club` names no date at all yet still read as unresolved. Only #9's `⚪ LOW · negligible` was harmless — and the authoritative #11 was already stamped). It had already cost something real — the draft-4 error below (reading #2's stale heading as proof its hole was open) came straight out of it — and the older duplicate of #11 still carried `🟠 STATUS 2026-08-10 — FIX WRITTEN, NOT YET APPLIED. STILL OPEN ON PRODUCTION.` three days after the migration was applied and verified, which is a booby trap for whoever reads that copy first.
+>
+> Fixed by: a dated **closing banner** in §1 marking the historical verdict paragraphs (2026-07-21 + the 07-23 update) as such + an 11-row disposition table; every heading given a disposition with the as-found severity preserved in parentheses — `✅ CLOSED (was …)` on the ten that were fixed, `⚖️ ACCEPTED — no fix possible (was ⚪ LOW · negligible)` on #9; **six** new status boxes, for **#1, #2, #3, #7, #8, #10** (which had none); §4's roadmap marked done item by item, with item 6 relabelled an accepted *decision*, not a shipped fix; the duplicate #11's whole body collapsed into `<details>` and labelled `⛔ SUPERSEDED`; and §1's two remaining present-tense paragraphs (the 07-23 "#10 changed the headline" update, the PIN-chain lead) additionally stamped historical in place — the banner **as first drafted** disclaimed only the 2026-07-21 verdict paragraph, and a scoped disclaimer is not a document-wide one; it now names both. **Four** paragraphs elsewhere in the file still asserted live exposures or live rankings and were corrected in place, not deleted: two inside long-closed #6 — `refresh_alltime_leaderboard`'s "anon can trigger REFRESH at will → fold into the PR5 sweep" (there is no PR5; #10's revoke set covered it) and its "second-most-impactful … live today" ranking — plus §3's `v_alltime_leaderboard_mat` anon-SELECT note (closed by `20260722165729`) and §4's urgency framing. The two leaderboard objects were re-measured `false` for anon **and** authenticated on 2026-08-13.
+>
+> **Every row was re-measured, not copied from the PR log.** Code: the third gate in all four `profile.ts` actions, `.eq("session_id_snapshot", …)`, both shims' participation gates, five `allMatchesInSession` call sites. Prod (read-only): the 3 leaderboard RPCs + matview `false` for anon **and** authenticated; all 16 mutating RPCs `false` for anon / `true` for `service_role`; `swap_teams_in_active_match` carrying both `SESSION_ID_REQUIRED` and `AND session_id = p_session_id`; 8 migration stamps present in the prescribed order.
+>
+> ⚠️ **Four of the false claims the pass caught in itself** — a selection, not a total: *every* review round found a fresh one inside the previous round's own corrections. Same failure mode as D1's four. The fourth was *inherited*, not authored — and then **over-corrected three times, which is the lesson**. Closing out the audit's non-code items, the pass copied the recorded leaked-password rationale (*"every `auth.users` row signs in via Google OAuth **and walk-in players are anonymous+PIN**, so no email+password credential exists for HIBP to check"* — quote it whole; an earlier draft dropped the walk-in clause, which is the clause carrying 202 of the 226 rows) into the audit banner, measured it, and stamped it **false**. The stamp was wrong: the measurement asked `encrypted_password IS NOT NULL`, which counts the **empty string** — the placeholder held by 190 of the 226 rows, 184 of them anonymous walk-ins — so walk-ins got counted as credential holders. `coalesce(encrypted_password,'') <> ''` returns **1 row in the entire database** (the other 225 hold NULL or `''`): the Playwright E2E organizer bot, which is also the sole `email` identity beside 21 `google`. The replacement claim was worse still (*"walk-in passwords are machine-generated"*): walk-ins have **no password at all** (`auth.ts:187` calls `signInAnonymously`) and the 4-digit PIN they do hold is **user-chosen** (`login-form.tsx:451`, `auth.ts:43`) — `generatePin()`'s single call site is OAuth provisioning. Exactly one word of the **second** clause needed correcting: *no* email+password credential exists → exactly one does, and it is a test fixture. (The first clause is loose — 21 `google` identities, 1 `email`, 202 anonymous, and the remaining **2 non-anonymous** rows with no identity row — but "OAuth or anonymous+PIN" is what it means. 🪤 **204** rows have no `auth.identities` row, not 2: anonymous sign-in creates none. A draft of this parenthetical said "2 have no identity row at all" — off by 202, inside the paragraph warning against unmeasured counts.) No human user of this app has a password, so the WON'T DO stands on **both** of its reasons. 🪤 `IS NOT NULL` is not a has-a-credential test. The three authored ones: (1) *"zero volatile SECDEF functions hold anon EXECUTE"* is **false**; `handle_new_user` and `handle_new_session` are volatile and anon-executable. The invariant that actually holds — and the one the regression test pins — is **no volatile _non-trigger_ SECDEF function**, because PostgREST will not dispatch a `RETURNS trigger` function. (2) *"#3's `crypto.getRandomValues` clause only partly shipped"* is **false**; `randInt` (`sessions.ts:49-53`) *is* `crypto.getRandomValues`. (3) The sharpest, because it is this very defect eating the audit of it: #1's status box called `profile.ts`'s header *"so **both** gates can be verified"* a stale miscount, on the grounds that there are three gates. **False** — `sessionId` is consumed by exactly two of them (gate 1 takes no session), and `git show 607df4e^` shows the line read *"so **the organizer gate** can be verified"*, singular, until `607df4e` widened it to "both" **at the very commit that added gate 3**. The comment had tracked the count correctly all along; before calling a comment stale, reconstruct what it counted and when. All three were written by reasoning from a plausible shape instead of opening the line.
+>
+> **Exactly one finding is closed as a decision, not a fix**, and is labelled that way rather than folded into the ✅ count: **#9**, accepted (realtime bypasses RLS on DELETE by design — no policy can fix it). 🪤 **A declined *clause* is not the same category** — **two** findings are `✅ FIXED · clause 3 declined`, on both the heading and the §1 table row: **#3** (the passcode is the *sole* credential a delegated co-organizer holds, so there is no club context to scope the lookup to; the uniform `INVALID` reply + lockout covers what scoping would have) and **#7** (ids-only buys zero incremental disclosure — every recipient already reads those names via `can_read_profile` arm 2 — while anonymising the co-organizer toast; §3.36). An earlier draft of this line said "two findings closed as decisions" and named #9 + #3, which double-miscounts: #3 is ✅ FIXED, and #7 has the identical shape and was omitted.
+>
+> **Nothing here changes behaviour and nothing new is open.** The audit spawned three non-finding items and exactly one is still open: **E**, the optional "Allow public access" toggle. The other two are **C** — the live broadcast-delivery smoke test, ✅ done 2026-08-12 — and the leaked-password toggle, ❌ WON'T DO 2026-08-04 (item 2 of the historical 07-29 list). All three unchanged by this pass. *(Not **A**: that is the cross-court live-session smoke test, a different piece of work. An earlier draft of this line collapsed C into A because `A` says C "folds into the same night" — a paraphrase where a re-read was needed.)*
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
@@ -2254,20 +2676,171 @@ it in `beforeEach` and once in `afterAll`, and no real session or member is touc
   raised for *either*, RB-8 asserts the grant is present **and** that the error names row-level
   security. Details in the top-of-file §"THE BROADCAST POLICY…".
 
-**D. Optional, unscheduled:** project-wide Realtime "Allow public access" OFF (needs every
-`postgres_changes` channel private first); and **9 stale remote branches** whose PRs are all merged
-(`chore/pending-queue-2026-08-10`, `claude/pull-latest-main-EpwqL`, `docs/close-audit-11-applied`,
-`fix/audit-organizer-remove`, `fix/clear-cancel-audit-trail`, `fix/matchmaking-balanced-teams`,
-`fix/respect-rotation-lock`, `fix/ui-transitions-and-refresh`, `fix/vapid-key-urlsafe`) — pure
-cleanup, no unshipped content in any of them.
+**D. The two open judgement calls — ✅ BOTH RESOLVED 2026-08-13, delegated by the owner.** (D1 was
+*already* decided on 2026-07-24 and only needed recording; D2 is a genuinely new decision.)
+
+  **D1 — audit #7's never-shipped third clause ("strip display names from payloads"): DECLINED.**
+  ⚠️ **It was already declined in the very PR that shipped clauses 1–2** (`4bc5cfc`, PR #41, merged
+  2026-07-24) — `PENDING_WORK_2026-07-23.md` §2.4, "Reversed from the
+  original PR4 spec — do NOT strip display names", with this same reasoning. (The doc's *filename* and
+  the migration `20260723100000` are both dated 07-23 for authoring; the merge and the prod stamp
+  `20260724050234` are 07-24. Elsewhere the repo rounds to 07-23 after the filename.) The failure was never the
+  decision; it was that `TENANCY_AUDIT_2026-07-21.md` was never amended, so the only durable trace was
+  a prescribed remedy with no disposition. Everything below is the *re-derivation* that confirms it and
+  the amendment that records it. Re-derived against the *deployed* predicates, not from the audit text. The join is gated on
+  `session_access_level(sid) IS NOT NULL`, so every recipient is the session creator, a
+  `session_organizers` row, a club owner/admin, or an **active** `club_members` row.
+  `profiles_select` is `id = auth.uid() OR can_read_profile(id)`, and `can_read_profile` **arm 2** is
+  *"target is queued in a session I can reach"* — which covers `cap_saturation.anchorPlayerName`
+  outright, because the anchor is `pool[0]` off `fetchActivePool` → `v_queue_with_wait_time`, i.e. a
+  queued player of that same session. Incremental disclosure: **zero**, and it does not decay —
+  checkout **UPDATEs** the row to `status='left'` (`src/app/actions/queue.ts:166`;
+  `remove_player_from_queue_organizer` does the same) and arm 2 has no status filter. ⚠️ Migration
+  `20260723200000`'s own header says *"`queue_entries` rows are DELETEd on checkout"* — **false**:
+  `queue_delete_own`/`queue_delete_organizer` are DELETE *policies*, and no application code path
+  deletes — the only DELETE **against `queue_entries`** in `src/` is dev-only `clearSessionData`
+  (`src/` holds **nine** other `.delete()` sites against other tables — one of them `match_players`
+  inside `checkoutPlayer` itself at `queue.ts:207`, and two against `push_subscriptions` in
+  `src/lib/notifications/push-client.ts:139` and `push-server.ts:209`, which is where an earlier
+  count of "seven" went wrong: it swept `src/app/actions/` and never reached `src/lib/`); the only
+  other **non-test** one is the hand-run
+  `supabase/data-fixes/20260608_duplicate_name_data_fix.sql` — and it **preserves** the no-decay
+  property rather than breaking it: it first `UPDATE`s the loser's `queue_entries` to the winner's
+  id for every session the winner is *not* already in, and only then deletes the remainder
+  (`:113-117`), which are precisely the rows the winner already duplicates. The
+  `(session_id, player_id)` uniqueness is what forces that second step, so no session loses its
+  record of the merged human — it just changes which id carries it. The profile row goes too
+  (`:139`), but by then nothing points at it. 🪤 One removal path is invisible to every count above,
+  because the counts were built by grepping `.delete()`: `scripts/reset_database.sql:11-22`
+  `TRUNCATE`s `queue_entries` along with nine other tables `CASCADE`. It is a hand-run total wipe,
+  not an application path, so it does not falsify the no-decay claim — but it does bound how much
+  the claim is entitled to say. **The search method silently scoped the assertion**: a `.delete()`
+  grep cannot see `TRUNCATE`, a raw SQL `DELETE FROM`, or an RPC body, and the sentence was phrased
+  as a census. (`tests/` deletes freely — **thirteen**
+  sites across six files — including the arm-3 test named below, which is how it manufactures its
+  state.) **Four sites had imported the false claim**, three of them committed (the memory dir is not
+  a git repo): `APP_MANIFEST.md`'s arm-3 row, this file's own arms list below, the
+  `profiles-select-five-arms` memory, and `tests/integration/rls-edge-cases.test.ts` (its arm-3 test
+  title *and* its setup comment — the test manufactured the state with a service-role DELETE and
+  passed, so the false claim carried a green check). All four are corrected as of 2026-08-13; they
+  were found only because a review round grepped the **whole corpus** for the claim instead of
+  re-reading the passage being edited.
+  🪤 An earlier draft of this paragraph said all four "went uncaught for **three weeks**" — one
+  duration, asserted over a set whose members have different ages, and measured against nothing.
+  `git log -S` dates them: the test comment entered in `ba49fa2` on **2026-07-24**, the *same commit
+  as the migration whose header it copied*, and `APP_MANIFEST.md`'s row only on **2026-07-29**
+  (`90766f7`). That is **20 days** and **15 days** to 2026-08-13 — neither is three weeks, and no
+  single figure covers the set. The two uncommitted sites cannot be dated at all. The habit being
+  corrected here is the one that produced the error: **a tidy number attached to a set is a claim
+  about every member of it**, and "about three weeks" felt true because the oldest member was
+  close to it. Do not re-import it; the applied migration file is deliberately left unedited.
+  The two `actorName`s are
+  covered by arms 4/5 (`session_organizers`, `sessions.created_by`), arm 1 (**shares any active
+  club** with the target — a `club_members` self-join on `me.club_id = them.club_id`, *not* a test
+  against this session's club), **arm 3**
+  (played a match in a reachable session) **or arm 2** (queued in one — no status filter, so simply
+  being in the session's own queue suffices). One shape escapes all five, and it is a property of the
+  **recipient**: anyone who can reach the session but shares **no active club at all** with the actor
+  has no arm 1, so a club owner/admin actor with no `session_organizers` row, no reachable match, no
+  reachable queue entry **and no session of their own creation that the recipient can reach** (arm 5)
+  is unresolvable to them. (Holding no row in *this* session's club is the usual
+  route there, not a sufficient condition — an overlap in any other club restores arm 1.) Today the
+  class that lands there in practice is the **delegated**
+  (QR-invite) organizer: a non-member session *creator* would also qualify, but since audit #2 was
+  fixed `createSession` requires an explicit `clubId` + `isClubAdmin` and `getClubRole` filters
+  `is_active` (`src/lib/clubs.ts:161`), so creators hold an active membership *at creation
+  time* and arm 1 covers them. Membership is revocable afterwards (`leaveClub` / `removeMember` →
+  `club_member_deactivate`), so a post-fix creator can lose arm 1 too — and then they **join the
+  delegated organizer in the uncovered class**. 🪤 **Arm 5 does not rescue them.** `profiles_select` is
+  `id = auth.uid() OR can_read_profile(id)`, so `p_profile_id` is *the row being read* — the **actor**.
+  Every arm is a predicate on the **actor**, qualified only by what the **recipient** can reach; arm 5
+  fires when the *actor* created a reachable session, never when the recipient did. The conclusion
+  survives: either way the recipient is a co-organizer of the very
+  session being acted on, which is the field's whole purpose.
+  ⚠️ This enumeration has now been corrected **seven times** by review — draft 1 omitted arm 3, draft 2
+  omitted arm 2, draft 3 stated the escape over the *actor* when it is a property of the *recipient*,
+  draft 4 justified the recipient class from audit #2's finding text without checking that #2's
+  code was already fixed, draft 5 read arm 1 as "no `club_members` row in *this* session's club" when
+  the predicate is a self-join on **any** shared active club, draft 6 claimed only *pre-fix legacy*
+  sessions could have a non-member creator (membership is revocable at any time via `leaveClub` /
+  `removeMember` → `club_member_deactivate`), and draft 7 — draft 6's own replacement justification —
+  claimed **arm 5** covers such a creator, reading a directional predicate backwards: `p_profile_id` is
+  the row *being read*, so arm 5 is a fact about the **actor**, and an ex-member creator sitting on the
+  **recipient** side is simply uncovered. The same draft dropped arm 5 from the escape-shape split
+  while misusing it here, making that the **third** omitted-arm defect in one paragraph.
+  When the argument *is* a case split over five arms, skipping one voids it,
+  "it errs pessimistic" is not a defence, and **an audit finding with no status box is not evidence
+  that the hole is open** — read the code.
+  ⚠️ Implementing it would have **regressed** the feature: `use-organizer-session.ts:300` renders
+  `payload.actorName ?? "A co-organizer"`, so ids-only anonymises every toast unless a lookup is
+  wired into a path that `src/lib/broadcast.ts`'s own header records as having **no** polling
+  fallback (only the two toggle events have one) — and that lookup returns nothing in precisely the
+  one uncovered case. The clause was written while the topic was **public**; clauses 1–2 deleted the
+  population it protected against. Recorded in APP_MANIFEST **§3.36** and the status box under §2 #7
+  of `TENANCY_AUDIT_2026-07-21.md`. **Re-open if the join predicate is ever widened.**
+
+  **D2 — the two `*_prerebuild_20260812` backup tables: KEPT, and secured.** Measured on prod first:
+  `relacl` is `postgres` + `service_role` only, and `has_table_privilege('anon', …, 'select')` was
+  already false, so PostgREST could not reach them. They were not a leak. ⚠️ That is an end-state
+  measurement and nothing more — `relacl` cannot distinguish *never granted* from *granted then
+  revoked*, so do not read it as evidence about what `ALTER DEFAULT PRIVILEGES` does. (The
+  §CROSS-SESSION STATS block in this file (search "hold the pre-rebuild rows") and `APP_MANIFEST.md:871` — not §B — both describe
+  these tables as "revoked from `anon`/`authenticated`", which is consistent with either history.)
+  RLS was nevertheless **enabled** on both
+  (zero policies = fail-closed) so a future blanket `grant … on all tables in schema public` cannot
+  expose them by accident — the exact class of surprise this repo has already hit with column grants.
+  `postgres` and `service_role` both have `rolbypassrls = true` (verified), so the rollback path is
+  untouched; a `service_role` read of both tables was re-run after the change and still returns rows.
+  They are the only evidence trail for the three disclosed badge revocations in **B**, so they stay
+  until **2026-09-12**, then:
+
+  ```sql
+  drop table if exists public.player_rivalries_prerebuild_20260812;
+  drop table if exists public.player_partnerships_prerebuild_20260812;
+  ```
+
+  ⚠️ Both are **untracked DB objects** — no migration file exists for them or for the RLS enable, so
+  they will not appear in any `supabase db diff` against the repo. That is deliberate for a
+  one-month snapshot (2026-08-12 → 2026-09-12), but it is drift; the expiry above is the only thing
+  that closes it.
+
+**E. Optional, unscheduled:** project-wide Realtime "Allow public access" OFF (needs every
+`postgres_changes` channel private first); and **15 stale remote branches** whose PRs are all merged
+(origin has 17 heads; the only two to keep are `main` and `backup/main-pre-cleanup-20260713`, a
+deliberate safety branch — **do not delete it**). Pure cleanup, no unshipped content in any of them.
+
+  🪤 **`git branch -r --merged origin/main` finds only 6 of the 15**, and a first pass through this
+  list was wrong because of it. `--merged` asks "is this tip an ancestor of main?", which is only true
+  for **merge**-merged branches; a **squash**-merged branch keeps a tip main has never contained, so it
+  reports as un-merged forever. The 9 that `--merged` hides are exactly the 9 this item used to list —
+  they were never pruned. Use `gh pr list --state all` (or `--no-merged` plus a PR-state check) to
+  classify, never `--merged` alone.
+
+  - Reported by `--merged` (6): `docs/stamp-p1-p6-shipped`, `feat/engine-improvements`,
+    `fix/hide-e2e-sandbox-session`, `fix/migration-replay-publication`,
+    `fix/tenancy-pr2-lock-leaderboard-reads`, `security/throttle-reconnect-pin`.
+  - Squash-merged, invisible to `--merged` (9): `chore/pending-queue-2026-08-10`,
+    `claude/pull-latest-main-EpwqL`, `docs/close-audit-11-applied`, `fix/audit-organizer-remove`,
+    `fix/clear-cancel-audit-trail`, `fix/matchmaking-balanced-teams`, `fix/respect-rotation-lock`,
+    `fix/ui-transitions-and-refresh`, `fix/vapid-key-urlsafe`.
 
 ### Historical (2026-07-29 list, kept for the record)
 
 1. ~~Merge PR #45~~ ✅ MERGED 2026-07-29 (`52e30b1`) — migration-file drift closed; prod deploy READY.
 2. ~~USER: enable leaked-password protection~~ ❌ **CLOSED — WON'T DO (user decision, reconfirmed 2026-08-04).**
-   The toggle is **Pro-plan-gated** and the org is on Free, so it is not actionable. It would also protect
-   nothing real: every `auth.users` row signs in via Google OAuth and walk-in players are anonymous+PIN, so no
-   email+password credential exists for HIBP to check. The advisor WARN `auth_leaked_password_protection` will
+   The toggle is **Pro-plan-gated** and the org is on Free, so it is not actionable. The secondary rationale
+   this entry carries — *"every `auth.users` row signs in via Google OAuth and walk-in players are
+   anonymous+PIN, so no email+password credential exists for HIBP to check"* — is **substantially true, and
+   was finally measured on 2026-08-13**. One word is wrong: *no* credential exists → **exactly one** does.
+   `auth.identities` holds **1 `email` identity** alongside 21 `google`, and it is the Playwright E2E
+   organizer bot (`…@playwright.local`, a 60-char `$2a$` bcrypt) — the only row in `auth.users` with a real
+   hash. No human user of this app has a password. ⚠️ Two corrections a first draft of this note got wrong
+   and a second review caught: (a) it claimed **184** anonymous rows carry a password hash — they carry
+   `encrypted_password = ''`, an empty-string placeholder that 190 of the 226 rows hold, so the count came
+   from asking `IS NOT NULL` instead of `coalesce(encrypted_password,'') <> ''`; (b) it claimed walk-in passwords are
+   machine-generated — walk-ins have **no password** (`src/app/actions/auth.ts:187`) and the 4-digit PIN they
+   do hold is **user-chosen** (`src/components/login-form.tsx:451`, `auth.ts:43`); `generatePin()`'s single
+   call site is `src/lib/oauth-provision.ts:56`, the OAuth path. The advisor WARN `auth_leaked_password_protection` will
    keep appearing — **accepted noise**. Re-open only if the app adds password sign-up _or_ the org upgrades to Pro.
 3. ~~USER: live #7 smoke-test~~ ✅ **DONE 2026-08-12 — and it never needed to be a user handoff.**
    `tests/e2e/scenario-r-resilience.spec.ts` already drives two real organizer contexts against
@@ -2349,7 +2922,7 @@ STABLE SECURITY DEFINER union of five arms, ordered so the common one short-circ
 
 1. shared **active** club (`club_members` × `club_members` on `club_id`)
 2. target is **queued** in a session I can reach — walk-ins have a `queue_entries` row and no membership
-3. target **played a match** in a session I can reach — checkout DELETEs the queue row, `match_players` survives
+3. target **played a match** in a session I can reach — ⚠️ this line used to say *checkout DELETEs the queue row*; it does not, it **UPDATEs** to `status='left'` (`queue.ts:166`). Since arm 2 has **no status filter**, arm 2 already covers players who left, and on prod 2026-08-13, of **638** (player, session) pairs with a completed match, **0** lacked a `queue_entries` row *in that same session* (192 players; the per-session form is the right test, since the arms are per-session) — arm 3 adds nothing today. Keep it as **fail-safe depth only** — ⚠️ a draft here named the hand-run data fix and dev-only `clearSessionData` as paths that produce the arm-3-only state; **neither does.** `clearSessionData` deletes `match_players`/`matches` *before* `queue_entries` (`dev.ts:465-477`), so arm 3 dies first; the data fix reassigns match rows to the winner **and moves the loser's queue row to the winner as well** (guarded `NOT EXISTS`, `20260608:113-116`) before deleting the remainder and the loser's profile — so the winner holds a queue row wherever they gained match rows. No application or hand-run path in this repo reaches the state — only the integration test, which manufactures it with a service-role DELETE. Arm 3's real case: it is the one arm that would survive a queue row being removed on its own
 4. target **organizes** a session I can reach (`session_organizers`) — QR-delegated organizers have no membership
 5. target **created** a session I can reach (`sessions.created_by`)
 
@@ -2614,7 +3187,9 @@ optional) · the `p_session_id` NULL-rejecting follow-up.
   is also why it's harmless; the only fix touches prod realtime infra + 5 hooks for negligible benefit — fix
   design banked in the `tenancy-audit-findings` memory). Remaining = **1** dashboard handoff: the optional
   project-wide "Allow public access" OFF. _(Was 3. The leaked-password toggle was closed as WON'T DO on
-  2026-08-04: Pro-plan-gated on a Free org, and there are no email+password credentials for HIBP to check. The
+  2026-08-04: Pro-plan-gated on a Free org, and nothing real for it to protect — the "no email+password
+  credentials for HIBP to check" half was finally measured on 2026-08-13 and holds but for one word: exactly
+  **one** credential exists, the E2E organizer bot; no human user has a password. See the STANDING TO-DO entry. The
   live #7 delivery smoke-test was closed on **2026-08-12** — it was never actually a user handoff: the
   resilience E2E suite already drives two organizer contexts against prod, and `[R-1] [R-2] [R-5]` ran 4/4
   green. Its missing half — proof the policy **refuses** — is now Suite RB, §3.35. See the STANDING TO-DO at
@@ -2626,6 +3201,8 @@ optional) · the `p_session_id` NULL-rejecting follow-up.
 
 Closes finding **#7**. **Held unmerged** — see "Deploy prerequisites" below; the migration must be applied by
 hand _before_ the code deploys, and there is one prod behaviour to smoke-test that cannot be reproduced locally.
+*(Historical: it was merged the next day as `4bc5cfc`. This block is the state at the time of writing and is
+left uncorrected on purpose — see the ✅ ALL CLOSED line further down for the outcome.)*
 
 **The hole, both halves.** `session-events:{sessionId}` was a **public** Broadcast topic, and public topics
 skip authorization entirely — Realtime never consults `realtime.messages` for them. With the publishable anon

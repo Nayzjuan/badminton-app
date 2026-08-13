@@ -27,6 +27,16 @@
 //     M-11 auto + auto → both flip to 'modified'
 //     M-12 manual + auto → manual STAYS, auto flips to 'modified'
 //
+//   swapMatchPlayers tenancy
+//     M-14  a PENDING match from another session → rejected by guard 3b,
+//           reported as MATCH_STARTED (no existence oracle). Audit #12.
+//     M-14b a NON-pending match from another session → same wording. Pins
+//           guard ORDER: 3b (session) must outrank 3c (pending). Asserts on
+//           `message`, because errorCode is MATCH_STARTED either way.
+//     M-14c a NON-organizer gets one reply for a real match id and for a
+//           random one. Pins the other half of the same reordering: guard 2
+//           (organizer) must outrank guard 3 (exists).
+//
 // Isolation: Layer B — truncateTracked() in afterEach.
 // ============================================================
 
@@ -528,6 +538,259 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
       expect(await getMatchClassification(matchAuto.id)).toBe("auto_modified");
     } finally {
       restore();
+    }
+  });
+
+  // ── M-14: cross-session swap is rejected ─────────────────
+  // Guard 3b (audit #12). swapMatchPlayers authorizes with
+  // isSessionOrganizer(user.id, sessionId) against the CALLER-SUPPLIED
+  // sessionId and then writes through the service-role client, so RLS
+  // is not a backstop. Before guard 3b an organizer of session A could
+  // pass a pending match id from session B and rewrite a roster in
+  // another club's session. This is the draft-path twin of the defect
+  // 20260723000001 bound the four live-swap RPCs against.
+  //
+  // ⚠ The rejection reports MATCH_STARTED, which guard 3 also returns for
+  // a missing or already-started match. So this test asserts the
+  // precondition explicitly: matchB must exist AND be pending at call
+  // time, leaving guard 3b as the only thing that can produce the code.
+  // Without that assert the test would pass just as happily against a
+  // match that was never created.
+  it("M-14: swapMatchPlayers rejects a match belonging to another session", async () => {
+    const a = await seedSessionWithPlayers(4);
+    const b = await seedSessionWithPlayers(4);
+
+    const matchA = await makeMatchViaRpc({
+      sessionId: a.session.id,
+      teamA: [a.players[0].id, a.players[1].id],
+      teamB: [a.players[2].id, a.players[3].id],
+      isPublished: true,
+    });
+    const matchB = await makeMatchViaRpc({
+      sessionId: b.session.id,
+      teamA: [b.players[0].id, b.players[1].id],
+      teamB: [b.players[2].id, b.players[3].id],
+      isPublished: true,
+    });
+
+    // Precondition: the victim match is real and still swappable, so the
+    // MATCH_STARTED below can only have come from guard 3b.
+    const { data: preB } = await serviceClient()
+      .from("matches")
+      .select("id, status, session_id")
+      .eq("id", matchB.id)
+      .single();
+    expect(preB?.status).toBe("pending");
+    expect(preB?.session_id).toBe(b.session.id);
+
+    // a.organizer organizes session A only, and passes session A's id —
+    // so guard 2 (organizer) says yes. Only guard 3b stops this.
+    const restore = mockAuthAs(a.organizer.id);
+    try {
+      const result = await swapMatchPlayers(
+        matchA.id,
+        a.players[0].id,
+        matchB.id,
+        b.players[0].id,
+        a.session.id
+      );
+
+      expect(result.success).toBe(false);
+      // MATCH_STARTED, not a distinct cross-session code: "belongs to another
+      // session" is deliberately indistinguishable from "does not exist", so
+      // this action is not an existence oracle over match ids.
+      expect(result.errorCode).toBe("MATCH_STARTED");
+
+      // Neither roster moved.
+      const { data: mpA } = await serviceClient()
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", matchA.id);
+      const { data: mpB } = await serviceClient()
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", matchB.id);
+      expect((mpA ?? []).map((r) => r.player_id).sort()).toEqual(a.players.map((p) => p.id).sort());
+      expect((mpB ?? []).map((r) => r.player_id).sort()).toEqual(b.players.map((p) => p.id).sort());
+
+      // And the victim's match was not even reclassified — guard 3b
+      // returns before the RPC, so no modification_count bump.
+      expect(await getMatchClassification(matchB.id)).toBe("manual_clean");
+    } finally {
+      restore();
+    }
+  });
+
+  // ── M-14b: guard 3b must outrank guard 3c ────────────────
+  // M-14 only covers a cross-session match that is still PENDING, and the
+  // first version of the fix ran the status check before the session check.
+  // For a cross-session match that is NOT pending, that ordering returned
+  // "A match has already started …" while a nonexistent id returned "One or
+  // both matches could not be found." — two distinguishable replies, i.e.
+  // the existence oracle guard 3b exists to prevent, reintroduced one guard
+  // later. errorCode is MATCH_STARTED in every branch this test can reach
+  // (swapMatchPlayers does also return PLAYER_NOT_IN_MATCH, at :420 and :448 of
+  // swap-player.ts, but neither is reachable from a foreign match id — guard 3b
+  // rejects first). So the code alone cannot detect the regression: this test
+  // asserts on `message`.
+  // 🪤 Both cites are the `return {` line, not the `if` above it and not the
+  // `errorCode:` line inside it. They have now been wrong THREE times, always
+  // the same way: :383/:411 (the `if` lines, and 8 low besides), then :391/:419,
+  // then :406/:434 — each read before a further round of comment edits to
+  // swap-player.ts pushed both returns down again. A cite into another file is
+  // only as fresh as that file's LAST edit, not your last read of it. Re-derive
+  // after it; see the same 🪤 in swap-player.ts:84.
+  it("M-14b: a NON-pending match from another session gets the not-found wording, not 'already started'", async () => {
+    // Session A needs eight players: create_match_with_players refuses to seat
+    // anyone already committed to a pending match, so the positive control's
+    // second match cannot reuse matchA's four.
+    const a = await seedSessionWithPlayers(8);
+    const b = await seedSessionWithPlayers(4);
+
+    const matchA = await makeMatchViaRpc({
+      sessionId: a.session.id,
+      teamA: [a.players[0].id, a.players[1].id],
+      teamB: [a.players[2].id, a.players[3].id],
+      isPublished: true,
+    });
+    const matchB = await makeMatchViaRpc({
+      sessionId: b.session.id,
+      teamA: [b.players[0].id, b.players[1].id],
+      teamB: [b.players[2].id, b.players[3].id],
+      isPublished: true,
+    });
+
+    // The distinguishing condition: session B's match is no longer pending.
+    await serviceClient().from("matches").update({ status: "in_progress" }).eq("id", matchB.id);
+    const { data: preB } = await serviceClient()
+      .from("matches")
+      .select("status, session_id")
+      .eq("id", matchB.id)
+      .single();
+    expect(preB?.status).toBe("in_progress");
+    expect(preB?.session_id).toBe(b.session.id);
+
+    const restore = mockAuthAs(a.organizer.id);
+    try {
+      const cross = await swapMatchPlayers(
+        matchA.id,
+        a.players[0].id,
+        matchB.id,
+        b.players[0].id,
+        a.session.id
+      );
+
+      expect(cross.success).toBe(false);
+      expect(cross.errorCode).toBe("MATCH_STARTED");
+      expect(cross.message).toBe("One or both matches could not be found.");
+
+      // Positive control: the two wordings really are different, so the
+      // assertion above is not just matching the only string the action
+      // ever returns. Same organizer, same non-pending condition — but the
+      // match is in THEIR session, so guard 3c is allowed to be specific.
+      const ownStarted = await makeMatchViaRpc({
+        sessionId: a.session.id,
+        teamA: [a.players[4].id, a.players[5].id],
+        teamB: [a.players[6].id, a.players[7].id],
+        isPublished: true,
+      });
+      await serviceClient()
+        .from("matches")
+        .update({ status: "in_progress" })
+        .eq("id", ownStarted.id);
+
+      const sameSession = await swapMatchPlayers(
+        matchA.id,
+        a.players[0].id,
+        ownStarted.id,
+        a.players[4].id,
+        a.session.id
+      );
+
+      expect(sameSession.success).toBe(false);
+      expect(sameSession.errorCode).toBe("MATCH_STARTED");
+      expect(sameSession.message).toBe("A match has already started — the swap was cancelled.");
+    } finally {
+      restore();
+    }
+  });
+
+  // ── M-14c: guard 2 must outrank guard 3 ──────────────────
+  // M-14/M-14b both pin orderings *among* the match guards, and both are run
+  // by an organizer. Neither covers the other half of the same reordering:
+  // guard 2 (organizer) was originally BELOW guard 3 (exists), which let a
+  // caller who organizes nothing at all learn whether a match id exists — the
+  // same oracle, one guard earlier, and reachable by any authenticated user
+  // rather than only by an organizer of something.
+  //
+  // The pin: for a NON-organizer, a nonexistent id and a real id must be
+  // indistinguishable. If guard 3 ever floats back above guard 2, the random
+  // UUID keeps answering "Not authorized." while the real started match starts
+  // answering "A match has already started …" — and this test fails on the
+  // second assertion. Asserting on `message` is deliberate for the same reason
+  // as M-14b: the two branches differ in wording before they differ in code.
+  it("M-14c: a non-organizer cannot tell a real match id from a random one", async () => {
+    const a = await seedSessionWithPlayers(4);
+    const outsider = await makeProfile({ faker });
+
+    const realMatch = await makeMatchViaRpc({
+      sessionId: a.session.id,
+      teamA: [a.players[0].id, a.players[1].id],
+      teamB: [a.players[2].id, a.players[3].id],
+      isPublished: true,
+    });
+    // Started, so guard 3c would have something specific to say if it were
+    // reachable. A pending match would be rejected by 3b/3c wording that the
+    // organizer path already covers.
+    await serviceClient().from("matches").update({ status: "in_progress" }).eq("id", realMatch.id);
+
+    const nonexistent = faker.string.uuid();
+
+    const restore = mockAuthAs(outsider.id);
+    try {
+      const withReal = await swapMatchPlayers(
+        realMatch.id,
+        a.players[0].id,
+        realMatch.id,
+        a.players[1].id,
+        a.session.id
+      );
+      const withRandom = await swapMatchPlayers(
+        nonexistent,
+        a.players[0].id,
+        nonexistent,
+        a.players[1].id,
+        a.session.id
+      );
+
+      expect(withReal.success).toBe(false);
+      expect(withRandom.success).toBe(false);
+      expect(withReal.message).toBe("Not authorized. Organizer access required.");
+      // The actual pin — same reply for both, so nothing leaks.
+      expect(withRandom.message).toBe(withReal.message);
+      expect(withRandom.errorCode).toBe(withReal.errorCode);
+
+      // Positive control: the organizer of that same session DOES get past
+      // guard 2 and reaches a match-specific answer. Without this, the test
+      // would still pass if swapMatchPlayers rejected literally everyone.
+      restore();
+      const asOrganizer = mockAuthAs(a.organizer.id);
+      try {
+        const organizerReply = await swapMatchPlayers(
+          realMatch.id,
+          a.players[0].id,
+          realMatch.id,
+          a.players[1].id,
+          a.session.id
+        );
+        expect(organizerReply.success).toBe(false);
+        expect(organizerReply.message).not.toBe("Not authorized. Organizer access required.");
+        expect(organizerReply.errorCode).toBe("MATCH_STARTED");
+      } finally {
+        asOrganizer();
+      }
+    } finally {
+      clearMockAuth();
     }
   });
 

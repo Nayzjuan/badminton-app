@@ -9,6 +9,8 @@
 // Key invariants tested:
 //   • Idempotency: second close returns "already closed" with no side effects
 //   • Authorization: non-organizer rejected; co-organizer succeeds
+//   • Authorization ORDER: the denial is not a session-UUID existence or
+//     status oracle (Test 1b) — the gate must precede the session fetch
 //   • Cross-session accumulation: sessions_faced increments per session
 //   • Wrapped pipeline: wrappedReady = true when RPC succeeds
 //   • Session state: is_active=false, pending matches cancelled, queue drained
@@ -109,6 +111,90 @@ describe("closeSession — Suite B", () => {
       .from("sessions")
       .select("is_active")
       .eq("id", session.id)
+      .single();
+    expect(s?.is_active).toBe(true);
+  });
+
+  // ── Test 1b: the denial must not be an oracle ─────────────
+  // Guard ORDER, not guard existence. Test 1 passes with the organizer gate
+  // in either position, because it only ever probes an existing ACTIVE
+  // session — the one input for which both orderings answer identically.
+  // With the gate below the session fetch, an authenticated caller who
+  // organizes nothing could tell three cases apart from the reply alone:
+  // "Session not found." / "Session is already closed." / "Not authorized."
+  // — a session-UUID existence-and-status oracle across tenants.
+  //
+  // The rule is already written down at sessions.ts (see the note above
+  // applyDraftCapOverride's Promise.all): isSessionOrganizer returns false
+  // for both "not yours" and "does not exist", so a distinct message is what
+  // creates the leak. Asserts on `message` — every branch here would share
+  // an errorCode even if one existed.
+
+  it("Test 1b: a non-organizer cannot tell an active, a closed, and a nonexistent session apart", async () => {
+    const active = await seedActiveSession();
+    const closed = await seedActiveSession();
+    const stranger = await makeProfile({ faker });
+    const nonexistent = faker.string.uuid();
+
+    // Close the second one as its own organizer, so it is genuinely closed.
+    const asOwner = mockAuthAs(closed.organizer.id);
+    try {
+      const closeIt = await closeSession(closed.session.id);
+      expect(closeIt.success).toBe(true);
+    } finally {
+      asOwner();
+    }
+
+    const restore = mockAuthAs(stranger.id);
+    try {
+      const onActive = await closeSession(active.session.id);
+      const onClosed = await closeSession(closed.session.id);
+      const onMissing = await closeSession(nonexistent);
+
+      expect(onActive.message).toBe("Not authorized. Organizer access required.");
+      expect(onClosed.message).toBe(onActive.message);
+      expect(onMissing.message).toBe(onActive.message);
+      // `alreadyClosed` is a second channel a message-only pin would miss: the
+      // UI treats it as a success, so leaking it would both disclose state and
+      // tell a stranger their close "worked".
+      expect(onActive.alreadyClosed).toBeUndefined();
+      expect(onClosed.alreadyClosed).toBeUndefined();
+      expect(onMissing.alreadyClosed).toBeUndefined();
+      expect([onActive.success, onClosed.success, onMissing.success]).toEqual([
+        false,
+        false,
+        false,
+      ]);
+    } finally {
+      restore();
+    }
+
+    // An organizer of a DIFFERENT session is just as much a stranger here.
+    const asOtherOrganizer = mockAuthAs(active.organizer.id);
+    try {
+      const crossTenant = await closeSession(closed.session.id);
+      expect(crossTenant.message).toBe("Not authorized. Organizer access required.");
+      expect(crossTenant.alreadyClosed).toBeUndefined();
+    } finally {
+      asOtherOrganizer();
+    }
+
+    // Positive control — the real organizer DOES get the state-revealing
+    // reply, so this test cannot pass by making every caller's answer uniform.
+    const asClosedOwner = mockAuthAs(closed.organizer.id);
+    try {
+      const secondClose = await closeSession(closed.session.id);
+      expect(secondClose.message).toBe("Session is already closed.");
+      expect(secondClose.alreadyClosed).toBe(true);
+    } finally {
+      asClosedOwner();
+    }
+
+    // The still-open session must be untouched by any of the above.
+    const { data: s } = await serviceClient()
+      .from("sessions")
+      .select("is_active")
+      .eq("id", active.session.id)
       .single();
     expect(s?.is_active).toBe(true);
   });

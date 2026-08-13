@@ -1045,6 +1045,13 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   } = await userClient.auth.getUser();
   if (!user) return { success: false, message: "Not authenticated." };
 
+  // Construct the service client BEFORE the organizer gate, even though the
+  // gate must precede every *lookup*. Building it reveals nothing about
+  // sessionId, and isSessionOrganizer calls createServiceClient() itself,
+  // unguarded (_shared.ts). With SUPABASE_SERVICE_ROLE_KEY missing, gating
+  // first would throw out of this action instead of returning the documented
+  // { success: false, message } shape — and would leave this try/catch, which
+  // exists for exactly that case, unreachable.
   let supabase: ReturnType<typeof createServiceClient>;
   try {
     supabase = createServiceClient();
@@ -1053,11 +1060,25 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     return { success: false, message: msg };
   }
 
-  // Verify the session exists and is currently active, and capture
-  // created_by for the organizer check below.
+  // ── Organizer check — BEFORE any lookup keyed on sessionId ───
+  // Order matters, not just presence. This gate used to sit below the
+  // fetch, which handed any authenticated caller holding a session UUID a
+  // three-way oracle: "Session not found." (does not exist) vs "Session is
+  // already closed." (exists, closed) vs "Not authorized." (exists, active,
+  // someone else's). isSessionOrganizer returns false for both "not yours"
+  // and "does not exist", so gating first collapses all three into one
+  // answer. Same rule as `applyDraftCapOverride` (above its Promise.all), and
+  // renotifySessionClosed's gate-before-LOOKUP order — that axis only.
+  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
+  if (!isOrganizer) {
+    return { success: false, message: "Not authorized. Organizer access required." };
+  }
+
+  // Verify the session is currently active. Only an organizer reaches here,
+  // so both branches below are safe to distinguish.
   const { data: session, error: sessionError } = await supabase
     .from("sessions")
-    .select("id, is_active, created_by")
+    .select("id, is_active")
     .eq("id", sessionId)
     .single();
 
@@ -1066,12 +1087,6 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   }
   if (!session.is_active) {
     return { success: false, message: "Session is already closed.", alreadyClosed: true };
-  }
-
-  // ── Organizer check ──────────────────────────────────────────
-  const isOrganizer = await isSessionOrganizer(user.id, sessionId);
-  if (!isOrganizer) {
-    return { success: false, message: "Not authorized. Organizer access required." };
   }
 
   // ── 0. Pre-compute Wrapped stats ────────────────────────────

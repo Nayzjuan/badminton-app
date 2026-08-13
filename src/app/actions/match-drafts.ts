@@ -91,13 +91,21 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
     .eq("id", matchId)
     .single();
 
-  if (matchFetchError || !match) {
-    return { success: false, message: `Match not found: ${matchFetchError?.message ?? "unknown"}` };
+  // One reply for "no such match" and "not your match". This fetch used to
+  // answer `Match not found: <raw PostgREST error>` to any authenticated
+  // caller for any match UUID, before a single authorization check ran, and it
+  // reads through the service client so RLS is no backstop. A missing row has
+  // no session_id to authorize against, so the two cases cannot be told apart
+  // without leaking the first; the error text is logged instead. Audit #12.
+  //
+  // ONE condition and ONE return, not two adjacent `if`s holding the same
+  // string: two of them drift apart under a later edit and one cannot.
+  // (isSessionOrganizer reads through the service client too — see _shared.ts
+  // — so this is a JS-layer gate, not an RLS one.)
+  if (matchFetchError) {
+    console.error("[clearOnDeckMatch] match fetch failed:", matchFetchError.message);
   }
-
-  // Verify caller is an organizer for this session (using the RLS client).
-  const organizer = await isSessionOrganizer(user.id, match.session_id);
-  if (!organizer) {
+  if (!match || !(await isSessionOrganizer(user.id, match.session_id))) {
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 
