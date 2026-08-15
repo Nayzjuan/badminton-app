@@ -3613,7 +3613,9 @@ action returns the same refusal. Two details are load-bearing:
 the queue row). `handleCheckout` now surfaces `result.error` as a toast instead of failing silently. In
 `my-status-tab`, the **Match Forming card's** "Leave Queue" button now renders only for
 `status === "drafted"` — that card is the one a drafted *or* on-deck player sees, and only the drafted half
-may still leave. (The paused and waiting branches keep their own Leave buttons; both are leaveable states.)
+may still leave. The **paused** branch now carries the same gate (see the follow-up below — the claim that
+once stood here, that paused is itself a leaveable state, was false). The waiting branch keeps its Leave
+button unconditionally, because `waiting` really is always leaveable.
 The `MatchAlert` court-call overlay is deliberately no longer passed `onLeaveQueue` — the prop is optional
 and gates two buttons, so dropping it removes both, and by the time that overlay fires the player is on deck.
 
@@ -3624,3 +3626,29 @@ that the message is the refusal** — `expect(result!.error).toMatch(/on deck|in
 assertion is the one doing the work: `success === false` plus unchanged rows is *also* what a broken
 `mockAuthAs` or a rejected UUID produces, so without pinning the message the test would stay green for
 reasons having nothing to do with the guard.
+
+**Follow-up (same day, `cbf57df`) — three defects the review gate found in the above.**
+
+1. **The guard had its own false-success hole.** The pre-read discarded its error, and a null `currentEntry`
+   is indistinguishable from "not in this session". So on a transient read failure the `on_deck`/`playing`
+   check never fired, the UPDATE matched 0 rows (an `on_deck` status is outside its `.in()` set), and the
+   0-rows guard was skipped *precisely because* it requires a non-null `currentEntry` — the exclusion
+   described two paragraphs above. The action returned `success` and the client navigated away while the
+   player sat in a live roster. That is the very failure this section exists to describe, reachable through
+   the fix for it. The read now fails closed.
+2. **The paused branch rendered an ungated Leave button**, and it returns *before* the drafted/on-deck
+   branch, so the gate at that branch never saw a paused player. `is_paused` is orthogonal to status:
+   `togglePlayerPause` (`queue.ts:83`) has no status guard, and the organizer's pause control
+   (`queue-control.tsx:942`) — unlike its checkout control at `:969` — is not hidden for locked rows, so an
+   on-deck player can be paused and land there. The server refused correctly, so this was UX-only: a dead
+   button contradicting the rule applied 34 lines below it.
+3. **`handleCheckout` used `try/finally`**, which cleared `checkingOut` on the *success* path too, flipping
+   the button out of "Leaving…" while `router.push` was still in flight (`origin/main` never reset it). The
+   `finally` also silenced `react-hooks/set-state-in-effect` across the **entire component** — that, not the
+   effect at `:188`, is what had orphaned the disable there into an unused directive. Measured both ways:
+   `finally` → 1 warning, `catch` → 0. Now `try/catch`, which keeps throw-safety, removes the flicker, and
+   makes the disable load-bearing again.
+
+🪤 Two of the three are the repo's standing defect class rather than new logic bugs: a doc/comment asserting
+something the code does not do. The parenthetical corrected above ("paused … both are leaveable states") is
+what made #2 invisible, and it shipped in the same commit as the fix it contradicted.
