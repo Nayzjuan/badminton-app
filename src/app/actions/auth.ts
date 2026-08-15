@@ -653,10 +653,41 @@ export async function reconnectPlayer(
         .select("id, status")
         .eq("session_id", targetSessionId)
         .eq("player_id", newUserId)
-        .in("status", ["playing", "drafted", "on_deck"])
         .maybeSingle();
 
-      if (queueEntry) {
+      if (queueEntry?.status === "left") {
+        // The player is reconnecting to a session that is STILL ACTIVE
+        // (targetSessionId is only ever set from an active session, Phases 1-3
+        // above) yet their queue entry reads "left" — from an earlier checkout,
+        // an organizer removal, or a mid-session re-registration. The act of
+        // reconnecting means they are physically present and want back in, but
+        // the app has no organizer "re-add" control, so without this they stay
+        // invisible in Match Control (this is the "I can't see <player>" class
+        // of incident). Restore to "waiting" with a fresh timestamp so they
+        // rejoin the TAIL of the queue rather than line-jumping on a stale
+        // joined_at. The existing flow already redirects them into this
+        // session's play page, so re-queuing matches that intent. Non-fatal.
+        console.log(
+          "[reconnectPlayer] Reconnect to active session while marked 'left' — restoring to 'waiting'.",
+          { newUserId, sessionId: targetSessionId }
+        );
+        await service
+          .from("queue_entries")
+          // Clear is_paused too: a returning player who is physically present
+          // must be both visible AND matchable — a leftover pause would keep the
+          // engine skipping them even after the status is restored.
+          .update({
+            status: "waiting" as const,
+            joined_at: new Date().toISOString(),
+            is_paused: false,
+          })
+          .eq("id", queueEntry.id);
+      } else if (
+        queueEntry &&
+        (queueEntry.status === "playing" ||
+          queueEntry.status === "drafted" ||
+          queueEntry.status === "on_deck")
+      ) {
         // Player's queue entry is stuck in a match-related status.
         // Verify whether they have an active match in THIS session.
         //
