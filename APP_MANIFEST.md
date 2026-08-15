@@ -3645,9 +3645,11 @@ reasons having nothing to do with the guard.
 3. **`handleCheckout` used `try/finally`**, which cleared `checkingOut` on the *success* path too, flipping
    the button out of "Leaving…" while `router.push` was still in flight (`origin/main` never reset it). The
    `finally` also silenced `react-hooks/set-state-in-effect` across the **entire component** — that, not the
-   effect at `:188`, is what had orphaned the disable there into an unused directive. Measured both ways:
-   `finally` → 1 warning, `catch` → 0. Now `try/catch`, which keeps throw-safety, removes the flicker, and
-   makes the disable load-bearing again.
+   `prevHasActiveMatchRef` tab-switch effect the directive sits on, is what had orphaned that disable into
+   an unused directive. (Mechanism: the compiler-backed `react-hooks` rules cannot lower a `TryStatement`
+   with no `catch` handler, so they bail on the enclosing component.) Measured both ways: `finally` → 1
+   warning, `catch` → 0. Now `try/catch`, which keeps throw-safety, removes the flicker, and makes the
+   disable load-bearing again — it also toasts on a throw, which the `finally` never did.
 
 🪤 Two of the three are the repo's standing defect class rather than new logic bugs: a doc/comment asserting
 something the code does not do. The parenthetical corrected above ("paused … both are leaveable states") is

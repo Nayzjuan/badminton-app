@@ -153,6 +153,25 @@ does not do.** §3.19's own parenthetical — *"the paused and waiting branches 
 both are leaveable states"* — is what made #2 invisible, and it shipped **in the same commit as the guard
 it contradicted**. Corrected in APP_MANIFEST §3.39.
 
+### Review-gate notes — verdict **LGTM**, 2 minor, documented per CLAUDE.md rather than fixed
+
+1. **Stalled-navigation live-lock (narrow, ACCEPTED not patched).** `handleCheckout` deliberately does
+   not clear `checkingOut` on success, because the component stays mounted across `router.push`. If that
+   navigation stalls or is cancelled while mounted, the flag is stuck true. Mostly benign — the player
+   *has* left. The reachable tail: realtime then drops `myEntry` (the `left` row is filtered out by
+   `useQueue`'s `.in([...])`), the tab falls through to "Ready to play?", the player re-joins via the CTA,
+   and the header "Leave session" button stays disabled at "Leaving…" until a remount or reload. Requires
+   a stalled/cancelled client nav to reach. Accepted rather than patched with another effect.
+2. **The `catch` message is unconditional.** If `router.push` were the thrower, the leave already
+   succeeded but the toast still reads "Couldn't leave the session." App Router's `push` does not throw
+   synchronously, so this is theoretical; moving the push below the `try` would tighten it.
+
+Independently re-verified by the reviewer, not just asserted: the `finally`→`catch` lint delta (1 → 0 via
+`eslint --stdin` on both revisions), that `queue_entries`' `UNIQUE (session_id, player_id)` makes the
+`maybeSingle()` multiple-rows error unreachable (so failing closed blocks no legitimate leave), and that
+the paused-branch gate's status set is an exact match for the server's refusal set — `left` is unreachable
+client-side because `useQueue` never fetches it.
+
 ### Not done / not mine
 
 - **Merge is the user's call** (squash-merge via the GitHub MCP) — do not merge #66 or #67.
