@@ -4,13 +4,16 @@
 // checkoutPlayer marks the calling player's queue_entries row
 // as "left", blocking future matchmaking for them.  It also
 // cleans up any unpublished draft matches they were assigned to.
+// A player who is ON DECK or PLAYING is NOT allowed to self-check
+// out — that would strand a ghost in a live match roster; an
+// organizer must remove them instead (removePlayerFromQueue).
 //
 // Behaviours under test:
 //   Q-1  Player can check out → status becomes 'left'
 //   Q-2  Unauthenticated caller is rejected
 //   Q-3  Invalid session UUID is rejected without DB round-trip
-//   Q-4  Checkout while on_deck → status 'left', match unaffected
-//   Q-5  Checkout while 'playing' → status 'left', match unaffected
+//   Q-4  Checkout while on_deck is REJECTED — status + match unchanged
+//   Q-5  Checkout while 'playing' is REJECTED — status + match unchanged
 //   Q-6  Draft match is cleaned up when player checks out
 //   Q-7  Published (on-deck) match is NOT cancelled by checkout
 //   Q-8  Checking out twice is idempotent (second call still succeeds)
@@ -112,7 +115,7 @@ describe("checkoutPlayer — Suite Q", () => {
 
   // ── Q-4: Checkout while on_deck ──────────────────────────────
 
-  it("Q-4: player can check out while on_deck — status becomes 'left', match unaffected", async () => {
+  it("Q-4: player CANNOT check out while on_deck — rejected, status + match unchanged", async () => {
     const { session, player } = await checkoutSetup();
     const other1 = await makeProfile({ faker });
     const other2 = await makeProfile({ faker });
@@ -138,22 +141,27 @@ describe("checkoutPlayer — Suite Q", () => {
       .in("player_id", [player.id, other1.id, other2.id, other3.id]);
 
     const restore = mockAuthAs(player.id);
+    let result: Awaited<ReturnType<typeof checkoutPlayer>>;
     try {
-      await checkoutPlayer(session.id);
+      result = await checkoutPlayer(session.id);
     } finally {
       restore();
     }
 
-    // Player's queue entry is 'left'
+    // Self-checkout is REJECTED for an on-deck player — leaving would strand a
+    // ghost in the published roster that breaks the match when it hits a court.
+    expect(result!.success).toBe(false);
+
+    // Player's queue entry is untouched — still on_deck.
     const { data: entry } = await serviceClient()
       .from("queue_entries")
       .select("status")
       .eq("session_id", session.id)
       .eq("player_id", player.id)
       .single();
-    expect(entry?.status).toBe("left");
+    expect(entry?.status).toBe("on_deck");
 
-    // The published match is NOT cancelled — it was already visible to players
+    // The published match is untouched.
     const { data: m } = await serviceClient()
       .from("matches")
       .select("status")
@@ -162,9 +170,9 @@ describe("checkoutPlayer — Suite Q", () => {
     expect(m?.status).toBe("pending");
   });
 
-  // ── Q-5: Checkout while playing ──────────────────────────────
+  // ── Q-5: Checkout while playing is blocked ───────────────────
 
-  it("Q-5: player can check out while playing — status 'left', in-progress match unaffected", async () => {
+  it("Q-5: player CANNOT check out while playing — rejected, status + match unchanged", async () => {
     const { session, player } = await checkoutSetup();
     const other1 = await makeProfile({ faker });
     const other2 = await makeProfile({ faker });
@@ -191,11 +199,15 @@ describe("checkoutPlayer — Suite Q", () => {
       .in("player_id", [player.id, other1.id, other2.id, other3.id]);
 
     const restore = mockAuthAs(player.id);
+    let result: Awaited<ReturnType<typeof checkoutPlayer>>;
     try {
-      await checkoutPlayer(session.id);
+      result = await checkoutPlayer(session.id);
     } finally {
       restore();
     }
+
+    // Rejected — a player in an in-progress match cannot self-leave.
+    expect(result!.success).toBe(false);
 
     const { data: entry } = await serviceClient()
       .from("queue_entries")
@@ -203,9 +215,9 @@ describe("checkoutPlayer — Suite Q", () => {
       .eq("session_id", session.id)
       .eq("player_id", player.id)
       .single();
-    expect(entry?.status).toBe("left");
+    expect(entry?.status).toBe("playing");
 
-    // In-progress match is NOT affected by checkout
+    // In-progress match is untouched.
     const { data: m } = await serviceClient()
       .from("matches")
       .select("status")

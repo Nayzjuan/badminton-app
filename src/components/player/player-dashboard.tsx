@@ -41,6 +41,7 @@ import { WaitlistTab } from "./waitlist-tab";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import { VipTag } from "@/components/ui/vip-tag";
 import { checkoutPlayer } from "@/app/actions/queue";
+import { toast } from "sonner";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ScoreInputCard } from "./score-input-card";
@@ -105,8 +106,19 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
 
   async function handleCheckout() {
     setCheckingOut(true);
-    await checkoutPlayer(session.id);
-    router.push(clubSlug ? clubBase(clubSlug) : "/play");
+    try {
+      const result = await checkoutPlayer(session.id);
+      if (!result.success) {
+        // Server refused (e.g. the player is on deck / in a match — leaving
+        // would strand a ghost in the roster). Surface it and STAY in the
+        // session rather than silently navigating away on a false success.
+        toast.error(result.error ?? "Couldn't leave the session.");
+        return;
+      }
+      router.push(clubSlug ? clubBase(clubSlug) : "/play");
+    } finally {
+      setCheckingOut(false);
+    }
   }
 
   const {
@@ -341,17 +353,19 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
                     <AlertDialogHeader>
                       <AlertDialogTitle>Leave &ldquo;{session.name}&rdquo;?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        You will be removed from the queue and will lose your spot. Any match
-                        currently in progress will not be affected. You can rejoin later using your
-                        name and PIN.
+                        {hasActiveMatch
+                          ? "You're on deck or in a match right now, so you can't leave yet — bailing mid-match breaks the game for everyone on your court. Finish the match, or ask an organizer to remove you."
+                          : "You will be removed from the queue and will lose your spot. You can rejoin later using your name and PIN."}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Stay</AlertDialogCancel>
                       <AlertDialogAction
                         onClick={handleCheckout}
-                        disabled={checkingOut}
-                        className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                        // On deck / playing players cannot leave the queue; the
+                        // server enforces this too, this just prevents the tap.
+                        disabled={checkingOut || hasActiveMatch}
+                        className="bg-red-600 hover:bg-red-700 focus:ring-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {checkingOut ? "Leaving…" : "Leave session"}
                       </AlertDialogAction>
@@ -435,7 +449,12 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
                           isMixedLevel: currentMatch.match.is_mixed_level,
                           onDeckPosition: currentMatch.onDeckPosition,
                           totalOnDeck: currentMatch.totalOnDeck,
-                          onLeaveQueue: leaveQueue,
+                          // Intentionally NOT passing onLeaveQueue: this overlay
+                          // renders only when the player is on deck (pending) or
+                          // playing (in_progress), and such players are no longer
+                          // allowed to leave the queue — leaving mid-match left a
+                          // ghost in the roster that broke the court pull. The
+                          // absent handler removes both overlay Leave buttons.
                           upcomingReserved:
                             currentMatch.match.status === "in_progress" && upcomingHeld?.reserved
                               ? { ready: upcomingHeld.ready }
