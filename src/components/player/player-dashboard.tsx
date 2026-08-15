@@ -113,10 +113,19 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
         // would strand a ghost in the roster). Surface it and STAY in the
         // session rather than silently navigating away on a false success.
         toast.error(result.error ?? "Couldn't leave the session.");
+        setCheckingOut(false);
         return;
       }
+      // Deliberately NOT cleared on success: this component stays mounted
+      // across router.push, so resetting here flips the button out of
+      // "Leaving…" while navigation is still in flight. Use catch, never
+      // finally — a `finally` clears it on the success path too, and it also
+      // silences react-hooks/set-state-in-effect across this entire component
+      // (measured: swapping finally→catch is what makes the disable below
+      // load-bearing again rather than an unused directive).
       router.push(clubSlug ? clubBase(clubSlug) : "/play");
-    } finally {
+    } catch {
+      toast.error("Couldn't leave the session.");
       setCheckingOut(false);
     }
   }

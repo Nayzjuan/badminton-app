@@ -176,12 +176,24 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   const BLOCKED_WHILE_ACTIVE =
     "You can't leave while you're on deck or in a match. Finish your game, or ask an organizer to remove you.";
 
-  const { data: currentEntry } = await svc
+  const { data: currentEntry, error: readError } = await svc
     .from("queue_entries")
     .select("status")
     .eq("session_id", sessionId)
     .eq("player_id", user.id)
     .maybeSingle();
+
+  // Fail closed if the status read itself fails. A transient error leaves
+  // currentEntry null, and null is indistinguishable from "not in this
+  // session": the on_deck/playing check below would not fire, the UPDATE would
+  // match 0 rows (an on_deck status is outside its .in() set), and the TOCTOU
+  // guard further down is skipped precisely because it requires a non-null
+  // currentEntry. The action would return success and the client would
+  // navigate away while the player is still in a live roster — the exact
+  // false-success this guard exists to remove.
+  if (readError) {
+    return { success: false, error: "Couldn't check your queue status. Please try again." };
+  }
 
   if (currentEntry?.status === "on_deck" || currentEntry?.status === "playing") {
     return { success: false, error: BLOCKED_WHILE_ACTIVE };
