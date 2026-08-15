@@ -5,10 +5,10 @@
 
 ---
 
-## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-12. Repo and prod agree.
+## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-15. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
-Merging a PR ships TypeScript only.** All six migrations this section tracks are now **applied and
+Merging a PR ships TypeScript only.** All seven migrations this section tracks are now **applied and
 verified on production** (`usxftpexoimletqmrggb`). Nothing is pending. **Every new migration must be
 added to this table with its prod stamp** — the stamps drift from the filenames, and this table is
 the only place that records the mapping.
@@ -21,6 +21,7 @@ the only place that records the mapping.
 | `20260811000001_repair_duplicate_milestone_awards` | `20260810173605` |
 | `20260812000000_clear_on_deck_never_unseats_a_playing_body` | `20260812092029` |
 | `20260812100000_refresh_cross_session_stats_absolute_rebuild` | `20260812144342` |
+| `20260815000000_queue_status_audit` | `20260815133945` |
 
 ⚠️ **`apply_migration` strips non-ASCII from stored function bodies.** The `── section ──` rules this
 repo decorates SQL with are safe in a migration *header* (never stored) but not inside a function
@@ -2285,8 +2286,21 @@ totally unaudited** (no history table, no triggers), so the cause is unrecoverab
 organizer-remove, close, endMatch, migrate, manual). Trigger body is exception-wrapped → can NEVER roll back a
 queue update. Captures old/new/changed_at + best-effort `actor_uid` (JWT sub; NULL for service-role = engine +
 all server actions, so it's a hint — correlate `changed_at` with logs). RLS on, no policies (service-role only).
-`database.ts` updated (`QueueStatusEvent` + `queue_status_events` table). **⚠️ NOT YET APPLIED to prod** — held
-off applying a live schema change mid-session; migration ships in the PR for the user to apply/deploy.
+`database.ts` updated (`QueueStatusEvent` + `queue_status_events` table).
+
+✅ **APPLIED to prod 2026-08-15**, stamp `20260815133945` (applied ahead of the merge — schema and code ship
+separately here). Verified structurally *and* functionally: table present, `rls_enabled=true` with **0
+policies**, 3 indexes, trigger enabled (`tgenabled='O'`), function `SECURITY DEFINER` with
+`search_path = public, pg_temp`. The functional proof ran inside a self-rolling-back `DO $$ … RAISE
+EXCEPTION $$` block — a real `queue_entries` status flip produced exactly one audit row
+(`old=left new=waiting`), then rolled back to `audit_rows=0` with prod data untouched (`left`=667,
+`waiting`=31 before and after). Applied during a genuine quiet window: the only two "active" sessions were
+one idle 5.5 h and the permanently-active hidden E2E sandbox.
+
+⚠️ The table carries `anon,authenticated` **grants** — verified deliberate, not an oversight: `match_events`
+carries an identical grant set, and with **zero** RLS policies the grants are unreachable (RLS default-denies),
+so `queue_status_events` is strictly *stricter* than the table the migration says it mirrors. Non-ASCII in the
+migration was converted to ASCII before applying, per the `apply_migration` body-stripping note above.
 
 **Fix 2 — reconnect rescues `left` (`src/app/actions/auth.ts` reconcile block).** `reconnectPlayer`'s
 post-migration reconcile only lifted `playing/drafted/on_deck`→`waiting`; it ignored `left`. Now: reconnecting
