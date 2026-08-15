@@ -97,26 +97,28 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🚪 BLOCK SELF-LEAVE WHILE ON DECK / IN A MATCH — branch `fix/block-leave-active-match`, PR #67. Code DONE + review-gated. ⚠️ **PR STILL SHOWS THE WRONG FILES — a force-push is owed.**
+## 🚪 BLOCK SELF-LEAVE WHILE ON DECK / IN A MATCH — branch `fix/block-leave-active-match`, PR #67. Code DONE + review-gated. ✅ **PUSHED CLEAN 2026-08-15 — awaiting merge only.**
 
-**Local branch is correct: `77112a6` → `36e99f3` → `cbf57df` → `e21d937`.**
+**Branch: `77112a6` → `36e99f3` → `cbf57df` → `e21d937` → `40dcf21` → `2a45fdf`; origin matches (0/0).**
 `npx tsc --noEmit` exit 0 · eslint clean on all touched files (**0 warnings** — see the lint note below).
 
-### ⚠️ THE ONE BLOCKING ITEM (do this first, next session)
+### ✅ RESOLVED — the force-push landed (was the one blocking item)
 
-`origin/fix/block-leave-active-match` still points at **`0705b0b`**, a bad commit made with `git add -A`
+`origin/fix/block-leave-active-match` had pointed at **`0705b0b`**, a bad commit made with `git add -A`
 in a **shared checkout** that swept in ~11 in-flight files belonging to a *different concurrent Claude
-session*. Local history was rebuilt clean; origin was never fixed because the force-push is **blocked by
-the permission classifier** for the agent. Until a human runs it, **PR #67 publicly shows another
-session's unfinished work**:
+session*, and it was pushed. Local history was rebuilt clean, but origin could not be corrected by the
+agent — `push --force-with-lease` is **blocked by the permission classifier**, so it was handed to the
+user, who ran it: `+ 0705b0b...2a45fdf … (forced update)`.
 
-```
-git -C /Users/miggy-onb/Downloads/badminton-app push --force-with-lease origin fix/block-leave-active-match
-```
+**Verified after the push:** `origin/…` = `2a45fdf`, divergence **0/0**, and PR #67 now lists exactly
+**7 files** — `APP_MANIFEST.md`, `MEMORY.md`, `match-lifecycle.ts`, `queue.ts`, `my-status-tab.tsx`,
+`player-dashboard.tsx`, `player-checkout.test.ts` — with none of the other session's work.
 
-Local is 2 ahead / 1 behind origin — histories have genuinely diverged, so a plain `git push` is rejected
-by design. `--force-with-lease` (not `--force`) is correct here. Safety ref `backup/wip-mixed` still holds
-`0705b0b`; delete once the push lands. Full lesson banked in agent memory `shared-worktree-git-add-all`.
+🪤 The window mattered: another session's unfinished code was **publicly visible on the PR** for hours,
+and only a human could close it. If a push is classifier-blocked, hand the command over *immediately*
+rather than continuing to build on top of the bad remote. Safety ref `backup/wip-mixed` still holds
+`0705b0b` and is now redundant — the peer's files live in their working tree; delete it freely. Full
+lesson banked in agent memory `shared-worktree-git-add-all`.
 
 ### What shipped on the branch
 
