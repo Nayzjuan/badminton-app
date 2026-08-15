@@ -97,6 +97,70 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
+## 🚪 BLOCK SELF-LEAVE WHILE ON DECK / IN A MATCH — branch `fix/block-leave-active-match`, PR #67. Code DONE + review-gated. ⚠️ **PR STILL SHOWS THE WRONG FILES — a force-push is owed.**
+
+**Local branch is correct: `77112a6` → `36e99f3` → `cbf57df` → `e21d937`.**
+`npx tsc --noEmit` exit 0 · eslint clean on all touched files (**0 warnings** — see the lint note below).
+
+### ⚠️ THE ONE BLOCKING ITEM (do this first, next session)
+
+`origin/fix/block-leave-active-match` still points at **`0705b0b`**, a bad commit made with `git add -A`
+in a **shared checkout** that swept in ~11 in-flight files belonging to a *different concurrent Claude
+session*. Local history was rebuilt clean; origin was never fixed because the force-push is **blocked by
+the permission classifier** for the agent. Until a human runs it, **PR #67 publicly shows another
+session's unfinished work**:
+
+```
+git -C /Users/miggy-onb/Downloads/badminton-app push --force-with-lease origin fix/block-leave-active-match
+```
+
+Local is 2 ahead / 1 behind origin — histories have genuinely diverged, so a plain `git push` is rejected
+by design. `--force-with-lease` (not `--force`) is correct here. Safety ref `backup/wip-mixed` still holds
+`0705b0b`; delete once the push lands. Full lesson banked in agent memory `shared-worktree-git-add-all`.
+
+### What shipped on the branch
+
+Server (`checkoutPlayer`, `queue.ts`): a player who is `on_deck` or `playing` can no longer self-leave —
+they used to be marked `'left'` while only *unpublished* drafts were cleaned up, leaving a ghost in a
+published roster that broke the live queue when the match was pulled to a court. Guarded by a pre-read
+**and** a status-guarded `UPDATE … .in(['waiting','drafted','left']).select('id')` that closes the TOCTOU
+window. `'left'` stays in the set so double-checkout remains idempotent. Client blocks the tap; server
+stays authoritative. Suite Q `Q-4`/`Q-5` were **inverted, not added** — they previously asserted the
+superseded contract and would have stayed green against the bug forever.
+
+### Review-gate fixes on top (`cbf57df`, `e21d937`) — the guard shipped with three defects of its own
+
+1. **A false-success hole inside the fix for false successes.** The pre-read discarded its error, and a
+   null `currentEntry` is indistinguishable from "not in this session" — so a transient read failure
+   skipped the status check, matched 0 rows, *and* skipped the 0-rows guard (which requires a non-null
+   `currentEntry` by design). Returned `success`, client navigated away, player still in a live roster.
+   Now fails closed.
+2. **The paused branch rendered an ungated Leave button** and returns *before* the drafted/on-deck branch,
+   so that branch's gate never saw a paused player. `is_paused` is orthogonal to status: `togglePlayerPause`
+   has no status guard and the organizer's pause control is not hidden for locked rows (its checkout
+   control at `queue-control.tsx:969` is). UX-only — the server refused correctly — but a dead button.
+3. **`try/finally` → `try/catch` in `handleCheckout`.** `finally` cleared `checkingOut` on the *success*
+   path too, flipping the button out of "Leaving…" mid-`router.push`.
+
+> 💡 **Lint note that supersedes an earlier claim.** The `player-dashboard.tsx:188`
+> "unused eslint-disable directive" warning is **fixed, not pre-existing-and-unavoidable**. The effect at
+> :188 was never the cause: the `try/finally` in `handleCheckout` was silencing
+> `react-hooks/set-state-in-effect` across the **whole component**, orphaning the disable. Measured both
+> ways — `finally` → 1 warning, `catch` → 0. Any baseline quoting "1 pre-existing warning" is now stale.
+
+🪤 Two of the three were the repo's standing defect class, not new logic: **a doc asserting what the code
+does not do.** §3.19's own parenthetical — *"the paused and waiting branches keep their own Leave buttons;
+both are leaveable states"* — is what made #2 invisible, and it shipped **in the same commit as the guard
+it contradicted**. Corrected in APP_MANIFEST §3.39.
+
+### Not done / not mine
+
+- **Merge is the user's call** (squash-merge via the GitHub MCP) — do not merge #66 or #67.
+- No migration on this branch. TypeScript only.
+
+
+---
+
 ## 🔓 TWO UNBOUND CROSS-TENANT WRITES + EIGHT UNORDERED GUARDS ACROSS SEVEN SITES — audit **#12**, ✅ **SHIPPED + DEPLOYED 2026-08-13** (PR #64 → `main` `8f4cb78`; Vercel Production `success`; CI green on the PR and again on `main`)
 
 **⚠️ NOT YET ON PROD.** TypeScript-only, **no migration** — it ships with the merge + Vercel deploy.
