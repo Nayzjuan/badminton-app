@@ -530,6 +530,27 @@ export type IdentityMigration = {
 };
 
 /**
+ * queue_status_events table — append-only audit of every queue_entries.status
+ * transition, written by the `trg_log_queue_status_change` DB trigger (migration
+ * 20260815000000). Answers "what changed this player's status, and when?" for the
+ * "why did <player> disappear from Match Control?" class of incident.
+ *
+ * `actor_uid` is best-effort (the request JWT's sub) — NULL for every service-role
+ * caller, which is the engine and all server actions, so it is a hint only;
+ * correlate `changed_at` with server logs for real attribution. Service-role only
+ * (RLS on, no policies).
+ */
+export type QueueStatusEvent = {
+  id: string;
+  session_id: string;
+  player_id: string;
+  old_status: string | null;
+  new_status: string;
+  actor_uid: string | null;
+  changed_at: string;
+};
+
+/**
  * co_organizer_join_attempts table — append-only credential-guessing log used by
  * the rate limiters (service-role only: RLS on, no policies, no grants).
  *
@@ -745,6 +766,13 @@ export type Database = {
         Row: IdentityMigration;
         Insert: Omit<IdentityMigration, "id" | "migrated_at">;
         Update: Record<string, never>; // append-only, no updates allowed
+        Relationships: [];
+      };
+      queue_status_events: {
+        Row: QueueStatusEvent;
+        // Written only by the trg_log_queue_status_change trigger, never the app.
+        Insert: Omit<QueueStatusEvent, "id" | "changed_at">;
+        Update: Record<string, never>; // append-only audit log
         Relationships: [];
       };
       co_organizer_join_attempts: {

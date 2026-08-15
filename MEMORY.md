@@ -2266,6 +2266,40 @@ after.
 
 ---
 
+## 👁️ QUEUE-STATUS AUDIT + RECONNECT 'left' RESCUE — 2026-08-15, branch `fix/queue-status-audit`
+
+**Incident.** "Can't see Vinz in Match Control." Vinz's `queue_entries.status` was `left`, and Match Control
+only renders `waiting/drafted/on_deck/playing`, so he was hidden. He had re-registered mid-session → the app's
+identity-migration flow (`migrate_player_identity`, old `93246b97` → new `21b41e22`) fired at 04:57. Immediate
+fix: restored his entry to `waiting`, deleted the stray empty "Vinzz" duplicate (0 refs).
+
+**Root-cause correction (important).** Initial hypothesis "the migration leaves players `left`" was **DISPROVEN**:
+`migrate_player_identity` only does `UPDATE queue_entries SET player_id=new WHERE player_id=old` (status
+untouched), and `match_events` show Vinz active under the new id all evening after 04:57. His `left` was set
+later by an unrecorded action — and the real structural gap is that **`queue_entries` status changes were
+totally unaudited** (no history table, no triggers), so the cause is unrecoverable from data.
+
+**Fix 1 — queue-status audit (migration `20260815000000_queue_status_audit.sql`).** New table
+`queue_status_events` + `AFTER UPDATE OF status` trigger `trg_log_queue_status_change` on `queue_entries`
+(fires `WHEN OLD.status IS DISTINCT FROM NEW.status`). DB-level so it catches EVERY path (engine, checkout,
+organizer-remove, close, endMatch, migrate, manual). Trigger body is exception-wrapped → can NEVER roll back a
+queue update. Captures old/new/changed_at + best-effort `actor_uid` (JWT sub; NULL for service-role = engine +
+all server actions, so it's a hint — correlate `changed_at` with logs). RLS on, no policies (service-role only).
+`database.ts` updated (`QueueStatusEvent` + `queue_status_events` table). **⚠️ NOT YET APPLIED to prod** — held
+off applying a live schema change mid-session; migration ships in the PR for the user to apply/deploy.
+
+**Fix 2 — reconnect rescues `left` (`src/app/actions/auth.ts` reconcile block).** `reconnectPlayer`'s
+post-migration reconcile only lifted `playing/drafted/on_deck`→`waiting`; it ignored `left`. Now: reconnecting
+to an ACTIVE session (targetSessionId only set from an active session) while marked `left` → restore to
+`waiting` with fresh `joined_at` (tail of queue, no line-jump). Closes the re-register-while-left disappearance
+path. Note: unconfirmed as Vinz's exact cause (only one migration logged), but a real code-confirmed gap that
+produces this symptom.
+
+**Follow-up (not done):** add a status-change `reason` (SET LOCAL GUC read by the trigger, or app-level) on the
+key `left`-setting paths (checkoutPlayer, remove_player_from_queue_organizer, closeSession) for true attribution.
+
+---
+
 ## 🔒 `draft_cap_phase` MOVED SERVER-SIDE — co-organizer lockout now actually works — 2026-08-04, **SHIPPED — `main` `e8e76bd` + `ddd080c`, prod-verified**
 
 **Status: working tree only. NOTHING committed, pushed or deployed.** Sits on top of the `broadcast.ts`
