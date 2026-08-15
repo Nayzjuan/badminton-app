@@ -97,10 +97,22 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🚪 BLOCK SELF-LEAVE WHILE ON DECK / IN A MATCH — branch `fix/block-leave-active-match`, PR #67. Code DONE + review-gated. ✅ **PUSHED CLEAN 2026-08-15 — awaiting merge only.**
+## 🚪 BLOCK SELF-LEAVE WHILE ON DECK / IN A MATCH — branch `fix/block-leave-active-match`, PR #67. Code DONE + review-gated. ✅ **PUSHED CLEAN + CI GREEN 2026-08-15 — awaiting merge only.**
 
-**Branch: `77112a6` → `36e99f3` → `cbf57df` → `e21d937` → `40dcf21` → `2a45fdf`; origin matches (0/0).**
+**Branch: `77112a6` (patch base) → six commits; origin matches local, divergence 0/0.**
 `npx tsc --noEmit` exit 0 · eslint clean on all touched files (**0 warnings** — see the lint note below).
+
+✅ **CI green on the real head.** `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`. Vitest ×2 pass,
+all three Vercel deploys pass, and **Vitest Integration ×2 pass** (8m45s / 8m28s, runs `31891664847`
+and `31891667059`) — the suite that actually exercises the `queue.ts` change (Suite Q `Q-4`/`Q-5`).
+🪰 Both run IDs were confirmed to carry `headSha = 7f83cfb`, i.e. the commit the PR actually points at.
+`gh pr checks` alone does **not** prove this: it renders whatever checks are attached now, so a stale
+run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate colour.
+
+🪰 **Do not write the current head SHA into this file.** The previous revision said "origin = `2a45fdf`",
+which the very commit that *added* the line (`7f83cfb`) falsified on landing — a self-invalidating claim,
+the repo's most-repeated defect class shipped inside the note describing it. SHAs below are immutable
+history (a bad commit, a force-push target, a CI run); the *head* is stated as an invariant instead.
 
 ### ✅ RESOLVED — the force-push landed (was the one blocking item)
 
@@ -110,9 +122,10 @@ session*, and it was pushed. Local history was rebuilt clean, but origin could n
 agent — `push --force-with-lease` is **blocked by the permission classifier**, so it was handed to the
 user, who ran it: `+ 0705b0b...2a45fdf … (forced update)`.
 
-**Verified after the push:** `origin/…` = `2a45fdf`, divergence **0/0**, and PR #67 now lists exactly
-**7 files** — `APP_MANIFEST.md`, `MEMORY.md`, `match-lifecycle.ts`, `queue.ts`, `my-status-tab.tsx`,
+**Verified after the push:** divergence **0/0**, and PR #67 lists exactly **7 files** —
+`APP_MANIFEST.md`, `MEMORY.md`, `match-lifecycle.ts`, `queue.ts`, `my-status-tab.tsx`,
 `player-dashboard.tsx`, `player-checkout.test.ts` — with none of the other session's work.
+Re-verified against the GitHub file list after each subsequent push, not just once.
 
 🪤 The window mattered: another session's unfinished code was **publicly visible on the PR** for hours,
 and only a human could close it. If a push is classifier-blocked, hand the command over *immediately*
