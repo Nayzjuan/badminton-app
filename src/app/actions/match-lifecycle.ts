@@ -261,10 +261,17 @@ async function endMatchInternal(
   //    increment by 1, reset to "waiting" with a fresh timestamp.
   //
   //    Status guard: only update rows where status is NOT "left".
-  //    Without this guard, players who explicitly checked out while
-  //    their match was in_progress would be silently re-added to the
-  //    queue every time the match ended — creating ghost "waiting"
-  //    entries for people who physically left the gym.
+  //    Without this guard, a player who is already 'left' while their match
+  //    was in_progress would be silently re-added to the queue every time the
+  //    match ended — creating ghost "waiting" entries for people who
+  //    physically left the gym.
+  //
+  //    NOTE: self-checkout can no longer produce that state — checkoutPlayer
+  //    refuses while the caller is on_deck/playing (APP_MANIFEST §3.39). The
+  //    guard is still load-bearing via the ORGANIZER path: the
+  //    remove_player_from_queue_organizer RPC only sweeps m.status='pending',
+  //    so removing a player mid-game sets queue status='left' and leaves the
+  //    in_progress match's roster intact — exactly the row this guard skips.
   if (matchPlayers && matchPlayers.length > 0) {
     // Ghost-availability fix (R3-1): a finishing player who is the pulled body of
     // a PENDING held draft must be re-reserved as 'drafted', NOT 'waiting' —

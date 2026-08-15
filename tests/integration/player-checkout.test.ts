@@ -150,7 +150,11 @@ describe("checkoutPlayer — Suite Q", () => {
 
     // Self-checkout is REJECTED for an on-deck player — leaving would strand a
     // ghost in the published roster that breaks the match when it hits a court.
+    // Pin the MESSAGE too: "success === false" alone is also what a broken
+    // mockAuthAs or a UUID rejection produces, so without this the test would
+    // stay green for reasons that have nothing to do with the guard.
     expect(result!.success).toBe(false);
+    expect(result!.error).toMatch(/on deck|in a match/i);
 
     // Player's queue entry is untouched — still on_deck.
     const { data: entry } = await serviceClient()
@@ -207,7 +211,9 @@ describe("checkoutPlayer — Suite Q", () => {
     }
 
     // Rejected — a player in an in-progress match cannot self-leave.
+    // Message pinned for the same reason as Q-4.
     expect(result!.success).toBe(false);
+    expect(result!.error).toMatch(/on deck|in a match/i);
 
     const { data: entry } = await serviceClient()
       .from("queue_entries")
@@ -336,7 +342,10 @@ describe("checkoutPlayer — Suite Q", () => {
     }
 
     expect(r1!.success).toBe(true);
-    // Second call updates zero rows but is still a successful UPDATE statement
+    // Second call updates ONE row, not zero: 'left' is deliberately inside the
+    // status guard's .in([...]) set, so the row still matches and the write
+    // succeeds. (Drop 'left' from that set and the "read as leaveable but wrote
+    // nothing" guard would turn this idempotency case into a failure.)
     expect(r2!.success).toBe(true);
 
     const { data: entry } = await serviceClient()
