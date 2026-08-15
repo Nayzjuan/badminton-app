@@ -98,6 +98,104 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
+## 🚪 BLOCK SELF-LEAVE WHILE ON DECK / IN A MATCH — branch `fix/block-leave-active-match`, PR #67. Code DONE + review-gated. ✅ **PUSHED CLEAN + CI GREEN 2026-08-15 — awaiting merge only.**
+
+**Branch: `77112a6` (patch base) → six commits; origin matches local, divergence 0/0.**
+`npx tsc --noEmit` exit 0 · eslint clean on all touched files (**0 warnings** — see the lint note below).
+
+✅ **CI green on the real head.** `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`. Vitest ×2 pass,
+all three Vercel deploys pass, and **Vitest Integration ×2 pass** (8m45s / 8m28s, runs `31891664847`
+and `31891667059`) — the suite that actually exercises the `queue.ts` change (Suite Q `Q-4`/`Q-5`).
+🪰 Both run IDs were confirmed to carry `headSha = 7f83cfb`, i.e. the commit the PR actually points at.
+`gh pr checks` alone does **not** prove this: it renders whatever checks are attached now, so a stale
+run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate colour.
+
+🪰 **Do not write the current head SHA into this file.** The previous revision said "origin = `2a45fdf`",
+which the very commit that *added* the line (`7f83cfb`) falsified on landing — a self-invalidating claim,
+the repo's most-repeated defect class shipped inside the note describing it. SHAs below are immutable
+history (a bad commit, a force-push target, a CI run); the *head* is stated as an invariant instead.
+
+### ✅ RESOLVED — the force-push landed (was the one blocking item)
+
+`origin/fix/block-leave-active-match` had pointed at **`0705b0b`**, a bad commit made with `git add -A`
+in a **shared checkout** that swept in ~11 in-flight files belonging to a *different concurrent Claude
+session*, and it was pushed. Local history was rebuilt clean, but origin could not be corrected by the
+agent — `push --force-with-lease` is **blocked by the permission classifier**, so it was handed to the
+user, who ran it: `+ 0705b0b...2a45fdf … (forced update)`.
+
+**Verified after the push:** divergence **0/0**, and PR #67 lists exactly **7 files** —
+`APP_MANIFEST.md`, `MEMORY.md`, `match-lifecycle.ts`, `queue.ts`, `my-status-tab.tsx`,
+`player-dashboard.tsx`, `player-checkout.test.ts` — with none of the other session's work.
+Re-verified against the GitHub file list after each subsequent push, not just once.
+
+🪤 The window mattered: another session's unfinished code was **publicly visible on the PR** for hours,
+and only a human could close it. If a push is classifier-blocked, hand the command over *immediately*
+rather than continuing to build on top of the bad remote. Safety ref `backup/wip-mixed` still holds
+`0705b0b` and is now redundant — the peer's files live in their working tree; delete it freely. Full
+lesson banked in agent memory `shared-worktree-git-add-all`.
+
+### What shipped on the branch
+
+Server (`checkoutPlayer`, `queue.ts`): a player who is `on_deck` or `playing` can no longer self-leave —
+they used to be marked `'left'` while only *unpublished* drafts were cleaned up, leaving a ghost in a
+published roster that broke the live queue when the match was pulled to a court. Guarded by a pre-read
+**and** a status-guarded `UPDATE … .in(['waiting','drafted','left']).select('id')` that closes the TOCTOU
+window. `'left'` stays in the set so double-checkout remains idempotent. Client blocks the tap; server
+stays authoritative. Suite Q `Q-4`/`Q-5` were **inverted, not added** — they previously asserted the
+superseded contract and would have stayed green against the bug forever.
+
+### Review-gate fixes on top (`cbf57df`, `e21d937`) — the guard shipped with three defects of its own
+
+1. **A false-success hole inside the fix for false successes.** The pre-read discarded its error, and a
+   null `currentEntry` is indistinguishable from "not in this session" — so a transient read failure
+   skipped the status check, matched 0 rows, *and* skipped the 0-rows guard (which requires a non-null
+   `currentEntry` by design). Returned `success`, client navigated away, player still in a live roster.
+   Now fails closed.
+2. **The paused branch rendered an ungated Leave button** and returns *before* the drafted/on-deck branch,
+   so that branch's gate never saw a paused player. `is_paused` is orthogonal to status: `togglePlayerPause`
+   has no status guard and the organizer's pause control is not hidden for locked rows (its checkout
+   control at `queue-control.tsx:969` is). UX-only — the server refused correctly — but a dead button.
+3. **`try/finally` → `try/catch` in `handleCheckout`.** `finally` cleared `checkingOut` on the *success*
+   path too, flipping the button out of "Leaving…" mid-`router.push`.
+
+> 💡 **Lint note that supersedes an earlier claim.** The `player-dashboard.tsx:188`
+> "unused eslint-disable directive" warning is **fixed, not pre-existing-and-unavoidable**. The effect at
+> :188 was never the cause: the `try/finally` in `handleCheckout` was silencing
+> `react-hooks/set-state-in-effect` across the **whole component**, orphaning the disable. Measured both
+> ways — `finally` → 1 warning, `catch` → 0. Any baseline quoting "1 pre-existing warning" is now stale.
+
+🪤 Two of the three were the repo's standing defect class, not new logic: **a doc asserting what the code
+does not do.** §3.19's own parenthetical — *"the paused and waiting branches keep their own Leave buttons;
+both are leaveable states"* — is what made #2 invisible, and it shipped **in the same commit as the guard
+it contradicted**. Corrected in APP_MANIFEST §3.39.
+
+### Review-gate notes — verdict **LGTM**, 2 minor, documented per CLAUDE.md rather than fixed
+
+1. **Stalled-navigation live-lock (narrow, ACCEPTED not patched).** `handleCheckout` deliberately does
+   not clear `checkingOut` on success, because the component stays mounted across `router.push`. If that
+   navigation stalls or is cancelled while mounted, the flag is stuck true. Mostly benign — the player
+   *has* left. The reachable tail: realtime then drops `myEntry` (the `left` row is filtered out by
+   `useQueue`'s `.in([...])`), the tab falls through to "Ready to play?", the player re-joins via the CTA,
+   and the header "Leave session" button stays disabled at "Leaving…" until a remount or reload. Requires
+   a stalled/cancelled client nav to reach. Accepted rather than patched with another effect.
+2. **The `catch` message is unconditional.** If `router.push` were the thrower, the leave already
+   succeeded but the toast still reads "Couldn't leave the session." App Router's `push` does not throw
+   synchronously, so this is theoretical; moving the push below the `try` would tighten it.
+
+Independently re-verified by the reviewer, not just asserted: the `finally`→`catch` lint delta (1 → 0 via
+`eslint --stdin` on both revisions), that `queue_entries`' `UNIQUE (session_id, player_id)` makes the
+`maybeSingle()` multiple-rows error unreachable (so failing closed blocks no legitimate leave), and that
+the paused-branch gate's status set is an exact match for the server's refusal set — `left` is unreachable
+client-side because `useQueue` never fetches it.
+
+### Not done / not mine
+
+- **Merge is the user's call** (squash-merge via the GitHub MCP) — do not merge #66 or #67.
+- No migration on this branch. TypeScript only.
+
+
+---
+
 ## 🔓 TWO UNBOUND CROSS-TENANT WRITES + EIGHT UNORDERED GUARDS ACROSS SEVEN SITES — audit **#12**, ✅ **SHIPPED + DEPLOYED 2026-08-13** (PR #64 → `main` `8f4cb78`; Vercel Production `success`; CI green on the PR and again on `main`)
 
 **⚠️ NOT YET ON PROD.** TypeScript-only, **no migration** — it ships with the merge + Vercel deploy.

@@ -222,15 +222,24 @@ function QueueSubTab({
           You won&apos;t be called for matches while paused. Your spot is saved — the organizer will
           resume you when you&apos;re ready.
         </p>
-        <button
-          onClick={handleLeave}
-          disabled={leaving}
-          className="mt-10 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
-                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive
-                     disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {leaving ? "Leaving…" : "Leave Queue"}
-        </button>
+        {/* Same rule as the drafted/on-deck branch below: only a leaveable
+            status gets a Leave button. is_paused is orthogonal to status —
+            togglePlayerPause has no status guard and the organizer's pause
+            control is not hidden for locked rows (unlike its checkout
+            control), so an on_deck player can be paused and lands here. The
+            server refuses that checkout anyway; without this gate the player
+            just gets a dead button and an error toast. */}
+        {(myEntry.status === "waiting" || myEntry.status === "drafted") && (
+          <button
+            onClick={handleLeave}
+            disabled={leaving}
+            className="mt-10 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
+                       text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {leaving ? "Leaving…" : "Leave Queue"}
+          </button>
+        )}
       </div>
     );
   }
@@ -261,15 +270,21 @@ function QueueSubTab({
           <span className="text-sm font-medium text-muted-foreground">Match forming</span>
           <p className="mt-1 text-xs text-muted-foreground">selected from {totalWaiting} queued</p>
         </div>
-        <button
-          onClick={handleLeave}
-          disabled={leaving}
-          className="mt-2 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
-                     text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive
-                     disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {leaving ? "Leaving…" : "Leave Queue"}
-        </button>
+        {/* Leave is offered only for a tentative 'drafted' match (unpublished —
+            leaving tears the draft down cleanly). Once 'on_deck' (published,
+            awaiting a court) the player can no longer leave: bailing left a ghost
+            in the roster that broke the match when it was pulled to a court. */}
+        {myEntry.status === "drafted" && (
+          <button
+            onClick={handleLeave}
+            disabled={leaving}
+            className="mt-2 rounded-xl border border-border bg-transparent px-5 py-2 text-xs font-medium
+                       text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {leaving ? "Leaving…" : "Leave Queue"}
+          </button>
+        )}
       </div>
     );
   }

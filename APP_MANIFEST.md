@@ -1308,19 +1308,28 @@ Also: `src/lib/schemas/auth.ts` — Zod schema for `display_name` (3–30 chars,
 
 ### 3.19 Checkout / Leave Session
 
-**Files:** `src/app/actions/queue.ts` (`checkoutPlayer`), `src/components/organizer/queue-control.tsx`, `src/components/player/queue-toggle.tsx`
+**Files:** `src/app/actions/queue.ts` (`checkoutPlayer`, `removePlayerFromQueue`), `src/components/player/player-dashboard.tsx`, `src/components/player/my-status-tab.tsx`, `src/components/organizer/queue-control.tsx`
 
-Two paths to exit a session:
+Two paths to exit a session, and they are **different server actions with different authority** — not one action with an optional player argument:
 
-**Player self-checkout**: Player taps the leave button from their dashboard. Calls `checkoutPlayer(sessionId)` — sets `queue_entries.status = "left"`. If the player is currently `on_deck` or `playing`, the organizer sees the change immediately via Realtime.
+**Player self-checkout**: Player opens the leave dialog from their dashboard. Calls `checkoutPlayer(sessionId)` — note the signature takes **only** a session id; the player is always `auth.getUser()` server-side, so this action can never move anyone else's row. It sets `queue_entries.status = "left"` **only if the player is leaveable** — see §3.39. A player who is `on_deck` or `playing` is refused.
 
-**Organizer-initiated checkout**: Organizer clicks the checkout action in the queue control table. Uses the same `checkoutPlayer` action with the target player's ID via the service-role client (cross-user mutation). Wrapped in `AlertDialog` confirmation to prevent accidental removals.
+**Organizer-initiated removal**: Organizer confirms the remove action in the queue control table (`queue-control.tsx` → `onRemoveFromQueue` → `use-organizer-queue`), wrapped in an `AlertDialog` to prevent accidental removals. This calls **`removePlayerFromQueue(sessionId, playerId)`**, which gates on `isSessionOrganizer` and then delegates to the `remove_player_from_queue_organizer` RPC (migration `20260512200002`): one transaction that locks the queue row, pulls the player from any **pending** roster, cancels matches that fall under-strength, returns their survivors to `waiting`, and sets `status = "left"`. It then broadcasts `match_cancelled` to the remaining players and logs a `cancelled` match event for the matches that were genuinely torn down.
+
+⚠️ **The organizer cannot remove an active player in one step either — and that is deliberate.** Three limits stack, and they agree:
+
+- `v_queue_full_with_wait_time` is `WHERE qe.status IN ('waiting','drafted','on_deck')` — a **`playing` player is not listed in the queue panel at all** (the organizer still sees them on the
+  active-match / court board — this limit is about the queue table, which is where the remove control lives).
+- In `queue-control.tsx` the checkout dialog renders behind `{!isLocked && …}` where `isLocked = status === "on_deck" || status === "drafted"`; `wait-time-monitor.tsx` hides it for `on_deck` too, and `queue-skill-groups.tsx` lists `waiting` only. So the **only** removable status in the UI is `waiting`.
+- The RPC itself only sweeps `m.status = 'pending'`; an `in_progress` match is never touched, so calling it on a playing player would strand exactly the ghost this design exists to prevent.
+
+The real escape hatch for an active player is **two steps**: the organizer cancels the on-deck match (or ends the in-progress one) — which returns its roster to `waiting` — and *then* checks the player out. Both the server refusal string and the leave-dialog copy say "ask an organizer to remove you"; that is accurate, but the organizer's first move is tearing the match down, not clicking remove.
 
 **Post-checkout state:**
 
 - `queue_entries.status` → `"left"`.
 - Matchmaking engine excludes `left` players from all candidate pools.
-- If the player was assigned to an unpublished draft match, the draft is not automatically cleared — the organizer must discard it manually (BUG-002 in `publishMatchAction` will block publishing if a draft contains a `left` player).
+- If the player was assigned to an **unpublished draft** match, `checkoutPlayer` clears it via the `checkout_player_cleanup_drafts` RPC — atomically removing them from the draft's `match_players` and cancelling the draft if it drops below 4. (A manual, non-atomic fallback loop runs only on an environment where that RPC is not yet deployed.) BUG-002 in `publishMatchAction` (`src/app/actions/match-drafts.ts`) remains the backstop: it refuses to publish a draft containing a `left` player.
 - **Re-joining**: `rejoin_queue(p_session_id)` RPC resets status to `"waiting"` and preserves `games_played`. Players can re-join at any time while the session is active.
 
 ---
@@ -1343,7 +1352,7 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 - `on_deck` players: teal border + "On Deck" badge + "ASSIGNED" label — **never flagged as bottlenecks** (they're already assigned to a match). Remove button is hidden.
 - Summary line: "X waiting, Y on deck".
 
-**Organizer actions:** Remove from queue (AlertDialog-confirmed, `waiting` players only). Calls `checkoutPlayer`.
+**Organizer actions:** Remove from queue (AlertDialog-confirmed, `waiting` players only — the control is hidden for `on_deck`). Calls **`removePlayerFromQueue(sessionId, playerId)`**, *not* `checkoutPlayer` — the latter takes only a session id and can only ever act on the caller (§3.19).
 
 ⚠️ `joined_at` is **not reset** when a player moves to `on_deck` — their accumulated wait time continues ticking and is preserved if the match is cancelled and they return to `waiting`.
 
@@ -1986,7 +1995,7 @@ M2 kills the four reads as well because a permissive `ALL` policy is OR-ed into 
 
 **Who can hear them now.** The join predicate is `session_access_level(<topic session id>) IS NOT NULL`, i.e. session creator, a `session_organizers` row, a club `owner`/`admin`, or an **active** `club_members` row. That is the whole audience — the clause was written when the topic was public and an anon socket with a session UUID could harvest the feed.
 
-**Why ids buy nothing.** `profiles_select` is `id = auth.uid() OR can_read_profile(id)`, and `can_read_profile` has five arms ([20260723200000](supabase/migrations/20260723200000_scope_profiles_select_to_shared_scope.sql)). Arm 2 — *target is queued in a session I can reach* — covers `anchorPlayerName` outright: the anchor is by construction a queued player of that same session (`const anchor = pool[0]` → `broadcastCapSaturation`, [matchmaking.ts:584-593](src/app/actions/matchmaking.ts:584)), and the recipient can reach the session or they could not have joined. So every recipient of a `cap_saturation` payload can already `SELECT` that display name; sending the id instead would just make them fetch it. Incremental disclosure: **zero**, and it does not decay — checkout **UPDATEs** the row to `status='left'` ([queue.ts:166](src/app/actions/queue.ts:166), `remove_player_from_queue_organizer`), it does not delete it, and arm 2 has no status filter, so coverage survives the anchor leaving. ⚠️ `20260723200000`'s own header comment says *"`queue_entries` rows are DELETEd on checkout"* — **that is false**; `queue_delete_own` / `queue_delete_organizer` are DELETE *policies* on the table, and no production code path issues a DELETE against it (the only DELETE **against `queue_entries`** in `src/` is dev-only `clearSessionData` in `src/app/actions/dev.ts` — `checkoutPlayer` does hold a DELETE at [queue.ts:207](src/app/actions/queue.ts:207), but against `match_players`; the only other **non-test** one is the hand-run `supabase/data-fixes/20260608_duplicate_name_data_fix.sql`, which is not an application path — `tests/` deletes freely, thirteen sites across six files, which is exactly how the arm-3 integration test manufactures its state). A draft of this section imported that claim as fact; do not re-import it.
+**Why ids buy nothing.** `profiles_select` is `id = auth.uid() OR can_read_profile(id)`, and `can_read_profile` has five arms ([20260723200000](supabase/migrations/20260723200000_scope_profiles_select_to_shared_scope.sql)). Arm 2 — *target is queued in a session I can reach* — covers `anchorPlayerName` outright: the anchor is by construction a queued player of that same session (`const anchor = pool[0]` → `broadcastCapSaturation`, [matchmaking.ts:584-593](src/app/actions/matchmaking.ts:584)), and the recipient can reach the session or they could not have joined. So every recipient of a `cap_saturation` payload can already `SELECT` that display name; sending the id instead would just make them fetch it. Incremental disclosure: **zero**, and it does not decay — checkout **UPDATEs** the row to `status='left'` ([queue.ts:198](src/app/actions/queue.ts:198), `remove_player_from_queue_organizer`), it does not delete it, and arm 2 has no status filter, so coverage survives the anchor leaving. ⚠️ `20260723200000`'s own header comment says *"`queue_entries` rows are DELETEd on checkout"* — **that is false**; `queue_delete_own` / `queue_delete_organizer` are DELETE *policies* on the table, and no production code path issues a DELETE against it (the only DELETE **against `queue_entries`** in `src/` is dev-only `clearSessionData` in `src/app/actions/dev.ts` — `checkoutPlayer` does hold a DELETE at [queue.ts:249](src/app/actions/queue.ts:249), but against `match_players`; the only other **non-test** one is the hand-run `supabase/data-fixes/20260608_duplicate_name_data_fix.sql`, which is not an application path — `tests/` deletes freely, thirteen sites across six files, which is exactly how the arm-3 integration test manufactures its state). A draft of this section imported that claim as fact; do not re-import it.
 
 The two `actorName`s name the acting organizer and are covered by arm 4 (`session_organizers`), arm 5 (`sessions.created_by`), arm 1 (*shares any active club with the target* — a `club_members` self-join on `me.club_id = them.club_id`, **not** a test against this session's club), arm 3 (*target played a match in a session I can reach*, which catches any club owner/admin who has ever played in front of this recipient) or arm 2 (*target is queued in one* — arm 2 carries **no status filter**, so an organizer who is also sitting in their own session's queue is covered). ⚠️ **One shape escapes all five, and it is a property of the RECIPIENT:** anyone who can reach the session but shares no active club **at all** with the actor has no arm 1, so an actor who is a club owner/admin with no `session_organizers` row, no reachable match played, no reachable queue entry **and no session of their own creation that this recipient can reach** (arm 5) is unresolvable to them. (Not holding a row in *this* session's club is the usual route there, but not sufficient — an overlap in any other club restores arm 1.) Today the recipient class that lands there in practice is the *delegated* (QR-invite) organizer — the case `can_read_profile`'s non-club arms exist for. A non-member session **creator** would also qualify, but cannot be minted any more: since audit #2 was fixed, `createSession` demands an explicit `clubId` + `isClubAdmin` ([sessions.ts:140-146](src/app/actions/sessions.ts:140)) and `getClubRole` filters `is_active` ([clubs.ts:161](src/lib/clubs.ts:161)), so creators hold an active membership *at creation time* and arm 1 covers them. Membership is revocable afterwards (`leaveClub` / `removeMember` → `club_member_deactivate`), so a post-fix creator can lose arm 1 as well — and when they do they **join the delegated organizer in the uncovered class**. 🪤 **Arm 5 does not rescue them.** `profiles_select` is `id = auth.uid() OR can_read_profile(id)`, so `p_profile_id` binds to the row **being read** — the actor. Every arm is a predicate on the **actor**, qualified only by what the **recipient** can reach; arm 5 fires when the *actor* created a reachable session and says nothing about the recipient having created one. The draft before this one read that arm backwards and had it covering creators-as-recipients. The conclusion is unaffected: either way the recipient is a co-organizer of the very session being acted on. Attributing "who just cleared my board" is what the field is **for**. Enumerate all five arms when re-checking this: an argument that *is* an exhaustive case split stops being one the moment an arm is skipped — this paragraph has now been corrected **three** times on exactly that, first for omitting arm 3, then arm 2, and then arm 5, which fell out of the escape-shape split while the very same paragraph was busy (mis)spending arm 5 on the creator question.
 
@@ -2313,7 +2322,7 @@ Follow the `match-history-panel.tsx` pattern: centered icon in `rounded-full bg-
 Always wrapped in `AlertDialog` with explicit cancel + confirm. The only exception is cancel-match which uses a two-step inline confirmation (to avoid modal on a time-sensitive courtside action).
 
 **Loading states:**
-`disabled:opacity-50 disabled:cursor-not-allowed` on every interactive element. One deliberate exception: MatchAlert's Leave Queue button uses `aria-disabled` + a click guard instead of `disabled` — a truly disabled control drops out of the focus order, so the "Leaving…" label change would never be announced; `aria-disabled` keeps focus on it while `aria-live="polite"` reads the change (visual opacity/cursor classes applied conditionally).
+`disabled:opacity-50 disabled:cursor-not-allowed` on every interactive element. One deliberate exception — **now unreachable in practice, see §3.39**: no caller passes `onLeaveQueue` to `MatchAlert` any more, so the control it gated no longer renders; the pattern is retained here because it is the house rule for any future time-sensitive control. MatchAlert's Leave Queue button uses `aria-disabled` + a click guard instead of `disabled` — a truly disabled control drops out of the focus order, so the "Leaving…" label change would never be announced; `aria-disabled` keeps focus on it while `aria-live="polite"` reads the change (visual opacity/cursor classes applied conditionally).
 
 **Initial-load skeletons (player tabs, 2026-07-13):**
 `my-status-tab.tsx`, `live-courts-tab.tsx`, `waitlist-tab.tsx` render content-shaped skeletons on first load — never bare "Loading…" text. Wrapper: `role="status" aria-busy="true" aria-label="Loading …"`. Blocks: `bg-slate-200 dark:bg-muted animate-pulse` (the explicit slate keeps them visible on the pale light canvas where bare `bg-muted` washed out; plain `bg-muted` is fine where the skeleton sits inside a bordered `bg-card` shell, as in live-courts). Skeletons mirror the real layout (waitlist reproduces the board header + `56px 1fr auto` row grid) so the list doesn't jump when data lands; `loading` flips true→false once per mount, so they render exactly once — no flicker on realtime refetches.
@@ -2470,7 +2479,7 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `match-update.test.ts`     | —     | Score edit and match revert flows                                                                                                |
 | `matchmaking.test.ts`      | —     | Engine integration against real DB                                                                                               |
 | `performance.test.ts`      | —     | Engine timing benchmarks                                                                                                        |
-| `player-checkout.test.ts`  | Q     | `checkoutPlayer`: happy path, unauthenticated rejection, UUID validation, checkout while on_deck/playing, draft cleanup, idempotency |
+| `player-checkout.test.ts`  | Q     | `checkoutPlayer`: happy path, unauthenticated rejection, UUID validation, **checkout while on_deck/playing is REFUSED** (Q-4/Q-5, §3.39 — these assert a rejection, not a success), draft cleanup, idempotency |
 | `player-pause.test.ts`     | P     | `togglePlayerPause`: pause/unpause, `games_played`+`joined_at` invariant, non-organizer rejection, UUID validation              |
 | `publish-match.test.ts`    | —     | `publishMatchAction` BUG-001 (ON_DECK_WARNING timing) and BUG-002 (stale-player guard)                                          |
 | `queue-join.test.ts`       | —     | `joinQueueAction` inherited-games floor, re-join paths                                                                          |
@@ -2699,7 +2708,6 @@ src/
       player-dashboard.tsx       # Player view shell (My Status, Live Courts, Waitlist tabs)
       match-alert.tsx            # Full-screen match takeover (pending amber / in_progress navy) + MatchAlertPresence (enter/crossfade/exit orchestration, focus + live-region a11y)
       on-deck-alert.tsx          # "You're up next" on-deck position card
-      queue-toggle.tsx           # Join/leave queue button
       queue-status.tsx           # Queue position + wait time display
       live-courts-tab.tsx        # Live courts view for players
       waitlist-tab.tsx           # Waitlist tab showing all waiting players
@@ -3556,3 +3564,98 @@ generated `email` and exports `TEST_USER_PASSWORD` — because `mockAuthAs` only
 Postgres; RLS is only exercised by a genuine `authenticated` JWT. Every arm test pairs its positive
 assertion with a `not.toContain(stranger.id)` control, so a pass cannot be explained by the very bug being
 fixed.
+
+---
+
+### 3.39 A player can no longer self-leave from a live match — the refusal, and the TOCTOU window under it (2026-08-15)
+
+**Files:** `src/app/actions/queue.ts` (`checkoutPlayer`), `src/components/player/player-dashboard.tsx`,
+`src/components/player/my-status-tab.tsx`, `tests/integration/player-checkout.test.ts`.
+Supersedes the self-checkout half of §3.19.
+
+**The incident.** Self-checkout used to mark the caller `left` from *any* status and clean up only
+**unpublished** drafts. A player who was `on_deck` (published, waiting for a court) or `playing` therefore
+kept their seat in a live roster while being gone from the queue — a ghost. When that on-deck match was
+pulled to a court it broke the live queue. The cleanup path was never wrong; it simply had no jurisdiction
+over a *published* match, and nothing else refused the request.
+
+**The rule.** `checkoutPlayer` now refuses when the caller's queue status is `on_deck` or `playing`.
+`waiting` and `drafted` still leave freely — a drafted player's match is tentative, and the
+`checkout_player_cleanup_drafts` RPC tears it down cleanly.
+
+⚠️ **Do not read this as "the organizer can just remove them instead."** No single action removes an
+`on_deck`/`playing` player — not the organizer's either. Two UI limits make the organizer's remove control
+`waiting`-only, and a third limit means the RPC behind it could not repair the damage anyway: it sweeps
+only `pending` matches (all three enumerated in §3.19). Getting an active player out is deliberately **two steps**: tear the match down first so
+its roster returns to `waiting`, then check them out. (One exception to "returns to `waiting`": a finishing
+player who is the pulled body of a held cross-court draft is re-reserved as `drafted`, not `waiting`
+(`match-lifecycle.ts`, R3-1) — and `drafted` is `isLocked` in the organizer UI too, so that draft has to be
+cleared as well.) The capability was not moved to another actor — it was
+**gated behind repairing the match**, which is the thing that was actually missing.
+
+**Two gates, because one is not enough.** The status read and the write are separate round-trips, and the
+engine can promote a `waiting` player to `on_deck` in between — publishing a roster containing someone who
+is about to vanish. So the write itself is guarded:
+
+```ts
+.update({ status: "left" })
+.eq("session_id", sessionId).eq("player_id", user.id)
+.in("status", ["waiting", "drafted", "left"])
+.select("id")
+```
+
+If the promotion won the race, the `.in(...)` predicate no longer matches and **0 rows** come back; the
+action returns the same refusal. Two details are load-bearing:
+
+- **`"left"` stays in the allowed set** so a double-checkout still updates its own row and succeeds — Q-8's
+  idempotency is a real behaviour, not an accident of ordering.
+- **A null pre-read is excluded from the 0-rows guard.** A caller who was never in this session also updates
+  0 rows, but that is a harmless no-op, not a lost race. Only "read as leaveable, wrote nothing" is a race.
+
+**Client.** The leave dialog's copy branches on `hasActiveMatch` and the confirm button is
+`disabled={checkingOut || hasActiveMatch}` — the client blocks the *tap*, the server remains authoritative
+(the two derive from different sources: `hasActiveMatch` from the current match's status, the server from
+the queue row). `handleCheckout` now surfaces `result.error` as a toast instead of failing silently. In
+`my-status-tab`, the **Match Forming card's** "Leave Queue" button now renders only for
+`status === "drafted"` — that card is the one a drafted *or* on-deck player sees, and only the drafted half
+may still leave. The **paused** branch now carries the same gate (see the follow-up below — the claim that
+once stood here, that paused is itself a leaveable state, was false). The waiting branch keeps its Leave
+button unconditionally, because `waiting` really is always leaveable.
+The `MatchAlert` court-call overlay is deliberately no longer passed `onLeaveQueue` — the prop is optional
+and gates two buttons, so dropping it removes both, and by the time that overlay fires the player is on deck.
+
+**Tests.** Suite Q `Q-4`/`Q-5` were **inverted, not added** — they previously asserted the superseded
+contract (`expect(entry?.status).toBe("left")` while on deck) and would have stayed green against the bug
+forever. Both now assert `result.success === false`, that the queue status and match status are unchanged, **and
+that the message is the refusal** — `expect(result!.error).toMatch(/on deck|in a match/i)`. That last
+assertion is the one doing the work: `success === false` plus unchanged rows is *also* what a broken
+`mockAuthAs` or a rejected UUID produces, so without pinning the message the test would stay green for
+reasons having nothing to do with the guard.
+
+**Follow-up (same day, `cbf57df`) — three defects the review gate found in the above.**
+
+1. **The guard had its own false-success hole.** The pre-read discarded its error, and a null `currentEntry`
+   is indistinguishable from "not in this session". So on a transient read failure the `on_deck`/`playing`
+   check never fired, the UPDATE matched 0 rows (an `on_deck` status is outside its `.in()` set), and the
+   0-rows guard was skipped *precisely because* it requires a non-null `currentEntry` — the exclusion
+   described two paragraphs above. The action returned `success` and the client navigated away while the
+   player sat in a live roster. That is the very failure this section exists to describe, reachable through
+   the fix for it. The read now fails closed.
+2. **The paused branch rendered an ungated Leave button**, and it returns *before* the drafted/on-deck
+   branch, so the gate at that branch never saw a paused player. `is_paused` is orthogonal to status:
+   `togglePlayerPause` (`queue.ts:83`) has no status guard, and the organizer's pause control
+   (`queue-control.tsx:942`) — unlike its checkout control at `:969` — is not hidden for locked rows, so an
+   on-deck player can be paused and land there. The server refused correctly, so this was UX-only: a dead
+   button contradicting the rule applied 34 lines below it.
+3. **`handleCheckout` used `try/finally`**, which cleared `checkingOut` on the *success* path too, flipping
+   the button out of "Leaving…" while `router.push` was still in flight (`origin/main` never reset it). The
+   `finally` also silenced `react-hooks/set-state-in-effect` across the **entire component** — that, not the
+   `prevHasActiveMatchRef` tab-switch effect the directive sits on, is what had orphaned that disable into
+   an unused directive. (Mechanism: the compiler-backed `react-hooks` rules cannot lower a `TryStatement`
+   with no `catch` handler, so they bail on the enclosing component.) Measured both ways: `finally` → 1
+   warning, `catch` → 0. Now `try/catch`, which keeps throw-safety, removes the flicker, and makes the
+   disable load-bearing again — it also toasts on a throw, which the `finally` never did.
+
+🪤 Two of the three are the repo's standing defect class rather than new logic bugs: a doc/comment asserting
+something the code does not do. The parenthetical corrected above ("paused … both are leaveable states") is
+what made #2 invisible, and it shipped in the same commit as the fix it contradicted.

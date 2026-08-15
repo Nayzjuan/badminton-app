@@ -134,8 +134,11 @@ export async function togglePlayerPause(
 
 /**
  * Marks the calling player as "left" in the given session, removing them from
- * future matchmaking. Safe to call while on_deck or playing — the active match
- * is unaffected; only future scheduling is blocked.
+ * future matchmaking. REFUSES when the player is on_deck (in a published match
+ * awaiting a court) or playing (in an in-progress match): self-leaving mid-match
+ * strands a ghost in the roster that breaks the match when it is pulled to a
+ * court, so an organizer must remove them (removePlayerFromQueue) instead.
+ * 'waiting' and 'drafted' players leave freely.
  *
  * Also cleans up any unpublished draft matches the player is assigned to via the
  * `checkout_player_cleanup_drafts` RPC (falls back to a manual loop if the RPC
@@ -161,14 +164,65 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   // own row — the same shape the organizer path at removePlayerFromQueue uses.
   const svc = createServiceClient();
 
-  const { error } = await svc
+  // Guard: a player who is ON DECK (in a published match awaiting a court) or
+  // PLAYING (in an in-progress match) must not be able to self-checkout. The
+  // old behaviour marked them 'left' and only cleaned up UNPUBLISHED drafts, so
+  // their published/active match kept a ghost in its roster — and when that
+  // on-deck match was pulled to a court it broke the live queue (the incident
+  // that motivated this guard). If such a player genuinely must step out, an
+  // organizer removes them via removePlayerFromQueue, whose RPC atomically
+  // cancels or repairs the affected match. 'waiting'/'drafted' can still leave
+  // freely — a drafted player's tentative draft is torn down cleanly below.
+  const BLOCKED_WHILE_ACTIVE =
+    "You can't leave while you're on deck or in a match. Finish your game, or ask an organizer to remove you.";
+
+  const { data: currentEntry, error: readError } = await svc
+    .from("queue_entries")
+    .select("status")
+    .eq("session_id", sessionId)
+    .eq("player_id", user.id)
+    .maybeSingle();
+
+  // Fail closed if the status read itself fails. A transient error leaves
+  // currentEntry null, and null is indistinguishable from "not in this
+  // session": the on_deck/playing check below would not fire, the UPDATE would
+  // match 0 rows (an on_deck status is outside its .in() set), and the TOCTOU
+  // guard further down is skipped precisely because it requires a non-null
+  // currentEntry. The action would return success and the client would
+  // navigate away while the player is still in a live roster — the exact
+  // false-success this guard exists to remove.
+  if (readError) {
+    return { success: false, error: "Couldn't check your queue status. Please try again." };
+  }
+
+  if (currentEntry?.status === "on_deck" || currentEntry?.status === "playing") {
+    return { success: false, error: BLOCKED_WHILE_ACTIVE };
+  }
+
+  // Atomic write guarded on a leaveable status. If the engine promoted this
+  // player to on_deck/playing in the window between the read above and this
+  // write, 0 rows are affected — closing the TOCTOU gap that would otherwise
+  // strand a ghost in the freshly-published roster (the exact failure this
+  // guard exists to prevent). 'left' stays in the set so a double-checkout
+  // remains idempotent (Q-8).
+  const { data: leftRows, error } = await svc
     .from("queue_entries")
     .update({ status: "left" as const })
     .eq("session_id", sessionId)
-    .eq("player_id", user.id);
+    .eq("player_id", user.id)
+    .in("status", ["waiting", "drafted", "left"])
+    .select("id");
 
   if (error) {
     return { success: false, error: error.message };
+  }
+
+  // currentEntry existed and read as leaveable, yet nothing updated → a
+  // concurrent promotion to on_deck/playing beat us. Refuse rather than ghost.
+  // (A null currentEntry — player not in this session — updates 0 rows too, but
+  // that is a harmless no-op, so it is excluded from this guard.)
+  if (currentEntry && (!leftRows || leftRows.length === 0)) {
+    return { success: false, error: BLOCKED_WHILE_ACTIVE };
   }
 
   // Clean up any unpublished draft matches this player is assigned to.
