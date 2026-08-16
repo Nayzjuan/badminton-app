@@ -124,10 +124,15 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🎽 HELD CROSS-COURT DRAFTS COULD NEVER BE PUBLISHED — 2026-08-16. ✅ **COMMITTED + MIGRATION APPLIED TO PROD**
+## 🎽 HELD CROSS-COURT DRAFTS COULD NEVER BE PUBLISHED — 2026-08-16. ✅ **MERGED + DEPLOYED + MIGRATION APPLIED TO PROD**
 
-**Status: code complete, validated, review-gated, committed as `db600a4` on `fix/block-leave-active-match`.
-Migration `20260816000000` is APPLIED AND VERIFIED ON PROD** (stamp `20260816024129` — see the migration
+**Status: SHIPPED.** Committed as `db600a4` on `fix/block-leave-active-match`, PR
+[#68](https://github.com/Nayzjuan/badminton-app/pull/68) **squash-merged to `main` as `61e942b`**;
+Vercel Production deployment `dpl_J7ZEr81PVLSRGNhBNGxg6nPmXsya` reached **READY** on that exact SHA
+(`githubCommitSha 61e942b…`, aliases live). CI verified per-run before the merge — all four Actions
+runs carried `headSha = 5521f48` (the PR head) and `mergeStateStatus: CLEAN`, rather than trusting the
+aggregate colour of `gh pr checks`.
+**Migration `20260816000000` is APPLIED AND VERIFIED ON PROD** (stamp `20260816024129` — see the migration
 queue at the top of this file for the measured before/after fingerprints and the ACL check).
 `npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **68 files, 1278 passed, 1 skipped** ·
 `npm run test:integration` **25 files, 289 passed** · `npm run build` success.
@@ -263,7 +268,7 @@ header just corrected to remove exactly that claim.
 - **Still no live-session proof of the fix.** The DB-level chain is proven (Suite XC + PUB-HELD-DB) and
   the field failure is reproduced, but nothing here has run in a real session.
 
-## `cancelMatchAction` restore is a PARTITION, not a bulk `waiting` — 2026-08-16
+## `cancelMatchAction` restore is a PARTITION, not a bulk `waiting` — 2026-08-16. ✅ **MERGED** — folded into PR #68 → `main` `61e942b`
 
 Follow-up to the booked gap above. Files: `src/lib/cancel-restore.ts` (new, pure),
 `src/app/actions/match-lifecycle.ts` (step 3 of `cancelMatchAction` + its JSDoc),
@@ -385,13 +390,17 @@ the hold is no longer `pending` by then, so it cannot reserve its own body. One 
 2. ~~Commit with **explicit pathspecs** (list above).~~ ✅ **Done 2026-08-16** as `db600a4`, 49 files.
    The `constants.ts` / `APP_MANIFEST.md` hunk split was never needed: the user chose one PR for all
    four workstreams.
-3. 🔭 **STILL OPEN — the only live action here.** Watch the next live session for held drafts that
+3. ~~Merge and deploy.~~ ✅ **Done 2026-08-16** — PR #68 squash-merged to `main` as `61e942b`, Vercel
+   Production READY on that SHA. `--delete-branch` was deliberately **omitted**: this checkout is
+   shared with another Claude session, and deleting the branch would have switched it out from under
+   them mid-edit.
+4. 🔭 **STILL OPEN — the only live action here.** Watch the next live session for held drafts that
    actually reach a court. **12 created → 2 reaching a court is the baseline to beat**, and it is the
    only real test of this fix: nothing in the suite can prove a hold survives its whole lifecycle.
 
 ---
 
-## 🎯 SCORE RACE + REPEAT EDIT — 2026-08-15. ✅ **COMMITTED** in `db600a4` (folded into the cross-court PR)
+## 🎯 SCORE RACE + REPEAT EDIT — 2026-08-15. ✅ **MERGED** — `db600a4`, folded into PR #68 → `main` `61e942b`
 
 **Status: code complete, validated, review-gated (5 rounds, final verdict LGTM), committed.**
 `npx tsc --noEmit` 0 · `npm run lint` **exit 0, zero errors, zero warnings** ·
@@ -595,8 +604,9 @@ demonstrably edit scores in the same session hours after it stops.
 1. ~~Branch these paths off `main` by explicit pathspec.~~ ✅ **Done 2026-08-16** — committed as
    `db600a4` on `fix/block-leave-active-match` together with the cross-court work, by explicit user
    decision, with pathspecs for all 49 files.
-2. Ship, then watch a live session: does any match get a second `score_edit`? That is the only real
-   test of defect 2 — nothing in the suite can prove it.
+2. ~~Ship.~~ ✅ **Done 2026-08-16** — PR #68 → `main` `61e942b`, Vercel Production READY. Now watch a
+   live session: does any match get a second `score_edit`? That is the only real test of defect 2 —
+   nothing in the suite can prove it.
 3. Also watch the duplicate confirm in that session: how often it fires, and whether organizers confirm
    through it. Firing constantly would mean the 30-minute window is too wide.
 4. Open items from the verification sweep, both **out of scope for this change set** and neither
