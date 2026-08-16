@@ -402,7 +402,8 @@ the hold is no longer `pending` by then, so it cannot reserve its own body. One 
 
 ## 🎯 SCORE RACE + REPEAT EDIT — 2026-08-15. ✅ **MERGED** — `db600a4`, folded into PR #68 → `main` `61e942b`
 
-**Status: code complete, validated, review-gated (5 rounds, final verdict LGTM), committed.**
+**Status: SHIPPED** — code complete, validated, review-gated (5 rounds, final verdict LGTM), merged to
+`main` in `61e942b` and live on the Vercel Production deploy of that SHA.
 `npx tsc --noEmit` 0 · `npm run lint` **exit 0, zero errors, zero warnings** ·
 `npm run test:unit` **65 files, 1240 passed, 1 skipped** at the time (68/1278 after the cross-court
 work merged in) · `npm run build` success. TypeScript-only, **no migration**.
@@ -623,9 +624,17 @@ demonstrably edit scores in the same session hours after it stops.
 ✅ **CI green on the real head.** `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`. Vitest ×2 pass,
 all three Vercel deploys pass, and **Vitest Integration ×2 pass** (8m45s / 8m28s, runs `31891664847`
 and `31891667059`) — the suite that actually exercises the `queue.ts` change (Suite Q `Q-4`/`Q-5`).
-🪤 Both run IDs were confirmed to carry `headSha = 7f83cfb`, i.e. the commit the PR actually points at.
+🪤 Both run IDs were confirmed to carry `headSha = 7f83cfb` — **the head at the moment of that check, not
+the head the PR merged at.** ⚠️ Corrected 2026-08-16: one more docs commit (`e1542ec`) landed after this
+paragraph was written, so `e1542ec` is what PR #67 actually pointed at when it merged, and the sentence
+that said `7f83cfb` "is the commit the PR actually points at" was falsified by the commit that wrote it —
+the same self-invalidating defect the very next 🪤 warns about, four lines below the warning. The verdict
+survives on the real head: `e1542ec` re-ran four workflows, all `success` (Unit `31892255690` push /
+`31892258687` PR, Integration `31892255681` push / `31892258874` PR; Supabase Preview `skipped`), and
+those were confirmed after the fact, not at the time.
 `gh pr checks` alone does **not** prove this: it renders whatever checks are attached now, so a stale
-run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate colour.
+run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate colour —
+and re-verify after **every** further push, including a docs-only one.
 
 🪤 **Do not write the current head SHA into this file.** The previous revision said "origin = `2a45fdf`",
 which the very commit that *added* the line (`7f83cfb`) falsified on landing — a self-invalidating claim,
@@ -3268,7 +3277,12 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 
 ## 📋 STANDING TO-DO (as of 2026-08-13)
 
-**`main` is `c9f2337`; nothing is in flight.** PRs #61 (Suite XC — the cross-court real-DB proof),
+⚠️ **Head-state line corrected 2026-08-16.** It read "**`main` is `c9f2337`; nothing is in flight**" —
+a named head SHA, which the 🪤 in the PR #67 section explicitly forbids, and false since PR #64 landed
+the next day. Stated as an invariant instead: **`main` carries every merged PR through #68; the
+migration queue is empty and repo and prod agree** (verify with `gh pr list --state open` and the
+migration-queue table at the top of this file, both of which move on their own). The rest of this
+paragraph is as-of 2026-08-13 and is left as written. PRs #61 (Suite XC — the cross-court real-DB proof),
 #62 (the cross-session ledger rebuild, **B**) and #63 (Suite RB — the broadcast refusal proof) are
 all merged; `gh pr list --state open` is empty. Migration `20260812100000` is applied to prod (stamp
 `20260812144342`); the migration queue is otherwise empty. **B and C are done**; **D is decided but
@@ -3291,9 +3305,14 @@ Everything else below is kept because its consequences are worth carrying.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
-structurally cannot exercise it. Watch (i) whether held drafts appear at all, and (ii) whether any
-hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15` — the cancel is event-driven off match end/cancel,
-not a timer, so a court that goes quiet strands its hold. Item **C** below folds into the same night.
+structurally cannot exercise it. ⚠️ **Re-framed 2026-08-16 — (i) has been answered and the bar moved.**
+The 08/15 session created **12 held drafts**, so "do they appear at all" is settled; what it also showed
+is that **only 2 ever reached a court**, because the publish path refused the rest (four defects, fixed
+and shipped in PR #68 → `main` `61e942b`; see the cross-court section at the top of this file). So the
+watch is now: (i) do held drafts **complete their lifecycle** — created → published → on court —
+against the **12 → 2 baseline**; and (ii) whether any hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15`
+— the cancel is event-driven off match end/cancel, not a timer, so a court that goes quiet strands its
+hold. Item **C** below folds into the same night.
 
 **B. `player_rivalries` / `player_partnerships` club-wide rebuild — ✅ DONE 2026-08-12, both halves.**
 The owner was shown the three names below and said proceed. Data rebuilt on prod (rivalries 2342 →
