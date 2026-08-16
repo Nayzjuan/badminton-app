@@ -3353,7 +3353,12 @@ The 08/15 session created **12 held drafts**, so "do they appear at all" is sett
 is that **only 2 ever reached a court**; the other 10 were cleared by hand while the publish path was
 broken in **three** ways — §3.41's defects 1, 3 and 4; its defect 2, the draft-cap notice, is a
 generation-visibility bug found in the same session, not a publish one (all four fixed and shipped in
-PR #68 → `main` `61e942b`; see the cross-court section at the top of this file). ⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
+PR #68 → `main` `61e942b`; see the cross-court section at the top of this file). 🪤 **`61e942b`'s body
+counts four publish-path defects where this counts three — do not "reconcile" that by reverting to
+four.** Both enumerations are four items over sets that differ by one member: the body's extra is the
+`SortableCard` Publish button that could not succeed, which §3.41 folds into the repair rather than
+numbering, and §3.41 numbers the draft-cap notice in its place. The body cannot be amended; this can.
+⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
 narrowed form of the same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the
 RESTING window is not refused, it *publishes* and then fails at promotion, and prod records no refusal
 for any of the 10 either way. So the

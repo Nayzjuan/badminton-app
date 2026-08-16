@@ -3886,7 +3886,8 @@ phrase grep as a starting set, never as proof of completeness. ⚠️ **No tally
 this sentence**, which learned it twice: it originally said "four" (exact for these two files at the
 time), and the 2026-08-16 "correction" to "six" was wrong for the command it printed, which carried no
 pathspec and so swept the whole tree (nine hits at the time, including the migration and two test
-files), while the six it did describe included the correction's own new line. A count that changes when you write it down is not a fact about the document. A squash message
+files), while the six it did describe included the correction's own new line. A count that changes when
+you write it down is not a fact about the document. A squash message
 cannot be amended, so `61e942b`'s body is permanent and wrong; these documents are the correctable
 record.
 
