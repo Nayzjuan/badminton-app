@@ -3874,9 +3874,9 @@ couldn't approve any of them"*, and *"Publish All allows it on deck, but I could
 said "four … that happen to share one symptom" until 2026-08-16; defect 2 (the draft-cap notice) does
 not. Its symptom is a panel that cannot say why *generation* stopped, and it was found while tracing the
 other three, not reported. Defects **1, 3 and 4** are the publish path; defect 2 rides along because it
-shares the session and the fix. Production trace, session `3367d4c6` ("08/15 Saturday Session",
-`auto_publish=false`,
-`max_auto_drafts_override=1`): **12 held drafts created, 10 cleared by hand, 2 ever reached a court.**
+shares the session and the fix. Production trace, session `3367d4c6` ("08/15 Saturday
+Session", `auto_publish=false`, `max_auto_drafts_override=1`): **12 held drafts created, 10
+cleared by hand, 2 ever reached a court.**
 That is the feature's first live-session evidence of any kind — §3.1's cross-court block had said "still
 not observed in a live session", and what the first observation shows is that it does not work.
 
@@ -3903,7 +3903,7 @@ resolved". `held_ready_at` is a *state* column: non-null now proves the hold eve
 that the publish came after it. **Production records no publish time at all** — `matches` has no
 `published_at`. Its four `timestamptz` columns are `created_at`, `started_at`, `completed_at` and
 `held_ready_at` itself, plus the `is_published` boolean; publication is recorded as a flag, with no
-instant attached. (This parenthetical listed three and silently dropped `held_ready_at` until
+instant attached. (This list read three and silently dropped `held_ready_at` until
 2026-08-16 — omitting from an "only X, Y, Z" the very column the sentence before it is about, which
 is how a reader re-derives the ordering this paragraph exists to kill.)
 `match_events` for this session holds only `created` / `cancelled` / `team_flip` / `roster_swap` /

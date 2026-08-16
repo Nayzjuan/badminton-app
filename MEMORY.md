@@ -222,21 +222,23 @@ are `is_held`, `is_published`, promoted and `completed`. The absolute survives p
 — it had already become "could publish none of them" in APP_MANIFEST §3.1 — and a squash message cannot
 be amended, so `61e942b` is permanently wrong here.
 
-🪤 **The first correction then over-fixed it into an ordering nothing can prove**, claiming the stamped
-`held_ready_at` on those two rows meant they "published only after the hold had already resolved".
-Prod records **no publish time**: no `published_at` column, no `published` row in `match_events`, and
-`queue_status_events` is empty (its migration postdates the session). 🔴 Say that precisely —
-`MatchEventType` **does** define a `"published"` kind (`src/lib/match-provenance.ts`); what is missing
-is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2 that reached a court.
-"No publish `event_type`" was the wording here until 2026-08-16 and it is false; see item **A0** under
-`## 📋 STANDING TO-DO`. (Locator, not an offset: this said "at the bottom of this file" until
-2026-08-16, and A0 sits at 48% with 81 `##` sections below it.) The distinction is load-bearing: an
-unwired event means no `match_events` query can separate "never published" from "published,
-unrecorded". The RESTING window is measured at
-**88 s** and **237 s** for these two rows, and in it the pre-fix publish *succeeds* — so the opposite
-ordering is live, not hypothetical. Claim the count and defect 1's by-construction `CONFLICT`; do not
-claim a sequence. Full derivation in §3.41's ⚠️ paragraph on the absolute-then-ordering fix (**not** its
-🪤s, which this pointed at until 2026-08-16); re-derive counts from `matches`.
+🪤 **The first correction then over-fixed it into an ordering nothing can prove**, claiming the
+stamped `held_ready_at` on those two rows meant they "published only after the hold had already
+resolved". Prod records **no publish time**: no `published_at` column, no `published` row in
+`match_events`, and `queue_status_events` is empty (its migration postdates the session). 🔴 Say that
+precisely — `MatchEventType` **does** define a `"published"` kind (`src/lib/match-provenance.ts`);
+what is missing is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2
+that reached a court. "No publish `event_type`" was the wording here until 2026-08-16 and it is
+false; see item **A0** under `## 📋 STANDING TO-DO`. (Locator, not an offset: this said "at the
+bottom of this file" until 2026-08-16, and A0 is nowhere near it. No figure for *how far* off it was
+is recorded here on purpose — the first draft of this correction gave two, and one of them drifted
+within this very branch. Pinned copy of the pre-fix state: `git show e75a843:MEMORY.md`.) The
+distinction is load-bearing: an unwired event means no `match_events` query can separate "never
+published" from "published, unrecorded". The RESTING window is measured at **88 s** and **237 s**
+for these two rows, and in it the pre-fix publish *succeeds* — so the opposite ordering is live, not
+hypothetical. Claim the count and defect 1's by-construction `CONFLICT`; do not claim a sequence.
+Full derivation in §3.41's ⚠️ paragraph on the absolute-then-ordering fix (**not** its 🪤s, which
+this pointed at until 2026-08-16); re-derive counts from `matches`.
 
 ### The five things that will bite the next person
 
@@ -3381,40 +3383,42 @@ Everything else below is kept because its consequences are worth carrying.
 >
 > **Nothing here changes behaviour and nothing new is open.** The audit spawned three non-finding items and exactly one is still open: **E**, the optional "Allow public access" toggle. The other two are **C** — the live broadcast-delivery smoke test, ✅ done 2026-08-12 — and the leaked-password toggle, ❌ WON'T DO 2026-08-04 (item 2 of the historical 07-29 list). All three unchanged by this pass. *(Not **A**: that is the cross-court live-session smoke test, a different piece of work. An earlier draft of this line collapsed C into A because `A` says C "folds into the same night" — a paraphrase where a re-read was needed.)*
 
-**A0. 🔴 OPEN — the `published` event kind is plumbed and never written.** ⚠️ **Not a new find, and this
-entry called itself one until 2026-08-16.** It is already booked further down this same file — *"DEFERRED
-— `published` event (L2): never emitted (publish actions raw-update `is_published`). Non-counting;
-timeline just won't show the publish step"* — and `src/lib/match-event-log.ts`'s header says it too
-(*"DEFERRED (plumbed in the type/DB but NOT yet emitted): player_left from the leaver paths, and
-published"*). Grep `event (L2)` rather than trusting this paragraph's date: a file about claims the record
-does not support announced a discovery the record already held. **What is new is the measurement, and it
-outgrows L2's own pricing of the cost.** Taken 2026-08-16 while reviewing the paragraph that argues from
-prod's silence about publishes: `MatchEventType` in `src/lib/match-provenance.ts` lists `"published" //
-draft → published`, and production holds **0 rows of it across all 1071 events** — including for the 2
-held drafts of session `3367d4c6` that did reach a court, so this is not "the feature was never
-exercised". L2 prices the gap at one missing timeline row. It is also (1) a provenance ledger that
-silently under-describes every match's history, since draft→published is the one transition it claims to
-record and doesn't, and (2) — the load-bearing one — **no query over `match_events` can distinguish "never
-published" from "published, unrecorded"**, which is exactly the inference §3.41 and this file lean on when
-they hedge the 10 hand-clears. The hedges are still right; they are just resting on an unwired ledger
-rather than on a missing column. **The work is to add the call** in `publishMatchAction` and the
-`publish_all_drafts` path. The grep prescribed below returns **five** hits besides the declaration at
+**A0. 🔴 OPEN — the `published` event kind is plumbed and never written.** ⚠️ **Not a new find, and
+this entry called itself one until 2026-08-16.** It is already booked further down this same file —
+*"DEFERRED — `published` event (L2): never emitted (publish actions raw-update `is_published`).
+Non-counting; timeline just won't show the publish step"* — and `src/lib/match-event-log.ts`'s
+header says it too (*"DEFERRED (plumbed in the type/DB but NOT yet emitted): player_left from the
+leaver paths, and published"*). Grep `event (L2)` rather than trusting this paragraph's date: a file
+about claims the record does not support announced a discovery the record already held. **What is
+new is the measurement, and it outgrows L2's own pricing of the cost.** Taken 2026-08-16 while
+reviewing the paragraph that argues from prod's silence about publishes: `MatchEventType` in
+`src/lib/match-provenance.ts` lists `"published" // draft → published`, and production holds **0
+rows of it across all 1071 events** — including for the 2 held drafts of session `3367d4c6` that did
+reach a court, so this is not "the feature was never exercised". L2 prices the gap at one missing
+timeline row. It is also (1) a provenance ledger that silently under-describes every match's
+history, since draft→published is the one transition it claims to record and doesn't, and (2) — the
+load-bearing one — **no query over `match_events` can distinguish "never published" from "published,
+unrecorded"**, which is exactly the inference §3.41 and this file lean on when they hedge the 10
+hand-clears. The hedges are still right; they are just resting on an unwired ledger rather than on a
+missing column. **The work is to add the call** in `publishMatchAction` and the `publish_all_drafts`
+path. The grep prescribed below returns **five** hits besides the declaration at
 `src/lib/match-provenance.ts:40`, of which **four are carriers**: `logMatchEvent`'s `eventType`
 (`Extract<MatchEventType, … | "published">`, `src/lib/match-event-log.ts:40`), `modificationDelta`'s
 0-returning arm, which it shares with `created` (`src/lib/match-provenance.ts:139`), the timeline's
 "Published to players" (`src/components/organizer/match-event-timeline.tsx:32`), and
-`tests/unit/match-provenance.test.ts:117`. The fifth, `src/components/organizer/on-deck-panel.tsx:519`,
-is prose — an optimistic-UI comment, no relation to the event kind. Excluded on purpose, and named
-because this said "four sites" until 2026-08-16 while
-prescribing a grep that returns five: a count is only checkable against the command that produced it.
-🪤 **Deleting the kind is *silently* lossy — worse than the "would break all three" this said until
-2026-08-16, which named the wrong three and invented `eventDelta`, a symbol with zero hits in
-`src`/`tests`.** Measured, not reasoned: remove the member, run `npx tsc --noEmit`, and exactly **three**
-errors appear — the two `case "published":` arms and the test — with **none** at the writer signature,
-because `Extract<T, U>` is `T extends U ? T : never` and simply narrows to the surviving four. (This
-paragraph also said "or delete the kind" until 2026-08-16, on a grep scoped to `match-provenance.ts`
-alone; search `src` *and* `tests` for the string literal, not the type's own file.) Not touched in PR #69,
-which is a docs-accuracy branch — wiring a new ledger write is a behaviour change and needs its own tests.
+`tests/unit/match-provenance.test.ts:117`. The fifth,
+`src/components/organizer/on-deck-panel.tsx:519`, is prose — an optimistic-UI comment, no relation
+to the event kind. Excluded on purpose, and named because this said "four sites" until 2026-08-16
+while prescribing a grep that returns five: a count is only checkable against the command that
+produced it. 🪤 **Deleting the kind is *silently* lossy — worse than the "would break all three" this
+said until 2026-08-16, which named the wrong three and invented `eventDelta`, a symbol with zero
+hits in `src`/`tests`.** Measured, not reasoned: remove the member, run `npx tsc --noEmit`, and
+exactly **three** errors appear — the two `case "published":` arms and the test — with **none** at
+the writer signature, because `Extract<T, U>` is `T extends U ? T : never` and simply narrows to the
+surviving four. (This paragraph also said "or delete the kind" until 2026-08-16, on a grep scoped to
+`match-provenance.ts` alone; search `src` *and* `tests` for the string literal, not the type's own
+file.) Not touched in PR #69, which is a docs-accuracy branch — wiring a new ledger write is a
+behaviour change and needs its own tests.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
