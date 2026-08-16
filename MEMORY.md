@@ -5,15 +5,7 @@
 
 ---
 
-## ⚠️ MIGRATION QUEUE — 1 pending as of 2026-08-16.
-
-**`20260818000000_session_notifications` is NOT on prod.** TypeScript degrades: leave/checkout still broadcast; inbox hydrate returns empty; score-correction resolve is unavailable. Apply by hand before relying on the bell or player requests. Do not DROP `resolve_score_correction`.
-
-| Pending | Why |
-|---|---|
-| `20260818000000_session_notifications` | `session_notifications` table + pending-correction / pause-bucket uniques + `resolve_score_correction` (service_role only) |
-
-## ✅ APPLIED (prod agrees with these)
+## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
 Merging a PR ships TypeScript only.** **Every new migration must be
@@ -22,7 +14,7 @@ the only place that records the mapping.
 
 | Applied | Stamp |
 |---|---|
-| `20260818000000_session_notifications` | **pending** |
+| `20260818000000_session_notifications` | `20260816065517` |
 | `20260817000000_queue_leave_notices` | `20260816052740` |
 | `20260810000000_declare_compute_session_wrapped` | `20260810151122` |
 | `20260810000001_extend_draft_firewall_to_match_players` | `20260810151355` |
@@ -32,6 +24,10 @@ the only place that records the mapping.
 | `20260812100000_refresh_cross_session_stats_absolute_rebuild` | `20260812144342` |
 | `20260815000000_queue_status_audit` | `20260815133945` |
 | `20260816000000_publish_never_touches_an_unready_held_draft` | `20260816024129` |
+
+⚠️ **`20260818000000` — applied to prod 2026-08-16, verified.** Stamp `20260816065517` (MCP name `session_notifications`).
+Table `session_notifications` exists, RLS on, 0 rows. Indexes: pkey, `session_created`, pending-correction unique, pause-bucket unique. Policy: `session_notifications_player_select_own` (SELECT, `kind = score_correction AND subject_player_id = auth.uid()`). Table grants: `authenticated=SELECT` only; `service_role=ALL`; no `anon`.
+`resolve_score_correction` `SECURITY DEFINER`, ACL exactly `{postgres=X/postgres,service_role=X/postgres}`, `anon_exec=false`, `auth_exec=false`, `service_exec=true`. `prosrc` 2022 B, md5 `69db9f321ebad474c17ea2ba57512f55` (em dash in the revert error string survived). Do not DROP.
 
 ⚠️ **`20260817000000` — applied to prod 2026-08-16, verified.** Stamp `20260816052740`.
 `paused_at` column on `queue_entries`; `v_queue_full_with_wait_time` trailing column +
@@ -139,18 +135,18 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🔔 ORGANIZER NOTICE INBOX + PLAYER SCORE CORRECTION — 2026-08-16. Code complete, migration NOT applied.
+## 🔔 ORGANIZER NOTICE INBOX + PLAYER SCORE CORRECTION — 2026-08-16. Code merged (#71 / `8fdb909`). Migration APPLIED TO PROD.
 
 APP_MANIFEST §3.43. Center card first, then the header bell. Player session history can request a score fix; Review opens the existing Edit Match dialog pre-filled.
 
-- Table `session_notifications` + `resolve_score_correction` in `20260818000000` (**pending on prod**). Unique: one pending correction per match; one pause row per (session, player, bucket).
+- Table `session_notifications` + `resolve_score_correction` in `20260818000000` (**applied**, stamp `20260816065517`). Unique: one pending correction per match; one pause row per (session, player, bucket).
 - No 6th Realtime table channel. Hydrate + `queue_notice` upsert + 45s poll. `realtimeConnected` stays at 5.
 - Writers `emitOrganizerNotice` / `closePendingScoreCorrections` are `server-only` (`src/lib/session-notice-write.ts`), not public Server Actions. RPC EXECUTE revoked from PUBLIC/anon/authenticated by name.
 - Pause catch-up waits for a non-empty authoritative queue, then inserts `read` + `interrupt: false`.
 - `npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **70 files, 1302 passed, 1 skipped** · `npm run build` success.
 - Review: four passes. First three **Needs fixes** (catch-up vs empty queue, public writers, player INSERT poison, stacked dialogs, RPC default EXECUTE). Fourth **LGTM**.
 
-**Next:** apply `20260818000000` by hand and stamp this table. Merging this PR ships TypeScript only.
+**Next:** none for this feature. `#71` is on `main`; SQL stamp `20260816065517` is on prod.
 
 ---
 

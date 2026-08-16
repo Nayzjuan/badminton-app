@@ -4301,4 +4301,4 @@ A leaver **vanishes** from Match Control (`v_queue_full_with_wait_time` excludes
 
 **Writes.** Gated Server Actions (`list` / `markRead` / `recordPauseReminder` / `request` / `resolve`) use the service client after `isSessionOrganizer` (the primary organizer has no `session_organizers` row). `emitOrganizerNotice` and `closePendingScoreCorrections` live in `src/lib/session-notice-write.ts` (`import "server-only"`) so they are not public POST endpoints. Authenticated clients have SELECT on their own correction rows only — no INSERT grant (the pending-correction unique would otherwise be poisonable). `resolve_score_correction` is `REVOKE`d from `PUBLIC`, `anon`, and `authenticated` by name (default privileges would otherwise leave EXECUTE on the RPC). Do not `DROP` the RPC.
 
-**Not done:** Web Push; applying `20260818000000` to prod (TypeScript degrades: leave/checkout still broadcast without an inbox row).
+**Not done:** Web Push. Migration `20260818000000` is **applied on prod** (stamp `20260816065517`).
