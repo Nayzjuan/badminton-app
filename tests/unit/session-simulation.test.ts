@@ -253,7 +253,7 @@ function simRunAlgorithm(
           partnershipCounts,
           MAX_PARTNERSHIP_REPEATS
         );
-        if (!draft) continue;
+        if (!draft || draft.usedCapOverride) continue;
         return {
           formed: true,
           match: {
@@ -285,7 +285,7 @@ function simRunAlgorithm(
     } else {
       // ── No diversity violation: snakeDraft with cap ────────
       const draft = snakeDraft([anchor, ...group], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
-      if (draft) {
+      if (draft && !draft.usedCapOverride) {
         return {
           formed: true,
           match: {
@@ -308,7 +308,7 @@ function simRunAlgorithm(
       partnershipCounts,
       MAX_PARTNERSHIP_REPEATS
     );
-    if (draft) {
+    if (draft && !draft.usedCapOverride) {
       return {
         formed: true,
         match: { teamA: draft.teamA, teamB: draft.teamB, isMixed: true },
@@ -690,24 +690,27 @@ describe("30-player session simulation", () => {
   // Invariant 9: snakeDraft null-return is the safety gate —
   // never destructured blindly
   // ─────────────────────────────────────────────────────────
-  it("snakeDraft returns null when all 3 splits are capped, never produces a violating assignment", () => {
+  it("snakeDraft seats mixed over cap when all balanced splits are capped — never high+high vs low+low", () => {
     const p6 = makeSimPlayer("p6", 6);
     const p5 = makeSimPlayer("p5", 5);
     const p4 = makeSimPlayer("p4", 4);
     const p3 = makeSimPlayer("p3", 3);
 
-    // Build counts where every possible team split has at least one pair AT cap
-    // Split 0: teamA=[p6,p3] pairKey="p3:p6", teamB=[p5,p4] pairKey="p4:p5"
-    // Split 1: teamA=[p6,p5] pairKey="p5:p6", teamB=[p4,p3] pairKey="p3:p4"
-    // Split 2: teamA=[p6,p4] pairKey="p4:p6", teamB=[p5,p3] pairKey="p3:p5"
     const fullyCapped = new Map<string, number>([
-      ["p3:p6", MAX_PARTNERSHIP_REPEATS], // split 0 teamA
-      ["p4:p6", MAX_PARTNERSHIP_REPEATS], // split 2 teamA
-      ["p5:p6", MAX_PARTNERSHIP_REPEATS], // split 1 teamA
+      ["p3:p6", MAX_PARTNERSHIP_REPEATS],
+      ["p4:p6", MAX_PARTNERSHIP_REPEATS],
+      ["p5:p6", MAX_PARTNERSHIP_REPEATS],
     ]);
 
     const result = snakeDraft([p6, p5, p4, p3], fullyCapped, MAX_PARTNERSHIP_REPEATS);
-    expect(result).toBeNull(); // safety gate held — no violating assignment produced
+    expect(result).not.toBeNull();
+    expect(result!.usedCapOverride).toBe(true);
+    const gap = Math.abs(
+      result!.teamA[0].skill_level_int +
+        result!.teamA[1].skill_level_int -
+        (result!.teamB[0].skill_level_int + result!.teamB[1].skill_level_int)
+    );
+    expect(gap).toBeLessThanOrEqual(SKILL_VARIANCE_MAX);
   });
 
   // ─────────────────────────────────────────────────────────

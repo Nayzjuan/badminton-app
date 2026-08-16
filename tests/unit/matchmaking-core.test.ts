@@ -1097,16 +1097,28 @@ describe("rotatedDraft", () => {
     expect(teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
   });
 
-  it("splitIndex=1 (1 full-repeat roster): teamA=[top pair], teamB=[bottom pair]", () => {
+  it("H-2 shape (4/3/3/2): splitIndex=1 is still allowed — gap 2 is balanced", () => {
+    const dan = makePlayer("dan", { skillInt: 4 });
+    const bob = makePlayer("bob", { skillInt: 3 });
+    const cara = makePlayer("cara", { skillInt: 3 });
+    const alice = makePlayer("alice", { skillInt: 2 });
+    const ids = ["dan", "bob", "cara", "alice"];
+    const result = rotatedDraft([dan, bob, cara, alice], [ids]);
+    expect(result).not.toBeNull();
+    // Sorted DESC: dan, bob, cara, alice. Split 1 = dan+bob vs cara+alice, gap 2.
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["bob", "dan"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["alice", "cara"]);
+  });
+
+  it("splitIndex=1 (1 full-repeat roster): skips lopsided top-vs-bottom, uses the mixed cross-split", () => {
     const { p6, p5, p4, p3 } = makeFour();
     const allFourIds = [p6, p5, p4, p3].map((p) => p.player_id);
-    // Exactly 1 roster containing all 4 → repeatCount=1 → splitIndex=1
     const result = rotatedDraft([p6, p5, p4, p3], [allFourIds]);
     expect(result).not.toBeNull();
     const { teamA, teamB } = result!;
-    // teamA = [p6, p5], teamB = [p4, p3]
-    expect(teamA.map((p) => p.player_id).sort()).toEqual(["p5", "p6"]);
-    expect(teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p4"]);
+    // Split 1 (p6+p5 vs p4+p3, gap 4) is lopsided; cycle continues to Split 2.
+    expect(teamA.map((p) => p.player_id).sort()).toEqual(["p4", "p6"]);
+    expect(teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p5"]);
   });
 
   it("splitIndex=2 (2 full-repeat rosters): teamA=[1st+3rd], teamB=[2nd+4th] — cross-split", () => {
@@ -1216,23 +1228,23 @@ describe("rotatedDraft — opponent-cap preference", () => {
     return { p6, p5, p4, p3 };
   }
 
-  it("Pass 1a: skips splits with capped cross-net pair — returns the uncapped split from natural rotation", () => {
+  it("Pass 1a: skips splits with capped cross-net pair — does not fall through to lopsided Split 1", () => {
     // 0 full-repeat rosters → splitIndex=0. "p5:p6" capped in Splits 0 and 2.
-    // Pass 1a cycles Splits 0→1→2; Split 1 has p5+p6 same-team (not cross-net) → crossNetOk → return it.
+    // Split 1 would pass (p5+p6 same-team) but is lopsided (gap 4). Pass 1b
+    // relaxes opponent cap and returns Split 0.
     const { p6, p5, p4, p3 } = makeFourAlpha();
     const opponentCounts = new Map([["p5:p6", OPP_CAP]]);
     const result = rotatedDraft(
       [p6, p5, p4, p3],
-      [], // 0 repeats → splitIndex=0
-      new Map(), // all partnerships fresh
+      [],
+      new Map(),
       MAX_PARTNERSHIP_REPEATS,
       opponentCounts,
       OPP_CAP
     );
     expect(result).not.toBeNull();
-    // Split 1: teamA=[p6,p5], teamB=[p4,p3]
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p5", "p6"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p4"]);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
   });
 
   it("Pass 1b: when ALL splits have a capped cross-net pair, relaxes opponent cap and returns first fresh-partnership split", () => {
@@ -1258,18 +1270,17 @@ describe("rotatedDraft — opponent-cap preference", () => {
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
   });
 
-  it("Pass 2a: when all partnerships are stale, still prefers the split with no capped cross-net pair", () => {
+  it("Pass 2a: when all partnerships are stale, does not use lopsided Split 1 to dodge a capped cross-net pair", () => {
     // All 6 partnership pairs stale (count=1, below cap=2). "p5:p6" capped.
-    // Passes 1a+1b: no fresh partnerships → skip. Pass 2a: Splits 0+2 fail crossNetOk,
-    // Split 1 has p5+p6 same-team so crossNetOk=true → return Split 1.
+    // Split 1 would pass crossNetOk but is lopsided. Pass 2b returns Split 0.
     const { p6, p5, p4, p3 } = makeFourAlpha();
     const partnershipCounts = new Map([
-      ["p3:p6", 1], // Split 0 teamA
-      ["p4:p5", 1], // Split 0 teamB
-      ["p5:p6", 1], // Split 1 teamA
-      ["p3:p4", 1], // Split 1 teamB
-      ["p4:p6", 1], // Split 2 teamA
-      ["p3:p5", 1], // Split 2 teamB
+      ["p3:p6", 1],
+      ["p4:p5", 1],
+      ["p5:p6", 1],
+      ["p3:p4", 1],
+      ["p4:p6", 1],
+      ["p3:p5", 1],
     ]);
     const opponentCounts = new Map([["p5:p6", OPP_CAP]]);
     const result = rotatedDraft(
@@ -1281,9 +1292,8 @@ describe("rotatedDraft — opponent-cap preference", () => {
       OPP_CAP
     );
     expect(result).not.toBeNull();
-    // Pass 2a: Split 1 passes crossNetOk (p5:p6 same-team, not cross-net)
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p5", "p6"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p3", "p4"]);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["p3", "p6"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
   });
 
   it("Pass 2b: last resort — returns first below-partnership-cap split when all cross-net pairs are capped", () => {
@@ -1437,7 +1447,7 @@ describe("snakeDraft — cap enforcement", () => {
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
   });
 
-  it("skips Splits 0 and 2, returns Split 1 when both prior teamA pairs are capped", () => {
+  it("skips Splits 0 and 2, seats Split 0 over cap rather than lopsided Split 1", () => {
     const { a, b, c, d } = makeFourAlpha();
     const counts = new Map([
       ["a:d", MAX_PARTNERSHIP_REPEATS], // Split 0 teamA capped
@@ -1445,21 +1455,24 @@ describe("snakeDraft — cap enforcement", () => {
     ]);
     const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
     expect(result).not.toBeNull();
-    // Only Split 1 remains: teamA=[a,b], teamB=[c,d]
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+    // Split 1 (a+b vs c+d) is lopsided. Cap override reseats Split 0 mixed.
+    expect(result!.usedCapOverride).toBe(true);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 
-  it("returns null when all 3 splits have at least one capped pair", () => {
+  it("seats mixed over cap when every balanced split is capped — never null, never Split 1", () => {
     const { a, b, c, d } = makeFourAlpha();
-    // Cap the teamA pair of every split — each split immediately fails
     const counts = new Map([
-      ["a:d", MAX_PARTNERSHIP_REPEATS], // Split 0 teamA capped
-      ["a:c", MAX_PARTNERSHIP_REPEATS], // Split 2 teamA capped
-      ["a:b", MAX_PARTNERSHIP_REPEATS], // Split 1 teamA capped
+      ["a:d", MAX_PARTNERSHIP_REPEATS],
+      ["a:c", MAX_PARTNERSHIP_REPEATS],
+      ["a:b", MAX_PARTNERSHIP_REPEATS],
     ]);
     const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
-    expect(result).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result!.usedCapOverride).toBe(true);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 
   it("count < cap is allowed but fresh Split 2 is preferred when Split 0 pairs are stale", () => {
@@ -1478,20 +1491,19 @@ describe("snakeDraft — cap enforcement", () => {
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
   });
 
-  it("treats count === cap as capped (count < cap is false at equality)", () => {
+  it("treats count === cap as capped — seats mixed over cap, never lopsided Split 1", () => {
     const { a, b, c, d } = makeFourAlpha();
-    // Every pair except Split 1's pairs is at cap — Split 1 is the only valid option
     const counts = new Map([
-      ["a:d", MAX_PARTNERSHIP_REPEATS], // Split 0 teamA capped
-      ["b:c", MAX_PARTNERSHIP_REPEATS], // Split 0 teamB also capped (belt & suspenders)
-      ["a:c", MAX_PARTNERSHIP_REPEATS], // Split 2 teamA capped
-      ["b:d", MAX_PARTNERSHIP_REPEATS], // Split 2 teamB also capped
-      // Split 1 pairs ("a:b" and "c:d") are absent → count=0 < cap=2 ✓
+      ["a:d", MAX_PARTNERSHIP_REPEATS],
+      ["b:c", MAX_PARTNERSHIP_REPEATS],
+      ["a:c", MAX_PARTNERSHIP_REPEATS],
+      ["b:d", MAX_PARTNERSHIP_REPEATS],
     ]);
     const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
     expect(result).not.toBeNull();
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+    expect(result!.usedCapOverride).toBe(true);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 });
 
@@ -1559,14 +1571,18 @@ describe("snakeDraft — fresh-pair preference", () => {
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 
-  it("still returns null when all splits are at the hard cap (no bypass)", () => {
+  it("seats mixed over cap when all balanced splits are at the hard cap (no lopsided bypass)", () => {
     const { a, b, c, d } = makeFourAlpha();
     const counts = new Map([
       ["a:d", MAX_PARTNERSHIP_REPEATS],
       ["a:c", MAX_PARTNERSHIP_REPEATS],
       ["a:b", MAX_PARTNERSHIP_REPEATS],
     ]);
-    expect(snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
+    const result = snakeDraft([a, b, c, d], counts, MAX_PARTNERSHIP_REPEATS);
+    expect(result).not.toBeNull();
+    expect(result!.usedCapOverride).toBe(true);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 });
 
@@ -1616,7 +1632,7 @@ describe("snakeDraft — opponent-cap preference", () => {
     // Split 0: teamA=[a,d], teamB=[b,c] — balanced beats opponent-freshness
     expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
-    expect(result!.usedLopsidedFallback).toBeUndefined();
+    expect(result!.usedCapOverride).toBeUndefined();
   });
 
   it("Pass 1b: returns most-balanced Split 0 when all splits have capped cross-net pairs but partnerships are fresh", () => {
@@ -1666,7 +1682,7 @@ describe("snakeDraft — opponent-cap preference", () => {
     // Split 0: teamA=[a,d], teamB=[b,c] — balance beats opponent-freshness
     expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
-    expect(result!.usedLopsidedFallback).toBeUndefined();
+    expect(result!.usedCapOverride).toBeUndefined();
   });
 
   // ── Balance gate regression (INT+INT vs BEG+BEG incident) ──────────
@@ -1701,10 +1717,10 @@ describe("snakeDraft — opponent-cap preference", () => {
       const result = snakeDraft([h1, h2, l1, l2], counts, MAX_PARTNERSHIP_REPEATS);
       expect(result).not.toBeNull();
       expect(teamGap(result!)).toBe(0); // each team = 1 high + 1 low
-      expect(result!.usedLopsidedFallback).toBeUndefined();
+      expect(result!.usedCapOverride).toBeUndefined();
     });
 
-    it("lopsided fallback fires (flagged) only when every balanced split is at the hard cap", () => {
+    it("cap override seats mixed when every balanced split is at the hard cap — never high+high vs low+low", () => {
       const { h1, h2, l1, l2 } = makeTwoTiers();
       const counts = new Map([
         ["h1:l1", MAX_PARTNERSHIP_REPEATS],
@@ -1714,10 +1730,11 @@ describe("snakeDraft — opponent-cap preference", () => {
       ]);
       const result = snakeDraft([h1, h2, l1, l2], counts, MAX_PARTNERSHIP_REPEATS);
       expect(result).not.toBeNull();
-      expect(result!.usedLopsidedFallback).toBe(true); // caller may swap a body
+      expect(teamGap(result!)).toBe(0);
+      expect(result!.usedCapOverride).toBe(true);
     });
 
-    it("returns null when lopsided splits are also capped (no silent stall-break)", () => {
+    it("still seats mixed when the lopsided pairs are capped too — rotatedDraft on the same counts returns null", () => {
       const { h1, h2, l1, l2 } = makeTwoTiers();
       const counts = new Map([
         ["h1:l1", MAX_PARTNERSHIP_REPEATS],
@@ -1727,7 +1744,12 @@ describe("snakeDraft — opponent-cap preference", () => {
         ["h1:h2", MAX_PARTNERSHIP_REPEATS],
         ["l1:l2", MAX_PARTNERSHIP_REPEATS],
       ]);
-      expect(snakeDraft([h1, h2, l1, l2], counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
+      const seated = snakeDraft([h1, h2, l1, l2], counts, MAX_PARTNERSHIP_REPEATS);
+      expect(seated).not.toBeNull();
+      expect(teamGap(seated!)).toBe(0);
+      expect(seated!.usedCapOverride).toBe(true);
+      // rotatedDraft must still fail closed so Tier-3 can expand the window.
+      expect(rotatedDraft([h1, h2, l1, l2], [], counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
     });
   });
 
@@ -1805,28 +1827,25 @@ describe("rotatedDraft — cap enforcement", () => {
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
   });
 
-  it("returns the natural rotation split when no pairs are capped", () => {
+  it("returns the next mixed split when rotation lands on lopsided top-vs-bottom", () => {
     const { a, b, c, d } = makeFourAlpha();
-    // 1 repeat → splitIndex=1 → top vs bottom
+    // 1 repeat → splitIndex=1 would be top vs bottom (gap 4). Skip it.
     const allFourIds = [a, b, c, d].map((p) => p.player_id);
-    const counts = new Map<string, number>(); // all pairs at count 0 < cap
+    const counts = new Map<string, number>();
     const result = rotatedDraft([a, b, c, d], [allFourIds], counts, MAX_PARTNERSHIP_REPEATS);
     expect(result).not.toBeNull();
-    // splitIndex=1: teamA=[a,b], teamB=[c,d]
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
   });
 
-  it("falls back to the next split when the natural rotation split is capped (splitIndex=0→next=split 1)", () => {
+  it("falls back to the next mixed split when the natural rotation split is capped (splitIndex=0→Split 2)", () => {
     const { a, b, c, d } = makeFourAlpha();
-    // 0 repeats → natural splitIndex=0 (teamA=[a,d], teamB=[b,c])
-    // Cap split 0's teamA pair → must advance to split 1 (index (0+1)%3=1)
     const counts = new Map([["a:d", MAX_PARTNERSHIP_REPEATS]]);
     const result = rotatedDraft([a, b, c, d], [], counts, MAX_PARTNERSHIP_REPEATS);
     expect(result).not.toBeNull();
-    // Split 1: teamA=[a,b], teamB=[c,d]
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "b"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["c", "d"]);
+    // Split 1 is lopsided; next remaining balanced split is Split 2.
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
   });
 
   it("falls back across two splits (splitIndex=1, splits 1 and 2 capped → returns split 0)", () => {
@@ -2174,6 +2193,49 @@ describe("rejection memory (isRejectedRoster + runAlgorithm)", () => {
   });
 });
 
+describe("runAlgorithm — cap override + Fix B", () => {
+  it("Fix B: swaps in another body rather than seating the capped trio over cap", () => {
+    const anchor = makePlayer("anchor", { skillInt: 3, waitMinutes: 10 });
+    const c1 = makePlayer("c1", { skillInt: 3, waitMinutes: 9 });
+    const c2 = makePlayer("c2", { skillInt: 3, waitMinutes: 8 });
+    const c3 = makePlayer("c3", { skillInt: 3, waitMinutes: 7 });
+    // 3 games ahead so preview still prefers the capped trio (CCO-13); Fix B
+    // must then swap this body in so the court is not seated over cap.
+    const c4 = makePlayer("c4", { skillInt: 3, waitMinutes: 6, gamesPlayed: 3 });
+    const counts = new Map([
+      [pairKey("c1", "c2"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("c1", "c3"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("c2", "c3"), MAX_PARTNERSHIP_REPEATS],
+    ]);
+    const result = runAlgorithm([anchor, c1, c2, c3, c4], counts, new Map(), []);
+    expect(result.proposal).not.toBeNull();
+    const served = [...result.proposal!.teamA, ...result.proposal!.teamB].map((p) => p.player_id);
+    expect(served).toContain("c4");
+  });
+
+  it("Fix B: with no other body, keeps the four mixed over cap — never lopsided", () => {
+    const h1 = makePlayer("h1", { skillInt: 3, waitMinutes: 10 });
+    const h2 = makePlayer("h2", { skillInt: 3, waitMinutes: 9 });
+    const l1 = makePlayer("l1", { skillInt: 1, waitMinutes: 8 });
+    const l2 = makePlayer("l2", { skillInt: 1, waitMinutes: 7 });
+    // Pre-filter drops l1/l2 vs h1... so this four never forms from h1 as
+    // anchor. Cap the companion pairs instead so the four is still eligible.
+    const companionCap = new Map([
+      [pairKey("h2", "l1"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("h2", "l2"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("l1", "l2"), MAX_PARTNERSHIP_REPEATS],
+    ]);
+    const result = runAlgorithm([h1, h2, l1, l2], companionCap, new Map(), []);
+    expect(result.proposal).not.toBeNull();
+    const gap = Math.abs(
+      result.proposal!.teamA[0].skill_level_int +
+        result.proposal!.teamA[1].skill_level_int -
+        (result.proposal!.teamB[0].skill_level_int + result.proposal!.teamB[1].skill_level_int)
+    );
+    expect(gap).toBe(0);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────
 // runAlgorithm — last-resort fallback and no-match paths
 // ─────────────────────────────────────────────────────────────
@@ -2181,8 +2243,8 @@ describe("rejection memory (isRejectedRoster + runAlgorithm)", () => {
 //
 //   MC-new-1  Fallback fires when anchor waited > FALLBACK_WAIT_MINUTES
 //             and all skill-window passes fail — returns isMixedLevel=true
-//   MC-new-2  Fallback fires but snakeDraft returns null (all team splits
-//             cap-blocked by non-anchor pairs) → proposal: null
+//   MC-new-2  Fallback fires and seats mixed over cap when every balanced
+//             split is partnership-capped (keep-the-four).
 //   MC-new-3  Anchor wait exactly equals FALLBACK_WAIT_MINUTES (not
 //             exceeding it) → fallback does NOT fire → proposal: null
 //   MC-new-4  All candidates cap-blocked with the anchor → candidates=[]
@@ -2215,20 +2277,15 @@ describe("runAlgorithm — last-resort fallback and no-match paths", () => {
   });
 
   // ── MC-new-2 ─────────────────────────────────────────────────
-  it("MC-new-2: fallback fires but snakeDraft returns null because all non-anchor candidate pairs are capped — proposal: null", () => {
+  it("MC-new-2: fallback fires and seats mixed over cap when every balanced split is partnership-capped", () => {
     const anchor = makePlayer("anchor", {
       skillInt: 5,
-      waitMinutes: FALLBACK_WAIT_MINUTES + 1, // 16 min → fallback fires
+      waitMinutes: FALLBACK_WAIT_MINUTES + 1,
     });
-    // candidates skills 4,3,2: ±1 has only c1 (1 < 3), ±2 has c1+c2 (2 < 3) → all windows fail
     const c1 = makePlayer("c1", { skillInt: 4, waitMinutes: 5 });
     const c2 = makePlayer("c2", { skillInt: 3, waitMinutes: 4 });
     const c3 = makePlayer("c3", { skillInt: 2, waitMinutes: 3 });
 
-    // Cap all non-anchor same-side pairs. Sorted DESC → [anchor(5),c1(4),c2(3),c3(2)]
-    // Split 0: teamA=[anchor,c3], teamB=[c1,c2] → c1-c2 capped → skip
-    // Split 1: teamA=[anchor,c2], teamB=[c1,c3] → c1-c3 capped → skip
-    // Split 2: teamA=[anchor,c1], teamB=[c2,c3] → c2-c3 capped → skip
     const partnershipCounts = new Map([
       [pairKey("c1", "c2"), MAX_PARTNERSHIP_REPEATS],
       [pairKey("c1", "c3"), MAX_PARTNERSHIP_REPEATS],
@@ -2238,11 +2295,15 @@ describe("runAlgorithm — last-resort fallback and no-match paths", () => {
     const pool = [anchor, c1, c2, c3];
     const result = runAlgorithm(pool, partnershipCounts, new Map(), []);
 
-    // Fallback fires but snakeDraft exhausts all splits → no proposal
-    expect(result.proposal).toBeNull();
-    // capWasActive: anchor-candidate pairs are NOT capped → cap did not filter any
-    // candidate → capWasActive = false → capSaturation: false
+    expect(result.proposal).not.toBeNull();
+    expect(result.proposal!.isMixedLevel).toBe(true);
     expect(result.capSaturation).toBe(false);
+    const gap = Math.abs(
+      result.proposal!.teamA[0].skill_level_int +
+        result.proposal!.teamA[1].skill_level_int -
+        (result.proposal!.teamB[0].skill_level_int + result.proposal!.teamB[1].skill_level_int)
+    );
+    expect(gap).toBeLessThanOrEqual(SKILL_VARIANCE_MAX);
   });
 
   // ── MC-new-3 ─────────────────────────────────────────────────
@@ -2978,15 +3039,12 @@ describe("buildCombinationGroup — the split-preview gate", () => {
 // The unsplittable-four trap  [regression — review gate, blocking]
 // ============================================================
 //
-// snakeDraft returns null when EVERY team assignment for a four is partnership-
-// capped. The preview first scored that as `repeats = 0` — the best possible
-// value — so the argmin did not merely tolerate an unseatable four, it PREFERRED
-// one over a seatable four whenever fairness was within 4 × 3 = 12 points.
-//
-// Nothing downstream recovers it: runAlgorithm's `if (!draft) continue` abandons
-// the whole skill window, so the observable failure is a court that seats nobody
-// while a perfectly good four was available — and with capSaturation false, so
-// it does not even read as saturation to the caller.
+// snakeDraft used to return null when EVERY team assignment for a four is
+// partnership-capped; it now seats mixed with `usedCapOverride`. Preview still
+// scores both as `repeats = MAX+1`. Scoring either as `repeats = 0` made the
+// argmin PREFER an over-cap four over a seatable one whenever fairness was
+// within 4 × 3 = 12 points. That is a WHO bug: the search must not pick a four
+// only because it is over-cap. Fix B / last-resort may keep such a four later.
 //
 // The setup below is the real precondition, not a contrivance: three players
 // mutually at the partnership cap while none of them is capped WITH the anchor.
@@ -3040,6 +3098,7 @@ describe("buildCombinationGroup — an unsplittable four is scored worst, not be
       lastOpponents()
     );
     expect(draft).not.toBeNull();
+    expect(draft!.usedCapOverride).toBeUndefined();
   });
 
   it("CCO-12: runAlgorithm still seats a court instead of returning no match", () => {

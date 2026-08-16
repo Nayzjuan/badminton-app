@@ -5,15 +5,18 @@
 
 ---
 
-## ⚠️ MIGRATION QUEUE — 1 pending as of 2026-08-16.
+## ⚖️ LOPSIDED TEAM SPLITS BANNED — 2026-08-17. TypeScript only. Branch `fix/ban-lopsided-team-splits`.
 
-**`20260818000000_session_notifications` is NOT on prod.** TypeScript degrades: leave/checkout still broadcast; inbox hydrate returns empty; score-correction resolve is unavailable. Apply by hand before relying on the bell or player requests. Do not DROP `resolve_score_correction`.
+The 07/30 balance gate stopped *preferring* INT+INT vs BEG+BEG; it still emitted that split as a stall-break. Ban: `snakeDraft` never returns a lopsided split (`gap > minGap + SKILL_VARIANCE_MAX`). When every mixed pairing is at the partnership cap, it seats mixed anyway (`usedCapOverride`) after Fix B tries another body. `rotatedDraft` drops lopsided from the cycle but still returns `null` so Tier-3 can expand the window. Preview / Tier-1/2 treat `usedCapOverride` like `null`. Last-resort accepts it.
 
-| Pending | Why |
-|---|---|
-| `20260818000000_session_notifications` | `session_notifications` table + pending-correction / pause-bucket uniques + `resolve_score_correction` (service_role only) |
+**Accepted hole:** mixed seating may exceed `MAX_PARTNERSHIP_REPEATS` when no other body exists. Organizer-created lopsided matches unchanged. Gap ≤ minGap+2 (H-2 4/3/3/2) is still allowed.
 
-## ✅ APPLIED (prod agrees with these)
+**Review (Minor issues):** `simRunAlgorithm` still treats `usedCapOverride` as a stall on every path (incl. last-resort) so the 30-player "never exceed cap" invariant holds. Production last-resort is covered by MC-new-2. Preview / CCO-11 comments and assertion tightened.
+
+---
+---
+
+## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
 Merging a PR ships TypeScript only.** **Every new migration must be
@@ -22,7 +25,7 @@ the only place that records the mapping.
 
 | Applied | Stamp |
 |---|---|
-| `20260818000000_session_notifications` | **pending** |
+| `20260818000000_session_notifications` | `20260816065517` |
 | `20260817000000_queue_leave_notices` | `20260816052740` |
 | `20260810000000_declare_compute_session_wrapped` | `20260810151122` |
 | `20260810000001_extend_draft_firewall_to_match_players` | `20260810151355` |
@@ -32,6 +35,10 @@ the only place that records the mapping.
 | `20260812100000_refresh_cross_session_stats_absolute_rebuild` | `20260812144342` |
 | `20260815000000_queue_status_audit` | `20260815133945` |
 | `20260816000000_publish_never_touches_an_unready_held_draft` | `20260816024129` |
+
+⚠️ **`20260818000000` — applied to prod 2026-08-16, verified.** Stamp `20260816065517` (MCP name `session_notifications`).
+Table `session_notifications` exists, RLS on, 0 rows. Indexes: pkey, `session_created`, pending-correction unique, pause-bucket unique. Policy: `session_notifications_player_select_own` (SELECT, `kind = score_correction AND subject_player_id = auth.uid()`). Table grants: `authenticated=SELECT` only; `service_role=ALL`; no `anon`.
+`resolve_score_correction` `SECURITY DEFINER`, ACL exactly `{postgres=X/postgres,service_role=X/postgres}`, `anon_exec=false`, `auth_exec=false`, `service_exec=true`. `prosrc` 2022 B, md5 `69db9f321ebad474c17ea2ba57512f55` (em dash in the revert error string survived). Do not DROP.
 
 ⚠️ **`20260817000000` — applied to prod 2026-08-16, verified.** Stamp `20260816052740`.
 `paused_at` column on `queue_entries`; `v_queue_full_with_wait_time` trailing column +
@@ -139,18 +146,18 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🔔 ORGANIZER NOTICE INBOX + PLAYER SCORE CORRECTION — 2026-08-16. Code complete, migration NOT applied.
+## 🔔 ORGANIZER NOTICE INBOX + PLAYER SCORE CORRECTION — 2026-08-16. Code merged (#71 / `8fdb909`). Migration APPLIED TO PROD.
 
 APP_MANIFEST §3.43. Center card first, then the header bell. Player session history can request a score fix; Review opens the existing Edit Match dialog pre-filled.
 
-- Table `session_notifications` + `resolve_score_correction` in `20260818000000` (**pending on prod**). Unique: one pending correction per match; one pause row per (session, player, bucket).
+- Table `session_notifications` + `resolve_score_correction` in `20260818000000` (**applied**, stamp `20260816065517`). Unique: one pending correction per match; one pause row per (session, player, bucket).
 - No 6th Realtime table channel. Hydrate + `queue_notice` upsert + 45s poll. `realtimeConnected` stays at 5.
 - Writers `emitOrganizerNotice` / `closePendingScoreCorrections` are `server-only` (`src/lib/session-notice-write.ts`), not public Server Actions. RPC EXECUTE revoked from PUBLIC/anon/authenticated by name.
 - Pause catch-up waits for a non-empty authoritative queue, then inserts `read` + `interrupt: false`.
 - `npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **70 files, 1302 passed, 1 skipped** · `npm run build` success.
 - Review: four passes. First three **Needs fixes** (catch-up vs empty queue, public writers, player INSERT poison, stacked dialogs, RPC default EXECUTE). Fourth **LGTM**.
 
-**Next:** apply `20260818000000` by hand and stamp this table. Merging this PR ships TypeScript only.
+**Next:** none for this feature. `#71` is on `main`; SQL stamp `20260816065517` is on prod.
 
 ---
 
@@ -3227,25 +3234,20 @@ OUTER gate, team balance only the inner ordering. Once every cross-tier pairing 
 had been used once, the only "fresh" split left was high+high vs low+low — chosen deliberately to avoid a
 within-cap partnership repeat. Compounds all night in two-tier pools.
 
-**Fix A — balance gate in `snakeDraft`.** Splits partitioned into balanced (gap ≤ minGap+`SKILL_VARIANCE_MAX`)
-vs lopsided; 4-pass freshness runs over balanced first; lopsided only fires when every balanced split is
-partnership-capped and is flagged `usedLopsidedFallback: true` (new `SnakeDraftResult` type). Tolerance of 2
+**Fix A — balance gate in `snakeDraft` (2026-07-30).** Splits partitioned into balanced (gap ≤ minGap+`SKILL_VARIANCE_MAX`)
+vs lopsided; 4-pass freshness runs over balanced first. Tolerance of 2
 preserves the fresh-pair preference between near-equal splits (6/5/4/3 → Split 2 gap 2 OK). Side effect (by
 design): balance now also outranks opponent-cap freshness — 2 old tests encoding that inversion were updated.
 
-**Fix B — balance-preserving swap in `runAlgorithm` main path.** On `usedLopsidedFallback`, try replacing each
+**Fix B — balance-preserving swap in `runAlgorithm` main path.** Originally triggered on `usedLopsidedFallback`. **Retargeted 2026-08-17** to `usedCapOverride`: try replacing each
 trio member (lowest-priority first, Red-Zone members never benched — mirrors diversity-swap guard) with another
-eligible candidate (window + ≤1 pulled + no diversity violation); take the first balanced draft. If none exists,
-accept the lopsided draft (no stall).
+eligible candidate (window + ≤1 pulled + no diversity violation); take the first under-cap mixed draft.
 
-**Validated:** simulated the incident scenario against the real `snakeDraft` before+after (S1/S7 lopsided →
-balanced, 0 regressions); tsc/eslint clean; 169 unit tests pass incl. 3 new regression tests
-(`snakeDraft — balance gate` block); `npm run build` green. Review verdict: **Minor issues** (all addressed:
-eviction order + Red-Zone guard added, package-lock noise reverted, docs updated).
+**2026-08-17 — lopsided seating banned.** The 07/30 gate still fell through to high+high vs low+low when every balanced split was partnership-capped. That fall-through is deleted. `usedCapOverride` replaced `usedLopsidedFallback`. `rotatedDraft` drops lopsided splits from its cycle but still returns `null` when every remaining balanced split is at cap (window expansion). Preview scores `usedCapOverride` as unsplittable so WHO does not change.
 
-**Accepted holes:** (1) `rotatedDraft` (forced repeat of the exact same 4) still cycles through top-vs-bottom —
-documented in APP_MANIFEST §snakeDraft. (2) When the same 4 bodies have capped ALL balanced pairings and no
-alternative candidate exists (tiny/late session), one lopsided match is still emitted rather than stalling.
+**Validated 2026-08-17:** incident case still gap 0; cap-override still gap 0; rotatedDraft H-2 shape still Split 1; 6/5/4/3 splitIndex=1 skips to Split 2.
+
+**Accepted holes (updated):** (1) ~~`rotatedDraft` still cycles through top-vs-bottom~~ **closed 2026-08-17** for fours where that split is lopsided. H-2 (gap 2) still rotates to it. (2) When the same 4 bodies have capped ALL balanced pairings and no alternative candidate exists, a **mixed over-cap** match is emitted rather than stalling — never a lopsided one.
 
 ---
 

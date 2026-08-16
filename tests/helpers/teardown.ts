@@ -1079,7 +1079,9 @@ export async function seedSession(
     //   - isDiversityViolation([all 4]) = true (4-of-4 overlap with completed)
     //   - Tier 1 swap: swapPool empty (no other players) → fail
     //   - Tier 2 expand: widerEligible empty (all 4 already in group) → fail
-    //   - Tier 3 rotatedDraft: repeatCount=1 → splitIndex=1 → "top pair vs bottom pair"
+    //   - Tier 3 rotatedDraft: repeatCount=1 → splitIndex=1. For this
+    //     4/3/3/2 four, Split 1 (gap 2) is still balanced. A 6/5/4/3
+    //     four would skip top-vs-bottom as lopsided.
     //
     // The rotated split with sorted-DESC-by-skill input (dan, bob/cara, alice)
     // produces partnership pairs that DIFFER from {alice+dan, bob+cara}.
