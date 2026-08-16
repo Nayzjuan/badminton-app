@@ -231,14 +231,20 @@ what is missing is any **writer** for it, 0 rows DB-wide across 1071 events, inc
 that reached a court. "No publish `event_type`" was the wording here until 2026-08-16 and it is
 false; see item **A0** under `## 📋 STANDING TO-DO`. (Locator, not an offset: this said "at the
 bottom of this file" until 2026-08-16, and A0 is nowhere near it. No figure for *how far* off it was
-is recorded here on purpose — the first draft of this correction gave two, and one of them drifted
-within this very branch. Pinned copy of the pre-fix state: `git show e75a843:MEMORY.md`.) The
-distinction is load-bearing: an unwired event means no `match_events` query can separate "never
-published" from "published, unrecorded". The RESTING window is measured at **88 s** and **237 s**
-for these two rows, and in it the pre-fix publish *succeeds* — so the opposite ordering is live, not
-hypothetical. Claim the count and defect 1's by-construction `CONFLICT`; do not claim a sequence.
-Full derivation in §3.41's ⚠️ paragraph on the absolute-then-ordering fix (**not** its 🪤s, which
-this pointed at until 2026-08-16); re-derive counts from `matches`.
+is recorded here on purpose: a distance is unverifiable by inspection, which is reason enough
+without waiting for one to rot. 🪤 The first draft of this note gave two ("48%", "81 sections below")
+and the second claimed one of them had drifted. **It had not** — both held at every revision on this
+branch. What moved was A0's raw line number, which the note never stated; watching *that* move and
+concluding a figure derived from it had rotted, without re-deriving the derived figure, is this
+file's own subject committed inside the sentence added to prevent it. No line number appears here
+either, because the one drafted into this very correction was stale before it could be committed.
+Pinned copy of the pre-fix state: `git show e75a843:MEMORY.md`.) The distinction is load-bearing: an
+unwired event means no `match_events` query can separate "never published" from "published,
+unrecorded". The RESTING window is measured at **88 s** and **237 s** for these two rows, and in it
+the pre-fix publish *succeeds* — so the opposite ordering is live, not hypothetical. Claim the count
+and defect 1's by-construction `CONFLICT`; do not claim a sequence. Full derivation in §3.41's ⚠️
+paragraph on the absolute-then-ordering fix (**not** its 🪤s, which this pointed at until
+2026-08-16); re-derive counts from `matches`.
 
 ### The five things that will bite the next person
 
