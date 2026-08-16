@@ -5,17 +5,13 @@
 
 ---
 
-## 🔴 MIGRATION QUEUE — 1 PENDING as of 2026-08-16.
+## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
-Merging a PR ships TypeScript only.** **Every new migration must be added to this table with its prod
-stamp** — the stamps drift from the filenames, and this table is the only place that records the mapping.
-
-| 🔴 PENDING — apply to prod | What it does |
-|---|---|
-| `20260816000000_publish_never_touches_an_unready_held_draft.sql` | `CREATE OR REPLACE` on **`publish_match`** (new `HELD_NOT_READY` return code) and **`publish_all_drafts`** (unready held drafts dropped from `v_all_draft_ids`). Applied to the **LOCAL test DB only** — hand-applied over `postgresql://postgres:postgres@127.0.0.1:54322/postgres` inside a transaction, with the row inserted into `supabase_migrations.schema_migrations`, because the `supabase` CLI is not installed on this machine and `global-setup`'s `db push --local` silently takes its warn-and-continue branch. Post-apply on local: both bodies contain the guard, ACL still `postgres=X/postgres,service_role=X/postgres`. See APP_MANIFEST §3.41. ⚠️ **Both are `CREATE OR REPLACE` with unchanged signatures on purpose** — DROP+CREATE resets the ACL to `EXECUTE TO PUBLIC` and undoes `20260721180000` / `20260722000004`. Unapplied, the TypeScript half still degrades safely (the UI stops offering Publish on an unready hold, and both actions' snapshot filters exclude it), so the organizer cannot reach the old `CONFLICT` path by the ordinary route — but the RPCs themselves stay unguarded, so a stale client or a direct call still can |
-
-All six migrations below are **applied and verified on production** (`usxftpexoimletqmrggb`).
+Merging a PR ships TypeScript only.** All eight migrations this section tracks are now **applied and
+verified on production** (`usxftpexoimletqmrggb`). Nothing is pending. **Every new migration must be
+added to this table with its prod stamp** — the stamps drift from the filenames, and this table is
+the only place that records the mapping.
 
 | Applied | Stamp |
 |---|---|
@@ -25,6 +21,28 @@ All six migrations below are **applied and verified on production** (`usxftpexoi
 | `20260811000001_repair_duplicate_milestone_awards` | `20260810173605` |
 | `20260812000000_clear_on_deck_never_unseats_a_playing_body` | `20260812092029` |
 | `20260812100000_refresh_cross_session_stats_absolute_rebuild` | `20260812144342` |
+| `20260815000000_queue_status_audit` | `20260815133945` |
+| `20260816000000_publish_never_touches_an_unready_held_draft` | `20260816024129` |
+
+⚠️ **`20260816000000` — applied to prod 2026-08-16, verified.** `CREATE OR REPLACE` on
+**`publish_match`** (new `HELD_NOT_READY` return, checked **before** the left-player and conflict
+predicates) and **`publish_all_drafts`** (unready held drafts dropped from `v_all_draft_ids` rather
+than skipped in the loop, so they never land in `skipped_count`). Post-apply on prod, measured:
+`publish_match` md5 `329540501beb…` → `a58ff60e1fd8…` (1852 → 2329 B), `publish_all_drafts` md5
+`aba72b630dc0…` → `73d08a902e7c…` (2771 → 3133 B); both still `SECURITY DEFINER`; both ACLs still
+exactly `postgres=X/postgres | service_role=X/postgres` — **no PUBLIC, anon or authenticated grant**.
+Return ordering re-verified positionally after apply: `HELD_NOT_READY` < `HAS_LEFT_PLAYERS` <
+`CONFLICT`. Pre-apply the two prod bodies were confirmed **clean pre-fix baselines** (no `v_is_held`,
+no ready clause), so the new version is a strict superset, and both open sessions had **0 live
+matches and 0 held drafts** at the time — nothing in flight was disturbed. Rollback SQL:
+`scratchpad/rollback-20260816000000.sql` (a reconstruction, not a byte capture — compare behaviour,
+not md5). ⚠️ **Both are `CREATE OR REPLACE` with unchanged signatures on purpose** — DROP+CREATE
+resets the ACL to `EXECUTE TO PUBLIC` and undoes `20260721180000` / `20260722000004`. 🪤 The
+TypeScript half degrades safely without the SQL (the UI stops offering Publish on an unready hold and
+both actions' snapshot filters exclude it), which is exactly what makes "did the migration land?" easy
+to stop asking — the organizer cannot reach the old `CONFLICT` path by the ordinary route, but the
+RPCs themselves would stay unguarded against a stale client or a direct call. That is why
+`tests/unit/publish-held-guard.test.ts` pins the JS fallbacks to the same rule as the SQL.
 
 ⚠️ **`apply_migration` strips non-ASCII from stored function bodies.** The `── section ──` rules this
 repo decorates SQL with are safe in a migration *header* (never stored) but not inside a function
@@ -101,16 +119,25 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🎽 HELD CROSS-COURT DRAFTS COULD NEVER BE PUBLISHED — 2026-08-16, **UNCOMMITTED WORKING TREE**, shares the tree with the score-race work below
+## 🎽 HELD CROSS-COURT DRAFTS COULD NEVER BE PUBLISHED — 2026-08-16. ✅ **COMMITTED + MIGRATION APPLIED TO PROD**
 
-**Status: code complete, validated, review-gated. NOT committed, NOT pushed, NOT deployed. Migration
-`20260816000000` applied to the LOCAL test DB ONLY — see the migration queue at the top of this file.**
-`npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **67 files, 1271 passed, 1 skipped** ·
-`npm run test:integration` **25 files, 287 passed** · `npm run build` success.
+**Status: code complete, validated, review-gated, committed as `db600a4` on `fix/block-leave-active-match`.
+Migration `20260816000000` is APPLIED AND VERIFIED ON PROD** (stamp `20260816024129` — see the migration
+queue at the top of this file for the measured before/after fingerprints and the ACL check).
+`npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **68 files, 1278 passed, 1 skipped** ·
+`npm run test:integration` **25 files, 289 passed** · `npm run build` success.
 
-⚠️ **The working tree contains TWO unrelated tasks.** This one and the score-race/duplicate-roster work
-below. Do **not** `git add -A` (see the shared-worktree incident of 2026-08-15 — a blanket add swept a
-concurrent session's 13 files into a pushed commit). Explicit pathspecs only. This task's files:
+⚖️ **Shipped as ONE commit spanning four workstreams, by explicit user decision.** This one, the
+score-race/duplicate-roster work below, the `cancelMatchAction` held-draft re-reservation, and the
+repeat-edit fix all interleaved in a single worktree — `match-lifecycle.ts` alone carries hunks from
+three of them, and `src/lib/constants.ts` + `APP_MANIFEST.md` from two, so no pathspec split existed.
+The user was offered the split and chose one PR. 🪤 The commit still used **explicit pathspecs for all
+49 files, never `git add -A`** — the reason for that rule is a *shared checkout*, not a mixed one, and
+"I'm committing everything anyway" does not make a blanket add safe (see the 2026-08-15 incident: a
+blanket add swept a concurrent session's 13 files into a pushed commit). `git status --porcelain` was
+diffed against the expected 49 before staging, precisely to catch a peer's file appearing mid-task.
+
+This task's own files:
 
 ```
 supabase/migrations/20260816000000_publish_never_touches_an_unready_held_draft.sql   (new)
@@ -121,9 +148,6 @@ tests/unit/publish-held-guard.test.ts   tests/unit/held-draft-ui.test.tsx       
 tests/unit/{derive-held-state,cross-court-trigger,matchmaking-engine}.test.ts
 tests/integration/publish-match.test.ts   APP_MANIFEST.md (§3.41 + one §3.1 bullet)
 ```
-
-`src/lib/constants.ts` and `APP_MANIFEST.md` are touched by **both** tasks — they cannot be split by
-path. If these ship separately, split those two by hunk.
 
 ### The user's report was accurate, and it was four defects wearing one symptom
 
@@ -359,27 +383,24 @@ the hold is no longer `pending` by then, so it cannot reserve its own body. One 
 
 ---
 
-## 🎯 SCORE RACE + REPEAT EDIT — 2026-08-15, **UNCOMMITTED WORKING TREE**, no branch of its own yet
+## 🎯 SCORE RACE + REPEAT EDIT — 2026-08-15. ✅ **COMMITTED** in `db600a4` (folded into the cross-court PR)
 
-**Status: code complete, validated, review-gated (5 rounds, final verdict LGTM). NOT committed, NOT
-pushed, NOT deployed.** `npx tsc --noEmit` 0 · `npm run lint` **exit 0, zero errors, zero warnings** ·
-`npm run test:unit` **65 files, 1240 passed, 1 skipped** · `npm run build` success. TypeScript-only,
-**no migration**.
+**Status: code complete, validated, review-gated (5 rounds, final verdict LGTM), committed.**
+`npx tsc --noEmit` 0 · `npm run lint` **exit 0, zero errors, zero warnings** ·
+`npm run test:unit` **65 files, 1240 passed, 1 skipped** at the time (68/1278 after the cross-court
+work merged in) · `npm run build` success. TypeScript-only, **no migration**.
 
-💾 **Durable backup taken 2026-08-16** against base `e1542ec`, because this worktree has already lost
-work once to a peer session's `git add -A` (PR #67): `tracked-changes.patch` (116 KB, `git apply
---check --reverse` verified an exact match for the worktree) + `untracked.tar.gz` (the 7 new files) +
-`base-sha.txt`, in this session's scratchpad `…/3f06a257-…/scratchpad/backup/`. ⚠️ Scratchpad, not the
-repo — it does not survive indefinitely. Re-apply with `git apply tracked-changes.patch` onto
-`e1542ec` plus `tar xzf untracked.tar.gz`.
+💾 The durable pre-commit backup (`tracked-changes.patch` + `untracked.tar.gz` + `base-sha.txt` against
+base `e1542ec`, in session `3f06a257`'s scratchpad) is now **superseded by the commit** — git holds the
+content. Kept only until that scratchpad is reaped; it needs no further care.
 
-⚠️ **These changes are sitting uncommitted in the shared checkout on branch
-`fix/block-leave-active-match`, which belongs to a different piece of work.** They need their own
-branch before commit. **23 modified + 7 untracked.** Stage by explicit pathspec, never `git add -A`.
-🪤 **The pathspec buys nothing for the two docs:** `APP_MANIFEST.md` and `MEMORY.md` are single files
-carrying BOTH sessions' in-flight edits (this very file already mixes them — the section below is the
-peer's), so committing either one commits some of their prose too. There is no clean split short of
-hand-splitting the hunks; decide deliberately rather than discovering it at `git add` time.
+⚖️ **These shipped in the same commit as the cross-court work**, not on a branch of their own. That was
+the user's call after being shown the alternative: `match-lifecycle.ts` carries hunks from three
+workstreams and `src/lib/constants.ts` + `APP_MANIFEST.md` from two, so a by-path split was impossible
+and a by-hunk split would have produced two PRs neither of which built on its own.
+🪤 The lesson that *did* survive: **the pathspec buys nothing for the two docs.** `APP_MANIFEST.md` and
+`MEMORY.md` are single files that were carrying BOTH sessions' in-flight edits, so committing either one
+commits some of the other's prose too. Discover that when you plan the split, not at `git add` time.
 🪤 **The peer session is ACTIVELY committing in this checkout** — HEAD moved from `77112a6` to
 `e1542ec` (7 commits) mid-task, one of them (`36e99f3`) touching `src/app/actions/match-lifecycle.ts`,
 a file this work also edits. No sweep this time: their hunk is the requeue-guard comment, ours is the
@@ -563,8 +584,9 @@ demonstrably edit scores in the same session hours after it stops.
 
 ### Next steps
 
-1. Branch these paths off `main` by explicit pathspec (do **not** commit them onto
-   `fix/block-leave-active-match`, and do **not** `git add -A` — the peer session shares this tree).
+1. ~~Branch these paths off `main` by explicit pathspec.~~ ✅ **Done 2026-08-16** — committed as
+   `db600a4` on `fix/block-leave-active-match` together with the cross-court work, by explicit user
+   decision, with pathspecs for all 49 files.
 2. Ship, then watch a live session: does any match get a second `score_edit`? That is the only real
    test of defect 2 — nothing in the suite can prove it.
 3. Also watch the duplicate confirm in that session: how often it fires, and whether organizers confirm
@@ -2847,6 +2869,53 @@ cookies to the **Vercel hostname**, and `signInOrganizerBot` short-circuits when
 the login screen, which itself has a `[role="tablist"]`, so the failure surfaces as a confusing
 "tab named /waitlist/i not found" rather than "not logged in". Delete the file before a local run, restore it
 after.
+
+---
+
+## 👁️ QUEUE-STATUS AUDIT + RECONNECT 'left' RESCUE — 2026-08-15, branch `fix/queue-status-audit`
+
+**Incident.** "Can't see Vinz in Match Control." Vinz's `queue_entries.status` was `left`, and Match Control
+only renders `waiting/drafted/on_deck/playing`, so he was hidden. He had re-registered mid-session → the app's
+identity-migration flow (`migrate_player_identity`, old `93246b97` → new `21b41e22`) fired at 04:57. Immediate
+fix: restored his entry to `waiting`, deleted the stray empty "Vinzz" duplicate (0 refs).
+
+**Root-cause correction (important).** Initial hypothesis "the migration leaves players `left`" was **DISPROVEN**:
+`migrate_player_identity` only does `UPDATE queue_entries SET player_id=new WHERE player_id=old` (status
+untouched), and `match_events` show Vinz active under the new id all evening after 04:57. His `left` was set
+later by an unrecorded action — and the real structural gap is that **`queue_entries` status changes were
+totally unaudited** (no history table, no triggers), so the cause is unrecoverable from data.
+
+**Fix 1 — queue-status audit (migration `20260815000000_queue_status_audit.sql`).** New table
+`queue_status_events` + `AFTER UPDATE OF status` trigger `trg_log_queue_status_change` on `queue_entries`
+(fires `WHEN OLD.status IS DISTINCT FROM NEW.status`). DB-level so it catches EVERY path (engine, checkout,
+organizer-remove, close, endMatch, migrate, manual). Trigger body is exception-wrapped → can NEVER roll back a
+queue update. Captures old/new/changed_at + best-effort `actor_uid` (JWT sub; NULL for service-role = engine +
+all server actions, so it's a hint — correlate `changed_at` with logs). RLS on, no policies (service-role only).
+`database.ts` updated (`QueueStatusEvent` + `queue_status_events` table).
+
+✅ **APPLIED to prod 2026-08-15**, stamp `20260815133945` (applied ahead of the merge — schema and code ship
+separately here). Verified structurally *and* functionally: table present, `rls_enabled=true` with **0
+policies**, 3 indexes, trigger enabled (`tgenabled='O'`), function `SECURITY DEFINER` with
+`search_path = public, pg_temp`. The functional proof ran inside a self-rolling-back `DO $$ … RAISE
+EXCEPTION $$` block — a real `queue_entries` status flip produced exactly one audit row
+(`old=left new=waiting`), then rolled back to `audit_rows=0` with prod data untouched (`left`=667,
+`waiting`=31 before and after). Applied during a genuine quiet window: the only two "active" sessions were
+one idle 5.5 h and the permanently-active hidden E2E sandbox.
+
+⚠️ The table carries `anon,authenticated` **grants** — verified deliberate, not an oversight: `match_events`
+carries an identical grant set, and with **zero** RLS policies the grants are unreachable (RLS default-denies),
+so `queue_status_events` is strictly *stricter* than the table the migration says it mirrors. Non-ASCII in the
+migration was converted to ASCII before applying, per the `apply_migration` body-stripping note above.
+
+**Fix 2 — reconnect rescues `left` (`src/app/actions/auth.ts` reconcile block).** `reconnectPlayer`'s
+post-migration reconcile only lifted `playing/drafted/on_deck`→`waiting`; it ignored `left`. Now: reconnecting
+to an ACTIVE session (targetSessionId only set from an active session) while marked `left` → restore to
+`waiting` with fresh `joined_at` (tail of queue, no line-jump). Closes the re-register-while-left disappearance
+path. Note: unconfirmed as Vinz's exact cause (only one migration logged), but a real code-confirmed gap that
+produces this symptom.
+
+**Follow-up (not done):** add a status-change `reason` (SET LOCAL GUC read by the trigger, or app-level) on the
+key `left`-setting paths (checkoutPlayer, remove_player_from_queue_organizer, closeSession) for true attribution.
 
 ---
 
