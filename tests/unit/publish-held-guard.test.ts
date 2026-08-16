@@ -37,12 +37,22 @@ vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
 vi.mock("@/app/actions/_shared", () => ({
   getAuthenticatedUser: vi.fn(),
   isSessionOrganizer: vi.fn(),
+  getActorContext: vi.fn(),
+}));
+// Stubbed deliberately, not just for convenience: several cases below assert an
+// exact svc.from() call COUNT to pin query ordering, and the 'published' audit
+// issues its own reads. Letting it run would fold an unrelated concern into
+// those counts. The audit itself is covered in tests/unit/published-event.test.ts.
+vi.mock("@/lib/match-event-log", () => ({
+  logMatchEvent: vi.fn(),
+  logPublishedEvents: vi.fn(),
+  fetchRosterSnapshots: vi.fn().mockResolvedValue(new Map()),
 }));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
+import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match-drafts";
 
@@ -143,6 +153,7 @@ beforeEach(() => {
     email: "org@test.com",
   } as never);
   vi.mocked(isSessionOrganizer).mockResolvedValue(true);
+  vi.mocked(getActorContext).mockResolvedValue({ id: "user-1", name: "Org" });
 });
 
 // ─────────────────────────────────────────────────────────────

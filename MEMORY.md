@@ -251,9 +251,12 @@ stamped `held_ready_at` on those two rows meant they "published only after the h
 resolved". Prod records **no publish time**: no `published_at` column, no `published` row in
 `match_events`, and `queue_status_events` is empty (its migration postdates the session). 🔴 Say that
 precisely — `MatchEventType` **does** define a `"published"` kind (`src/lib/match-provenance.ts`);
-what is missing is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2
+what was missing is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2
 that reached a court. "No publish `event_type`" was the wording here until 2026-08-16 and it is
-false; see item **A0** under `## 📋 STANDING TO-DO`. (Locator, not an offset: this said "at the
+false; see item **A0** under `## 📋 STANDING TO-DO`. ✅ **The writer landed 2026-08-16 (A0), and it
+changes nothing above**: this paragraph is about the 08/15 corpus, which is behind the fix and has
+nothing to backfill from. Every claim here stays true of those rows *permanently* — read the tense as
+historical, not as a live description of `src/`. (Locator, not an offset: this said "at the
 bottom of this file" until 2026-08-16, and A0 is nowhere near it. No figure for *how far* off it was
 is recorded here on purpose: a distance is unverifiable by inspection, which is reason enough
 without waiting for one to rot. 🪤 The first draft of this note gave two ("48%", "81 sections below")
@@ -3413,7 +3416,7 @@ Everything else below is kept because its consequences are worth carrying.
 >
 > **Nothing here changes behaviour and nothing new is open.** The audit spawned three non-finding items and exactly one is still open: **E**, the optional "Allow public access" toggle. The other two are **C** — the live broadcast-delivery smoke test, ✅ done 2026-08-12 — and the leaked-password toggle, ❌ WON'T DO 2026-08-04 (item 2 of the historical 07-29 list). All three unchanged by this pass. *(Not **A**: that is the cross-court live-session smoke test, a different piece of work. An earlier draft of this line collapsed C into A because `A` says C "folds into the same night" — a paraphrase where a re-read was needed.)*
 
-**A0. 🔴 OPEN — the `published` event kind is plumbed and never written.** ⚠️ **Not a new find, and
+**A0. ✅ CLOSED 2026-08-16 (was 🔴 OPEN) — the `published` event kind was plumbed and never written.** ⚠️ **Not a new find, and
 this entry called itself one until 2026-08-16.** It is already booked further down this same file —
 *"DEFERRED — `published` event (L2): never emitted (publish actions raw-update `is_published`).
 Non-counting; timeline just won't show the publish step"* — and `src/lib/match-event-log.ts`'s
@@ -3449,6 +3452,97 @@ surviving four. (This paragraph also said "or delete the kind" until 2026-08-16,
 `match-provenance.ts` alone; search `src` *and* `tests` for the string literal, not the type's own
 file.) Not touched in PR #69, which is a docs-accuracy branch — wiring a new ledger write is a
 behaviour change and needs its own tests.
+
+✅ **Fixed 2026-08-16 on `feat/log-published-event`** — full write-up in `APP_MANIFEST.md` §3.41 →
+*Wiring the `published` event*. TypeScript only, **no migration**: `match_events` already accepts the
+kind and `record_match_event` already writes it, so unlike `20260816000000` this cannot be
+half-shipped and is correct in prod the day it merges. `logPublishedEvents` in
+`src/lib/match-event-log.ts` owns the write; five transitions call it with a `reason`
+(`publish_single` ×2, `publish_all` ×2, `auto_publish_held`). 🪤 **The brief named two sites and there
+are five.** The fifth — `recomputeHeldReadiness`'s `auto_publish_match` arm in
+`src/app/actions/matchmaking.ts` — is the *cross-court auto-publish* path, i.e. the exact path this
+whole investigation is about, and it is reachable only in an `auto_publish` session so the two
+organizer entry points never see it. Found by enumerating every writer of `is_published`, not by
+re-reading the brief. The same enumeration is what separates a *transition* from **birth-as-published**
+(`create_match_with_players` with `p_is_published=true`): that is deliberately **not** logged — the row
+was never a draft and its `created` event already carries the fact.
+
+⚠️ **The closure is narrower than "the ledger records publishes", and the next reader will widen it.**
+A *present* row is now proof a match was published; a *missing* one is still not proof of the
+opposite, and for the 08/15 corpus it never can be — there is nothing to backfill from (`matches` has
+no `published_at`, `queue_status_events` was empty for that session). So the hedges in §3.41 and in
+this file stay exactly as written for anything before this merge. What changed is only that the same
+question is answerable *going forward*.
+
+🪤 **`ALREADY_PUBLISHED` returns `success: true`.** An "on success, log it" reading stamps a second
+review onto a match nobody re-published; `PUB-EVT-3` exists for that alone. Coverage is
+`PUB-EVT-1..14` in `tests/unit/published-event.test.ts`, asserting at the **`record_match_event` RPC
+boundary** rather than at the `logPublishedEvents` seam — "the helper was called" is precisely the
+assertion that would have stayed green for the entire time production held 0 rows. Negative-control
+verified: `git stash`-ing the two action files turns 8 of 19 red, every one of them a positive case,
+negatives untouched.
+
+🪤 **A whole-feature negative control cannot validate a negative test.** Stashing removes the writer,
+so every "writes nothing" case is satisfied *trivially* and stays green — including `PUB-EVT-14`, which
+guards the review gate's one real correctness find (below). Pin those with a **targeted** mutation
+instead: ungating the fallback's log (`if (true)`) reddens `PUB-EVT-14` alone. The green half of a
+stash control is not evidence about the negatives; it is the absence of evidence, and it looks
+identical.
+
+🪤 **The review gate paid for itself twice, and both finds were in work I had already validated
+green** (tsc 0, lint 0, 1312 unit + 289 integration, build OK). (1) A **correctness** defect:
+`publishMatchFallback`'s UPDATE carries `.eq("is_published", false)` but had no `.select("id")`, so a
+concurrent publisher winning the race made it a silent no-op that still logged — crediting *this*
+organizer with the other one's transition. Its own sibling, `publishAllDraftsFallback`, already used
+the RETURNING set and my new comment there *cited that as the reason* — I wrote the rule down 250
+lines below the site that broke it. (2) A **false factual claim in brand-new prose**: I asserted
+"all three `create_match_with_players` callers" and listed `swap-player.ts`. There are two;
+`swap-player.ts` calls `swap_player_in_match`, which only *reads* `p_is_published` to pick the
+incoming player's queue status and creates no match. **A shared parameter name is not a shared
+writer** — grep the RPC name, and enumerate before you write a count. This is
+[[comments-that-explain-why-rot]] landing inside the very paragraph documenting a fix for it.
+
+🪤 **Round 2 then found a SECOND false claim in the sentence round 1 had just rewritten.** The fix
+glossed `matchmaking-db.ts`'s `p_is_published: autoPublish` as "auto_publish sessions" — but the flag
+`executeMatch` receives is `effectiveAutoPublish = autoPublish || (bypassGate && i === 0)`
+(`matchmaking.ts:827`), so `callNextMatch`'s slot 0 is born published in **draft mode** too. That is
+documented *twice* in the very file the sentence is about (`:817-822`, `:855-857`) and I still wrote
+past it. Two rounds, two unverified claims, one paragraph: **a correction is the single likeliest
+place to author the next instance of the class it is correcting**, and re-reading your own replacement
+prose as if a reviewer wrote it is not optional. Round 2 also downgraded "disjoint *by construction*"
+(the `held_ready_at IS NULL` filter is on the candidate SELECT, not the downgrade UPDATE — a
+read-then-write, not a lock) and "the one leak" (there are two arms, same benign consequence).
+**Never re-review only what round 1 flagged; review the diff again, fixes included.**
+
+🪤 **Round 3 then found the same false claim sitting in the line my fix points readers AT.**
+`matchmaking-db.ts:559` said "Manually-created matches also start unpublished" — false, and false
+already when it was written (`368df7d`, 2026-06-24), since `createManualMatchAction` has passed a
+literal `p_is_published: true` since `684e14e`, 2026-05-09. It sits six lines above the `p_is_published: autoPublish` my
+new comment cites as the second born-published caller, so a reader following the citation lands on it.
+Fixed here (plus the same `effectiveAutoPublish` correction, since the comment framed the flag as the
+session's). **A citation is a recommendation to read** — when you point at a line, you inherit
+responsibility for the comment around it, and that is where the phrase sweep has to reach.
+
+🪤 **And the review agent's own dated claim was wrong, one edit from shipping.** It dated the manual
+creator's `p_is_published: true` to `6355c41` (2026-05-17) — that commit only *split* `match.ts` into
+`match-lifecycle.ts`, so `-S` on the new path reports the move, not the origin. The real commit is
+`684e14e`, **2026-05-09**; second witness: `git show 6355c41^:src/app/actions/match.ts` already has the
+literal at `:609`. The conclusion ("already false when written") survived, the date did not. **`git log
+-S` on a path reports when the string entered THAT path** — check `<split>^:<old-path>` before writing
+a date down, and don't launder a subagent's number into a comment just because its argument was right.
+
+🪤 **Two neighbouring suites assert exact `svc.from()` call counts** to pin query ordering
+(`publish-engine-trigger`, `publish-held-guard`), so adding the audit's own reads broke 7 cases that
+were not regressions. Both now stub `@/lib/match-event-log` and complete their `_shared` mock with
+`getActorContext`. Any future query added to a publish path trips the same wire.
+
+🪤 **Local integration DB drift, found here, fixed here (unrelated to this change):** 11 integration
+tests in `player-checkout` / `player-pause` / `queue-join` failed identically on a clean `origin/main`
+checkout. Cause was the *local* Supabase missing three migrations already on main —
+`20260812100000`, `20260815000000` (`queue_status_audit`), `20260817000000` (`queue_leave_notices`).
+`npx supabase migration up --local --include-all` (the plain form refuses out-of-order files) applied
+them; suite went 289/289. **Baseline before you blame yourself** — the parity check took one command
+and would otherwise have looked like a regression in a file this change never touches.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
@@ -5001,7 +5095,7 @@ Per explicit user directive ("do them now, before you continue, so we don't have
 
 - **Migrations NOT applied** (no local Postgres; needs Supabase branch validation OR prod apply with go-ahead). Apply order: mig1 → deploy app → mig2.
 - **DEFERRED — leaver/clear events (M1):** `player_left`/`cancelled` from `checkout_player_cleanup_drafts`, `remove_player_from_queue_organizer`, `clear_on_deck_match_atomic`, `clear_all_unpublished_drafts` are plumbed (type + DB CHECK + delta) but NOT emitted. All those paths CANCEL the draft → excluded from completed metrics → zero analytics impact; only the trail entry is missing. Wiring needs per-RPC affected-id handling (some RPCs return void → need a pre-query).
-- **DEFERRED — `published` event (L2):** never emitted (publish actions raw-update `is_published`). Non-counting; timeline just won't show the publish step.
+- ~~**DEFERRED — `published` event (L2):** never emitted (publish actions raw-update `is_published`). Non-counting; timeline just won't show the publish step.~~ ✅ **WIRED 2026-08-16 — see STANDING TO-DO A0 and `APP_MANIFEST.md` §3.41 → *Wiring the `published` event*.** Still non-counting (delta 0), and the pricing above was the understatement A0 documents: the real cost was that no `match_events` query could tell "never published" from "published, unrecorded". Left struck through rather than deleted because A0 grep-references this exact line (`event (L2)`) as the proof the gap was booked long before it was "found".
 - **DEFERRED — `reverses_event_id` (L1):** column + RPC params exist but undo call sites pass NULL (forward actions don't return the emitted event id through `undoContext`). Counting is still correct (undo=−1); only the explicit reversed-event link is absent.
 - Integration suite `manual-and-swap.test.ts` migrated to new model (assertions flipped: swapped-manual → manual_modified) but needs a LIVE-DB run to confirm (not in unit CI).
 - Session provenance summary action built (`getSessionProvenance`) but not yet surfaced in a dashboard component.

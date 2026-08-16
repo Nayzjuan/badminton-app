@@ -3916,11 +3916,12 @@ is how a reader re-derives the ordering this paragraph exists to kill.)
 flip, is **empty** (migration `queue_status_audit`, stamped `20260815133945` — hours after the session's
 last match completed at `08:01:06Z`; the session itself has `ended_at IS NULL` and was never closed).
 🔴 **Sharper, measured 2026-08-16 while reviewing this paragraph: `MatchEventType` *does* define a
-`"published"` kind — "draft → published", in `src/lib/match-provenance.ts` — and nothing writes it.
+`"published"` kind — "draft → published", in `src/lib/match-provenance.ts` — and nothing wrote it.
 0 such rows in the whole production database across all 1071 events, including for the 2 held drafts
-that did reach a court.** So "prod has no publish record" is not a missing-column argument: the ledger
-event exists and is unwired, which means no query over `match_events` can tell "never published" from
-"published, unrecorded". ⚠️ The *gap* is not a discovery, and this paragraph said "found" until
+that did reach a court.** So "prod has no publish record" was not a missing-column argument: the ledger
+event existed and was unwired, which means no query over `match_events` can tell "never published" from
+"published, unrecorded" **for anything up to this merge** — the writer landed the same day (below), and
+it is forward-only, so every sentence in this paragraph stays true of the 08/15 rows forever. ⚠️ The *gap* is not a discovery, and this paragraph said "found" until
 2026-08-16: it is booked as `DEFERRED — published event (L2)` in `MEMORY.md` and again in
 `src/lib/match-event-log.ts`'s header. What is new is the count and that consequence — L2 prices the gap
 at "the timeline just won't show the publish step" and does not anticipate it. The writer plumbing is all
@@ -3931,7 +3932,8 @@ players" — so what is missing is the call. Deleting the kind instead is *silen
 narrows to the survivors without complaint. The comment heading the held-draft block in
 `tests/integration/publish-match.test.ts` asserted prod had "no event type" for publish; that was
 false in the safer-sounding direction, and it was not caught in draft — it shipped in `f08e662` and
-sat on this PR until the next review. Booked as STANDING TO-DO **A0**, not fixed here. Worse, the
+sat on this PR until the next review. Was booked as STANDING TO-DO **A0**; ✅ **the call is now wired —
+see *Wiring the `published` event* below.** Worse, the
 RESTING window that defect 4 below turns on is measured, and in it the opposite ordering is possible:
 `2c1b0edc…` rested **88 s** between its source match completing and its stamp, `4cf0a097…` **237 s**,
 and in that window the pre-fix `publish_match` *passes* — `derive-held-state.ts` says so in as many
@@ -4139,6 +4141,133 @@ reproduces the exact unguarded `update({ status: "waiting" }).in("player_id", �
 `20260812000000` removed from the RPC. On any environment where `clear_on_deck_match_atomic` is missing, the
 Clear button on a held draft unseats a live body. Out of scope here — named so "we fixed the class" doesn't
 stop the next reader looking.
+
+#### Wiring the `published` event — CLOSED 2026-08-16 (was STANDING TO-DO **A0**)
+
+**Files:** `src/lib/match-event-log.ts`, `src/app/actions/match-drafts.ts`, `src/app/actions/matchmaking.ts`,
+`tests/unit/published-event.test.ts` **(new)**, `tests/unit/{publish-engine-trigger,publish-held-guard}.test.ts`.
+**No migration** — `match_events` already accepts the kind and `record_match_event` already writes it, so this
+is TypeScript only and is correct in production the day it merges. Contrast `20260816000000` above, which had
+to be hand-applied first: this one cannot be half-shipped.
+
+`logPublishedEvents` (in `match-event-log.ts`) owns the write; the five transitions call it and pass a
+`reason`. It is deliberately one helper rather than five inline `logMatchEvent` calls, because the payload it
+assembles is the part a per-site copy would drift on:
+
+| site | reason | actor |
+| --- | --- | --- |
+| `publishMatchAction`, RPC `SUCCESS` | `publish_single` | organizer |
+| `publishMatchFallback` (PGRST202) | `publish_single` | organizer |
+| `publishAllDraftMatchesAction`, RPC path | `publish_all` | organizer |
+| `publishAllDraftsFallback` (PGRST202) | `publish_all` | organizer |
+| `recomputeHeldReadiness` → `auto_publish_match` `SUCCESS` | `auto_publish_held` | **engine** |
+
+The RPC and its fallback share a `reason` on purpose: the transition is identical, and *which one ran* is a
+property of the environment's migration state, not of the match. The fifth site is the one the brief did not
+name and the one this whole section is about — it is the cross-court auto-publish path, so wiring only the two
+organizer entry points would have left held drafts exactly as unrecorded as before.
+
+- **`actor_type` is `engine`, not `system`, for the fifth site.** `logMatchEvent` derives the actor from the
+  presence of an `actorId`, which yields `system` when there is none; that default is right for *an automatic
+  consequence* and wrong here, because this is the matchmaker itself acting. The new `actorType` override
+  exists for that one case. `engine` is not a new actor kind — `create_match_with_players` already writes it
+  for every engine-made `created` event (`CASE WHEN p_origin = 'manual' THEN 'organizer' ELSE 'engine' END`,
+  `20260617000000_match_provenance_audit`). Note the pair it contrasts is organizer/engine; that RPC never
+  emits `system` at all.
+- **`phase` is `"draft"`**, per the codebase convention that any `pending` match is a draft — spelled out at
+  the `cancelled` call site inside `removePlayerFromQueue` (`src/app/actions/queue.ts`), which is where the
+  rule is written down. The match is `pending` on *both* sides of this transition — publishing flips `is_published`,
+  never `status` — so there is no phase to move to. The published/on-deck distinction lives in the payload.
+- **The payload distinguishes the held path without needing a separate event kind.** It carries
+  `created_method`, `is_held` and `held_ready_at` alongside the roster snapshot. `held_ready_at` (when the hold
+  unlocked) against the event's own `created_at` (when it was published) is the interval the 08/15 post-mortem
+  had no way to measure — the paragraph above spends five sentences establishing that prod records no publish
+  time *at all*, and this is the column that ends that. All three are read *after* the write, which is safe
+  for two different reasons and it matters which: `created_method` is immutable after insert, but the held
+  pair is **not** — `recomputeHeldReadiness` downgrades a held draft whose pulled body left the roster by
+  clearing `pulled_player_ids` (which drives the GENERATED `is_held`) and `held_ready_at`. Its *candidate
+  query* filters `.is("held_ready_at", null)` while a held draft cannot publish until `held_ready_at` is
+  stamped (`20260816000000`), so the two normally never see the same row — not because the columns are frozen.
+  Be exact about the strength of that: the filter is on the SELECT, not on the downgrade's UPDATE, so it is a
+  read-then-write and two overlapping recompute runs could still clobber a row published in between. The cost
+  is one payload carrying a stale held triple. An earlier draft of this bullet claimed all three columns were
+  simply stable, and its replacement said *by construction* — the weaker, true reason is the one that tells a
+  later reader which line to keep. `is_published` is deliberately **absent** — post-write it is `true` for
+  every row, so recording it would record nothing.
+- **`ALREADY_PUBLISHED` writes nothing**, and it is the trap worth naming: it returns `success: true`. An
+  "on success, log it" reading of the code stamps a second review onto a match nobody re-published. The two
+  **fallback** paths have the same hazard without the error code: their UPDATE carries `.eq("is_published",
+  false)`, so a concurrent publisher between the precondition read and the write makes it a silent no-op. Both
+  therefore log off the UPDATE's own `.select("id")` RETURNING rather than off "no error" — `publishMatchFallback`
+  was missing that `.select` and would have credited this organizer with the other one's transition; the review
+  gate caught it. The batch RPC path drives its events from the *same re-read* that drives the on-deck push, so
+  the ledger and the notification can never disagree about who was published — including on that re-read's
+  known leak, which is *anything* a concurrent publisher flipped between this run's snapshot and the re-read,
+  whichever of the three arms skipped it. The RPC returns counts, not ids, so nothing short of a new signature
+  separates them; the residue is a duplicate row a few seconds after a real one, never a missing one. The
+  opposite direction exists too and is equally benign: the snapshot excludes unready holds, so a hold stamped
+  ready between the snapshot and the RPC is published by the RPC and gets neither the push (pre-existing) nor
+  an event — under-recording, which is the bias the paragraph below already licenses.
+- **Best-effort, matching every other call site**: the sequence is computed outside the row lock, the
+  modification delta is 0 (already pinned by `MP-CNT-03`), and both the returned-`error` and the thrown-
+  exception paths are swallowed with a `console.error`. Publishing is the user-facing mutation and it has
+  already committed; failing the action here would report a false negative about a match that *is* published.
+  ⚖️ **Accepted cost:** the audit is `await`ed inline, so it adds two serial round trips (`getActorContext`,
+  then the batched provenance + roster read) to the publish response. The neighbouring *clear* path
+  parallelizes its equivalent pair, but there the roster fetch is at the call site; here it lives inside
+  `logPublishedEvents`, so matching that shape would mean threading a promise through the helper's signature.
+  Awaiting is what every existing writer in `match-event-log.ts` does, and one consistent seam beats two round
+  trips — revisit only if publish latency is ever measured as a problem, not on principle.
+
+⚠️ **What a row does and does not prove, going forward.** A *present* `published` row is now proof the match
+was published, which is the half that did not exist before. A *missing* one is still not proof of the
+opposite, and never will be for the 08/15 corpus: there is nothing to backfill from — no `published_at`, and
+`queue_status_events` was empty for that session. The ambiguity is closed for matches published from this
+merge onward and permanently open behind it. Do not let a later reader collapse that into "the ledger records
+publishes" and then reason backwards over old data.
+
+⚠️ **A match *born* published is deliberately not logged.** `create_match_with_players` takes
+`p_is_published`, and it has exactly **two** callers: `match-lifecycle.ts` (a literal `true` — a manual
+on-deck match) and `matchmaking-db.ts` (`p_is_published: autoPublish`). Read that second one carefully: the
+flag `executeMatch` receives is `effectiveAutoPublish = autoPublish || (bypassGate && i === 0)`
+([`matchmaking.ts:827`](src/app/actions/matchmaking.ts:827)), **not** the session's `auto_publish` — so
+`callNextMatch`'s slot 0 is born published in a *draft-mode* session too, for the reason spelled out at that
+assignment (promotion only considers `is_published=true`; without it the primary button composes a match it
+can never seat — verified live 08/06). Neither caller is a draft→published transition: the row was never a
+draft an organizer released, and the `created` event already carries the fact. Adding a `published` row there
+would make the two kinds mean different things at different call sites, which is precisely the drift that
+makes an audit ledger unreadable.
+
+🪤 **This one paragraph shipped two different false claims, and the second survived the fix for the first.**
+Round 1 of the review gate caught "*three* callers", listing `swap-player.ts` as a re-creation forwarding the
+original's `is_published` — both halves wrong, since that file calls the unrelated `swap_player_in_match`,
+which swaps a roster slot in place, only *reads* `p_is_published` to choose the incoming player's queue
+status, and creates no match. Round 2 then caught the rewrite's own gloss of `matchmaking-db.ts` as
+"auto_publish sessions", which the `effectiveAutoPublish` line above falsifies — and which the code documents
+*twice*, in the file the sentence is about. Two lessons, both already in this repo's ledger and both re-earned
+here: **enumerate with a grep before writing a count, and check the RPC name, not just the argument name** (a
+shared parameter is not a shared writer); and **a correction inherits the burden of proof it is enforcing** —
+rewriting a sentence to fix one unverified claim is the single likeliest place to author the next one.
+
+Coverage: `PUB-EVT-1..14` in `tests/unit/published-event.test.ts` — one per site, plus the negatives
+(`ALREADY_PUBLISHED`, all six refusal codes, a `published_count > 0` the re-read cannot confirm, a refused
+auto-publish, a fallback UPDATE that flipped no row) and the two best-effort arms. They assert at the
+**`record_match_event` RPC boundary**, not at the `logPublishedEvents` seam, because "the helper was called"
+is exactly the assertion that would have passed throughout the years the ledger was empty.
+**Negative-control verified**: `git stash`-ing the two action files turns 8 of the 19 cases red — every
+positive one — while the negatives stay green, which is the correct signature.
+
+🪤 That control **cannot validate a negative test**, and `PUB-EVT-14` is the case that shows it. Stashing
+removes the writer altogether, so every "writes nothing" assertion is satisfied trivially and stays green —
+including the one guarding the `.select("id")` gate, which is the whole point of that test. It is pinned
+instead by a *targeted* mutation: ungating the fallback log (`if (true)`) reddens `PUB-EVT-14` alone,
+18 passed / 1 failed. **Match the mutation to the assertion** — deleting a feature only proves the tests that
+assert the feature happened.
+
+🪤 Two neighbouring suites (`publish-engine-trigger`, `publish-held-guard`) needed their `_shared` mock
+completed with `getActorContext` and `@/lib/match-event-log` stubbed. The stub is not convenience: several of
+their cases assert an exact `svc.from()` **call count** to pin query ordering, and the audit issues its own
+reads. Any future work that adds a query to a publish path will trip those counts the same way.
 
 ---
 

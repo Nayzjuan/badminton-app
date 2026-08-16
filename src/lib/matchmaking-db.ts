@@ -554,14 +554,28 @@ export async function executeMatch(
     p_team_a_ids: teamA.map((p) => p.player_id),
     p_team_b_ids: teamB.map((p) => p.player_id),
     p_origin: "auto" as const,
-    // Draft mode (autoPublish=false, default): is_published=false → the match
-    // lands as a DRAFT for organizer review. "Publish All" or per-match Publish
-    // promotes it to On Deck. Manually-created matches also start unpublished.
+    // autoPublish=false (draft mode's usual case): is_published=false → the
+    // match lands as a DRAFT for organizer review. "Publish All" or per-match
+    // Publish promotes it to On Deck, and THAT transition is what writes the
+    // 'published' event (see logPublishedEvents in match-event-log.ts).
     //
-    // Auto-publish mode (autoPublish=true): is_published=true → the RPC promotes
-    // the roster straight to 'on_deck' and the match skips the review gate. The
+    // autoPublish=true: is_published=true → the RPC promotes the roster straight
+    // to 'on_deck' and the match skips the review gate. Born published, so no
+    // 'published' event — its 'created' event already carries the fact. The
     // engine fires ON_DECK_WARNING itself (the push lives in the publish action,
     // which this path bypasses).
+    //
+    // 🪤 This flag is NOT the session's auto_publish. executeMatch's only caller
+    // passes `effectiveAutoPublish = autoPublish || (bypassGate && i === 0)`
+    // (matchmaking.ts), so callNextMatch's slot 0 arrives here as true even in a
+    // draft-mode session — the reason is written down at that assignment.
+    // (Until 2026-08-16 this comment also claimed manually-created matches start
+    // unpublished. They do not: createManualMatchAction is the only manual
+    // creator and passes a literal p_is_published: true, which it has done since
+    // 684e14e on 2026-05-09 — six weeks BEFORE this comment was written in
+    // 368df7d, so the claim was never true. The date is the commit that
+    // introduced the literal into the pre-split match.ts, not 6355c41, which
+    // only moved that file.)
     p_is_published: autoPublish,
   });
 
