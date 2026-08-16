@@ -184,8 +184,10 @@ of them"* + *"Publish All allows it on deck, but I couldn't make it work."* Full
 Prod session `3367d4c6-6838-4cf7-8abe-5f5c3143dd1e` ("08/15 Saturday Session", `auto_publish=false`,
 `max_auto_drafts_override=1`): **12 held drafts created, 10 cleared by hand, 2 ever reached a court.**
 Two holds sat ~10 minutes. APP_MANIFEST §3.1 had said "still not observed in a live session" — this is
-the observation, and it is a failure report. The 10 manual clears are defect 1's copy working exactly as
-written: the organizer was told to clear, so they cleared.
+the observation, and it is a failure report. The 10 manual clears read as defect 1's copy working exactly
+as written — the organizer was told to clear — but prod records no publish *attempt* (see the 🪤 below),
+so that is the data's likely reading, not a traced cause. Three of the ten were cancelled 12–54 s after
+creation — two of those inside 16 s, which is quick for reading an error and deciding on it.
 
 🪤 **The 2 are load-bearing — this heading said "COULD NEVER BE PUBLISHED" until 2026-08-16, and PR #68's
 squash body on `main` still says "published zero / refused every one".** Rows `2c1b0edc…` and `4cf0a097…`
@@ -3317,8 +3319,9 @@ whose branch wrote it. (An earlier draft of this correction said "the next day" 
 and +08; the true version is the more damning one. A later draft still timed only the SHA clause, which
 is the slower of the two.) No replacement head SHA is written here,
 because any value put in this slot is falsified by the push or the merge that **lands** it — not by the
-commit, which cannot know its own SHA (that phrasing survived here until 2026-08-16, one paragraph away
-from the correction that removed it elsewhere). To get the real head
+commit, which cannot know its own SHA (that phrasing survived here until 2026-08-16, in a different
+section from the correction that had already removed it — see the PR #67 🪤 above; no line distance is
+given here, because the twin sites are thousands of lines apart and both move). To get the real head
 state, ask git and GitHub, which move on their own: `git rev-parse origin/main` and
 `gh pr list --state open`. Everything from here to the end of this paragraph is as-of **2026-08-13** and
 is left as written — including its "`gh pr list --state open` is empty", which was true that day and is
@@ -3347,8 +3350,12 @@ Everything else below is kept because its consequences are worth carrying.
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
 structurally cannot exercise it. ⚠️ **Re-framed 2026-08-16 — (i) has been answered and the bar moved.**
 The 08/15 session created **12 held drafts**, so "do they appear at all" is settled; what it also showed
-is that **only 2 ever reached a court**, because the publish path refused the rest (four defects, fixed
-and shipped in PR #68 → `main` `61e942b`; see the cross-court section at the top of this file). So the
+is that **only 2 ever reached a court**; the other 10 were cleared by hand while the publish path was
+broken in four ways (fixed and shipped in PR #68 → `main` `61e942b`; see the cross-court section at the
+top of this file). ⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
+narrowed form of the same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the
+RESTING window is not refused, it *publishes* and then fails at promotion, and prod records no refusal
+for any of the 10 either way. So the
 watch is now: (i) do held drafts **complete their lifecycle** — created → published → on court —
 against the **12 → 2 baseline**; and (ii) whether any hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15`
 — the cancel is event-driven off match end/cancel, not a timer, so a court that goes quiet strands its
