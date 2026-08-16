@@ -3899,7 +3899,14 @@ that the publish came after it. **Production records no publish time at all** �
 `score_edit`, and `queue_status_events`, the table that would have caught the roster's `drafted→on_deck`
 flip, is **empty** (migration `queue_status_audit`, stamped `20260815133945` — hours after the session's
 last match completed at `08:01:06Z`; the session itself has `ended_at IS NULL` and was never closed).
-Worse, defect 4
+🔴 **Sharper, found 2026-08-16 while reviewing this paragraph: `MatchEventType` *does* define a
+`"published"` kind — "draft → published", in `src/lib/match-provenance.ts` — and nothing writes it.
+0 such rows in the whole production database across all 1071 events, including for the 2 held drafts
+that did reach a court.** So "prod has no publish record" is not a missing-column argument: the ledger
+event exists and is unwired, which means no query over `match_events` can tell "never published" from
+"published, unrecorded". A draft of the test comment in `tests/integration/publish-match.test.ts` said
+prod had "no event type" for publish; that was false, and it was false in the safer-sounding direction.
+Booked, not fixed here — see MEMORY.md. Worse, defect 4
 below is a measured window where the opposite is possible: `2c1b0edc…` rested **88 s** between its source
 match completing and its stamp, `4cf0a097…` **237 s**, and in that window the pre-fix `publish_match`
 *passes* — `derive-held-state.ts` says so in as many words ("RESTING … it CAN succeed, and that is

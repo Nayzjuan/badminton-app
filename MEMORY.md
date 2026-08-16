@@ -197,8 +197,13 @@ be amended, so `61e942b` is permanently wrong here.
 
 🪤 **The first correction then over-fixed it into an ordering nothing can prove**, claiming the stamped
 `held_ready_at` on those two rows meant they "published only after the hold had already resolved".
-Prod records **no publish time**: no `published_at` column, no publish `event_type`, and
-`queue_status_events` is empty (its migration postdates the session). Defect 4's RESTING window is
+Prod records **no publish time**: no `published_at` column, no `published` row in `match_events`, and
+`queue_status_events` is empty (its migration postdates the session). 🔴 Say that precisely —
+`MatchEventType` **does** define a `"published"` kind (`src/lib/match-provenance.ts`); what is missing
+is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2 that reached a court.
+"No publish `event_type`" was the wording here until 2026-08-16 and it is false; see the standing item
+at the bottom of this file. The distinction is load-bearing: an unwired event means no `match_events`
+query can separate "never published" from "published, unrecorded". Defect 4's RESTING window is
 measured at **88 s** and **237 s** for these two rows, and in it the pre-fix publish *succeeds* — so the
 opposite ordering is live, not hypothetical. Claim the count and defect 1's by-construction `CONFLICT`;
 do not claim a sequence. Full derivation in §3.41's 🪤; re-derive counts from `matches`.
@@ -3345,6 +3350,22 @@ Everything else below is kept because its consequences are worth carrying.
 > **Exactly one finding is closed as a decision, not a fix**, and is labelled that way rather than folded into the ✅ count: **#9**, accepted (realtime bypasses RLS on DELETE by design — no policy can fix it). 🪤 **A declined *clause* is not the same category** — **two** findings are `✅ FIXED · clause 3 declined`, on both the heading and the §1 table row: **#3** (the passcode is the *sole* credential a delegated co-organizer holds, so there is no club context to scope the lookup to; the uniform `INVALID` reply + lockout covers what scoping would have) and **#7** (ids-only buys zero incremental disclosure — every recipient already reads those names via `can_read_profile` arm 2 — while anonymising the co-organizer toast; §3.36). An earlier draft of this line said "two findings closed as decisions" and named #9 + #3, which double-miscounts: #3 is ✅ FIXED, and #7 has the identical shape and was omitted.
 >
 > **Nothing here changes behaviour and nothing new is open.** The audit spawned three non-finding items and exactly one is still open: **E**, the optional "Allow public access" toggle. The other two are **C** — the live broadcast-delivery smoke test, ✅ done 2026-08-12 — and the leaked-password toggle, ❌ WON'T DO 2026-08-04 (item 2 of the historical 07-29 list). All three unchanged by this pass. *(Not **A**: that is the cross-court live-session smoke test, a different piece of work. An earlier draft of this line collapsed C into A because `A` says C "folds into the same night" — a paraphrase where a re-read was needed.)*
+
+**A0. 🔴 OPEN — `match_events` defines a `published` event and nothing writes it.** Found 2026-08-16
+while reviewing the paragraph that argues from prod's silence about publishes. `MatchEventType` in
+`src/lib/match-provenance.ts` lists `"published" // draft → published`, and production holds **0 rows
+of it across all 1071 events** — including for the 2 held drafts of session `3367d4c6` that did reach a
+court, so this is not "the feature was never exercised". Two consequences, and the second is why this
+is filed rather than shrugged at: (1) the provenance ledger silently under-describes every match's
+history, since draft→published is the one transition it claims to record and doesn't; (2) **no query
+over `match_events` can distinguish "never published" from "published, unrecorded"** — which is exactly
+the inference §3.41 and this file lean on when they hedge the 10 hand-clears. The hedges are still
+right; they are just resting on an unwired ledger rather than on a missing column, and a future reader
+who discovers the type exists will otherwise read the hedge as sloppy. Scope when picked up: find
+whether any writer was ever intended (`git log -S '"published"' -- src/lib/match-provenance.ts`), then
+either wire `publishMatchAction` / `publish_all_drafts` to record it or delete the kind. Not touched in
+PR #69, which is a docs-accuracy branch — wiring a new ledger write is a behaviour change and needs its
+own tests.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
