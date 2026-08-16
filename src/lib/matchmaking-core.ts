@@ -299,9 +299,9 @@ export function isGroupValid(players: ScoredPlayer[], maxVariance: number): bool
 //   Split 2 — [0,2] vs [1,3]: alternating cross-split
 //   Split 1 — [0,1] vs [2,3]: top pair vs bottom pair (least balanced)
 //
-// Returns null if every split puts at least one team pair at or above
-// the cap — the caller must treat this as a slot failure and either
-// try another candidate group or return no-match.
+// Returns null only if there is no balanced split at all (should not
+// happen for a real four). Partnership-capped balanced splits are still
+// seated, flagged `usedCapOverride`. Lopsided splits are never returned.
 //
 // When partnershipCounts / cap are omitted, the function behaves
 // exactly as before (always returns the balanced Split 0).
@@ -310,24 +310,28 @@ export function isGroupValid(players: ScoredPlayer[], maxVariance: number): bool
 // where no cross-net pair is at the opponent cap (soft preference — never
 // a hard block so the engine cannot stall on small sessions).
 //
-// BALANCE GATE (anti-repeat vs balance priority inversion fix):
+// BALANCE GATE (anti-repeat vs balance priority inversion fix, 2026-07-30;
+// lopsided seating banned 2026-08-17):
 // The 4-pass freshness search runs over the MOST skill-balanced splits
-// first, and only falls through to less-balanced splits when every
-// balanced split is at the partnership cap. Previously freshness was the
-// outer gate, so once all cross-tier pairings had been used once, the
-// engine would "prefer" a fresh high+high vs low+low split (INT+INT vs
-// BEG+BEG) over repeating a within-cap balanced pairing. A within-cap
-// repeat on balanced teams always beats a fresh-but-lopsided match.
-// `usedLopsidedFallback: true` on the result signals that only a
-// less-balanced split was available — the caller (runAlgorithm) uses it
-// to try a different 4th body before accepting the lopsided teams.
+// only. Previously freshness was the outer gate, so once all cross-tier
+// pairings had been used once, the engine would "prefer" a fresh
+// high+high vs low+low split (INT+INT vs BEG+BEG) over repeating a
+// within-cap balanced pairing. A within-cap repeat on balanced teams
+// always beats a fresh-but-lopsided match.
+//
+// Lopsided splits (gap > minGap + SKILL_VARIANCE_MAX) are never returned.
+// When every balanced split is partnership-capped, snakeDraft still seats
+// the four mixed and flags `usedCapOverride` so the caller can try a
+// different body first. rotatedDraft does NOT cap-override — it returns
+// null so the skill window can still expand.
 
 export type SnakeDraftResult = {
   teamA: ScoredPlayer[];
   teamB: ScoredPlayer[];
-  /** True when every most-balanced split was partnership-capped and a
-   *  less-balanced split was returned to prevent a stall. */
-  usedLopsidedFallback?: boolean;
+  /** True when every balanced split was partnership-capped and a mixed
+   *  split was returned anyway. Callers that must not break the cap
+   *  (preview, Tier-1/2 swap, Fix B's "found a better four") skip these. */
+  usedCapOverride?: boolean;
 };
 
 /** A candidate team assignment for one foursome. */
@@ -348,6 +352,26 @@ function splitSkillGap(split: TeamSplit): number {
       split.teamA[1].skill_level_int -
       (split.teamB[0].skill_level_int + split.teamB[1].skill_level_int)
   );
+}
+
+/** Splits whose team-skill gap is within SKILL_VARIANCE_MAX of the best gap. */
+function isBalancedSplit(split: TeamSplit, minGap: number): boolean {
+  return splitSkillGap(split) <= minGap + SKILL_VARIANCE_MAX;
+}
+
+/** The three candidate seatings, most-balanced first, from skill-DESC order. */
+function splitsForFour(allFour: ScoredPlayer[]): {
+  sorted: ScoredPlayer[];
+  splits: TeamSplit[];
+  minGap: number;
+} {
+  const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
+  const splits: TeamSplit[] = [
+    { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] },
+    { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] },
+    { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] },
+  ];
+  return { sorted, splits, minGap: Math.min(...splits.map(splitSkillGap)) };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -531,6 +555,10 @@ type SplitConstraints = {
   opponentCounts?: Map<string, number>;
   opponentCap?: number;
   lastOpponents?: LastOpponents;
+  /** When true, pass 2 treats every split as under the partnership cap so
+   *  snakeDraft can still seat a mixed four. Preview / swaps / rotatedDraft
+   *  must not set this. */
+  ignorePartnershipCap?: boolean;
 };
 
 function selectSplit(pool: TeamSplit[], c: SplitConstraints): TeamSplit | null {
@@ -553,8 +581,9 @@ function selectSplit(pool: TeamSplit[], c: SplitConstraints): TeamSplit | null {
     pairCount(split.teamB[0], split.teamB[1]) === 0;
 
   const bothPairsUnderCap = (split: TeamSplit): boolean =>
-    pairCount(split.teamA[0], split.teamA[1]) < c.cap &&
-    pairCount(split.teamB[0], split.teamB[1]) < c.cap;
+    c.ignorePartnershipCap ||
+    (pairCount(split.teamA[0], split.teamA[1]) < c.cap &&
+      pairCount(split.teamB[0], split.teamB[1]) < c.cap);
 
   const passes: Array<(s: TeamSplit) => boolean> = [
     (s) => bothPairsFresh(s) && crossNetOk(s),
@@ -591,39 +620,23 @@ export function snakeDraft(
   opponentCap?: number,
   lastOpponents?: LastOpponents
 ): SnakeDraftResult | null {
-  const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
+  const { splits, minGap } = splitsForFour(allFour);
+  const balancedSplits = splits.filter((s) => isBalancedSplit(s, minGap));
 
-  // Without cap enforcement, always return the balanced default.
+  // Without cap enforcement, always return the balanced default (Split 0).
   if (!partnershipCounts || cap === undefined) {
-    return {
-      teamA: [sorted[0], sorted[3]],
-      teamB: [sorted[1], sorted[2]],
-    };
+    return { teamA: splits[0].teamA, teamB: splits[0].teamB };
   }
-
-  // Try splits from most to least skill-balanced.
-  const splits: TeamSplit[] = [
-    { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] },
-    { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] },
-    { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] },
-  ];
 
   // Partition by balance: the freshness passes must never trade team
   // balance away just to avoid a within-cap partnership repeat. Splits
   // within SKILL_VARIANCE_MAX of the best gap still count as balanced —
   // that keeps the fresh-pair preference alive between near-equal splits
   // (e.g. skills 6/5/4/3: Split 2's gap of 2 is acceptable) while
-  // demoting genuinely lopsided ones (e.g. 4/4/1/1: high+high vs
-  // low+low has gap 6 and only ever fires as a stall-prevention
-  // fallback).
-  const minGap = Math.min(...splits.map(splitSkillGap));
-  const balancedSplits = splits.filter((s) => splitSkillGap(s) <= minGap + SKILL_VARIANCE_MAX);
-  const lopsidedSplits = splits.filter((s) => splitSkillGap(s) > minGap + SKILL_VARIANCE_MAX);
-
-  // The 4-pass freshness ladder now lives in selectSplit (above), shared with
-  // rotatedDraft. Within a pass it additionally prefers the split creating the
-  // fewest consecutive-opponent repeats; with lastOpponents absent that count
-  // is always 0, so the first qualifying split wins exactly as before.
+  // refusing genuinely lopsided ones (e.g. 4/4/1/1: high+high vs
+  // low+low has gap 6). Those used to fire as a stall-prevention
+  // fallback; they are now banned. Cap override seats a mixed split
+  // instead, flagged so the caller can still try a different body.
   const constraints: SplitConstraints = {
     partnershipCounts,
     cap,
@@ -635,11 +648,8 @@ export function snakeDraft(
   const balanced = selectSplit(balancedSplits, constraints);
   if (balanced) return balanced;
 
-  // Every balanced split is partnership-capped — fall through to a less
-  // balanced split rather than stalling, but flag it so the caller can
-  // try a different 4th body first.
-  const lopsided = selectSplit(lopsidedSplits, constraints);
-  if (lopsided) return { ...lopsided, usedLopsidedFallback: true };
+  const override = selectSplit(balancedSplits, { ...constraints, ignorePartnershipCap: true });
+  if (override) return { ...override, usedCapOverride: true };
 
   return null;
 }
@@ -938,16 +948,16 @@ export function buildCombinationGroup(
           splitPreview.opponentCap,
           lastOpponents
         );
-        // A null split means every team assignment for this four is
-        // partnership-capped — the seater CANNOT seat it. Score it as the worst
-        // case, never as neutral: scoring it 0 made "unsplittable" the best
-        // possible preview, so the argmin actively PREFERRED an unseatable four
+        // A null split, or one that only seats by breaking the partnership
+        // cap (`usedCapOverride`), must score as the worst case, never as
+        // neutral: scoring it 0 made "unsplittable" the best possible
+        // preview, so the argmin actively PREFERRED an unseatable four
         // over a seatable one whenever fairness was within 4 × 3 = 12 points.
-        // Nothing downstream repairs that — runAlgorithm's `if (!draft)` below
-        // does `continue`, which abandons the whole skill window, so the group
-        // this function "won" with is a group the caller then throws away. The
-        // measured failure is a court that seats nobody with capSaturation
-        // false, i.e. it does not even read as saturation to the caller.
+        // Cap-override is how snakeDraft keeps a four on court AFTER it has
+        // already been chosen; letting it win the preview would change WHO
+        // plays. Preview therefore scores it like `null`. Downstream, Fix B
+        // and last-resort may still accept that four if no under-cap body
+        // exists — that is a seating last-resort, not a WHO preference.
         //
         // MAX + 1, not MAX: at exactly MAX an unsplittable four TIES a seatable
         // four that carries 4 repeats at the same fairness, and the strict `<`
@@ -958,9 +968,10 @@ export function buildCombinationGroup(
         // This stays a tie-break against unsplittable fours, not a second
         // partnership gate: a group that is 16+ fairness points better still
         // wins and still gets its `continue`, exactly as before this feature.
-        const repeats = split
-          ? countConsecutiveOpponentRepeats(split, lastOpponents)
-          : MAX_CONSECUTIVE_OPPONENT_REPEATS + 1;
+        const repeats =
+          split && !split.usedCapOverride
+            ? countConsecutiveOpponentRepeats(split, lastOpponents)
+            : MAX_CONSECUTIVE_OPPONENT_REPEATS + 1;
         const cost = fairness + CONSECUTIVE_OPPONENT_PENALTY * repeats;
 
         // Strict `<` — ties keep the earlier (higher-priority) triple, which is
@@ -1000,14 +1011,17 @@ export function buildCombinationGroup(
 //   Split 1 — [0,1] vs [2,3]: top pair vs bottom pair
 //   Split 2 — [0,2] vs [1,3]: alternating cross-split
 //
-// splitIndex = repeatCount % 3. When cap enforcement is active,
-// the function tries splits starting from splitIndex, cycling
-// through all 3, returning the first that satisfies the cap.
-// Returns null if every split puts at least one team pair at or
-// above the cap — the caller must treat this as a slot failure.
+// splitIndex = repeatCount % 3. Lopsided splits (gap > minGap +
+// SKILL_VARIANCE_MAX) are dropped from the cycle — a 2-high+2-low four
+// never sits high+high vs low+low just because it is their second repeat.
+// When cap enforcement is active, the function tries the remaining
+// balanced splits starting from splitIndex, returning the first that
+// satisfies the cap. Returns null if every remaining balanced split is
+// at the cap — the caller must expand the skill window, not cap-override.
+// (snakeDraft is the function that seats mixed over cap.)
 //
-// When partnershipCounts / cap are omitted, behaviour is identical
-// to before: always returns the split at splitIndex (never null).
+// When partnershipCounts / cap are omitted, returns the first balanced
+// split in rotation order (never a lopsided Split 1).
 //
 // opponentCounts / opponentCap: same soft-preference semantics as in
 // snakeDraft — used to avoid repeated cross-net matchups within rotations.
@@ -1036,24 +1050,27 @@ export function rotatedDraft(
 
   const splitIndex = repeatCount % 3;
 
-  // All 3 splits indexed to match the original switch semantics.
+  // Indexed to match splitIndex % 3 (not snakeDraft's most-balanced-first order).
   const splits: TeamSplit[] = [
     { teamA: [sorted[0], sorted[3]], teamB: [sorted[1], sorted[2]] }, // 0: snake default
     { teamA: [sorted[0], sorted[1]], teamB: [sorted[2], sorted[3]] }, // 1: top vs bottom
     { teamA: [sorted[0], sorted[2]], teamB: [sorted[1], sorted[3]] }, // 2: cross-split
   ];
+  const minGap = Math.min(...splits.map(splitSkillGap));
+  const rotationOrdered = [0, 1, 2]
+    .map((i) => splits[(splitIndex + i) % 3])
+    .filter((s) => isBalancedSplit(s, minGap));
 
-  // Without cap enforcement, return the natural rotation split unconditionally.
+  // Without cap enforcement, still skip lopsided — partner variety among
+  // mixed splits is enough.
   if (!partnershipCounts || cap === undefined) {
-    return splits[splitIndex];
+    return rotationOrdered[0] ?? null;
   }
 
-  // Rotate the pool so the natural split for this repeatCount is first, then run
-  // the same 4-pass ladder snakeDraft uses. Pool order carries the rotation
-  // preference, and selectSplit's strict `<` tie-break preserves it whenever the
-  // consecutive-opponent counts are equal (always, without lastOpponents).
-  const rotationOrdered = [0, 1, 2].map((i) => splits[(splitIndex + i) % 3]);
-
+  // Pool order carries the rotation preference, and selectSplit's strict `<`
+  // tie-break preserves it whenever the consecutive-opponent counts are equal
+  // (always, without lastOpponents). Lopsided splits are already gone, so a
+  // capped mixed four returns null and the window can expand.
   return selectSplit(rotationOrdered, {
     partnershipCounts,
     cap,
@@ -1702,7 +1719,7 @@ export function runAlgorithm(
                 MAX_OPPONENT_REPEATS,
                 lastOpponents
               );
-              if (!draft) {
+              if (!draft || draft.usedCapOverride) {
                 if (process.env.DEBUG_MATCHMAKING === "true") {
                   console.log(
                     `[matchmaking] Tier-1 swap: all team splits capped for ${candidate.display_name} — skipping`
@@ -1750,7 +1767,7 @@ export function runAlgorithm(
                     MAX_OPPONENT_REPEATS,
                     lastOpponents
                   );
-                  if (!draft) {
+                  if (!draft || draft.usedCapOverride) {
                     if (process.env.DEBUG_MATCHMAKING === "true") {
                       console.log(
                         `[matchmaking] Tier-2 expanded swap: all team splits capped for ${candidate.display_name} — skipping`
@@ -1826,13 +1843,13 @@ export function runAlgorithm(
       }
 
       // ── Balance-preserving swap (Fix B) ─────────────────────────
-      // snakeDraft only returns a lopsided split when every balanced
-      // split of THIS group is partnership-capped. Before accepting
-      // high+high vs low+low teams, try replacing each member of the
+      // snakeDraft only flags usedCapOverride when every balanced split
+      // of THIS group is partnership-capped. Before accepting a mixed
+      // seating that breaks the cap, try replacing each member of the
       // trio with another eligible candidate — a different 4th body
       // usually restores a fresh balanced pairing. Constraints mirror
       // the main path: skill window, ≤1 pulled body, diversity.
-      if (draft.usedLopsidedFallback) {
+      if (draft.usedCapOverride) {
         const inGroup = new Set(allFour.map((p) => p.player_id));
         balanceSwap: for (const { candidate } of scored) {
           if (inGroup.has(candidate.player_id)) continue;
@@ -1854,11 +1871,11 @@ export function runAlgorithm(
               MAX_OPPONENT_REPEATS,
               lastOpponents
             );
-            if (altDraft && !altDraft.usedLopsidedFallback) {
+            if (altDraft && !altDraft.usedCapOverride) {
               if (process.env.DEBUG_MATCHMAKING === "true") {
                 console.log(
                   `[matchmaking] Balance swap: replaced ${group[i].display_name} with ` +
-                    `${candidate.display_name} to avoid lopsided teams`
+                    `${candidate.display_name} to avoid over-cap mixed seating`
                 );
               }
               draft = altDraft;
@@ -1866,11 +1883,11 @@ export function runAlgorithm(
             }
           }
         }
-        // No balanced alternative anywhere in the pool — accept the
-        // lopsided split rather than stalling the queue.
-        if (draft.usedLopsidedFallback && process.env.DEBUG_MATCHMAKING === "true") {
+        // No under-cap alternative anywhere in the pool — accept the mixed
+        // over-cap split rather than stalling, and never sit them lopsided.
+        if (draft.usedCapOverride && process.env.DEBUG_MATCHMAKING === "true") {
           console.log(
-            `[matchmaking] ±${maxVariance} window: no balanced alternative — accepting lopsided split`
+            `[matchmaking] ±${maxVariance} window: no under-cap alternative — accepting mixed over-cap split`
           );
         }
       }

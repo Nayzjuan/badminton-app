@@ -5,6 +5,17 @@
 
 ---
 
+## ⚖️ LOPSIDED TEAM SPLITS BANNED — 2026-08-17. TypeScript only. Branch `fix/ban-lopsided-team-splits`.
+
+The 07/30 balance gate stopped *preferring* INT+INT vs BEG+BEG; it still emitted that split as a stall-break. Ban: `snakeDraft` never returns a lopsided split (`gap > minGap + SKILL_VARIANCE_MAX`). When every mixed pairing is at the partnership cap, it seats mixed anyway (`usedCapOverride`) after Fix B tries another body. `rotatedDraft` drops lopsided from the cycle but still returns `null` so Tier-3 can expand the window. Preview / Tier-1/2 treat `usedCapOverride` like `null`. Last-resort accepts it.
+
+**Accepted hole:** mixed seating may exceed `MAX_PARTNERSHIP_REPEATS` when no other body exists. Organizer-created lopsided matches unchanged. Gap ≤ minGap+2 (H-2 4/3/3/2) is still allowed.
+
+**Review (Minor issues):** `simRunAlgorithm` still treats `usedCapOverride` as a stall on every path (incl. last-resort) so the 30-player "never exceed cap" invariant holds. Production last-resort is covered by MC-new-2. Preview / CCO-11 comments and assertion tightened.
+
+---
+---
+
 ## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
@@ -3223,25 +3234,20 @@ OUTER gate, team balance only the inner ordering. Once every cross-tier pairing 
 had been used once, the only "fresh" split left was high+high vs low+low — chosen deliberately to avoid a
 within-cap partnership repeat. Compounds all night in two-tier pools.
 
-**Fix A — balance gate in `snakeDraft`.** Splits partitioned into balanced (gap ≤ minGap+`SKILL_VARIANCE_MAX`)
-vs lopsided; 4-pass freshness runs over balanced first; lopsided only fires when every balanced split is
-partnership-capped and is flagged `usedLopsidedFallback: true` (new `SnakeDraftResult` type). Tolerance of 2
+**Fix A — balance gate in `snakeDraft` (2026-07-30).** Splits partitioned into balanced (gap ≤ minGap+`SKILL_VARIANCE_MAX`)
+vs lopsided; 4-pass freshness runs over balanced first. Tolerance of 2
 preserves the fresh-pair preference between near-equal splits (6/5/4/3 → Split 2 gap 2 OK). Side effect (by
 design): balance now also outranks opponent-cap freshness — 2 old tests encoding that inversion were updated.
 
-**Fix B — balance-preserving swap in `runAlgorithm` main path.** On `usedLopsidedFallback`, try replacing each
+**Fix B — balance-preserving swap in `runAlgorithm` main path.** Originally triggered on `usedLopsidedFallback`. **Retargeted 2026-08-17** to `usedCapOverride`: try replacing each
 trio member (lowest-priority first, Red-Zone members never benched — mirrors diversity-swap guard) with another
-eligible candidate (window + ≤1 pulled + no diversity violation); take the first balanced draft. If none exists,
-accept the lopsided draft (no stall).
+eligible candidate (window + ≤1 pulled + no diversity violation); take the first under-cap mixed draft.
 
-**Validated:** simulated the incident scenario against the real `snakeDraft` before+after (S1/S7 lopsided →
-balanced, 0 regressions); tsc/eslint clean; 169 unit tests pass incl. 3 new regression tests
-(`snakeDraft — balance gate` block); `npm run build` green. Review verdict: **Minor issues** (all addressed:
-eviction order + Red-Zone guard added, package-lock noise reverted, docs updated).
+**2026-08-17 — lopsided seating banned.** The 07/30 gate still fell through to high+high vs low+low when every balanced split was partnership-capped. That fall-through is deleted. `usedCapOverride` replaced `usedLopsidedFallback`. `rotatedDraft` drops lopsided splits from its cycle but still returns `null` when every remaining balanced split is at cap (window expansion). Preview scores `usedCapOverride` as unsplittable so WHO does not change.
 
-**Accepted holes:** (1) `rotatedDraft` (forced repeat of the exact same 4) still cycles through top-vs-bottom —
-documented in APP_MANIFEST §snakeDraft. (2) When the same 4 bodies have capped ALL balanced pairings and no
-alternative candidate exists (tiny/late session), one lopsided match is still emitted rather than stalling.
+**Validated 2026-08-17:** incident case still gap 0; cap-override still gap 0; rotatedDraft H-2 shape still Split 1; 6/5/4/3 splitIndex=1 skips to Split 2.
+
+**Accepted holes (updated):** (1) ~~`rotatedDraft` still cycles through top-vs-bottom~~ **closed 2026-08-17** for fours where that split is lopsided. H-2 (gap 2) still rotates to it. (2) When the same 4 bodies have capped ALL balanced pairings and no alternative candidate exists, a **mixed over-cap** match is emitted rather than stalling — never a lopsided one.
 
 ---
 
