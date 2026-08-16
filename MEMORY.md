@@ -3361,11 +3361,17 @@ history, since draft→published is the one transition it claims to record and d
 over `match_events` can distinguish "never published" from "published, unrecorded"** — which is exactly
 the inference §3.41 and this file lean on when they hedge the 10 hand-clears. The hedges are still
 right; they are just resting on an unwired ledger rather than on a missing column, and a future reader
-who discovers the type exists will otherwise read the hedge as sloppy. Scope when picked up: find
-whether any writer was ever intended (`git log -S '"published"' -- src/lib/match-provenance.ts`), then
-either wire `publishMatchAction` / `publish_all_drafts` to record it or delete the kind. Not touched in
-PR #69, which is a docs-accuracy branch — wiring a new ledger write is a behaviour change and needs its
-own tests.
+who discovers the type exists will otherwise read the hedge as sloppy. ⚠️ **A writer was plainly
+intended — only the call is missing, and this is NOT a "delete the unused kind" job.** Three sites
+already carry it: `logMatchEvent`'s `eventType` is `Extract<MatchEventType, … | "published">`
+(`src/lib/match-event-log.ts`), `eventDelta` scores it 0 alongside `created` (`match-provenance.ts`),
+and the timeline renders it as "Published to players"
+(`src/components/organizer/match-event-timeline.tsx`). No caller ever passes it. So the work is to add
+the call in `publishMatchAction` and the `publish_all_drafts` path — deleting the kind instead would
+break all three. (This paragraph said "or delete the kind" until 2026-08-16, on a grep scoped to
+`match-provenance.ts` alone; search `src` for the string literal, not the type's own file.) Not touched
+in PR #69, which is a docs-accuracy branch — wiring a new ledger write is a behaviour change and needs
+its own tests.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
@@ -3380,9 +3386,11 @@ four.** Each enumeration holds four items, over sets that differ by one member: 
 `SortableCard`'s Publish button, which §3.41 folds into the repair rather than numbering, and §3.41
 numbers the draft-cap notice in its place. ⚠️ The body calls that button one "that could not succeed",
 and do not repeat that unquoted — it is exact while the hold is HOLDING and **false while it RESTS**,
-where the publish *succeeds* and promotion refuses it (§3.41 defect 4; the RESTING bullet in
-`isHeldAwaitingReadiness`'s doc comment in `src/lib/cross-court/derive-held-state.ts`). The body
-cannot be amended; this can.
+where the publish *succeeds* and promotion refuses it — see the RESTING bullet in
+`isHeldAwaitingReadiness`'s doc comment (`src/lib/cross-court/derive-held-state.ts`) and §3.41's 🪤 on
+the measured RESTING window, **not** §3.41 defect 4, which this cited until 2026-08-16: defect 4 is
+`publish_all_drafts`, while the card's button drives `publish_match`. The body cannot be amended;
+this can.
 ⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
 narrowed form of the same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the
 RESTING window is not refused, it *publishes* and then fails at promotion, and prod records no refusal

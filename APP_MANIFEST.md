@@ -3904,14 +3904,18 @@ last match completed at `08:01:06Z`; the session itself has `ended_at IS NULL` a
 0 such rows in the whole production database across all 1071 events, including for the 2 held drafts
 that did reach a court.** So "prod has no publish record" is not a missing-column argument: the ledger
 event exists and is unwired, which means no query over `match_events` can tell "never published" from
-"published, unrecorded". A draft of the test comment in `tests/integration/publish-match.test.ts` said
-prod had "no event type" for publish; that was false, and it was false in the safer-sounding direction.
-Booked, not fixed here — see MEMORY.md. Worse, defect 4
-below is a measured window where the opposite is possible: `2c1b0edc…` rested **88 s** between its source
-match completing and its stamp, `4cf0a097…` **237 s**, and in that window the pre-fix `publish_match`
-*passes* — `derive-held-state.ts` says so in as many words ("RESTING … it CAN succeed, and that is
-worse"). So the honest claim is the count plus defect 1's mechanism (a HOLDING draft's publish is
-`CONFLICT` by construction), **not** a sequence. Fixing "false" with "unprovable" is not a fix.
+"published, unrecorded". The writer plumbing is all there — `logMatchEvent` accepts `"published"`,
+`eventDelta` scores it, the timeline labels it "Published to players" — and no caller passes it, so
+this is a missing call, not an unused type to delete. The comment heading the held-draft block in
+`tests/integration/publish-match.test.ts` asserted prod had "no event type" for publish; that was
+false in the safer-sounding direction, and it was not caught in draft — it shipped in `f08e662` and
+sat on this PR until the next review. Booked as STANDING TO-DO **A0**, not fixed here. Worse,
+defect 4 below is a measured window where the opposite is possible: `2c1b0edc…` rested **88 s**
+between its source match completing and its stamp, `4cf0a097…` **237 s**, and in that window the
+pre-fix `publish_match` *passes* — `derive-held-state.ts` says so in as many words ("RESTING … it CAN
+succeed, and that is worse"). So the honest claim is the count plus defect 1's mechanism (a HOLDING
+draft's publish is `CONFLICT` by construction), **not** a sequence. Fixing "false" with "unprovable"
+is not a fix.
 
 1. **`publish_match` returned `CONFLICT`, 100% of the time, by construction.** Its conflict predicate counts
    any OTHER pending/`in_progress` match holding one of this roster's players. A held draft's pulled body
