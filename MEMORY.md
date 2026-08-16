@@ -228,9 +228,11 @@ Prod records **no publish time**: no `published_at` column, no `published` row i
 `queue_status_events` is empty (its migration postdates the session). 🔴 Say that precisely —
 `MatchEventType` **does** define a `"published"` kind (`src/lib/match-provenance.ts`); what is missing
 is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2 that reached a court.
-"No publish `event_type`" was the wording here until 2026-08-16 and it is false; see the standing item
-at the bottom of this file. The distinction is load-bearing: an unwired event means no `match_events`
-query can separate "never published" from "published, unrecorded". The RESTING window is measured at
+"No publish `event_type`" was the wording here until 2026-08-16 and it is false; see item **A0** under
+`## 📋 STANDING TO-DO`. (Locator, not an offset: this said "at the bottom of this file" until
+2026-08-16, and A0 sits at 48% with 81 `##` sections below it.) The distinction is load-bearing: an
+unwired event means no `match_events` query can separate "never published" from "published,
+unrecorded". The RESTING window is measured at
 **88 s** and **237 s** for these two rows, and in it the pre-fix publish *succeeds* — so the opposite
 ordering is live, not hypothetical. Claim the count and defect 1's by-construction `CONFLICT`; do not
 claim a sequence. Full derivation in §3.41's ⚠️ paragraph on the absolute-then-ordering fix (**not** its
@@ -3396,11 +3398,15 @@ record and doesn't, and (2) — the load-bearing one — **no query over `match_
 published" from "published, unrecorded"**, which is exactly the inference §3.41 and this file lean on when
 they hedge the 10 hand-clears. The hedges are still right; they are just resting on an unwired ledger
 rather than on a missing column. **The work is to add the call** in `publishMatchAction` and the
-`publish_all_drafts` path. Four sites carry the literal besides the declaration at
-`src/lib/match-provenance.ts:40`: `logMatchEvent`'s `eventType` (`Extract<MatchEventType, … |
-"published">`, `src/lib/match-event-log.ts:40`), `modificationDelta`'s 0-returning arm, which it shares
-with `created` (`src/lib/match-provenance.ts:139`), the timeline's "Published to players"
-(`src/components/organizer/match-event-timeline.tsx:32`), and `tests/unit/match-provenance.test.ts:117`.
+`publish_all_drafts` path. The grep prescribed below returns **five** hits besides the declaration at
+`src/lib/match-provenance.ts:40`, of which **four are carriers**: `logMatchEvent`'s `eventType`
+(`Extract<MatchEventType, … | "published">`, `src/lib/match-event-log.ts:40`), `modificationDelta`'s
+0-returning arm, which it shares with `created` (`src/lib/match-provenance.ts:139`), the timeline's
+"Published to players" (`src/components/organizer/match-event-timeline.tsx:32`), and
+`tests/unit/match-provenance.test.ts:117`. The fifth, `src/components/organizer/on-deck-panel.tsx:519`,
+is prose — an optimistic-UI comment, no relation to the event kind. Excluded on purpose, and named
+because this said "four sites" until 2026-08-16 while
+prescribing a grep that returns five: a count is only checkable against the command that produced it.
 🪤 **Deleting the kind is *silently* lossy — worse than the "would break all three" this said until
 2026-08-16, which named the wrong three and invented `eventDelta`, a symbol with zero hits in
 `src`/`tests`.** Measured, not reasoned: remove the member, run `npx tsc --noEmit`, and exactly **three**
