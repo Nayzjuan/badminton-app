@@ -159,7 +159,7 @@ tests/unit/{derive-held-state,cross-court-trigger,matchmaking-engine}.test.ts
 tests/integration/publish-match.test.ts   APP_MANIFEST.md (§3.41 + one §3.1 bullet)
 ```
 
-### The user's report was accurate, and it was four defects wearing one symptom
+### The user's report was accurate — four defects, three of them wearing one symptom
 
 Reported as *"cross-court matches generated for people who are still playing but I couldn't approve any
 of them"* + *"Publish All allows it on deck, but I couldn't make it work."* Full write-up in
@@ -3351,8 +3351,9 @@ evidence the feature works: it had 0 held drafts in 945 production matches, and 
 structurally cannot exercise it. ⚠️ **Re-framed 2026-08-16 — (i) has been answered and the bar moved.**
 The 08/15 session created **12 held drafts**, so "do they appear at all" is settled; what it also showed
 is that **only 2 ever reached a court**; the other 10 were cleared by hand while the publish path was
-broken in four ways (fixed and shipped in PR #68 → `main` `61e942b`; see the cross-court section at the
-top of this file). ⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
+broken in **three** ways — §3.41's defects 1, 3 and 4; its defect 2, the draft-cap notice, is a
+generation-visibility bug found in the same session, not a publish one (all four fixed and shipped in
+PR #68 → `main` `61e942b`; see the cross-court section at the top of this file). ⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
 narrowed form of the same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the
 RESTING window is not refused, it *publishes* and then fails at promotion, and prod records no refusal
 for any of the 10 either way. So the

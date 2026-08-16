@@ -600,7 +600,7 @@ Published on-deck matches do **not** count against the cap — they are already 
 
 When the four the waiting pool can form is **stale** — someone would face a player they just played — the engine reaches into a live court for ONE still-playing "pulled body" and pre-builds a **held draft** (3 waiting + 1 playing) that is fresher. It runs entirely under auto-matchmaking; the organizer does nothing.
 
-> **This feature shipped DEAD and was repaired 2026-08-12 — but that repair only fixed GENERATION. See §3.41:** the first live session (2026-08-15) created 12 held drafts and got **2** of them onto a court; the other 10 were cleared by hand — which is what defect 1's `CONFLICT` copy tells an organizer to do, though prod records no publish *attempt*, so read that as the likely reading of the data and not as a traced cause. That path predated held drafts entirely. Read this block as the history of the three *generation* blockers, not as an all-clear for the feature. ⚠️ Until 2026-08-16 this line said "could publish **none** of them" — false (prod session `3367d4c6` has two published, promoted, completed held rows), and false in the direction of the §3.41 heading it was paraphrasing, which then read "could never be published". Both are fixed. The heading's first replacement ("could not be published until its hold resolved") was itself false of defect 4, which publishes a RESTING hold and lets promotion refuse it; §3.41 now names **both** halves — refused while holding, wrongly allowed while resting. Three phrasings, two of them wrong, for one section: a title that generalises over several defects will misstate at least one, so the surviving one enumerates instead. ⚖️ It still names only the publish symptom — §3.41 deliberately bundles a fourth defect, the draft-cap notice, which is a *generation-visibility* bug that shares the session but not the symptom. Accepted: a heading that covered all four would name none of them usefully.
+> **This feature shipped DEAD and was repaired 2026-08-12 — but that repair only fixed GENERATION. See §3.41:** the first live session (2026-08-15) created 12 held drafts and got **2** of them onto a court; the other 10 were cleared by hand — which is what defect 1's `CONFLICT` copy tells an organizer to do, though prod records no publish *attempt*, so read that as the likely reading of the data and not as a traced cause. That path predated held drafts entirely. Read this block as the history of the three *generation* blockers, not as an all-clear for the feature. ⚠️ Until 2026-08-16 this line said "could publish **none** of them" — false (prod session `3367d4c6` has two published, promoted, completed held rows), and false in the direction of the §3.41 heading it was paraphrasing, which then read "could never be published". Both are fixed. The heading's first replacement ("could not be published until its hold resolved") was itself false of defect 4, which publishes a RESTING hold and lets promotion refuse it; §3.41 now names **both** halves — refused while holding, wrongly allowed while resting. Three phrasings, two of them wrong, for one section: a title that generalises over several defects will misstate at least one, so the surviving one enumerates instead. ⚖️ It still names only the publish symptom — §3.41 deliberately bundles **defect 2**, the draft-cap notice, which is a *generation-visibility* bug sharing the session but not the symptom. (Ordinal, not "a fourth defect": §3.41 numbers them, and its defect 4 is a publish one.) Accepted: a heading that covered all four would name none of them usefully.
 >
 > It produced **0 held drafts across 945 production matches**. Three independent blockers, each individually sufficient to prevent every reach — and every downstream helper was green the whole time, because nothing tested whether the engine ever *decides* to reach. The three, and the shape of the repair, are recorded below because each one is a trap worth not re-entering.
 >
@@ -3863,7 +3863,11 @@ hand-applied to prod 2026-08-16, stamp `20260816024129`)**, `src/app/actions/mat
 Reported after a live session: *"cross-court matches generated for people who are still playing but I
 couldn't approve any of them"*, and *"Publish All allows it on deck, but I couldn't make it work."*
 
-**The report is accurate, and it is four separate defects that happen to share one symptom.** Production
+**The report is accurate, and it is four separate defects — three of them sharing one symptom.** ⚠️ This
+said "four … that happen to share one symptom" until 2026-08-16; defect 2 (the draft-cap notice) does
+not. Its symptom is a panel that cannot say why *generation* stopped, and it was found while tracing the
+other three, not reported. Defects **1, 3 and 4** are the publish path; defect 2 rides along because it
+shares the session and the fix. Production
 trace, session `3367d4c6` ("08/15 Saturday Session", `auto_publish=false`,
 `max_auto_drafts_override=1`): **12 held drafts created, 10 cleared by hand, 2 ever reached a court.**
 That is the feature's first live-session evidence of any kind — §3.1's cross-court block had said "still
@@ -3880,9 +3884,9 @@ figure. The list is `git grep -n "2 ever reached a court\|10 cleared by hand\|10
 APP_MANIFEST.md MEMORY.md` — and note it misses §3.1's "got **2** of them onto a court", so treat a
 phrase grep as a starting set, never as proof of completeness. ⚠️ **No tally of those sites belongs in
 this sentence**, which learned it twice: it originally said "four" (exact for these two files at the
-time), and the 2026-08-16 "correction" to "six" was wrong for the command it printed — that command
-greps the whole tree and returns nine — while the six it did describe included the correction's own new
-line. A count that changes when you write it down is not a fact about the document. A squash message
+time), and the 2026-08-16 "correction" to "six" was wrong for the command it printed, which carried no
+pathspec and so swept the whole tree (nine hits at the time, including the migration and two test
+files), while the six it did describe included the correction's own new line. A count that changes when you write it down is not a fact about the document. A squash message
 cannot be amended, so `61e942b`'s body is permanent and wrong; these documents are the correctable
 record.
 
