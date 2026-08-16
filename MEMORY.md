@@ -625,16 +625,19 @@ demonstrably edit scores in the same session hours after it stops.
 all three Vercel deploys pass, and **Vitest Integration ×2 pass** (8m45s / 8m28s, runs `31891664847`
 and `31891667059`) — the suite that actually exercises the `queue.ts` change (Suite Q `Q-4`/`Q-5`).
 🪤 Both run IDs were confirmed to carry `headSha = 7f83cfb` — **the head at the moment of that check, not
-the head the PR merged at.** ⚠️ Corrected 2026-08-16: one more docs commit (`e1542ec`) landed after this
-paragraph was written, so `e1542ec` is what PR #67 actually pointed at when it merged, and the sentence
-that said `7f83cfb` "is the commit the PR actually points at" was falsified by the commit that wrote it —
-the same self-invalidating defect the very next 🪤 warns about, four lines below the warning. The verdict
-survives on the real head: `e1542ec` re-ran four workflows, all `success` (Unit `31892255690` push /
-`31892258687` PR, Integration `31892255681` push / `31892258874` PR; Supabase Preview `skipped`), and
-those were confirmed after the fact, not at the time.
-`gh pr checks` alone does **not** prove this: it renders whatever checks are attached now, so a stale
-run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate colour —
-and re-verify after **every** further push, including a docs-only one.
+the head the PR merged at.** ⚠️ Corrected 2026-08-16: this sentence originally ended "…i.e. the commit
+the PR actually points at", and `git show e1542ec -- MEMORY.md` shows the whole ✅ block arriving as `+`
+lines in **`e1542ec`** — so the commit that *wrote* the claim is the one that falsified it, on push.
+PR #67's `headRefOid` at merge was `e1542ec`, never `7f83cfb`. That is not "a later push moved the head";
+it is the **exact** shape the 🪤 below this one describes for `2a45fdf` — a doc naming the head it is
+being committed as — and it recurred one commit later, inside the note warning about it. So the rule to
+carry is that stronger one, not "re-check more often": **a doc can never name its own head, because the
+act of committing it moves the head.** The verdict does survive on the real head: `e1542ec` re-ran two
+workflows on four runs, all `success` (Unit `31892255690` push / `31892258687` PR, Integration
+`31892255681` push / `31892258874` PR; Supabase Preview `skipped`), verified after the fact.
+`gh pr checks` alone does **not** prove any of this: it renders whatever checks are attached now, so a
+stale run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate
+colour — and re-verify after **every** further push, including a docs-only one.
 
 🪤 **Do not write the current head SHA into this file.** The previous revision said "origin = `2a45fdf`",
 which the very commit that *added* the line (`7f83cfb`) falsified on landing — a self-invalidating claim,
@@ -3277,12 +3280,16 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 
 ## 📋 STANDING TO-DO (as of 2026-08-13)
 
-⚠️ **Head-state line corrected 2026-08-16.** It read "**`main` is `c9f2337`; nothing is in flight**" —
-a named head SHA, which the 🪤 in the PR #67 section explicitly forbids, and false since PR #64 landed
-the next day. Stated as an invariant instead: **`main` carries every merged PR through #68; the
-migration queue is empty and repo and prod agree** (verify with `gh pr list --state open` and the
-migration-queue table at the top of this file, both of which move on their own). The rest of this
-paragraph is as-of 2026-08-13 and is left as written. PRs #61 (Suite XC — the cross-court real-DB proof),
+⚠️ **Head-state line corrected 2026-08-16.** It read "**`main` is `c9f2337`; nothing is in flight**" — a
+named head SHA, which the 🪤 in the PR #67 section forbids. It was authored in `de7ee47` at
+`2026-08-13T12:31:32Z` and PR #64 merged at `12:42:40Z`: **false 11 minutes later, by the merge of the
+very PR whose branch wrote it.** (An earlier draft of this correction said "the next day" — same-day in
+both UTC and +08; the true version is the more damning one.) No replacement head SHA is written here,
+because any value put in this slot is falsified by the commit that puts it there. To get the real head
+state, ask git and GitHub, which move on their own: `git rev-parse origin/main` and
+`gh pr list --state open`. Everything from here to the end of this paragraph is as-of **2026-08-13** and
+is left as written — including its "`gh pr list --state open` is empty", which was true that day and is
+not now. PRs #61 (Suite XC — the cross-court real-DB proof),
 #62 (the cross-session ledger rebuild, **B**) and #63 (Suite RB — the broadcast refusal proof) are
 all merged; `gh pr list --state open` is empty. Migration `20260812100000` is applied to prod (stamp
 `20260812144342`); the migration queue is otherwise empty. **B and C are done**; **D is decided but
