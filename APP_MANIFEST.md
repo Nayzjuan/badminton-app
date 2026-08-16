@@ -600,7 +600,7 @@ Published on-deck matches do **not** count against the cap — they are already 
 
 When the four the waiting pool can form is **stale** — someone would face a player they just played — the engine reaches into a live court for ONE still-playing "pulled body" and pre-builds a **held draft** (3 waiting + 1 playing) that is fresher. It runs entirely under auto-matchmaking; the organizer does nothing.
 
-> **This feature shipped DEAD and was repaired 2026-08-12 — but that repair only fixed GENERATION. See §3.41:** the first live session (2026-08-15) created 12 held drafts and could publish **none** of them, because the publish path predated held drafts entirely. Read this block as the history of the three *generation* blockers, not as an all-clear for the feature.
+> **This feature shipped DEAD and was repaired 2026-08-12 — but that repair only fixed GENERATION. See §3.41:** the first live session (2026-08-15) created 12 held drafts and got **2** of them onto a court; the other 10 were cleared by hand, which is exactly what the publish path's own error copy told the organizer to do. That path predated held drafts entirely. Read this block as the history of the three *generation* blockers, not as an all-clear for the feature. ⚠️ Until 2026-08-16 this line said "could publish **none** of them" — false (prod session `3367d4c6` has two published, promoted, completed held rows), and false in the direction of the §3.41 heading it was paraphrasing, which then read "could never be published". Both are fixed; the heading now names the *window* rather than an absolute, because the absolute is what a paraphrase turns into a count.
 >
 > It produced **0 held drafts across 945 production matches**. Three independent blockers, each individually sufficient to prevent every reach — and every downstream helper was green the whole time, because nothing tested whether the engine ever *decides* to reach. The three, and the shape of the repair, are recorded below because each one is a trap worth not re-entering.
 >
@@ -3851,7 +3851,7 @@ the pre-check row instead of re-reading.
 
 ---
 
-### 3.41 A held cross-court draft could never be published — the code that meant "not yet" did not exist (2026-08-16)
+### 3.41 A held cross-court draft could not be published until its hold resolved — the code that meant "not yet" did not exist (2026-08-16)
 
 **Files:** `supabase/migrations/20260816000000_publish_never_touches_an_unready_held_draft.sql` **(new —
 hand-applied to prod 2026-08-16, stamp `20260816024129`)**, `src/app/actions/match-drafts.ts`, `src/app/actions/matchmaking.ts`,
@@ -3868,6 +3868,20 @@ trace, session `3367d4c6` ("08/15 Saturday Session", `auto_publish=false`,
 `max_auto_drafts_override=1`): **12 held drafts created, 10 cleared by hand, 2 ever reached a court.**
 That is the feature's first live-session evidence of any kind — §3.1's cross-court block had said "still
 not observed in a live session", and what the first observation shows is that it does not work.
+
+🪤 **"2 ever reached a court" is the number; do not let a heading round it to zero.** This section was
+titled "could never be published" until 2026-08-16, and PR #68's squash body on `main` (`61e942b`) still
+says the session "**published zero**" and that the publish path "**refused every one**". Both are false
+in the same direction: `matches` rows `2c1b0edc…` and `4cf0a097…` in session `3367d4c6` are
+`is_held`, `created_method='held'`, **`is_published`**, promoted, and `completed`. What is true is the
+*window* — each of those two has `held_ready_at` stamped, so both published only after the hold had
+already resolved, which is exactly the defect class and exactly what the absolute was reaching for. The
+absolute is nonetheless the more dangerous phrasing, because a class title survives paraphrase into a
+**count**: within a day "could never be published" had become "could publish **none** of them" in §3.1,
+where it is not a characterisation but an arithmetic claim contradicted by four other sites in these two
+files. A squash message cannot be amended, so `61e942b`'s body is permanent and wrong; these documents
+are the correctable record, and any count taken from that commit message must be re-derived from the
+`matches` rows instead.
 
 1. **`publish_match` returned `CONFLICT`, 100% of the time, by construction.** Its conflict predicate counts
    any OTHER pending/`in_progress` match holding one of this roster's players. A held draft's pulled body

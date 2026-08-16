@@ -124,7 +124,7 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🎽 HELD CROSS-COURT DRAFTS COULD NEVER BE PUBLISHED — 2026-08-16. ✅ **MERGED + DEPLOYED + MIGRATION APPLIED TO PROD**
+## 🎽 HELD CROSS-COURT DRAFTS COULD NOT BE PUBLISHED UNTIL THE HOLD RESOLVED — 2026-08-16. ✅ **MERGED + DEPLOYED + MIGRATION APPLIED TO PROD**
 
 **Status: SHIPPED.** Committed as `db600a4` on `fix/block-leave-active-match`, PR
 [#68](https://github.com/Nayzjuan/badminton-app/pull/68) **squash-merged to `main` as `61e942b`**;
@@ -186,6 +186,14 @@ Prod session `3367d4c6-6838-4cf7-8abe-5f5c3143dd1e` ("08/15 Saturday Session", `
 Two holds sat ~10 minutes. APP_MANIFEST §3.1 had said "still not observed in a live session" — this is
 the observation, and it is a failure report. The 10 manual clears are defect 1's copy working exactly as
 written: the organizer was told to clear, so they cleared.
+
+🪤 **The 2 are load-bearing — this heading said "COULD NEVER BE PUBLISHED" until 2026-08-16, and PR #68's
+squash body on `main` still says "published zero / refused every one".** Rows `2c1b0edc…` and `4cf0a097…`
+are `is_held`, `is_published`, promoted and `completed`; both carry a stamped `held_ready_at`, so the true
+claim is about the *window* (nothing published while the hold was unresolved), not an absolute. The
+absolute survives paraphrase into a **count** — it had already become "could publish none of them" in
+APP_MANIFEST §3.1 — and a squash message cannot be amended, so `61e942b` is permanently wrong here. See
+§3.41's 🪤 for the full derivation; re-derive any count from `matches`, never from that commit message.
 
 ### The five things that will bite the next person
 
@@ -258,8 +266,11 @@ composed from what the stale sentence was trying to say.
   the two places you *remember* leaves the third; grep the phrase, don't recall the sites.
 
 Also fixed, pre-existing and only visible as a diff context line: `matchmaking.ts`'s
-`runEngineInternal` JSDoc still said slots are "capped by `MAX_AUTO_DRAFTS`" **three lines below** the
-header just corrected to remove exactly that claim.
+`runEngineInternal` JSDoc still said slots are "capped by `MAX_AUTO_DRAFTS`" in the doc comment
+**immediately beneath** the `// INTERNAL: runEngineInternal` banner just corrected to remove exactly
+that claim. (Locator, not an offset: this said "three lines below" until 2026-08-16, and a distance is
+unverifiable the moment the file it counts in is edited. Pinned copy of the pre-fix state:
+`git show 61e942b^:src/app/actions/matchmaking.ts`.)
 
 ### Not done — deliberate
 
@@ -621,7 +632,8 @@ demonstrably edit scores in the same session hours after it stops.
 **Squashed from `77112a6` (patch base) → six commits. PR #66 landed first as `main` `90dd3f5`.**
 `npx tsc --noEmit` exit 0 · eslint clean on all touched files (**0 warnings** — see the lint note below).
 
-✅ **CI green on the real head.** `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`. Vitest ×2 pass,
+✅ **CI green on the head the PR merged at — but *not* on the runs cited in this paragraph; read the 🪤
+before reusing these IDs.** `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`. Vitest ×2 pass,
 all three Vercel deploys pass, and **Vitest Integration ×2 pass** (8m45s / 8m28s, runs `31891664847`
 and `31891667059`) — the suite that actually exercises the `queue.ts` change (Suite Q `Q-4`/`Q-5`).
 🪤 Both run IDs were confirmed to carry `headSha = 7f83cfb` — **the head at the moment of that check, not
@@ -634,7 +646,8 @@ the moment it is written**, which is its own parent, and which its own push then
 recurred one commit later, inside the note warning about it. ⚠️ A draft of this correction said "the head
 it is being committed **as**"; that is impossible (a commit cannot know its own SHA) and points the next
 reader at a mistake nobody can make. **So: a doc can never name the current head, because the act of
-committing it moves the head.** That rule and the per-run CI rule below govern different things and do
+*landing* it — the push, or the merge — moves the head.** (Committing alone does not; the `c9f2337`
+instance in STANDING TO-DO was falsified by its own PR's merge, not by its commit.) That rule and the per-run CI rule below govern different things and do
 not compete — one is about writing SHAs into prose, the other about which runs to trust; an earlier draft
 framed them as rivals ("the stronger one, not re-check more often"), which they are not.
 The verdict does survive on the real head: `e1542ec` re-ran two
@@ -3290,10 +3303,13 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 ## 📋 STANDING TO-DO (as of 2026-08-13)
 
 ⚠️ **Head-state line corrected 2026-08-16.** It read "**`main` is `c9f2337`; nothing is in flight**" — a
-named head SHA, which the 🪤 in the PR #67 section forbids. It was authored in `de7ee47` at
-`2026-08-13T12:31:32Z` and PR #64 merged at `12:42:40Z`: **false 11 minutes later, by the merge of the
-very PR whose branch wrote it.** (An earlier draft of this correction said "the next day" — same-day in
-both UTC and +08; the true version is the more damning one.) No replacement head SHA is written here,
+named head SHA, which the 🪤 in the PR #67 section forbids. **Both of its clauses died the same day, to
+the same PR.** It was authored in `de7ee47` at `2026-08-13T12:31:32Z`; PR #64 was *opened* at
+`12:33:49Z`, which falsified "nothing is in flight" **2 minutes 17 seconds later**, and merged at
+`12:42:40Z`, which falsified "`main` is `c9f2337`" **11 minutes later** — by the merge of the very PR
+whose branch wrote it. (An earlier draft of this correction said "the next day" — same-day in both UTC
+and +08; the true version is the more damning one. A later draft still timed only the SHA clause, which
+is the slower of the two.) No replacement head SHA is written here,
 because any value put in this slot is falsified by the commit that puts it there. To get the real head
 state, ask git and GitHub, which move on their own: `git rev-parse origin/main` and
 `gh pr list --state open`. Everything from here to the end of this paragraph is as-of **2026-08-13** and
