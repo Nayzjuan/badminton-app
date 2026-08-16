@@ -3899,23 +3899,29 @@ that the publish came after it. **Production records no publish time at all** �
 `score_edit`, and `queue_status_events`, the table that would have caught the roster's `drafted→on_deck`
 flip, is **empty** (migration `queue_status_audit`, stamped `20260815133945` — hours after the session's
 last match completed at `08:01:06Z`; the session itself has `ended_at IS NULL` and was never closed).
-🔴 **Sharper, found 2026-08-16 while reviewing this paragraph: `MatchEventType` *does* define a
+🔴 **Sharper, measured 2026-08-16 while reviewing this paragraph: `MatchEventType` *does* define a
 `"published"` kind — "draft → published", in `src/lib/match-provenance.ts` — and nothing writes it.
 0 such rows in the whole production database across all 1071 events, including for the 2 held drafts
 that did reach a court.** So "prod has no publish record" is not a missing-column argument: the ledger
 event exists and is unwired, which means no query over `match_events` can tell "never published" from
-"published, unrecorded". The writer plumbing is all there — `logMatchEvent` accepts `"published"`,
-`eventDelta` scores it, the timeline labels it "Published to players" — and no caller passes it, so
-this is a missing call, not an unused type to delete. The comment heading the held-draft block in
+"published, unrecorded". ⚠️ The *gap* is not a discovery, and this paragraph said "found" until
+2026-08-16: it is booked as `DEFERRED — published event (L2)` in `MEMORY.md` and again in
+`src/lib/match-event-log.ts`'s header. What is new is the count and that consequence — L2 prices the gap
+at "the timeline just won't show the publish step" and does not anticipate it. The writer plumbing is all
+there — `logMatchEvent` accepts `"published"`, `modificationDelta` scores it 0 (this called that function
+`eventDelta` until 2026-08-16, a symbol the repo does not contain), the timeline labels it "Published to
+players" — so what is missing is the call. Deleting the kind instead is *silently* lossy, measured with
+`npx tsc --noEmit`: three errors, **none** at the writer signature, whose `Extract<MatchEventType, …>`
+narrows to the survivors without complaint. The comment heading the held-draft block in
 `tests/integration/publish-match.test.ts` asserted prod had "no event type" for publish; that was
 false in the safer-sounding direction, and it was not caught in draft — it shipped in `f08e662` and
-sat on this PR until the next review. Booked as STANDING TO-DO **A0**, not fixed here. Worse,
-defect 4 below is a measured window where the opposite is possible: `2c1b0edc…` rested **88 s**
-between its source match completing and its stamp, `4cf0a097…` **237 s**, and in that window the
-pre-fix `publish_match` *passes* — `derive-held-state.ts` says so in as many words ("RESTING … it CAN
-succeed, and that is worse"). So the honest claim is the count plus defect 1's mechanism (a HOLDING
-draft's publish is `CONFLICT` by construction), **not** a sequence. Fixing "false" with "unprovable"
-is not a fix.
+sat on this PR until the next review. Booked as STANDING TO-DO **A0**, not fixed here. Worse, the
+RESTING window that defect 4 below turns on is measured, and in it the opposite ordering is possible:
+`2c1b0edc…` rested **88 s** between its source match completing and its stamp, `4cf0a097…` **237 s**,
+and in that window the pre-fix `publish_match` *passes* — `derive-held-state.ts` says so in as many
+words ("RESTING … it CAN succeed, and that is worse"). So the honest claim is the count plus defect 1's
+mechanism (a HOLDING draft's publish is `CONFLICT` by construction), **not** a sequence. Fixing
+"false" with "unprovable" is not a fix.
 
 1. **`publish_match` returned `CONFLICT`, 100% of the time, by construction.** Its conflict predicate counts
    any OTHER pending/`in_progress` match holding one of this roster's players. A held draft's pulled body

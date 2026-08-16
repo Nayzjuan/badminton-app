@@ -203,10 +203,11 @@ Prod records **no publish time**: no `published_at` column, no `published` row i
 is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2 that reached a court.
 "No publish `event_type`" was the wording here until 2026-08-16 and it is false; see the standing item
 at the bottom of this file. The distinction is load-bearing: an unwired event means no `match_events`
-query can separate "never published" from "published, unrecorded". Defect 4's RESTING window is
-measured at **88 s** and **237 s** for these two rows, and in it the pre-fix publish *succeeds* — so the
-opposite ordering is live, not hypothetical. Claim the count and defect 1's by-construction `CONFLICT`;
-do not claim a sequence. Full derivation in §3.41's 🪤; re-derive counts from `matches`.
+query can separate "never published" from "published, unrecorded". The RESTING window is measured at
+**88 s** and **237 s** for these two rows, and in it the pre-fix publish *succeeds* — so the opposite
+ordering is live, not hypothetical. Claim the count and defect 1's by-construction `CONFLICT`; do not
+claim a sequence. Full derivation in §3.41's ⚠️ paragraph on the absolute-then-ordering fix (**not** its
+🪤s, which this pointed at until 2026-08-16); re-derive counts from `matches`.
 
 ### The five things that will bite the next person
 
@@ -3351,27 +3352,36 @@ Everything else below is kept because its consequences are worth carrying.
 >
 > **Nothing here changes behaviour and nothing new is open.** The audit spawned three non-finding items and exactly one is still open: **E**, the optional "Allow public access" toggle. The other two are **C** — the live broadcast-delivery smoke test, ✅ done 2026-08-12 — and the leaked-password toggle, ❌ WON'T DO 2026-08-04 (item 2 of the historical 07-29 list). All three unchanged by this pass. *(Not **A**: that is the cross-court live-session smoke test, a different piece of work. An earlier draft of this line collapsed C into A because `A` says C "folds into the same night" — a paraphrase where a re-read was needed.)*
 
-**A0. 🔴 OPEN — `match_events` defines a `published` event and nothing writes it.** Found 2026-08-16
-while reviewing the paragraph that argues from prod's silence about publishes. `MatchEventType` in
-`src/lib/match-provenance.ts` lists `"published" // draft → published`, and production holds **0 rows
-of it across all 1071 events** — including for the 2 held drafts of session `3367d4c6` that did reach a
-court, so this is not "the feature was never exercised". Two consequences, and the second is why this
-is filed rather than shrugged at: (1) the provenance ledger silently under-describes every match's
-history, since draft→published is the one transition it claims to record and doesn't; (2) **no query
-over `match_events` can distinguish "never published" from "published, unrecorded"** — which is exactly
-the inference §3.41 and this file lean on when they hedge the 10 hand-clears. The hedges are still
-right; they are just resting on an unwired ledger rather than on a missing column, and a future reader
-who discovers the type exists will otherwise read the hedge as sloppy. ⚠️ **A writer was plainly
-intended — only the call is missing, and this is NOT a "delete the unused kind" job.** Three sites
-already carry it: `logMatchEvent`'s `eventType` is `Extract<MatchEventType, … | "published">`
-(`src/lib/match-event-log.ts`), `eventDelta` scores it 0 alongside `created` (`match-provenance.ts`),
-and the timeline renders it as "Published to players"
-(`src/components/organizer/match-event-timeline.tsx`). No caller ever passes it. So the work is to add
-the call in `publishMatchAction` and the `publish_all_drafts` path — deleting the kind instead would
-break all three. (This paragraph said "or delete the kind" until 2026-08-16, on a grep scoped to
-`match-provenance.ts` alone; search `src` for the string literal, not the type's own file.) Not touched
-in PR #69, which is a docs-accuracy branch — wiring a new ledger write is a behaviour change and needs
-its own tests.
+**A0. 🔴 OPEN — the `published` event kind is plumbed and never written.** ⚠️ **Not a new find, and this
+entry called itself one until 2026-08-16.** It is already booked further down this same file — *"DEFERRED
+— `published` event (L2): never emitted (publish actions raw-update `is_published`). Non-counting;
+timeline just won't show the publish step"* — and `src/lib/match-event-log.ts`'s header says it too
+(*"DEFERRED (plumbed in the type/DB but NOT yet emitted): player_left from the leaver paths, and
+published"*). Grep `event (L2)` rather than trusting this paragraph's date: a file about claims the record
+does not support announced a discovery the record already held. **What is new is the measurement, and it
+outgrows L2's own pricing of the cost.** Taken 2026-08-16 while reviewing the paragraph that argues from
+prod's silence about publishes: `MatchEventType` in `src/lib/match-provenance.ts` lists `"published" //
+draft → published`, and production holds **0 rows of it across all 1071 events** — including for the 2
+held drafts of session `3367d4c6` that did reach a court, so this is not "the feature was never
+exercised". L2 prices the gap at one missing timeline row. It is also (1) a provenance ledger that
+silently under-describes every match's history, since draft→published is the one transition it claims to
+record and doesn't, and (2) — the load-bearing one — **no query over `match_events` can distinguish "never
+published" from "published, unrecorded"**, which is exactly the inference §3.41 and this file lean on when
+they hedge the 10 hand-clears. The hedges are still right; they are just resting on an unwired ledger
+rather than on a missing column. **The work is to add the call** in `publishMatchAction` and the
+`publish_all_drafts` path. Four sites carry the literal besides the declaration at
+`src/lib/match-provenance.ts:40`: `logMatchEvent`'s `eventType` (`Extract<MatchEventType, … |
+"published">`, `src/lib/match-event-log.ts:40`), `modificationDelta`'s 0-returning arm, which it shares
+with `created` (`src/lib/match-provenance.ts:139`), the timeline's "Published to players"
+(`src/components/organizer/match-event-timeline.tsx:32`), and `tests/unit/match-provenance.test.ts:117`.
+🪤 **Deleting the kind is *silently* lossy — worse than the "would break all three" this said until
+2026-08-16, which named the wrong three and invented `eventDelta`, a symbol with zero hits in
+`src`/`tests`.** Measured, not reasoned: remove the member, run `npx tsc --noEmit`, and exactly **three**
+errors appear — the two `case "published":` arms and the test — with **none** at the writer signature,
+because `Extract<T, U>` is `T extends U ? T : never` and simply narrows to the surviving four. (This
+paragraph also said "or delete the kind" until 2026-08-16, on a grep scoped to `match-provenance.ts`
+alone; search `src` *and* `tests` for the string literal, not the type's own file.) Not touched in PR #69,
+which is a docs-accuracy branch — wiring a new ledger write is a behaviour change and needs its own tests.
 
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
@@ -3386,19 +3396,20 @@ four.** Each enumeration holds four items, over sets that differ by one member: 
 `SortableCard`'s Publish button, which §3.41 folds into the repair rather than numbering, and §3.41
 numbers the draft-cap notice in its place. ⚠️ The body calls that button one "that could not succeed",
 and do not repeat that unquoted — it is exact while the hold is HOLDING and **false while it RESTS**,
-where the publish *succeeds* and promotion refuses it — see the RESTING bullet in
-`isHeldAwaitingReadiness`'s doc comment (`src/lib/cross-court/derive-held-state.ts`) and §3.41's 🪤 on
-the measured RESTING window, **not** §3.41 defect 4, which this cited until 2026-08-16: defect 4 is
-`publish_all_drafts`, while the card's button drives `publish_match`. The body cannot be amended;
-this can.
-⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
-narrowed form of the same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the
-RESTING window is not refused, it *publishes* and then fails at promotion, and prod records no refusal
-for any of the 10 either way. So the
-watch is now: (i) do held drafts **complete their lifecycle** — created → published → on court —
-against the **12 → 2 baseline**; and (ii) whether any hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15`
-— the cancel is event-driven off match end/cancel, not a timer, so a court that goes quiet strands its
-hold. Item **C** below folds into the same night.
+where the publish *succeeds* and promotion refuses it — see the RESTING bullet in the doc comment on
+`isHeldAwaitingReadiness` (`src/lib/cross-court/derive-held-state.ts`), and in §3.41 the ⚠️ paragraph
+that measures the window and says the pre-fix `publish_match` *passes* inside it. Two citations were
+wrong here before: **§3.41 defect 4** until 2026-08-16 (defect 4 is `publish_all_drafts`, while the
+card's button drives `publish_match`), and then **"§3.41's 🪤 on the measured RESTING window"**, which
+resolves to nothing — that section's three 🪤 are the "2 ever reached a court" count, the migration's
+safe degradation, and the cancel-restore overstatement. The body cannot be amended; this can. ⚠️ Not
+"refused the rest" — that was the wording here until 2026-08-16, and it is the narrowed form of the
+same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the RESTING window is
+not refused, it *publishes* and then fails at promotion, and prod records no refusal for any of the
+10 either way. So the watch is now: (i) do held drafts **complete their lifecycle** — created →
+published → on court — against the **12 → 2 baseline**; and (ii) whether any hold outlives
+`CROSS_COURT_MAX_HOLD_MINUTES = 15` — the cancel is event-driven off match end/cancel, not a timer,
+so a court that goes quiet strands its hold. Item **C** below folds into the same night.
 
 **B. `player_rivalries` / `player_partnerships` club-wide rebuild — ✅ DONE 2026-08-12, both halves.**
 The owner was shown the three names below and said proceed. Data rebuilt on prod (rivalries 2342 →
