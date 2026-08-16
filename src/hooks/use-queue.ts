@@ -161,6 +161,7 @@ export function useQueue(sessionId: string, playerId: string): UseQueueResult {
         status: "waiting",
         position: null,
         is_paused: false,
+        paused_at: null,
         created_at: existing?.created_at ?? now,
       };
       return [...prev.filter((q) => q.player_id !== playerId), optimistic];

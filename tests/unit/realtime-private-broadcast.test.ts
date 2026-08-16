@@ -47,6 +47,7 @@ import {
   broadcastSessionClosed,
   broadcastOrganizerIntervention,
   broadcastDraftCapPhase,
+  broadcastQueueNotice,
 } from "@/lib/broadcast";
 import { subscribeToOrganizerBroadcast } from "@/lib/realtime";
 
@@ -227,6 +228,34 @@ describe("private session-events broadcast", () => {
     });
   });
 
+  it("RPB-8 queue_notice rides the same private topic", async () => {
+    await broadcastQueueNotice(SESSION_ID, {
+      kind: "player_left",
+      playerId: "p1",
+      playerName: "Alex",
+      cancelledDraft: true,
+    });
+    const msg = lastFetchBody().messages[0];
+
+    const { client, channelCalls } = makeFakeClient();
+    const unsub = subscribeToOrganizerBroadcast(client as never, SESSION_ID, {
+      onIntervention: vi.fn(),
+    });
+    releaseAuth();
+    await flush();
+    unsub();
+
+    expect(msg.topic).toBe(channelCalls[0].name);
+    expect(msg.private).toBe(true);
+    expect(msg.event).toBe("queue_notice");
+    expect(msg.payload).toEqual({
+      kind: "player_left",
+      playerId: "p1",
+      playerName: "Alex",
+      cancelledDraft: true,
+    });
+  });
+
   it("RPB-6 registers listeners only — the client never sends on this channel", async () => {
     const { client, chan } = makeFakeClient();
     const unsub = subscribeToOrganizerBroadcast(client as never, SESSION_ID, {
@@ -236,7 +265,7 @@ describe("private session-events broadcast", () => {
     releaseAuth();
     await flush();
 
-    expect(chan.on).toHaveBeenCalledTimes(6);
+    expect(chan.on).toHaveBeenCalledTimes(7);
     expect(chan.send).not.toHaveBeenCalled();
     unsub();
     expect(client.removeChannel).toHaveBeenCalledTimes(1);

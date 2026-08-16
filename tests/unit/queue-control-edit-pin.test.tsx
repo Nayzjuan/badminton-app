@@ -64,6 +64,7 @@ function makeQueueEntry(overrides: Partial<QueueFullWithWaitTime> = {}): QueueFu
     status: "waiting",
     position: 1,
     is_paused: false,
+    paused_at: null,
     created_at: new Date().toISOString(),
     display_name: "Test Player",
     skill_level: "intermediate",

@@ -62,6 +62,7 @@ function makeSimPlayer(
     status: "waiting",
     position: null,
     is_paused: false,
+    paused_at: null,
     created_at: new Date().toISOString(),
     display_name: `Player-${id}`,
     skill_level: "intermediate",

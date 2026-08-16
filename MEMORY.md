@@ -8,13 +8,13 @@
 ## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
-Merging a PR ships TypeScript only.** All eight migrations this section tracks are now **applied and
-verified on production** (`usxftpexoimletqmrggb`). Nothing is pending. **Every new migration must be
+Merging a PR ships TypeScript only.** **Every new migration must be
 added to this table with its prod stamp** — the stamps drift from the filenames, and this table is
 the only place that records the mapping.
 
 | Applied | Stamp |
 |---|---|
+| `20260817000000_queue_leave_notices` | `20260816052740` |
 | `20260810000000_declare_compute_session_wrapped` | `20260810151122` |
 | `20260810000001_extend_draft_firewall_to_match_players` | `20260810151355` |
 | `20260811000000_one_time_milestone_awards` | `20260810173410` |
@@ -23,6 +23,12 @@ the only place that records the mapping.
 | `20260812100000_refresh_cross_session_stats_absolute_rebuild` | `20260812144342` |
 | `20260815000000_queue_status_audit` | `20260815133945` |
 | `20260816000000_publish_never_touches_an_unready_held_draft` | `20260816024129` |
+
+⚠️ **`20260817000000` — applied to prod 2026-08-16, verified.** Stamp `20260816052740`.
+`paused_at` column on `queue_entries`; `v_queue_full_with_wait_time` trailing column +
+`security_invoker=true` still set; `checkout_player_cleanup_drafts` CREATE OR REPLACE, ACL still
+exactly `postgres=X/postgres | service_role=X/postgres`, `SECURITY DEFINER`. Backfill: 3 live
+paused rows stamped, 0 missing.
 
 ⚠️ **`20260816000000` — applied to prod 2026-08-16, verified.** `CREATE OR REPLACE` on
 **`publish_match`** (new `HELD_NOT_READY` return, checked **before** the left-player and conflict
@@ -121,6 +127,27 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 > ⚠️ Prod migration stamps drift from repo filenames. **Never compare by version number — compare
 > by name suffix, and ultimately by querying the catalog.**
+
+---
+
+## 🚪 ORGANIZER LEAVE + PAUSE NOTICES — branch `feat/queue-leave-notices`, 2026-08-16. Migration applied to prod (`20260816052740`). Code not yet merged.
+
+Leave-while-on-deck/playing was already shipped (PR #67 / §3.39). This adds the organizer-facing half:
+
+- Centered dismissible Match Control card when a player leaves (`queue_notice` broadcast). Organizer kick attaches `actorId` and the actor's own board suppresses.
+- `queue_entries.paused_at` + 15/30/45… reminder cards computed locally. Badge upgrades to "Paused 15m" / "Paused 30m".
+- `checkout_player_cleanup_drafts` keep-the-hotfix (`status = 'drafted'` restore). TS fallback now also returns leftover drafted players to `waiting`.
+- APP_MANIFEST §3.42.
+
+`npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **69 files, 1294 passed, 1 skipped** · `npm run build` success.
+
+Review: first pass **Needs fixes** (kick copy treated any cancelled match as an unpublished draft; remove/rejoin left `paused_at` set). Both fixed. Second pass **Minor issues** (acceptable):
+
+- Organizer remove still broadcasts on an already-left no-op (concurrent double-kick).
+- No action-level unit tests for `cancelledDraft` / `didLeave` / pause-clear.
+- Center card is a focus-trapping Dialog (dismiss-first if you want to resume from the reminder).
+
+**Next:** PR when asked. Do not merge until the user says so. Do not commit unless asked.
 
 ---
 

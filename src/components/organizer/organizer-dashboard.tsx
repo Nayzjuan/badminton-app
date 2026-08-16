@@ -4,7 +4,7 @@
 // Organizer Dashboard — Main shell with tab navigation
 // ============================================================
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useOrganizerData } from "@/hooks/use-organizer-data";
@@ -48,6 +48,9 @@ import { useSessionClosedWatcher } from "@/hooks/use-session-closed-watcher";
 import { clubBase, clubOrganizer, clubTv } from "@/lib/club-paths";
 import type { Profile, Session } from "@/types/database";
 import { DASHBOARD_GRID_SIZE_PX, TOAST_DISMISS_MS } from "@/lib/constants";
+import { useOrganizerAlerts } from "@/hooks/use-organizer-alerts";
+import { OrganizerCenterAlert } from "@/components/organizer/organizer-center-alert";
+import type { QueueNoticePayload } from "@/lib/broadcast";
 
 // ── Design token constants ───────────────────────────────────
 // Command-center surface tokens (theme-aware via cc-* tokens in globals.css).
@@ -85,6 +88,14 @@ export function OrganizerDashboard({
     toastMessage: "This session was closed.",
   });
 
+  // Leave notices arrive on the session broadcast before useOrganizerAlerts
+  // exists (it needs the queue from useOrganizerData). The ref is written
+  // after both hooks settle — same pattern as fetchXxxRef.
+  const enqueueLeaveRef = useRef<(payload: QueueNoticePayload) => void>(() => {});
+  const onQueueNotice = useCallback((payload: QueueNoticePayload) => {
+    enqueueLeaveRef.current(payload);
+  }, []);
+
   const {
     session: liveSession,
     courts,
@@ -118,7 +129,13 @@ export function OrganizerDashboard({
   } = useOrganizerData(session.id, session, profile.id, {
     onSessionClosed: handleSessionClosed,
     onBroadcastStatus: handleClosedWatcherStatus,
+    onQueueNotice,
   });
+
+  const alerts = useOrganizerAlerts(queue);
+  useEffect(() => {
+    enqueueLeaveRef.current = alerts.enqueueLeave;
+  }, [alerts.enqueueLeave]);
 
   const {
     swapContext,
@@ -892,6 +909,12 @@ export function OrganizerDashboard({
           terminal "done" broadcast arrives, or when the co-organizer's
           lease expires (useOrganizerSession's TTL self-unlock).
       ──────────────────────────────────────────────────────── */}
+      <OrganizerCenterAlert
+        alert={alerts.current}
+        remaining={alerts.remaining}
+        onDismiss={alerts.dismiss}
+      />
+
       {isDashboardLocked && (
         <div
           data-testid="cap-lockout-overlay"
