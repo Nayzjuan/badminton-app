@@ -369,6 +369,39 @@ export async function broadcastDraftCapPhase(
   await postBroadcast(`session-events:${sessionId}`, "draft_cap_phase", payload);
 }
 
+// ── queue_notice ──────────────────────────────────────────
+
+export type QueueNoticeKind = "player_left";
+
+export interface QueueNoticePayload {
+  kind: QueueNoticeKind;
+  playerId: string;
+  playerName: string;
+  cancelledDraft: boolean;
+  /**
+   * Set only on an organizer kick. The actor's own dashboard suppresses
+   * the card (they just confirmed the dialog). Self-leave omits this so
+   * every organizer with Match Control open sees the notice.
+   */
+  actorId?: string | null;
+  actorName?: string | null;
+}
+
+/**
+ * Tell organizers a player left the queue. Dedicated event so the
+ * player-side listener (useOrganizerBroadcast) never handles it —
+ * they share the session-events channel.
+ *
+ * Channel: session-events:{sessionId}
+ * Event:   queue_notice
+ */
+export async function broadcastQueueNotice(
+  sessionId: string,
+  payload: QueueNoticePayload
+): Promise<void> {
+  await postBroadcast(`session-events:${sessionId}`, "queue_notice", payload);
+}
+
 /**
  * Notify a session's clients that an organizer has intervened (cleared an On
  * Deck match or cancelled an In-Progress match). Players filter by their own

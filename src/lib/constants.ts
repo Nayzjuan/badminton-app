@@ -635,6 +635,12 @@ export const APPROACHING_QUEUE_THRESHOLD = 2;
 /** Queue position at or below which the OnDeckAlert banner is shown. */
 export const ON_DECK_ALERT_THRESHOLD = 4;
 
+/**
+ * Organizer reminder interval for a player left paused in Match Control.
+ * First notice at 15 minutes, then every 15 minutes after that.
+ */
+export const PAUSE_REMIND_MINUTES = 15;
+
 // ── Organizer dashboard layout ────────────────────────────────────────────────
 
 /** px size of the background grid overlay on the organizer dashboard. */

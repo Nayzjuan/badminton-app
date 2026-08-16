@@ -64,6 +64,7 @@ createServiceClient(); // uses service role key
 - `auto_publish_toggled` — `{ isOn: boolean }` → syncs auto-publish mode state to all co-organizers (same RLS-bypass rationale). Handled in `use-organizer-session.ts`; `auto_publish` is also excluded from the postgres_changes apply so it never double-syncs.
 - `cap_saturation` — `{ type: "general" | "red_zone", anchorPlayerId, anchorPlayerName }` → fires when the partner-repeat cap (not player shortage) blocks every possible team split for the anchor player; `red_zone` once the anchor has waited ≥ `CRITICAL_WAIT_MINUTES` — tested with `isRedZonePlayer(anchor)`, **not** a `priorityScore ≥ RED_ZONE_SCORE_FLOOR` comparison, which is not the same condition (§3.34). Handled in `use-organizer-session.ts` → surfaces the `CapSaturationNotice` banner in the on-deck panel so the organizer knows to intervene manually.
 - `draft_cap_phase` — `{ phase: "clearing" | "generating" | "done", override }` (`override: number | null`, null = Dynamic) → drives the synchronized dashboard lockout overlay during a cap-change reset; `done` is also emitted on failure so co-organizer screens never stay locked.
+- `queue_notice` — `{ kind: "player_left", playerId, playerName, cancelledDraft, actorId?, actorName? }` → centered dismissible card on every organizer / co-organizer dashboard with Match Control open. Emitted by `checkoutPlayer` (no actor — every board sees it) and `removePlayerFromQueue` (actor attached; the acting dashboard suppresses). Player-side `useOrganizerBroadcast` does not handle this event. Pause reminders are **not** broadcast — they are computed locally from `queue_entries.paused_at`.
 
 ### Realtime Subscription Auth (JWT-before-join)
 
@@ -190,6 +191,7 @@ Append-only access-control table. Never DELETE or UPDATE rows — presence of a 
 | `status`       | `queue_status` enum  | See enum below                                                         |
 | `position`     | `int \| null`        | Display position; nullable                                             |
 | `is_paused`    | `bool`               | Soft-pause: player visible in queue list but excluded from matchmaking |
+| `paused_at`    | `timestamptz \| null`| When the organizer paused this row. Null when not paused.              |
 | `created_at`   | `timestamptz`        |                                                                        |
 
 #### `matches`
@@ -1231,16 +1233,16 @@ Intentionally silent: engine draft creation (players stay `waiting` until publis
 
 ### 3.14 Step Out / Soft Pause
 
-**File:** `src/components/organizer/queue-control.tsx`, queue entry `is_paused` column
+**File:** `src/components/organizer/queue-control.tsx`, queue entry `is_paused` + `paused_at` columns
 
 Organizer can soft-pause any player in the queue. Paused players:
 
 - Remain visible in the queue list (position preserved)
 - Are excluded from matchmaking candidate pool
 - Can be un-paused at any time (single click)
-- Displayed with a distinct visual indicator (muted / dimmed row + pause icon)
+- Displayed with a distinct visual indicator (muted / dimmed row + pause badge). After 15 / 30 / 45 … minutes the badge reads "Paused 15m" (amber) then "Paused 30m" (red), and a centered organizer notice fires at each bucket (see §3.42)
 
-Does not affect `games_played`. Does not change `queue_status`.
+`togglePlayerPause` writes `paused_at = now()` on pause and `null` on resume. Does not affect `games_played`. Does not change `queue_status`.
 
 ---
 
@@ -1314,7 +1316,7 @@ Also: `src/lib/schemas/auth.ts` — Zod schema for `display_name` (3–30 chars,
 
 Two paths to exit a session, and they are **different server actions with different authority** — not one action with an optional player argument:
 
-**Player self-checkout**: Player opens the leave dialog from their dashboard. Calls `checkoutPlayer(sessionId)` — note the signature takes **only** a session id; the player is always `auth.getUser()` server-side, so this action can never move anyone else's row. It sets `queue_entries.status = "left"` **only if the player is leaveable** — see §3.39. A player who is `on_deck` or `playing` is refused.
+**Player self-checkout**: Player opens the leave dialog from their dashboard. Calls `checkoutPlayer(sessionId)` — note the signature takes **only** a session id; the player is always `auth.getUser()` server-side, so this action can never move anyone else's row. It sets `queue_entries.status = "left"` **only if the player is leaveable** — see §3.39. A player who is `on_deck` or `playing` is refused. On success it broadcasts `queue_notice` so every open Match Control sees a centered "{Name} left the queue" card (§3.42).
 
 **Organizer-initiated removal**: Organizer confirms the remove action in the queue control table (`queue-control.tsx` → `onRemoveFromQueue` → `use-organizer-queue`), wrapped in an `AlertDialog` to prevent accidental removals. This calls **`removePlayerFromQueue(sessionId, playerId)`**, which gates on `isSessionOrganizer` and then delegates to the `remove_player_from_queue_organizer` RPC (migration `20260512200002`): one transaction that locks the queue row, pulls the player from any **pending** roster, cancels matches that fall under-strength, returns their survivors to `waiting`, and sets `status = "left"`. It then broadcasts `match_cancelled` to the remaining players and logs a `cancelled` match event for the matches that were genuinely torn down.
 
@@ -2483,6 +2485,7 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `performance.test.ts`      | —     | Engine timing benchmarks                                                                                                        |
 | `player-checkout.test.ts`  | Q     | `checkoutPlayer`: happy path, unauthenticated rejection, UUID validation, **checkout while on_deck/playing is REFUSED** (Q-4/Q-5, §3.39 — these assert a rejection, not a success), draft cleanup, idempotency |
 | `player-pause.test.ts`     | P     | `togglePlayerPause`: pause/unpause, `games_played`+`joined_at` invariant, non-organizer rejection, UUID validation              |
+| `organizer-alerts.test.ts` | OA    | Pause-bucket math, badge copy, center-alert enqueue/dismiss (§3.42)                                                              |
 | `publish-match.test.ts`    | —     | `publishMatchAction` BUG-001 (ON_DECK_WARNING timing) and BUG-002 (stale-player guard)                                          |
 | `queue-join.test.ts`       | —     | `joinQueueAction` inherited-games floor, re-join paths                                                                          |
 | `realtime-broadcast-rls.test.ts`| RB | **The broadcast topic's RLS actually refuses outsiders** (§3.35): a plain member and the organizer may read (RB-1/2); a stranger, a member of a *different* club, a deactivated member, an `anon` caller and a malformed topic are all refused (RB-3…7); nobody may INSERT, not even the organizer (RB-8). Every one is killed by at least one mutated policy — table in the file header |
@@ -2691,6 +2694,8 @@ src/
       score-modal.tsx            # Score entry dialog (single / best-of-3 / best-of-5)
       queue-control.tsx          # Player queue table, manual match creation, pause, dnd-kit; List/By-Skill view toggle
       queue-skill-groups.tsx     # "By Skill" queue lens — waiting players grouped by tier (Adv→Beg), longest-wait-first
+      organizer-center-alert.tsx # Large centered dismissible leave / pause-reminder card
+      paused-badge.tsx           # Match Control pause chip — "Paused" / "Paused 15m" / "Paused 30m"
       wait-time-monitor.tsx      # Bottleneck monitor (wait ≥ BOTTLENECK_THRESHOLD_MINUTES)
       match-history-panel.tsx    # Completed match history with edit/undo score + Fix Player Record trigger
       fix-record-sheet.tsx       # Historical roster correction Sheet — amber accent, 2-step flow (pick out → pick in)
@@ -2775,6 +2780,7 @@ src/
     use-swap-state.ts            # Tap-to-Swap state machine; Layer 2 race guard; bench + direct swap
     use-score-form.ts            # Shared score input state (player + organizer); enforces 0–30 range
     use-organizer-broadcast.ts   # Server broadcast listener (organizer_intervention, session_closed)
+    use-organizer-alerts.ts      # Queued centered leave + pause-reminder notices for Match Control
     use-visibility-refresh.ts    # Re-fetch on tab focus / app foreground
 
   lib/
@@ -2789,6 +2795,7 @@ src/
     vip-config.ts                # VIP_THEMES record — 10 presets, neon + holo configs
     wrapped-awards.ts            # AWARD_META record — all award slugs with emoji/title/subtitle/rarity
     broadcast.ts                 # Server-side REST broadcast helpers (fire-and-forget)
+    organizer-alerts.ts          # Pure pause-bucket math + center-alert queue helpers
     realtime.ts                  # Supabase channel subscriptions (courts, queue, matches, etc.)
     validate.ts                  # isValidUUID — type-narrowing UUID guard for all server actions
     utils.ts                     # cn(), createUnknownProfile(id) — fallback profile for unknown player IDs
@@ -4123,3 +4130,19 @@ reproduces the exact unguarded `update({ status: "waiting" }).in("player_id", �
 `20260812000000` removed from the RPC. On any environment where `clear_on_deck_match_atomic` is missing, the
 Clear button on a held draft unseats a live body. Out of scope here — named so "we fixed the class" doesn't
 stop the next reader looking.
+
+---
+
+### 3.42 Organizer notices — leave-queue + 15-minute pause reminder (2026-08-16)
+
+**Files:** `src/lib/organizer-alerts.ts`, `src/hooks/use-organizer-alerts.ts`, `src/components/organizer/{organizer-center-alert,paused-badge}.tsx`, `src/lib/broadcast.ts` (`queue_notice`), `src/lib/realtime.ts`, `src/hooks/use-organizer-{session,data}.ts`, `src/app/actions/queue.ts`, `src/lib/constants.ts` (`PAUSE_REMIND_MINUTES`), migration `20260817000000_queue_leave_notices`.
+
+A leaver **vanishes** from Match Control (`v_queue_full_with_wait_time` excludes `left`). The notice is what tells organizers who disappeared.
+
+**Leave.** `checkoutPlayer` and `removePlayerFromQueue` emit `queue_notice` on the existing private `session-events:{id}` channel. Self-leave has no `actorId` — every open organizer dashboard shows a centered dismissible card. An organizer kick attaches `actorId`; that organizer's own client suppresses (they just confirmed the dialog). Copy: "{Name} left the queue", plus a line only when an **unpublished** draft was cancelled (a published on-deck teardown does not use that line). Already-left / not-in-session checkouts are silent.
+
+**Pause reminder.** `queue_entries.paused_at` is stamped on pause and cleared on resume, self-leave, organizer remove, and rejoin. Each open dashboard computes `floor(minutes / 15)` locally (15s tick + queue refetch) and enqueues the same centered card at 15 / 30 / 45 …. An in-memory Set of `${playerId}:${bucket}` prevents a dismissed bucket from coming back. Resume clears that player's keys. The Match Control badge upgrades from "Paused" to "Paused 15m" (amber) / "Paused 30m" (red).
+
+**Held-draft restore.** `checkout_player_cleanup_drafts` already restored only `status = 'drafted'` (hotfix `20260511210001`). The 20260817 replace keeps that contract and documents why: a held draft's pulled body stays `playing` and must not be written to `waiting`. The TypeScript fallback now mirrors the restore (it previously cancelled the draft and left the other three `drafted`).
+
+**Not done:** Web Push to organizers; a persistent "left" list in Match Control. The on-deck / playing leave refusal is unchanged (§3.39).

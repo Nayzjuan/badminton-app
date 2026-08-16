@@ -16,7 +16,11 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { EnrichedMatch } from "@/hooks/use-enriched-matches";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
-import type { CapSaturationPayload, SessionClosedPayload } from "@/lib/broadcast";
+import type {
+  CapSaturationPayload,
+  QueueNoticePayload,
+  SessionClosedPayload,
+} from "@/lib/broadcast";
 import type { CapPhaseSignal } from "@/hooks/use-organizer-session";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
 import type { MatchActionCode } from "@/app/actions/_shared";
@@ -146,6 +150,7 @@ export function useOrganizerData(
   closeHooks?: {
     onSessionClosed?: (payload: SessionClosedPayload) => void;
     onBroadcastStatus?: () => void;
+    onQueueNotice?: (payload: QueueNoticePayload) => void;
   }
 ): UseOrganizerDataResult {
   // Single Supabase client shared across all sub-hooks.

@@ -36,7 +36,7 @@ import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { broadcastOrganizerIntervention, broadcastQueueNotice } from "@/lib/broadcast";
 import { isValidUUID } from "@/lib/validate";
 import { isSessionOrganizer, isSessionActive, getActorContext } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
@@ -107,7 +107,10 @@ export async function togglePlayerPause(
   const svc = createServiceClient();
   const { error } = await svc
     .from("queue_entries")
-    .update({ is_paused: isPaused })
+    .update({
+      is_paused: isPaused,
+      paused_at: isPaused ? new Date().toISOString() : null,
+    })
     .eq("session_id", sessionId)
     .eq("player_id", playerId);
 
@@ -207,7 +210,7 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   // remains idempotent (Q-8).
   const { data: leftRows, error } = await svc
     .from("queue_entries")
-    .update({ status: "left" as const })
+    .update({ status: "left" as const, is_paused: false, paused_at: null })
     .eq("session_id", sessionId)
     .eq("player_id", user.id)
     .in("status", ["waiting", "drafted", "left"])
@@ -236,6 +239,7 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
     }
   );
 
+  const fallbackCancelledIds: string[] = [];
   if (cleanupError) {
     if (isRpcNotFound(cleanupError)) {
       // Fallback: manual non-atomic cleanup (pre-RPC behaviour).
@@ -273,6 +277,23 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
               .update({ status: "cancelled" as const })
               .eq("id", entry.match_id)
               .eq("status", "pending");
+            fallbackCancelledIds.push(entry.match_id);
+
+            // Mirror the RPC: only drafted leftovers return to waiting.
+            // A held draft's pulled body stays playing / on_deck.
+            const { data: remaining } = await svc
+              .from("match_players")
+              .select("player_id")
+              .eq("match_id", entry.match_id);
+            const leftoverIds = (remaining ?? []).map((r) => r.player_id);
+            if (leftoverIds.length > 0) {
+              await svc
+                .from("queue_entries")
+                .update({ status: "waiting" as const })
+                .eq("session_id", sessionId)
+                .in("player_id", leftoverIds)
+                .eq("status", "drafted");
+            }
           }
         }
       }
@@ -287,9 +308,11 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   // its FK is intact. actorId is null → actor_type 'system' (an automatic
   // consequence of the leaver); the trigger player is recorded in the payload.
   // Best-effort — logMatchEvent never throws.
-  const cancelledMatchIds = (cleanupData ?? [])
-    .map((r) => r.cancelled_match_id)
-    .filter((id): id is string => Boolean(id));
+  const cancelledMatchIds = cleanupError
+    ? fallbackCancelledIds
+    : (cleanupData ?? [])
+        .map((r) => r.cancelled_match_id)
+        .filter((id): id is string => Boolean(id));
   for (const mid of cancelledMatchIds) {
     await logMatchEvent({
       matchId: mid,
@@ -310,6 +333,19 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
       console.error("[engine] after() unhandled failure:", err)
     )
   );
+
+  // Q-8 already-left and not-in-session are silent no-ops — do not toast
+  // organizers for a retry or a ghost.
+  const didLeave = currentEntry != null && currentEntry.status !== "left";
+  if (didLeave) {
+    const leaver = await getActorContext(user.id);
+    await broadcastQueueNotice(sessionId, {
+      kind: "player_left",
+      playerId: user.id,
+      playerName: leaver.name ?? "A player",
+      cancelledDraft: cancelledMatchIds.length > 0,
+    });
+  }
 
   return { success: true };
 }
@@ -398,6 +434,16 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   console.log(`[joinQueueAction] ${result.action} games_played=${result.games_played}`);
 
+  // join_queue does not touch pause. A kicked-while-paused row (or a leftover
+  // from before remove started clearing) would otherwise re-enter still paused
+  // with a stale paused_at and fire a 15-minute reminder immediately.
+  await svc
+    .from("queue_entries")
+    .update({ is_paused: false, paused_at: null })
+    .eq("session_id", sessionId)
+    .eq("player_id", user.id)
+    .eq("status", "waiting");
+
   // Fire-and-forget: schedule the engine after the response is sent so the
   // client gets confirmation immediately rather than waiting for matchmaking.
   after(() =>
@@ -484,6 +530,7 @@ export async function removePlayerFromQueue(
   if (!rpcErr) {
     // Notify remaining players in any matches that were cancelled.
     const matchIds = (affectedMatchIds ?? []) as string[];
+    let cancelledDraft = false;
     if (matchIds.length > 0) {
       const { data: matchPlayers } = await svc
         .from("match_players")
@@ -511,6 +558,9 @@ export async function removePlayerFromQueue(
         .eq("status", "cancelled");
 
       if (cancelledRows && cancelledRows.length > 0) {
+        // Only unpublished drafts use the "draft was cancelled" card line.
+        // Kicking someone off a published on-deck match is a different path.
+        cancelledDraft = cancelledRows.some((r) => !r.is_published);
         const actor = await getActorContext(user.id);
         for (const row of cancelledRows) {
           await logMatchEvent({
@@ -539,6 +589,25 @@ export async function removePlayerFromQueue(
         console.error("[engine] after() unhandled failure:", err)
       )
     );
+    // The organizer RPC only flips status='left'. Clear pause so a kicked
+    // paused player who later rejoins does not inherit a stale paused_at.
+    await svc
+      .from("queue_entries")
+      .update({ is_paused: false, paused_at: null })
+      .eq("session_id", sessionId)
+      .eq("player_id", playerId);
+    const [actor, target] = await Promise.all([
+      getActorContext(user.id),
+      getActorContext(playerId),
+    ]);
+    await broadcastQueueNotice(sessionId, {
+      kind: "player_left",
+      playerId,
+      playerName: target.name ?? "A player",
+      cancelledDraft,
+      actorId: actor.id,
+      actorName: actor.name,
+    });
     return { success: true };
   }
 
@@ -555,7 +624,7 @@ export async function removePlayerFromQueue(
   // TOCTOU risk is accepted here; the RPC eliminates it once deployed.
   const { error } = await svc
     .from("queue_entries")
-    .update({ status: "left" as const })
+    .update({ status: "left" as const, is_paused: false, paused_at: null })
     .eq("session_id", sessionId)
     .eq("player_id", playerId);
 
@@ -569,6 +638,15 @@ export async function removePlayerFromQueue(
       console.error("[engine] after() unhandled failure:", err)
     )
   );
+  const [actor, target] = await Promise.all([getActorContext(user.id), getActorContext(playerId)]);
+  await broadcastQueueNotice(sessionId, {
+    kind: "player_left",
+    playerId,
+    playerName: target.name ?? "A player",
+    cancelledDraft: false,
+    actorId: actor.id,
+    actorName: actor.name,
+  });
   return { success: true };
 }
 
@@ -631,6 +709,8 @@ async function joinQueueFallback(
         status: "waiting" as const,
         games_played: inheritedGames,
         joined_at: new Date().toISOString(),
+        is_paused: false,
+        paused_at: null,
       })
       .eq("id", existing.id);
 

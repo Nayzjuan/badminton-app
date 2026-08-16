@@ -29,6 +29,7 @@ import type { CandidateMarker } from "@/lib/repeat-pairing";
 import type { NameLookup } from "@/lib/repeat-pairing-copy";
 import { SKILL_LEVELS } from "@/types/database";
 import { SKILL_META } from "@/lib/constants";
+import { PausedBadge } from "@/components/organizer/paused-badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -346,9 +347,10 @@ function PlayerRow({
             <VipTag tag={profile.vip_tag} theme={profile.vip_theme} />
           )}
           {isPaused && (
-            <span className="clip-cut-badge shrink-0 bg-cc-bg-3 px-2 py-0.5 font-command text-[9px] font-bold uppercase tracking-[0.08em] text-cc-t3">
-              Paused
-            </span>
+            <PausedBadge
+              pausedAt={entry.paused_at}
+              className="clip-cut-badge shrink-0 font-command text-[9px] tracking-[0.08em]"
+            />
           )}
         </div>
 

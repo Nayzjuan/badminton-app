@@ -46,6 +46,7 @@ function makeEntry(
     joined_at: new Date(Date.now() - 5 * 60_000).toISOString(),
     position: 1,
     is_paused: false,
+    paused_at: null,
     created_at: new Date().toISOString(),
   };
 }

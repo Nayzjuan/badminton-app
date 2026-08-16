@@ -862,6 +862,7 @@ export async function fetchPullablePlayers(
       status: "playing",
       position: null,
       is_paused: false,
+      paused_at: null,
       created_at: q.created_at,
       display_name: prof.display_name,
       skill_level: prof.skill_level,
