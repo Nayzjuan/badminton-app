@@ -124,7 +124,7 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🎽 HELD CROSS-COURT DRAFTS COULD NOT BE PUBLISHED UNTIL THE HOLD RESOLVED — 2026-08-16. ✅ **MERGED + DEPLOYED + MIGRATION APPLIED TO PROD**
+## 🎽 PUBLISHING A HELD CROSS-COURT DRAFT — REFUSED WHILE HOLDING, WRONGLY ALLOWED WHILE RESTING — 2026-08-16. ✅ **MERGED + DEPLOYED + MIGRATION APPLIED TO PROD**
 
 **Status: SHIPPED.** Committed as `db600a4` on `fix/block-leave-active-match`, PR
 [#68](https://github.com/Nayzjuan/badminton-app/pull/68) **squash-merged to `main` as `61e942b`**;
@@ -189,11 +189,17 @@ written: the organizer was told to clear, so they cleared.
 
 🪤 **The 2 are load-bearing — this heading said "COULD NEVER BE PUBLISHED" until 2026-08-16, and PR #68's
 squash body on `main` still says "published zero / refused every one".** Rows `2c1b0edc…` and `4cf0a097…`
-are `is_held`, `is_published`, promoted and `completed`; both carry a stamped `held_ready_at`, so the true
-claim is about the *window* (nothing published while the hold was unresolved), not an absolute. The
-absolute survives paraphrase into a **count** — it had already become "could publish none of them" in
-APP_MANIFEST §3.1 — and a squash message cannot be amended, so `61e942b` is permanently wrong here. See
-§3.41's 🪤 for the full derivation; re-derive any count from `matches`, never from that commit message.
+are `is_held`, `is_published`, promoted and `completed`. The absolute survives paraphrase into a **count**
+— it had already become "could publish none of them" in APP_MANIFEST §3.1 — and a squash message cannot
+be amended, so `61e942b` is permanently wrong here.
+
+🪤 **The first correction then over-fixed it into an ordering nothing can prove**, claiming the stamped
+`held_ready_at` on those two rows meant they "published only after the hold had already resolved".
+Prod records **no publish time**: no `published_at` column, no publish `event_type`, and
+`queue_status_events` is empty (its migration postdates the session). Defect 4's RESTING window is
+measured at **88 s** and **237 s** for these two rows, and in it the pre-fix publish *succeeds* — so the
+opposite ordering is live, not hypothetical. Claim the count and defect 1's by-construction `CONFLICT`;
+do not claim a sequence. Full derivation in §3.41's 🪤; re-derive counts from `matches`.
 
 ### The five things that will bite the next person
 
@@ -3310,7 +3316,9 @@ the same PR.** It was authored in `de7ee47` at `2026-08-13T12:31:32Z`; PR #64 wa
 whose branch wrote it. (An earlier draft of this correction said "the next day" — same-day in both UTC
 and +08; the true version is the more damning one. A later draft still timed only the SHA clause, which
 is the slower of the two.) No replacement head SHA is written here,
-because any value put in this slot is falsified by the commit that puts it there. To get the real head
+because any value put in this slot is falsified by the push or the merge that **lands** it — not by the
+commit, which cannot know its own SHA (that phrasing survived here until 2026-08-16, one paragraph away
+from the correction that removed it elsewhere). To get the real head
 state, ask git and GitHub, which move on their own: `git rev-parse origin/main` and
 `gh pr list --state open`. Everything from here to the end of this paragraph is as-of **2026-08-13** and
 is left as written — including its "`gh pr list --state open` is empty", which was true that day and is
