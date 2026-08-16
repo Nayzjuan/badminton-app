@@ -949,6 +949,7 @@ export function OrganizerDashboard({
                 isAutoMatchmakingOn={liveSession.is_auto_matchmaking_on}
                 autoPublishIsOn={autoPublish}
                 waitingCount={waitingCount}
+                maxAutoDraftsOverride={liveSession.max_auto_drafts_override}
                 hasNewDraft={hasNewDraft}
                 queue={queue}
               />

@@ -75,6 +75,10 @@ const QUEUE: QueueFullWithWaitTime[] = ROSTER.map(([id, name], i) =>
   makeQueueEntry({ id: `entry-${id}`, player_id: id, display_name: name, position: i + 1 })
 );
 
+// Third argument is `confirmDuplicate`. Every assertion below pins it to false:
+// the first attempt is never a confirmed re-send, and asserting it explicitly is
+// what keeps a future default flip from silently bypassing the duplicate-roster
+// prompt. The true path is covered in queue-control-duplicate-confirm.test.tsx.
 const onCreateManualMatch = vi.fn().mockResolvedValue({});
 
 let lastRerender: ((ui: React.ReactElement) => void) | null = null;
@@ -145,7 +149,7 @@ describe("QRP-S: slot selection model", () => {
     fireEvent.click(screen.getByRole("button", { name: /add to on deck/i }));
 
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"], false)
     );
   });
 
@@ -159,7 +163,7 @@ describe("QRP-S: slot selection model", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /add to on deck/i }));
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p5"], ["p3", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p5"], ["p3", "p4"], false)
     );
   });
 
@@ -178,7 +182,7 @@ describe("QRP-S: slot selection model", () => {
     fireEvent.click(eveRow);
     fireEvent.click(screen.getByRole("button", { name: /add to on deck/i }));
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"], false)
     );
   });
 });
@@ -206,7 +210,7 @@ describe("QRP-P: team preview + swap across the net", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /add to on deck/i }));
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p3", "p2"], ["p1", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p3", "p2"], ["p1", "p4"], false)
     );
   });
 
@@ -221,7 +225,7 @@ describe("QRP-P: team preview + swap across the net", () => {
     // Bob vacated A2, so Carol fills it and Dave lands on B2.
     fireEvent.click(screen.getByRole("button", { name: /add to on deck/i }));
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p3"], ["p2", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p3"], ["p2", "p4"], false)
     );
   });
 });
@@ -302,7 +306,7 @@ describe("QRP-W: the warning is advisory, never a gate", () => {
 
     fireEvent.click(cta);
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"], false)
     );
   });
 
@@ -615,7 +619,7 @@ describe("QRP-B: By Skill lens parity", () => {
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     fireEvent.click(screen.getByRole("button", { name: /add to on deck/i }));
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"], false)
     );
   });
 
@@ -763,7 +767,7 @@ describe("QRP-K: keyboard selection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /add to on deck/i }));
     await waitFor(() =>
-      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"])
+      expect(onCreateManualMatch).toHaveBeenCalledWith(["p1", "p2"], ["p3", "p4"], false)
     );
   });
 });

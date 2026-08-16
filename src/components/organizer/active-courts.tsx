@@ -31,6 +31,8 @@ import { useLiveMatchSwap } from "@/hooks/use-live-match-swap";
 import type { Court, QueueFullWithWaitTime } from "@/types/database";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
+import type { MatchActionCode } from "@/app/actions/_shared";
+import { settledMatchToast } from "@/lib/settled-match-toast";
 import type { RosterPlayer } from "@/components/organizer/match-roster";
 import { CourtCard } from "./court-card";
 
@@ -56,7 +58,7 @@ interface ActiveCourtsProps {
     matchId: string,
     teamAScore: number,
     teamBScore: number
-  ) => Promise<{ error?: string }>;
+  ) => Promise<{ error?: string; code?: MatchActionCode }>;
   onCancelMatch: (matchId: string) => Promise<{ error?: string }>;
   onClearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
 }
@@ -462,6 +464,17 @@ export function ActiveCourts({
         onSubmit={async (teamAScore, teamBScore) => {
           if (!scoringMatchId) return { error: "No match selected." };
           const result = await onEndMatch(scoringMatchId, teamAScore, teamBScore);
+          const settledToast = settledMatchToast(result.code);
+          if (settledToast) {
+            // The match is settled — by someone else, one way or another. The
+            // board has already been refetched by onEndMatch, so close the modal
+            // rather than holding the organizer on a form for a match that is
+            // now in history. settledMatchToast owns which of the two outcomes
+            // this is; the copy differs materially between them.
+            setScoringMatchId(null);
+            showToast({ type: "warning", ...settledToast });
+            return { settled: true, settledMessage: result.error };
+          }
           if (!result.error) {
             setScoringMatchId(null);
             showToast({

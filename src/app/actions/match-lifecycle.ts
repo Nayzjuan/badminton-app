@@ -18,6 +18,7 @@ import {
   recomputeHeldReadiness,
 } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { partitionCancelRestore } from "@/lib/cancel-restore";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
@@ -30,6 +31,7 @@ import {
 } from "@/app/actions/_shared";
 import { scoreSchema } from "@/lib/schemas/match";
 import { logMatchEvent } from "@/lib/match-event-log";
+import { DUPLICATE_ROSTER_WINDOW_MINUTES } from "@/lib/constants";
 
 // ============================================================
 // submitMatchScore — player-initiated score submission
@@ -209,8 +211,17 @@ async function endMatchInternal(
     }
   }
 
+  // Losing this check is the ordinary outcome of the organizer and a player
+  // submitting the same match at almost the same time — the match IS scored,
+  // just not by this caller. Tag it so the UI can move the loser on instead of
+  // stranding them on a form whose match no longer exists (see the CAS below,
+  // which catches the same race one step later).
   if (match.status === "completed" || match.status === "cancelled") {
-    return { success: false, message: `Match is already ${match.status}.` };
+    return {
+      success: false,
+      message: `Match is already ${match.status}.`,
+      code: match.status === "completed" ? "already_scored" : "match_cancelled",
+    };
   }
 
   // 2. P0-1: Atomic UPDATE — only succeeds if status is still "in_progress".
@@ -242,7 +253,45 @@ async function endMatchInternal(
   }
   if (!updatedRows || updatedRows.length === 0) {
     // 0 rows affected — another concurrent caller already completed/cancelled.
-    return { success: false, message: "Match was already completed by another request." };
+    // This is the true concurrency window: the status check above passed, then
+    // the other caller's UPDATE landed first. Settled either way, so the code
+    // lets the UI transition rather than surface a red error for something the
+    // user cannot act on.
+    //
+    // Re-read the status instead of assuming "completed". The two outcomes need
+    // OPPOSITE copy — after a concurrent complete a score exists and was kept,
+    // after a concurrent cancel there is none and the game has to be re-run —
+    // and settledMatchToast can only keep them apart if it is handed the right
+    // code.
+    //
+    // Only "cancelled" takes the cancel arm, and the asymmetry is deliberate.
+    // The cancel copy states that no score was recorded; an organizer reading
+    // that re-runs the game, and re-running one that was in fact scored is how
+    // a second row for the same match gets created — the defect this change set
+    // exists for. So everything else lands on "already scored": a read error, a
+    // deleted row, and one status that is neither settled outcome — "pending",
+    // which passes the check above (it rejects only completed/cancelled) and
+    // then misses the CAS. That last case is not reachable from either UI today
+    // (the player card renders only on in_progress, the organizer's modal opens
+    // from a court card), and its copy would be wrong if it ever were, but the
+    // wrong-and-harmless direction is the one that does not invent a re-run.
+    const { data: settledRow } = await db
+      .from("matches")
+      .select("status")
+      .eq("id", matchId)
+      .maybeSingle();
+    if (settledRow?.status === "cancelled") {
+      return {
+        success: false,
+        message: "This match was cancelled while the score form was open.",
+        code: "match_cancelled",
+      };
+    }
+    return {
+      success: false,
+      message: "This match was already scored by someone else.",
+      code: "already_scored",
+    };
   }
 
   // 3. Fetch all players in this match.
@@ -443,12 +492,34 @@ export async function updateMatchDetails(
 
   if (!revertToActive) {
     // ── Score-only edit ──────────────────────────────────────
-    const { error } = await db
+    // Deliberately NOT idempotency-guarded: correcting a score is a repeatable
+    // operation and the organizer may need several passes at it (a first fix
+    // that swapped the teams, then a second that fixes a digit). Every pass
+    // writes and appends its own score_edit event.
+    //
+    // It IS status-guarded. `.eq("status","completed")` makes this a
+    // compare-and-swap against the row we authorized: the Edit control only
+    // exists on a completed history card, so if the row is no longer completed
+    // a concurrent "Revert to Active Court" moved it back onto a court, and
+    // stamping a final score onto a live match would silently corrupt the game
+    // in progress. 0 rows affected → say so and let the organizer re-read the
+    // board. (`.select("id")`, not `.single()`: PostgREST returns an empty
+    // array on 0 rows and `.single()` throws a coercion error on it.)
+    const { data: editedRows, error } = await db
       .from("matches")
       .update({ team_a_score: safeA, team_b_score: safeB })
-      .eq("id", matchId);
+      .eq("id", matchId)
+      .eq("status", "completed")
+      .select("id");
 
     if (error) return { success: false, message: "Failed to update scores." };
+    if (!editedRows || editedRows.length === 0) {
+      return {
+        success: false,
+        message: "This match is no longer completed — it was reverted to an active court.",
+        code: "not_completed",
+      };
+    }
 
     // Best-effort audit (score edits never count as composition modifications).
     await logMatchEvent({
@@ -570,9 +641,13 @@ export async function updateMatchDetails(
 // ============================================================
 
 /**
- * Cancels an active (in_progress or pending) match and returns all players to
- * "waiting" status. Players are restored BEFORE the engine runs so they are
- * immediately eligible for the next match generation cycle.
+ * Cancels an active (in_progress or pending) match and returns its roster to the
+ * queue. Players are restored BEFORE the engine runs so they are immediately
+ * eligible for the next match generation cycle.
+ *
+ * "Restored" is a three-way partition, not a blanket "waiting" — see step 3 and
+ * `partitionCancelRestore`. Ordinary rosters are all-waiting, as before; the two
+ * exceptions exist only where a cross-court held draft is involved.
  *
  * Uses a CAS-style guard: reads the current status and aborts if it has already
  * changed — prevents double-cancel under concurrent organizer actions.
@@ -658,24 +733,168 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   //    Done BEFORE running the engine so returned players are visible
   //    to the matchmaker and can be included in new on-deck matches.
   //
+  //    Where each roster member goes is a PARTITION, not a constant —
+  //    partitionCancelRestore owns the rule, this block only feeds it:
+  //
+  //    (a) A pulled body whose held draft is still pending comes back
+  //        'drafted', not 'waiting' — mirroring endMatchInternal's R3-1 above.
+  //        A cancelled source FREES the body (recomputeHeldReadiness counts
+  //        'cancelled' alongside 'completed' — matchmaking.ts) and therefore
+  //        KEEPS the hold alive, so the seat it reserved must stay reserved.
+  //        Recompute cannot repair a wrong status here: no path in it ever
+  //        writes 'drafted' — its only queue_entries writes are the ones its
+  //        RPCs do (clear_on_deck_match_atomic → 'waiting', auto_publish_match
+  //        → 'on_deck'), and neither restores a lost reservation. It also runs
+  //        after this block, not before.
+  //    (b) A member who physically holds an in_progress match in this session
+  //        is not written AT ALL. That is the physical-truth rule migration
+  //        20260812000000 put inside clear_on_deck_match_atomic — which this
+  //        action bypasses, so it needs its own copy. Reachable here by
+  //        cancelling the held draft itself: three drafted members plus one
+  //        body who is mid-game on another court.
+  //
+  //    Both arms rely on the CAS above having ALREADY flipped this match out of
+  //    pending/in_progress, which is what lets one predicate set cover both
+  //    cases: this match can no longer be the "in_progress match" of (b) nor
+  //    the "pending held draft" of (a). Do NOT branch on `match.status` — that
+  //    variable holds the PRE-CAS status (it is correct for the audit `phase`
+  //    above and wrong for this).
+  //
+  //    ⚠️ The pending branch is reachable at the server-action level even
+  //    though today's UI only offers Cancel on an in_progress court card
+  //    (active-courts.tsx filters to in_progress; court-card.tsx renders Clear,
+  //    not Cancel, for a pending row). Every export of a "use server" file is a
+  //    public endpoint — the UI is not the gate.
+  //
   //    Status guard: only restore players whose current status is NOT
   //    "left". A player who manually checked out while on_deck / in a
   //    pending match should not be pulled back into the queue just
-  //    because the organizer later cancelled the match.
-  const { data: matchPlayers } = await db
+  //    because the organizer later cancelled the match. It stays INSIDE each
+  //    UPDATE so it is evaluated server-side and honours a checkout that lands
+  //    between our reads and our writes.
+  //
+  //    ⚖️ The three partition-feeding reads below (liveMatches, heldDrafts,
+  //    liveRoster — not the roster read, whose degrade is "no restore at all")
+  //    are FAIL-OPEN: on error they contribute an empty set and the partition
+  //    degrades to the old bulk 'waiting'. Aborting instead is not available:
+  //    the CAS above has ALREADY committed the cancel, so an abort cannot
+  //    un-cancel it — it would leave all four members at 'playing'/'on_deck'
+  //    against a cancelled match, invisible to fetchActivePool, with no
+  //    orphaned-status reconciler anywhere in src/. Fail-open degrades to the
+  //    known pre-fix bug, which is bounded and self-healing; aborting invents an
+  //    unrecoverable state. Moving these reads BEFORE the CAS to allow a clean
+  //    abort would destroy the post-CAS ordering the correctness argument rests
+  //    on. But a silent degrade is how the original defect hid, so all four
+  //    reads log, each naming its own consequence.
+  const { data: matchPlayers, error: rosterError } = await db
     .from("match_players")
     .select("player_id")
     .eq("match_id", matchId);
 
+  if (rosterError) {
+    console.error("[cancelMatch] roster read failed:", rosterError);
+  }
+
   let playerIds: string[] = [];
   if (matchPlayers && matchPlayers.length > 0) {
     playerIds = matchPlayers.map((mp) => mp.player_id);
-    await db
-      .from("queue_entries")
-      .update({ status: "waiting" as const })
-      .eq("session_id", match.session_id)
-      .in("player_id", playerIds)
-      .neq("status", "left"); // skip players who already checked out
+
+    const [
+      { data: liveMatches, error: liveMatchesError },
+      { data: heldDrafts, error: heldDraftsError },
+    ] = await Promise.all([
+      // Manual join (this codebase declares Relationships: [] — see CLAUDE.md);
+      // same two-step shape as fetchPullablePlayers in matchmaking-db.ts.
+      db
+        .from("matches")
+        .select("id")
+        .eq("session_id", match.session_id)
+        .eq("status", "in_progress"),
+      // Same narrowing as R3-1: the partial index on session_id (WHERE
+      // is_held=true AND status='pending') limits the scan, then && filters.
+      db
+        .from("matches")
+        .select("pulled_player_ids")
+        .eq("session_id", match.session_id)
+        .eq("status", "pending")
+        .eq("is_held", true)
+        .overlaps("pulled_player_ids", playerIds),
+    ]);
+
+    // A failed held-draft read degrades to "no holds" → a reserved body is
+    // restored to 'waiting' and the hold is stranded: the original defect.
+    if (heldDraftsError) {
+      console.error(
+        "[cancelMatch] held-draft read failed — held seats may be released:",
+        heldDraftsError
+      );
+    }
+    // A failed live-match read degrades to "nobody playing" → a mid-game body is
+    // flipped to 'waiting': the unseating defect 20260812000000 removed.
+    if (liveMatchesError) {
+      console.error(
+        "[cancelMatch] live-match read failed — a playing body may be unseated:",
+        liveMatchesError
+      );
+    }
+
+    const reservedAsHeld = new Set(
+      (heldDrafts ?? [])
+        .flatMap((m) => m.pulled_player_ids ?? [])
+        .filter((id) => playerIds.includes(id)) // safety: only flag IDs on this roster
+    );
+
+    const liveMatchIds = (liveMatches ?? []).map((m) => m.id);
+    let playingElsewhere = new Set<string>();
+    if (liveMatchIds.length > 0) {
+      const { data: liveRoster, error: liveRosterError } = await db
+        .from("match_players")
+        .select("player_id")
+        .in("match_id", liveMatchIds)
+        .in("player_id", playerIds);
+      // Same degrade as liveMatchesError above — we know live matches exist here
+      // but not who is on them, so the skip set comes back empty.
+      if (liveRosterError) {
+        console.error(
+          "[cancelMatch] live-roster read failed — a playing body may be unseated:",
+          liveRosterError
+        );
+      }
+      playingElsewhere = new Set((liveRoster ?? []).map((r) => r.player_id));
+    }
+
+    const { waitingIds, draftedIds } = partitionCancelRestore({
+      rosterIds: playerIds,
+      playingElsewhere,
+      reservedAsHeld,
+    });
+
+    // 'waiting' FIRST, 'drafted' second. If the second write fails, everyone
+    // already restored sits at 'waiting' — the benign pre-existing behaviour.
+    // The other order would strand up to three members at 'playing': invisible
+    // to the queue and physically off court.
+    if (waitingIds.length > 0) {
+      const { error: waitingError } = await db
+        .from("queue_entries")
+        .update({ status: "waiting" as const })
+        .eq("session_id", match.session_id)
+        .in("player_id", waitingIds)
+        .neq("status", "left"); // skip players who already checked out
+      if (waitingError) {
+        console.error("[cancelMatch] restore to waiting failed:", waitingError);
+      }
+    }
+    if (draftedIds.length > 0) {
+      const { error: draftedError } = await db
+        .from("queue_entries")
+        .update({ status: "drafted" as const })
+        .eq("session_id", match.session_id)
+        .in("player_id", draftedIds)
+        .neq("status", "left");
+      if (draftedError) {
+        console.error("[cancelMatch] held re-reservation failed:", draftedError);
+      }
+    }
   }
 
   // 4. PIPELINE: promote oldest on-deck match to the freed court.
@@ -723,12 +942,20 @@ export type CreateManualMatchResult = {
   success: boolean;
   message: string;
   matchId?: string;
+  /**
+   * `duplicate_roster` is a *soft* refusal: these four already have a completed
+   * match in this session inside the recent window. The caller is expected to
+   * ask the organizer and, on a yes, re-send with `confirmDuplicate = true`.
+   * Any other failure has no code and must not be retried this way.
+   */
+  code?: "duplicate_roster";
 };
 
 export async function createManualMatchAction(
   sessionId: string,
   teamAPlayerIds: string[],
-  teamBPlayerIds: string[]
+  teamBPlayerIds: string[],
+  confirmDuplicate = false
 ): Promise<CreateManualMatchResult> {
   if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
   // Validate each player ID in both arrays before any DB call.
@@ -771,6 +998,85 @@ export async function createManualMatchAction(
   const missingPlayers = allPlayerIds.filter((id) => !foundPlayerIds.has(id));
   if (missingPlayers.length > 0) {
     return { success: false, message: "One or more selected players are not in this session." };
+  }
+
+  // ── Duplicate-roster soft confirm ─────────────────────────────
+  //
+  // The one production incident of "two scores for the same match" was not a
+  // concurrent double-submit — the CAS in endMatchInternal has always made that
+  // impossible on a single row. It was two SEPARATE completed rows for the same
+  // game: same four players, same session, created 10 minutes apart, both by the
+  // organizer, the second a 19-second retroactive hand-entry of a game that had
+  // already been recorded on another court. Nothing downstream can tell those
+  // apart from a genuine rematch, so the only place to catch it is here, at
+  // creation, while the organizer is still looking at the roster.
+  //
+  // Deliberately a confirm and not a block: the same four DO rematch, and a hard
+  // rule would make a legitimate game unrecordable with no way through. An
+  // organizer who means it re-sends with confirmDuplicate.
+  if (!confirmDuplicate) {
+    const windowStart = new Date(
+      Date.now() - DUPLICATE_ROSTER_WINDOW_MINUTES * 60_000
+    ).toISOString();
+
+    const { data: recentMatches } = await svc
+      .from("matches")
+      .select("id, completed_at")
+      .eq("session_id", sessionId)
+      .eq("status", "completed")
+      .gte("completed_at", windowStart);
+
+    if (recentMatches && recentMatches.length > 0) {
+      const { data: recentPlayers } = await svc
+        .from("match_players")
+        .select("match_id, player_id")
+        .in(
+          "match_id",
+          recentMatches.map((m) => m.id)
+        );
+
+      // Roster identity is the SET of participants — which side they were on is
+      // irrelevant, a rematch with the teams swapped is still the same four.
+      const rosterByMatch = new Map<string, Set<string>>();
+      for (const row of recentPlayers ?? []) {
+        const set = rosterByMatch.get(row.match_id) ?? new Set<string>();
+        set.add(row.player_id);
+        rosterByMatch.set(row.match_id, set);
+      }
+
+      const wanted = new Set(allPlayerIds);
+      const duplicate = recentMatches.find((m) => {
+        const roster = rosterByMatch.get(m.id);
+        if (!roster || roster.size !== wanted.size) return false;
+        for (const id of wanted) if (!roster.has(id)) return false;
+        return true;
+      });
+
+      if (duplicate) {
+        // The null arm is a type-level fallback, not a state that can occur:
+        // the .gte above already dropped every NULL completed_at (a comparison
+        // against NULL is never true). It stays because the column is nullable
+        // in the schema, so narrowing it away would mean asserting non-null on
+        // a value the type still says may be missing.
+        const minutesAgo = duplicate.completed_at
+          ? Math.max(
+              0,
+              Math.round((Date.now() - new Date(duplicate.completed_at).getTime()) / 60_000)
+            )
+          : null;
+        const when =
+          minutesAgo === null
+            ? "already have a completed match in this session"
+            : minutesAgo === 0
+              ? "just finished a match together"
+              : `finished a match together ${minutesAgo} minute${minutesAgo === 1 ? "" : "s"} ago`;
+        return {
+          success: false,
+          code: "duplicate_roster",
+          message: `These players ${when}. Creating this match will record a second result for the same lineup. Create it anyway?`,
+        };
+      }
+    }
   }
 
   // Compute is_mixed_level from player skill levels.

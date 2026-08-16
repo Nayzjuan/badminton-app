@@ -12,6 +12,9 @@
 //   MH-7  Realtime subscription triggers re-fetch
 //   MH-8  refresh() callable and re-fetches
 //   MH-9  Fetches both completed AND cancelled matches
+//   MH-AUTH-1  Empty result while de-authed holds the list (+ inverse pin)
+//   MH-AUTH-2  Refetches on auth recovery (SIGNED_IN)
+//   MH-ERR-1   Query failure preserves the last good history
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -21,7 +24,13 @@ import { useMatchHistory } from "@/hooks/use-match-history";
 
 // ── Mocks ─────────────────────────────────────────────────────
 
-vi.mock("@/utils/supabase/client", () => ({
+// importOriginal keeps the REAL hasAuthSession — the hook imports it from this
+// module and runs it against the mock client's auth stub below. Replacing it
+// with a vi.fn() would make the auth-loss guard vacuously true and MH-AUTH-1
+// would pass against a hook that had no guard at all. Only the client factory
+// is replaced. Same arrangement as use-queue.test.ts.
+vi.mock("@/utils/supabase/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/supabase/client")>()),
   createBrowserSupabaseClient: vi.fn(),
 }));
 
@@ -67,11 +76,42 @@ const knownProfile = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+// ── Auth stub ─────────────────────────────────────────────────
+// Every mock client needs one: the hook probes `auth.getSession` (via the real
+// hasAuthSession) before it will commit an empty result, and registers on
+// `auth.onAuthStateChange` through useAuthRecoveryRefetch. A client literal
+// without `auth` throws on mount. Defaults to a live session so the pre-guard
+// tests keep asserting the same behaviour; the MH-AUTH tests flip it to null.
+let mockAuthSession: { user: { id: string } } | null = { user: { id: "organizer-1" } };
+let authChangeCallback: ((event: string) => void) | null = null;
+
+function authStub() {
+  return {
+    getSession: () => Promise.resolve({ data: { session: mockAuthSession } }),
+    onAuthStateChange: (cb: (event: string) => void) => {
+      authChangeCallback = cb;
+      return {
+        data: {
+          subscription: {
+            unsubscribe: () => {
+              authChangeCallback = null;
+            },
+          },
+        },
+      };
+    },
+  };
+}
+
 // ── Mock client factory ────────────────────────────────────────
 
 type FromTable = "matches" | "match_players" | "profiles" | "courts";
 
-function buildMockClient(overrides: Partial<Record<FromTable, unknown>> = {}) {
+function buildMockClient(
+  overrides: Partial<Record<FromTable, unknown>> = {},
+  /** When set, the `matches` query resolves as a failure instead of data. */
+  matchesError: { message: string } | null = null
+) {
   const defaults: Record<FromTable, unknown> = {
     matches: [completedMatch],
     match_players: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }],
@@ -81,6 +121,7 @@ function buildMockClient(overrides: Partial<Record<FromTable, unknown>> = {}) {
   };
 
   return {
+    auth: authStub(),
     from: (table: string) => {
       const data = defaults[table as FromTable] ?? [];
       const chain: Record<string, unknown> = {
@@ -88,8 +129,10 @@ function buildMockClient(overrides: Partial<Record<FromTable, unknown>> = {}) {
         eq: () => chain,
         in: () => chain,
         order: () => chain,
-        then: (resolve: (v: { data: unknown; error: null }) => void) =>
-          resolve({ data, error: null }),
+        then: (resolve: (v: { data: unknown; error: { message: string } | null }) => void) =>
+          table === "matches" && matchesError
+            ? resolve({ data: null, error: matchesError })
+            : resolve({ data, error: null }),
       };
       return chain;
     },
@@ -101,6 +144,8 @@ function buildMockClient(overrides: Partial<Record<FromTable, unknown>> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(subscribeToMatches).mockReturnValue(vi.fn());
+  mockAuthSession = { user: { id: "organizer-1" } };
+  authChangeCallback = null;
 });
 
 describe("useMatchHistory", () => {
@@ -226,6 +271,7 @@ describe("useMatchHistory", () => {
       let matchFetchCount = 0;
       const match2 = { ...completedMatch, id: "match-2" };
       vi.mocked(createBrowserSupabaseClient).mockReturnValue({
+        auth: authStub(),
         from: (table: string) => {
           const chain: Record<string, unknown> = {
             select: () => chain,
@@ -280,6 +326,7 @@ describe("useMatchHistory", () => {
       let matchFetchCount = 0;
       const match2 = { ...completedMatch, id: "match-2" };
       vi.mocked(createBrowserSupabaseClient).mockReturnValue({
+        auth: authStub(),
         from: (table: string) => {
           const chain: Record<string, unknown> = {
             select: () => chain,
@@ -334,6 +381,7 @@ describe("useMatchHistory", () => {
     it("refresh() triggers a new fetch and returns updated matches", async () => {
       let callCount = 0;
       const client = {
+        auth: authStub(),
         from: (table: string) => {
           const chain: Record<string, unknown> = {
             select: () => chain,
@@ -441,6 +489,162 @@ describe("useMatchHistory", () => {
       const statuses = result.current.matches.map((m) => m.status);
       expect(statuses).toContain("completed");
       expect(statuses).toContain("cancelled");
+    });
+  });
+
+  // ── Guards on the two ways a fetch can wipe a populated panel ──
+  //
+  // Both of these emptied `matches` before the guards existed, and an emptied
+  // panel unmounts the history card an open Edit dialog is anchored to — which
+  // takes the dialog with it mid-correction. That is one of the shapes the
+  // "couldn't edit again" report can take.
+
+  describe("MH-AUTH-1: empty result while de-authed does not wipe history", () => {
+    it("holds the populated list when the session is gone and the query returns []", async () => {
+      // Phase 1 (authed): one match. Phase 2 (de-authed): the same query comes
+      // back empty — RLS filtering every row is a SUCCESS, so the error branch
+      // cannot catch it. Only the auth probe can tell the two apart.
+      let phase = 1;
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue({
+        auth: authStub(),
+        from: (table: string) => {
+          const chain: Record<string, unknown> = {
+            select: () => chain,
+            eq: () => chain,
+            in: () => chain,
+            order: () => chain,
+            then: (resolve: (v: { data: unknown; error: null }) => void) => {
+              if (table === "matches") {
+                resolve({ data: phase === 1 ? [completedMatch] : [], error: null });
+              } else if (table === "match_players") {
+                resolve({
+                  data: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }],
+                  error: null,
+                });
+              } else if (table === "profiles") {
+                resolve({ data: [knownProfile], error: null });
+              } else {
+                resolve({ data: [{ id: COURT_ID, name: "Court X" }], error: null });
+              }
+            },
+          };
+          return chain;
+        },
+      } as unknown as ReturnType<typeof createBrowserSupabaseClient>);
+
+      const { result } = renderHook(() => useMatchHistory(SESSION_ID));
+      await waitFor(() => expect(result.current.matches.length).toBe(1));
+
+      phase = 2;
+      mockAuthSession = null;
+      await act(async () => result.current.refresh());
+
+      expect(result.current.matches).toHaveLength(1);
+    });
+
+    it("still commits a genuinely empty history while authed", async () => {
+      // The inverse pin: without it, a guard that simply never clears would
+      // pass the test above. mockAuthSession stays live here.
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue(
+        buildMockClient({ matches: [] }) as unknown as ReturnType<
+          typeof createBrowserSupabaseClient
+        >
+      );
+      const { result } = renderHook(() => useMatchHistory(SESSION_ID));
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.matches).toEqual([]);
+    });
+  });
+
+  describe("MH-AUTH-2: refetches when auth recovers", () => {
+    it("re-runs the fetch on SIGNED_IN so the hold above is not a one-way door", async () => {
+      let matchFetchCount = 0;
+      const match2 = { ...completedMatch, id: "match-2" };
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue({
+        auth: authStub(),
+        from: (table: string) => {
+          const chain: Record<string, unknown> = {
+            select: () => chain,
+            eq: () => chain,
+            in: () => chain,
+            order: () => chain,
+            then: (resolve: (v: { data: unknown; error: null }) => void) => {
+              if (table === "matches") {
+                matchFetchCount++;
+                resolve({
+                  data: matchFetchCount === 1 ? [completedMatch] : [completedMatch, match2],
+                  error: null,
+                });
+              } else if (table === "match_players") {
+                resolve({
+                  data: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }],
+                  error: null,
+                });
+              } else if (table === "profiles") {
+                resolve({ data: [knownProfile], error: null });
+              } else {
+                resolve({ data: [{ id: COURT_ID, name: "Court X" }], error: null });
+              }
+            },
+          };
+          return chain;
+        },
+      } as unknown as ReturnType<typeof createBrowserSupabaseClient>);
+
+      const { result } = renderHook(() => useMatchHistory(SESSION_ID));
+      await waitFor(() => expect(result.current.matches.length).toBe(1));
+      expect(authChangeCallback).not.toBeNull();
+
+      await act(async () => {
+        authChangeCallback?.("SIGNED_IN");
+      });
+
+      await waitFor(() => expect(result.current.matches.length).toBe(2));
+    });
+  });
+
+  describe("MH-ERR-1: query failure preserves the last good history", () => {
+    it("keeps existing matches and clears loading when the matches query errors", async () => {
+      let failing = false;
+      vi.mocked(createBrowserSupabaseClient).mockReturnValue({
+        auth: authStub(),
+        from: (table: string) => {
+          const chain: Record<string, unknown> = {
+            select: () => chain,
+            eq: () => chain,
+            in: () => chain,
+            order: () => chain,
+            then: (resolve: (v: { data: unknown; error: { message: string } | null }) => void) => {
+              if (table === "matches") {
+                resolve(
+                  failing
+                    ? { data: null, error: { message: "network down" } }
+                    : { data: [completedMatch], error: null }
+                );
+              } else if (table === "match_players") {
+                resolve({
+                  data: [{ match_id: MATCH_ID, player_id: PLAYER_ID, team: "a", id: "mp-1" }],
+                  error: null,
+                });
+              } else if (table === "profiles") {
+                resolve({ data: [knownProfile], error: null });
+              } else {
+                resolve({ data: [{ id: COURT_ID, name: "Court X" }], error: null });
+              }
+            },
+          };
+          return chain;
+        },
+      } as unknown as ReturnType<typeof createBrowserSupabaseClient>);
+
+      const { result } = renderHook(() => useMatchHistory(SESSION_ID));
+      await waitFor(() => expect(result.current.matches.length).toBe(1));
+
+      failing = true;
+      await act(async () => result.current.refresh());
+
+      expect(result.current.matches).toHaveLength(1);
+      expect(result.current.loading).toBe(false);
     });
   });
 });

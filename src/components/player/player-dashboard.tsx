@@ -470,7 +470,15 @@ export function PlayerDashboard({ profile, session, hasGoogleLinked }: PlayerDas
                               : null,
                           scoreSlot:
                             currentMatch.match.status === "in_progress" ? (
+                              // key on the match id: the card holds terminal
+                              // state (submitted / settled by someone else) and
+                              // the typed scores in its own hook, none of which
+                              // is derived from matchId. Without the key, an
+                              // in_progress → in_progress transition inside one
+                              // debounce window would reuse the instance and
+                              // carry that state into a different match.
                               <ScoreInputCard
+                                key={currentMatch.match.id}
                                 matchId={currentMatch.match.id}
                                 myTeam={currentMatch.myTeam}
                               />

@@ -34,6 +34,7 @@ import { skillLevelToInt } from "@/types/database";
 import {
   ANTI_REPEAT_LOOKBACK,
   COMMITTED_MATCH_STATUSES,
+  CROSS_COURT_MAX_UNREADY_HOLDS,
   MATCH_REST_GAP_MINUTES,
   MIN_REST_MINUTES,
   OVERLAP_WEIGHT_OPPONENT,
@@ -657,10 +658,27 @@ export type PullableBody = QueueWithWaitTime & {
 // the parity window, but it would also demand two spare matches before any
 // reach — a real narrowing of a feature whose whole history is never firing —
 // to fix a case that is not established as reachable. Left as stacking control.
+//
+// ── Second bound: CROSS_COURT_MAX_UNREADY_HOLDS ──────────────
+// `feedable > held` is a RATIO, and it is pinned to the wrong quantity. feedable
+// counts pending non-held matches regardless of is_published, so in draft mode
+// every match the organizer publishes to the on-deck queue raises the ceiling by
+// one. That was harmless while the review-queue cap also counted held drafts —
+// runEngineInternal's draft-mode branch now excludes unready ones, because a
+// draft the organizer cannot publish must not occupy a review slot — but with
+// that gone, the ratio alone lets holds grow with the on-deck backlog: courts
+// busy, four matches queued, and five or six holds are authorised, parking three
+// waiting players each. So the gate now also refuses once the session already
+// has CROSS_COURT_MAX_UNREADY_HOLDS unready holds. Absolute, not a ratio.
+//
+// Only UNREADY holds count toward that ceiling. A stamped hold is publishable
+// and promotable — ordinary on-deck inventory, not a reservation — so it stays
+// on the `held` side of the ratio (it still seats nobody until promoted) but is
+// not part of the reservation budget.
 export async function hasFeedableCapacity(supabase: DbClient, sessionId: string): Promise<boolean> {
   const { data, error } = await supabase
     .from("matches")
-    .select("is_held")
+    .select("is_held, held_ready_at")
     .eq("session_id", sessionId)
     .eq("status", "pending");
 
@@ -675,6 +693,7 @@ export async function hasFeedableCapacity(supabase: DbClient, sessionId: string)
 
   let feedable = 0;
   let held = 0;
+  let unreadyHeld = 0;
   for (const row of data) {
     // ⚠️ This deliberately does NOT fail closed, unlike the error path above.
     // A reviewer read that as an inconsistency, so, precisely:
@@ -706,10 +725,16 @@ export async function hasFeedableCapacity(supabase: DbClient, sessionId: string)
     // pending match and ship cross-court dead a second time. A transient read
     // error costing one skipped reach is not the same risk as a schema condition
     // killing the feature outright. CCT-FEED-7 pins this arm.
-    if (row.is_held === true) held++;
-    else feedable++;
+    if (row.is_held === true) {
+      held++;
+      // Same predicate as isHeldAwaitingReadiness, spelled out rather than
+      // called: the NULL-is_held arm above is deliberate and load-bearing, and
+      // routing this through a helper typed `is_held: boolean` would quietly
+      // launder it. Reachable only from the true arm, so is_held is settled.
+      if (row.held_ready_at === null) unreadyHeld++;
+    } else feedable++;
   }
-  return feedable > held;
+  return feedable > held && unreadyHeld < CROSS_COURT_MAX_UNREADY_HOLDS;
 }
 
 // ─────────────────────────────────────────────────────────────

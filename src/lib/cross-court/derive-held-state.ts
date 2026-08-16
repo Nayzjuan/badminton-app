@@ -33,6 +33,41 @@ export function deriveHeldState(input: HeldStateInput): HeldState {
   return "resting";
 }
 
+/**
+ * Is this held draft still waiting on its pulled body — i.e. NOT publishable?
+ *
+ * This is the single definition of the publish rule. Every layer that has to
+ * agree on it CALLS this rather than re-spelling it; do not maintain a list of
+ * them here, it will rot — `grep -rn "isHeldAwaitingReadiness" src/` is the
+ * list. There is exactly one deliberate exception, `matchmaking-db.ts`'s
+ * unready-hold count, and it says at the call site why it spells the predicate
+ * out instead. The DB enforces the same rule independently in `publish_match` /
+ * `publish_all_drafts` — see migration
+ * `20260816000000_publish_never_touches_an_unready_held_draft`. ⚠️ The SQL
+ * spelling is NOT identical: `NOT (is_held IS TRUE AND held_ready_at IS NULL)`
+ * is the same partition in three-valued logic, not the same characters.
+ *
+ * Why `held_ready_at IS NULL` is the whole test, and not `deriveHeldState`:
+ * publishing an unready held draft is useless in BOTH of its unready states, for
+ * two different reasons, and the stamp is what distinguishes them from READY.
+ *   • HOLDING (body still on court) — `publish_match`'s conflict check counts the
+ *     body's `in_progress` match and returns CONFLICT. It cannot succeed.
+ *   • RESTING (source ended, not yet stamped) — it CAN succeed, and that is worse:
+ *     the roster flips to `on_deck` and gets an ON_DECK_WARNING push, but
+ *     `promoteOnDeckMatchInternal` filters on `held_ready_at !== null`, so the
+ *     match sits on deck un-promotable until a lifecycle event stamps it.
+ * `deriveHeldState` needs `sourceStillPlaying` to tell those two apart, which is
+ * exactly the input this predicate does not need — so it does not take it.
+ */
+export function isHeldAwaitingReadiness(input: {
+  /** matches.is_held */
+  is_held: boolean;
+  /** matches.held_ready_at */
+  held_ready_at: string | null;
+}): boolean {
+  return input.is_held === true && input.held_ready_at === null;
+}
+
 /** Organizer-facing label + sub-line for each state (font-command microcopy). */
 export const HELD_STATE_META: Record<
   Exclude<HeldState, "none">,

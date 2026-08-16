@@ -6,7 +6,8 @@
 // ============================================================
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { createBrowserSupabaseClient } from "@/utils/supabase/client";
+import { createBrowserSupabaseClient, hasAuthSession } from "@/utils/supabase/client";
+import { useAuthRecoveryRefetch } from "@/hooks/use-auth-recovery-refetch";
 import { subscribeToMatches } from "@/lib/realtime";
 import { trailingDebounce } from "@/lib/trailing-debounce";
 import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
@@ -32,29 +33,62 @@ export function useMatchHistory(sessionId: string) {
   const [matches, setMatches] = useState<CompletedMatch[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Monotonic sequence guard (CLAUDE.md: concurrent fetches MUST have one).
+  // This hook runs FOUR sequential round-trips per fetch and the debouncer below
+  // re-arms on every relevant match event, so two chains are routinely in flight
+  // at once and can land out of order — repainting pre-edit scores over a fresh
+  // result. The organizer reads that as "my correction didn't save".
+  const fetchSeq = useRef(0);
+
   const fetchHistory = useCallback(async () => {
+    const mySeq = ++fetchSeq.current;
+
     // Fetch both completed AND cancelled matches so cancellations
     // are preserved in history (with a distinct visual treatment).
-    const { data: rawMatches } = await supabase
+    const { data: rawMatches, error } = await supabase
       .from("matches")
       .select("*")
       .eq("session_id", sessionId)
       .in("status", ["completed", "cancelled"])
       .order("completed_at", { ascending: false });
 
-    if (!rawMatches || rawMatches.length === 0) {
+    if (mySeq !== fetchSeq.current) return;
+
+    if (error) {
+      // Preserve stale history. This used to fall through to setMatches([]),
+      // so any transient failure (Wi-Fi blip, 401, 5xx) emptied the panel — and
+      // emptying the panel unmounts the card an edit dialog is anchored to,
+      // taking the open dialog with it.
+      console.error("[useMatchHistory] fetchHistory error:", error.message);
+      setLoading(false);
+      return;
+    }
+
+    const rows = rawMatches ?? [];
+    if (rows.length === 0) {
+      // Empty success + no auth session = this client is running as anon and
+      // RLS filtered every row (a success, so the error branch can't catch it)
+      // — NOT an actually-empty history. Same reasoning as useQueue.
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchSeq.current) return;
+      if (!authed) {
+        console.warn("[useMatchHistory] empty history without auth — holding state");
+        return;
+      }
       setMatches([]);
       setLoading(false);
       return;
     }
 
-    const matchIds = rawMatches.map((m) => m.id);
+    const matchIds = rows.map((m) => m.id);
 
     // Fetch players for all matches.
     const { data: matchPlayers } = await supabase
       .from("match_players")
       .select("*")
       .in("match_id", matchIds);
+
+    if (mySeq !== fetchSeq.current) return;
 
     // Fetch profiles.
     const playerIds = [...new Set((matchPlayers ?? []).map((mp) => mp.player_id))];
@@ -67,15 +101,26 @@ export function useMatchHistory(sessionId: string) {
       profileMap = new Map((profiles ?? []).map((p) => [p.id, { ...p, pin: null }]));
     }
 
+    if (mySeq !== fetchSeq.current) return;
+
     // Fetch court names.
-    const courtIds = [...new Set(rawMatches.map((m) => m.court_id).filter(Boolean))] as string[];
+    const courtIds = [...new Set(rows.map((m) => m.court_id).filter(Boolean))] as string[];
     let courtMap = new Map<string, string>();
     if (courtIds.length > 0) {
       const { data: courts } = await supabase.from("courts").select("id, name").in("id", courtIds);
       courtMap = new Map((courts ?? []).map((c) => [c.id, c.name]));
     }
 
-    const enriched: CompletedMatch[] = rawMatches.map((match) => ({
+    // Last gate before the terminal write. Not the only load-bearing one — the
+    // check after the matches fetch guards the error path's setLoading(false),
+    // and the one inside the empty-rows branch guards setMatches([]); only the
+    // two after the match_players and profiles awaits are purely cost-saving.
+    // Placed AFTER the length-guarded block rather than inside it: a session
+    // with no courts to resolve skips that await entirely, and a check inside
+    // would not run.
+    if (mySeq !== fetchSeq.current) return;
+
+    const enriched: CompletedMatch[] = rows.map((match) => ({
       ...match,
       courtName: match.court_id ? (courtMap.get(match.court_id) ?? null) : null,
       players: (matchPlayers ?? [])
@@ -131,6 +176,13 @@ export function useMatchHistory(sessionId: string) {
       unsub();
     };
   }, [supabase, sessionId]);
+
+  // Without this, the hold-on-anon branch above is a one-way door: a client that
+  // fetched while de-authed keeps its stale (or empty) history until something
+  // else happens to fire a refetch. Same pairing as useQueue, useOrganizerQueue,
+  // usePlayerMatch and useSessionData, which each hold on an anon empty result
+  // and recover through this hook.
+  useAuthRecoveryRefetch(supabase, fetchHistory);
 
   // fetchHistory is already stable (useCallback with [supabase, sessionId] deps),
   // so returning it directly is equivalent to wrapping it in another useCallback.

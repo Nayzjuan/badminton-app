@@ -4,18 +4,21 @@
 // useEditMatch — state machine for the organizer score-edit dialog
 // ============================================================
 
-import { useState, useTransition } from "react";
+import { useState, useRef, useEffect, useTransition } from "react";
 import { updateMatchDetails } from "@/app/actions/match-lifecycle";
-import { DIALOG_CLOSE_DELAY_MS } from "@/lib/constants";
+import { DIALOG_CLOSE_DELAY_MS, MAX_BADMINTON_SCORE } from "@/lib/constants";
 
 export type UseEditMatchResult = {
   open: boolean;
   scoreA: string;
   scoreB: string;
+  /** Setters that also clear the feedback message — see `clearFeedback`. */
   setScoreA: (v: string) => void;
   setScoreB: (v: string) => void;
   message: string | null;
   isError: boolean;
+  /** True once a score edit in THIS dialog session has been saved. */
+  savedOnce: boolean;
   isPending: boolean;
   handleOpenChange: (next: boolean) => void;
   handleSaveScore: () => void;
@@ -35,6 +38,30 @@ export type UseEditMatchResult = {
  *   handleSaveScore — corrects the recorded scores without re-opening the match.
  *   handleRevert    — sets scores to 0/0 and returns the match to in_progress
  *                     status so players can re-submit (revertToActive=true).
+ *
+ * ⚠️ A score edit deliberately does NOT close the dialog. Correcting a score is
+ * a repeatable operation — the organizer routinely needs a second pass (swap the
+ * teams, then fix a digit) — and this dialog previously ended every successful
+ * save with a detached `setTimeout(() => setOpen(false), DIALOG_CLOSE_DELAY_MS)`.
+ * Two independent reasons that is wrong:
+ *
+ *   1. It made every repeat edit a close/reopen cycle, for an operation whose
+ *      whole point is that it repeats. Staying open costs one ✕ click and makes
+ *      the second edit a non-event.
+ *   2. The timer was untracked, so it outlived the dialog: it could fire against
+ *      a reopened dialog (slamming it shut mid-typing) and set state after
+ *      unmount.
+ *
+ * ⛔ It is NOT because a timer-driven close strands `body { pointer-events:none }`.
+ * That was an earlier hypothesis for the "then nothing responded" report and it
+ * is FALSE — checked against the installed source: @radix-ui/react-dismissable-layer
+ * restores the body from an effect *cleanup* on unmount, which runs no matter what
+ * flipped `open`, so a timer close is not special. A safety-net hook built on that
+ * hypothesis was written and then reverted. Don't re-add one without a reproduction.
+ *
+ * The revert path still auto-closes: it moves the match back onto a court, so
+ * the history card it lives in disappears from under the dialog either way. Its
+ * timer is tracked in a ref and cancelled on unmount and on every new action.
  */
 export function useEditMatch(
   matchId: string,
@@ -42,19 +69,54 @@ export function useEditMatch(
   initialScoreB: number
 ): UseEditMatchResult {
   const [open, setOpen] = useState(false);
-  const [scoreA, setScoreA] = useState(String(initialScoreA));
-  const [scoreB, setScoreB] = useState(String(initialScoreB));
+  const [scoreA, setScoreARaw] = useState(String(initialScoreA));
+  const [scoreB, setScoreBRaw] = useState(String(initialScoreB));
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
+  const [savedOnce, setSavedOnce] = useState(false);
   const [isPending, startTransition] = useTransition();
 
+  // Pending auto-close timer (revert path only). Held in a ref so it can be
+  // cancelled — an uncancelled timer fires against whatever the dialog has
+  // become by the time it lands.
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function cancelPendingClose() {
+    if (closeTimerRef.current !== null) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+  useEffect(() => cancelPendingClose, []);
+
+  // Typing invalidates the last verdict. Without this the green "Scores
+  // updated." outlives the values it was about: the dialog no longer closes
+  // itself after a save, so the organizer can retype 21→23 and be left looking
+  // at a success message next to a number that was never sent.
+  function clearFeedback() {
+    setMessage(null);
+    setIsError(false);
+  }
+  function setScoreA(v: string) {
+    clearFeedback();
+    setScoreARaw(v);
+  }
+  function setScoreB(v: string) {
+    clearFeedback();
+    setScoreBRaw(v);
+  }
+
   function handleOpenChange(next: boolean) {
+    cancelPendingClose();
     if (next) {
       // Reset to the current persisted scores each time the dialog opens,
       // discarding any partially-typed values from a previous open/close cycle.
-      setScoreA(String(initialScoreA));
-      setScoreB(String(initialScoreB));
+      // isError is reset alongside message — it used to survive the close and
+      // could paint the next open's first message red.
+      setScoreARaw(String(initialScoreA));
+      setScoreBRaw(String(initialScoreB));
       setMessage(null);
+      setIsError(false);
+      setSavedOnce(false);
     }
     setOpen(next);
   }
@@ -67,25 +129,44 @@ export function useEditMatch(
       setIsError(true);
       return;
     }
+    // Upper bound mirrors scoreSchema (@/lib/schemas/match), which the server
+    // applies to this exact call. Without it the only feedback on a typo like
+    // 211 is a round-trip; useScoreForm already bounds the submit path the same
+    // way, so the two score-entry surfaces now agree on what is enterable.
+    if (a > MAX_BADMINTON_SCORE || b > MAX_BADMINTON_SCORE) {
+      setMessage(`Enter valid scores (0–${MAX_BADMINTON_SCORE}) for both teams.`);
+      setIsError(true);
+      return;
+    }
     if (a === b) {
       setMessage("Scores cannot be equal — there must be a winning team.");
       setIsError(true);
       return;
     }
+    cancelPendingClose();
     setMessage(null);
     startTransition(async () => {
       const result = await updateMatchDetails(matchId, a, b, false);
       setMessage(result.message);
       setIsError(!result.success);
       if (result.success) {
-        // Realtime will update the history card score; close after a brief delay
-        // so the organizer can confirm the success message was shown.
-        setTimeout(() => setOpen(false), DIALOG_CLOSE_DELAY_MS);
+        // Stay open, re-seeded with what was just persisted, so the next
+        // correction is one edit away. Realtime updates the history card behind
+        // the dialog independently.
+        //
+        // Raw setters: the public setScoreA/setScoreB clear the feedback
+        // message (they exist to invalidate it on a keystroke), and these two
+        // lines run immediately after setMessage(result.message) — going
+        // through the wrappers would erase the "Scores updated." we just set.
+        setScoreARaw(String(a));
+        setScoreBRaw(String(b));
+        setSavedOnce(true);
       }
     });
   }
 
   function handleRevert() {
+    cancelPendingClose();
     startTransition(async () => {
       const result = await updateMatchDetails(matchId, 0, 0, true);
       setMessage(result.message);
@@ -93,7 +174,10 @@ export function useEditMatch(
       if (result.success) {
         // Match disappears from history via realtime once it transitions back
         // to in_progress. Close the dialog so the organizer can see the court.
-        setTimeout(() => setOpen(false), DIALOG_CLOSE_DELAY_MS);
+        closeTimerRef.current = setTimeout(() => {
+          closeTimerRef.current = null;
+          handleOpenChange(false);
+        }, DIALOG_CLOSE_DELAY_MS);
       }
     });
   }
@@ -106,6 +190,7 @@ export function useEditMatch(
     setScoreB,
     message,
     isError,
+    savedOnce,
     isPending,
     handleOpenChange,
     handleSaveScore,

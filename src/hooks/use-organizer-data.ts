@@ -19,6 +19,7 @@ import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import type { CapSaturationPayload, SessionClosedPayload } from "@/lib/broadcast";
 import type { CapPhaseSignal } from "@/hooks/use-organizer-session";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
+import type { MatchActionCode } from "@/app/actions/_shared";
 import type { SwapResult, SwapMatchPlayersResult } from "@/app/actions/swap-player";
 import type { Court, Profile, QueueFullWithWaitTime, Session } from "@/types/database";
 import { useOrganizerSession } from "@/hooks/use-organizer-session";
@@ -78,12 +79,21 @@ export interface UseOrganizerDataResult {
   // -- Matchmaking --
   callNextMatch: (courtId: string) => Promise<MatchmakingResult>;
   // -- Match actions --
-  createManualMatch: (teamA: string[], teamB: string[]) => Promise<{ error?: string }>;
+  createManualMatch: (
+    teamA: string[],
+    teamB: string[],
+    confirmDuplicate?: boolean
+  ) => Promise<{ error?: string; duplicateMessage?: string }>;
+  // `code` is re-declared here, not just in useOrganizerMatches. This facade is
+  // what organizer-dashboard actually consumes, and `{ error?: string }` alone
+  // stays assignable to the richer prop type (every extra field is optional), so
+  // dropping it here would compile while silently erasing the discriminator the
+  // "already scored / cancelled" toast is chosen from.
   endMatch: (
     matchId: string,
     teamAScore: number,
     teamBScore: number
-  ) => Promise<{ error?: string }>;
+  ) => Promise<{ error?: string; code?: MatchActionCode }>;
   cancelMatch: (matchId: string) => Promise<{ error?: string }>;
   clearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   reorderOnDeckMatches: (orderedMatchIds: string[]) => Promise<{ error?: string }>;

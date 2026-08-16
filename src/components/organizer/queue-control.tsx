@@ -77,7 +77,11 @@ interface QueueControlProps {
   queue: QueueFullWithWaitTime[];
   /** Full profiles map (from useOrganizerData) for VIP tag lookup. */
   profiles?: Map<string, Profile>;
-  onCreateManualMatch: (teamA: string[], teamB: string[]) => Promise<{ error?: string }>;
+  onCreateManualMatch: (
+    teamA: string[],
+    teamB: string[],
+    confirmDuplicate?: boolean
+  ) => Promise<{ error?: string; duplicateMessage?: string }>;
   onRemoveFromQueue: (playerId: string) => Promise<{ error?: string }>;
   onPausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
   /**
@@ -123,6 +127,14 @@ export function QueueControl({
   const [view, setView] = useState<"list" | "skill">("list");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the server softly refuses a create because these same players
+  // already have a completed match in this session. Holds the roster it asked
+  // about, so confirming re-sends exactly that.
+  const [duplicatePrompt, setDuplicatePrompt] = useState<{
+    message: string;
+    teamA: string[];
+    teamB: string[];
+  } | null>(null);
   const [joiningQueue, setJoiningQueue] = useState(false);
   const [pausingPlayers, setPausingPlayers] = useState<Set<string>>(new Set());
   const [removingPlayer, setRemovingPlayer] = useState<string | null>(null);
@@ -263,24 +275,43 @@ export function QueueControl({
     }
   }
 
-  async function handleCreateMatch() {
-    if (filled !== REQUIRED_PLAYERS) return;
-
+  async function submitCreateMatch(teamA: string[], teamB: string[], confirmDuplicate: boolean) {
     setCreating(true);
     setError(null);
 
+    const result = await onCreateManualMatch(teamA, teamB, confirmDuplicate);
+    setCreating(false);
+
+    if (result.duplicateMessage) {
+      // Soft refusal, not a failure: these four already have a completed match
+      // in this session. Carry the exact roster into the prompt rather than
+      // re-deriving from `slots` on confirm, so the create that goes through is
+      // structurally the one the organizer was asked about. Today the dialog is
+      // modal and `slots` only changes on a tap, so the two can't diverge — but
+      // that is a property of the dialog, not of this handler, and dropping
+      // `modal` would silently make "Create anyway" send a different lineup.
+      setDuplicatePrompt({ message: result.duplicateMessage, teamA, teamB });
+      return;
+    }
+    if (result.error) {
+      // Close the prompt on the confirm path too: the inline error renders
+      // behind the dialog, so leaving it open would hide the reason the
+      // confirmed create did not go through.
+      setDuplicatePrompt(null);
+      setError(result.error);
+      return;
+    }
+    setDuplicatePrompt(null);
+    setSlots(EMPTY_SLOTS);
+    setSelectionEpoch((n) => n + 1);
+  }
+
+  async function handleCreateMatch() {
+    if (filled !== REQUIRED_PLAYERS) return;
     // Teams come from the SLOTS, never from Set iteration order — the
     // preview the organizer just read is the contract.
     const { teamA, teamB } = deriveTeams(slots);
-
-    const result = await onCreateManualMatch(teamA, teamB);
-    if (result.error) {
-      setError(result.error);
-    } else {
-      setSlots(EMPTY_SLOTS);
-      setSelectionEpoch((n) => n + 1);
-    }
-    setCreating(false);
+    await submitCreateMatch(teamA, teamB, false);
   }
 
   async function handleJoinQueue() {
@@ -407,6 +438,42 @@ export function QueueControl({
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
       </div>
+
+      {/* ── Duplicate-roster confirm ─────────────────────────────
+          Controlled (no trigger): it opens from the server's soft refusal, not
+          from a control the organizer can reach. Cancel just drops the prompt
+          and leaves the selection intact so it can be corrected. */}
+      <AlertDialog
+        open={duplicatePrompt !== null}
+        onOpenChange={(next) => {
+          if (!next) setDuplicatePrompt(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Same players again?</AlertDialogTitle>
+            <AlertDialogDescription>{duplicatePrompt?.message}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={creating}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={creating}
+              className="bg-slate-900 hover:bg-slate-800 dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/90"
+              onClick={(e) => {
+                // Radix closes on Action click; keep it open until the retry
+                // resolves so the organizer is not left with a silent no-op if
+                // the create fails for some other reason.
+                e.preventDefault();
+                const pending = duplicatePrompt;
+                if (!pending) return;
+                void submitCreateMatch(pending.teamA, pending.teamB, true);
+              }}
+            >
+              {creating ? "Creating…" : "Create anyway"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <ManualMatchBar
         slots={slots}
