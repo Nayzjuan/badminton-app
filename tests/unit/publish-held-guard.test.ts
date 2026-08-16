@@ -13,7 +13,8 @@
 //     conflict probe matches 100% of the time and the organizer was told to
 //     "clear this draft and let the engine regenerate" about a draft that was
 //     merely waiting. In the 08/15 live session 10 of 12 held drafts were
-//     manually cleared on that advice.
+//     manually cleared — plausibly on that advice, but prod logs no publish
+//     attempt, so the link is read off the copy rather than traced.
 //   RESTING — the source match ended but the engine has not stamped
 //     held_ready_at yet. This one PUBLISHES, fires a premature ON_DECK_WARNING
 //     push, and then sits on deck un-promotable. Refusing it is the fix.

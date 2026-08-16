@@ -3355,9 +3355,13 @@ broken in **three** ways — §3.41's defects 1, 3 and 4; its defect 2, the draf
 generation-visibility bug found in the same session, not a publish one (all four fixed and shipped in
 PR #68 → `main` `61e942b`; see the cross-court section at the top of this file). 🪤 **`61e942b`'s body
 counts four publish-path defects where this counts three — do not "reconcile" that by reverting to
-four.** Both enumerations are four items over sets that differ by one member: the body's extra is the
-`SortableCard` Publish button that could not succeed, which §3.41 folds into the repair rather than
-numbering, and §3.41 numbers the draft-cap notice in its place. The body cannot be amended; this can.
+four.** Each enumeration holds four items, over sets that differ by one member: the body's extra is
+`SortableCard`'s Publish button, which §3.41 folds into the repair rather than numbering, and §3.41
+numbers the draft-cap notice in its place. ⚠️ The body calls that button one "that could not succeed",
+and do not repeat that unquoted — it is exact while the hold is HOLDING and **false while it RESTS**,
+where the publish *succeeds* and promotion refuses it (§3.41 defect 4; the RESTING bullet in
+`isHeldAwaitingReadiness`'s doc comment in `src/lib/cross-court/derive-held-state.ts`). The body
+cannot be amended; this can.
 ⚠️ Not "refused the rest" — that was the wording here until 2026-08-16, and it is the
 narrowed form of the same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the
 RESTING window is not refused, it *publishes* and then fails at promotion, and prod records no refusal

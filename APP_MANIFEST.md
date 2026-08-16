@@ -3887,9 +3887,8 @@ this sentence**, which learned it twice: it originally said "four" (exact for th
 time), and the 2026-08-16 "correction" to "six" was wrong for the command it printed, which carried no
 pathspec and so swept the whole tree (nine hits at the time, including the migration and two test
 files), while the six it did describe included the correction's own new line. A count that changes when
-you write it down is not a fact about the document. A squash message
-cannot be amended, so `61e942b`'s body is permanent and wrong; these documents are the correctable
-record.
+you write it down is not a fact about the document. A squash message cannot be amended, so `61e942b`'s
+body is permanent and wrong; these documents are the correctable record.
 
 ⚠️ **And do not replace the absolute with an ordering, which is what the first correction did.** It read
 "each of those two has `held_ready_at` stamped, **so** both published only after the hold had already
