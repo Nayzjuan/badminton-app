@@ -641,6 +641,9 @@ export const ON_DECK_ALERT_THRESHOLD = 4;
  */
 export const PAUSE_REMIND_MINUTES = 15;
 
+/** Max centered interrupt cards queued at once; overflow stays inbox-only. */
+export const CENTER_ALERT_CAP = 5;
+
 // ── Organizer dashboard layout ────────────────────────────────────────────────
 
 /** px size of the background grid overlay on the organizer dashboard. */

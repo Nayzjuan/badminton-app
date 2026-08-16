@@ -5,14 +5,16 @@
 // and the unit tests share one definition of "15 / 30 / 45 minutes".
 
 import { PAUSE_REMIND_MINUTES } from "@/lib/constants";
+import type { SessionNotification, SessionNotificationKind } from "@/types/database";
 
-export type OrganizerAlertKind = "player_left" | "player_paused_long";
+export type OrganizerAlertKind = SessionNotificationKind;
 
 export type OrganizerAlert = {
   id: string;
   kind: OrganizerAlertKind;
   title: string;
   body: string;
+  notification?: SessionNotification;
 };
 
 export type PauseBadgeTone = "muted" | "amber" | "red";
@@ -79,6 +81,17 @@ export function leaveAlert(
       ? "An unpublished draft they were in was cancelled."
       : "They are no longer waiting to be matched.",
   };
+}
+
+export function parsePauseAlertId(id: string): { playerId: string; bucket: number } | null {
+  if (!id.startsWith("pause:")) return null;
+  const rest = id.slice("pause:".length);
+  const lastColon = rest.lastIndexOf(":");
+  if (lastColon <= 0) return null;
+  const playerId = rest.slice(0, lastColon);
+  const bucket = Number(rest.slice(lastColon + 1));
+  if (!playerId || !Number.isInteger(bucket) || bucket < 1) return null;
+  return { playerId, bucket };
 }
 
 export function pauseAlert(playerName: string, bucket: number, playerId: string): OrganizerAlert {

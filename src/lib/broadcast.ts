@@ -371,7 +371,11 @@ export async function broadcastDraftCapPhase(
 
 // ── queue_notice ──────────────────────────────────────────
 
-export type QueueNoticeKind = "player_left";
+export type QueueNoticeKind =
+  | "player_left"
+  | "player_checked_out"
+  | "player_paused_long"
+  | "score_correction";
 
 export interface QueueNoticePayload {
   kind: QueueNoticeKind;
@@ -380,11 +384,18 @@ export interface QueueNoticePayload {
   cancelledDraft: boolean;
   /**
    * Set only on an organizer kick. The actor's own dashboard suppresses
-   * the card (they just confirmed the dialog). Self-leave omits this so
-   * every organizer with Match Control open sees the notice.
+   * the center card (they just confirmed the dialog). Self-leave omits this.
+   * Do not use this to suppress score-correction or pause cards.
    */
   actorId?: string | null;
   actorName?: string | null;
+  /** Full inbox row when the insert succeeded. Clients upsert by id. */
+  notification?: import("@/types/database").SessionNotification | null;
+  bucket?: number;
+  interrupt?: boolean;
+  matchId?: string;
+  proposedScoreA?: number;
+  proposedScoreB?: number;
 }
 
 /**

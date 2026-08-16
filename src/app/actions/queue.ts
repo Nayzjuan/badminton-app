@@ -36,7 +36,8 @@ import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { broadcastOrganizerIntervention, broadcastQueueNotice } from "@/lib/broadcast";
+import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { emitOrganizerNotice } from "@/lib/session-notice-write";
 import { isValidUUID } from "@/lib/validate";
 import { isSessionOrganizer, isSessionActive, getActorContext } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
@@ -339,11 +340,15 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
   const didLeave = currentEntry != null && currentEntry.status !== "left";
   if (didLeave) {
     const leaver = await getActorContext(user.id);
-    await broadcastQueueNotice(sessionId, {
+    await emitOrganizerNotice({
+      sessionId,
       kind: "player_left",
-      playerId: user.id,
-      playerName: leaver.name ?? "A player",
-      cancelledDraft: cancelledMatchIds.length > 0,
+      subjectPlayerId: user.id,
+      payload: {
+        playerName: leaver.name ?? "A player",
+        cancelledDraft: cancelledMatchIds.length > 0,
+        interrupt: true,
+      },
     });
   }
 
@@ -600,11 +605,16 @@ export async function removePlayerFromQueue(
       getActorContext(user.id),
       getActorContext(playerId),
     ]);
-    await broadcastQueueNotice(sessionId, {
-      kind: "player_left",
-      playerId,
-      playerName: target.name ?? "A player",
-      cancelledDraft,
+    await emitOrganizerNotice({
+      sessionId,
+      kind: "player_checked_out",
+      subjectPlayerId: playerId,
+      payload: {
+        playerName: target.name ?? "A player",
+        cancelledDraft,
+        actorName: actor.name,
+        interrupt: true,
+      },
       actorId: actor.id,
       actorName: actor.name,
     });
@@ -639,11 +649,16 @@ export async function removePlayerFromQueue(
     )
   );
   const [actor, target] = await Promise.all([getActorContext(user.id), getActorContext(playerId)]);
-  await broadcastQueueNotice(sessionId, {
-    kind: "player_left",
-    playerId,
-    playerName: target.name ?? "A player",
-    cancelledDraft: false,
+  await emitOrganizerNotice({
+    sessionId,
+    kind: "player_checked_out",
+    subjectPlayerId: playerId,
+    payload: {
+      playerName: target.name ?? "A player",
+      cancelledDraft: false,
+      actorName: actor.name,
+      interrupt: true,
+    },
     actorId: actor.id,
     actorName: actor.name,
   });

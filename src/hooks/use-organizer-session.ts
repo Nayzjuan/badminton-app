@@ -333,10 +333,19 @@ export function useOrganizerSession(
         setCapSaturation(payload);
       },
       onQueueNotice: (payload: QueueNoticePayload) => {
-        // Organizer kick attaches actorId so the acting dashboard (the one
-        // that confirmed the dialog) does not also flash the leave card.
-        // Self-leave omits actorId — every open Match Control sees it.
-        if (payload.actorId && payload.actorId === currentUserIdRef.current) return;
+        // Only an organizer kick suppresses the acting dashboard's center
+        // card. Score-correction / pause attach other actor ids and must
+        // still interrupt. The inbox row is upserted either way.
+        if (
+          payload.kind === "player_checked_out" &&
+          payload.actorId &&
+          payload.actorId === currentUserIdRef.current
+        ) {
+          if (payload.notification) {
+            closeHooksRef.current?.onQueueNotice?.({ ...payload, interrupt: false });
+          }
+          return;
+        }
         closeHooksRef.current?.onQueueNotice?.(payload);
       },
       onDraftCapPhaseChanged: (payload: DraftCapPhasePayload) => {
