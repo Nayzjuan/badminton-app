@@ -274,7 +274,7 @@ describe("togglePlayerPause — Suite P", () => {
       .single();
 
     expect(entry?.is_paused).toBe(true);
-    // Status must remain 'playing' — togglePlayerPause only touches is_paused
+    // Status must remain 'playing' — togglePlayerPause only stamps is_paused / paused_at
     expect(entry?.status).toBe("playing");
   });
 

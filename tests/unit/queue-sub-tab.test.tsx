@@ -83,6 +83,7 @@ function makeEntry(status: QueueEntry["status"], isPaused = false): QueueEntry {
     joined_at: new Date(Date.now() - 10 * 60_000).toISOString(),
     position: 1,
     is_paused: isPaused,
+    paused_at: null,
     created_at: new Date().toISOString(),
   };
 }
@@ -313,6 +314,7 @@ describe("QueueSubTab — Component Smoke Tests", () => {
       joined_at: new Date(Date.now() - 3 * 60_000).toISOString(),
       position: 5,
       is_paused: false,
+      paused_at: null,
       created_at: new Date().toISOString(),
     };
 

@@ -187,6 +187,7 @@ function makePlayer(id: string, skillInt = 3, waitMinutes = 5, gamesPlayed = 1):
     status: "waiting",
     position: null,
     is_paused: false,
+    paused_at: null,
     created_at: new Date().toISOString(),
     display_name: `Player-${id}`,
     skill_level: "intermediate",

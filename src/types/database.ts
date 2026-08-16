@@ -217,6 +217,8 @@ export type QueueEntry = {
   position: number | null;
   /** Soft-pause: player stays visible but is excluded from matchmaking. */
   is_paused: boolean;
+  /** When the organizer paused this row. Null when not paused. */
+  paused_at: string | null;
   created_at: string;
 };
 
@@ -323,7 +325,8 @@ export type QueueWithWaitTime = QueueEntry & {
 
 /** v_queue_full_with_wait_time view — organizer/player display layer.
  *  Includes waiting + drafted + on_deck rows (excludes playing/left).
- *  Adds status_priority for sort: on_deck=0, drafted=1, waiting=2. */
+ *  Adds status_priority for sort: on_deck=0, drafted=1, waiting=2.
+ *  `paused_at` is a trailing view column (migration 20260817000000). */
 export type QueueFullWithWaitTime = QueueWithWaitTime & {
   status_priority: number;
 };
@@ -418,7 +421,10 @@ export type QueueEntryInsert = Pick<QueueEntry, "session_id" | "player_id"> &
   Partial<Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position">>;
 
 export type QueueEntryUpdate = Partial<
-  Pick<QueueEntry, "status" | "joined_at" | "games_played" | "position" | "player_id" | "is_paused">
+  Pick<
+    QueueEntry,
+    "status" | "joined_at" | "games_played" | "position" | "player_id" | "is_paused" | "paused_at"
+  >
 >;
 
 export type MatchInsert = Pick<Match, "session_id"> &

@@ -28,6 +28,7 @@ import type {
   DraftCapPhasePayload,
   OrganizerInterventionPayload,
   SessionClosedPayload,
+  QueueNoticePayload,
 } from "@/lib/broadcast";
 import type { Session } from "@/types/database";
 
@@ -136,6 +137,7 @@ export function useOrganizerSession(
   closeHooks?: {
     onSessionClosed?: (payload: SessionClosedPayload) => void;
     onBroadcastStatus?: () => void;
+    onQueueNotice?: (payload: QueueNoticePayload) => void;
   }
 ): {
   liveSession: Session;
@@ -329,6 +331,13 @@ export function useOrganizerSession(
       },
       onCapSaturation: (payload: CapSaturationPayload) => {
         setCapSaturation(payload);
+      },
+      onQueueNotice: (payload: QueueNoticePayload) => {
+        // Organizer kick attaches actorId so the acting dashboard (the one
+        // that confirmed the dialog) does not also flash the leave card.
+        // Self-leave omits actorId — every open Match Control sees it.
+        if (payload.actorId && payload.actorId === currentUserIdRef.current) return;
+        closeHooksRef.current?.onQueueNotice?.(payload);
       },
       onDraftCapPhaseChanged: (payload: DraftCapPhasePayload) => {
         const phase = payload?.phase;

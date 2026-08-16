@@ -45,6 +45,7 @@ vi.mock("@/lib/broadcast", () => ({
   broadcastAutoMatchmakingToggled: vi.fn(),
   broadcastAutoPublishToggled: vi.fn(),
   broadcastDraftCapPhase: vi.fn(),
+  broadcastQueueNotice: vi.fn().mockResolvedValue(undefined),
 }));
 // next/headers throws outside a request scope; return a header bag with no IP.
 vi.mock("next/headers", () => ({

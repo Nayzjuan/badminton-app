@@ -143,6 +143,7 @@ export function replaySession(fixture: SessionFixture): ReplayResult {
       status: "waiting",
       position: null,
       is_paused: false,
+      paused_at: null,
       created_at: joinedAt,
       display_name: p.display_name,
       skill_level: p.skill_level,

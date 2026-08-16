@@ -37,6 +37,7 @@ import { PLAYERS_PER_MATCH } from "@/lib/constants";
 import { VipTag } from "@/components/ui/vip-tag";
 import { SKILL_LEVELS } from "@/types/database";
 import { QueueSkillGroups } from "@/components/organizer/queue-skill-groups";
+import { PausedBadge } from "@/components/organizer/paused-badge";
 import { ManualMatchBar } from "@/components/organizer/manual-match-bar";
 import { RepeatPairDetails } from "@/components/organizer/repeat-pair-details";
 import {
@@ -787,15 +788,7 @@ export function QueueControl({
                                   Drafted
                                 </span>
                               )}
-                              {isPaused && (
-                                <span
-                                  className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
-                                         text-[10px] font-bold uppercase tracking-wide
-                                         text-slate-500 dark:text-slate-400"
-                                >
-                                  Paused
-                                </span>
-                              )}
+                              {isPaused && <PausedBadge pausedAt={entry.paused_at} />}
                             </span>
                           </td>
                           {/* Skill — editable dropdown */}

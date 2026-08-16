@@ -680,6 +680,7 @@ export async function reconnectPlayer(
             status: "waiting" as const,
             joined_at: new Date().toISOString(),
             is_paused: false,
+            paused_at: null,
           })
           .eq("id", queueEntry.id);
       } else if (
