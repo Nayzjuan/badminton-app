@@ -1655,17 +1655,22 @@ expect(recomputeHeldReadiness).toHaveBeenCalledWith(db, SESSION_ID);
 // beforeEach(() => vi.clearAllMocks()); // mandatory in the NEW lifecycle suite
 ```
 
-### P2 · `QA-TRG-13` — Add a cancelMatchAction GHOST/leaver-equivalent note — cancel does NOT re-queue per-player
+### 🚫 P2 · `QA-TRG-13` — **SUPERSEDED 2026-08-16 (was: "cancel does NOT re-queue per-player").** It described a bug as a design decision and proposed a test that would go green on the bug
 
-**Kind:** add case  ·  **Targets:** `NEW`
+**Kind:** ~~add case~~ retracted · **Targets:** `NEW`
 
-cancelMatchAction returns players via a SINGLE bulk `.update({status:'waiting'}).in('player_id', playerIds).neq('status','left')` (line 521) — there is NO per-player loop and NO 'drafted' reservation on cancel. The cluster's GHOST cases are all keyed to endMatchAction only, which is correct, but the catalog never states that cancel intentionally has NO R3-1 'drafted' path (a cancelled match's pulled body was never finishing-for-a-held-draft in the same way). Add a one-line guard case or explicit note so a future implementer doesn't mistakenly port the 'drafted' logic into cancelMatchAction's bulk update. If a held draft DID name a player on a cancelled match, recompute (which fires before engine) is the mechanism that reconciles it — assert cancel's bulk update writes only 'waiting'.
+> **Do not implement `CC-TRG-CAN-03` as written below.** Its assertion (`expect(bulk[0].status).not.toBe("drafted")`) is now FALSE by design: `cancelMatchAction` re-reserves a pulled body as `'drafted'`, and the case it forbids is pinned in the opposite direction by `CC-CAN-HELD-01` (`tests/integration/cross-court-realdb.test.ts`). The entry is kept, not deleted, so a reader who remembers it finds the retraction instead of re-deriving it.
+
+**The false premise.** The original entry hedged its own instruction with an escape hatch — _"If a held draft DID name a player on a cancelled match, recompute (which fires before engine) is the mechanism that reconciles it"_. `recomputeHeldReadiness` (`src/app/actions/matchmaking.ts`) **has no path that writes `'drafted'`**, so it cannot restore a reservation. It stamps `held_ready_at`, downgrades a hold whose body left the roster, and clears one via `clear_on_deck_match_atomic`; the only `queue_entries` writes anywhere under it are that RPC's `→ 'waiting'` and `auto_publish_match`'s `→ 'on_deck'`, neither of which can turn a wrongly-`'waiting'` body back into a `'drafted'` one. And at the readiness step it treats a **cancelled** source exactly like a completed one (`freed = status === "completed" || status === "cancelled"`), so the hold it was supposed to reconcile is precisely the hold that SURVIVES the cancel with its seat leaked. The claim that "a cancelled match's pulled body was never finishing-for-a-held-draft in the same way" was the asymmetry, not the justification for it.
+
+**What is true now.** `cancelMatchAction`'s restore is a three-way partition (`partitionCancelRestore`, `src/lib/cancel-restore.ts`), still bulk, still no per-player loop — that part of the original entry was right and stays right:
 
 ```ts
-// CC-TRG-CAN-03: cancel re-queues all non-left members to 'waiting' in ONE bulk update (no 'drafted')
-const bulk = updateSpy.mock.calls.find(([p]) => p && p.status);
-expect(bulk[0]).toMatchObject({ status: "waiting" });
-expect(bulk[0].status).not.toBe("drafted");
+// CC-CAN-HELD-01 (integration): cancelling the SOURCE match of a live hold
+expect(await queueStatusOf(session.id, body.id)).toBe("drafted"); // the pulled body keeps its seat
+for (const id of others) expect(await queueStatusOf(session.id, id)).toBe("waiting"); // the other three
+// CC-CAN-HELD-02: cancelling the HOLD itself leaves a mid-game body alone
+expect(await queueStatusOf(session.id, body.id)).toBe("playing"); // never written at all
 ```
 
 ## 5. RPC / DB Guards — CC-RPC-* (executeHeldMatch unit + create_held_cross_court_match integration/manual)

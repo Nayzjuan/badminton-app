@@ -25,6 +25,22 @@ import {
 } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
 import { logMatchEvent } from "@/lib/match-event-log";
+import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
+
+/**
+ * Copy for publish_match's HELD_NOT_READY code (migration 20260816000000) and
+ * for the JS fallback that mirrors it. Kept in one place so the two paths can't
+ * drift into telling the organizer two different things about the same state.
+ *
+ * Deliberately not phrased as a failure: nothing is wrong with the draft. Its
+ * fourth player is still finishing a game on another court, and the engine
+ * stamps held_ready_at on its own once that game ends. Contrast HAS_LEFT_PLAYERS
+ * and CONFLICT, which both end in "clear and regenerate" because those drafts
+ * can never publish. This one can — just not yet — so the only instruction is
+ * the opt-out.
+ */
+const HELD_NOT_READY_MESSAGE =
+  "Not ready yet — this cross-court draft is waiting on a player who's still on court. It unlocks by itself when that game ends; clear it if you'd rather not wait.";
 
 /**
  * Roster snapshot for audit payloads — [{ team, player_id, player_name }],
@@ -466,6 +482,8 @@ export async function publishMatchAction(
     case "ALREADY_PUBLISHED":
       // Already on-deck — no slot was newly vacated, no engine trigger needed.
       return { success: true, message: "Already published." };
+    case "HELD_NOT_READY":
+      return { success: false, message: HELD_NOT_READY_MESSAGE };
     case "HAS_LEFT_PLAYERS":
       return {
         success: false,
@@ -491,7 +509,7 @@ async function publishMatchFallback(
 ): Promise<{ success: boolean; message: string }> {
   const { data: match } = await svc
     .from("matches")
-    .select("session_id, status, is_published")
+    .select("session_id, status, is_published, is_held, held_ready_at")
     .eq("id", matchId)
     .single();
 
@@ -499,6 +517,14 @@ async function publishMatchFallback(
   if (match.status !== "pending")
     return { success: false, message: "Only pending (on-deck) matches can be published." };
   if (match.is_published) return { success: true, message: "Already published." };
+
+  // Mirrors publish_match's HELD_NOT_READY guard, and for the same reason it
+  // sits ahead of the left/conflict checks below: the held draft's fourth player
+  // is on court, so the conflict query is guaranteed to match and would report a
+  // waiting draft as a broken one.
+  if (isHeldAwaitingReadiness(match)) {
+    return { success: false, message: HELD_NOT_READY_MESSAGE };
+  }
 
   const { data: matchPlayerRows } = await svc
     .from("match_players")
@@ -600,13 +626,20 @@ export async function publishAllDraftMatchesAction(
 
   // Snapshot which matches are drafts right now, so after the bulk publish we
   // can ping exactly the players who transitioned drafted → on_deck.
+  //
+  // Unready held drafts are dropped from the snapshot to match publish_all_drafts,
+  // which excludes them from its candidate set. They are the one draft the RPC
+  // will not touch, so including them here would only widen the "did this one
+  // flip to is_published?" re-read below onto rows that cannot have flipped.
   const { data: draftMatches } = await svc
     .from("matches")
-    .select("id")
+    .select("id, is_held, held_ready_at")
     .eq("session_id", sessionId)
     .eq("status", "pending")
     .eq("is_published", false);
-  const draftMatchIds = (draftMatches ?? []).map((m) => m.id);
+  const draftMatchIds = (draftMatches ?? [])
+    .filter((m) => !isHeldAwaitingReadiness(m))
+    .map((m) => m.id);
 
   const { data: result, error: rpcError } = await svc.rpc("publish_all_drafts", {
     p_session_id: sessionId,
@@ -628,14 +661,25 @@ export async function publishAllDraftMatchesAction(
   const publishedCount = result.published_count ?? 0;
   const skippedCount = result.skipped_count ?? 0;
 
+  // A skip is now a roster problem the organizer has to clear. It used to read
+  // "(left players)" unconditionally, which was wrong for every held draft: those
+  // were skipped as CONFLICTs because their fourth player was mid-game, and
+  // "clear and regenerate" was exactly the wrong advice. Held drafts are no longer
+  // candidates at all (see migration 20260816000000), so the causes an organizer
+  // can act on are a departed player and a genuine double-booking — both of which
+  // do want a clear. The RPC has a third skip arm (the row stopped being a pending
+  // unpublished draft between the candidate snapshot and the FOR UPDATE), but that
+  // is a concurrency race resolved by someone else's action, not a state the
+  // organizer has to fix; it is rare enough to leave under the same copy rather
+  // than widen the message for it.
   const skippedMsg =
     skippedCount > 0
-      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
+      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped — a player left or is already in another match. Clear and regenerate.`
       : "";
 
   // On-deck ping: of the snapshot drafts, the ones now is_published=true were
-  // actually published (skipped left-player drafts stay false). Notify their
-  // rosters that they're on deck.
+  // actually published (skipped drafts stay false). Notify their rosters that
+  // they're on deck.
   if (publishedCount > 0 && draftMatchIds.length > 0) {
     const { data: publishedMatches } = await svc
       .from("matches")
@@ -678,22 +722,30 @@ async function publishAllDraftsFallback(
 ): Promise<{ success: boolean; message: string; publishedCount?: number; skippedCount?: number }> {
   const { data: draftMatches, error: draftErr } = await svc
     .from("matches")
-    .select("id")
+    .select("id, is_held, held_ready_at")
     .eq("session_id", sessionId)
     .eq("status", "pending")
     .eq("is_published", false);
 
   if (draftErr) return { success: false, message: draftErr.message };
 
+  // Two lists, deliberately. allDraftIds keeps EVERY draft, because it is the
+  // exclusion set for the conflict probe further down — narrowing it would turn
+  // held drafts into "other active matches" and let them taint their neighbours.
+  // candidateIds is what we actually try to publish, and unready held drafts are
+  // not candidates (mirrors publish_all_drafts' v_all_draft_ids predicate).
   const allDraftIds = (draftMatches ?? []).map((m) => m.id);
-  if (allDraftIds.length === 0) {
+  const candidateIds = (draftMatches ?? [])
+    .filter((m) => !isHeldAwaitingReadiness(m))
+    .map((m) => m.id);
+  if (candidateIds.length === 0) {
     return { success: true, message: "No drafts to publish.", publishedCount: 0 };
   }
 
   const { data: matchPlayerRows } = await svc
     .from("match_players")
     .select("match_id, player_id")
-    .in("match_id", allDraftIds);
+    .in("match_id", candidateIds);
 
   const allPlayerIds = [...new Set((matchPlayerRows ?? []).map((r) => r.player_id))];
 
@@ -714,7 +766,7 @@ async function publishAllDraftsFallback(
     }
   }
 
-  const allPublishableBeforeConflict = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
+  const allPublishableBeforeConflict = candidateIds.filter((id) => !taintedMatchIdSet.has(id));
   if (allPublishableBeforeConflict.length > 0) {
     const { data: otherActiveMatches } = await svc
       .from("matches")
@@ -748,13 +800,15 @@ async function publishAllDraftsFallback(
     }
   }
 
-  const publishableIds = allDraftIds.filter((id) => !taintedMatchIdSet.has(id));
+  const publishableIds = candidateIds.filter((id) => !taintedMatchIdSet.has(id));
   const skippedCount = taintedMatchIdSet.size;
 
   if (publishableIds.length === 0) {
     return {
       success: false,
-      message: `All ${allDraftIds.length} draft match${allDraftIds.length !== 1 ? "es have" : " has"} players who left — clear them and let the engine regenerate.`,
+      // Counts candidates, not all drafts: an unready held draft was never
+      // attempted, so it is not one of the matches that "can't publish".
+      message: `All ${candidateIds.length} draft match${candidateIds.length !== 1 ? "es have" : " has"} a player who left or is already in another match — clear them and let the engine regenerate.`,
       publishedCount: 0,
       skippedCount,
     };
@@ -794,9 +848,10 @@ async function publishAllDraftsFallback(
     }
   }
 
+  // Same wording as the RPC path — see the note there.
   const skippedMsg =
     skippedCount > 0
-      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped (left players — clear and regenerate).`
+      ? ` ${skippedCount} draft${skippedCount !== 1 ? "s" : ""} skipped — a player left or is already in another match. Clear and regenerate.`
       : "";
 
   // Engine hook: refill the review queue after publishing.

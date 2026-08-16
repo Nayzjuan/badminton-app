@@ -174,7 +174,14 @@ describe("Score Submission Cascade — Suite F", () => {
     const failures = results.filter((r) => !r.success);
     expect(successes.length).toBe(1);
     expect(failures.length).toBe(1);
-    expect(failures[0].message).toMatch(/already completed/i);
+
+    // Assert on `code`, not on the copy. This is a genuine race, so the loser
+    // may land on either of two branches — the status pre-check, or the CAS
+    // itself — and they word it differently for the user ("Match is already
+    // completed." vs "This match was already scored by someone else."). Both
+    // report `already_scored`, which is the contract the UI actually consumes
+    // to transition the loser out instead of stranding them on the form.
+    expect(failures[0].code).toBe("already_scored");
   });
 
   // ── Test 5: submitMatchScore — player submits their own score
@@ -300,6 +307,16 @@ describe("Score Submission Cascade — Suite F", () => {
         players.map((p) => p.id)
       );
 
+    const { data: before } = await serviceClient()
+      .from("queue_entries")
+      .select("player_id, joined_at")
+      .eq("session_id", session.id)
+      .in(
+        "player_id",
+        players.map((p) => p.id)
+      );
+    const joinedAtBefore = new Map((before ?? []).map((e) => [e.player_id, e.joined_at]));
+
     const restore = mockAuthAs(organizer.id);
     try {
       const result = await cancelMatchAction(match.id);
@@ -310,7 +327,7 @@ describe("Score Submission Cascade — Suite F", () => {
 
     const { data: entries } = await serviceClient()
       .from("queue_entries")
-      .select("player_id, status, games_played")
+      .select("player_id, status, games_played, joined_at")
       .eq("session_id", session.id)
       .in(
         "player_id",
@@ -321,6 +338,14 @@ describe("Score Submission Cascade — Suite F", () => {
     for (const e of entries ?? []) {
       expect(e.status).toBe("waiting");
       expect(e.games_played).toBe(7); // ← unchanged. endMatchAction would set 8.
+      // joined_at is the OTHER column requeue_finished_players rewrites
+      // (`joined_at = now()`), and the reason that RPC cannot be reused on the
+      // cancel path even though its p_drafted_ids argument looks like exactly
+      // what the held re-reservation needs. Restamping it would cost every
+      // cancelled player their place in the queue: wait_minutes resets to 0 and
+      // they sort to the back of fetchActivePool. Cancel must write `status` and
+      // nothing else.
+      expect(e.joined_at).toBe(joinedAtBefore.get(e.player_id));
     }
   });
 

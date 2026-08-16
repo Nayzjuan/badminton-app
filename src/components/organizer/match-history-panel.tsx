@@ -38,7 +38,7 @@ interface MatchHistoryPanelProps {
 }
 
 export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
-  const { matches, loading } = useMatchHistory(sessionId);
+  const { matches, loading, refresh } = useMatchHistory(sessionId);
 
   // Pinned selection object — name captured at select time so the chip stays
   // correct even if the player later vanishes from playerOptions (identity merge,
@@ -379,7 +379,14 @@ export function MatchHistoryPanel({ sessionId }: MatchHistoryPanelProps) {
                     initialScoreA={match.team_a_score ?? 0}
                     initialScoreB={match.team_b_score ?? 0}
                   />
-                  <FixRecordSheet match={match} sessionId={sessionId} onCorrected={() => {}} />
+                  {/* onCorrected refetches. `fix_record_swap_player` rewrites
+                      `match_players`, which this panel never subscribes to — it
+                      listens on `matches` only. It repaints today solely because
+                      that RPC also recomputes `matches.is_mixed_level` as a side
+                      effect, which happens to fire the subscription. That is an
+                      incidental dependency on an unrelated column, not a
+                      guarantee; refetch explicitly instead. */}
+                  <FixRecordSheet match={match} sessionId={sessionId} onCorrected={refresh} />
                 </div>
               </div>
 

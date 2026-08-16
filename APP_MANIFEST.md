@@ -614,7 +614,7 @@ When the four the waiting pool can form is **stale** — someone would face a pl
 - **Diversity is judged on the OUTER lookback.** The inner `runAlgorithm` calls each see a pool of exactly 4, and `getEffectiveLookback(4)` is **2** — far shorter than the 4–7 the real waiting pool earns. Left alone the reach would enforce a *weaker* anti-repeat rule than the plain draft it replaces, which is backwards for a freshness feature. `buildCrossCourtProposal` therefore re-takes the `isDiversityViolation` / `isRejectedRoster` verdict itself, against `recentRosters.slice(0, getEffectiveLookback(pool.length))`. That key is never *looser* than the outer engine's: `runAlgorithm` keys on `eligible.length + 1`, where `eligible` is the pool minus the anchor, minus everyone outside the skill window, minus everyone partner-capped — so `eligible.length + 1 ≤ pool.length` always, and `getEffectiveLookback` is monotonically non-decreasing. The reach may refuse a four the plain draft would have taken; it can never wave through one the plain draft would have rejected.
 - **The anchor is never held while urgent** (`anchorBlocksReach`). Dropping `i > 0` changed who the anchor is — it was the 5th-highest-priority waiter, it is now the **highest-priority** one. A held draft marks its 3 waiting members `drafted`, removing them from `fetchActivePool`, so the Red-Zone and Hard-Wait escalations can no longer reach them. The guard refuses the reach when the anchor is in the Red Zone **or** within `CROSS_COURT_REST_FALLBACK_MINUTES` of `CRITICAL_WAIT_MINUTES` (≥17 min). ⚠️ **This covers the anchor only** — see the sorting note above; clearing `pool[0]` does *not* clear the two seated waiters.
   - **Hold-age cancel** (`heldDraftExpired` + `CROSS_COURT_MAX_HOLD_MINUTES = 15`, enforced in `recomputeHeldReadiness`): if a held draft is still waiting on its source court after 15 minutes, it is cancelled via `clear_on_deck_match_atomic` and all three parked players re-enter the pool.
-    - ⚠️ **Best-effort, evaluated on an event — not a timer.** `recomputeHeldReadiness` is never invoked from the engine loop; its only callers are in `match-lifecycle.ts`, when a match ends or is cancelled. Both sit inside `if (match.court_id)`, so a match with no court does not even count as attention. Until one of those two events fires on a court, a hold outlives the cap indefinitely. Benign in practice (a court freeing is the same event that makes a hold resolvable at all), but the constant is an upper bound on *attention*, not on elapsed time. Do not quote it as a hard bound or as a Red-Zone guarantee.
+    - ⚠️ **Best-effort, evaluated on an event — not a timer.** `recomputeHeldReadiness` has three callers: the two in `match-lifecycle.ts` (a match ending or being cancelled, both inside `if (match.court_id)`, so a match with no court does not even count as attention) and the **held-draft heartbeat** in `runEngineInternal`, added 2026-08-16. The engine one is much the denser — queue joins, publishes and clears all reach it — but it sits below the `courtCount` early-return and inside the `is_auto_matchmaking_on` gate, and it is itself gated on `pendingRows.some(isHeldAwaitingReadiness)` so a session with no live hold pays nothing for it. On a quiet session, or one with the engine off or every court closed, a hold still outlives the cap indefinitely. The constant is an upper bound on *attention*, not on elapsed time — widened by the heartbeat, not removed. Do not quote it as a hard bound or as a Red-Zone guarantee. ⚠️ This bullet asserted "never invoked from the engine loop; its only callers are in `match-lifecycle.ts`" until 2026-08-16 — the sentence outlived the code by one commit, which is §3.34's defect class exactly. Re-derive the caller list from `grep -rn "recomputeHeldReadiness" src/`, do not paraphrase this one.
     - ⚠️ **This required a migration** (`20260812000000_clear_on_deck_never_unseats_a_playing_body`). The hold-age cancel is the first *routine* caller of `clear_on_deck_match_atomic` on a draft whose pulled body is **still mid-game**, and step 5 of that RPC restored the whole roster to `waiting` under only a `status != 'left'` guard — flipping a player who is physically on court. Exactly the hazard `20260624000000` had already fixed for the *bulk* clear. Symptom if unfixed: the body reads `wait_minutes ≈ 15–20` with `joined_at` untouched, sorts near the top of `fetchActivePool`, and every subsequent engine tick composes a four containing them → `create_match_with_players` Guard 2 sees their `in_progress` match → NULL → the slot loop breaks → **zero matches produced until their real game ends**, while they appear in the queue and on a court simultaneously. The fix tests *physical* truth rather than the status string — `NOT EXISTS (an in_progress match for this player in this session)` — which leaves ordinary drafts and the R3-B purged-source path behaving exactly as before. Leaving the body `playing` is not a leak: once the draft row is gone, `endMatchAction`'s R3-1 overlap query finds nothing and `requeue_finished_players` returns them to `waiting` normally, *with* the `games_played` increment and `joined_at` stamp the flip would have skipped. Covered by integration `J-1`/`J-1b`/`J-2`/`J-3` — not unit-testable, since `heldDraftExpired` returns the same boolean either way and the whole defect is in the SQL. (`J-1b` is the complementary permutation: the same held shape but with the source match already `completed`, where **all four** must restore — it pins that the guard tests *physical* truth and not "is this a held draft", which a guard keyed on `is_held` or `pulled_player_ids` would have got wrong by stranding the freed body.) **Applied to prod 2026-08-12** under stamp `20260812092029` (stamps differ from repo filenames here — migrations are applied by hand), via `CREATE OR REPLACE` specifically: `20260723000000` narrowed this function's ACL to `service_role`, and a DROP+CREATE would silently reset it to `EXECUTE TO PUBLIC`. Post-apply the ACL was re-verified as `{postgres, service_role}`. Suite J is injection-verified — restoring the pre-fix body locally failed **exactly `J-1`** (`expected 'waiting' to be 'playing'`) while `J-2`/`J-3` stayed green, which is what proves the `NOT EXISTS` clause is a no-op on the ordinary-draft and `left`-guard paths rather than a behaviour change smuggled in beside the fix. Calibrated against production's soonest-court-free distribution (p50 4.7 / p90 12.7 / p99 18.1) so it sits above p90 and clips only the genuine tail. It fires *only* while the body is still playing (`pulledFreedAt === null`) — a freed draft is minutes from promotion and cancelling it would waste the reach — and a malformed `created_at` never cancels. `CC-HOLD-1`…`CC-HOLD-6`.
     - **Rejected alternative:** extending the 17-minute margin to the seats. Strictly more correct, but on `fetchActivePool`'s rested branch every player with ≥1 game is at `wait ≥ 18 ≥ 17`, so all three waiters would have to be zero-games players — plausibly returning a feature whose whole history is *0 held drafts in 945 matches* to never firing. The replay harness structurally cannot count held drafts, so that cost is unmeasurable up front. The hold-age cancel bounds the *harm* to all three parked players without narrowing *which* reaches are allowed.
     - ⚠️ **What it does not promise:** it bounds the HOLD, not the total wait. A seat that entered the hold at 12 minutes can still be released at 27. Do not describe it as a Red-Zone guarantee.
@@ -3654,3 +3654,399 @@ reasons having nothing to do with the guard.
 🪤 Two of the three are the repo's standing defect class rather than new logic bugs: a doc/comment asserting
 something the code does not do. The parenthetical corrected above ("paused … both are leaveable states") is
 what made #2 invisible, and it shipped in the same commit as the fix it contradicted.
+
+---
+
+### 3.40 Losing the score race gracefully, and un-breaking the repeat score edit (2026-08-15)
+
+**Files:** `src/app/actions/_shared.ts`, `src/app/actions/match-lifecycle.ts`, `src/lib/constants.ts`,
+`src/lib/settled-match-toast.ts` **(new)**,
+`src/hooks/{use-edit-match,use-score-form,use-score-input,use-organizer-matches,use-organizer-data,use-match-history}.ts`,
+`src/components/player/{score-input-card,player-dashboard}.tsx`,
+`src/components/organizer/{edit-match-dialog,score-modal,active-courts,match-history-panel,queue-control}.tsx`,
+`tests/unit/{edit-match-dialog-repeat,score-race-transition,queue-control-duplicate-confirm}.test.tsx`,
+`tests/unit/{duplicate-roster-confirm,settled-match-toast,end-match-cas-code}.test.ts`, and mock/assertion updates in
+`tests/unit/{match-origin-tracking,use-score-form,use-match-history,queue-control-repeat-pairing}.test.*`
++ `tests/integration/score-submission.test.ts`. **TypeScript only — no migration.**
+
+Reported as two defects: *"2 scores for the same match … caused by the organizer and the player inputting
+the scores"*, and *"when one match is edited, they couldn't be edited or fixed again"*.
+
+⚠️ **The reported cause of the first one is not what the data shows, and the distinction changes what the
+fix is worth.** The duplicate in the 2026-08-15 session is **two `matches` rows**, not two scores on one row:
+
+| | `0dfedb8a…` | `88168066…` |
+|---|---|---|
+| court | Court 9 | Court **12** |
+| created → completed | 05:22:42 → 05:31:20 (**8m 38s**) | 05:33:11 → 05:33:39 (**19s**) |
+| score | 30–31 | 31–25, edited to 31–15 at 05:37:45 |
+| `created_method` / `created` actor | manual / **Miggy** | manual / **Miggy** |
+
+Same four players (Leo + Arvin vs Von + Michelle), both rows created by the **organizer**, ten minutes
+apart, on different courts. No player was involved in creating either. A 19-second match is not a match
+that was played — it is a row created *after the fact* to record a result, which is an established
+workflow here, not an anomaly: **48 completed matches** across the database have a sub-minute
+`completed_at - started_at` (5 of today's 55, 43 of the earlier 896).
+
+So the compare-and-swap in `endMatchInternal` was never the thing that failed. It already prevents two
+scores landing on one row (`.eq("status","in_progress")` on the UPDATE plus a `.select("id")` row count),
+and nothing in the ledger contradicts it. **What was broken was everything that happens after the CAS
+refuses.** That is worth fixing on its own terms — a race between an organizer and four players all
+reaching for the score of a game that just ended is real and routine — but it should not be recorded as
+the fix for what happened on 2026-08-15.
+
+**The loser of the race had nowhere to go.** `submitMatchScore` returned `{success:false, message:"Match is
+already completed."}`, the player's card painted it red next to a live "Submit Final Score" button, and
+every retry hit the same wall. The organizer's side was worse than cosmetic: `useOrganizerMatches.endMatch`
+returned `{error}` *without refetching*, so the board still showed an occupied court for a match that had
+already moved to history — an invitation to record it a second way, which is precisely the shape of the
+duplicate above.
+
+**A `code`, because prose is not a branch condition.** `MatchActionResult` gains an optional
+`code?: MatchActionCode` (`"already_scored" | "match_cancelled" | "not_completed"`). Only outcomes needing
+something other than "render the text in red" carry one; every existing consumer that ignores `code` keeps
+its exact previous behaviour, which is why the field is optional rather than a new required discriminant.
+`endMatchInternal` tags **both** places the race surfaces — the pre-check on the fetched row *and* the
+0-rows CAS branch below it, which is the true concurrency window (the pre-check passed, then the other
+caller's UPDATE landed first).
+
+🪤 **And both places have to DISCRIMINATE, not just tag.** The pre-check always did
+(`match.status === "completed" ? "already_scored" : "match_cancelled"`); the CAS branch first shipped
+hardcoding `already_scored`, so a concurrent *cancel* in that window produced *"the score they entered
+was kept"* for a match that has no score and must be re-run. That is precisely the sentence
+`settledMatchToast` was extracted to prevent — and `settled-match-toast.test.ts` was green throughout,
+because the pure function was never the thing that was wrong. **A correct mapping tested in isolation
+proves nothing about the caller that chooses its input.** The branch now re-reads `status`. Only
+`"cancelled"` takes the cancel arm; the cancel copy states that no score was recorded, an organizer
+reading that re-runs the game, and re-running one that was in fact scored is how a second row for the same
+match gets created — the defect at the top of this section. So everything else falls back to
+`already_scored`: a read error, a deleted row, and `"pending"` — a fourth status that passes the pre-check
+(which rejects only `completed`/`cancelled`) and then misses the CAS. `pending` is not reachable from
+either UI today and its copy would be wrong if it were; it lands on the arm that does not invent a re-run.
+
+**`useScoreForm` now has three outcomes, not two.** `{}` is a win, `{error}` is an actionable failure that
+keeps the form armed, and `{settled}` is "someone else scored it" — terminal, like a success. `settled` is
+checked **before** `error` so a handler that fills in both still lands on the terminal state. The player
+card renders `settled` in neutral slate with an `Info` icon rather than red, and drops the form entirely;
+the organizer's `ScoreModal` closes and raises the toast `settledMatchToast` picks for the code —
+`Already Scored` or `Match Cancelled`, never one shared string, which is the distinction this whole
+section turns on — and `endMatch` now refetches **on the failure path too** so the board is correct
+before the modal disappears.
+
+🪤 **`ScoreModal` was silently discarding the field.** It wrapped its `onSubmit` prop in
+`async (a,b) => ({ error: (await onSubmit(a,b)).error })` — a lambda that re-wraps the result and keeps only
+`error`. Threading `settled` from the action to `active-courts.tsx` and never touching that lambda would
+have type-checked and done nothing. It is now `useScoreForm(onSubmit)` and the prop is typed
+`Promise<ScoreSubmitOutcome>`. **A projection lambda in the middle of a chain is a silent filter; widening a
+return type does not widen the code that narrowed it.**
+
+**The score edit is no longer a one-shot — and the auto-close was the reason it was.** Both paths of
+`useEditMatch` used to end with a detached `setTimeout(() => setOpen(false), DIALOG_CLOSE_DELAY_MS)`:
+untracked, never cleared, bypassing `handleOpenChange`. Two consequences, one cause:
+
+- It fired against whatever the dialog had become — a reopened dialog, or an unmounted one.
+- `isError` was never reset on reopen, so a stale red could colour the next open's first message.
+
+🪤 **A third consequence was hypothesised and then disproven, and the disproof is worth keeping.** The
+appealing story was that closing a Radix modal from a *timer* rather than a dismissal gesture strands
+`document.body.style.pointerEvents: none`, which would make **every** control on the page unclickable and
+would match the report's plural — *"they couldn't be edited"* — far better than a per-card failure does. It
+does not happen. `DismissableLayer` restores the style in an **unmount cleanup**
+(`@radix-ui/react-dismissable-layer`, the `disableOutsidePointerEvents` effect), and a timer-driven close
+unmounts the layer exactly like a gesture-driven one, running the same cleanup. Nothing about the trigger is
+special. An earlier draft of this section carried the hypothesis as a finding and described a
+`useReleaseStrandedBodyLock` escape hatch in `dialog.tsx`; **no such hook exists and `dialog.tsx` is
+unchanged by this work** — the story survived into prose because it explained the symptom so neatly.
+
+A score edit now **does not close the dialog at all**. Correcting a score is inherently repeatable (fix the
+digit, notice the teams are swapped, fix that too); the button becomes **"Save Again"**, a line of copy says
+so, and a `DialogClose`-wrapped **"Done"** button gives a real dismissal gesture. The revert path still
+auto-closes — it moves the match back to a court, so the history card hosting the dialog disappears anyway
+— but its timer is held in a ref, cancelled on unmount and before every new action, and routed through
+`handleOpenChange`.
+
+⚠️ **Honest limit: the browser-level failure was never reproduced, and the root cause is unconfirmed.**
+Three things are established. The **server** had no idempotency guard on the score-edit path — it was a
+bare `.update({scores}).eq("id", matchId)` — so a second edit would have been accepted. The **ledger**
+has no per-`event_type` uniqueness, so a repeat `score_edit` inserts cleanly. And **production proves both
+empirically**: two matches have in fact received two `score_edit` events — `c516b3de…` 52 s apart on
+2026-07-25, `d79d8ddb…` 101 min apart on 2026-07-30 — out of 17 matches that were edited at all.
+
+**Repeat editing is therefore intermittent, not blocked.** That is the load-bearing finding: it rules out
+every hard-block explanation (server guard, DB constraint, dead code path) and leaves only a
+timing-dependent client fault, which is what the three changes above target. They are not a confirmed
+root-cause fix, and this paragraph exists so the next reader does not upgrade them into one. The only
+real test is a live session — watch whether any match receives a second `score_edit`.
+
+**The edit path is now status-guarded, but deliberately not idempotency-guarded.** `updateMatchDetails`'s
+score-only branch adds `.eq("status","completed")` + `.select("id")`. The Edit control only exists on a
+completed history card, so 0 rows means a concurrent "Revert to Active Court" put the match back on a
+court, and stamping a final score onto a live game would corrupt it silently; the organizer gets
+`not_completed` and re-reads the board. It does **not** guard against repeating the same edit — that is the
+behaviour being restored, and every pass appends its own `score_edit` event. The `revertToActive` branch is
+untouched by this CAS.
+
+**The duplicate-roster soft confirm on `createManualMatchAction` — the one change aimed at what actually
+happened.** Everything above hardens the race; this is the part that addresses the 2026-08-15 rows. Before
+creating a manual match, the action asks whether these same four already have a **completed** match in this
+session inside the last `DUPLICATE_ROSTER_WINDOW_MINUTES` (30, in `constants.ts`). If they do, it returns
+`{success:false, code:"duplicate_roster", message}` and the organizer is asked to confirm; re-sending with
+`confirmDuplicate = true` skips the probe entirely and creates the match.
+
+Three properties are deliberate and each one is load-bearing:
+
+- **A confirm, not a block.** Rematches between the same four are ordinary badminton, and the 48 sub-minute
+  rows show retroactive hand-entry is a workflow the organizer relies on. A hard rule would make a
+  legitimate game unrecordable with no way through, which is worse than the duplicate it prevents.
+- **Roster identity is the SET of participants, not the teams.** A rematch with the sides swapped is the
+  same four people; comparing team-by-team would miss exactly the case an organizer is most likely to
+  re-enter differently.
+- **It is a distinct `code`, not an `error`.** A soft refusal that arrives as an error string gets rendered
+  red by every existing caller, and red has no "yes, do it anyway" affordance. `code:"duplicate_roster"` is
+  what lets `queue-control.tsx` open a confirm instead — and the client carries the exact roster from the
+  refusal into the confirm rather than re-deriving it from the current selection, so the create that goes
+  through is structurally the lineup the organizer was asked about.
+
+The probe sits **behind** the organizer gate and runs only when `confirmDuplicate` is false, so a
+non-organizer is refused before any match row is read (no `code` on that path — an auth failure must never
+render a "Create anyway" button). Wording degrades by age: *just finished*, *1 minute ago*, *N minutes ago*.
+
+**Tests.** `edit-match-dialog-repeat.test.tsx` (EM-1…EM-6, happy-dom + RTL) pins the new contract: the
+dialog stays open after a save, a second save from the same open dialog **reaches the server**, close-and-
+reopen still allows another edit, reopening re-seeds from refreshed props, a failed save stays open and
+retryable, and a stale error does not bleed into the next open (asserted via the success message's
+`text-emerald-600` class, not its text). `score-race-transition.test.tsx` (SR-1…SR-4) pins the player side:
+`already_scored` and `match_cancelled` each resolve the card and **remove the submit button**, while an
+ordinary failure still renders red and leaves the form armed — the control that stops SR-1/SR-2 passing for
+the trivial reason that every failure hides the form.
+
+`duplicate-roster-confirm.test.ts` (DRC-1…DRC-6, 16 cases) drives the server probe through a
+table-addressed service mock: it fires on the same four with the teams swapped across the net, scans every
+match in the window rather than only the newest, stays silent when just three of the four are shared and
+when the session is empty, records the window bound it asks for, proves `confirmDuplicate` both creates
+the refused match and skips the probe entirely (no `matches` read), and — DRC-6 — is unreachable by a
+non-organizer, asserted by checking the `matches` table was never read rather than by trusting the message. `queue-control-duplicate-confirm.test.tsx`
+(QDC-1…QDC-6, 10 cases) pins the client half: a `duplicateMessage` opens a prompt and an `error` never
+does, Cancel keeps the selection so the organizer can correct it, and **QDC-4a changes the selection while
+the prompt is open and asserts the re-send is unaffected** — the property that stops the confirm from
+silently creating a different match than the one it described. `settled-match-toast.test.ts` (SMT-1…SMT-4)
+holds `already_scored` and `match_cancelled` apart, since collapsing them tells an organizer their score
+was kept when the match was in fact cancelled.
+
+`end-match-cas-code.test.ts` (EMC-1…EMC-3) is the other half of that pair, and the reason the pair is
+needed: SMT tests the mapping, EMC tests the **producer that picks which input the mapping gets**. It
+drives `endMatchAction` to the 0-rows CAS branch (a queued `matches` mock answers the pre-check fetch with
+an `in_progress` row, the UPDATE with `[]`, then the re-read with whatever the winner left) and asserts a
+concurrent cancel yields `match_cancelled` with a message that never says *scored*, a concurrent complete
+yields `already_scored`, and an unreadable status falls back to `already_scored`. EMC-1 also asserts the
+`matches` table was read three times — without it the test passes on a branch that guessed the code from
+the pre-check row instead of re-reading.
+
+---
+
+### 3.41 A held cross-court draft could never be published — the code that meant "not yet" did not exist (2026-08-16)
+
+**Files:** `supabase/migrations/20260816000000_publish_never_touches_an_unready_held_draft.sql` **(new — must
+be applied by hand)**, `src/app/actions/match-drafts.ts`, `src/app/actions/matchmaking.ts`,
+`src/lib/cross-court/derive-held-state.ts`, `src/lib/constants.ts`,
+`src/components/organizer/{sortable-card,on-deck-panel}.tsx`,
+`tests/unit/{publish-held-guard,held-draft-ui,derive-held-state}.test.*`,
+`tests/integration/publish-match.test.ts`.
+
+Reported after a live session: *"cross-court matches generated for people who are still playing but I
+couldn't approve any of them"*, and *"Publish All allows it on deck, but I couldn't make it work."*
+
+**The report is accurate, and it is four separate defects that happen to share one symptom.** Production
+trace, session `3367d4c6` ("08/15 Saturday Session", `auto_publish=false`,
+`max_auto_drafts_override=1`): **12 held drafts created, 10 cleared by hand, 2 ever reached a court.**
+That is the feature's first live-session evidence of any kind — §3.1's cross-court block had said "still
+not observed in a live session", and what the first observation shows is that it does not work.
+
+1. **`publish_match` returned `CONFLICT`, 100% of the time, by construction.** Its conflict predicate counts
+   any OTHER pending/`in_progress` match holding one of this roster's players. A held draft's pulled body
+   sits in an `in_progress` match for the entire hold — that is *what a hold is*. The organizer-facing copy
+   for `CONFLICT` reads "a player is already assigned to another active match. Clear this draft and let the
+   engine regenerate." Structurally true and exactly the wrong advice: nothing was broken, the hold had
+   simply not resolved. **There was no return code that meant "not yet"**, so the caller could not
+   distinguish *wait* from *throw this away* — and 10 of 12 organizer clears is what that reads like in the
+   data.
+2. **The draft-cap notice could not explain why generation stopped.** `DraftCapNotice` computed its ceiling
+   from `getDynamicDraftCap(waitingCount)` alone and never read `max_auto_drafts_override`, while
+   `runEngineInternal` caps at `min(override, dynamicCap)`. With the override at 1 — the live session's
+   setting — the engine stopped after one draft and the panel, still waiting for three, said nothing at all.
+   The notice was a strict under-reporter: it could only ever fire when the dynamic cap was *also* hit.
+3. **`recomputeHeldReadiness` was event-driven on the wrong event.** Its only two callers were in
+   `match-lifecycle.ts` (match end / cancel). The RESTING→READY stamp requires
+   `CROSS_COURT_REST_FALLBACK_MINUTES` of rest to have elapsed — which is **never true at the instant the
+   source match ends**. So the one event that fired the recompute was the one event that could not stamp,
+   and nothing fired again until some *other* match ended. Two holds in the trace sat unresolved ~10 minutes.
+4. **`publish_all_drafts` had no held exclusion at all**, and its two failure modes are opposite. While the
+   body is on court the hold hits the same conflict check and is **skipped silently** — the action reported
+   every skip as "(left players)" and still returned `success: true`. In the RESTING window (source game
+   over, stamp not yet written) it **passes** the conflict check and publishes: four queue rows flip to
+   `on_deck`, an `ON_DECK_WARNING` push fires, and `promoteOnDeckMatchInternal` still refuses the match —
+   its JS filter over the published pending set takes a held row only once `held_ready_at` is both stamped
+   **and due** (`<= now`), so publishing cannot satisfy it. A card parked on deck that no court will take.
+   That is "Publish All let it through but it never worked", verbatim.
+
+**One rule, one predicate, plus an independent SQL mirror: a held draft is not publishable until
+`held_ready_at` is stamped.** `isHeldAwaitingReadiness(row)` (`= row.is_held === true && row.held_ready_at
+=== null`) is the single definition — the card's Publish button, the on-deck review-queue count, the
+engine's draft-mode cap count, the heartbeat gate, `promoteOnDeckMatchInternal`'s blocking-drafts count and
+both publish actions' snapshot filters all *call* it rather than re-spelling it. Do not maintain a count of
+the call sites in prose (this sentence said "five" and there were eight): `grep -rn
+"isHeldAwaitingReadiness" src/` is the list, and `matchmaking-db.ts`'s unready-hold count is the one
+deliberate inline spelling, which says why at the call site. `publish_match` / `publish_all_drafts` enforce
+the same rule independently in SQL — ⚠️ the same *partition*, not the same characters:
+`NOT (is_held IS TRUE AND held_ready_at IS NULL)` is three-valued logic, `=== true` is not. The two halves are
+deliberately redundant: the RPCs are the real gate (the JS fallbacks only run pre-deploy), and the UI half
+exists so the organizer never sees a button whose only outcome is a refusal.
+
+- **`publish_match` gains a `HELD_NOT_READY` code**, checked *after* `ALREADY_PUBLISHED` and *before* the
+  left-player and conflict predicates, so the specific cause wins over the generic one. A **new** code, not
+  a repurposed one — callers switch on the string and must be able to say "wait". The copy names the
+  mechanism and the exit: *"waiting on a player who's still on court. It unlocks by itself when that game
+  ends; clear it if you'd rather not wait."* ⚖️ **The order has one accepted cost**: a held draft that has
+  *also* lost a player is told to wait rather than to clear. It is self-correcting — once `held_ready_at`
+  stamps, the next publish reports `HAS_LEFT_PLAYERS` correctly, and the 15-minute hold-age cancel bounds
+  it regardless — and Clear is offered throughout. The alternative restores the original bug for the common
+  case (every ordinary hold gets clear-advice again) to improve a rare compound one.
+- **`publish_all_drafts` excludes unready holds from `v_all_draft_ids` entirely**, rather than letting them
+  fall into `v_skipped_ids`. They are not eligible, so they are not attempts, so they must not inflate
+  `skipped_count` — the number the client renders as "clear and regenerate". Same **motive** as
+  `20260624000000_clear_drafts_exclude_held` (keep a held draft out of a bulk operation's candidate set
+  rather than handling it inside the loop), but deliberately **not** the same predicate: that one excludes
+  *every* held draft (`is_held IS NOT TRUE`), since a bulk clear must never touch a hold; this one excludes
+  only the **unready** ones, since a stamped hold is an ordinary publishable draft. Aligning the two
+  spellings would make a READY hold permanently unpublishable via Publish All. With held drafts no longer
+  candidates, the skip causes an organizer can act on are a departed player and a genuine double-booking,
+  so the skip copy was corrected from the unconditional "(left players)" to name both. (The loop's third
+  skip arm — the row stopped being a `pending` unpublished draft between the snapshot and the `FOR UPDATE`
+  — is a concurrency race, not an organizer-actionable state, and is rare enough to leave under the same
+  copy.)
+- **Publishing stays BLOCKED, not deferred.** Promotion requires the stamp anyway, so an early publish buys
+  nothing and costs a premature player-facing ping. Clear stays available — it is the one action that is
+  always legitimate on a hold the organizer no longer wants, and it is also how the three reserved players
+  are freed.
+- **Held-draft heartbeat** (`runEngineInternal`): `recomputeHeldReadiness` now also runs from the engine,
+  gated on `pendingRows.some(isHeldAwaitingReadiness)` so a session with no live hold pays nothing. Queue
+  joins, publishes and clears all reach the engine, making it much the denser trigger. Re-entrancy is safe
+  — `endMatchAction` already calls it, so a match end now runs it twice; the stamp is idempotent
+  (`.is("held_ready_at", null)`) and the second pass is the useful one, landing *after* that end's
+  promotion and so seeing the incremented `promotionsSinceFreed`. The pending set is **re-read** after the
+  recompute rather than counted from the pre-recompute snapshot, because the recompute can stamp, cancel or
+  downgrade a row — all three change the count below it. Still not a timer: it sits below the `courtCount`
+  early-return and inside the `is_auto_matchmaking_on` gate, so `CROSS_COURT_MAX_HOLD_MINUTES` remains a
+  bound on *attention*. See the corrected bullet in §3.1.
+- **`CROSS_COURT_MAX_UNREADY_HOLDS = 2`**, enforced in `hasFeedableCapacity` at creation time. The trace's
+  12 holds against 2 promotions is the shape this bounds: reaching again while two holds are already
+  unresolved parks six more players against a mechanism that has not yet demonstrated it can release three.
+- **The panel now computes the engine's cap**, `min(override, dynamicCap)`, and counts the same review
+  queue the engine does — held drafts excluded while unready, included once stamped. An unready hold still
+  **renders**; it just does not fill a slot. Counting it would have produced the worst possible notice:
+  "2/2 draft slots filled — publish the drafts below to resume", pointing at a card whose Publish button
+  had just been removed.
+
+**Tests.** `derive-held-state.test.ts` CC-DHS-06…08 pin the predicate itself, including that a null
+`is_held` falls to *not held* (fail-open, same direction as `hasFeedableCapacity`'s CCT-FEED-7). The column
+is `GENERATED` and never null in the DB, and `database.ts` declares it `boolean` — but that declaration is
+an assertion, not a validation: nothing checks a PostgREST payload against it at runtime (types are erased
+and `supabase-js` casts). CC-DHS-08 needs a cast to reach the case *because* the type says it cannot happen; that is
+the point of the case, not an argument against it.
+`publish-held-guard.test.ts` (PUB-HELD-1…10) covers the two JS fallbacks through a table-addressed service
+mock, and asserts guard **order** structurally rather than by message: PUB-HELD-2 checks `svc.from` was
+called exactly once and no update was issued, so the refusal cannot be coming from a later probe.
+PUB-HELD-8 pins the asymmetry that makes the two-list restructure correct — `match_players` is queried for
+the *publishable* ids while the conflict probe still excludes **every** draft including the held one,
+because narrowing that exclusion set would turn a held draft into an "other active match" and let it taint
+its neighbours. `held-draft-ui.test.tsx` (UI-HELD-1…4, UI-CAP-1…6) pins both components, including that the
+suppression is *explained* — a button that vanishes with no reason reads as a bug.
+
+`tests/integration/publish-match.test.ts` Suite **PUB-HELD-DB-1…4** is the half no unit test can reach: the
+conflict predicate needs a genuinely `in_progress` source match holding the body, and the `publish_all_drafts`
+candidate filter is SQL. (The `-DB` suffix is load-bearing — the unit suite already owns `PUB-HELD-*`, and
+these are different tests of the other half.) It builds the fixture through `create_held_cross_court_match`
+rather than a raw insert, so `is_held` and the drafted/playing queue statuses come out exactly as the
+engine writes them. **Injection-verified**: restoring the pre-fix function bodies locally failed exactly
+PUB-HELD-DB-1 (`expected 'Cannot publish — a player is already …' to match /still on court/i` — the field
+bug reproduced verbatim), PUB-HELD-DB-3 and PUB-HELD-DB-4 (`skipped_count` 1, not 0), while PUB-HELD-DB-2
+stayed green — which is what proves PUB-HELD-DB-2 is a real control (the guard lifts) and not a tautology.
+ACLs were re-verified as `{postgres, service_role}` after restore.
+
+⚠️ **Migration `20260816000000` has been applied to the LOCAL test database only.** Both functions are
+`CREATE OR REPLACE` with unchanged signatures specifically to preserve the narrowed EXECUTE grants from
+`20260721180000` / `20260722000004` — do **not** convert either to DROP+CREATE, which silently resets the
+ACL to `EXECUTE TO PUBLIC`. Until it is applied to production the TypeScript half degrades safely: the UI
+stops offering Publish on an unready hold and the action's snapshot filter excludes it, so the organizer
+cannot reach the old `CONFLICT` path by the ordinary route — but the RPCs themselves are still unguarded.
+
+✅ **The `cancelMatchAction` reservation gap — CLOSED 2026-08-16 (was ⚠️ "pre-existing, not fixed here").**
+No migration: it is TypeScript only, so unlike `20260816000000` it is correct in production the day it merges.
+
+`cancelMatchAction` flipped **every** roster player to `waiting` in one bulk UPDATE. That is right for the
+ordinary cancel and wrong at both ends of a live hold, so the restore is now a three-way partition —
+`partitionCancelRestore` in `src/lib/cancel-restore.ts` owns the rule, the action only feeds it reads:
+
+1. **The reservation mirror.** A pulled body whose held draft is still `pending` comes back `drafted`, not
+   `waiting` — the same re-reservation `endMatchAction`'s R3-1 performs. This half is required precisely
+   *because* the hold survives: `recomputeHeldReadiness` counts `cancelled` alongside `completed` as the
+   event that frees the body, so a cancelled source moves the draft Holding→Resting rather than tearing it
+   down. And recompute cannot repair the status afterwards: **no path in it ever writes `'drafted'`**. Its
+   only `queue_entries` writes are the ones its RPCs perform — `clear_on_deck_match_atomic` → `'waiting'`
+   and `auto_publish_match` → `'on_deck'` — and neither restores a lost reservation. (In auto-publish mode
+   the second one would eventually rewrite a wrongly-`'waiting'` body to `'on_deck'`, which is not a repair:
+   by then the engine has already had the body in the pool.) It also runs *after* the restore, not before.
+2. **The physical-truth skip.** A roster member who holds an `in_progress` match in this session is not
+   written at all. That is the rule migration `20260812000000` put inside `clear_on_deck_match_atomic`;
+   `cancelMatchAction` never calls that RPC, so it needed its own copy. Reachable by cancelling the **held
+   draft itself** — three drafted members plus one body mid-game on another court. The UI declines to send
+   that today (`active-courts.tsx` filters to `in_progress`, `court-card.tsx` renders Clear for a pending
+   row), but every export of a `"use server"` file is a public endpoint, so the UI is not the gate.
+
+Both arms depend on the CAS at `match-lifecycle.ts` having **already** flipped this match out of
+`pending`/`in_progress`: that is what lets one predicate set cover both cases, since the cancelled match can
+then be neither "the `in_progress` match" of (2) nor "the pending held draft" of (1). Do not reintroduce a
+`match.status` branch — that variable holds the *pre*-CAS status (correct for the audit `phase`, wrong here).
+`requeue_finished_players` is deliberately **not** reused despite its `p_drafted_ids` argument looking made
+for this: it unconditionally does `games_played + 1, joined_at = now()`, and a cancel must cost neither.
+
+🪤 **The claim this replaces was overstated in its consequence** and the correction matters, because the
+overstatement points at the wrong failure. The freed body could not actually be "drafted elsewhere, leaving
+the hold permanently in CONFLICT" — `create_match_with_players`' Guard 2 counts `pending` **and**
+`in_progress`, and the held draft's own `match_players` row is pending, so the RPC returns NULL. What
+actually happens is worse and quieter: the body re-enters `fetchActivePool`, the engine spends a slot
+seating them, the RPC returns NULL, `executeMatch` fails and the **slot loop breaks — the tick produces
+zero matches**. Same chain migration `20260812000000`'s header describes for the unseating bug.
+
+Coverage: `CC-CAN-HELD-01` / `CC-CAN-HELD-02` (`tests/integration/cross-court-realdb.test.ts`, both off the
+existing `seedHeldDraft` fixture) and `CC-CAN-01..07` (`tests/unit/cancel-restore.test.ts`). **Negative-control
+verified**, each half separately: deleting the drafted branch fails only `CC-CAN-HELD-01`
+(`expected 'waiting' to be 'drafted'` — the bug verbatim); deleting the physical-truth skip fails only
+`CC-CAN-HELD-02` (`expected 'waiting' to be 'playing'`). Both assert **pool admission**, not just the status
+string, since it is `fetchActivePool` membership that drives the stall. `CC-CAN-05` is the arm no fixture can
+reach — a player both playing and held-reserved must be *skipped*, never drafted — and it is exactly the
+precedence a later refactor would invert. `F-cancel-2` now also pins `joined_at` as unchanged, which is the
+column that made the RPC reuse tempting and wrong.
+
+⚠️ What makes `CC-CAN-05` unreachable is a **conjunction of two guards in two migrations**, and citing only
+the first is the mistake this paragraph exists to prevent. `create_match_with_players`' Guard 2
+(`20260507000000`) covers an *ordinary* roster member. It does **not** cover the pulled body, because
+`create_held_cross_court_match`'s own Guard 2 (`20260607000000`) deliberately **exempts** it ("the pulled body
+is exempt — it IS in its `in_progress` match") — that exemption is the whole point of the held RPC. The guard
+actually blocking the overlap is that RPC's **Guard 1b**, the reservation check that refuses a body already
+named by another `pending` held draft (see the **Held RPC** bullet under §3.1 → *Cross-Court Diversity
+Drafting (held drafts)*). A reader sent to `create_match_with_players`
+finds no held-draft logic there, concludes the precedence is dead code, and deletes it — which is the exact
+outcome `CC-CAN-05` was written to prevent. Lose *either* guard and the arm goes live.
+
+⚠️ **Accepted, not fixed:** between the held-draft read and the `drafted` write, a concurrent
+`clear_on_deck_match_atomic` can delete the draft and strand that player at `drafted` — invisible to
+`fetchActivePool`, with no orphaned-`drafted` reconciler anywhere in `src/`. The identical window already
+exists in R3-1, so this is parity rather than new risk; close it only if observed, and only with an RPC that
+*replaces* the TS block rather than twinning it behind a fallback.
+
+⚠️ **Same class, still open one file over:** `match-drafts.ts`'s `clearOnDeckMatch` PGRST202 fallback
+reproduces the exact unguarded `update({ status: "waiting" }).in("player_id", …).neq("status", "left")` that
+`20260812000000` removed from the RPC. On any environment where `clear_on_deck_match_atomic` is missing, the
+Clear button on a held draft unseats a live body. Out of scope here — named so "we fixed the class" doesn't
+stop the next reader looking.

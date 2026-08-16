@@ -1140,6 +1140,12 @@ export type Database = {
         Args: { p_match_id: string; p_session_id: string };
         Returns: string[];
       };
+      // Organizer-initiated publish. Returns 'SUCCESS' | 'NOT_ORGANIZER' |
+      // 'NOT_FOUND' | 'NOT_PENDING' | 'ALREADY_PUBLISHED' | 'HELD_NOT_READY' |
+      // 'HAS_LEFT_PLAYERS' | 'CONFLICT'. HELD_NOT_READY (20260816000000) means a
+      // cross-court hold whose pulled body is still on court — retryable on its
+      // own, unlike the two roster codes after it. auto_publish_match has no such
+      // code because the engine only calls it once held_ready_at is stamped.
       publish_match: {
         Args: { p_match_id: string; p_session_id: string; p_user_id: string };
         Returns: string;

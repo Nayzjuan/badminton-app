@@ -21,6 +21,7 @@ import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { ReuseNotice } from "@/lib/derive-reuse-notice";
 import type { CapSaturationPayload } from "@/lib/broadcast";
 import { CRITICAL_WAIT_MINUTES, MAX_PARTNERSHIP_REPEATS } from "@/lib/constants";
+import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
 import type { SwapContext } from "./on-deck-panel";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -256,6 +257,13 @@ export function SortableCard({
   // before the server round-trip completes.
   const effectivelyDraft = isDraft && !isOptimisticPublished;
 
+  // Cross-court held drafts are not publishable until held_ready_at is stamped —
+  // see isHeldAwaitingReadiness for why that is true in BOTH unready states. The
+  // button used to render unguarded, so the organizer was offered an action that
+  // could only fail (CONFLICT) or produce a stuck on-deck match. Clear stays
+  // available: abandoning the hold is the one thing they CAN legitimately do.
+  const awaitingHold = isHeldAwaitingReadiness(match);
+
   // Build SwapContext from a player row tap.
   function handlePlayerTap(player: RosterPlayer, team: "a" | "b") {
     onPlayerTap({
@@ -386,15 +394,17 @@ export function SortableCard({
         <div className="px-3 py-2 bg-cc-bg-3 border-t border-cc-border flex items-center justify-between gap-2">
           <p className="text-xs text-cc-t3 min-w-0 truncate">
             {effectivelyDraft
-              ? "Hidden from players — publish to reveal"
+              ? awaitingHold
+                ? "Hidden from players — publish unlocks when this hold is ready"
+                : "Hidden from players — publish to reveal"
               : isPickingMode && selectedPlayerId
                 ? "Tap another player to swap"
                 : "Tap any player to start a swap"}
           </p>
 
           <div className="flex items-center gap-2 shrink-0">
-            {/* Publish button — only shown for drafts */}
-            {effectivelyDraft && (
+            {/* Publish button — drafts only, and never while a hold is unready. */}
+            {effectivelyDraft && !awaitingHold && (
               <button
                 onClick={() => onPublish(match.id)}
                 disabled={isPublishing || isPickingMode}

@@ -61,6 +61,7 @@ import {
   PLAYERS_PER_MATCH,
 } from "@/lib/constants";
 import { getDynamicDraftCap } from "@/lib/matchmaking-core";
+import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
 
 // ── DraftCapNotice ────────────────────────────────────────────
 // Shown when auto-matchmaking is ON, there are enough waiting players,
@@ -157,8 +158,20 @@ interface OnDeckPanelProps {
   onPlayerTap: (ctx: Omit<SwapContext, "mode">) => void;
   /** Draft Mode: publish a single draft match. */
   onPublishMatch: (matchId: string) => Promise<{ error?: string }>;
-  /** Draft Mode: publish all draft matches for this session. */
-  onPublishAllDrafts: () => Promise<{ error?: string; publishedCount?: number }>;
+  /**
+   * Draft Mode: publish all draft matches for this session.
+   *
+   * `skippedCount` is the partial-failure channel: the bulk RPC publishes what
+   * it can and reports the rest as skipped, so a run that publishes nothing
+   * still resolves with no `error`. Callers must treat `skippedCount > 0` as a
+   * failure for those drafts and surface `message`.
+   */
+  onPublishAllDrafts: () => Promise<{
+    error?: string;
+    message?: string;
+    publishedCount?: number;
+    skippedCount?: number;
+  }>;
   /**
    * Non-null when the partner-pair cap blocked the last match attempt.
    * Renders a dismissable notice above the draft banner.
@@ -182,6 +195,16 @@ interface OnDeckPanelProps {
    * draft cap threshold so the notice appears at the right fill level.
    */
   waitingCount?: number;
+  /**
+   * sessions.max_auto_drafts_override — the organizer's manual ceiling on the
+   * review queue, or null for "use the dynamic cap". Needed here because the
+   * engine applies it as min(override, dynamicCap); without it this panel
+   * computed the dynamic cap alone and the notice stayed silent in exactly the
+   * case that most needs it. With override=1 and 8 waiting (dynamic 3), the
+   * engine stopped generating at one draft while the notice waited for three —
+   * so the organizer saw generation stop with no explanation at all.
+   */
+  maxAutoDraftsOverride?: number | null;
   /**
    * True for ~3 s after unpublished drafts first appear from zero. Drives a
    * transient "NEW" badge on the Publish All banner so the organizer knows a
@@ -211,6 +234,7 @@ function OnDeckPanelInner({
   isAutoMatchmakingOn,
   autoPublishIsOn = false,
   waitingCount,
+  maxAutoDraftsOverride,
   hasNewDraft,
   queue,
 }: OnDeckPanelProps) {
@@ -391,7 +415,23 @@ function OnDeckPanelInner({
     () => orderedMatches.filter((m) => m.is_published || optimisticPublishedIds.has(m.id)),
     [orderedMatches, optimisticPublishedIds]
   );
-  const draftCount = draftMatches.length;
+
+  // The REVIEW QUEUE — the drafts the organizer can actually action right now.
+  // A held cross-court draft whose hold is unready still RENDERS (it belongs in
+  // the drafts section, with its violet HELD chip, so the organizer knows the
+  // engine is holding those three players) but it is not awaiting approval and
+  // cannot be published, so it must not drive any count that means "approve
+  // these": the Publish All banner, the cap notice, or the Publish All payload.
+  // The engine applies the identical exclusion to its own draft-mode cap count
+  // in runEngineInternal — the two counts have to agree or the notice describes
+  // a cap the engine is not enforcing. Note that agreeing on the COUNT is only
+  // half of it: the notice compares that count against effectiveCap below, which
+  // has to mirror the engine's min(override, dynamicCap) for the same reason.
+  const publishableDraftMatches = useMemo(
+    () => draftMatches.filter((m) => !isHeldAwaitingReadiness(m)),
+    [draftMatches]
+  );
+  const draftCount = publishableDraftMatches.length;
 
   // Per-draft equity signal: which drafts seat played players while an
   // equal-or-larger fresher cohort waits. Memoised — recomputes only when
@@ -416,15 +456,26 @@ function OnDeckPanelInner({
   // is ON, and there are enough players waiting — explains to the organizer
   // why the engine has stopped generating new matches.
   // Suppressed in auto-publish mode: there is no review step, and unpublished
-  // held drafts (is_published=false) would otherwise inflate draftCount and fire
-  // a "publish the drafts below" notice for cards that aren't shown.
+  // held drafts (is_published=false) would otherwise inflate the count and fire
+  // a "publish the drafts below" notice for cards that aren't shown. In DRAFT
+  // mode the same inflation used to produce a worse failure — a cap notice
+  // telling the organizer to publish drafts that were structurally impossible to
+  // publish — which is why draftCount now counts publishableDraftMatches.
+  //
+  // effectiveCap mirrors runEngineInternal exactly: min(override, dynamicCap),
+  // with a null override meaning "dynamic as-is". This used to be the dynamic cap
+  // alone, which made the notice a strict under-reporter — it could only fire
+  // when the engine was ALSO blocked, never when the override was the binding
+  // constraint, which is the one case the organizer cannot deduce for themselves.
   const waiting = waitingCount ?? 0;
   const dynamicCap = getDynamicDraftCap(waiting);
+  const effectiveCap =
+    maxAutoDraftsOverride != null ? Math.min(maxAutoDraftsOverride, dynamicCap) : dynamicCap;
   const isDraftCapBlocked =
     isAutoMatchmakingOn === true &&
     !autoPublishIsOn &&
     waiting >= PLAYERS_PER_MATCH &&
-    draftCount >= dynamicCap;
+    draftCount >= effectiveCap;
 
   // Stable identity for SortableContext — recreated only when the match
   // set changes, not on every loading-state update inside the component.
@@ -435,11 +486,12 @@ function OnDeckPanelInner({
   const handlePublishAll = useCallback(async () => {
     setIsPublishingAll(true);
     setPublishAllError(null);
-    // draftMatches is already memoised to (!is_published && !optimisticPublished),
-    // so we read it directly — no duplicate filter needed.
+    // publishableDraftMatches is already memoised to (!is_published &&
+    // !optimisticPublished && !heldAwaitingReadiness), so we read it directly.
     // This prevents a failing Publish All from reverting a separate in-flight
-    // individual publish that happened to overlap.
-    const draftIds = draftMatches.map((m) => m.id);
+    // individual publish that happened to overlap — and keeps unready held
+    // drafts out of the optimistic set, which the server will not publish.
+    const draftIds = publishableDraftMatches.map((m) => m.id);
     setOptimisticPublishedIds((prev) => {
       const next = new Set(prev);
       draftIds.forEach((id) => next.add(id));
@@ -458,10 +510,28 @@ function OnDeckPanelInner({
       });
       // Surface error on the banner — no per-card context available.
       setPublishAllError(result.error);
+      return;
     }
-    // On success, realtime will resolve final is_published=true state;
+
+    // Partial success. The action returns success:true when SOME drafts were
+    // skipped (left players, or a roster already committed elsewhere), so
+    // result.error is empty and the block above never fires — every skipped
+    // card would sit stuck in the optimistic "published" state until a realtime
+    // event happened to correct it. The RPC reports counts, not ids, so we
+    // cannot revert selectively: drop the whole optimistic set and let the
+    // is_published=true rows come back through realtime, which is the only
+    // source that knows which ones actually landed.
+    if ((result.skippedCount ?? 0) > 0) {
+      setOptimisticPublishedIds((prev) => {
+        const next = new Set(prev);
+        draftIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      if (result.message) setPublishAllError(result.message);
+    }
+    // On full success, realtime will resolve final is_published=true state;
     // optimistic IDs will be cleaned up naturally by the useEffect above.
-  }, [draftMatches, onPublishAllDrafts]);
+  }, [publishableDraftMatches, onPublishAllDrafts]);
 
   // ── Empty state ──────────────────────────────────────────────
   // NOTE: still wraps in space-y-4 so the cap saturation notice can
@@ -496,7 +566,7 @@ function OnDeckPanelInner({
       {isDraftCapBlocked && (
         <DraftCapNotice
           draftCount={draftCount}
-          cap={dynamicCap}
+          cap={effectiveCap}
           onPublishAll={handlePublishAll}
           isPublishing={isPublishingAll}
         />

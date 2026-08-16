@@ -26,6 +26,12 @@
 //   XC-3  control for XC-2 — the same event with a fresh held draft leaves
 //           it untouched, so the cancel is age-gated, not "any recompute
 //           kills holds"
+//   CC-CAN-HELD-01  cancelling the SOURCE match re-reserves the pulled body
+//           as 'drafted' (the hold survives a cancel), so they never re-enter
+//           fetchActivePool while committed to it
+//   CC-CAN-HELD-02  cancelling the HELD DRAFT ITSELF leaves the still-playing
+//           body untouched at 'playing' — the physical-truth rule
+//           clear_on_deck_match_atomic has, applied to the path that bypasses it
 //
 // Isolation: Layer B — truncateTracked() in afterEach.
 // ============================================================
@@ -45,7 +51,8 @@ import {
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { queryCommitted } from "./helpers/withTx";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import { endMatchAction } from "@/app/actions/match-lifecycle";
+import { cancelMatchAction, endMatchAction } from "@/app/actions/match-lifecycle";
+import { fetchActivePool } from "@/lib/matchmaking-db";
 import { CROSS_COURT_MAX_HOLD_MINUTES } from "@/lib/constants";
 
 const faker = new Faker({ locale: [en] });
@@ -444,5 +451,123 @@ describe("Cross-Court Held Drafts (Real DB) — Suite XC", () => {
       expect(await queueStatusOf(session.id, m.id)).toBe("drafted");
     }
     expect(await queueStatusOf(session.id, body.id)).toBe("playing");
+  });
+
+  // ── CC-CAN-HELD-01 / -02: cancelMatchAction and a live hold ──
+  //
+  // Two directions out of the same fixture. seedHeldDraft leaves exactly one
+  // player in each of the two states the plain bulk restore gets wrong, and the
+  // cancelled match decides which one you hit:
+  //   cancel the SOURCE  → the body is FREED and must come back reserved
+  //   cancel the HOLD    → the body is still ON COURT and must not be touched
+  // Both go through cancelMatchAction, which never calls
+  // clear_on_deck_match_atomic and therefore does not inherit that RPC's
+  // physical-truth guard (migration 20260812000000).
+
+  /** Cancels a match as the organizer. */
+  async function cancelAs(organizerId: string, matchId: string) {
+    const restore = mockAuthAs(organizerId);
+    try {
+      return await cancelMatchAction(matchId);
+    } finally {
+      restore();
+    }
+  }
+
+  it("CC-CAN-HELD-01: cancelling the SOURCE match re-reserves the pulled body as 'drafted'", async () => {
+    const { organizer, session, members, body, sourceMatch, heldId } = await seedHeldDraft();
+
+    const result = await cancelAs(organizer.id, sourceMatch.id);
+    expect(result.success).toBe(true);
+
+    // The hold SURVIVES a cancelled source: recomputeHeldReadiness counts
+    // 'cancelled' alongside 'completed' as the event that frees the body, so the
+    // draft moves Holding → Resting rather than being torn down. It is not yet
+    // stamped — the body was freed a millisecond ago, so neither the promotion
+    // nor the 3-minute rest fallback can have been satisfied.
+    const { data: held } = await serviceClient()
+      .from("matches")
+      .select("status, is_held, held_ready_at, pulled_player_ids")
+      .eq("id", heldId)
+      .maybeSingle();
+    expect(held).not.toBeNull();
+    expect(held!.status).toBe("pending");
+    expect(held!.is_held).toBe(true);
+    expect(held!.held_ready_at).toBeNull();
+    expect(held!.pulled_player_ids).toEqual([body.id]);
+
+    // The body's seat survives with it. 'waiting' here is the bug: the hold is
+    // still holding a seat for them, so the general pool must not see them.
+    expect(await queueStatusOf(session.id, body.id)).toBe("drafted");
+
+    // Their three co-members on the cancelled match have no such reservation.
+    const { data: sourceRoster } = await serviceClient()
+      .from("match_players")
+      .select("player_id")
+      .eq("match_id", sourceMatch.id);
+    const others = (sourceRoster ?? []).map((r) => r.player_id).filter((id) => id !== body.id);
+    expect(others).toHaveLength(3);
+    for (const id of others) {
+      expect(await queueStatusOf(session.id, id)).toBe("waiting");
+    }
+
+    // The three parked members are untouched — cancelling a source match is not
+    // an event about them.
+    for (const m of members) {
+      expect(await queueStatusOf(session.id, m.id)).toBe("drafted");
+    }
+
+    // The mechanism, asserted directly rather than through the engine. A body at
+    // 'waiting' is admitted to fetchActivePool, gets seated in a new draft, and
+    // create_match_with_players' Guard 2 then returns NULL because they already
+    // hold the pending held draft — executeMatch fails and the slot loop breaks.
+    // Driving that chain end-to-end needs a pool large and precisely-aged enough
+    // for the engine to actually PICK this body, which would make the test's
+    // outcome depend on scoring rather than on the fix. Pool admission is the
+    // link the fix owns, so that is what this pins.
+    const pool = await fetchActivePool(serviceClient(), session.id);
+    expect(pool.map((p) => p.player_id)).not.toContain(body.id);
+    expect(pool.map((p) => p.player_id)).toEqual(expect.arrayContaining(others));
+  });
+
+  it("CC-CAN-HELD-02: cancelling the HELD DRAFT itself never unseats its still-playing body", async () => {
+    const { organizer, session, members, body, sourceMatch, heldId } = await seedHeldDraft();
+
+    // The UI never sends this today (active-courts.tsx only surfaces Cancel for
+    // an in_progress court, and court-card.tsx renders Clear for a pending row),
+    // but cancelMatchAction is an exported server action — a public endpoint —
+    // and its CAS accepts 'pending'. This calls it the way an endpoint can be
+    // called, which is the only way the guard can be tested.
+    const result = await cancelAs(organizer.id, heldId);
+    expect(result.success).toBe(true);
+
+    const { data: held } = await serviceClient()
+      .from("matches")
+      .select("status")
+      .eq("id", heldId)
+      .maybeSingle();
+    // cancelMatchAction's contract is a SURVIVING row marked cancelled — unlike
+    // clear_on_deck_match_atomic, which deletes. The audit event references it.
+    expect(held!.status).toBe("cancelled");
+
+    // The three parked members go back to the pool...
+    for (const m of members) {
+      expect(await queueStatusOf(session.id, m.id)).toBe("waiting");
+    }
+
+    // ...and the body does not, because they are physically mid-game on Court 1.
+    // Their source match is untouched by this cancel.
+    expect(await queueStatusOf(session.id, body.id)).toBe("playing");
+    const { data: src } = await serviceClient()
+      .from("matches")
+      .select("status")
+      .eq("id", sourceMatch.id)
+      .maybeSingle();
+    expect(src!.status).toBe("in_progress");
+
+    // Not in the pool either — the status and the pool must agree, since it is
+    // pool admission (not the string) that stalls the engine.
+    const pool = await fetchActivePool(serviceClient(), session.id);
+    expect(pool.map((p) => p.player_id)).not.toContain(body.id);
   });
 });

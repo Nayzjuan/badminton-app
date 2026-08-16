@@ -84,6 +84,8 @@ function makeBuilder(response: MockResponse) {
     "update",
     "delete",
     "insert",
+    // gte: the duplicate-roster probe filters completed_at by a time window.
+    "gte",
   ]) {
     b[method] = (..._args: unknown[]) => b;
   }
@@ -129,6 +131,13 @@ function makeCapturingServiceClient(rpcResponse: MockResponse) {
         data: PLAYER_IDS.map((id) => ({ id, skill_level: "intermediate" })),
         error: null,
       });
+    }
+    // "matches" → the duplicate-roster probe. Empty means "these four have no
+    // recent completed match", so the soft confirm never fires and origin
+    // stamping is tested on its own. The confirm path has its own file
+    // (duplicate-roster-confirm.test.ts).
+    if (table === "matches") {
+      return makeBuilder({ data: [], error: null });
     }
     return makeBuilder({ data: null, error: null });
   });

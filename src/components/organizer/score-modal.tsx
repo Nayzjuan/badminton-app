@@ -31,6 +31,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { useScoreForm } from "@/hooks/use-score-form";
+import type { ScoreSubmitOutcome } from "@/hooks/use-score-form";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 
 interface ScoreModalProps {
@@ -38,7 +39,7 @@ interface ScoreModalProps {
   open: boolean;
   /** The match being scored. May be null when dialog is animating closed. */
   match: EnrichedMatch | null;
-  onSubmit: (teamAScore: number, teamBScore: number) => Promise<{ error?: string }>;
+  onSubmit: (teamAScore: number, teamBScore: number) => Promise<ScoreSubmitOutcome>;
   onClose: () => void;
 }
 
@@ -51,26 +52,30 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
     error,
     isPending,
     handleSubmit,
-    clearError,
-  } = useScoreForm(async (a, b) => {
-    const result = await onSubmit(a, b);
-    return { error: result.error };
-  });
+    reset,
+  } = useScoreForm(onSubmit);
   const teamARef = useRef<HTMLInputElement>(null);
 
-  // Reset form each time the dialog opens for a new match.
-  // clearError ensures a stale validation message from a previous
-  // submission doesn't bleed into the next time the modal is opened.
+  // Reset form each time the dialog opens for a new match. This modal is
+  // mounted once and reused for every court, so a stale `error` would otherwise
+  // colour the next match's first open. `reset` rather than `clearError`: it
+  // also drops the terminal `settled`/`submitted` states, which this component
+  // does not read today — the race is handled a layer up, in ActiveCourts,
+  // which closes the modal on a settled code. Clearing them anyway costs
+  // nothing and keeps the hook's state honest for a host that does read them.
   useEffect(() => {
     if (open) {
       setTeamAScore("");
       setTeamBScore("");
-      clearError();
+      reset();
       // Small delay so Radix has finished its focus-trap setup.
       const t = setTimeout(() => teamARef.current?.focus(), DIALOG_FOCUS_DELAY_MS);
       return () => clearTimeout(t);
     }
-    // setTeamAScore, setTeamBScore, clearError are stable (from useState)
+    // setTeamAScore/setTeamBScore are useState setters, so genuinely stable.
+    // `reset` is not — useScoreForm re-creates it each render — but its body is
+    // nothing but calls to those same setters, so a captured copy can never go
+    // stale. Depending on it would re-run this effect on every render instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -126,7 +131,10 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
               type="number"
               inputMode="numeric"
               min="0"
-              max="99"
+              // Matches the range useScoreForm actually enforces at submit.
+              // A wider attribute here only means the browser's own hint
+              // disagrees with the error the organizer gets a tap later.
+              max={MAX_BADMINTON_SCORE}
               value={teamAScore}
               onChange={(e) => setTeamAScore(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && teamARef.current?.blur()}
@@ -168,7 +176,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
               type="number"
               inputMode="numeric"
               min="0"
-              max="99"
+              max={MAX_BADMINTON_SCORE}
               value={teamBScore}
               onChange={(e) => setTeamBScore(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}

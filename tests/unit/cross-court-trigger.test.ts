@@ -53,6 +53,8 @@
 //   CCT-FEED-5: the query is scoped to this session's PENDING matches
 //   CCT-FEED-6: held drafts cannot STACK against one feedable match
 //   CCT-FEED-7: a NULL is_held counts as feedable, not held
+//   CCT-FEED-8: the UNREADY-hold ceiling — the second, absolute bound that
+//               replaced the draft cap's accidental one
 //   CCT-TRIG-1: forcedRepeat arms the reach even at zero staleness
 //   CCT-TRIG-2: staleness alone arms it — the case the old trigger missed
 //   CCT-TRIG-3: fresh four + no forced repeat ⇒ no reach, no queries spent
@@ -97,6 +99,7 @@ import {
 } from "@/lib/matchmaking-core";
 import {
   CRITICAL_WAIT_MINUTES,
+  CROSS_COURT_MAX_UNREADY_HOLDS,
   CROSS_COURT_REST_FALLBACK_MINUTES,
   HARD_WAIT_CAP_MINUTES,
   RED_ZONE_SCORE_FLOOR,
@@ -107,19 +110,21 @@ const SESSION_ID = "sess-1";
 
 // ── Mock factory ─────────────────────────────────────────────
 // hasFeedableCapacity issues ONE query:
-//   from("matches").select("is_held").eq(session).eq(status pending)
+//   from("matches").select("is_held, held_ready_at").eq(session).eq(status pending)
 // and compares the two populations itself. The chain records every filter so
 // the tests can assert the query SHAPE, not just its result — a guard that
 // returned the right boolean off the wrong predicate would be
 // indistinguishable otherwise.
 //
 // `rows` is the pending-match population: is_held true = a held draft (seats
-// nobody yet), false = a feedable match (a freeing court can take it).
+// nobody yet), false = a feedable match (a freeing court can take it). A held
+// row with a null held_ready_at is additionally UNREADY — the pulled body is
+// still on court — which is what the second bound counts.
 
 type Filter = { op: string; args: unknown[] };
 
 function makeCountMock(result: {
-  data: { is_held: boolean | null }[] | null;
+  data: { is_held: boolean | null; held_ready_at?: string | null }[] | null;
   error: { message: string } | null;
 }) {
   const filters: Filter[] = [];
@@ -151,11 +156,22 @@ function makeCountMock(result: {
   return { client, filters, tables, selectArgs: () => selectArgs };
 }
 
-/** Pending-match population: `feedable` promotable matches + `held` held drafts. */
-function rows(feedable: number, held: number) {
+/**
+ * Pending-match population: `feedable` promotable matches + `held` held drafts
+ * + `readyHeld` held drafts whose hold has already resolved.
+ *
+ * Held rows default to UNREADY (held_ready_at null), which is what a hold looks
+ * like the instant it is created — and the only kind CROSS_COURT_MAX_UNREADY_HOLDS
+ * counts. A READY hold is publishable and promotable, so it is not parking anyone.
+ */
+function rows(feedable: number, held: number, readyHeld = 0) {
   return [
-    ...Array.from({ length: feedable }, () => ({ is_held: false })),
-    ...Array.from({ length: held }, () => ({ is_held: true })),
+    ...Array.from({ length: feedable }, () => ({ is_held: false, held_ready_at: null })),
+    ...Array.from({ length: held }, () => ({ is_held: true, held_ready_at: null })),
+    ...Array.from({ length: readyHeld }, () => ({
+      is_held: true,
+      held_ready_at: "2026-08-16T00:00:00.000Z",
+    })),
   ];
 }
 
@@ -214,7 +230,7 @@ describe("hasFeedableCapacity — the courts-stay-fed gate", () => {
     expect(await hasFeedableCapacity(client, SESSION_ID)).toBe(false);
   });
 
-  it("CCT-FEED-5: reads is_held for PENDING matches in this session only", async () => {
+  it("CCT-FEED-5: reads is_held + held_ready_at for PENDING matches in this session only", async () => {
     const { client, filters, tables, selectArgs } = makeCountMock({
       data: rows(2, 0),
       error: null,
@@ -222,9 +238,12 @@ describe("hasFeedableCapacity — the courts-stay-fed gate", () => {
     await hasFeedableCapacity(client, SESSION_ID);
 
     expect(tables).toEqual(["matches"]);
-    // is_held must be SELECTED, not filtered away: the guard has to see the
-    // held population to know whether the feedable one still outnumbers it.
-    expect(selectArgs()[0]).toBe("is_held");
+    // Both columns must be SELECTED, not filtered away: is_held for the
+    // stacking bound (the guard has to see the held population to know whether
+    // the feedable one still outnumbers it), held_ready_at for the unready-hold
+    // ceiling (CCT-FEED-8) — dropping it makes every hold look READY and the
+    // ceiling never fires.
+    expect(selectArgs()[0]).toBe("is_held, held_ready_at");
 
     const eqs = filters.filter((f) => f.op === "eq").map((f) => f.args);
     expect(eqs).toContainEqual(["session_id", SESSION_ID]);
@@ -257,6 +276,40 @@ describe("hasFeedableCapacity — the courts-stay-fed gate", () => {
     // the gate into never authorising. See the comment in hasFeedableCapacity.
     const { client } = makeCountMock({ data: [{ is_held: null }], error: null });
     expect(await hasFeedableCapacity(client, SESSION_ID)).toBe(true);
+  });
+
+  it("CCT-FEED-8: at most CROSS_COURT_MAX_UNREADY_HOLDS unresolved holds, however many spares back them", async () => {
+    // The SECOND bound, and the one the stacking rule above cannot express.
+    // feedable > held is a RATIO: a session with enough pending matches satisfies
+    // it at any hold count, and the draft cap used to be what actually stopped
+    // the third hold — by accident, back when every unpublished draft counted
+    // against it. Draft mode now excludes unready holds from that count (they are
+    // unpublishable, so a cap slot spent on one is a slot nothing can free), which
+    // removed the accidental ceiling and left nothing bounding how many bodies can
+    // be parked at once. This is the deliberate replacement.
+    //
+    // 5 feedable vs 2 unready holds passes the ratio comfortably and is still
+    // refused. Each hold parks 3 waiting players, so 2 is a 6-player budget.
+    const atCeiling = makeCountMock({ data: rows(5, CROSS_COURT_MAX_UNREADY_HOLDS), error: null });
+    expect(await hasFeedableCapacity(atCeiling.client, SESSION_ID)).toBe(false);
+
+    // One below the ceiling, same ratio ⇒ authorised. Pins that it is the hold
+    // COUNT being refused above and not the fixture's shape.
+    const below = makeCountMock({
+      data: rows(5, CROSS_COURT_MAX_UNREADY_HOLDS - 1),
+      error: null,
+    });
+    expect(await hasFeedableCapacity(below.client, SESSION_ID)).toBe(true);
+
+    // READY holds are exempt. They are publishable and promotable — nobody is
+    // parked behind an unfinished game — so a session that has resolved its holds
+    // may reach again. Counting them here would make the ceiling a lifetime
+    // budget per session rather than a concurrency limit.
+    const resolved = makeCountMock({
+      data: rows(5, 0, CROSS_COURT_MAX_UNREADY_HOLDS + 1),
+      error: null,
+    });
+    expect(await hasFeedableCapacity(resolved.client, SESSION_ID)).toBe(true);
   });
 });
 

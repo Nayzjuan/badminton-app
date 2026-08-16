@@ -30,16 +30,37 @@
 // ============================================================
 
 /**
+ * Machine-readable outcome discriminator for match actions.
+ *
+ * `message` is written for humans and is free to be reworded; a client that
+ * needs to BRANCH on an outcome must branch on this instead. Only failures
+ * that call for something other than "show the text in red" carry a code:
+ *
+ *   already_scored  — the match was completed by someone else first (the
+ *                     player and the organizer racing on the same match).
+ *                     Not really an error: the desired end state is reached,
+ *                     so the caller should transition on rather than trap the
+ *                     user on a dead form.
+ *   match_cancelled — the match was cancelled out from under the caller.
+ *   not_completed   — a score edit targeted a match that is no longer
+ *                     completed (a concurrent "Revert to Active Court").
+ */
+export type MatchActionCode = "already_scored" | "match_cancelled" | "not_completed";
+
+/**
  * Standard return shape for match server actions.
  *
  * Consistent with the broader action convention used in sessions.ts,
  * matchmaking.ts, and queue.ts. The `message` field is always present
  * so callers can surface a human-readable reason for both success and
- * failure without null-checking.
+ * failure without null-checking. `code` is optional and present only on the
+ * outcomes listed in MatchActionCode — callers that ignore it keep the exact
+ * behaviour they had before it existed.
  */
 export type MatchActionResult = {
   success: boolean;
   message: string;
+  code?: MatchActionCode;
 };
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";

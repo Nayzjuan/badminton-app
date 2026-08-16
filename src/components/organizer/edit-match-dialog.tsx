@@ -6,8 +6,10 @@
 
 import { Pencil, RotateCcw } from "lucide-react";
 import { useEditMatch } from "@/hooks/use-edit-match";
+import { MAX_BADMINTON_SCORE } from "@/lib/constants";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -29,6 +31,7 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
     setScoreB,
     message,
     isError,
+    savedOnce,
     isPending,
     handleOpenChange,
     handleSaveScore,
@@ -63,11 +66,16 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
                 Team A
               </p>
+              {/* max is the server's real bound (scoreSchema in @/lib/schemas/match
+                  rejects anything over MAX_BADMINTON_SCORE), not a round 99. The
+                  attribute alone does not block typing 32 — useEditMatch does that
+                  at submit time — but the stepper and the browser's own validity
+                  UI should not advertise a ceiling the server will refuse. */}
               <input
                 type="number"
                 inputMode="numeric"
                 min={0}
-                max={99}
+                max={MAX_BADMINTON_SCORE}
                 value={scoreA}
                 onChange={(e) => setScoreA(e.target.value)}
                 disabled={isPending}
@@ -89,7 +97,7 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
                 type="number"
                 inputMode="numeric"
                 min={0}
-                max={99}
+                max={MAX_BADMINTON_SCORE}
                 value={scoreB}
                 onChange={(e) => setScoreB(e.target.value)}
                 disabled={isPending}
@@ -109,7 +117,8 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
             </p>
           )}
 
-          {/* Save score */}
+          {/* Save score. The dialog stays open after a successful save so the
+              scores can be corrected again immediately — see useEditMatch. */}
           <button
             onClick={handleSaveScore}
             disabled={isPending}
@@ -118,8 +127,26 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
                        dark:bg-primary dark:text-primary-foreground dark:hover:bg-primary/90
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isPending ? "Saving…" : "Save Score"}
+            {isPending ? "Saving…" : savedOnce ? "Save Again" : "Save Score"}
           </button>
+
+          {savedOnce && !isPending && (
+            <>
+              <p className="text-center text-[10px] text-slate-400 dark:text-muted-foreground">
+                Still not right? Change the numbers and save again — you can correct a score as many
+                times as you need.
+              </p>
+              <DialogClose asChild>
+                <button
+                  className="w-full rounded-xl border border-slate-200 dark:border-border px-4 py-2
+                             text-xs font-semibold text-slate-600 dark:text-muted-foreground
+                             hover:bg-slate-50 dark:hover:bg-muted transition-colors"
+                >
+                  Done
+                </button>
+              </DialogClose>
+            </>
+          )}
 
           {/* Divider */}
           <div className="flex items-center gap-2">

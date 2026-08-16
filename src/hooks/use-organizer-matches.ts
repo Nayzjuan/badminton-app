@@ -21,6 +21,7 @@ import {
   cancelMatchAction,
   createManualMatchAction,
 } from "@/app/actions/match-lifecycle";
+import type { MatchActionCode } from "@/app/actions/_shared";
 import {
   clearOnDeckMatch as clearOnDeckMatchAction,
   reorderOnDeckMatches as reorderOnDeckMatchesAction,
@@ -91,17 +92,41 @@ export function useOrganizerMatches(
    */
   matchesRevision: number;
   callNextMatch: (courtId: string) => Promise<MatchmakingResult>;
-  createManualMatch: (teamA: string[], teamB: string[]) => Promise<{ error?: string }>;
+  /**
+   * `confirmDuplicate` re-sends a create the server softly refused because these
+   * same players already have a completed match in this session inside the recent
+   * window. The refusal comes back as `duplicateMessage` (never `error`) so the
+   * caller is forced to distinguish "ask and maybe retry" from "this failed" —
+   * rendering it as an error would leave the organizer with no way through.
+   */
+  createManualMatch: (
+    teamA: string[],
+    teamB: string[],
+    confirmDuplicate?: boolean
+  ) => Promise<{ error?: string; duplicateMessage?: string }>;
+  /**
+   * `code` is forwarded verbatim from the server action rather than reduced to
+   * a boolean here. "someone scored it first" and "someone cancelled it" are
+   * both reasons the organizer's submit bounced, but they need opposite copy —
+   * one says a score was kept, the other says no score exists — so the caller
+   * has to be able to tell them apart. Reducing them at this layer is what
+   * makes a wrong toast unavoidable downstream.
+   */
   endMatch: (
     matchId: string,
     teamAScore: number,
     teamBScore: number
-  ) => Promise<{ error?: string }>;
+  ) => Promise<{ error?: string; code?: MatchActionCode }>;
   cancelMatch: (matchId: string) => Promise<{ error?: string }>;
   clearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
   reorderOnDeckMatches: (orderedMatchIds: string[]) => Promise<{ error?: string }>;
   publishMatch: (matchId: string) => Promise<{ error?: string }>;
-  publishAllDrafts: () => Promise<{ error?: string; publishedCount?: number }>;
+  publishAllDrafts: () => Promise<{
+    error?: string;
+    message?: string;
+    publishedCount?: number;
+    skippedCount?: number;
+  }>;
   swapPlayer: (matchId: string, outPlayerId: string, inPlayerId: string) => Promise<SwapResult>;
   swapMatchPlayers: (
     aMatchId: string,
@@ -221,8 +246,9 @@ export function useOrganizerMatches(
   );
 
   const createManualMatch = useCallback(
-    async (teamA: string[], teamB: string[]) => {
-      const result = await createManualMatchAction(sessionId, teamA, teamB);
+    async (teamA: string[], teamB: string[], confirmDuplicate = false) => {
+      const result = await createManualMatchAction(sessionId, teamA, teamB, confirmDuplicate);
+      if (result.code === "duplicate_roster") return { duplicateMessage: result.message };
       if (!result.success) return { error: result.message };
       await Promise.all([fetchQueue(), fetchActiveMatches()]);
       bumpMatchesRevision();
@@ -234,7 +260,16 @@ export function useOrganizerMatches(
   const endMatch = useCallback(
     async (matchId: string, teamAScore: number, teamBScore: number) => {
       const result = await endMatchAction(matchId, teamAScore, teamBScore);
-      if (!result.success) return { error: result.message };
+      if (!result.success) {
+        // Refetch on failure too. The most common failure here is losing the
+        // race to a player who submitted the same match a moment earlier, and
+        // in that case the board this modal was opened from is now wrong — the
+        // court is free and the match has moved to history. Returning early
+        // without refetching (what this did before) left the organizer looking
+        // at a match that no longer exists, which invites recording it again.
+        await Promise.all([fetchCourts(), fetchActiveMatches()]);
+        return { error: result.message, code: result.code };
+      }
       await Promise.all([fetchCourts(), fetchActiveMatches()]);
       return {};
     },
@@ -272,12 +307,24 @@ export function useOrganizerMatches(
     return result.success ? {} : { error: result.message };
   }, []);
 
+  // `skippedCount` + `message` are forwarded on the SUCCESS path too: the bulk
+  // publish reports partial failure as success-with-skips, so collapsing the
+  // result to { publishedCount } (as this used to) discarded the only signal the
+  // panel had that some drafts did not publish.
   const publishAllDrafts = useCallback(async (): Promise<{
     error?: string;
+    message?: string;
     publishedCount?: number;
+    skippedCount?: number;
   }> => {
     const result = await publishAllDraftMatchesAction(sessionId);
-    return result.success ? { publishedCount: result.publishedCount } : { error: result.message };
+    return result.success
+      ? {
+          publishedCount: result.publishedCount,
+          skippedCount: result.skippedCount,
+          message: result.message,
+        }
+      : { error: result.message };
   }, [sessionId]);
 
   const swapPlayer = useCallback(

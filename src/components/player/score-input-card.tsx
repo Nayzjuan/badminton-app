@@ -4,7 +4,7 @@
 // ScoreInputCard — lets any player in the match submit the score
 // ============================================================
 
-import { CheckCircle2, BarChart2 } from "lucide-react";
+import { CheckCircle2, BarChart2, Info } from "lucide-react";
 import { sanitizeScore } from "@/lib/score-input";
 import { useScoreInput } from "@/hooks/use-score-input";
 
@@ -21,6 +21,7 @@ export function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
     setTeamBScore,
     error,
     submitted,
+    settled,
     isPending,
     handleSubmit,
   } = useScoreInput(matchId);
@@ -43,6 +44,21 @@ export function ScoreInputCard({ matchId, myTeam }: ScoreInputCardProps) {
     const clean = sanitizeScore(val);
     if (myTeam === "a") setTeamBScore(clean);
     else setTeamAScore(clean);
+  }
+
+  // Lost the race — the organizer (or a teammate) got there first. Deliberately
+  // NOT styled as an error: the score is recorded, this player just wasn't the
+  // one who recorded it, and there is nothing here for them to retry. The
+  // dashboard drops this card entirely on the next realtime tick.
+  if (settled) {
+    return (
+      <div className="rounded-2xl border border-slate-200 dark:border-border bg-slate-50 dark:bg-muted px-5 py-4 text-center">
+        <div className="flex items-center justify-center gap-2 text-slate-600 dark:text-muted-foreground">
+          <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <p className="text-sm font-semibold">{settled}</p>
+        </div>
+      </div>
+    );
   }
 
   if (submitted) {

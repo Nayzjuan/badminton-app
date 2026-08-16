@@ -76,6 +76,7 @@ import {
   hasFeedableCapacity,
   executeHeldMatch,
 } from "@/lib/matchmaking-db";
+import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
 import { isSessionOrganizer, isSessionActive } from "@/app/actions/_shared";
 import { isValidUUID } from "@/lib/validate";
 
@@ -311,23 +312,33 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────
 // INTERNAL: runEngineInternal
 // ─────────────────────────────────────────────────────────────
-// Draft review queue filler. Generates unpublished drafts until the
-// count of UNPUBLISHED pending matches reaches MAX_AUTO_DRAFTS.
+// Draft review queue filler.
 //
-// slotsAvailable = max(0, MAX_AUTO_DRAFTS − draftCount)
-//   draftCount = status='pending' AND is_published=false only.
-//   Published on-deck matches do NOT count against the cap — they have
-//   already been reviewed and are not blocking the review queue.
-//   0 drafts → up to 3 slots (pool diversity cap applies)
-//   1 draft  → up to 2 slots
-//   2 drafts → 1 slot
-//   3 drafts → 0 slots (review queue full)
-// Fills slots up to slotsAvailable, stopping when queue is exhausted.
+// slotsAvailable = max(0, effectiveCap − draftCount), then fills slots one at a
+// time, stopping when the queue is exhausted. Neither term is a constant:
+//
+//   effectiveCap = override != null ? min(override, getDynamicDraftCap(waiting))
+//                                   : getDynamicDraftCap(waiting)
+//     getDynamicDraftCap returns MAX_AUTO_DRAFTS (3) / MAX_AUTO_DRAFTS_LARGE (5)
+//     / MAX_AUTO_DRAFTS_XLARGE (6) by waiting-pool size, switching at
+//     DRAFT_CAP_LARGE_THRESHOLD (25) and DRAFT_CAP_XLARGE_THRESHOLD (30) — the
+//     *_THRESHOLD pair are waiting counts, not caps; do not read them as caps.
+//     The organizer's max_auto_drafts_override is a CEILING on the result,
+//     never a raise.
+//
+//   draftCount is mode-dependent, and the two modes count held drafts
+//     differently on purpose — see the long comment at the definition below.
+//     Draft mode: unpublished pending, minus unready held drafts.
+//     Auto-publish mode: published-or-held pending.
+//
+// Published on-deck matches never count in draft mode: they have already been
+// reviewed and are not blocking the review queue.
 
 /**
  * Core engine loop — computes how many on-deck slots are available (capped by
- * MAX_AUTO_DRAFTS), then fills each slot by calling `runAlgorithm` against the
- * waiting player pool.
+ * `effectiveCap`, derived above; MAX_AUTO_DRAFTS is only its small-session
+ * value), then fills each slot by calling `runAlgorithm` against the waiting
+ * player pool.
  *
  * Why a loop rather than a batch: each iteration consumes players from the pool
  * and must commit the match before the next slot can be computed accurately.
@@ -362,7 +373,7 @@ async function runEngineInternal(
     return;
   }
 
-  // ── Fetch waiting players + draft count + session in parallel ─
+  // ── Fetch waiting players + pending matches + session in parallel ─
   //
   // waitingRows is hoisted here (outside !bypassGate) for two reasons:
   //   1. The waiting count drives getDynamicDraftCap — we need it before
@@ -370,14 +381,13 @@ async function runEngineInternal(
   //   2. The same rows are reused for the soft gate and estimatedWaiting,
   //      so we avoid a second round-trip later.
   //
-  // Draft count cap (is_published=false only):
-  //   Published on-deck matches are already reviewed. Counting them against
-  //   the cap would block fresh draft generation while reviewed matches wait
-  //   to be called to courts. The cap is a REVIEW QUEUE cap, not a total
-  //   on-deck cap.
+  // pendingMatchRows is fetched as ROWS, not as two `head: true` counts, because
+  // both modes need a different predicate over the same tiny set (pending matches
+  // are bounded by the draft cap plus the court count — single digits), and one
+  // read is cheaper than the count-then-recount round-trip this replaces.
   const [
     { data: waitingRows, error: waitErr },
-    { count: draftCountRaw, error: draftErr },
+    { data: pendingMatchRows, error: draftErr },
     { data: sessionRow, error: sessionErr },
     // Rejection memory — per RUN, not per slot: cleared-roster events are only
     // written by organizer actions, never by the engine's own slot commits, so
@@ -391,10 +401,9 @@ async function runEngineInternal(
       .eq("status", "waiting"),
     supabase
       .from("matches")
-      .select("id", { count: "exact", head: true })
+      .select("id, is_published, is_held, held_ready_at")
       .eq("session_id", sessionId)
-      .eq("status", "pending")
-      .eq("is_published", false),
+      .eq("status", "pending"),
     supabase
       .from("sessions")
       .select("max_auto_drafts_override, auto_publish")
@@ -407,12 +416,58 @@ async function runEngineInternal(
   }
 
   if (draftErr) {
-    console.error(`[engine] runEngineInternal: draft count failed — ${draftErr.message}`);
+    console.error(`[engine] runEngineInternal: pending-match fetch failed — ${draftErr.message}`);
     return;
   }
   // waitErr is non-fatal — fall back to default cap if the view is unavailable.
   if (waitErr) {
     console.warn(`[engine] runEngineInternal: waiting-rows fetch failed — ${waitErr.message}`);
+  }
+
+  // ── Held-draft heartbeat ─────────────────────────────────────
+  //
+  // Until this existed, recomputeHeldReadiness had exactly two callers, both in
+  // match-lifecycle.ts (match end / cancel), so a hold could only advance when
+  // some OTHER match happened to end. That is the gap behind the field report:
+  // the RESTING→READY stamp needs CROSS_COURT_REST_FALLBACK_MINUTES of rest to
+  // have elapsed, which by construction is never true at the instant the source
+  // match ends — so the one event that fires the recompute is the one event that
+  // cannot stamp. Nothing fires again until the next match ends, and in session
+  // 3367d4c6 two holds sat unresolved for ~10 minutes waiting for that. The
+  // engine also runs on queue joins, publishes and clears, so calling it here
+  // is a materially denser heartbeat. Still not a timer: on a session where
+  // nothing at all happens, nothing fires, and this sits below the courtCount
+  // early-return and inside the is_auto_matchmaking_on gate, so a session with
+  // every court closed or the engine switched off gets no heartbeat from here.
+  // The ⚠️ on CROSS_COURT_MAX_HOLD_MINUTES still holds — ATTENTION, not elapsed
+  // time — it is only widened.
+  //
+  // Gated on the rows we already have, so a session with no live hold pays
+  // NOTHING for it. When one does fire we re-read the pending set rather than
+  // count the pre-recompute snapshot, because the recompute can stamp (a hold
+  // becomes publishable, so draft mode must now count it), cancel (a hold past
+  // its age cap disappears) or downgrade (the pulled body was swapped out, so it
+  // becomes a plain draft) — all three change the number below.
+  //
+  // Safe to re-enter: endMatchAction already calls it, so a match end now runs
+  // it twice. Idempotent by construction (the stamp is `.is("held_ready_at",
+  // null)`), and the second pass is the useful one, because it lands AFTER that
+  // end's promotion and so sees the incremented promotionsSinceFreed.
+  let pendingRows = pendingMatchRows ?? [];
+  if (pendingRows.some(isHeldAwaitingReadiness)) {
+    await recomputeHeldReadiness(supabase, sessionId);
+    const { data: refreshedPending, error: refreshErr } = await supabase
+      .from("matches")
+      .select("id, is_published, is_held, held_ready_at")
+      .eq("session_id", sessionId)
+      .eq("status", "pending");
+    if (refreshErr) {
+      console.warn(
+        `[engine] runEngineInternal: pending re-read after held recompute failed — ${refreshErr.message}`
+      );
+    } else if (refreshedPending) {
+      pendingRows = refreshedPending;
+    }
   }
 
   const autoPublish = shouldAutoPublishMatch(sessionRow?.auto_publish ?? false);
@@ -424,24 +479,42 @@ async function runEngineInternal(
   const override = sessionRow?.max_auto_drafts_override ?? null;
   const effectiveCap = override != null ? Math.min(override, dynamicCap) : dynamicCap;
 
-  // Mode-dependent cap count. Draft mode counts the unpublished review queue
-  // (fetched above). Auto-publish mode has no review step, so the cap instead
-  // limits the on-deck queue — re-count published on-deck matches PLUS held
-  // drafts. Held drafts are born is_published=false (hidden until their pulled
-  // body is free) but they RESERVE a future on-deck slot — they auto-publish at
-  // readiness. Counting them here stops the engine over-generating while several
-  // held drafts are pending, which would otherwise overshoot the cap when they
-  // all publish at once.
-  let draftCount = draftCountRaw ?? 0;
-  if (autoPublish) {
-    const { count: onDeckCountRaw } = await supabase
-      .from("matches")
-      .select("id", { count: "exact", head: true })
-      .eq("session_id", sessionId)
-      .eq("status", "pending")
-      .or("is_published.eq.true,is_held.eq.true");
-    draftCount = onDeckCountRaw ?? 0;
-  }
+  // Mode-dependent cap count, both derived from the single pending-match read.
+  //
+  // Draft mode — the REVIEW QUEUE: unpublished drafts, MINUS held drafts whose
+  //   hold is not yet ready. Published on-deck matches are already reviewed;
+  //   counting them would block fresh generation while reviewed matches wait for
+  //   a court. Unready held drafts are excluded for the same reason in reverse:
+  //   the organizer cannot action them at all (publish_match refuses until
+  //   held_ready_at is stamped), so a cap slot spent on one is a slot nothing can
+  //   ever free. That was the deadlock: with max_auto_drafts_override low enough,
+  //   a single hold saturated the cap, the engine stopped generating, and the
+  //   organizer's only exit was to clear the draft the UI was telling them to
+  //   publish. A hold that HAS been stamped ready is publishable, so it counts.
+  //   OnDeckPanel's publishableDraftMatches applies the identical predicate — the
+  //   two must agree or the cap notice describes a cap nobody is enforcing.
+  //
+  // Auto-publish mode — the ON-DECK queue: there is no review step, so the cap
+  //   limits what is on deck. Held drafts count here even though they are
+  //   is_published=false, because in this mode they auto-publish the instant they
+  //   are ready (recomputeHeldReadiness), so each one RESERVES an on-deck slot.
+  //   Not counting them would let the engine overshoot the cap the moment a batch
+  //   of holds resolved together. This is why the two branches differ on held
+  //   drafts: the draft-mode question is "can the organizer act on it?", the
+  //   auto-mode question is "will this take a court slot?".
+  //
+  // ⚠️ Draft mode's exclusion means this cap no longer bounds unready holds at
+  //   all — it used to, by accident, back when every unpublished draft counted.
+  //   The replacement bound is CROSS_COURT_MAX_UNREADY_HOLDS, enforced in
+  //   hasFeedableCapacity at the moment a hold is created. Do not reason about
+  //   draft-mode pending totals from `effectiveCap` alone: unready holds add up
+  //   to CROSS_COURT_MAX_UNREADY_HOLDS on top of it, and PUBLISHED pending rows
+  //   are excluded by this same branch and bounded by nothing here at all (they
+  //   drain as courts free). `effectiveCap` bounds the review queue, not the
+  //   pending set.
+  const draftCount = autoPublish
+    ? pendingRows.filter((m) => m.is_published || m.is_held).length
+    : pendingRows.filter((m) => !m.is_published && !isHeldAwaitingReadiness(m)).length;
   const slotsAvailable = Math.max(0, effectiveCap - draftCount);
 
   console.log(
@@ -649,10 +722,12 @@ async function runEngineInternal(
     // not guaranteed — by recomputeHeldReadiness' hold-age cancel
     // (CROSS_COURT_MAX_HOLD_MINUTES), which is what covers the two seated
     // waiters this guard does not see. Best-effort because the cancel is
-    // evaluated on an event, not on a timer: its only callers are in
-    // match-lifecycle.ts, when a match on a court ends or is cancelled. On a
-    // session that goes quiet, a hold can outlive the cap until the next such
-    // event. See the doc on CROSS_COURT_MAX_HOLD_MINUTES in constants.ts.
+    // evaluated on an event, not on a timer: match-lifecycle.ts calls it when a
+    // match on a court ends or is cancelled, and this engine calls it on any run
+    // that already sees an unready hold. On a session that goes quiet — or with
+    // the engine off, or every court closed — a hold can still outlive the cap
+    // until the next such event. See the doc on CROSS_COURT_MAX_HOLD_MINUTES in
+    // constants.ts.
     // Measured on production, the soonest
     // court to free at draft time is p50 4.7 min / p90 12.7 / p99 18.1, so most
     // holds outlast the 3-minute fallback by a wide margin. What makes that
@@ -906,14 +981,23 @@ export async function promoteOnDeckMatchInternal(
     // Nothing READY. Surface a contextual warning if unpublished drafts are blocking;
     // held-not-ready matches simply wait their turn (the engine builds a ready match
     // to feed the court, so it never idles).
-    const { count: draftCount, error: draftCountError } = await supabase
+    //
+    // That second clause used to be a comment the query contradicted: a head-count
+    // of every unpublished draft included unready holds, so a session whose only
+    // draft was a hold answered "1 draft match needs review before the next game
+    // can start" and ActiveCourts raised the amber "Drafts Waiting for Approval"
+    // banner — pointing at a card that now deliberately has no Publish button.
+    // Fetching the rows instead of head-counting lets the same predicate the
+    // publish paths and the cap use decide what "needs review" means.
+    const { data: draftRows, error: draftCountError } = await supabase
       .from("matches")
-      .select("id", { count: "exact", head: true })
+      .select("id, is_held, held_ready_at")
       .eq("session_id", sessionId)
       .eq("status", "pending")
       .eq("is_published", false);
+    const draftCount = (draftRows ?? []).filter((m) => !isHeldAwaitingReadiness(m)).length;
 
-    if (!draftCountError && (draftCount ?? 0) > 0) {
+    if (!draftCountError && draftCount > 0) {
       return {
         success: false,
         message: `Court freed — ${draftCount} draft match${draftCount !== 1 ? "es need" : " needs"} review before the next game can start.`,
@@ -1059,7 +1143,11 @@ export async function promoteOnDeckMatchInternal(
 // ─────────────────────────────────────────────────────────────
 // recomputeHeldReadiness — cross-court held-draft health check
 // ─────────────────────────────────────────────────────────────
-// Runs before the engine / promotion at every lifecycle event (Phase 6).
+// Runs before the engine / promotion at every lifecycle event (Phase 6), and —
+// since the RESTING→READY stamp can never land on the event that ends the source
+// match — again from runEngineInternal on any run whose pending set still holds
+// an unready hold. Callers must assume it is re-entered; every step below is
+// idempotent.
 // For each HELD, not-yet-ready, PENDING match in the session:
 //   1. Roster integrity (N-2): if the pulled body was swapped OUT of the
 //      roster, clear the held columns → downgrade to a normal draft.

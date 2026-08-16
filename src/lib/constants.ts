@@ -465,16 +465,44 @@ export const CROSS_COURT_REST_FALLBACK_MINUTES = 3;
  *    the parked players' actual `wait_minutes` rather than on hold age; that
  *    costs a query per held draft and is the follow-up if this reads too loose.
  * 2. It is BEST-EFFORT, evaluated on an event, not on a timer. The cancel lives
- *    in `recomputeHeldReadiness`, which is never invoked from the engine loop —
- *    its only callers are in match-lifecycle.ts, when a match ends or is
- *    cancelled. Both of those sit inside `if (match.court_id)`, so a match with
- *    no court does not even count as attention. Until one of those two events
- *    fires on a court, a hold outlives this cap indefinitely. That coupling is
- *    benign in practice (a court freeing is the same event that makes a hold
- *    resolvable at all), but the cap is an upper bound on ATTENTION, not on
- *    elapsed time.
+ *    in `recomputeHeldReadiness`, whose callers are the two in match-lifecycle.ts
+ *    (a match ending or being cancelled — both inside `if (match.court_id)`, so a
+ *    match with no court does not even count as attention) plus the heartbeat in
+ *    `runEngineInternal`, which fires on every engine run that already sees an
+ *    unready hold in its pending set. The engine one is much the denser of the
+ *    two, since queue joins, publishes and clears all reach it — but it sits
+ *    below the courtCount early-return and inside the is_auto_matchmaking_on
+ *    gate. So on a quiet session, or one with the engine off or every court
+ *    closed, a hold still outlives this cap indefinitely: the cap is an upper
+ *    bound on ATTENTION, not on elapsed time.
  */
 export const CROSS_COURT_MAX_HOLD_MINUTES = 15;
+
+/**
+ * Hard ceiling on how many UNREADY held drafts a session may hold at once,
+ * enforced in `hasFeedableCapacity` at the moment a hold would be created.
+ *
+ * Why this exists at all. Nothing used to need it: in draft mode every
+ * unpublished draft counted against the review-queue cap, holds included, so the
+ * cap bounded them for free. That accident had to go — an unready hold cannot be
+ * published, so a cap slot spent on one is a slot nothing can free — and its
+ * removal left `feedable > held` in hasFeedableCapacity as the only bound. That
+ * one scales with the wrong quantity: `feedable` counts published pending
+ * matches too, so in draft mode every match the organizer sends to the on-deck
+ * queue silently licenses one more hold. With courts busy and a few matches
+ * queued, holds could reach five or six, parking three waiting players each.
+ *
+ * Why 2. A hold parks 3 waiting players for up to CROSS_COURT_MAX_HOLD_MINUTES,
+ * so this is really a budget of 6 parked players. One would make the feature
+ * single-threaded across a multi-court session; three would park nine, which is
+ * most of a typical waiting pool. This bounds the exposure without narrowing a
+ * feature whose entire history is never firing at all (0 held drafts in 945
+ * production matches before it was fixed).
+ *
+ * READY holds are deliberately not counted: they are publishable and promotable,
+ * so they are ordinary on-deck inventory, not a reservation.
+ */
+export const CROSS_COURT_MAX_UNREADY_HOLDS = 2;
 
 /**
  * Max consecutive back-to-back games before a playing body is excluded from
@@ -565,6 +593,20 @@ export const REALTIME_REFETCH_DEBOUNCE_MS = 200;
 
 /** Maximum valid score in a single badminton game (standard 21-point, but we allow up to 31 for deuce scenarios). */
 export const MAX_BADMINTON_SCORE = 31;
+
+/**
+ * How far back a manual match looks for an identical roster before asking the
+ * organizer to confirm.
+ *
+ * Sized from the incident this exists for: two completed matches in one session
+ * with the same four players, created 10 minutes apart, both by the organizer
+ * (the second a 19-second retroactive hand-entry of a game already recorded).
+ * The DB has no constraint against that and should not — the same four legitimately
+ * do rematch — so this is a confirm, never a block. Wide enough to cover the
+ * observed gap with headroom; short enough that a genuine rematch an hour later
+ * is silent.
+ */
+export const DUPLICATE_ROSTER_WINDOW_MINUTES = 30;
 
 /**
  * Maximum skill variance window for Red Zone anchor candidates.

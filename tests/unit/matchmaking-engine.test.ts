@@ -26,8 +26,18 @@
 //   queriedTables tracks the DB table-access order for assertions.
 //
 // Per-slot query order inside runEngineInternal:
-//   Promise.all (after courts): v_queue_with_wait_time [0], matches draft count [1],
-//                               sessions [2]; auto mode adds a published on-deck count
+//   Promise.all (after courts): v_queue_with_wait_time [0], matches PENDING ROWS [1],
+//                               sessions [2], match_events [3]
+//     [1] is a ROW read (id, is_published, is_held, held_ready_at), not a head
+//     count: draft mode and auto mode need different predicates over the same
+//     tiny set, so both are filtered in memory off this one response. Auto mode
+//     used to fire a second `matches` head count for the published on-deck set —
+//     it does not any more (ENG-AP-1 pins its absence). Use the DRAFTS(n) helper;
+//     a `{ count: n, data: null }` fixture reads back as ZERO rows.
+//   held heartbeat (CONDITIONAL): fires only when [1] contains a hold with
+//     held_ready_at === null. Costs a recomputeHeldReadiness (matches read +
+//     possible writes) plus a matches re-read. Sessions with no live hold — which
+//     is every fixture that doesn't use heldRow() — pay nothing.
 //   soft gate (if triggered):   matches in_progress count
 //   PER SLOT, at the top of each loop iteration — two independent reads issued
 //   concurrently via Promise.all, so from() sees them in this fixed order:
@@ -236,6 +246,37 @@ function makeMockClient(fromResponses: MockResponse[], rpcResponses: MockRespons
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 const COURT_ID = "00000000-0000-4000-8000-000000000002";
 
+// ── Pending-match ROW fixtures ─────────────────────────────────
+// Both the engine's cap count and promoteOnDeckMatchInternal's draft-blocking
+// check read pending matches as ROWS, not as `head: true` counts: each needs a
+// different predicate over the same tiny set, and both must be able to skip a
+// held draft whose hold has not resolved (`is_held && held_ready_at === null`),
+// which a count cannot express. A `{ count: N, data: null }` fixture is
+// therefore NOT equivalent here — it reads back as ZERO rows.
+const draftRows = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    id: `draft-${i + 1}`,
+    is_published: false,
+    is_held: false,
+    held_ready_at: null as string | null,
+  }));
+/** One cross-court held draft. ready=false is HOLDING — the pulled body is still on court. */
+const heldRow = (ready: boolean, id = "held-1") => ({
+  id,
+  is_published: false,
+  is_held: true,
+  held_ready_at: ready ? "2026-08-16T00:00:00.000Z" : null,
+});
+/** A reviewed, published-but-not-yet-promoted on-deck match. */
+const publishedRow = (id = "published-1") => ({
+  id,
+  is_published: true,
+  is_held: false,
+  held_ready_at: null as string | null,
+});
+/** The Promise.all[1] pending-matches response for n plain unpublished drafts. */
+const DRAFTS = (n: number) => ({ data: draftRows(n), error: null });
+
 // Convenience for the most common match object returned by the pending query
 const MOCK_MATCH = { id: "match-1", is_mixed_level: false };
 const MOCK_MATCH_PLAYERS = [
@@ -266,7 +307,7 @@ describe("promoteOnDeckMatchInternal", () => {
     const mock = makeMockClient([
       { data: { id: COURT_ID }, error: null }, // [0] courts: court-ownership gate (audit #12)
       { data: [], error: null }, // matches fetch → empty
-      { count: 0, data: null, error: null }, // draft-blocking secondary check → 0 unpublished drafts
+      { data: [], error: null }, // draft-blocking secondary check → 0 unpublished drafts
     ]);
 
     const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
@@ -285,7 +326,7 @@ describe("promoteOnDeckMatchInternal", () => {
     const mock = makeMockClient([
       { data: { id: COURT_ID }, error: null }, // [0] courts: court-ownership gate (audit #12)
       { data: [], error: null }, // matches fetch → 0 published pending
-      { count: 2, data: null, error: null }, // draft check → 2 unpublished drafts blocking
+      { data: draftRows(2), error: null }, // draft check → 2 unpublished drafts blocking
     ]);
 
     const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
@@ -296,6 +337,49 @@ describe("promoteOnDeckMatchInternal", () => {
     expect(result.message).toMatch(/draft/i);
     expect(result.message).toContain("2");
     expect(mock.queriedTables).toEqual(["courts", "matches", "matches"]);
+  });
+
+  it("CC-PROM-CC04: an UNREADY held draft is not 'blocking' — it cannot be reviewed", async () => {
+    // Same dead end as the draft cap, in the message layer. "Court freed — 1
+    // draft match needs review" sends the organizer to a card whose Publish
+    // button is refused (publish_match returns HELD_NOT_READY while the pulled
+    // body is on court), so the only way to satisfy the prompt is to clear the
+    // draft — which is what the organizer in session 3367d4c6 did 10 times.
+    // The honest answer is the plain empty state: nothing is promotable, and the
+    // hold resolves by itself.
+    const mock = makeMockClient([
+      { data: { id: COURT_ID }, error: null }, // [0] courts: court-ownership gate
+      { data: [], error: null }, // [1] matches → 0 published pending
+      { data: [heldRow(false)], error: null }, // [2] draft check → one unready hold
+    ]);
+
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.hasDraftsBlocking).toBeUndefined();
+    expect(result.message).toMatch(/no on-deck/i);
+    expect(result.message).not.toMatch(/draft/i);
+  });
+
+  it("CC-PROM-CC05: a READY held draft IS blocking, and is counted alongside plain drafts", async () => {
+    // The other side of CC-PROM-CC04. A stamped hold is publishable and
+    // promotable, so it belongs in the count — dropping every held row would
+    // under-report the review queue and send back "No on-deck match available"
+    // while a publishable draft sat waiting.
+    const mock = makeMockClient([
+      { data: { id: COURT_ID }, error: null }, // [0] courts
+      { data: [], error: null }, // [1] matches → 0 published pending
+      // 1 plain draft + 1 READY hold + 1 UNREADY hold ⇒ counts 2, not 3 and not 1.
+      {
+        data: [...draftRows(1), heldRow(true, "held-ready"), heldRow(false, "held-holding")],
+        error: null,
+      }, // [2]
+    ]);
+
+    const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
+
+    expect(result.hasDraftsBlocking).toBe(true);
+    expect(result.message).toContain("2");
   });
 
   it("returns success:false with the DB error message surfaced (not masked as no-on-deck)", async () => {
@@ -514,7 +598,7 @@ describe("runEngineForSession", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // sessions (toggle)
       { data: [{ id: "c1" }, { id: "c2" }], error: null }, // courts (2)
       { data: [], error: null }, // v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 3, data: null, error: null }, // matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      DRAFTS(3), // matches: 3 plain drafts → slotsAvailable=0 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // sessions override (Promise.all[2])
       { data: [], error: null }, // match_events — rejection memory, empty (Promise.all[3])
     ]);
@@ -587,7 +671,7 @@ describe("runEngineForSession", () => {
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
         { data: fourPlayers, error: null }, // [2] v_queue_with_wait_time: maxWait=10 → gateTimedOut (Promise.all[0])
-        { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
+        DRAFTS(0), // [3] matches: 0 drafts → slotsAvailable=3 (Promise.all[1])
         { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
         { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
         { data: [], error: null }, // [6] fetchSessionMatchSnapshot: matches → []
@@ -754,7 +838,7 @@ describe("runEngineForSession", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
       { data: [{ id: "c1" }], error: null }, // [1] courts (1)
       { data: cappedPool, error: null }, // [2] v_queue_with_wait_time: maxWait=10≥8 → gateTimedOut=true (Promise.all[0])
-      { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
+      DRAFTS(0), // [3] matches: 0 drafts → slotsAvailable=3 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
       { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
       // Slot 1 read phase — snapshot and pool are issued concurrently, so from()
@@ -899,7 +983,7 @@ describe("runEngineForSession", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
       { data: [{ id: "c1" }], error: null }, // [1] courts (1)
       { data: cappedPool, error: null }, // [2] v_queue_with_wait_time
-      { count: 0, data: null, error: null }, // [3] matches draft count=0
+      DRAFTS(0), // [3] matches: 0 drafts
       { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override
       { data: [], error: null }, // [5] match_events — rejection memory
       { data: matchRows, error: null }, // [6] snapshot: committed match IDs
@@ -951,7 +1035,7 @@ describe("runEngineForSession", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
       { data: [{ id: "c1" }], error: null }, // [1] courts (1)
       { data: eightExtremes, error: null }, // [2] v_queue_with_wait_time: 8 players (Promise.all[0])
-      { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=2 (Promise.all[1])
+      DRAFTS(0), // [3] matches: 0 drafts → slotsAvailable=2 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
       { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
       { data: [], error: null }, // [6] fetchSessionMatchSnapshot: matches → [] (short-circuits)
@@ -998,7 +1082,7 @@ describe("runEngineForSession", () => {
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts (2)
         { data: eightPlayers, error: null }, // [2] v_queue_with_wait_time (estimatedWaiting=8) (Promise.all[0])
-        { count: 0, data: null, error: null }, // [3] matches draft count=0 → slotsAvailable=3 (Promise.all[1])
+        DRAFTS(0), // [3] matches: 0 drafts → slotsAvailable=3 (Promise.all[1])
         { data: { max_auto_drafts_override: null }, error: null }, // [4] sessions override (Promise.all[2])
         { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
         { data: [], error: null }, // [6] fetchSessionMatchSnapshot: matches → [] (short-circuits)
@@ -1050,7 +1134,7 @@ describe("runEngineForSession — max_auto_drafts_override ceiling", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [0] sessions (toggle)
       { data: [{ id: "c1" }], error: null }, // [1] courts (1)
       { data: [], error: null }, // [2] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 2, data: null, error: null }, // [3] matches draft count=2 (Promise.all[1])
+      DRAFTS(2), // [3] matches: 2 drafts (Promise.all[1])
       { data: { max_auto_drafts_override: 2 }, error: null }, // [4] sessions override=2 (Promise.all[2])
       // effectiveCap=min(2,3)=2; slotsAvailable=max(0,2-2)=0 → skip
     ]);
@@ -1078,7 +1162,7 @@ describe("runEngineForSession — max_auto_drafts_override ceiling", () => {
       { data: { is_auto_matchmaking_on: true }, error: null },
       { data: [{ id: "c1" }], error: null },
       { data: [], error: null },
-      { count: 3, data: null, error: null },
+      DRAFTS(3),
       { data: { max_auto_drafts_override: 5 }, error: null }, // override=5 but dynamic=3 wins
     ]);
     vi.mocked(createServiceClient).mockReturnValue(mock as never);
@@ -1086,6 +1170,203 @@ describe("runEngineForSession — max_auto_drafts_override ceiling", () => {
     await runEngineForSession(SESSION_ID);
 
     expect(mock.rpc).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// The draft cap vs held drafts, and the held heartbeat
+// ─────────────────────────────────────────────────────────────
+// The field failure these exist for: session 3367d4c6 ran draft mode with
+// max_auto_drafts_override=1. A single cross-court hold was created, counted as
+// the one allowed draft, and the engine stopped generating — while the organizer
+// could not publish that draft either (publish_match returned CONFLICT the whole
+// time the pulled body was on court). The only exit was to clear the draft the UI
+// was telling them to publish, which is what the trace shows them doing 10 times.
+//
+//   CAP-HELD-1  draft mode: an UNREADY hold does not consume a cap slot
+//   CAP-HELD-2  draft mode: a READY hold DOES — it is publishable, so it counts
+//   CAP-HELD-3  auto mode: an unready hold counts (it reserves an on-deck slot)
+//   ENG-HEARTBEAT-1  an unready hold in the pending set fires recomputeHeldReadiness
+//                    and the engine re-reads afterwards
+//   ENG-HEARTBEAT-2  nothing unready ⇒ no recompute, no re-read, zero extra cost
+
+describe("runEngineForSession — held drafts vs the draft cap (CAP-HELD)", () => {
+  const fourWaiting = () =>
+    Array.from({ length: 4 }, (_, i) => ({
+      id: `entry-${i}`,
+      session_id: SESSION_ID,
+      player_id: `p${i}`,
+      joined_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      games_played: 0,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: `Player ${i}`,
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 10,
+      is_bottleneck: false,
+    }));
+
+  /**
+   * recomputeHeldReadiness' opening read, answered empty so it returns before
+   * doing anything else. The recompute's own behaviour is covered by CC-RDY-*;
+   * what these tests care about is only WHETHER it ran.
+   */
+  const RECOMPUTE_NOOP = { data: [], error: null };
+
+  it("CAP-HELD-1: draft mode — an unready hold does NOT consume a cap slot (the deadlock)", async () => {
+    // override=1, and the session's one pending match is a hold whose body is
+    // still on court. Before the fix draftCount was 1, slotsAvailable 0, and the
+    // engine returned without generating anything — permanently, because nothing
+    // about an unready hold changes on its own. Entering the slot loop IS the
+    // assertion.
+    const four = fourWaiting();
+    const mock = makeMockClient(
+      [
+        { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+        { data: [{ id: "c1" }], error: null }, // [1] courts
+        { data: four, error: null }, // [2] v_queue (Promise.all[0])
+        { data: [heldRow(false)], error: null }, // [3] matches: one UNREADY hold
+        { data: { max_auto_drafts_override: 1, auto_publish: false }, error: null }, // [4] session
+        { data: [], error: null }, // [5] match_events
+        RECOMPUTE_NOOP, // [6] heartbeat: recomputeHeldReadiness held read
+        { data: [heldRow(false)], error: null }, // [7] heartbeat: pending re-read (unchanged)
+        { data: [], error: null }, // [8] slot 0 snapshot (empty ⇒ no match_players)
+        { data: four, error: null }, // [9] slot 0 fetchActivePool
+      ],
+      [{ data: null, error: { message: "stop after one slot" } }]
+    );
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    // Reached the slot loop and tried to commit ⇒ effectiveCap 1 - draftCount 0 = 1.
+    expect(mock.rpc).toHaveBeenCalledWith("create_match_with_players", expect.anything());
+  });
+
+  it("CAP-HELD-2: draft mode — a READY hold DOES consume a cap slot", async () => {
+    // The other side of CAP-HELD-1, and the reason the predicate is
+    // `is_held && held_ready_at IS NULL` rather than plain `is_held`. Once the
+    // stamp lands the organizer can publish it, so it is a real review-queue
+    // item; excluding it would let the queue grow past the cap the notice quotes.
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+      { data: [{ id: "c1" }], error: null }, // [1] courts
+      { data: fourWaiting(), error: null }, // [2] v_queue (Promise.all[0])
+      { data: [heldRow(true)], error: null }, // [3] matches: one READY hold
+      { data: { max_auto_drafts_override: 1, auto_publish: false }, error: null }, // [4] session
+      { data: [], error: null }, // [5] match_events
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    expect(mock.rpc).not.toHaveBeenCalled();
+    // No heartbeat either — a stamped hold has nothing left to recompute.
+    expect(mock.queriedTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+      "sessions",
+      "match_events",
+    ]);
+  });
+
+  it("CAP-HELD-3: auto mode — an unready hold counts, because it reserves an on-deck slot", async () => {
+    // The mode asymmetry, stated as a test so it cannot be "simplified" into one
+    // shared predicate. In auto mode there is no review step: the hold publishes
+    // itself the instant recomputeHeldReadiness stamps it, so it is already
+    // spoken for. Not counting it would overshoot the cap the moment a batch of
+    // holds resolved together.
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+      { data: [{ id: "c1" }], error: null }, // [1] courts
+      { data: fourWaiting(), error: null }, // [2] v_queue (Promise.all[0])
+      { data: [heldRow(false)], error: null }, // [3] matches: one UNREADY hold
+      { data: { max_auto_drafts_override: 1, auto_publish: true }, error: null }, // [4] session
+      { data: [], error: null }, // [5] match_events
+      RECOMPUTE_NOOP, // [6] heartbeat: recompute held read
+      { data: [heldRow(false)], error: null }, // [7] heartbeat: pending re-read
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    // Same fixture as CAP-HELD-1 but auto_publish=true ⇒ draftCount 1, slots 0.
+    expect(mock.rpc).not.toHaveBeenCalled();
+  });
+
+  it("ENG-HEARTBEAT-1: an unready hold fires recomputeHeldReadiness, then the pending set is RE-READ", async () => {
+    // Why the engine calls the recompute at all: its only other callers are in
+    // match-lifecycle.ts, and the RESTING→READY stamp needs the rest fallback to
+    // have ELAPSED — which is never true at the instant the source match ends. So
+    // the one event that fired the recompute was the one event that could not
+    // stamp, and a hold sat until some unrelated match happened to end. Two did,
+    // for ~10 minutes each, in session 3367d4c6.
+    //
+    // The re-read is not optional: the recompute can stamp, cancel or downgrade a
+    // hold, and all three change the number the cap is about to be compared
+    // against. Counting the pre-recompute snapshot would re-introduce a one-run
+    // lag on exactly the transition this exists to catch.
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+      { data: [{ id: "c1" }], error: null }, // [1] courts
+      { data: [], error: null }, // [2] v_queue → waiting 0, dynamicCap 3
+      { data: [heldRow(false)], error: null }, // [3] matches: one UNREADY hold
+      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
+      { data: [], error: null }, // [5] match_events
+      RECOMPUTE_NOOP, // [6] heartbeat: recompute held read
+      // [7] The re-read, answered with 3 plain drafts. Nothing in [3] could
+      // produce that count, so the engine stopping at the cap below proves it
+      // counted THIS response and not the snapshot it already had.
+      DRAFTS(3), // [7] heartbeat: pending re-read
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    expect(mock.queriedTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches", // cap phase: pending rows
+      "sessions",
+      "match_events",
+      "matches", // recomputeHeldReadiness
+      "matches", // pending re-read
+    ]);
+    // draftCount 3 vs dynamicCap 3 ⇒ saturated. Off the [3] snapshot it would
+    // have been 0 and the engine would have entered the slot loop.
+    expect(mock.rpc).not.toHaveBeenCalled();
+  });
+
+  it("ENG-HEARTBEAT-2: no unready hold ⇒ no recompute and no re-read", async () => {
+    // The cost guard. The heartbeat is gated on rows the engine already has, so
+    // the overwhelming majority of runs — every session with no live hold — pay
+    // nothing for it. Drop the `.some(isHeldAwaitingReadiness)` guard and this is
+    // the only test that fails.
+    const mock = makeMockClient([
+      { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
+      { data: [{ id: "c1" }], error: null }, // [1] courts
+      { data: [], error: null }, // [2] v_queue → waiting 0, dynamicCap 3
+      // A published on-deck match and a READY hold: two rows that make the
+      // pending set non-empty without anything being unresolved.
+      { data: [publishedRow(), heldRow(true)], error: null }, // [3] matches
+      { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
+      { data: [], error: null }, // [5] match_events
+      { data: [], error: null }, // [6] slot 0 snapshot — reached, cap not saturated
+      { data: [], error: null }, // [7] slot 0 fetchActivePool — empty pool ends the run
+    ]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    // Exactly two `matches` reads: the cap-phase row read and the per-slot
+    // snapshot. A heartbeat would make it four.
+    expect(mock.queriedTables.filter((t) => t === "matches")).toHaveLength(2);
   });
 });
 
@@ -1171,7 +1452,7 @@ describe("callNextMatch", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [10] runEngineForSession toggle → ON
       { data: [{ id: "c1" }], error: null }, // [11] runEngineInternal: courts
       { data: [], error: null }, // [12] runEngineInternal: v_queue (Promise.all[0])
-      { count: 3, data: null, error: null }, // [13] runEngineInternal: matches draft count=3 (Promise.all[1])
+      DRAFTS(3), // [13] runEngineInternal: matches → 3 drafts (Promise.all[1])
       { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [14] sessions (Promise.all[2])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
@@ -1208,7 +1489,7 @@ describe("callNextMatch", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [10] runEngineForSession toggle
       { data: [{ id: "c1" }], error: null }, // [11] runEngineInternal: courts
       { data: [], error: null }, // [12] runEngineInternal: v_queue
-      { count: 3, data: null, error: null }, // [13] runEngineInternal: matches draft count
+      DRAFTS(3), // [13] runEngineInternal: matches → 3 drafts
       { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [14] sessions
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
@@ -1263,7 +1544,7 @@ describe("callNextMatch", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [10] sessions → toggle ON
       { data: [{ id: "c1" }], error: null }, // [11] courts → engine proceeds
       { data: [], error: null }, // [12] v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 3, data: null, error: null }, // [13] matches draft count=3 → slotsAvailable=0 (Promise.all[1])
+      DRAFTS(3), // [13] matches: 3 drafts → slotsAvailable=0 (Promise.all[1])
       { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [14] sessions (Promise.all[2])
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
@@ -1301,7 +1582,7 @@ describe("callNextMatch", () => {
       { data: { id: COURT_ID }, error: null }, // [2] courts: court-ownership gate
       { data: { id: COURT_ID }, error: null }, // [3] courts: promote-path gate (audit #12)
       { data: [], error: null }, // [4] matches fetch → empty
-      { count: 0, data: null, error: null }, // [5] draft-blocking check → 0 drafts
+      { data: [], error: null }, // [5] draft-blocking check → 0 drafts
       { data: { is_auto_matchmaking_on: false }, error: null }, // [6] toggle check → OFF
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
@@ -1327,11 +1608,11 @@ describe("callNextMatch", () => {
       { data: { id: COURT_ID }, error: null }, // [2] courts: court-ownership gate
       { data: { id: COURT_ID }, error: null }, // [3] courts: promote-path gate (audit #12)
       { data: [], error: null }, // [4] promote 1: no published pending
-      { count: 2, data: null, error: null }, // [5] promote 1: 2 drafts → hasDraftsBlocking
+      { data: draftRows(2), error: null }, // [5] promote 1: 2 drafts → hasDraftsBlocking
       { data: { is_auto_matchmaking_on: true }, error: null }, // [6] toggle check → ON
       { data: [{ id: "c1" }], error: null }, // [7] runEngine: courts
       { data: [], error: null }, // [8] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 2, data: null, error: null }, // [9] runEngine: matches draft count=2 → slotsAvailable=1 (Promise.all[1])
+      DRAFTS(2), // [9] runEngine: matches → 2 drafts → slotsAvailable=1 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [10] runEngine: sessions override (Promise.all[2])
       { data: [], error: null }, // [11] match_events — rejection memory, empty (Promise.all[3])
       { data: [], error: null }, // [12] runEngine: fetchSessionMatchSnapshot matches → []
@@ -1341,7 +1622,7 @@ describe("callNextMatch", () => {
       // retry and hasDraftsBlocking would never be propagated.
       { data: { id: COURT_ID }, error: null }, // [14] courts: promote-path gate, retry
       { data: [], error: null }, // [15] promote 2: no published pending
-      { count: 2, data: null, error: null }, // [16] promote 2: 2 drafts → hasDraftsBlocking
+      { data: draftRows(2), error: null }, // [16] promote 2: 2 drafts → hasDraftsBlocking
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -1368,11 +1649,11 @@ describe("callNextMatch", () => {
       { data: { id: COURT_ID }, error: null }, // [2] courts: court-ownership gate
       { data: { id: COURT_ID }, error: null }, // [3] courts: promote-path gate (audit #12)
       { data: [], error: null }, // [4] promote 1: no pending
-      { count: 0, data: null, error: null }, // [5] promote 1: 0 drafts
+      { data: [], error: null }, // [5] promote 1: 0 drafts
       { data: { is_auto_matchmaking_on: true }, error: null }, // [6] toggle check → ON
       { data: [{ id: "c1" }], error: null }, // [7] runEngine: courts
       { data: [], error: null }, // [8] runEngine: v_queue_with_wait_time → waitingCount=0 (Promise.all[0])
-      { count: 0, data: null, error: null }, // [9] runEngine: matches draft count=0 → slotsAvailable=3 (Promise.all[1])
+      DRAFTS(0), // [9] runEngine: matches → 0 drafts → slotsAvailable=3 (Promise.all[1])
       { data: { max_auto_drafts_override: null }, error: null }, // [10] runEngine: sessions override (Promise.all[2])
       // [11] was missing here until 2026-08-13, and the labels below were off by
       // one as a result: match_events is issued unconditionally by
@@ -1386,7 +1667,7 @@ describe("callNextMatch", () => {
       { data: [], error: null }, // [13] fetchActivePool: v_queue_with_wait_time → [] (pool < 4 → break)
       { data: { id: COURT_ID }, error: null }, // [14] courts: promote-path gate, retry
       { data: [], error: null }, // [15] promote 2: still no pending
-      { count: 0, data: null, error: null }, // [16] promote 2: 0 drafts
+      { data: [], error: null }, // [16] promote 2: 0 drafts
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
@@ -1448,19 +1729,18 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
       is_bottleneck: false,
     }));
 
-  it("ENG-AP-1: auto_publish=true → RPC gets p_is_published=true; cap re-count runs (published + held)", async () => {
+  it("ENG-AP-1: auto_publish=true → RPC gets p_is_published=true; cap counts published+held off the SAME pending read", async () => {
     const four = fourWaiting();
     const mock = makeMockClient(
       [
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
         { data: four, error: null }, // [2] v_queue (Promise.all[0])
-        { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
+        DRAFTS(0), // [3] matches: 0 pending (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: true }, error: null }, // [4] session (Promise.all[2])
         { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
-        { count: 0, data: null, error: null }, // [6] PUBLISHED on-deck count (auto-mode extra)
-        { data: [], error: null }, // [7] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
-        { data: four, error: null }, // [8] fetchActivePool v_queue
+        { data: [], error: null }, // [6] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
+        { data: four, error: null }, // [7] fetchActivePool v_queue
         // No history ⇒ no match_players read, and the rosters / pair counts /
         // overlap map all derive from the empty snapshot with zero further queries.
       ],
@@ -1473,10 +1753,13 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
       "create_match_with_players",
       expect.objectContaining({ p_is_published: true, p_origin: "auto" })
     );
-    // Auto mode counts the published on-deck set: a 2nd matches count query runs in
-    // the cap phase (unpublished [3] + published [6]) before the slot loop starts.
-    // The whole array is pinned, not a slice, so the merged per-slot read phase
-    // ([7] snapshot + [8] pool, concurrent) can't silently regain a 3rd round trip.
+    // Auto mode counts a DIFFERENT predicate (published OR held) than draft mode,
+    // but over the SAME rows: [3] is a row read, so the mode-specific count is a
+    // filter in memory and auto mode pays no extra round trip. There used to be a
+    // second `matches` head-count here for the published on-deck set — its absence
+    // is the assertion. The whole array is pinned, not a slice, so neither that
+    // re-count nor a 3rd per-slot read ([6] snapshot + [7] pool, concurrent) can
+    // silently come back.
     expect(mock.queriedTables).toEqual([
       "sessions",
       "courts",
@@ -1484,7 +1767,6 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
       "matches",
       "sessions",
       "match_events", // rejection memory (Promise.all[3])
-      "matches",
       "matches", // slot 1 — fetchSessionMatchSnapshot (empty ⇒ no match_players)
       "v_queue_with_wait_time", // slot 1 — fetchActivePool
     ]);
@@ -1497,10 +1779,9 @@ describe("runEngineForSession — auto-publish mode (ENG-AP)", () => {
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
         { data: four, error: null }, // [2] v_queue (Promise.all[0])
-        { count: 0, data: null, error: null }, // [3] unpublished draft count (Promise.all[1])
+        DRAFTS(0), // [3] matches: 0 pending (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session (Promise.all[2])
         { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
-        // no published-count query in draft mode
         { data: [], error: null }, // [6] fetchSessionMatchSnapshot matches (empty ⇒ short-circuits)
         { data: four, error: null }, // [7] fetchActivePool v_queue
       ],
@@ -1560,11 +1841,11 @@ describe("callNextMatch — bypassGate publish override (ENG-BP)", () => {
         { data: { id: COURT_ID }, error: null }, // [2] courts: court-ownership gate
         { data: { id: COURT_ID }, error: null }, // [3] courts: promote-path gate (audit #12)
         { data: [], error: null }, // [4] promote 1: no published pending
-        { count: 0, data: null, error: null }, // [5] promote 1: draft-blocking check → none
+        { data: [], error: null }, // [5] promote 1: draft-blocking check → none
         { data: { is_auto_matchmaking_on: true }, error: null }, // [6] toggle → ON
         { data: [{ id: "c1" }], error: null }, // [7] runEngine: courts
         { data: four, error: null }, // [8] v_queue → waitingCount=4 (Promise.all[0])
-        { count: 0, data: null, error: null }, // [9] unpublished draft count=0 (Promise.all[1])
+        DRAFTS(0), // [9] matches: 0 pending (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [10] session — DRAFT MODE (Promise.all[2])
         { data: [], error: null }, // [11] match_events — rejection memory, empty (Promise.all[3])
         // bypassGate → soft gate + pool caps skipped; draft mode → no published-count query
@@ -1611,11 +1892,11 @@ describe("callNextMatch — bypassGate publish override (ENG-BP)", () => {
         { data: { id: COURT_ID }, error: null }, // [2] courts: court-ownership gate
         { data: { id: COURT_ID }, error: null }, // [3] courts: promote-path gate (audit #12)
         { data: [], error: null }, // [4] promote 1: no published pending
-        { count: 0, data: null, error: null }, // [5] promote 1: draft-blocking check → none
+        { data: [], error: null }, // [5] promote 1: draft-blocking check → none
         { data: { is_auto_matchmaking_on: true }, error: null }, // [6] toggle → ON
         { data: [{ id: "c1" }], error: null }, // [7] runEngine: courts
         { data: four, error: null }, // [8] v_queue (Promise.all[0])
-        { count: 0, data: null, error: null }, // [9] unpublished draft count=0 (Promise.all[1])
+        DRAFTS(0), // [9] matches: 0 pending (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [10] session — DRAFT MODE (Promise.all[2])
         { data: [], error: null }, // [11] match_events — rejection memory, empty (Promise.all[3])
         { data: [], error: null }, // [12] slot 0: snapshot (empty)
@@ -1627,7 +1908,7 @@ describe("callNextMatch — bypassGate publish override (ENG-BP)", () => {
         // promote-path court gate, read a second time by the retry (:225)
         { data: { id: COURT_ID }, error: null }, // [16] courts: promote-path gate, retry
         { data: [], error: null }, // [17] promote 2: no published pending
-        { count: 1, data: null, error: null }, // [18] promote 2: draft-blocking check
+        { data: draftRows(1), error: null }, // [18] promote 2: draft-blocking check
       ],
       [
         { data: "match-slot0", error: null }, // rpc[0]: slot 0 commit
@@ -1696,7 +1977,7 @@ describe("runEngineForSession — match-snapshot contract (ENG-SNAP)", () => {
       { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
       { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
       { data: four, error: null }, // [2] v_queue (Promise.all[0])
-      { count: 0, data: null, error: null }, // [3] draft count=0 → slots=3 (Promise.all[1])
+      DRAFTS(0), // [3] matches: 0 drafts → slots=3 (Promise.all[1])
       { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
       { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
       { data: null, error: { message: "statement timeout" } }, // [6] snapshot matches → FAILS
@@ -1739,7 +2020,7 @@ describe("runEngineForSession — match-snapshot contract (ENG-SNAP)", () => {
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
         { data: twelve, error: null }, // [2] v_queue (Promise.all[0])
-        { count: 0, data: null, error: null }, // [3] draft count=0 (Promise.all[1])
+        DRAFTS(0), // [3] matches: 0 drafts (Promise.all[1])
         { data: { max_auto_drafts_override: null, auto_publish: false }, error: null }, // [4] session
         { data: [], error: null }, // [5] match_events — rejection memory, empty (Promise.all[3])
         { data: [], error: null }, // [6] slot 1 snapshot: matches → []
@@ -1835,7 +2116,7 @@ describe("promoteOnDeckMatchInternal — held-draft TS-filter (C-4 / R3-A)", () 
         data: [{ id: "held-1", is_held: true, held_ready_at: null, is_mixed_level: false }],
         error: null,
       },
-      { count: 0, data: null, error: null }, // draft-blocking check → 0 unpublished drafts
+      { data: [], error: null }, // draft-blocking check → 0 unpublished drafts
     ]);
 
     const result = await promoteOnDeckMatchInternal(mock as never, SESSION_ID, COURT_ID);
@@ -2225,17 +2506,24 @@ describe("runEngineForSession — cross-court reachability (CC-REACH)", () => {
     { data: [{ match_id: "mip", player_id: "p4" }], error: null }, // recent roster
   ];
 
-  const HEAD = (count: number) => ({ count, data: null, error: null });
-
   /**
    * hasFeedableCapacity's read: the session's PENDING matches, each tagged
-   * is_held. It authorises the reach only while feedable > held, so a held
-   * draft cannot stack against a spare it never consumed.
+   * is_held + held_ready_at. It authorises the reach only while BOTH bounds
+   * hold — feedable > held (so a held draft cannot stack against a spare it
+   * never consumed) and unreadyHeld < CROSS_COURT_MAX_UNREADY_HOLDS (so draft
+   * mode, which no longer counts unready holds against the draft cap, still has
+   * a ceiling on how many bodies can be parked at once).
+   *
+   * Held rows default to UNREADY, which is what a freshly-created hold is.
    */
-  const PENDING = (feedable: number, held: number) => ({
+  const PENDING = (feedable: number, held: number, readyHeld = 0) => ({
     data: [
-      ...Array.from({ length: feedable }, () => ({ is_held: false })),
-      ...Array.from({ length: held }, () => ({ is_held: true })),
+      ...Array.from({ length: feedable }, () => ({ is_held: false, held_ready_at: null })),
+      ...Array.from({ length: held }, () => ({ is_held: true, held_ready_at: null })),
+      ...Array.from({ length: readyHeld }, () => ({
+        is_held: true,
+        held_ready_at: "2026-08-16T00:00:00.000Z",
+      })),
     ],
     error: null,
   });
@@ -2250,13 +2538,12 @@ describe("runEngineForSession — cross-court reachability (CC-REACH)", () => {
     { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
     { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
     { data: queue(), error: null }, // [2] v_queue (Promise.all[0])
-    HEAD(0), // [3] unpublished draft count
+    DRAFTS(0), // [3] matches: 0 pending ⇒ no held heartbeat, no cap block
     { data: { max_auto_drafts_override: null, auto_publish: true }, error: null }, // [4] session
     { data: [], error: null }, // [5] match_events — rejection memory
-    HEAD(0), // [6] published on-deck count (auto mode)
-    { data: [{ id: "m2" }, { id: "m1" }], error: null }, // [7] snapshot: newest-first
-    { data: queue(), error: null }, // [8] fetchActivePool (concurrent with snapshot)
-    { data: roster, error: null }, // [9] snapshot: match_players
+    { data: [{ id: "m2" }, { id: "m1" }], error: null }, // [6] snapshot: newest-first
+    { data: queue(), error: null }, // [7] fetchActivePool (concurrent with snapshot)
+    { data: roster, error: null }, // [8] snapshot: match_players
   ];
 
   it("CC-REACH-1: a stale four + a feedable match + a pullable body ⇒ held draft committed", async () => {
@@ -2334,11 +2621,11 @@ describe("runEngineForSession — cross-court reachability (CC-REACH)", () => {
 
     // The guard sits AHEAD of both round trips the reach would cost, and the
     // short-circuit is the assertion: `profiles` is fetchPullablePlayers'
-    // signature read, and hasFeedableCapacity would be a FOURTH read of
-    // `matches` (the preamble spends three — the unpublished-draft count, the
-    // published on-deck count, and the per-slot snapshot).
+    // signature read, and hasFeedableCapacity would be a THIRD read of `matches`
+    // (the preamble spends two — the pending-match row read in the cap phase,
+    // and the per-slot snapshot).
     expect(mock.queriedTables).not.toContain("profiles");
-    expect(mock.queriedTables.filter((t) => t === "matches")).toHaveLength(3);
+    expect(mock.queriedTables.filter((t) => t === "matches")).toHaveLength(2);
 
     // …and the four is still drafted. The guard refuses the HOLD, not the match:
     // an urgent anchor is exactly who should be seated now.
@@ -2407,20 +2694,19 @@ describe("runEngineForSession — cross-court reachability (CC-REACH)", () => {
         { data: { is_auto_matchmaking_on: true }, error: null }, // [0] toggle ON
         { data: [{ id: "c1" }, { id: "c2" }], error: null }, // [1] courts
         { data: padded(), error: null }, // [2] v_queue — 11 waiting
-        HEAD(0), // [3] unpublished draft count
+        DRAFTS(0), // [3] matches: 0 pending
         { data: { max_auto_drafts_override: null, auto_publish: true }, error: null }, // [4]
         { data: [], error: null }, // [5] match_events
-        HEAD(0), // [6] published on-deck count
-        { data: [{ id: "m2" }, { id: "m1" }], error: null }, // [7] snapshot
-        { data: padded(), error: null }, // [8] fetchActivePool
-        { data: entangledRoster, error: null }, // [9] snapshot rosters
-        PENDING(1, 0), // [10] gate — authorised
-        ...PULLABLE, // [11..17] ⇒ held draft commits, estimatedWaiting 11 → 8
+        { data: [{ id: "m2" }, { id: "m1" }], error: null }, // [6] snapshot
+        { data: padded(), error: null }, // [7] fetchActivePool
+        { data: entangledRoster, error: null }, // [8] snapshot rosters
+        PENDING(1, 0), // [9] gate — authorised
+        ...PULLABLE, // [10..16] ⇒ held draft commits, estimatedWaiting 11 → 8
         // ── slot 1 (only reached when the decrement was 3) ──
-        { data: [{ id: "m2" }, { id: "m1" }], error: null }, // [18] snapshot
-        { data: remaining(), error: null }, // [19] fetchActivePool — a0/a1/w now drafted
-        { data: entangledRoster, error: null }, // [20] snapshot rosters
-        // [21] The gate, IF slot 1 ever got as far as wanting a second reach.
+        { data: [{ id: "m2" }, { id: "m1" }], error: null }, // [17] snapshot
+        { data: remaining(), error: null }, // [18] fetchActivePool — a0/a1/w now drafted
+        { data: entangledRoster, error: null }, // [19] snapshot rosters
+        // [20] The gate, IF slot 1 ever got as far as wanting a second reach.
         // Left in place as the fail-closed answer (feedable 1 == held 1) for the
         // day someone changes the fixture — one held draft per run is all the
         // capacity gate will back (CCT-FEED-6).
@@ -2468,10 +2754,11 @@ describe("runEngineForSession — cross-court reachability (CC-REACH)", () => {
     expect(mock.queriedTables).not.toContain("profiles");
     expect(mock.queriedTables).not.toContain("queue_entries");
     // The gate query is a `matches` read, so table-absence cannot express it —
-    // pin the count instead. The preamble spends exactly three: the unpublished
-    // draft count, the published on-deck count, and the per-slot snapshot.
-    // hasFeedableCapacity would be a fourth.
-    expect(mock.queriedTables.filter((t) => t === "matches")).toHaveLength(3);
+    // pin the count instead. The preamble spends exactly two: the pending-match
+    // row read in the cap phase, and the per-slot snapshot. hasFeedableCapacity
+    // would be a third. (It was three until the cap phase stopped firing a
+    // second head count for auto mode's published on-deck set — see ENG-AP-1.)
+    expect(mock.queriedTables.filter((t) => t === "matches")).toHaveLength(2);
     expect(mock.rpc).toHaveBeenCalledWith(
       "create_match_with_players",
       expect.objectContaining({ p_origin: "auto" })
