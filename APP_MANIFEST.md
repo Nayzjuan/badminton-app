@@ -602,7 +602,9 @@ Published on-deck matches do **not** count against the cap — they are already 
 
 When the four the waiting pool can form is **stale** — someone would face a player they just played — the engine reaches into a live court for ONE still-playing "pulled body" and pre-builds a **held draft** (3 waiting + 1 playing) that is fresher. It runs entirely under auto-matchmaking; the organizer does nothing.
 
-> **This feature shipped DEAD and was repaired 2026-08-12.** It produced **0 held drafts across 945 production matches**. Three independent blockers, each individually sufficient to prevent every reach — and every downstream helper was green the whole time, because nothing tested whether the engine ever *decides* to reach. The three, and the shape of the repair, are recorded below because each one is a trap worth not re-entering.
+> **This feature shipped DEAD and was repaired 2026-08-12 — but that repair only fixed GENERATION. See §3.41:** the first live session (2026-08-15) created 12 held drafts and got **2** of them onto a court; the other 10 were cleared by hand — which is what defect 1's `CONFLICT` copy tells an organizer to do, though prod records no publish *attempt*, so read that as the likely reading of the data and not as a traced cause. That path predated held drafts entirely. Read this block as the history of the three *generation* blockers, not as an all-clear for the feature. ⚠️ Until 2026-08-16 this line said "could publish **none** of them" — false (prod session `3367d4c6` has two published, promoted, completed held rows), and false in the direction of the §3.41 heading it was paraphrasing, which then read "could never be published". Both are fixed. The heading's first replacement ("could not be published until its hold resolved") was itself false of defect 4, which publishes a RESTING hold and lets promotion refuse it; §3.41 now names **both** halves — refused while holding, wrongly allowed while resting. Three phrasings, two of them wrong, for one section: a title that generalises over several defects will misstate at least one, so the surviving one enumerates instead. ⚖️ It still names only the publish symptom — §3.41 deliberately bundles **defect 2**, the draft-cap notice, which is a *generation-visibility* bug sharing the session but not the symptom. (Ordinal, not "a fourth defect": §3.41 numbers them, and its defect 4 is a publish one.) Accepted: a heading that covered all four would name none of them usefully.
+>
+> It produced **0 held drafts across 945 production matches**. Three independent blockers, each individually sufficient to prevent every reach — and every downstream helper was green the whole time, because nothing tested whether the engine ever *decides* to reach. The three, and the shape of the repair, are recorded below because each one is a trap worth not re-entering.
 >
 > 1. **The slot gate was `i > 0`** — "not the first draft of this run". 91% of production engine runs commit exactly one draft, so the branch was unreachable by construction. It was a *proxy* for "a freeing court still has something to promote"; that invariant is now asked directly.
 > 2. **The trigger was `forcedRepeat` alone** — the engine having already failed to compose a legal four. That fires on ~4% of matches (22/550 replayed) and gets **rarer as the engine improves**, so the better the pool selection got, the deader this feature became.
@@ -630,7 +632,7 @@ When the four the waiting pool can form is **stale** — someone would face a pl
 
 New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (FK `ON DELETE SET NULL`), `held_ready_at timestamptz`, `is_held boolean GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0) STORED`. New constants: `CROSS_COURT_REST_FALLBACK_MINUTES=3`, `MAX_CONSECUTIVE_GAMES_FOR_PULL=2`, `MATCH_REST_GAP_MINUTES=5`, `CROSS_COURT_MAX_HOLD_MINUTES=15`, `CROSS_COURT_SEAT_CANDIDATES=7`. New token: `cc-violet`. **Deferred items** (UI 3-state track, swap auto-downgrade trigger, publish/callNextMatch recompute, staleness escape, RPC `search_path`) tracked in `MEMORY.md`.
 
-**Proven end-to-end against a real database (Suite XC, 2026-08-12).** The unit suite pins each predicate and the replay harness structurally cannot see the feature at all (`scripts/replay/simulate.ts`, simplification 3), so until now nothing proved the whole chain fires. `tests/integration/cross-court-realdb.test.ts` drives the real engine through the real server action (`endMatchAction` → `runEngineForSession`) against local Supabase: **XC-1** asserts a held draft row actually lands (`is_held`, `created_method='held'`, `pulled_from_match_id`, roster = anchor + 2 waiters + 1 still-playing body, the three seated `'drafted'` and the body left `'playing'`); **XC-2** ages a hold past `CROSS_COURT_MAX_HOLD_MINUTES` and asserts the cancel releases the three waiters *without* unseating the body (the `20260812000000` invariant); **XC-3** is the age-gate control. XC-1 cannot pass spuriously — `is_held` is generated from `pulled_player_ids`, whose only writer is `create_held_cross_court_match`, reachable only from this branch. ⚠️ Still not observed in a **live session**; this is DB-level proof, not field proof.
+**Proven end-to-end against a real database (Suite XC, 2026-08-12).** The unit suite pins each predicate and the replay harness structurally cannot see the feature at all (`scripts/replay/simulate.ts`, simplification 3), so until now nothing proved the whole chain fires. `tests/integration/cross-court-realdb.test.ts` drives the real engine through the real server action (`endMatchAction` → `runEngineForSession`) against local Supabase: **XC-1** asserts a held draft row actually lands (`is_held`, `created_method='held'`, `pulled_from_match_id`, roster = anchor + 2 waiters + 1 still-playing body, the three seated `'drafted'` and the body left `'playing'`); **XC-2** ages a hold past `CROSS_COURT_MAX_HOLD_MINUTES` and asserts the cancel releases the three waiters *without* unseating the body (the `20260812000000` invariant); **XC-3** is the age-gate control. XC-1 cannot pass spuriously — `is_held` is generated from `pulled_player_ids`, whose only writer is `create_held_cross_court_match`, reachable only from this branch. ⚠️ This ended "Still not observed in a **live session**; this is DB-level proof, not field proof" until 2026-08-16 — **now observed**: session `3367d4c6` on 2026-08-15 generated 12 held drafts, of which 2 reached a court (§3.41). Generation is field-proven; the field evidence for the rest of the lifecycle is a failure report, and the fix for it shipped the next day. 🪤 The pointer at the head of this block (added `6b44fed`, same day) was written for an adjacent reason — that the block read as a whole-feature all-clear the 08/15 session contradicts — and the sentence directly asserting the contradicted claim, at the block's other end, was not re-read in that edit. Annotating a block's opening is not correcting it: **grep the claim, then fix every assertion of it, not only the warning you just added about it.**
 
 ---
 
@@ -3856,7 +3858,7 @@ the pre-check row instead of re-reading.
 
 ---
 
-### 3.41 A held cross-court draft could never be published — the code that meant "not yet" did not exist (2026-08-16)
+### 3.41 Publishing a held cross-court draft — refused while it held, wrongly allowed while it rested; no code meant "not yet" (2026-08-16)
 
 **Files:** `supabase/migrations/20260816000000_publish_never_touches_an_unready_held_draft.sql` **(new —
 hand-applied to prod 2026-08-16, stamp `20260816024129`)**, `src/app/actions/match-drafts.ts`, `src/app/actions/matchmaking.ts`,
@@ -3868,11 +3870,69 @@ hand-applied to prod 2026-08-16, stamp `20260816024129`)**, `src/app/actions/mat
 Reported after a live session: *"cross-court matches generated for people who are still playing but I
 couldn't approve any of them"*, and *"Publish All allows it on deck, but I couldn't make it work."*
 
-**The report is accurate, and it is four separate defects that happen to share one symptom.** Production
-trace, session `3367d4c6` ("08/15 Saturday Session", `auto_publish=false`,
-`max_auto_drafts_override=1`): **12 held drafts created, 10 cleared by hand, 2 ever reached a court.**
+**The report is accurate, and it is four separate defects — three of them sharing one symptom.** ⚠️ This
+said "four … that happen to share one symptom" until 2026-08-16; defect 2 (the draft-cap notice) does
+not. Its symptom is a panel that cannot say why *generation* stopped, and it was found while tracing the
+other three, not reported. Defects **1, 3 and 4** are the publish path; defect 2 rides along because it
+shares the session and the fix. Production trace, session `3367d4c6` ("08/15 Saturday
+Session", `auto_publish=false`, `max_auto_drafts_override=1`): **12 held drafts created, 10
+cleared by hand, 2 ever reached a court.**
 That is the feature's first live-session evidence of any kind — §3.1's cross-court block had said "still
 not observed in a live session", and what the first observation shows is that it does not work.
+
+🪤 **"2 ever reached a court" is the number; do not let a heading round it to zero.** This section was
+titled "could never be published" until 2026-08-16, and PR #68's squash body on `main` (`61e942b`) still
+says the session "**published zero**" and that the publish path "**refused every one**". Both are false:
+`matches` rows `2c1b0edc…` and `4cf0a097…` in session `3367d4c6` are `is_held`,
+`created_method='held'`, **`is_published`**, promoted, and `completed`. A class title survives paraphrase
+into a **count** — within a day "could never be published" had become "could publish **none** of them" in
+§3.1, where it is not a characterisation but arithmetic, and disagreed with the other sites stating the
+figure. The list is `git grep -n "2 ever reached a court\|10 cleared by hand\|10 of 12" --
+APP_MANIFEST.md MEMORY.md` — and note it misses §3.1's "got **2** of them onto a court", so treat a
+phrase grep as a starting set, never as proof of completeness. ⚠️ **No tally of those sites belongs in
+this sentence**, which learned it twice: it originally said "four" (exact for these two files at the
+time), and the 2026-08-16 "correction" to "six" was wrong for the command it printed, which carried no
+pathspec and so swept the whole tree (nine hits at the time, including the migration and two test
+files), while the six it did describe included the correction's own new line. A count that changes when
+you write it down is not a fact about the document. A squash message cannot be amended, so `61e942b`'s
+body is permanent and wrong; these documents are the correctable record.
+
+⚠️ **And do not replace the absolute with an ordering, which is what the first correction did.** It read
+"each of those two has `held_ready_at` stamped, **so** both published only after the hold had already
+resolved". `held_ready_at` is a *state* column: non-null now proves the hold eventually resolved, never
+that the publish came after it. **Production records no publish time at all** — `matches` has no
+`published_at`. Its four `timestamptz` columns are `created_at`, `started_at`, `completed_at` and
+`held_ready_at` itself, plus the `is_published` boolean; publication is recorded as a flag, with no
+instant attached. (This list read three and silently dropped `held_ready_at` until
+2026-08-16 — omitting from an "only X, Y, Z" the very column the sentence before it is about, which
+is how a reader re-derives the ordering this paragraph exists to kill.)
+`match_events` for this session holds only `created` / `cancelled` / `team_flip` / `roster_swap` /
+`score_edit`, and `queue_status_events`, the table that would have caught the roster's `drafted→on_deck`
+flip, is **empty** (migration `queue_status_audit`, stamped `20260815133945` — hours after the session's
+last match completed at `08:01:06Z`; the session itself has `ended_at IS NULL` and was never closed).
+🔴 **Sharper, measured 2026-08-16 while reviewing this paragraph: `MatchEventType` *does* define a
+`"published"` kind — "draft → published", in `src/lib/match-provenance.ts` — and nothing writes it.
+0 such rows in the whole production database across all 1071 events, including for the 2 held drafts
+that did reach a court.** So "prod has no publish record" is not a missing-column argument: the ledger
+event exists and is unwired, which means no query over `match_events` can tell "never published" from
+"published, unrecorded". ⚠️ The *gap* is not a discovery, and this paragraph said "found" until
+2026-08-16: it is booked as `DEFERRED — published event (L2)` in `MEMORY.md` and again in
+`src/lib/match-event-log.ts`'s header. What is new is the count and that consequence — L2 prices the gap
+at "the timeline just won't show the publish step" and does not anticipate it. The writer plumbing is all
+there — `logMatchEvent` accepts `"published"`, `modificationDelta` scores it 0 (this called that function
+`eventDelta` until 2026-08-16, a symbol the repo does not contain), the timeline labels it "Published to
+players" — so what is missing is the call. Deleting the kind instead is *silently* lossy, measured with
+`npx tsc --noEmit`: three errors, **none** at the writer signature, whose `Extract<MatchEventType, …>`
+narrows to the survivors without complaint. The comment heading the held-draft block in
+`tests/integration/publish-match.test.ts` asserted prod had "no event type" for publish; that was
+false in the safer-sounding direction, and it was not caught in draft — it shipped in `f08e662` and
+sat on this PR until the next review. Booked as STANDING TO-DO **A0**, not fixed here. Worse, the
+RESTING window that defect 4 below turns on is measured, and in it the opposite ordering is possible:
+`2c1b0edc…` rested **88 s** between its source match completing and its stamp, `4cf0a097…` **237 s**,
+and in that window the pre-fix `publish_match` *passes* — `derive-held-state.ts` says so in as many
+words ("RESTING … it CAN succeed, and that is worse"). So the honest claim is the count plus defect 1's
+mechanism (a HOLDING draft's publish is `CONFLICT` by construction), **not** a sequence. Fixing
+"false" with "unprovable" is not a fix.
 
 1. **`publish_match` returned `CONFLICT`, 100% of the time, by construction.** Its conflict predicate counts
    any OTHER pending/`in_progress` match holding one of this roster's players. A held draft's pulled body

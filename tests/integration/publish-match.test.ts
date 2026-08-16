@@ -317,8 +317,13 @@ describe("publishMatchAction — Suite C", () => {
 // other half. Bare "PUB-HELD-2" in a doc would be ambiguous between them.
 //
 // Field evidence this is regression-guarding, not hypothetical: session
-// 3367d4c6, 2026-08-15 — 12 held drafts created, 10 cleared by hand on the
-// advice of a CONFLICT message, 2 reached a court.
+// 3367d4c6, 2026-08-15 — 12 `created` events with method='held', 2 of those
+// matches reached a court, 10 were cleared by hand. Prod records no publish at
+// all: `matches` has no published_at, `queue_status_events` was created after
+// the session's last match, and while MatchEventType defines a 'published'
+// kind, nothing writes it — 0 such rows DB-wide, including for the 2 that
+// succeeded. So the CONFLICT copy is the likely reason for those 10 clears,
+// not a traced one.
 
 /**
  * Organizer + session + a live source match on Court 1 + a held cross-court

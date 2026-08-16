@@ -151,10 +151,15 @@ Review: first pass **Needs fixes** (kick copy treated any cancelled match as an 
 
 ---
 
-## 🎽 HELD CROSS-COURT DRAFTS COULD NEVER BE PUBLISHED — 2026-08-16. ✅ **COMMITTED + MIGRATION APPLIED TO PROD**
+## 🎽 PUBLISHING A HELD CROSS-COURT DRAFT — REFUSED WHILE HOLDING, WRONGLY ALLOWED WHILE RESTING — 2026-08-16. ✅ **MERGED + DEPLOYED + MIGRATION APPLIED TO PROD**
 
-**Status: code complete, validated, review-gated, committed as `db600a4` on `fix/block-leave-active-match`.
-Migration `20260816000000` is APPLIED AND VERIFIED ON PROD** (stamp `20260816024129` — see the migration
+**Status: SHIPPED.** Committed as `db600a4` on `fix/block-leave-active-match`, PR
+[#68](https://github.com/Nayzjuan/badminton-app/pull/68) **squash-merged to `main` as `61e942b`**;
+Vercel Production deployment `dpl_J7ZEr81PVLSRGNhBNGxg6nPmXsya` reached **READY** on that exact SHA
+(`githubCommitSha 61e942b…`, aliases live). CI verified per-run before the merge — all four Actions
+runs carried `headSha = 5521f48` (the PR head) and `mergeStateStatus: CLEAN`, rather than trusting the
+aggregate colour of `gh pr checks`.
+**Migration `20260816000000` is APPLIED AND VERIFIED ON PROD** (stamp `20260816024129` — see the migration
 queue at the top of this file for the measured before/after fingerprints and the ACL check).
 `npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **68 files, 1278 passed, 1 skipped** ·
 `npm run test:integration` **25 files, 289 passed** · `npm run build` success.
@@ -181,7 +186,7 @@ tests/unit/{derive-held-state,cross-court-trigger,matchmaking-engine}.test.ts
 tests/integration/publish-match.test.ts   APP_MANIFEST.md (§3.41 + one §3.1 bullet)
 ```
 
-### The user's report was accurate, and it was four defects wearing one symptom
+### The user's report was accurate — four defects, three of them wearing one symptom
 
 Reported as *"cross-court matches generated for people who are still playing but I couldn't approve any
 of them"* + *"Publish All allows it on deck, but I couldn't make it work."* Full write-up in
@@ -206,8 +211,40 @@ of them"* + *"Publish All allows it on deck, but I couldn't make it work."* Full
 Prod session `3367d4c6-6838-4cf7-8abe-5f5c3143dd1e` ("08/15 Saturday Session", `auto_publish=false`,
 `max_auto_drafts_override=1`): **12 held drafts created, 10 cleared by hand, 2 ever reached a court.**
 Two holds sat ~10 minutes. APP_MANIFEST §3.1 had said "still not observed in a live session" — this is
-the observation, and it is a failure report. The 10 manual clears are defect 1's copy working exactly as
-written: the organizer was told to clear, so they cleared.
+the observation, and it is a failure report. The 10 manual clears read as defect 1's copy working exactly
+as written — the organizer was told to clear — but prod records no publish *attempt* (see the 🪤 below),
+so that is the data's likely reading, not a traced cause. Three of the ten were cancelled 12–54 s after
+creation — two of those inside 16 s, which is quick for reading an error and deciding on it.
+
+🪤 **The 2 are load-bearing — this heading said "COULD NEVER BE PUBLISHED" until 2026-08-16, and PR #68's
+squash body on `main` still says "published zero / refused every one".** Rows `2c1b0edc…` and `4cf0a097…`
+are `is_held`, `is_published`, promoted and `completed`. The absolute survives paraphrase into a **count**
+— it had already become "could publish none of them" in APP_MANIFEST §3.1 — and a squash message cannot
+be amended, so `61e942b` is permanently wrong here.
+
+🪤 **The first correction then over-fixed it into an ordering nothing can prove**, claiming the
+stamped `held_ready_at` on those two rows meant they "published only after the hold had already
+resolved". Prod records **no publish time**: no `published_at` column, no `published` row in
+`match_events`, and `queue_status_events` is empty (its migration postdates the session). 🔴 Say that
+precisely — `MatchEventType` **does** define a `"published"` kind (`src/lib/match-provenance.ts`);
+what is missing is any **writer** for it, 0 rows DB-wide across 1071 events, including for the 2
+that reached a court. "No publish `event_type`" was the wording here until 2026-08-16 and it is
+false; see item **A0** under `## 📋 STANDING TO-DO`. (Locator, not an offset: this said "at the
+bottom of this file" until 2026-08-16, and A0 is nowhere near it. No figure for *how far* off it was
+is recorded here on purpose: a distance is unverifiable by inspection, which is reason enough
+without waiting for one to rot. 🪤 The first draft of this note gave two ("48%", "81 sections below")
+and the second claimed one of them had drifted. **It had not** — both held at every revision on this
+branch. What moved was A0's raw line number, which the note never stated; watching *that* move and
+concluding a figure derived from it had rotted, without re-deriving the derived figure, is this
+file's own subject committed inside the sentence added to prevent it. No line number appears here
+either, because the one drafted into this very correction was stale before it could be committed.
+Pinned copy of the pre-fix state: `git show e75a843:MEMORY.md`.) The distinction is load-bearing: an
+unwired event means no `match_events` query can separate "never published" from "published,
+unrecorded". The RESTING window is measured at **88 s** and **237 s** for these two rows, and in it
+the pre-fix publish *succeeds* — so the opposite ordering is live, not hypothetical. Claim the count
+and defect 1's by-construction `CONFLICT`; do not claim a sequence. Full derivation in §3.41's ⚠️
+paragraph on the absolute-then-ordering fix (**not** its 🪤s, which this pointed at until
+2026-08-16); re-derive counts from `matches`.
 
 ### The five things that will bite the next person
 
@@ -280,8 +317,11 @@ composed from what the stale sentence was trying to say.
   the two places you *remember* leaves the third; grep the phrase, don't recall the sites.
 
 Also fixed, pre-existing and only visible as a diff context line: `matchmaking.ts`'s
-`runEngineInternal` JSDoc still said slots are "capped by `MAX_AUTO_DRAFTS`" **three lines below** the
-header just corrected to remove exactly that claim.
+`runEngineInternal` JSDoc still said slots are "capped by `MAX_AUTO_DRAFTS`" in the doc comment
+**immediately beneath** the `// INTERNAL: runEngineInternal` banner just corrected to remove exactly
+that claim. (Locator, not an offset: this said "three lines below" until 2026-08-16, and a distance is
+unverifiable the moment the file it counts in is edited. Pinned copy of the pre-fix state:
+`git show 61e942b^:src/app/actions/matchmaking.ts`.)
 
 ### Not done — deliberate
 
@@ -290,7 +330,7 @@ header just corrected to remove exactly that claim.
 - **Still no live-session proof of the fix.** The DB-level chain is proven (Suite XC + PUB-HELD-DB) and
   the field failure is reproduced, but nothing here has run in a real session.
 
-## `cancelMatchAction` restore is a PARTITION, not a bulk `waiting` — 2026-08-16
+## `cancelMatchAction` restore is a PARTITION, not a bulk `waiting` — 2026-08-16. ✅ **MERGED** — folded into PR #68 → `main` `61e942b`
 
 Follow-up to the booked gap above. Files: `src/lib/cancel-restore.ts` (new, pure),
 `src/app/actions/match-lifecycle.ts` (step 3 of `cancelMatchAction` + its JSDoc),
@@ -412,15 +452,20 @@ the hold is no longer `pending` by then, so it cannot reserve its own body. One 
 2. ~~Commit with **explicit pathspecs** (list above).~~ ✅ **Done 2026-08-16** as `db600a4`, 49 files.
    The `constants.ts` / `APP_MANIFEST.md` hunk split was never needed: the user chose one PR for all
    four workstreams.
-3. 🔭 **STILL OPEN — the only live action here.** Watch the next live session for held drafts that
+3. ~~Merge and deploy.~~ ✅ **Done 2026-08-16** — PR #68 squash-merged to `main` as `61e942b`, Vercel
+   Production READY on that SHA. `--delete-branch` was deliberately **omitted**: this checkout is
+   shared with another Claude session, and deleting the branch would have switched it out from under
+   them mid-edit.
+4. 🔭 **STILL OPEN — the only live action here.** Watch the next live session for held drafts that
    actually reach a court. **12 created → 2 reaching a court is the baseline to beat**, and it is the
    only real test of this fix: nothing in the suite can prove a hold survives its whole lifecycle.
 
 ---
 
-## 🎯 SCORE RACE + REPEAT EDIT — 2026-08-15. ✅ **COMMITTED** in `db600a4` (folded into the cross-court PR)
+## 🎯 SCORE RACE + REPEAT EDIT — 2026-08-15. ✅ **MERGED** — `db600a4`, folded into PR #68 → `main` `61e942b`
 
-**Status: code complete, validated, review-gated (5 rounds, final verdict LGTM), committed.**
+**Status: SHIPPED** — code complete, validated, review-gated (5 rounds, final verdict LGTM), merged to
+`main` in `61e942b` and live on the Vercel Production deploy of that SHA.
 `npx tsc --noEmit` 0 · `npm run lint` **exit 0, zero errors, zero warnings** ·
 `npm run test:unit` **65 files, 1240 passed, 1 skipped** at the time (68/1278 after the cross-court
 work merged in) · `npm run build` success. TypeScript-only, **no migration**.
@@ -622,8 +667,9 @@ demonstrably edit scores in the same session hours after it stops.
 1. ~~Branch these paths off `main` by explicit pathspec.~~ ✅ **Done 2026-08-16** — committed as
    `db600a4` on `fix/block-leave-active-match` together with the cross-court work, by explicit user
    decision, with pathspecs for all 49 files.
-2. Ship, then watch a live session: does any match get a second `score_edit`? That is the only real
-   test of defect 2 — nothing in the suite can prove it.
+2. ~~Ship.~~ ✅ **Done 2026-08-16** — PR #68 → `main` `61e942b`, Vercel Production READY. Now watch a
+   live session: does any match get a second `score_edit`? That is the only real test of defect 2 —
+   nothing in the suite can prove it.
 3. Also watch the duplicate confirm in that session: how often it fires, and whether organizers confirm
    through it. Firing constantly would mean the 30-minute window is too wide.
 4. Open items from the verification sweep, both **out of scope for this change set** and neither
@@ -637,17 +683,39 @@ demonstrably edit scores in the same session hours after it stops.
 **Squashed from `77112a6` (patch base) → six commits. PR #66 landed first as `main` `90dd3f5`.**
 `npx tsc --noEmit` exit 0 · eslint clean on all touched files (**0 warnings** — see the lint note below).
 
-✅ **CI green on the real head.** `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`. Vitest ×2 pass,
+✅ **CI green on the head the PR merged at — but *not* on the runs cited in this paragraph; read the 🪤
+before reusing these IDs.** `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`. Vitest ×2 pass,
 all three Vercel deploys pass, and **Vitest Integration ×2 pass** (8m45s / 8m28s, runs `31891664847`
 and `31891667059`) — the suite that actually exercises the `queue.ts` change (Suite Q `Q-4`/`Q-5`).
-🪤 Both run IDs were confirmed to carry `headSha = 7f83cfb`, i.e. the commit the PR actually points at.
-`gh pr checks` alone does **not** prove this: it renders whatever checks are attached now, so a stale
-run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate colour.
+🪤 Both run IDs were confirmed to carry `headSha = 7f83cfb` — **the head at the moment of that check, not
+the head the PR merged at.** ⚠️ Corrected 2026-08-16: this sentence originally ended "…i.e. the commit
+the PR actually points at", and `git show e1542ec -- MEMORY.md` shows the whole ✅ block arriving as `+`
+lines in **`e1542ec`** — so the commit that *wrote* the claim is the one that falsified it, on push.
+PR #67's `headRefOid` at merge was `e1542ec`, never `7f83cfb`. That is not "a later push moved the head";
+it is the **exact** shape the 🪤 below this one describes for `2a45fdf` — a doc naming the head **as of
+the moment it is written**, which is its own parent, and which its own push then replaces — and it
+recurred one commit later, inside the note warning about it. ⚠️ A draft of this correction said "the head
+it is being committed **as**"; that is impossible (a commit cannot know its own SHA) and points the next
+reader at a mistake nobody can make. **So: a doc can never name the current head, because the act of
+*landing* it — the push, or the merge — moves the head.** (Committing alone does not; the `c9f2337`
+instance in STANDING TO-DO was falsified by its own PR's merge, not by its commit.) That rule and the per-run CI rule below govern different things and do
+not compete — one is about writing SHAs into prose, the other about which runs to trust; an earlier draft
+framed them as rivals ("the stronger one, not re-check more often"), which they are not.
+The verdict does survive on the real head: `e1542ec` re-ran two
+workflows on four runs, all `success` (Unit `31892255690` push / `31892258687` PR, Integration
+`31892255681` push / `31892258874` PR; Supabase Preview `skipped`), verified after the fact.
+`gh pr checks` alone does **not** prove any of this: it renders whatever checks are attached now, so a
+stale run from a superseded push reads as a green PR. Verify `headSha` per run, not the aggregate
+colour — and re-verify after **every** further push, including a docs-only one.
 
 🪤 **Do not write the current head SHA into this file.** The previous revision said "origin = `2a45fdf`",
 which the very commit that *added* the line (`7f83cfb`) falsified on landing — a self-invalidating claim,
 the repo's most-repeated defect class shipped inside the note describing it. SHAs below are immutable
-history (a bad commit, a force-push target, a CI run); the *head* is stated as an invariant instead.
+history (a bad commit, a force-push target, a CI run). ⚠️ This 🪤 used to close "the *head* is stated as
+an invariant instead"; that was abandoned 2026-08-16 after the invariant offered in STANDING TO-DO turned
+out not to be one (`gh pr list --state open` cannot prove "`main` carries every merged PR"). **Do not
+state the head at all** — ask `git rev-parse origin/main` and `gh pr list --state open`, which move on
+their own.
 
 ### ✅ RESOLVED — the force-push landed (was the one blocking item)
 
@@ -3285,7 +3353,22 @@ framer-motion only in `swap-floating-bar.tsx`, no View Transitions, no motion to
 
 ## 📋 STANDING TO-DO (as of 2026-08-13)
 
-**`main` is `c9f2337`; nothing is in flight.** PRs #61 (Suite XC — the cross-court real-DB proof),
+⚠️ **Head-state line corrected 2026-08-16.** It read "**`main` is `c9f2337`; nothing is in flight**" — a
+named head SHA, which the 🪤 in the PR #67 section forbids. **Both of its clauses died the same day, to
+the same PR.** It was authored in `de7ee47` at `2026-08-13T12:31:32Z`; PR #64 was *opened* at
+`12:33:49Z`, which falsified "nothing is in flight" **2 minutes 17 seconds later**, and merged at
+`12:42:40Z`, which falsified "`main` is `c9f2337`" **11 minutes later** — by the merge of the very PR
+whose branch wrote it. (An earlier draft of this correction said "the next day" — same-day in both UTC
+and +08; the true version is the more damning one. A later draft still timed only the SHA clause, which
+is the slower of the two.) No replacement head SHA is written here,
+because any value put in this slot is falsified by the push or the merge that **lands** it — not by the
+commit, which cannot know its own SHA (that phrasing survived here until 2026-08-16, in a different
+section from the correction that had already removed it — see the PR #67 🪤 above; no line distance is
+given here, because the twin sites are thousands of lines apart and both move). To get the real head
+state, ask git and GitHub, which move on their own: `git rev-parse origin/main` and
+`gh pr list --state open`. Everything from here to the end of this paragraph is as-of **2026-08-13** and
+is left as written — including its "`gh pr list --state open` is empty", which was true that day and is
+not now. PRs #61 (Suite XC — the cross-court real-DB proof),
 #62 (the cross-session ledger rebuild, **B**) and #63 (Suite RB — the broadcast refusal proof) are
 all merged; `gh pr list --state open` is empty. Migration `20260812100000` is applied to prod (stamp
 `20260812144342`); the migration queue is otherwise empty. **B and C are done**; **D is decided but
@@ -3306,11 +3389,70 @@ Everything else below is kept because its consequences are worth carrying.
 >
 > **Nothing here changes behaviour and nothing new is open.** The audit spawned three non-finding items and exactly one is still open: **E**, the optional "Allow public access" toggle. The other two are **C** — the live broadcast-delivery smoke test, ✅ done 2026-08-12 — and the leaked-password toggle, ❌ WON'T DO 2026-08-04 (item 2 of the historical 07-29 list). All three unchanged by this pass. *(Not **A**: that is the cross-court live-session smoke test, a different piece of work. An earlier draft of this line collapsed C into A because `A` says C "folds into the same night" — a paraphrase where a re-read was needed.)*
 
+**A0. 🔴 OPEN — the `published` event kind is plumbed and never written.** ⚠️ **Not a new find, and
+this entry called itself one until 2026-08-16.** It is already booked further down this same file —
+*"DEFERRED — `published` event (L2): never emitted (publish actions raw-update `is_published`).
+Non-counting; timeline just won't show the publish step"* — and `src/lib/match-event-log.ts`'s
+header says it too (*"DEFERRED (plumbed in the type/DB but NOT yet emitted): player_left from the
+leaver paths, and published"*). Grep `event (L2)` rather than trusting this paragraph's date: a file
+about claims the record does not support announced a discovery the record already held. **What is
+new is the measurement, and it outgrows L2's own pricing of the cost.** Taken 2026-08-16 while
+reviewing the paragraph that argues from prod's silence about publishes: `MatchEventType` in
+`src/lib/match-provenance.ts` lists `"published" // draft → published`, and production holds **0
+rows of it across all 1071 events** — including for the 2 held drafts of session `3367d4c6` that did
+reach a court, so this is not "the feature was never exercised". L2 prices the gap at one missing
+timeline row. It is also (1) a provenance ledger that silently under-describes every match's
+history, since draft→published is the one transition it claims to record and doesn't, and (2) — the
+load-bearing one — **no query over `match_events` can distinguish "never published" from "published,
+unrecorded"**, which is exactly the inference §3.41 and this file lean on when they hedge the 10
+hand-clears. The hedges are still right; they are just resting on an unwired ledger rather than on a
+missing column. **The work is to add the call** in `publishMatchAction` and the `publish_all_drafts`
+path. The grep prescribed below returns **five** hits besides the declaration at
+`src/lib/match-provenance.ts:40`, of which **four are carriers**: `logMatchEvent`'s `eventType`
+(`Extract<MatchEventType, … | "published">`, `src/lib/match-event-log.ts:40`), `modificationDelta`'s
+0-returning arm, which it shares with `created` (`src/lib/match-provenance.ts:139`), the timeline's
+"Published to players" (`src/components/organizer/match-event-timeline.tsx:32`), and
+`tests/unit/match-provenance.test.ts:117`. The fifth,
+`src/components/organizer/on-deck-panel.tsx:519`, is prose — an optimistic-UI comment, no relation
+to the event kind. Excluded on purpose, and named because this said "four sites" until 2026-08-16
+while prescribing a grep that returns five: a count is only checkable against the command that
+produced it. 🪤 **Deleting the kind is *silently* lossy — worse than the "would break all three" this
+said until 2026-08-16, which named the wrong three and invented `eventDelta`, a symbol with zero
+hits in `src`/`tests`.** Measured, not reasoned: remove the member, run `npx tsc --noEmit`, and
+exactly **three** errors appear — the two `case "published":` arms and the test — with **none** at
+the writer signature, because `Extract<T, U>` is `T extends U ? T : never` and simply narrows to the
+surviving four. (This paragraph also said "or delete the kind" until 2026-08-16, on a grep scoped to
+`match-provenance.ts` alone; search `src` *and* `tests` for the string literal, not the type's own
+file.) Not touched in PR #69, which is a docs-accuracy branch — wiring a new ledger write is a
+behaviour change and needs its own tests.
+
 **A. Live session smoke-test of P5 cross-court** (auto-matchmaking ON). This is the *only* real
 evidence the feature works: it had 0 held drafts in 945 production matches, and the replay harness
-structurally cannot exercise it. Watch (i) whether held drafts appear at all, and (ii) whether any
-hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15` — the cancel is event-driven off match end/cancel,
-not a timer, so a court that goes quiet strands its hold. Item **C** below folds into the same night.
+structurally cannot exercise it. ⚠️ **Re-framed 2026-08-16 — (i) has been answered and the bar moved.**
+The 08/15 session created **12 held drafts**, so "do they appear at all" is settled; what it also showed
+is that **only 2 ever reached a court**; the other 10 were cleared by hand while the publish path was
+broken in **three** ways — §3.41's defects 1, 3 and 4; its defect 2, the draft-cap notice, is a
+generation-visibility bug found in the same session, not a publish one (all four fixed and shipped in
+PR #68 → `main` `61e942b`; see the cross-court section at the top of this file). 🪤 **`61e942b`'s body
+counts four publish-path defects where this counts three — do not "reconcile" that by reverting to
+four.** Each enumeration holds four items, over sets that differ by one member: the body's extra is
+`SortableCard`'s Publish button, which §3.41 folds into the repair rather than numbering, and §3.41
+numbers the draft-cap notice in its place. ⚠️ The body calls that button one "that could not succeed",
+and do not repeat that unquoted — it is exact while the hold is HOLDING and **false while it RESTS**,
+where the publish *succeeds* and promotion refuses it — see the RESTING bullet in the doc comment on
+`isHeldAwaitingReadiness` (`src/lib/cross-court/derive-held-state.ts`), and in §3.41 the ⚠️ paragraph
+that measures the window and says the pre-fix `publish_match` *passes* inside it. Two citations were
+wrong here before: **§3.41 defect 4** until 2026-08-16 (defect 4 is `publish_all_drafts`, while the
+card's button drives `publish_match`), and then **"§3.41's 🪤 on the measured RESTING window"**, which
+resolves to nothing — that section's three 🪤 are the "2 ever reached a court" count, the migration's
+safe degradation, and the cancel-restore overstatement. The body cannot be amended; this can. ⚠️ Not
+"refused the rest" — that was the wording here until 2026-08-16, and it is the narrowed form of the
+same overstatement `61e942b`'s own body makes ("refused every one"): a hold in the RESTING window is
+not refused, it *publishes* and then fails at promotion, and prod records no refusal for any of the
+10 either way. So the watch is now: (i) do held drafts **complete their lifecycle** — created →
+published → on court — against the **12 → 2 baseline**; and (ii) whether any hold outlives
+`CROSS_COURT_MAX_HOLD_MINUTES = 15` — the cancel is event-driven off match end/cancel, not a timer,
+so a court that goes quiet strands its hold. Item **C** below folds into the same night.
 
 **B. `player_rivalries` / `player_partnerships` club-wide rebuild — ✅ DONE 2026-08-12, both halves.**
 The owner was shown the three names below and said proceed. Data rebuilt on prod (rivalries 2342 →
