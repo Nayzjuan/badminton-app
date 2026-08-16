@@ -24,7 +24,7 @@ import {
   type MatchActionResult,
 } from "@/app/actions/_shared";
 import { isRpcNotFound } from "@/lib/rpc-utils";
-import { logMatchEvent } from "@/lib/match-event-log";
+import { logMatchEvent, logPublishedEvents, fetchRosterSnapshots } from "@/lib/match-event-log";
 import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
 
 /**
@@ -41,42 +41,6 @@ import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
  */
 const HELD_NOT_READY_MESSAGE =
   "Not ready yet — this cross-court draft is waiting on a player who's still on court. It unlocks by itself when that game ends; clear it if you'd rather not wait.";
-
-/**
- * Roster snapshot for audit payloads — [{ team, player_id, player_name }],
- * keyed by match_id. player_name is captured durably (survives a later profile
- * merge/rename), mirroring the shape of the 'created' event payload. Two bulk
- * queries — no N+1.
- */
-async function fetchRosterSnapshots(
-  db: ReturnType<typeof createServiceClient>,
-  matchIds: string[]
-): Promise<Map<string, Array<{ team: string; player_id: string; player_name: string }>>> {
-  const map = new Map<string, Array<{ team: string; player_id: string; player_name: string }>>();
-  if (matchIds.length === 0) return map;
-
-  const { data: mps } = await db
-    .from("match_players")
-    .select("match_id, team, player_id")
-    .in("match_id", matchIds);
-  const rows = mps ?? [];
-  if (rows.length === 0) return map;
-
-  const playerIds = [...new Set(rows.map((r) => r.player_id))];
-  const { data: profs } = await db.from("profiles").select("id, display_name").in("id", playerIds);
-  const nameMap = new Map((profs ?? []).map((p) => [p.id, p.display_name]));
-
-  for (const r of rows) {
-    const list = map.get(r.match_id) ?? [];
-    list.push({
-      team: r.team,
-      player_id: r.player_id,
-      player_name: nameMap.get(r.player_id) ?? "Unknown",
-    });
-    map.set(r.match_id, list);
-  }
-  return map;
-}
 
 // ============================================================
 // clearOnDeckMatch
@@ -451,13 +415,27 @@ export async function publishMatchAction(
   if (rpcError) {
     if (isRpcNotFound(rpcError)) {
       // Fallback: manual non-atomic publish (pre-RPC behaviour).
-      return await publishMatchFallback(svc, matchId, match.session_id);
+      return await publishMatchFallback(svc, matchId, match.session_id, user.id);
     }
     return { success: false, message: `Publish failed: ${rpcError.message}` };
   }
 
   switch (result) {
     case "SUCCESS": {
+      // Audit: the draft → published transition. Logged only under SUCCESS —
+      // ALREADY_PUBLISHED below returns success too, but nothing transitioned
+      // there, and a second event would invent a review that never happened.
+      // Best-effort — logPublishedEvents never throws.
+      const publishActor = await getActorContext(user.id);
+      await logPublishedEvents({
+        db: svc,
+        sessionId: match.session_id,
+        matchIds: [matchId],
+        reason: "publish_single",
+        actorId: publishActor.id,
+        actorName: publishActor.name,
+      });
+
       // On-deck ping: this draft's players just transitioned drafted → on_deck.
       // Fetch the roster and notify them (OS-level push for backgrounded phones),
       // fired after the response flushes.
@@ -505,7 +483,8 @@ export async function publishMatchAction(
 async function publishMatchFallback(
   svc: ReturnType<typeof createServiceClient>,
   matchId: string,
-  sessionId: string
+  sessionId: string,
+  userId: string
 ): Promise<{ success: boolean; message: string }> {
   const { data: match } = await svc
     .from("matches")
@@ -574,14 +553,37 @@ async function publishMatchFallback(
     }
   }
 
-  const { error } = await svc
+  const { data: flipped, error } = await svc
     .from("matches")
     .update({ is_published: true })
     .eq("id", matchId)
     .eq("status", "pending")
-    .eq("is_published", false);
+    .eq("is_published", false)
+    .select("id");
 
   if (error) return { success: false, message: "Failed to publish match." };
+
+  // Same audit as the RPC path — see the note there. The reason is shared
+  // deliberately: identical transition, and RPC-vs-fallback is a property of
+  // this environment's migration state, not of the match.
+  //
+  // Gated on the UPDATE's own RETURNING, like the batch fallback below: the
+  // is_published=false predicate makes this a no-op if a concurrent publisher
+  // won the race after the precondition read above, and an ungated log would
+  // then credit THIS organizer with a transition the other one performed. Zero
+  // rows is not an error — it is the fallback's ALREADY_PUBLISHED, which the
+  // RPC path also reports as success and also does not log.
+  if ((flipped?.length ?? 0) > 0) {
+    const fallbackActor = await getActorContext(userId);
+    await logPublishedEvents({
+      db: svc,
+      sessionId,
+      matchIds: [matchId],
+      reason: "publish_single",
+      actorId: fallbackActor.id,
+      actorName: fallbackActor.name,
+    });
+  }
 
   if (playerIds.length > 0) {
     // Promote players to 'on_deck'. Engine-generated drafts keep players at
@@ -649,7 +651,7 @@ export async function publishAllDraftMatchesAction(
   if (rpcError) {
     if (isRpcNotFound(rpcError)) {
       // Fallback: manual non-atomic bulk publish (pre-RPC behaviour).
-      return await publishAllDraftsFallback(svc, sessionId);
+      return await publishAllDraftsFallback(svc, sessionId, user.id);
     }
     return { success: false, message: `Publish failed: ${rpcError.message}` };
   }
@@ -678,8 +680,19 @@ export async function publishAllDraftMatchesAction(
       : "";
 
   // On-deck ping: of the snapshot drafts, the ones now is_published=true were
-  // actually published (skipped drafts stay false). Notify their rosters that
-  // they're on deck.
+  // actually published — the two skip arms the organizer can act on (a departed
+  // player, a double-booking) both leave the row false. Notify their rosters
+  // that they're on deck.
+  //
+  // The leak is anything a CONCURRENT publisher flipped between this run's
+  // snapshot and this re-read — whether the RPC skipped it under the third arm
+  // (no longer a pending unpublished draft at its FOR UPDATE) or under one of
+  // the other two. Either way it reads back true here and this call takes
+  // credit for it. The RPC returns counts, not ids, so nothing cheaper than a
+  // new signature distinguishes them. Both consequences are benign duplicates
+  // of a thing that did happen — a second on-deck push, and a second
+  // 'published' event a few seconds after the real one — never a missing row
+  // or a match published without notice.
   if (publishedCount > 0 && draftMatchIds.length > 0) {
     const { data: publishedMatches } = await svc
       .from("matches")
@@ -689,6 +702,20 @@ export async function publishAllDraftMatchesAction(
       .eq("status", "pending");
     const publishedIds = (publishedMatches ?? []).map((m) => m.id);
     if (publishedIds.length > 0) {
+      // Audit: one 'published' event per match that actually flipped. Driven by
+      // the same re-read as the push — including its one leak, noted above — so
+      // the ledger and the notification can never disagree about who was
+      // published.
+      const batchActor = await getActorContext(user.id);
+      await logPublishedEvents({
+        db: svc,
+        sessionId,
+        matchIds: publishedIds,
+        reason: "publish_all",
+        actorId: batchActor.id,
+        actorName: batchActor.name,
+      });
+
       const { data: rosterRows } = await svc
         .from("match_players")
         .select("player_id")
@@ -718,7 +745,8 @@ export async function publishAllDraftMatchesAction(
 // Fallback implementation used when the publish_all_drafts RPC is not yet deployed.
 async function publishAllDraftsFallback(
   svc: ReturnType<typeof createServiceClient>,
-  sessionId: string
+  sessionId: string,
+  userId: string
 ): Promise<{ success: boolean; message: string; publishedCount?: number; skippedCount?: number }> {
   const { data: draftMatches, error: draftErr } = await svc
     .from("matches")
@@ -828,6 +856,20 @@ async function publishAllDraftsFallback(
 
   if (publishedCount > 0) {
     const publishedMatchIds = new Set(data.map((m) => m.id));
+
+    // Same audit as the RPC path. `data` is the UPDATE's own RETURNING, so it is
+    // exactly the set that flipped — narrower than publishableIds if a row was
+    // taken by a concurrent writer between the probe and the UPDATE.
+    const batchFallbackActor = await getActorContext(userId);
+    await logPublishedEvents({
+      db: svc,
+      sessionId,
+      matchIds: [...publishedMatchIds],
+      reason: "publish_all",
+      actorId: batchFallbackActor.id,
+      actorName: batchFallbackActor.name,
+    });
+
     const publishedPlayerIds = [
       ...new Set(
         (matchPlayerRows ?? [])

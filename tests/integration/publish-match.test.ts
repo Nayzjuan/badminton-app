@@ -318,12 +318,17 @@ describe("publishMatchAction — Suite C", () => {
 //
 // Field evidence this is regression-guarding, not hypothetical: session
 // 3367d4c6, 2026-08-15 — 12 `created` events with method='held', 2 of those
-// matches reached a court, 10 were cleared by hand. Prod records no publish at
+// matches reached a court, 10 were cleared by hand. Prod recorded no publish at
 // all: `matches` has no published_at, `queue_status_events` was created after
-// the session's last match, and while MatchEventType defines a 'published'
-// kind, nothing writes it — 0 such rows DB-wide, including for the 2 that
+// the session's last match, and while MatchEventType defined a 'published'
+// kind, nothing wrote it — 0 such rows DB-wide, including for the 2 that
 // succeeded. So the CONFLICT copy is the likely reason for those 10 clears,
 // not a traced one.
+//
+// The writer exists as of 2026-08-16 (logPublishedEvents; APP_MANIFEST §3.41),
+// which does NOT make the above traceable in hindsight — there is nothing to
+// backfill a publish time from. Past tense on purpose: this is a statement
+// about that session's rows, which are permanently behind the fix.
 
 /**
  * Organizer + session + a live source match on Court 1 + a held cross-court

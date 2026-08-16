@@ -20,12 +20,20 @@ vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
 vi.mock("@/app/actions/_shared", () => ({
   getAuthenticatedUser: vi.fn(),
   isSessionOrganizer: vi.fn(),
+  getActorContext: vi.fn(),
+}));
+// The 'published' audit is a separate concern (tests/unit/published-event.test.ts).
+// Stubbed here so these cases keep measuring the engine trigger alone.
+vi.mock("@/lib/match-event-log", () => ({
+  logMatchEvent: vi.fn(),
+  logPublishedEvents: vi.fn(),
+  fetchRosterSnapshots: vi.fn().mockResolvedValue(new Map()),
 }));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { getAuthenticatedUser, isSessionOrganizer } from "@/app/actions/_shared";
+import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match-drafts";
 
 // ── Valid UUIDs ────────────────────────────────────────────────
@@ -111,6 +119,7 @@ beforeEach(() => {
     email: "org@test.com",
   } as never);
   vi.mocked(isSessionOrganizer).mockResolvedValue(true);
+  vi.mocked(getActorContext).mockResolvedValue({ id: "user-1", name: "Org" });
 });
 
 // ── PE-1 ───────────────────────────────────────────────────────

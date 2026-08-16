@@ -40,6 +40,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { broadcastCapSaturation } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
+import { logPublishedEvents } from "@/lib/match-event-log";
 import {
   PLAYERS_PER_MATCH,
   CRITICAL_WAIT_MINUTES,
@@ -1290,6 +1291,23 @@ export async function recomputeHeldReadiness(
           p_session_id: sessionId,
         });
         if (pubResult === "SUCCESS") {
+          // Audit: the third draft → published transition, and the only one with
+          // no organizer behind it — actorType 'engine', not the actorId-derived
+          // 'system', because this IS the matchmaking engine acting. Without this
+          // row an auto-published held draft is indistinguishable in the ledger
+          // from one that was never published at all, which is precisely the
+          // inference the 08/15 cross-court post-mortem could not make.
+          // Best-effort — logPublishedEvents never throws.
+          await logPublishedEvents({
+            db: supabase,
+            sessionId,
+            matchIds: [held.id],
+            reason: "auto_publish_held",
+            actorId: null,
+            actorName: null,
+            actorType: "engine",
+          });
+
           const { data: roster } = await supabase
             .from("match_players")
             .select("player_id")
