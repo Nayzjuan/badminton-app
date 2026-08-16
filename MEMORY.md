@@ -629,10 +629,15 @@ the head the PR merged at.** ⚠️ Corrected 2026-08-16: this sentence original
 the PR actually points at", and `git show e1542ec -- MEMORY.md` shows the whole ✅ block arriving as `+`
 lines in **`e1542ec`** — so the commit that *wrote* the claim is the one that falsified it, on push.
 PR #67's `headRefOid` at merge was `e1542ec`, never `7f83cfb`. That is not "a later push moved the head";
-it is the **exact** shape the 🪤 below this one describes for `2a45fdf` — a doc naming the head it is
-being committed as — and it recurred one commit later, inside the note warning about it. So the rule to
-carry is that stronger one, not "re-check more often": **a doc can never name its own head, because the
-act of committing it moves the head.** The verdict does survive on the real head: `e1542ec` re-ran two
+it is the **exact** shape the 🪤 below this one describes for `2a45fdf` — a doc naming the head **as of
+the moment it is written**, which is its own parent, and which its own push then replaces — and it
+recurred one commit later, inside the note warning about it. ⚠️ A draft of this correction said "the head
+it is being committed **as**"; that is impossible (a commit cannot know its own SHA) and points the next
+reader at a mistake nobody can make. **So: a doc can never name the current head, because the act of
+committing it moves the head.** That rule and the per-run CI rule below govern different things and do
+not compete — one is about writing SHAs into prose, the other about which runs to trust; an earlier draft
+framed them as rivals ("the stronger one, not re-check more often"), which they are not.
+The verdict does survive on the real head: `e1542ec` re-ran two
 workflows on four runs, all `success` (Unit `31892255690` push / `31892258687` PR, Integration
 `31892255681` push / `31892258874` PR; Supabase Preview `skipped`), verified after the fact.
 `gh pr checks` alone does **not** prove any of this: it renders whatever checks are attached now, so a
@@ -642,7 +647,11 @@ colour — and re-verify after **every** further push, including a docs-only one
 🪤 **Do not write the current head SHA into this file.** The previous revision said "origin = `2a45fdf`",
 which the very commit that *added* the line (`7f83cfb`) falsified on landing — a self-invalidating claim,
 the repo's most-repeated defect class shipped inside the note describing it. SHAs below are immutable
-history (a bad commit, a force-push target, a CI run); the *head* is stated as an invariant instead.
+history (a bad commit, a force-push target, a CI run). ⚠️ This 🪤 used to close "the *head* is stated as
+an invariant instead"; that was abandoned 2026-08-16 after the invariant offered in STANDING TO-DO turned
+out not to be one (`gh pr list --state open` cannot prove "`main` carries every merged PR"). **Do not
+state the head at all** — ask `git rev-parse origin/main` and `gh pr list --state open`, which move on
+their own.
 
 ### ✅ RESOLVED — the force-push landed (was the one blocking item)
 

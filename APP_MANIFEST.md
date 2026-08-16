@@ -600,7 +600,9 @@ Published on-deck matches do **not** count against the cap — they are already 
 
 When the four the waiting pool can form is **stale** — someone would face a player they just played — the engine reaches into a live court for ONE still-playing "pulled body" and pre-builds a **held draft** (3 waiting + 1 playing) that is fresher. It runs entirely under auto-matchmaking; the organizer does nothing.
 
-> **This feature shipped DEAD and was repaired 2026-08-12.** It produced **0 held drafts across 945 production matches**. Three independent blockers, each individually sufficient to prevent every reach — and every downstream helper was green the whole time, because nothing tested whether the engine ever *decides* to reach. The three, and the shape of the repair, are recorded below because each one is a trap worth not re-entering.
+> **This feature shipped DEAD and was repaired 2026-08-12 — but that repair only fixed GENERATION. See §3.41:** the first live session (2026-08-15) created 12 held drafts and could publish **none** of them, because the publish path predated held drafts entirely. Read this block as the history of the three *generation* blockers, not as an all-clear for the feature.
+>
+> It produced **0 held drafts across 945 production matches**. Three independent blockers, each individually sufficient to prevent every reach — and every downstream helper was green the whole time, because nothing tested whether the engine ever *decides* to reach. The three, and the shape of the repair, are recorded below because each one is a trap worth not re-entering.
 >
 > 1. **The slot gate was `i > 0`** — "not the first draft of this run". 91% of production engine runs commit exactly one draft, so the branch was unreachable by construction. It was a *proxy* for "a freeing court still has something to promote"; that invariant is now asked directly.
 > 2. **The trigger was `forcedRepeat` alone** — the engine having already failed to compose a legal four. That fires on ~4% of matches (22/550 replayed) and gets **rarer as the engine improves**, so the better the pool selection got, the deader this feature became.
