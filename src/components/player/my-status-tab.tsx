@@ -148,7 +148,12 @@ export function MyStatusTab({
           sessionName={session.name}
         />
       ) : (
-        <MatchHistory sessionId={session.id} playerId={profile.id} />
+        <MatchHistory
+          sessionId={session.id}
+          playerId={profile.id}
+          playerName={profile.display_name}
+          sessionActive={session.is_active}
+        />
       )}
     </div>
   );

@@ -50,7 +50,11 @@ import type { Profile, Session } from "@/types/database";
 import { DASHBOARD_GRID_SIZE_PX, TOAST_DISMISS_MS } from "@/lib/constants";
 import { useOrganizerAlerts } from "@/hooks/use-organizer-alerts";
 import { OrganizerCenterAlert } from "@/components/organizer/organizer-center-alert";
+import { OrganizerNoticeInbox } from "@/components/organizer/organizer-notice-inbox";
+import { EditMatchDialog } from "@/components/organizer/edit-match-dialog";
 import type { QueueNoticePayload } from "@/lib/broadcast";
+import type { SessionNotification } from "@/types/database";
+import { isPendingCorrectionStatus } from "@/lib/session-notifications";
 
 // ── Design token constants ───────────────────────────────────
 // Command-center surface tokens (theme-aware via cc-* tokens in globals.css).
@@ -91,9 +95,9 @@ export function OrganizerDashboard({
   // Leave notices arrive on the session broadcast before useOrganizerAlerts
   // exists (it needs the queue from useOrganizerData). The ref is written
   // after both hooks settle — same pattern as fetchXxxRef.
-  const enqueueLeaveRef = useRef<(payload: QueueNoticePayload) => void>(() => {});
+  const enqueueNoticeRef = useRef<(payload: QueueNoticePayload) => void>(() => {});
   const onQueueNotice = useCallback((payload: QueueNoticePayload) => {
-    enqueueLeaveRef.current(payload);
+    enqueueNoticeRef.current(payload);
   }, []);
 
   const {
@@ -132,10 +136,7 @@ export function OrganizerDashboard({
     onQueueNotice,
   });
 
-  const alerts = useOrganizerAlerts(queue);
-  useEffect(() => {
-    enqueueLeaveRef.current = alerts.enqueueLeave;
-  }, [alerts.enqueueLeave]);
+  const [reviewNotice, setReviewNotice] = useState<SessionNotification | null>(null);
 
   const {
     swapContext,
@@ -198,6 +199,11 @@ export function OrganizerDashboard({
     capSignal,
     suppressCloseWatcher: suppressLocalClose,
   });
+
+  const alerts = useOrganizerAlerts(session.id, queue, isClosed, !loading);
+  useEffect(() => {
+    enqueueNoticeRef.current = alerts.enqueueNotice;
+  }, [alerts.enqueueNotice]);
 
   // Refs for the --cc-header-h ResizeObserver (see the effect below).
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -304,16 +310,24 @@ export function OrganizerDashboard({
               All Sessions
             </button>
 
-            {/* Mobile-only: mini auto toggle + more-options menu */}
-            {!isClosed && (
-              <div className="flex items-center gap-2 lg:hidden">
-                {/* Mini auto-matchmaking toggle */}
-                <button
-                  onClick={handleToggleAuto}
-                  disabled={togglingAuto}
-                  aria-pressed={autoMatchmaking}
-                  title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5
+            <div className="flex items-center gap-2">
+              <OrganizerNoticeInbox
+                inbox={alerts.inbox}
+                unreadCount={alerts.unreadCount}
+                isClosed={isClosed}
+                onMarkRead={alerts.markRead}
+                onReview={setReviewNotice}
+              />
+              {/* Mobile-only: mini auto toggle + more-options menu */}
+              {!isClosed && (
+                <div className="flex items-center gap-2 lg:hidden">
+                  {/* Mini auto-matchmaking toggle */}
+                  <button
+                    onClick={handleToggleAuto}
+                    disabled={togglingAuto}
+                    aria-pressed={autoMatchmaking}
+                    title="Auto matchmaking: when ON, the engine automatically forms the next match when a court opens"
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5
                               text-[11px] font-semibold transition-colors border
                               ${
                                 autoMatchmaking
@@ -321,52 +335,52 @@ export function OrganizerDashboard({
                                   : "bg-cc-bg-3 border-cc-border text-cc-t3"
                               }
                               disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  {togglingAuto ? (
-                    <span className="h-2 w-2 shrink-0 animate-spin">
-                      <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
-                        <circle
-                          cx="5"
-                          cy="5"
-                          r="3.5"
-                          stroke="currentColor"
-                          strokeWidth="1.4"
-                          strokeDasharray="14 8"
-                          strokeLinecap="round"
-                          opacity=".9"
+                  >
+                    {togglingAuto ? (
+                      <span className="h-2 w-2 shrink-0 animate-spin">
+                        <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                          <circle
+                            cx="5"
+                            cy="5"
+                            r="3.5"
+                            stroke="currentColor"
+                            strokeWidth="1.4"
+                            strokeDasharray="14 8"
+                            strokeLinecap="round"
+                            opacity=".9"
+                          />
+                        </svg>
+                      </span>
+                    ) : (
+                      <span className="relative flex h-1.5 w-1.5 shrink-0">
+                        {autoMatchmaking && (
+                          <span className="animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
+                        )}
+                        <span
+                          className={`relative inline-flex h-1.5 w-1.5 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
                         />
-                      </svg>
-                    </span>
-                  ) : (
-                    <span className="relative flex h-1.5 w-1.5 shrink-0">
-                      {autoMatchmaking && (
-                        <span className="animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full bg-cc-accent opacity-50" />
-                      )}
-                      <span
-                        className={`relative inline-flex h-1.5 w-1.5 rounded-full ${autoMatchmaking ? "bg-cc-accent" : "bg-cc-t3"}`}
-                      />
-                    </span>
-                  )}
-                  {togglingAuto ? "…" : autoMatchmaking ? "Auto" : "Off"}
-                </button>
+                      </span>
+                    )}
+                    {togglingAuto ? "…" : autoMatchmaking ? "Auto" : "Off"}
+                  </button>
 
-                {/* Auto-publish toggle — mobile compact. State shown via accent
+                  {/* Auto-publish toggle — mobile compact. State shown via accent
                     color; disabled until Auto-Matchmaking is ON (D11). */}
-                {!isClosed && (
-                  <button
-                    data-testid="toggle-auto-publish-mobile"
-                    onClick={() => {
-                      const enabling = !autoPublish;
-                      if (enabling && draftMatches.length > 0) {
-                        setAutoPublishConfirmOpen(true);
-                      } else {
-                        void handleToggleAutoPublish(enabling);
-                      }
-                    }}
-                    disabled={togglingAutoPublish || !autoMatchmaking || isDashboardLocked}
-                    aria-pressed={autoPublish}
-                    aria-label={autoPublish ? "Auto-publish on" : "Auto-publish off"}
-                    className={`inline-flex items-center gap-1 clip-cut-sm px-2 py-1.5 min-h-[36px]
+                  {!isClosed && (
+                    <button
+                      data-testid="toggle-auto-publish-mobile"
+                      onClick={() => {
+                        const enabling = !autoPublish;
+                        if (enabling && draftMatches.length > 0) {
+                          setAutoPublishConfirmOpen(true);
+                        } else {
+                          void handleToggleAutoPublish(enabling);
+                        }
+                      }}
+                      disabled={togglingAutoPublish || !autoMatchmaking || isDashboardLocked}
+                      aria-pressed={autoPublish}
+                      aria-label={autoPublish ? "Auto-publish on" : "Auto-publish off"}
+                      className={`inline-flex items-center gap-1 clip-cut-sm px-2 py-1.5 min-h-[36px]
                                 font-command text-[9px] uppercase tracking-[0.08em] transition-colors border
                                 ${
                                   autoPublish
@@ -374,93 +388,96 @@ export function OrganizerDashboard({
                                     : "bg-cc-bg-3 border-cc-border text-cc-t3"
                                 }
                                 disabled:opacity-50 disabled:cursor-not-allowed`}
-                    title={!autoMatchmaking ? "Enable Auto-Matchmaking first" : "Auto-publish mode"}
-                  >
-                    <span
-                      className={`relative inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${autoPublish ? "bg-cc-accent" : "bg-cc-t3"}`}
+                      title={
+                        !autoMatchmaking ? "Enable Auto-Matchmaking first" : "Auto-publish mode"
+                      }
+                    >
+                      <span
+                        className={`relative inline-flex h-1.5 w-1.5 shrink-0 rounded-full ${autoPublish ? "bg-cc-accent" : "bg-cc-t3"}`}
+                      />
+                      {togglingAutoPublish ? "…" : "Pub"}
+                    </button>
+                  )}
+
+                  {/* Draft cap chip — mobile compact */}
+                  {!isClosed && (
+                    <DraftCapPopover
+                      value={liveSession.max_auto_drafts_override ?? null}
+                      autoIsOn={autoMatchmaking}
+                      autoPublishIsOn={autoPublish}
+                      capPhase={capPhase}
+                      onChange={handleCapChange}
+                      compact
                     />
-                    {togglingAutoPublish ? "…" : "Pub"}
-                  </button>
-                )}
+                  )}
 
-                {/* Draft cap chip — mobile compact */}
-                {!isClosed && (
-                  <DraftCapPopover
-                    value={liveSession.max_auto_drafts_override ?? null}
-                    autoIsOn={autoMatchmaking}
-                    autoPublishIsOn={autoPublish}
-                    capPhase={capPhase}
-                    onChange={handleCapChange}
-                    compact
-                  />
-                )}
-
-                {/* More-options dropdown */}
-                <div className="relative" ref={moreMenuRef}>
-                  <button
-                    onClick={() => setMoreMenuOpen((v) => !v)}
-                    className="inline-flex items-center justify-center h-9 w-9 rounded-lg
+                  {/* More-options dropdown */}
+                  <div className="relative" ref={moreMenuRef}>
+                    <button
+                      onClick={() => setMoreMenuOpen((v) => !v)}
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-lg
                                text-cc-t2 hover:text-cc-t1 hover:bg-cc-bg-3 transition-colors"
-                    aria-label="More options"
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </button>
+                      aria-label="More options"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </button>
 
-                  {moreMenuOpen && (
-                    <div
-                      className="absolute right-0 top-full mt-1.5 w-52 rounded-xl
+                    {moreMenuOpen && (
+                      <div
+                        className="absolute right-0 top-full mt-1.5 w-52 rounded-xl
                                     border border-cc-border bg-cc-bg-2
                                     shadow-xl z-50 overflow-hidden
                                     animate-in fade-in slide-in-from-top-1 duration-150"
-                    >
-                      {/* TV View */}
-                      <a
-                        href={clubSlug ? clubTv(clubSlug, session.id) : `/tv/${session.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() => setMoreMenuOpen(false)}
-                        className="flex items-center gap-3 w-full px-4 py-3 text-sm
+                      >
+                        {/* TV View */}
+                        <a
+                          href={clubSlug ? clubTv(clubSlug, session.id) : `/tv/${session.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => setMoreMenuOpen(false)}
+                          className="flex items-center gap-3 w-full px-4 py-3 text-sm
                                    text-cc-t2 hover:bg-cc-bg-3
                                    hover:text-cc-t1 transition-colors"
-                      >
-                        <Tv2 className="h-4 w-4 text-cc-t3 shrink-0" />
-                        TV Scoreboard
-                      </a>
+                        >
+                          <Tv2 className="h-4 w-4 text-cc-t3 shrink-0" />
+                          TV Scoreboard
+                        </a>
 
-                      {/* Share Session */}
-                      <button
-                        onClick={() => {
-                          setMoreMenuOpen(false);
-                          setShareOpen(true);
-                        }}
-                        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
+                        {/* Share Session */}
+                        <button
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            setShareOpen(true);
+                          }}
+                          className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
                                    text-cc-t2 hover:bg-cc-bg-3
                                    hover:text-cc-t1 transition-colors"
-                      >
-                        <Share2 className="h-4 w-4 text-cc-t3 shrink-0" />
-                        Share Session
-                      </button>
+                        >
+                          <Share2 className="h-4 w-4 text-cc-t3 shrink-0" />
+                          Share Session
+                        </button>
 
-                      <div className="border-t border-cc-border" />
+                        <div className="border-t border-cc-border" />
 
-                      {/* Close Session */}
-                      <button
-                        onClick={() => {
-                          setMoreMenuOpen(false);
-                          setCloseOpen(true);
-                        }}
-                        className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
+                        {/* Close Session */}
+                        <button
+                          onClick={() => {
+                            setMoreMenuOpen(false);
+                            setCloseOpen(true);
+                          }}
+                          className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
                                    text-cc-red hover:bg-cc-red-dim
                                    hover:text-cc-red transition-colors"
-                      >
-                        <Power className="h-4 w-4 shrink-0" />
-                        Close Session
-                      </button>
-                    </div>
-                  )}
+                        >
+                          <Power className="h-4 w-4 shrink-0" />
+                          Close Session
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* ── Row 2: title (left) + desktop action strip (right) ── */}
@@ -910,10 +927,41 @@ export function OrganizerDashboard({
           lease expires (useOrganizerSession's TTL self-unlock).
       ──────────────────────────────────────────────────────── */}
       <OrganizerCenterAlert
-        alert={alerts.current}
+        alert={reviewNotice ? null : alerts.current}
         remaining={alerts.remaining}
         onDismiss={alerts.dismiss}
+        onReview={() => {
+          const row = alerts.current?.notification;
+          alerts.dismiss();
+          if (row?.match_id) setReviewNotice(row);
+        }}
       />
+
+      {reviewNotice?.match_id && (
+        <EditMatchDialog
+          key={reviewNotice.id}
+          hideTrigger
+          open
+          onOpenChange={(next) => {
+            if (!next) setReviewNotice(null);
+          }}
+          matchId={reviewNotice.match_id}
+          initialScoreA={reviewNotice.payload.proposedScoreA ?? 0}
+          initialScoreB={reviewNotice.payload.proposedScoreB ?? 0}
+          notificationId={isPendingCorrectionStatus(reviewNotice.status) ? reviewNotice.id : null}
+          teamALabel={
+            reviewNotice.payload.teamANames?.length
+              ? reviewNotice.payload.teamANames.join(" & ")
+              : "Team A"
+          }
+          teamBLabel={
+            reviewNotice.payload.teamBNames?.length
+              ? reviewNotice.payload.teamBNames.join(" & ")
+              : "Team B"
+          }
+          onSaved={alerts.refreshInbox}
+        />
+      )}
 
       {isDashboardLocked && (
         <div

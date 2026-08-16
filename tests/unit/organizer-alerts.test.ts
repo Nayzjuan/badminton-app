@@ -15,6 +15,7 @@ import {
   pauseSeenKey,
   pausedBadge,
   collectDuePauseAlerts,
+  parsePauseAlertId,
   prunePauseSeen,
   type OrganizerAlert,
 } from "@/lib/organizer-alerts";
@@ -92,6 +93,14 @@ describe("alert queue", () => {
 
   it("pause copy uses the bucket interval, not raw minutes", () => {
     expect(pauseAlert("Alex", 2, "alex").title).toBe("Alex has been paused for 30 minutes");
+  });
+
+  it("parses pause alert ids back into player + bucket", () => {
+    expect(parsePauseAlertId(pauseAlert("Alex", 2, "alex").id)).toEqual({
+      playerId: "alex",
+      bucket: 2,
+    });
+    expect(parsePauseAlertId("leave:alex")).toBeNull();
   });
 });
 

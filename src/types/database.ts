@@ -197,6 +197,52 @@ export type SessionOrganizer = {
   granted_at: string;
 };
 
+export type SessionNotificationKind =
+  | "player_left"
+  | "player_checked_out"
+  | "player_paused_long"
+  | "score_correction";
+
+export type SessionNotificationStatus = "unread" | "read" | "resolved" | "superseded";
+
+export type SessionNotificationPayload = {
+  playerName: string;
+  cancelledDraft?: boolean;
+  actorName?: string | null;
+  bucket?: number;
+  interrupt?: boolean;
+  proposedScoreA?: number;
+  proposedScoreB?: number;
+  teamANames?: string[];
+  teamBNames?: string[];
+};
+
+/** session_notifications table (migration 20260818000000) */
+export type SessionNotification = {
+  id: string;
+  session_id: string;
+  kind: SessionNotificationKind;
+  status: SessionNotificationStatus;
+  subject_player_id: string;
+  match_id: string | null;
+  payload: SessionNotificationPayload;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+};
+
+export type SessionNotificationInsert = Pick<
+  SessionNotification,
+  "session_id" | "kind" | "subject_player_id"
+> &
+  Partial<
+    Pick<SessionNotification, "status" | "match_id" | "payload" | "resolved_by" | "resolved_at">
+  >;
+
+export type SessionNotificationUpdate = Partial<
+  Pick<SessionNotification, "status" | "resolved_by" | "resolved_at" | "payload">
+>;
+
 /** courts table */
 export type Court = {
   id: string;
@@ -706,6 +752,12 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      session_notifications: {
+        Row: SessionNotification;
+        Insert: SessionNotificationInsert;
+        Update: SessionNotificationUpdate;
+        Relationships: [];
+      };
       courts: {
         Row: Court;
         Insert: CourtInsert;
@@ -1199,6 +1251,24 @@ export type Database = {
           error?: string;
           published_count?: number;
           skipped_count?: number;
+        };
+      };
+      resolve_score_correction: {
+        Args: {
+          p_notification_id: string;
+          p_actor_id: string;
+          p_score_a: number;
+          p_score_b: number;
+        };
+        Returns: {
+          success: boolean;
+          error?: string;
+          alreadyResolved?: boolean;
+          actorName?: string | null;
+          oldScoreA?: number | null;
+          oldScoreB?: number | null;
+          sessionId?: string;
+          matchId?: string;
         };
       };
       checkout_player_cleanup_drafts: {

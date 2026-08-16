@@ -21,9 +21,15 @@ interface OrganizerCenterAlertProps {
   alert: OrganizerAlert | null;
   remaining: number;
   onDismiss: () => void;
+  onReview?: () => void;
 }
 
-export function OrganizerCenterAlert({ alert, remaining, onDismiss }: OrganizerCenterAlertProps) {
+export function OrganizerCenterAlert({
+  alert,
+  remaining,
+  onDismiss,
+  onReview,
+}: OrganizerCenterAlertProps) {
   return (
     <Dialog
       open={alert !== null}
@@ -50,15 +56,30 @@ export function OrganizerCenterAlert({ alert, remaining, onDismiss }: OrganizerC
               ) : (
                 <span />
               )}
-              <button
-                type="button"
-                onClick={onDismiss}
-                className="rounded-xl bg-primary px-6 py-2.5 text-sm font-bold text-primary-foreground
-                           transition-colors hover:brightness-110 focus-visible:outline-none
-                           focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                Dismiss
-              </button>
+              <div className="flex flex-wrap justify-end gap-2">
+                {alert.kind === "score_correction" && onReview && (
+                  <button
+                    type="button"
+                    onClick={onReview}
+                    className="rounded-xl bg-primary px-6 py-2.5 text-sm font-bold text-primary-foreground
+                               transition-colors hover:brightness-110 focus-visible:outline-none
+                               focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Review
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onDismiss}
+                  className={
+                    alert.kind === "score_correction" && onReview
+                      ? "rounded-xl border border-border px-6 py-2.5 text-sm font-bold text-foreground hover:bg-muted"
+                      : "rounded-xl bg-primary px-6 py-2.5 text-sm font-bold text-primary-foreground transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  }
+                >
+                  Dismiss
+                </button>
+              </div>
             </DialogFooter>
           </>
         )}

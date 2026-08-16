@@ -14,24 +14,44 @@ import { Trophy, History } from "lucide-react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import { subscribeToMatches } from "@/lib/realtime";
 import { getMatchHistory } from "@/app/actions/history";
-import type { MatchHistory as MatchHistoryType } from "@/types/database";
+import { listMyScoreCorrections } from "@/app/actions/notifications";
+import { ScoreCorrectionRequest } from "./score-correction-request";
+import type { MatchHistory as MatchHistoryType, SessionNotification } from "@/types/database";
 
 interface MatchHistoryProps {
   /** When provided, shows history for this session only (+ real-time updates).
    *  When omitted, shows all-time history across every session. */
   sessionId?: string;
   playerId: string;
+  playerName?: string;
+  sessionActive?: boolean;
   /** Cap the number of results returned. Default: unlimited. */
   limit?: number;
 }
 
-export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) {
+export function MatchHistory({
+  sessionId,
+  playerId,
+  playerName = "You",
+  sessionActive = false,
+  limit,
+}: MatchHistoryProps) {
   const [history, setHistory] = useState<MatchHistoryType[]>([]);
+  const [corrections, setCorrections] = useState<SessionNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   // Browser client kept only for the realtime subscription — data fetching
   // goes through the getMatchHistory server action instead.
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
+
+  const fetchCorrections = useCallback(async () => {
+    if (!sessionId) {
+      setCorrections([]);
+      return;
+    }
+    const result = await listMyScoreCorrections(sessionId);
+    if (result.success) setCorrections(result.notifications);
+  }, [sessionId]);
 
   const fetchHistory = useCallback(async () => {
     setFetchError(null);
@@ -41,8 +61,9 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
     } else {
       setHistory(result.matches);
     }
+    await fetchCorrections();
     setLoading(false);
-  }, [sessionId, playerId, limit]);
+  }, [sessionId, playerId, limit, fetchCorrections]);
 
   // Initial fetch. fetchHistory is a stable useCallback; calling it here is the
   // standard fetch-on-mount pattern — no infinite-loop risk.
@@ -267,6 +288,22 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
                     </p>
                   </div>
                 </div>
+                {sessionId && match.match_status === "completed" && (
+                  <ScoreCorrectionRequest
+                    matchId={match.match_id}
+                    teamALabel={teamLabel(match, playerName, "a")}
+                    teamBLabel={teamLabel(match, playerName, "b")}
+                    initialScoreA={match.team_a_score ?? 0}
+                    initialScoreB={match.team_b_score ?? 0}
+                    sessionActive={sessionActive}
+                    pending={corrections.find(
+                      (c) =>
+                        c.match_id === match.match_id &&
+                        (c.status === "unread" || c.status === "read")
+                    )}
+                    onSubmitted={fetchCorrections}
+                  />
+                )}
               </div>
             </div>
           );
@@ -274,4 +311,11 @@ export function MatchHistory({ sessionId, playerId, limit }: MatchHistoryProps) 
       </div>
     </div>
   );
+}
+
+function teamLabel(match: MatchHistoryType, playerName: string, side: "a" | "b"): string {
+  const mine = [playerName, ...(match.teammates ?? [])].filter(Boolean);
+  const theirs = match.opponents ?? [];
+  const names = match.team === side ? mine : theirs;
+  return names.length > 0 ? names.join(" & ") : side === "a" ? "Team A" : "Team B";
 }

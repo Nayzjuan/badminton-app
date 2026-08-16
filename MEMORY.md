@@ -5,7 +5,15 @@
 
 ---
 
-## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
+## ⚠️ MIGRATION QUEUE — 1 pending as of 2026-08-16.
+
+**`20260818000000_session_notifications` is NOT on prod.** TypeScript degrades: leave/checkout still broadcast; inbox hydrate returns empty; score-correction resolve is unavailable. Apply by hand before relying on the bell or player requests. Do not DROP `resolve_score_correction`.
+
+| Pending | Why |
+|---|---|
+| `20260818000000_session_notifications` | `session_notifications` table + pending-correction / pause-bucket uniques + `resolve_score_correction` (service_role only) |
+
+## ✅ APPLIED (prod agrees with these)
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
 Merging a PR ships TypeScript only.** **Every new migration must be
@@ -14,6 +22,7 @@ the only place that records the mapping.
 
 | Applied | Stamp |
 |---|---|
+| `20260818000000_session_notifications` | **pending** |
 | `20260817000000_queue_leave_notices` | `20260816052740` |
 | `20260810000000_declare_compute_session_wrapped` | `20260810151122` |
 | `20260810000001_extend_draft_firewall_to_match_players` | `20260810151355` |
@@ -130,7 +139,22 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ---
 
-## 🚪 ORGANIZER LEAVE + PAUSE NOTICES — branch `feat/queue-leave-notices`, 2026-08-16. Migration applied to prod (`20260816052740`). Code not yet merged.
+## 🔔 ORGANIZER NOTICE INBOX + PLAYER SCORE CORRECTION — 2026-08-16. Code complete, migration NOT applied.
+
+APP_MANIFEST §3.43. Center card first, then the header bell. Player session history can request a score fix; Review opens the existing Edit Match dialog pre-filled.
+
+- Table `session_notifications` + `resolve_score_correction` in `20260818000000` (**pending on prod**). Unique: one pending correction per match; one pause row per (session, player, bucket).
+- No 6th Realtime table channel. Hydrate + `queue_notice` upsert + 45s poll. `realtimeConnected` stays at 5.
+- Writers `emitOrganizerNotice` / `closePendingScoreCorrections` are `server-only` (`src/lib/session-notice-write.ts`), not public Server Actions. RPC EXECUTE revoked from PUBLIC/anon/authenticated by name.
+- Pause catch-up waits for a non-empty authoritative queue, then inserts `read` + `interrupt: false`.
+- `npx tsc --noEmit` 0 · `npm run lint` exit 0 · `npx vitest run` **70 files, 1302 passed, 1 skipped** · `npm run build` success.
+- Review: four passes. First three **Needs fixes** (catch-up vs empty queue, public writers, player INSERT poison, stacked dialogs, RPC default EXECUTE). Fourth **LGTM**.
+
+**Next:** apply `20260818000000` by hand and stamp this table. Merging this PR ships TypeScript only.
+
+---
+
+## 🚪 ORGANIZER LEAVE + PAUSE NOTICES — shipped PR #70 (`295be0d`), 2026-08-16. Migration applied to prod (`20260816052740`).
 
 Leave-while-on-deck/playing was already shipped (PR #67 / §3.39). This adds the organizer-facing half:
 

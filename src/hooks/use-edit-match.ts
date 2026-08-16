@@ -6,7 +6,15 @@
 
 import { useState, useRef, useEffect, useTransition } from "react";
 import { updateMatchDetails } from "@/app/actions/match-lifecycle";
+import { resolveScoreCorrection } from "@/app/actions/notifications";
 import { DIALOG_CLOSE_DELAY_MS, MAX_BADMINTON_SCORE } from "@/lib/constants";
+
+export type UseEditMatchOptions = {
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  notificationId?: string | null;
+  onSaved?: () => void;
+};
 
 export type UseEditMatchResult = {
   open: boolean;
@@ -66,9 +74,16 @@ export type UseEditMatchResult = {
 export function useEditMatch(
   matchId: string,
   initialScoreA: number,
-  initialScoreB: number
+  initialScoreB: number,
+  options: UseEditMatchOptions = {}
 ): UseEditMatchResult {
-  const [open, setOpen] = useState(false);
+  const isControlled = options.open !== undefined;
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = isControlled ? Boolean(options.open) : uncontrolledOpen;
+  function setOpen(next: boolean) {
+    if (!isControlled) setUncontrolledOpen(next);
+    options.onOpenChange?.(next);
+  }
   const [scoreA, setScoreARaw] = useState(String(initialScoreA));
   const [scoreB, setScoreBRaw] = useState(String(initialScoreB));
   const [message, setMessage] = useState<string | null>(null);
@@ -146,6 +161,35 @@ export function useEditMatch(
     cancelPendingClose();
     setMessage(null);
     startTransition(async () => {
+      if (options.notificationId) {
+        const result = await resolveScoreCorrection(options.notificationId, a, b);
+        if (result.alreadyResolved) {
+          setMessage(
+            result.actorName
+              ? `Already handled by ${result.actorName}.`
+              : (result.error ?? "Already handled.")
+          );
+          setIsError(true);
+          if (result.currentScoreA != null) setScoreARaw(String(result.currentScoreA));
+          if (result.currentScoreB != null) setScoreBRaw(String(result.currentScoreB));
+          options.onSaved?.();
+          return;
+        }
+        setMessage(result.message ?? result.error ?? null);
+        setIsError(!result.success);
+        if (result.success) {
+          setScoreARaw(String(a));
+          setScoreBRaw(String(b));
+          setSavedOnce(true);
+          options.onSaved?.();
+          closeTimerRef.current = setTimeout(() => {
+            closeTimerRef.current = null;
+            handleOpenChange(false);
+          }, DIALOG_CLOSE_DELAY_MS);
+        }
+        return;
+      }
+
       const result = await updateMatchDetails(matchId, a, b, false);
       setMessage(result.message);
       setIsError(!result.success);
@@ -161,6 +205,7 @@ export function useEditMatch(
         setScoreARaw(String(a));
         setScoreBRaw(String(b));
         setSavedOnce(true);
+        options.onSaved?.();
       }
     });
   }
@@ -174,6 +219,7 @@ export function useEditMatch(
       if (result.success) {
         // Match disappears from history via realtime once it transitions back
         // to in_progress. Close the dialog so the organizer can see the court.
+        options.onSaved?.();
         closeTimerRef.current = setTimeout(() => {
           closeTimerRef.current = null;
           handleOpenChange(false);

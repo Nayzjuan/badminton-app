@@ -20,9 +20,27 @@ type EditMatchDialogProps = {
   matchId: string;
   initialScoreA: number;
   initialScoreB: number;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+  notificationId?: string | null;
+  teamALabel?: string;
+  teamBLabel?: string;
+  onSaved?: () => void;
 };
 
-export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditMatchDialogProps) {
+export function EditMatchDialog({
+  matchId,
+  initialScoreA,
+  initialScoreB,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
+  notificationId,
+  teamALabel = "Team A",
+  teamBLabel = "Team B",
+  onSaved,
+}: EditMatchDialogProps) {
   const {
     open,
     scoreA,
@@ -36,23 +54,30 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
     handleOpenChange,
     handleSaveScore,
     handleRevert,
-  } = useEditMatch(matchId, initialScoreA, initialScoreB);
+  } = useEditMatch(matchId, initialScoreA, initialScoreB, {
+    open: controlledOpen,
+    onOpenChange,
+    notificationId,
+    onSaved,
+  });
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        <button
-          className="flex items-center gap-1 rounded-lg px-3 py-2 min-h-[44px] text-[11px] font-medium
-                     text-slate-400 hover:text-slate-700 hover:bg-slate-100
-                     dark:text-muted-foreground dark:hover:text-foreground dark:hover:bg-muted
-                     transition-colors"
-          title="Edit scores or revert match"
-          aria-label="Edit match scores"
-        >
-          <Pencil className="h-3 w-3" />
-          Edit
-        </button>
-      </DialogTrigger>
+      {!hideTrigger && (
+        <DialogTrigger asChild>
+          <button
+            className="flex items-center gap-1 rounded-lg px-3 py-2 min-h-[44px] text-[11px] font-medium
+                       text-slate-400 hover:text-slate-700 hover:bg-slate-100
+                       dark:text-muted-foreground dark:hover:text-foreground dark:hover:bg-muted
+                       transition-colors"
+            title="Edit scores or revert match"
+            aria-label="Edit match scores"
+          >
+            <Pencil className="h-3 w-3" />
+            Edit
+          </button>
+        </DialogTrigger>
+      )}
 
       <DialogContent className="sm:max-w-xs">
         <DialogHeader>
@@ -64,7 +89,7 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
           <div className="flex items-center gap-3">
             <div className="flex-1 space-y-1 text-center">
               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
-                Team A
+                {teamALabel}
               </p>
               {/* max is the server's real bound (scoreSchema in @/lib/schemas/match
                   rejects anything over MAX_BADMINTON_SCORE), not a round 99. The
@@ -91,7 +116,7 @@ export function EditMatchDialog({ matchId, initialScoreA, initialScoreB }: EditM
             </span>
             <div className="flex-1 space-y-1 text-center">
               <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-muted-foreground">
-                Team B
+                {teamBLabel}
               </p>
               <input
                 type="number"

@@ -2486,6 +2486,7 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `player-checkout.test.ts`  | Q     | `checkoutPlayer`: happy path, unauthenticated rejection, UUID validation, **checkout while on_deck/playing is REFUSED** (Q-4/Q-5, §3.39 — these assert a rejection, not a success), draft cleanup, idempotency |
 | `player-pause.test.ts`     | P     | `togglePlayerPause`: pause/unpause, `games_played`+`joined_at` invariant, non-organizer rejection, UUID validation              |
 | `organizer-alerts.test.ts` | OA    | Pause-bucket math, badge copy, center-alert enqueue/dismiss (§3.42)                                                              |
+| `session-notifications.test.ts` | SN | Leave vs checkout copy, pending-correction unread, catch-up non-interrupt, unique-insert no-broadcast, center cap (§3.43)     |
 | `publish-match.test.ts`    | —     | `publishMatchAction` BUG-001 (ON_DECK_WARNING timing) and BUG-002 (stale-player guard)                                          |
 | `queue-join.test.ts`       | —     | `joinQueueAction` inherited-games floor, re-join paths                                                                          |
 | `realtime-broadcast-rls.test.ts`| RB | **The broadcast topic's RLS actually refuses outsiders** (§3.35): a plain member and the organizer may read (RB-1/2); a stranger, a member of a *different* club, a deactivated member, an `anon` caller and a malformed topic are all refused (RB-3…7); nobody may INSERT, not even the organizer (RB-8). Every one is killed by at least one mutated policy — table in the file header |
@@ -2635,7 +2636,7 @@ src/
       match-drafts.ts  # clearOnDeckMatch, reorderOnDeckMatches, publishMatchAction,
                        #   publishAllDraftMatchesAction
       matchmaking.ts   # callNextMatch, runEngineForSession, runEngineInternal, promoteOnDeckMatchInternal
-      notifications.ts # sendPlayerNotification — Web Push via VAPID
+      notifications.ts # sendPlayerNotification (Web Push) + session inbox / score-correction actions
       profile.ts       # updatePlayerSkill, getPlayerPin, resetPlayerPin, updatePlayerPin
       queue.ts         # joinQueueAction, checkoutPlayer, togglePlayerPause
       sessions.ts      # createSession, joinAsCoOrganizer, toggleAutoMatchmaking, updateSessionSettings,
@@ -2694,7 +2695,8 @@ src/
       score-modal.tsx            # Score entry dialog (single / best-of-3 / best-of-5)
       queue-control.tsx          # Player queue table, manual match creation, pause, dnd-kit; List/By-Skill view toggle
       queue-skill-groups.tsx     # "By Skill" queue lens — waiting players grouped by tier (Adv→Beg), longest-wait-first
-      organizer-center-alert.tsx # Large centered dismissible leave / pause-reminder card
+      organizer-center-alert.tsx # Large centered dismissible leave / pause / score-correction card
+      organizer-notice-inbox.tsx # Header bell + session notice list (center-then-inbox)
       paused-badge.tsx           # Match Control pause chip — "Paused" / "Paused 15m" / "Paused 30m"
       wait-time-monitor.tsx      # Bottleneck monitor (wait ≥ BOTTLENECK_THRESHOLD_MINUTES)
       match-history-panel.tsx    # Completed match history with edit/undo score + Fix Player Record trigger
@@ -2718,7 +2720,8 @@ src/
       queue-status.tsx           # Queue position + wait time display
       live-courts-tab.tsx        # Live courts view for players
       waitlist-tab.tsx           # Waitlist tab showing all waiting players
-      match-history.tsx          # Player's in-session match history
+      match-history.tsx          # Player's in-session match history (+ score-correction request)
+      score-correction-request.tsx # Propose Team A/B scores; one pending request per match
       all-sessions-history.tsx   # Cross-session match history on the /play lobby (grouped by session; foreground re-sync + fetchSeq guard)
       player-match-alert-preview.tsx # Sandbox preview component
       score-input-card.tsx       # Player score submission card — uses useScoreForm
@@ -2780,7 +2783,7 @@ src/
     use-swap-state.ts            # Tap-to-Swap state machine; Layer 2 race guard; bench + direct swap
     use-score-form.ts            # Shared score input state (player + organizer); enforces 0–30 range
     use-organizer-broadcast.ts   # Server broadcast listener (organizer_intervention, session_closed)
-    use-organizer-alerts.ts      # Queued centered leave + pause-reminder notices for Match Control
+    use-organizer-alerts.ts      # Inbox hydrate + centered interrupts (leave, checkout, pause, score)
     use-visibility-refresh.ts    # Re-fetch on tab focus / app foreground
 
   lib/
@@ -2796,6 +2799,8 @@ src/
     wrapped-awards.ts            # AWARD_META record — all award slugs with emoji/title/subtitle/rarity
     broadcast.ts                 # Server-side REST broadcast helpers (fire-and-forget)
     organizer-alerts.ts          # Pure pause-bucket math + center-alert queue helpers
+    session-notifications.ts     # Inbox copy, unread rules, upsert, interrupt, center-queue cap
+    session-notice-write.ts      # server-only emit / close-pending (not public Server Actions)
     realtime.ts                  # Supabase channel subscriptions (courts, queue, matches, etc.)
     validate.ts                  # isValidUUID — type-narrowing UUID guard for all server actions
     utils.ts                     # cn(), createUnknownProfile(id) — fallback profile for unknown player IDs
@@ -4149,4 +4154,22 @@ A leaver **vanishes** from Match Control (`v_queue_full_with_wait_time` excludes
 
 **Held-draft restore.** `checkout_player_cleanup_drafts` already restored only `status = 'drafted'` (hotfix `20260511210001`). The 20260817 replace keeps that contract and documents why: a held draft's pulled body stays `playing` and must not be written to `waiting`. The TypeScript fallback now mirrors the restore (it previously cancelled the draft and left the other three `drafted`).
 
-**Not done:** Web Push to organizers; a persistent "left" list in Match Control. The on-deck / playing leave refusal is unchanged (§3.39).
+**Not done:** Web Push to organizers; a persistent "left" list in Match Control. The on-deck / playing leave refusal is unchanged (§3.39). Inbox + player score-correction requests are §3.43.
+
+### 3.43 Organizer notice inbox + player score correction (2026-08-16)
+
+**Files:** migration `20260818000000_session_notifications`, `src/types/database.ts`, `src/app/actions/notifications.ts`, `src/lib/session-notifications.ts`, `src/hooks/use-organizer-alerts.ts`, `src/components/organizer/{organizer-notice-inbox,organizer-center-alert,edit-match-dialog}.tsx`, `src/components/player/{match-history,score-correction-request}.tsx`, `src/app/actions/{queue,match-lifecycle}.ts`.
+
+**Inbox.** `session_notifications` is the durable log. Kinds: `player_left`, `player_checked_out`, `player_paused_long`, `score_correction`. Status: `unread` / `read` / `resolved` / `superseded`. Hydrate on Match Control load (`fetchSeq`). Live updates reuse `queue_notice` on private `session-events:{id}` (full row upsert). No sixth Realtime table channel — `realtimeConnected` stays at 5. A 45s visible-tab poll plus visibility refresh catch missed broadcasts.
+
+**Center then inbox.** A new unread/pending row interrupts with the existing centered card (cap 5). Dismiss files it into the bell. Informational dismiss → `read` (badge drops). Score-correction dismiss stays pending — looking is not handling. Actor suppress is **only** for `player_checked_out` when `actorId` is this organizer.
+
+**Uniques.** One pending score correction per `match_id`. One pause row per `(session_id, subject_player_id, payload.bucket)`. Unique violation → no second broadcast. Leave-after-rejoin is a new row. Q-8 already-left / not-in-session does not insert. Insert failure after a successful leave still broadcasts so the board is never silent.
+
+**Pause catch-up.** `recordPauseReminder` re-reads `is_paused` / `paused_at` and recomputes the bucket server-side. A bucket that was already due when the tab hydrated inserts as `read` with `interrupt: false`. Only a bucket that crosses while the tab is open interrupts.
+
+**Score correction.** Session history only (not all-time). Player form labels Team A/B with names and submits `team_a_score` / `team_b_score`. Organizer Review opens the existing Edit Match dialog, pre-filled with the proposal. `resolve_score_correction` is `SECURITY DEFINER`, `GRANT service_role` only, `FOR UPDATE`, CAS on `matches.status = 'completed'`. Resolve against a reverted match fails and **leaves the notice pending**. History pencil save closes pending as `resolved`; revert closes as `superseded`. Closed session: no new requests / pause inserts; bell is read-only.
+
+**Writes.** Gated Server Actions (`list` / `markRead` / `recordPauseReminder` / `request` / `resolve`) use the service client after `isSessionOrganizer` (the primary organizer has no `session_organizers` row). `emitOrganizerNotice` and `closePendingScoreCorrections` live in `src/lib/session-notice-write.ts` (`import "server-only"`) so they are not public POST endpoints. Authenticated clients have SELECT on their own correction rows only — no INSERT grant (the pending-correction unique would otherwise be poisonable). `resolve_score_correction` is `REVOKE`d from `PUBLIC`, `anon`, and `authenticated` by name (default privileges would otherwise leave EXECUTE on the RPC). Do not `DROP` the RPC.
+
+**Not done:** Web Push; applying `20260818000000` to prod (TypeScript degrades: leave/checkout still broadcast without an inbox row).

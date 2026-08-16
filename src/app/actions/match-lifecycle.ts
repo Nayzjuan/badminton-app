@@ -31,6 +31,7 @@ import {
 } from "@/app/actions/_shared";
 import { scoreSchema } from "@/lib/schemas/match";
 import { logMatchEvent } from "@/lib/match-event-log";
+import { closePendingScoreCorrections } from "@/lib/session-notice-write";
 import { DUPLICATE_ROSTER_WINDOW_MINUTES } from "@/lib/constants";
 
 // ============================================================
@@ -534,6 +535,7 @@ export async function updateMatchDetails(
         new: { a: safeA, b: safeB },
       },
     });
+    await closePendingScoreCorrections(matchId, "resolved", actor.id);
     return { success: true, message: "Scores updated." };
   }
 
@@ -633,6 +635,7 @@ export async function updateMatchDetails(
     payload: { from_status: match.status },
   });
 
+  await closePendingScoreCorrections(matchId, "superseded", actor.id);
   return { success: true, message: "Match reverted. Players can re-submit the correct score." };
 }
 
