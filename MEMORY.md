@@ -34,9 +34,14 @@ exactly `postgres=X/postgres | service_role=X/postgres` — **no PUBLIC, anon or
 Return ordering re-verified positionally after apply: `HELD_NOT_READY` < `HAS_LEFT_PLAYERS` <
 `CONFLICT`. Pre-apply the two prod bodies were confirmed **clean pre-fix baselines** (no `v_is_held`,
 no ready clause), so the new version is a strict superset, and both open sessions had **0 live
-matches and 0 held drafts** at the time — nothing in flight was disturbed. Rollback SQL:
-`scratchpad/rollback-20260816000000.sql` (a reconstruction, not a byte capture — compare behaviour,
-not md5). ⚠️ **Both are `CREATE OR REPLACE` with unchanged signatures on purpose** — DROP+CREATE
+matches and 0 held drafts** at the time — nothing in flight was disturbed.
+🪤 **Those md5s and byte counts are of `pg_get_functiondef(oid)`, NOT `prosrc`.** The same two bodies
+measure **2126** and **2941** via `prosrc`, so anyone re-verifying with the other function gets a
+mismatch and reads it as drift. State which one you measured, every time.
+**To roll back**, restore the pre-fix bodies from `20260717165546_fix_drafted_branch_and_publish_predicates`
+— that is the migration this one supersedes, it is in the repo, and it is the only durable source. (A
+reconstruction was also written to this session's scratchpad, but scratchpads are reaped; do not cite
+that path as if it were an artefact.) ⚠️ **Both are `CREATE OR REPLACE` with unchanged signatures on purpose** — DROP+CREATE
 resets the ACL to `EXECUTE TO PUBLIC` and undoes `20260721180000` / `20260722000004`. 🪤 The
 TypeScript half degrades safely without the SQL (the UI stops offering Publish on an unready hold and
 both actions' snapshot filters exclude it), which is exactly what makes "did the migration land?" easy
@@ -340,7 +345,7 @@ the hold is no longer `pending` by then, so it cannot reserve its own body. One 
   orphaned-`drafted` reconciler in `src/`**. R3-1 in `endMatchInternal` has the identical window today, so
   this is parity, not new risk. Close it only if observed, and only with an RPC that **replaces** the TS
   block (never a twin behind a fallback — two live implementations of one four-arm rule is the drift defect
-  with teeth), bundled with the still-pending `20260816000000` hand-apply.
+  with teeth), bundled with whatever migration comes next.
 - ⚠️ **`match-drafts.ts` `clearOnDeckMatch`'s PGRST202 fallback is the same defect one error code away** —
   it reproduces the unguarded `update({status:'waiting'}).in('player_id', …).neq('status','left')` that
   `20260812000000` removed from the RPC, so the protected Clear path silently degrades to the unprotected
@@ -374,12 +379,15 @@ the hold is no longer `pending` by then, so it cannot reserve its own body. One 
 
 ### Next steps
 
-1. **Apply `20260816000000` to prod** and record the stamp in the migration-queue table at the top.
-   `CREATE OR REPLACE` only. Re-verify the ACL is `{postgres, service_role}` after applying. (The cancel fix
-   needs nothing here — it ships with the TypeScript.)
-2. Commit with **explicit pathspecs** (list above), splitting `constants.ts` and `APP_MANIFEST.md` by
-   hunk if this ships separately from the score-race work.
-3. Watch the next live session for held drafts that actually reach a court — 12→2 is the baseline.
+1. ~~**Apply `20260816000000` to prod** and record the stamp in the migration-queue table at the top.~~
+   ✅ **Done 2026-08-16**, stamp `20260816024129`, `CREATE OR REPLACE` only, ACL re-verified as
+   `{postgres, service_role}`. (The cancel fix needed nothing here — it ships with the TypeScript.)
+2. ~~Commit with **explicit pathspecs** (list above).~~ ✅ **Done 2026-08-16** as `db600a4`, 49 files.
+   The `constants.ts` / `APP_MANIFEST.md` hunk split was never needed: the user chose one PR for all
+   four workstreams.
+3. 🔭 **STILL OPEN — the only live action here.** Watch the next live session for held drafts that
+   actually reach a court. **12 created → 2 reaching a court is the baseline to beat**, and it is the
+   only real test of this fix: nothing in the suite can prove a hold survives its whole lifecycle.
 
 ---
 
@@ -2872,7 +2880,7 @@ after.
 
 ---
 
-## 👁️ QUEUE-STATUS AUDIT + RECONNECT 'left' RESCUE — 2026-08-15, branch `fix/queue-status-audit`
+## 👁️ QUEUE-STATUS AUDIT + RECONNECT 'left' RESCUE — 2026-08-15, branch `fix/queue-status-audit`, PR #66. ✅ **MERGED → `main` `90dd3f5`**; migration `20260815000000_queue_status_audit` applied to prod, stamp `20260815133945`.
 
 **Incident.** "Can't see Vinz in Match Control." Vinz's `queue_entries.status` was `left`, and Match Control
 only renders `waiting/drafted/on_deck/playing`, so he was hidden. He had re-registered mid-session → the app's

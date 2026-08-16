@@ -3851,8 +3851,8 @@ the pre-check row instead of re-reading.
 
 ### 3.41 A held cross-court draft could never be published — the code that meant "not yet" did not exist (2026-08-16)
 
-**Files:** `supabase/migrations/20260816000000_publish_never_touches_an_unready_held_draft.sql` **(new — must
-be applied by hand)**, `src/app/actions/match-drafts.ts`, `src/app/actions/matchmaking.ts`,
+**Files:** `supabase/migrations/20260816000000_publish_never_touches_an_unready_held_draft.sql` **(new —
+hand-applied to prod 2026-08-16, stamp `20260816024129`)**, `src/app/actions/match-drafts.ts`, `src/app/actions/matchmaking.ts`,
 `src/lib/cross-court/derive-held-state.ts`, `src/lib/constants.ts`,
 `src/components/organizer/{sortable-card,on-deck-panel}.tsx`,
 `tests/unit/{publish-held-guard,held-draft-ui,derive-held-state}.test.*`,
@@ -3978,15 +3978,27 @@ bug reproduced verbatim), PUB-HELD-DB-3 and PUB-HELD-DB-4 (`skipped_count` 1, no
 stayed green — which is what proves PUB-HELD-DB-2 is a real control (the guard lifts) and not a tautology.
 ACLs were re-verified as `{postgres, service_role}` after restore.
 
-⚠️ **Migration `20260816000000` has been applied to the LOCAL test database only.** Both functions are
-`CREATE OR REPLACE` with unchanged signatures specifically to preserve the narrowed EXECUTE grants from
-`20260721180000` / `20260722000004` — do **not** convert either to DROP+CREATE, which silently resets the
-ACL to `EXECUTE TO PUBLIC`. Until it is applied to production the TypeScript half degrades safely: the UI
-stops offering Publish on an unready hold and the action's snapshot filter excludes it, so the organizer
-cannot reach the old `CONFLICT` path by the ordinary route — but the RPCs themselves are still unguarded.
+✅ **Migration `20260816000000` — APPLIED AND VERIFIED ON PRODUCTION 2026-08-16, stamp `20260816024129`.**
+Applied *before* the merge, while both open sessions held 0 live matches and 0 held drafts. Post-apply on
+prod: both functions still `SECURITY DEFINER`, both ACLs still exactly `postgres=X/postgres |
+service_role=X/postgres` (no PUBLIC, anon or authenticated), and the return ordering re-verified
+positionally as `HELD_NOT_READY` < `HAS_LEFT_PLAYERS` < `CONFLICT`. Pre-apply both prod bodies were
+confirmed clean pre-fix baselines, so the new version is a strict superset. Full fingerprints in repo
+`MEMORY.md`'s migration queue. ⚠️ Both functions are `CREATE OR REPLACE` with unchanged signatures
+specifically to preserve the narrowed EXECUTE grants from `20260721180000` / `20260722000004` — do **not**
+convert either to DROP+CREATE, which silently resets the ACL to `EXECUTE TO PUBLIC`.
+
+🪤 **Why this paragraph is worth re-reading before you trust it.** While the migration was unapplied, the
+TypeScript half degraded safely — the UI stopped offering Publish on an unready hold and the action's
+snapshot filter excluded it, so the organizer could not reach the old `CONFLICT` path by the ordinary route,
+*but the RPCs themselves stayed unguarded* against a stale client or a direct call. That safe degradation is
+exactly what makes "did the migration actually land?" an easy question to stop asking. It landed. If you are
+reverting, revert the **code** and leave the SQL: the guard is a strict narrowing and a no-op for any client
+that already refuses to publish an unready hold.
 
 ✅ **The `cancelMatchAction` reservation gap — CLOSED 2026-08-16 (was ⚠️ "pre-existing, not fixed here").**
-No migration: it is TypeScript only, so unlike `20260816000000` it is correct in production the day it merges.
+No migration: it is TypeScript only, so it is correct in production the day it merges — unlike
+`20260816000000`, which had to be hand-applied first and was.
 
 `cancelMatchAction` flipped **every** roster player to `waiting` in one bulk UPDATE. That is right for the
 ordinary cancel and wrong at both ends of a live hold, so the restore is now a three-way partition —
