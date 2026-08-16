@@ -5,15 +5,13 @@
 
 ---
 
-## ⚖️ LOPSIDED TEAM SPLITS BANNED — 2026-08-17. TypeScript only. Branch `fix/ban-lopsided-team-splits`.
+## ⚖️ LOPSIDED TEAM SPLITS BANNED — 2026-08-17. Shipped `24fcc7a` (#73).
 
 The 07/30 balance gate stopped *preferring* INT+INT vs BEG+BEG; it still emitted that split as a stall-break. Ban: `snakeDraft` never returns a lopsided split (`gap > minGap + SKILL_VARIANCE_MAX`). When every mixed pairing is at the partnership cap, it seats mixed anyway (`usedCapOverride`) after Fix B tries another body. `rotatedDraft` drops lopsided from the cycle but still returns `null` so Tier-3 can expand the window. Preview / Tier-1/2 treat `usedCapOverride` like `null`. Last-resort accepts it.
 
 **Accepted hole:** mixed seating may exceed `MAX_PARTNERSHIP_REPEATS` when no other body exists. Organizer-created lopsided matches unchanged. Gap ≤ minGap+2 (H-2 4/3/3/2) is still allowed.
 
 **Review (Minor issues):** `simRunAlgorithm` still treats `usedCapOverride` as a stall on every path (incl. last-resort) so the 30-player "never exceed cap" invariant holds. Production last-resort is covered by MC-new-2. Preview / CCO-11 comments and assertion tightened.
-
----
 ---
 
 ## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
