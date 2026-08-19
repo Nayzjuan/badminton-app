@@ -273,9 +273,11 @@ drop table if exists public.player_partnerships_prerebuild_20260812;
 They are the only evidence trail for the three disclosed badge revocations of 2026-08-12, which is
 why they were kept. ⚠️ Both are **untracked DB objects** — no migration file exists for them or for
 the RLS-enable applied to them — so they will not appear in any `supabase db diff`. The expiry date
-above is the only thing that closes that drift. ⏳ An early drop was raised on 2026-08-20 and is
-**awaiting the user's call** — the drop is irreversible and 2026-09-12 is three weeks out, so the
-question is whether the retention window still buys anything.
+above is the only thing that closes that drift. ⚖️ An early drop was **raised and DECLINED on
+2026-08-20** — the user chose to keep the full retention window. Reason: the drop is irreversible,
+the tables cost nothing to keep (idle, no `anon`/`authenticated` grants, RLS enabled as fail-closed
+insurance), and three more weeks of an evidence trail is cheaper than not having one if a revoked
+badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 
 **2. Apply `20260820000000` to production — code is merged, the schema is not.**
 ```
