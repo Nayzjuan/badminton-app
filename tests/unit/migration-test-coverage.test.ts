@@ -312,9 +312,9 @@ describe("every migrated object is named by a test — Suite MTC", () => {
     // Quoted and mixed-case survives too — the extractor lowercases, so the
     // NAME comes back, never `analytics`.
     expect(createdObjects('CREATE TABLE "Analytics"."Daily" (id uuid);')).toEqual(["daily"]);
-    expect(createdObjects("create or replace function auth.jwt() returns jsonb as $$ $$;")).toEqual([
-      "jwt",
-    ]);
+    expect(createdObjects("create or replace function auth.jwt() returns jsonb as $$ $$;")).toEqual(
+      ["jwt"]
+    );
     expect(createdObjects("create table bare_table (id uuid);")).toEqual(["bare_table"]);
   });
 });
