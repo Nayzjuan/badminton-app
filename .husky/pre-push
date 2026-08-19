@@ -26,6 +26,28 @@ set -e
 # `Types, Lint, Vitest` (the job's `name:`, not its YAML key) and this hook
 # becomes belt-and-braces instead of the belt.
 
+# ── Deletions are not pushes of code ────────────────────────────────────────
+# git feeds this hook one line per ref: "<local-ref> <local-sha> <remote-ref>
+# <remote-sha>", and a DELETE arrives with the local sha all zeros. Deleting a
+# merged branch ships nothing, so gating it on the working tree's types, lint
+# and tests measures something the push cannot affect. Left unguarded it also
+# runs the full ~17s suite once PER BRANCH — cleaning up 17 merged branches
+# meant ~5 minutes of re-testing an unchanged tree. Skip only when EVERY ref in
+# the push is a delete; a mixed push still gets the full gate.
+ALL_DELETES=1
+HAVE_REFS=0
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ -z "$local_sha" ] && continue
+  HAVE_REFS=1
+  case "$local_sha" in
+    *[!0]*) ALL_DELETES=0 ;;
+  esac
+done
+if [ "$HAVE_REFS" = 1 ] && [ "$ALL_DELETES" = 1 ]; then
+  echo "[pre-push] deletions only — nothing to type-check, lint or test"
+  exit 0
+fi
+
 echo "[pre-push] tsc --noEmit…"
 npx tsc --noEmit || { echo "[pre-push] ✗ type errors — push aborted (override: git push --no-verify)"; exit 1; }
 
