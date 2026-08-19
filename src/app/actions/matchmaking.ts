@@ -1185,12 +1185,28 @@ export async function recomputeHeldReadiness(
 
   // Auto-publish mode publishes each held draft the moment it becomes ready
   // (below), rather than at creation — see the if (ready) block. Fetch once.
-  const { data: heldSessionRow } = await supabase
+  const { data: heldSessionRow, error: sessionErr } = await supabase
     .from("sessions")
     .select("auto_publish")
     .eq("id", sessionId)
     .single();
-  const autoPublish = shouldAutoPublishMatch(heldSessionRow?.auto_publish ?? false);
+
+  // The one read whose wrong answer is UNRECOVERABLE. Defaulting to false in a
+  // session that is really in auto mode stamps the draft ready and then never
+  // publishes it — and in auto mode the on-deck panel hides both the drafts
+  // section and publish-all, so no organizer can finish or clear it either.
+  // That is precisely the orphan the AP2/AP3 branch below exists to prevent,
+  // reached through a failed read instead of a refused publish. Stamping
+  // nothing this pass costs one lifecycle event; the caller re-enters.
+  if (sessionErr || !heldSessionRow) {
+    console.warn(
+      `[matchmaking] recomputeHeldReadiness: auto_publish read failed for session ${sessionId} — ` +
+        `${sessionErr?.message ?? "no row returned"}; skipping the pass rather than ` +
+        `stamping drafts that auto mode could then never publish.`
+    );
+    return;
+  }
+  const autoPublish = shouldAutoPublishMatch(heldSessionRow.auto_publish ?? false);
 
   for (const held of heldMatches) {
     const pulledId = held.pulled_player_ids?.[0];

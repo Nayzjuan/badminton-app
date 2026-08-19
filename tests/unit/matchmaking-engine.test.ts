@@ -2343,6 +2343,31 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  it("CC-RDY-ERR5: auto_publish read FAILS ⇒ stamps nothing (an orphan is unrecoverable)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: null, error: { message: "boom" } }, // auto_publish read failed
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
+      { data: { status: "completed", completed_at: "2020-01-01T00:00:00.000Z" }, error: null },
+      { count: 1, data: null, error: null },
+      { data: null, error: null }, // the stamp that must NOT happen
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    // Defaulting to draft mode here is not conservative — it is the one wrong
+    // answer with no way back. A session really in auto mode would get a draft
+    // stamped ready and never published, and auto mode hides the drafts section
+    // and publish-all, so no organizer could finish or clear it. Skipping the
+    // pass costs one lifecycle event instead.
+    expect(mock.queriedTables).toEqual(["matches", "sessions"]);
+    expect(mock.recorder.update).toHaveLength(0);
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });
 
 // ═════════════════════════════════════════════════════════════
