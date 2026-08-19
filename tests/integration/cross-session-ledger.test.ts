@@ -79,6 +79,47 @@ async function readPartnership(playerId: string, partnerId: string) {
   return data;
 }
 
+
+async function readWrap(sessionId: string, playerId: string) {
+  const { data } = await serviceClient()
+    .from("session_wrapped_stats")
+    .select("earned_awards")
+    .eq("session_id", sessionId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+  return [...((data?.earned_awards as string[] | undefined) ?? [])].sort();
+}
+
+/** Push a session and everything it played into the past, so "before this
+ *  session" is a question about the calendar and not about millisecond
+ *  insert order. */
+async function backdate(sessionId: string, days: number) {
+  await queryCommitted(
+    `update public.sessions set created_at = now() - ($2 || ' days')::interval where id = $1`,
+    [sessionId, String(days)]
+  );
+  await queryCommitted(
+    `update public.matches set completed_at = now() - ($2 || ' days')::interval where session_id = $1`,
+    [sessionId, String(days)]
+  );
+}
+
+async function threeMatches(
+  sessionId: string,
+  winners: [string, string],
+  losers: [string, string]
+) {
+  for (let i = 0; i < 3; i++) {
+    await makeCompletedMatch({
+      sessionId,
+      teamA: winners,
+      teamB: losers,
+      scoreA: 21,
+      scoreB: 15,
+    });
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 
 describe("cross-session ledgers — Suite XS", () => {
@@ -253,5 +294,88 @@ describe("cross-session ledgers — Suite XS", () => {
 
     expect(await readRivalry(p1.id, ghost.id)).toBeNull();
     expect(await readRivalry(p1.id, p3.id)).not.toBeNull();
+  });
+
+  // ── XS-5: a wrap is AS OF its own session, not as of now ───
+
+  // The discriminator for 20260820000000. player_rivalries has no time
+  // dimension, so compute_session_wrapped recovered "before tonight" by
+  // subtracting tonight out of the running total — correct only while the
+  // ledger holds nothing AFTER the session being wrapped. fixPlayerRecord
+  // breaks that assumption by design: it re-fires this RPC on any closed
+  // session, however old, and by then the ledger holds every night since.
+  //
+  // Against the pre-migration body this test fails on the recomputed set:
+  // p1's "before" record reads 0-3 instead of 0-0, so redemption_arc and
+  // settled_the_score appear, and S2 becomes p1's "previous session" — a
+  // 0% night — so bounced_back appears too. None of the three were true
+  // on the night S1 was played, and none of them were in the wrap the
+  // player already saw.
+  it("recomputing an old session's wrap does not import the future into it", async () => {
+    const organizer = await makeProfile({ faker });
+    const [p1, p2, p3, p4] = await makeFour();
+
+    const s1 = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(s1.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(s1.id, organizer.id);
+    await backdate(s1.id, 7);
+
+    const asOfThatNight = await readWrap(s1.id, p1.id);
+    expect(asOfThatNight.length).toBeGreaterThan(0);
+
+    // A week later the same four meet again and the result flips. The ledger
+    // is now 3-3 both ways; nothing about the night of s1 has changed.
+    const s2 = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(s2.id, [p3.id, p4.id], [p1.id, p2.id]);
+    await closeAs(s2.id, organizer.id);
+
+    // What fixPlayerRecord does after an organizer corrects an old roster.
+    const { error } = await serviceClient().rpc("compute_session_wrapped", {
+      p_session_id: s1.id,
+    });
+    expect(error).toBeNull();
+
+    expect(await readWrap(s1.id, p1.id)).toEqual(asOfThatNight);
+    // Named, so a future change that empties every award cannot pass this.
+    expect(asOfThatNight).not.toContain("redemption_arc");
+    expect(asOfThatNight).not.toContain("settled_the_score");
+    expect(asOfThatNight).not.toContain("bounced_back");
+  });
+
+  // ── XS-6: the ordinary path still awards what it earned ────
+
+  // XS-5 alone is satisfiable by deleting the feature: widen the subtraction
+  // far enough and every "before" figure collapses to zero, every
+  // cross-session award disappears, and the recompute is stable because it is
+  // empty. This is the other half. Same two nights, same flip, read from the
+  // side where the comeback is real — p3 lost 0-3 to p1 and then won 3-0 —
+  // and the awards that XS-5 requires to be ABSENT from s1 must be PRESENT
+  // on s2.
+  it("still awards a genuine cross-session comeback on the night it happens", async () => {
+    const organizer = await makeProfile({ faker });
+    const [p1, p2, p3, p4] = await makeFour();
+
+    const s1 = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(s1.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(s1.id, organizer.id);
+    await backdate(s1.id, 7);
+
+    const s2 = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(s2.id, [p3.id, p4.id], [p1.id, p2.id]);
+    await closeAs(s2.id, organizer.id);
+
+    const comeback = await readWrap(s2.id, p3.id);
+    expect(comeback).toContain("redemption_arc");
+    expect(comeback).toContain("settled_the_score");
+    expect(comeback).toContain("bounced_back");
+
+    // And s2 is the club's latest, so the migration's window is exactly
+    // tonight and it must not have moved anything: re-running the RPC on the
+    // newest session is a no-op.
+    const { error } = await serviceClient().rpc("compute_session_wrapped", {
+      p_session_id: s2.id,
+    });
+    expect(error).toBeNull();
+    expect(await readWrap(s2.id, p3.id)).toEqual(comeback);
   });
 });

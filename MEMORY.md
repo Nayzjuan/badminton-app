@@ -259,7 +259,7 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ## 📋 OPEN ITEMS
 
-Triaged out of the retired 45 KB "STANDING TO-DO" on 2026-08-19, worked down to two on
+Triaged out of the retired 45 KB "STANDING TO-DO" on 2026-08-19, worked down on
 2026-08-20. The reasoning behind each — including every superseded framing — is in
 `docs/archive/MEMORY_HISTORY.md`, Part 2. **Do not re-import that reasoning here.** If an item
 closes, delete it from this list; if it closes by DECISION rather than by a fix, archive the
@@ -277,12 +277,24 @@ above is the only thing that closes that drift. ⏳ An early drop was raised on 
 **awaiting the user's call** — the drop is irreversible and 2026-09-12 is three weeks out, so the
 question is whether the retention window still buys anything.
 
-**2. The cross-session stats ledger has no as-of date.**
-Replaying an old session counts later results as pre-tonight history. Separate defect from the
-under-count that was fixed on 2026-08-12; the rebuild does not touch it — both ledgers in the
-measured A/B were *complete* and 16 grants still moved, so completeness does not confer
-as-of-ness. The mechanism and the measured grant delta per award slug are written up in
-`APP_MANIFEST.md` §3.7 (search `rivalry_with_tonight`); do not re-derive them here.
+**2. Apply `20260820000000` to production — code is merged, the schema is not.**
+```
+supabase/migrations/20260820000000_wrapped_reads_the_ledger_as_of_this_session.sql
+```
+Closes the ledger's missing as-of date **and** the `computed_at` definition of "previous session"
+(`APP_MANIFEST.md` §3.7.2 — causes 3 and 4 of the five that make an old recompute unsafe). Nothing
+goes red without it: the TypeScript does not reference the new CTEs, so an un-applied migration is
+invisible to the build. **Verify the stamp with `list_migrations`, never the build.** Regenerate
+rather than hand-edit — `scripts/gen-wrapped-as-of-migration.py`, eight anchored substitutions.
+Pre-apply gate: `select md5(prosrc), length(prosrc) from pg_proc where proname =
+'compute_session_wrapped'` must still read `e3689008fe20a015421a0c69afc49375` / `49438`; if it does
+not, prod has drifted from the baseline the file was generated against and the file must be
+regenerated from a fresh dump before applying.
+
+**3. Wrapped rows of hidden sessions still count as someone's "prior session".**
+Left open on purpose by `20260820000000` — that is a question about which wraps count, not about
+which came first, and closing it would move numbers that migration asserts are unchanged. Latent
+today: 0 of the sessions holding wraps are hidden. `APP_MANIFEST.md` §3.7 cause 4.
 
 ## 📚 Where everything else lives
 
