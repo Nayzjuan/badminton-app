@@ -1,0 +1,38 @@
+#!/usr/bin/env sh
+set -e
+
+# ── The gate GitHub cannot give us ───────────────────────────────────────────
+# CLAUDE.md makes `tsc --noEmit` and `npm run lint` mandatory before a merge,
+# and .github/workflows/unit-tests.yml now RUNS them (plus the unit suite) on
+# every push and PR. But running is not blocking: a check blocks a merge only
+# when branch protection lists it as a required status check — and this repo is
+# PRIVATE on a free plan, where branch protection and rulesets do not exist:
+#
+#   gh api repos/:owner/:repo/branches/main/protection  -> 403
+#   gh api repos/:owner/:repo/rulesets                  -> 403
+#   "Upgrade to GitHub Pro or make this repository public"   (measured 2026-08-19)
+#
+# So nothing on GitHub can refuse a merge here today. This hook is the only
+# enforcement point that actually exists, which is why it runs the same three
+# checks CI runs, in the same order, before anything leaves the machine.
+#
+# NOT run here, on purpose:
+#   * integration — needs a local Supabase on 127.0.0.1:54322; a contributor
+#     without one would be blocked from pushing by an environment problem.
+#   * E2E — Playwright targets PRODUCTION. A git hook must never touch it.
+#
+# ~17s total (tsc 2s, lint 9s, unit 5s). Escape hatch: git push --no-verify.
+# If branch protection ever becomes available, require the CI job context
+# `Types, Lint, Vitest` (the job's `name:`, not its YAML key) and this hook
+# becomes belt-and-braces instead of the belt.
+
+echo "[pre-push] tsc --noEmit…"
+npx tsc --noEmit || { echo "[pre-push] ✗ type errors — push aborted (override: git push --no-verify)"; exit 1; }
+
+echo "[pre-push] lint…"
+npm run lint || { echo "[pre-push] ✗ lint errors — push aborted (override: git push --no-verify)"; exit 1; }
+
+echo "[pre-push] unit tests…"
+npm run test:unit || { echo "[pre-push] ✗ unit tests failed — push aborted (override: git push --no-verify)"; exit 1; }
+
+echo "[pre-push] ✓ types, lint, unit all clean"

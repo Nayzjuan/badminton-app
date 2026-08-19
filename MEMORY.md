@@ -5,6 +5,33 @@
 
 ---
 
+## 🧪 VERIFICATION GAPS CLOSED — 2026-08-18. Branch `test/verification-gaps` (not yet merged).
+
+**Why:** the cross-court publish path shipped dead for four days (§3.41) and three migrations in four days created objects **no test referenced even once**. Both are the same defect: nothing enforced that a shipped object was ever exercised.
+
+**The defect this uncovered — `queue_status_events` (20260815) granted nobody anything.** RLS was enabled with no policy and the comment claimed "only the service role (which bypasses RLS) can read it". ACLs and RLS are independent gates and the ACL is checked first, so what shipped was whatever `ALTER DEFAULT PRIVILEGES` was in force — and **prod and local disagree**: `FOR ROLE postgres IN SCHEMA public` is `arwdDxtm` on prod, `Dxtm` locally. One grant-less `CREATE TABLE`, two opposite defects:
+
+- **local / CI**: no SELECT for anyone → trail written correctly (trigger is SECURITY DEFINER) and unreadable by everything. `permission denied` before RLS is consulted.
+- **prod**: `anon` + `authenticated` got SELECT/INSERT/UPDATE/DELETE/TRUNCATE on an audit table. RLS-with-no-policy is the only thing stopping it — real, but one `CREATE POLICY` from not being.
+
+**`20260818120000_lock_queue_status_events_grants.sql`** — `REVOKE ALL … FROM PUBLIC, anon, authenticated, service_role`, then `GRANT SELECT, DELETE TO service_role`. INSERT/UPDATE/TRUNCATE withheld so no API caller (or leaked service key) can forge a transition or drop the trail. ⚠️ **APPLIED LOCAL ONLY — NOT ON PROD.** Migrations are applied by hand here; merging ships no schema. Verify by stamp, never by build.
+
+🪤 **The first draft of that fix had the bug it was fixing, and QSA-10 was green through it.** It copied the sibling's `FROM PUBLIC, anon, authenticated` and omitted `service_role`. A REVOKE only touches roles it names, and `GRANT SELECT, DELETE` is a no-op against a role already holding `arwdDxtm` — so on **prod** the "withheld" INSERT/UPDATE would still have been held. The sibling is fine with three roles only because it ends `GRANT ALL TO service_role`: it wants the default. **Name the role whenever the intent is narrower than the default.** QSA-10's `ins:false, upd:false` couldn't see it because the *local* default (`Dxtm`) already withholds them — the test was agreeing with the environment, not the migration. `TRUNCATE` is the discriminator: the default grants it in both environments, so only an explicit REVOKE removes it (measured: `service_role=rdDxtm` → `rd`). **An assertion that a privilege is ABSENT proves nothing unless the environment would otherwise grant it** — pick the privilege the default hands out. Mutant M19.
+
+**Five gates added:** whole-schema `service_role` SELECT sweep in `schema-parity` (one new case; the file is 32 total. No `relacl IS NOT NULL` filter — a NULL ACL is the owner-only default, the case most worth catching); **Suite MTC** `tests/unit/migration-test-coverage.test.ts` (every migrated table/view/function must be *named* by a non-comment test line; ratcheting exemption lists); **Suite QSA** 11 cases + 8 measured mutants; **XC-4** (a held draft rests, ripens and actually publishes — §3.41's lifecycle half); **CI now runs `tsc --noEmit` + `npm run lint`**, which CLAUDE.md mandated and nothing executed.
+
+**E2E prod-leak fixed before it leaked:** `queue_status_events` has no FK to `queue_entries`, exactly like `match_events` (which leaked 171 rows into a prod table in 2026). Both `teardown.ts` paths now delete it and `validate-cleanup.mts` counts it. Prod held 29 rows, all from the 08/16 manual close — zero from E2E.
+
+**Banked:** a review agent's claims need checking too — it reported the prod ACL as the *local* one and I only found the two-environment split by querying prod directly. My own first drafts of the M12 and M18 blast radii were both **narrower than measured** (M18: predicted 4 cases, actually kills 8). Predicting a mutant's reach is the same error as trusting a migration's comment about who can read a table.
+
+**Also banked:** Suite MTC's corpus first counted **every** `.ts` under `tests/`, so a table was "covered" by its own line in `helpers/truncate.ts` — the routine first step for any new table would have satisfied the gate meant to catch it. Narrowing to `*.test.ts(x)` / `*.spec.ts` immediately exposed three tables named nowhere else: `club_invites`, `co_organizer_join_attempts`, `match_games` (now grandfathered). **A coverage gate whose corpus includes bookkeeping files measures bookkeeping.**
+
+**Review gate — five rounds:** Needs fixes ×4 → **round 5 "Minor issues"**, every item fixed rather than logged. Round 2 found my own migration reproducing the bug it fixed (`REVOKE` omitted `service_role`); round 4 found the MEMORY migration-queue banner still claiming repo↔prod agreement and the CI note naming the job *key* instead of the required-check *context*. Round 5's three were all the same class this branch polices — **prose that is checkable and wrong**: a quote in §3.44 A attributed to §7's "Forward hazard" note when it belongs to the "Landing order matters" paragraph after it; `emergency-cleanup.ts` claiming its own short-circuit "is how `match_events` reached 171 rows" when that leak was the *automatic* teardown's (this script never touched them); and `teardown.ts` step 6b justifying its position with "doing it last also sweeps whatever `repairSandboxState` generated" when `resetSandboxSession` never calls `repairSandboxState` and three steps follow 6b. All three effects were right and all three *reasons* were wrong — the exact failure mode of [[comments-that-explain-why-rot]], committed while documenting it.
+
+**Next:** merge. ✅ `20260818120000` is **already on prod** (stamp `20260819011750`, applied 2026-08-19) — the REVOKE was the half that mattered there, and prod's `relacl` went `{postgres=arwdDxtm, anon=arwdDxtm, authenticated=arwdDxtm, service_role=arwdDxtm}` → `{postgres=arwdDxtm, service_role=rd}`, i.e. anon genuinely held full DML on the audit trail until that apply. Prod was never the unreadable half; local was. `truncateTracked()` hard-couples **24 of 27** integration files to it — `auth.real`, `draft-cap-override` and `schema-parity` don't call it, so those three stay green on a stale DB and are not evidence it landed. Also: the CI job's **display name** changed `Vitest` → `Types, Lint, Vitest` (the YAML key went `vitest` → `checks`, but a required-status-check context is the job's `name:`, not its key). Any branch-protection rule pinned to `Vitest` is now pinned to a context that never reports. 🚨 **But there is no such rule and there cannot be one:** the repo is private on a free plan, so branch protection and rulesets are unavailable — both `gh api` endpoints answered `403 "Upgrade to GitHub Pro or make this repository public"` on 2026-08-19. **Nothing on GitHub gates a merge here today, and nothing can until the repo goes public or the plan changes.** The renamed context matters when that changes, not before. So the gate moved to where it can exist: **`.husky/pre-push`** (new) runs `tsc --noEmit` + `lint` + unit, in CI's order, ~17s, and refuses the push. Integration is excluded (needs local Supabase) and E2E is excluded (**it targets prod**). 🪤 A local hook is not a merge gate — `--no-verify` skips it and it binds one machine.
+
+---
+
 ## ⚖️ LOPSIDED TEAM SPLITS BANNED — 2026-08-17. Shipped `24fcc7a` (#73).
 
 The 07/30 balance gate stopped *preferring* INT+INT vs BEG+BEG; it still emitted that split as a stall-break. Ban: `snakeDraft` never returns a lopsided split (`gap > minGap + SKILL_VARIANCE_MAX`). When every mixed pairing is at the partnership cap, it seats mixed anyway (`usedCapOverride`) after Fix B tries another body. `rotatedDraft` drops lopsided from the cycle but still returns `null` so Tier-3 can expand the window. Preview / Tier-1/2 treat `usedCapOverride` like `null`. Last-resort accepts it.
@@ -14,7 +41,7 @@ The 07/30 balance gate stopped *preferring* INT+INT vs BEG+BEG; it still emitted
 **Review (Minor issues):** `simRunAlgorithm` still treats `usedCapOverride` as a stall on every path (incl. last-resort) so the 30-player "never exceed cap" invariant holds. Production last-resort is covered by MC-new-2. Preview / CCO-11 comments and assertion tightened.
 ---
 
-## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-16. Repo and prod agree.
+## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-19. Repo and prod agree.
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
 Merging a PR ships TypeScript only.** **Every new migration must be
@@ -23,6 +50,7 @@ the only place that records the mapping.
 
 | Applied | Stamp |
 |---|---|
+| `20260818120000_lock_queue_status_events_grants` | `20260819011750` |
 | `20260818000000_session_notifications` | `20260816065517` |
 | `20260817000000_queue_leave_notices` | `20260816052740` |
 | `20260810000000_declare_compute_session_wrapped` | `20260810151122` |

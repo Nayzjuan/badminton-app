@@ -496,6 +496,76 @@ describe("Schema Parity — Suite G", () => {
     expect(matches).toEqual([{ sig: "get_session_player_streaks(uuid)", defaults: 0 }]);
   });
 
+  it("every relation in public is readable by the service role", async () => {
+    // THE GATE THAT WAS MISSING. A migration that creates a table and says
+    // nothing about privileges does not create a table with no privileges — it
+    // creates one with whatever ALTER DEFAULT PRIVILEGES happens to be in
+    // force, and THE TWO ENVIRONMENTS DISAGREE:
+    //
+    //   pg_default_acl, FOR ROLE postgres IN SCHEMA public, defaclobjtype 'r'
+    //     production : anon=arwdDxtm  authenticated=arwdDxtm  service_role=arwdDxtm
+    //     local      : anon=Dxtm      authenticated=Dxtm      service_role=Dxtm
+    //
+    // THIS database — local, and any from-scratch `supabase db reset` — is the
+    // Dxtm half: TRUNCATE, REFERENCES, TRIGGER, MAINTAIN and no SELECT, INSERT,
+    // UPDATE or DELETE for anyone. So here the grant-less table is completely
+    // invisible through PostgREST while looking entirely normal in psql, where
+    // the superuser sees everything.
+    //
+    //   select relname, relacl from pg_class where relname = '<new table>';
+    //
+    // That is how queue_status_events (20260815) shipped: the audit trigger is
+    // SECURITY DEFINER so it wrote the trail correctly from day one, and on a
+    // from-scratch replay every read of it answered `permission denied` —
+    // before RLS, which the migration's comment believed was the control, was
+    // ever consulted. Nothing about the write path was ever wrong, which is
+    // exactly why nobody noticed.
+    //
+    // On production the SAME source line did the opposite: arwdDxtm handed anon
+    // and authenticated full DML on the audit trail, with RLS-and-no-policies
+    // as the only thing standing in front of it. One defect, two shapes.
+    // 20260818120000 fixes both by stating the privileges outright — which is
+    // also why this sweep can only ever catch the local shape, and why the
+    // production shape is pinned separately by QSA-10's has_table_privilege
+    // assertions.
+    //
+    // The sweep is over all of public rather than a list, because a list only
+    // ever contains the tables someone already thought about — and the failure
+    // mode here is forgetting.
+    //
+    // Membership is by oid, not by name, and the reason is the trap this file
+    // already documents one assertion up. Every relation in public does in
+    // fact resolve by name; the throw comes from `'public.' || relname` being
+    // evaluated against pg_class rows that the pg_namespace join has not
+    // filtered yet, so the planner tries `public.decrypted_secrets` for a row
+    // that lives in the vault schema and raises 42P01. Passing c.oid removes
+    // the resolution step entirely, so evaluation order stops mattering.
+    //
+    // There is deliberately no `relacl IS NOT NULL` filter. A NULL relacl is
+    // not "no opinion", it is the *owner-only* default — which is precisely the
+    // "table arrived with no grants at all" case a from-scratch replay produces
+    // (§7, the migration-replay layers) and the one most worth catching. It
+    // matches nothing today; skipping those rows would have made the gate blind
+    // to the day it does.
+    const exempt: string[] = [];
+    let unreadable: string[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{ relname: string; relkind: string }>(
+        `SELECT c.relname, c.relkind
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public'
+            AND c.relkind IN ('r', 'v', 'm')
+            AND NOT has_table_privilege('service_role', c.oid, 'SELECT')
+          ORDER BY c.relname`
+      );
+      unreadable = rows
+        .filter((r) => !exempt.includes(r.relname))
+        .map((r) => `${r.relname} (relkind ${r.relkind})`);
+    });
+    expect(unreadable).toEqual([]);
+  });
+
   // ── Materialized view ────────────────────────────────────
 
   it("v_alltime_leaderboard_mat materialized view exists", async () => {

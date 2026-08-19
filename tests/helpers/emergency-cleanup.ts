@@ -120,6 +120,21 @@ async function run() {
     .select("id", { count: "exact", head: true })
     .eq("session_id", sessionId);
 
+  // Queue status events — same shape as match_events and counted for the same
+  // reason. `queue_status_events` has NO foreign key to queue_entries at all
+  // (session_id / player_id are plain uuid columns), so deleting the queue rows
+  // cannot cascade it, and its trigger fires on EVERY status transition the
+  // harness makes. Left out of this count, a session holding nothing but audit
+  // rows would hit the "already clean" short-circuit below and never be
+  // cleaned. The 171 match_events rows were NOT this script's doing — they
+  // piled up because the automatic teardown never deleted them (teardown.ts
+  // step 4), and this script could not have reclaimed them either, because
+  // until now it neither counted nor deleted them. Same leak, one layer out.
+  const { count: queueStatusCount } = await db
+    .from("queue_status_events")
+    .select("id", { count: "exact", head: true })
+    .eq("session_id", sessionId);
+
   // Bot profiles — fetched here rather than at the delete step so the preview
   // and the "already clean" check below can see them. Excludes E2E_OrganizerBot,
   // the permanent account reused by every spec: deleting it invalidates the
@@ -208,6 +223,11 @@ async function run() {
     console.log();
   }
 
+  if ((queueStatusCount ?? 0) > 0) {
+    console.log(bold(`Queue status:   ${queueStatusCount}`));
+    console.log();
+  }
+
   if ((botProfiles ?? []).length > 0) {
     console.log(bold(`Bot profiles (${botProfiles!.length}):`));
     console.log(`  ${amber("▸")} ${botProfiles!.map((p) => p.display_name).join(", ")}`);
@@ -224,6 +244,7 @@ async function run() {
       (queueEntries?.length ?? 0) +
       (wrappedCount ?? 0) +
       (matchEventCount ?? 0) +
+      (queueStatusCount ?? 0) +
       (botProfiles?.length ?? 0);
 
     if (totalRows === 0) {
@@ -268,6 +289,12 @@ async function run() {
   // still reachable by session_id and would survive forever otherwise.
   await db.from("match_events").delete().eq("session_id", sessionId);
 
+  // queue_status_events — deleted unconditionally for the same reason as
+  // match_events above: nothing cascades it, so it survives every other delete
+  // here. Scoped by session_id; the trigger that writes it fires on UPDATE OF
+  // status only, so this DELETE cannot regenerate rows.
+  await db.from("queue_status_events").delete().eq("session_id", sessionId);
+
   // match_players → matches
   if (matchIds.length > 0) {
     await db.from("match_players").delete().in("match_id", matchIds);
@@ -310,6 +337,7 @@ async function run() {
   console.log(`  ${bold("Bot users deleted:")}       ${botUsersDeleted}`);
   console.log(`  ${bold("Wrapped stats deleted:")}   ${wrappedCount ?? 0}`);
   console.log(`  ${bold("Match events deleted:")}    ${matchEventCount ?? 0}`);
+  console.log(`  ${bold("Queue status deleted:")}    ${queueStatusCount ?? 0}`);
   console.log();
   console.log(dim(`  Session row preserved: ${sessionId}`));
   console.log(dim("  is_active=true  is_auto_matchmaking_on=false  ended_at=null"));

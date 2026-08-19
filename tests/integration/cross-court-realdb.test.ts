@@ -32,6 +32,11 @@
 //   CC-CAN-HELD-02  cancelling the HELD DRAFT ITSELF leaves the still-playing
 //           body untouched at 'playing' — the physical-truth rule
 //           clear_on_deck_match_atomic has, applied to the path that bypasses it
+//   XC-4  the FULL lifecycle against a real database: Holding → the source
+//           match ends → RESTING (still not ready, which is the production
+//           defect) → the rest elapses → READY (held_ready_at stamped by
+//           recomputeHeldReadiness itself) → published. Nothing here is
+//           hand-stamped.
 //
 // Isolation: Layer B — truncateTracked() in afterEach.
 // ============================================================
@@ -52,8 +57,9 @@ import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { queryCommitted } from "./helpers/withTx";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { cancelMatchAction, endMatchAction } from "@/app/actions/match-lifecycle";
+import { publishMatchAction } from "@/app/actions/match-drafts";
 import { fetchActivePool } from "@/lib/matchmaking-db";
-import { CROSS_COURT_MAX_HOLD_MINUTES } from "@/lib/constants";
+import { CROSS_COURT_MAX_HOLD_MINUTES, CROSS_COURT_REST_FALLBACK_MINUTES } from "@/lib/constants";
 
 const faker = new Faker({ locale: [en] });
 
@@ -569,5 +575,103 @@ describe("Cross-Court Held Drafts (Real DB) — Suite XC", () => {
     // pool admission (not the string) that stalls the engine.
     const pool = await fetchActivePool(serviceClient(), session.id);
     expect(pool.map((p) => p.player_id)).not.toContain(body.id);
+  });
+  // ── XC-4: the lifecycle nobody had ever run end-to-end ───────
+  //
+  // Cross-court shipped dead twice over. Generation was fixed first, and the
+  // publish path second — but every test of the second fix SET held_ready_at
+  // by hand (publish-match.test.ts PUB-HELD-DB-2 does exactly that, with a
+  // comment saying so). So the one transition that actually failed in
+  // production — a held draft becoming ready on its own — was still asserted
+  // nowhere against a real database, and two suites either side of it were
+  // green. XC-1 pins held_ready_at as null at birth; until this case there was
+  // no counterpart anywhere that watched it become non-null.
+  //
+  // Every timestamp below is moved with SQL, but the STAMP is not: it is
+  // written by recomputeHeldReadiness, reached through endMatchAction, the
+  // real call site.
+  //
+  // DISCRIMINATOR EVIDENCE — both mutants were applied, run, and reverted:
+  //   M9   isHeldMatchReady forced to never resolve   → kills XC-4 only
+  //   M11  publish_match refuses a READY held draft   → kills XC-4 only
+  // XC-1, XC-2, XC-3, CC-CAN-HELD-01 and CC-CAN-HELD-02 stay green under both.
+  // That is the measurement of the gap: five cross-court cases could not see a
+  // hold that never becomes ready, nor one that can never be published — the
+  // two ways this feature actually shipped dead.
+  it("XC-4: a held draft rests, becomes ready on its own, and publishes", async () => {
+    const { organizer, session, members, body, sourceMatch, triggerMatch, heldId } =
+      await seedHeldDraft();
+
+    const heldRow = async () => {
+      const { data } = await serviceClient()
+        .from("matches")
+        .select("id, is_held, is_published, status, held_ready_at, pulled_from_match_id")
+        .eq("id", heldId)
+        .maybeSingle();
+      return data!;
+    };
+
+    // 1. HOLDING — the body is still on Court 1.
+    expect(await heldRow()).toMatchObject({ is_held: true, held_ready_at: null });
+    expect(await queueStatusOf(session.id, body.id)).toBe("playing");
+
+    // 2. The source match ends. This frees the body AND runs the readiness
+    //    pass — but the rest cannot have elapsed in the same instant, so the
+    //    draft is deliberately still NOT ready. This is the state production
+    //    sat in forever: recompute only ran at match end, and at match end the
+    //    answer is always "not yet".
+    const restore = mockAuthAs(organizer.id);
+    try {
+      expect(await endMatchAction(sourceMatch.id, 21, 18)).toMatchObject({ success: true });
+    } finally {
+      restore();
+    }
+    expect((await heldRow()).held_ready_at).toBeNull();
+    // The body is re-reserved for the draft it is parked in, not sent back to waiting.
+    expect(await queueStatusOf(session.id, body.id)).toBe("drafted");
+
+    // 3. The rest elapses. Only the clock moves — completed_at is backdated
+    //    past CROSS_COURT_REST_FALLBACK_MINUTES so isHeldMatchReady's fallback
+    //    arm resolves. No readiness field is touched.
+    await queryCommitted(
+      `update public.matches
+          set completed_at = now() - ($2 || ' minutes')::interval
+        where id = $1`,
+      [sourceMatch.id, String(CROSS_COURT_REST_FALLBACK_MINUTES + 1)]
+    );
+
+    // 4. The next real lifecycle event runs the readiness pass again — and
+    //    THIS is the assertion that did not exist anywhere: the stamp is
+    //    written by the application, not by the test.
+    await endTrigger(organizer.id, triggerMatch.id);
+
+    const ready = await heldRow();
+    expect(ready.held_ready_at).not.toBeNull();
+    expect(ready.is_held).toBe(true);
+    expect(ready.is_published).toBe(false);
+    expect(ready.pulled_from_match_id).toBe(sourceMatch.id);
+
+    // 5. And a ready hold actually publishes. Before the publish-path fix this
+    //    returned CONFLICT 100% of the time, so a draft that reached this point
+    //    still could not complete its lifecycle — which is why reaching step 4
+    //    is not on its own proof the feature works.
+    const restorePub = mockAuthAs(organizer.id);
+    try {
+      expect(await publishMatchAction(heldId)).toMatchObject({ success: true });
+    } finally {
+      restorePub();
+    }
+
+    const published = await heldRow();
+    expect(published.is_published).toBe(true);
+    expect(published.status).toBe("pending");
+
+    // Publishing commits the roster: all four move off 'drafted' and onto the
+    // on-deck card the players actually see — the pulled body included, which
+    // is the whole point of having reached across a court for them.
+    for (const m of members) {
+      expect(await queueStatusOf(session.id, m.id)).toBe("on_deck");
+    }
+    expect(await queueStatusOf(session.id, body.id)).toBe("on_deck");
   });
 });

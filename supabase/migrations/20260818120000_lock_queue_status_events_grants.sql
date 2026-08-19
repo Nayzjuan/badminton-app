@@ -1,0 +1,80 @@
+-- ============================================================
+-- queue_status_events: state the audit table's privileges instead of
+-- inheriting whatever the environment happens to default to
+-- ============================================================
+-- WHY: 20260815_queue_status_audit created the table and said of it
+--
+--     "enable RLS with NO policy so only the service role (which bypasses
+--      RLS) can read it"
+--
+-- and then granted nothing to anybody. Bypassing RLS does not substitute for
+-- a table-level privilege — they are independent gates and the ACL is checked
+-- first — so the sentence was not a description of the table that shipped.
+-- What shipped instead was whatever `ALTER DEFAULT PRIVILEGES` happened to be
+-- in force, and THE TWO ENVIRONMENTS DISAGREE:
+--
+--   pg_default_acl, FOR ROLE postgres IN SCHEMA public, defaclobjtype 'r'
+--     production : anon=arwdDxtm  authenticated=arwdDxtm  service_role=arwdDxtm
+--     local      : anon=Dxtm      authenticated=Dxtm      service_role=Dxtm
+--
+-- Migrations run as `postgres`, so one grant-less CREATE TABLE produced two
+-- opposite defects from the same source line:
+--
+--   * On a from-scratch replay (`supabase db reset`) the table has no SELECT
+--     for anyone. The trigger is SECURITY DEFINER and owned by postgres, so
+--     the trail was written correctly from the first day and every read of it
+--     answered `permission denied for table queue_status_events` — before RLS,
+--     the control the comment believed in, was ever consulted. An audit trail
+--     nothing can query is not an audit trail.
+--
+--   * On production the same line handed anon and authenticated the FULL set:
+--     SELECT, INSERT, UPDATE, DELETE, TRUNCATE. Only RLS-with-zero-policies
+--     stands between an anonymous caller and rewriting the audit trail, and
+--     that is one `CREATE POLICY` or one `DISABLE ROW LEVEL SECURITY` away
+--     from being a real hole. Defence in depth was claimed; one layer shipped.
+--
+-- Neither environment matched the comment, and neither was going to complain.
+-- The sibling migration written three days later gets this right —
+-- 20260818000000_session_notifications REVOKEs before it GRANTs — which is
+-- the pattern restated here.
+--
+-- WHAT IS GRANTED, AND WHAT DELIBERATELY IS NOT:
+--
+--   service_role SELECT — the documented purpose: read the trail during an
+--                         incident.
+--   service_role DELETE — retention. One row per queue status change is the
+--                         highest-frequency mutation the app makes; with no
+--                         delete path the table grows without bound, and the
+--                         E2E teardown cannot reclaim its own sandbox rows.
+--
+--   service_role INSERT / UPDATE / TRUNCATE are withheld. The only legitimate
+--   writer is the SECURITY DEFINER trigger, which needs no grant, so
+--   withholding them means no API caller — including one holding a leaked
+--   service key — can forge a transition, rewrite one after the fact, or drop
+--   the whole trail in a single statement.
+--
+--   anon and authenticated are revoked to nothing, so RLS is the second
+--   defence rather than the only one.
+--
+-- WHY service_role IS NAMED IN THE REVOKE:
+--
+--   Because this migration wants LESS than the default, and a REVOKE only
+--   touches the roles it names. `REVOKE ... FROM PUBLIC, anon, authenticated`
+--   leaves service_role's own aclitem untouched, and a subsequent
+--   `GRANT SELECT, DELETE` is a no-op against a role that already holds
+--   arwdDxtm. On this local database the default is Dxtm, so the withheld
+--   INSERT/UPDATE would have looked correct here while production kept full
+--   DML — the same environment-dependent blindness that caused the original
+--   bug. The sibling 20260818000000 names only three roles and is still
+--   correct, because it ends with GRANT ALL TO service_role: it wants the
+--   default, so inheriting it is harmless. Naming the role is required
+--   precisely when the intent is narrower than the default.
+--
+-- Pinned by tests/integration/queue-status-audit.test.ts (QSA-7, QSA-10) and
+-- by the whole-schema sweep in tests/integration/schema-parity.test.ts.
+-- ============================================================
+
+REVOKE ALL ON TABLE public.queue_status_events
+  FROM PUBLIC, anon, authenticated, service_role;
+
+GRANT SELECT, DELETE ON TABLE public.queue_status_events TO service_role;
