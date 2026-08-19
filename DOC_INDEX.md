@@ -18,7 +18,7 @@ After a context compaction, do **not** re-read any of this.
 | `CLAUDE.md` | 11 KB | The rules. Read this in full — it is the only doc that is not optional. |
 | `HANDOFF.md` | 10 KB | Onboarding: repo paths, Supabase/Vercel connector discovery, workflow rules. |
 | `AGENTS.md` | 327 B | Next.js 16 is not the Next.js in your training data. Read before any Next API. |
-| `MEMORY.md` | 34 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
+| `MEMORY.md` | 18 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
 | `README.md` | 1 KB | Public-facing project readme. |
 | `PRODUCT.md` | 4 KB | What the product is for, in the user's language. |
 | `MATCHMAKING.md` | 20 KB | Standalone narrative of the matchmaking engine. |
@@ -249,7 +249,7 @@ reader treats it as a gap to close and reintroduces the design that was delibera
 | `docs/archive/LEADERBOARD_UI_SPEC.md` | 23 KB |
 | `docs/archive/MATCHMAKING_ENGINE_AUDIT_2026-08-12.md` | 12 KB |
 | `docs/archive/MATCH_PROVENANCE_AUDIT_PLAN.md` | 33 KB |
-| `docs/archive/MEMORY_HISTORY.md` | 602 KB |
+| `docs/archive/MEMORY_HISTORY.md` | 622 KB |
 | `docs/archive/MIGRATION_CHECKLIST.md` | 1021 B |
 | `docs/archive/MONTHLY_LEADERBOARD_PLAN.md` | 22 KB |
 | `docs/archive/MULTI_TENANT_PHASE2_PLAN.md` | 8 KB |
