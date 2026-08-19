@@ -1,9 +1,6 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(git push origin main)",
-      "Bash(git push origin main 2>&1)"
-    ]
+    "allow": ["Bash(git push origin main)", "Bash(git push origin main 2>&1)"]
   },
   "hooks": {
     "PostToolUse": [
