@@ -11,6 +11,7 @@
 //   CST-2  rpc THROWS → session still flipped, wrappedReady false
 //   CST-3  compute succeeds → wrappedReady true
 //   CST-4  57014 → no retry, still closes
+//   CST-5  ledger refresh fails, compute succeeds → rows written, NOT ready
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -167,6 +168,43 @@ describe("closeSession — Wrapped hang must not block close", () => {
     expect(result.success).toBe(true);
     expect(result.wrappedReady).toBe(true);
     expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, true);
+  });
+
+  // 0a (refresh_cross_session_stats) and 0b (compute_session_wrapped) take
+  // DIFFERENT advisory locks, so nothing serialises them but the await. If 0a
+  // loses, 0b snapshots cross-session awards from the pre-refresh ledger —
+  // awards that omit the session being closed. The rows must still be written
+  // (a missing session_wrapped_stats row replays the intro forever), but this
+  // close must not claim they are ready.
+  it("CST-5: a failed ledger refresh withholds wrappedReady even when compute succeeds", async () => {
+    let flipped = false;
+    vi.mocked(withTimeout).mockImplementation(async (promise) => promise);
+    const rpc = vi.fn((name: string) => {
+      if (name === "refresh_cross_session_stats") {
+        return Promise.resolve({
+          error: { message: "canceling statement due to statement timeout", code: "57014" },
+        });
+      }
+      return Promise.resolve({ error: null });
+    });
+    vi.mocked(createServiceClient).mockReturnValue(
+      makeServiceClient({
+        rpc,
+        onSessionFlip: () => {
+          flipped = true;
+        },
+      }) as never
+    );
+
+    const result = await closeSession(SESSION_ID);
+
+    expect(result.success).toBe(true);
+    expect(flipped).toBe(true);
+    // The Wrapped rows WERE written — we do not skip 0b.
+    expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(1);
+    // …but the watcher must route to the lobby, not to a stale Wrapped.
+    expect(result.wrappedReady).toBe(false);
+    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, false);
   });
 
   it("CST-4: statement-timeout (57014) does not retry, still closes", async () => {

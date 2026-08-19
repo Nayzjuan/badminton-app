@@ -157,11 +157,19 @@ function stripTsComments(src: string): string {
  * is genuinely part of the API a test would call: tables, views, functions,
  * and materialized views. Schema qualifier is dropped — tests address these
  * through PostgREST, which does not spell `public.`.
+ *
+ * The qualifier group matches ANY schema, not just `public`. Anchoring it to
+ * `public` looked harmless while every migration in the repo was
+ * public-qualified, but it made the name capture bind to the SCHEMA for any
+ * other one: `create table private.audit_log (…)` yielded `private`, and
+ * `\bprivate\b` matches the test corpus trivially, so this gate would report
+ * green over a new table that no test names. A coverage gate that can be
+ * satisfied by the word before the dot is not a gate.
  */
 export function createdObjects(sql: string): string[] {
   const body = stripSqlComments(sql);
   const re =
-    /\bcreate\s+(?:or\s+replace\s+)?(?:materialized\s+)?(table|view|function)\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z_][a-z_0-9]*)"?/gi;
+    /\bcreate\s+(?:or\s+replace\s+)?(?:materialized\s+)?(table|view|function)\s+(?:if\s+not\s+exists\s+)?(?:"?[a-z_][a-z_0-9]*"?\.)?"?([a-z_][a-z_0-9]*)"?/gi;
   const found = new Set<string>();
   for (const m of body.matchAll(re)) found.add(m[2].toLowerCase());
   return [...found];
@@ -290,5 +298,23 @@ describe("every migrated object is named by a test — Suite MTC", () => {
     // And the migration set itself is real — a mis-set path would make MTC-1
     // iterate nothing.
     expect(migrationFiles.length).toBeGreaterThan(20);
+  });
+
+  // ── The qualifier must not become the name ───────────────────
+  // Regression: the qualifier group used to be anchored to `public`, so any
+  // other schema fell through to the name capture and the SCHEMA was returned
+  // as the object. `private` matches the corpus trivially, so MTC-1 would go
+  // green over a table nothing tests. Every migration in the repo happens to
+  // be public-qualified today, which is exactly why this needs a test rather
+  // than an inspection.
+  it("MTC-4: a non-public schema yields the object name, never the schema", () => {
+    expect(createdObjects("create table private.audit_log (id uuid);")).toEqual(["audit_log"]);
+    // Quoted and mixed-case survives too — the extractor lowercases, so the
+    // NAME comes back, never `analytics`.
+    expect(createdObjects('CREATE TABLE "Analytics"."Daily" (id uuid);')).toEqual(["daily"]);
+    expect(createdObjects("create or replace function auth.jwt() returns jsonb as $$ $$;")).toEqual([
+      "jwt",
+    ]);
+    expect(createdObjects("create table bare_table (id uuid);")).toEqual(["bare_table"]);
   });
 });

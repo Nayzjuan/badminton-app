@@ -271,6 +271,16 @@ under-count that was fixed on 2026-08-12; the rebuild does not touch it.
 Requires every `postgres_changes` channel to be private first — a scoped project of its own, not a
 toggle. This is the single remaining open item from the 2026-07-21 tenancy audit.
 
+**6. `closeSession`'s 3s ceiling is per-RPC, not per-phase.**
+`withTimeout(…, 3_000)` wraps each call, so the worst case before `is_active` flips is refresh 3s +
+compute 3s + 600 ms backoff + retry 3s ≈ 9.6s. No route in the repo sets `maxDuration`, so the
+platform default is the real ceiling and nothing pins it. Fix if it ever bites: one phase deadline
+shared by all three calls (compute `deadline = start + 3_000` once, pass the remainder). Raised by
+the review gate on 2026-08-19 and accepted as-is — the 08/15 incident was an *unbounded* wait, and
+9.6s is bounded. 🪤 `CloseRpcOutcome`'s `"failed" → retry → ok` transition is still unasserted:
+CST-1…CST-5 cover hang, throw, success, 57014-no-retry, and the ledger guard, but never a first
+failure that the retry rescues.
+
 **5. Cleanup: 15 stale remote branches** whose PRs are all merged. `origin` has 17 heads; keep only
 `main` and `backup/main-pre-cleanup-20260713` (a deliberate safety branch — **do not delete it**).
 🪤 `git branch -r --merged origin/main` finds only 6 of the 15: `--merged` asks whether a tip is an

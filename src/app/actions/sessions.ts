@@ -1151,7 +1151,7 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   // rivalry and partnership ledgers from this session's completed
   // matches. Must run before compute_session_wrapped so the award
   // RPC can read up-to-date cross-session data.
-  await runCloseRpc("refresh_cross_session_stats", () =>
+  const ledger = await runCloseRpc("refresh_cross_session_stats", () =>
     supabase.rpc("refresh_cross_session_stats", { p_session_id: sessionId })
   );
 
@@ -1175,6 +1175,25 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
         supabase.rpc("compute_session_wrapped", { p_session_id: sessionId })
       );
       wrappedReady = retry.outcome === "ok";
+    }
+
+    // 0a and 0b do NOT serialize against each other: refresh takes
+    // pg_advisory_xact_lock('cross_session_stats:'||club) and compute takes
+    // 'wrapped_awards:'||club. The await above was the only ordering. So if
+    // the ledger refresh timed out or failed, compute has just snapshotted
+    // rivalry/partnership awards from the PRE-refresh ledger — awards that
+    // omit the session being closed — into session_wrapped_stats, and no
+    // recompute path exists outside fixPlayerRecord. The rows are still
+    // written (a missing row replays the intro forever, which is worse), but
+    // this close does not claim they are ready, so useSessionClosedWatcher
+    // routes players to the club lobby instead of presenting a Wrapped whose
+    // cross-session awards are silently one session behind.
+    if (wrappedReady && ledger.outcome !== "ok") {
+      console.warn(
+        `[closeSession] refresh_cross_session_stats ${ledger.outcome} — ` +
+          `cross-session awards for ${sessionId} may omit this session; not signalling wrappedReady`
+      );
+      wrappedReady = false;
     }
   }
 
