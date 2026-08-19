@@ -20,7 +20,7 @@
 ## 🚧 IN FLIGHT — process overhaul, 2026-08-19
 
 Branch `test/verification-gaps`. **Not on any remote.** `git branch -r --contains` is empty for
-both commits below, and `git ls-remote --heads origin` does not list the branch — the same
+every commit below, and `git ls-remote --heads origin` does not list the branch — the same
 shape as the container-local loss of 2026-07. Push or PR before doing anything else.
 
 - `c9c1295` — verification-gap tests (1,834 insertions) **and**
@@ -30,7 +30,17 @@ shape as the container-local loss of 2026-07. Push or PR before doing anything e
 - `a2ecd02` — P0: `closeSession` no longer strands an open session when the Wrapped pre-compute
   hangs. `runCloseRpc` wraps both RPCs in `withTimeout(3_000)`; `is_active` flips regardless.
   Pinned by `tests/unit/close-session-timeout.test.ts` (CST-1…4).
-- Uncommitted: the governance changes described below.
+- `75ba680` + `5dcbcac` — the governance changes tabulated below.
+- `baf2f79` + `3423036` — the review gate's two findings, fixed in one round.
+  (a) `refresh_cross_session_stats` and `compute_session_wrapped` take **different** advisory
+  locks, so the `await` was the only thing ordering them: a timed-out ledger refresh let compute
+  snapshot cross-session awards that omit the session being closed, and the close still reported
+  `wrappedReady`. Rows are still written — a missing `session_wrapped_stats` row replays the intro
+  forever and `fixPlayerRecord` is the only other compute call site — but the close no longer
+  claims they are ready, so the watcher routes to the club lobby. CST-5 (verified failing with the
+  guard disabled). (b) Suite MTC's `createdObjects` anchored its schema qualifier to `public`, so
+  any other schema bound the name capture to the **schema**: `create table private.audit_log`
+  yielded `private`, which matches the corpus trivially. MTC-4.
 
 **Why the overhaul:** feature and bug-fix work had slowed to the point where review round 3+ was
 still finding "mistakes". The cause was not the code. Two uncapped rules — the review gate
