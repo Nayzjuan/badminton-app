@@ -2263,6 +2263,86 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
       p_session_id: SESSION_ID,
     });
   });
+
+  // ── Failed reads are not answers ───────────────────────────────────────
+  // Every read in this function used to discard its error, and two of the
+  // branches below it are DESTRUCTIVE — they downgrade or cancel a healthy
+  // held draft, releasing three parked players. A transient SELECT failure
+  // therefore did the same thing as a real "the body left": deleted the pull.
+  // These four pin the distinction. Same shape as CCT-FEED-3.
+
+  it("CC-RDY-ERR1: roster read FAILS ⇒ no downgrade, no cancel, and it says so", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: { auto_publish: false }, error: null },
+      { data: null, error: { message: "boom" } }, // roster read failed
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    // The pull survives: a failed read must not look like a departed body.
+    expect(mock.recorder.update).toHaveLength(0);
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("CC-RDY-ERR2: source-match read FAILS ⇒ NOT cancelled (absent ≠ unreadable)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: { auto_publish: false }, error: null },
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
+      { data: null, error: { message: "boom" } }, // source read failed
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    // CC-RDY-CC04 cancels on data null WITH error null. This is the other case.
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(mock.recorder.update).toHaveLength(0);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("CC-RDY-ERR3: the opening held-draft read FAILS ⇒ writes nothing and warns", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mock = makeMockClient([{ data: null, error: { message: "boom" } }]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    // Returning is already correct here — being silent about it was not, since
+    // it is the one condition that explains every other branch going quiet.
+    expect(mock.queriedTables).toEqual(["matches"]);
+    expect(mock.recorder.update).toHaveLength(0);
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("CC-RDY-ERR4: promotion count FAILS ⇒ still stamps off the rest fallback", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: { auto_publish: false }, error: null },
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
+      // Freed long enough ago that the elapsed arm resolves on its own.
+      { data: { status: "completed", completed_at: "2020-01-01T00:00:00.000Z" }, error: null },
+      { count: null, data: null, error: { message: "boom" } }, // count failed
+      { data: null, error: null }, // stamp update
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    // Counting 0 on a failed read only DELAYS a stamp, so it stays the default
+    // — but a count that never succeeds reads as "the promotion arm is broken",
+    // which is why it may not be silent.
+    expect(mock.recorder.update).toHaveLength(1);
+    expect(mock.recorder.update[0]).toMatchObject({ held_ready_at: expect.any(String) });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });
 
 // ═════════════════════════════════════════════════════════════

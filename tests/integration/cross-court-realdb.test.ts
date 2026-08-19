@@ -633,17 +633,31 @@ describe("Cross-Court Held Drafts (Real DB) — Suite XC", () => {
     // 3. The rest elapses. Only the clock moves — completed_at is backdated
     //    past CROSS_COURT_REST_FALLBACK_MINUTES so isHeldMatchReady's fallback
     //    arm resolves. No readiness field is touched.
-    await queryCommitted(
-      `update public.matches
-          set completed_at = now() - ($2 || ' minutes')::interval
-        where id = $1`,
-      [sourceMatch.id, String(CROSS_COURT_REST_FALLBACK_MINUTES + 1)]
+    //
+    //    The origin is Date.now(), not Postgres now(), on purpose: the code
+    //    under test subtracts completed_at from Date.now(), so letting the DB
+    //    pick the origin makes the margin a function of the gap between two
+    //    clocks rather than of the interval being tested.
+    const backdated = await queryCommitted(
+      "update public.matches set completed_at = $2::timestamptz where id = $1",
+      [
+        sourceMatch.id,
+        new Date(Date.now() - (CROSS_COURT_REST_FALLBACK_MINUTES + 1) * 60_000).toISOString(),
+      ]
     );
+    // A setup write that quietly hits 0 rows reads downstream as "the app never
+    // stamped" — the exact failure this test reports — so assert the setup too.
+    expect(backdated.rowCount).toBe(1);
 
     // 4. The next real lifecycle event runs the readiness pass again — and
     //    THIS is the assertion that did not exist anywhere: the stamp is
     //    written by the application, not by the test.
-    await endTrigger(organizer.id, triggerMatch.id);
+    //
+    //    Assert the trigger's own result: endMatchAction returns { success }
+    //    rather than throwing, so an upstream failure would otherwise surface
+    //    only as a missing stamp — pointing the reader at the readiness pass
+    //    instead of at the call that never reached it.
+    expect(await endTrigger(organizer.id, triggerMatch.id)).toMatchObject({ success: true });
 
     const ready = await heldRow();
     expect(ready.held_ready_at).not.toBeNull();
