@@ -279,38 +279,6 @@ the tables cost nothing to keep (idle, no `anon`/`authenticated` grants, RLS ena
 insurance), and three more weeks of an evidence trail is cheaper than not having one if a revoked
 badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 
-**2. Apply `20260820000000`, then `20260821000000`, to production — in that order.**
-```
-supabase/migrations/20260820000000_wrapped_reads_the_ledger_as_of_this_session.sql
-supabase/migrations/20260821000000_prior_sessions_exclude_hidden.sql
-```
-The first closes the ledger's missing as-of date and the `computed_at` definition of "previous
-session"; the second stops a hidden session from serving as anybody's prior session
-(`APP_MANIFEST.md` §3.7.2 and §3.7.3 — causes 3 and 4 of the five). The code is on the pushed
-branch `test/verification-gaps` (PR #74), **not merged**. Nothing goes red without either
-migration: the TypeScript names no new CTE, so an un-applied one is invisible to the build.
-**Verify the stamp with `list_migrations`, never the build.**
-
-🪤 **Do NOT apply these with `apply_migration`** — it strips non-ASCII from stored function bodies,
-and this body carries an em dash inside player-facing award copy. Apply by **server-side
-reconstruction** via `execute_sql`, the channel `20260811000000` used: a DO block reads prod's own
-`pg_proc.prosrc`, replays the anchored `replace()` calls on the server, asserts every anchor matched
-exactly once and that the rebuilt md5 equals the target, then issues `CREATE OR REPLACE`. Every
-check raises before the DDL, so a bad run applies nothing. Emit both scripts with
-`scripts/_wrapped_apply_sql.py`, through each generator's `--verify-sql` / `--apply-sql`.
-Rehearsed end-to-end against the local Docker DB on 2026-08-20: both applies land on their target
-md5, a re-run is a no-op, and running one against a body it does not chain off refuses with `DRIFT`
-and changes nothing.
-
-Pre-apply gate for each step — `select md5(prosrc), length(prosrc) from pg_proc where proname =
-'compute_session_wrapped'`: `e3689008fe20a015421a0c69afc49375`/49438 (prod today) →
-`d459753ba1501da34691de5c00979a3d`/52094 → `8553a297ff79a81929ce1b8fb416c49b`/52140. If the first
-does not match, prod has drifted from the baseline these files were generated against — regenerate
-from a fresh dump rather than hand-editing. ⚠️ `CREATE OR REPLACE` rewrites `proconfig` wholesale,
-so prod must still read `search_path=public, pg_temp` afterwards. Dropping `pg_temp` passes every
-test — the body CREATEs four TEMP tables and Postgres finds temp TABLES regardless of `search_path`
-— which is why the generators derive the CREATE preamble from the baseline instead of retyping it.
-
 ## 📚 Where everything else lives
 
 | Looking for | Read |

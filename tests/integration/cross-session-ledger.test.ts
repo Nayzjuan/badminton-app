@@ -437,4 +437,61 @@ describe("cross-session ledgers — Suite XS", () => {
     expect(wrap).toContain("consistent_dominator");
     expect(wrap).toContain("momentum");
   });
+
+  // ── XS-9: the third award the same filter reaches ────
+
+  // prior_sessions_ranked feeds TWO awards, not one. The prior_sessions CTE
+  // over it emits both cs_prior_dominant_sessions (consistent_dominator, pinned
+  // by XS-7) and cs_prior_last_win_pct (bounced_back, pinned here). Verified
+  // against production's own prosrc on 2026-08-20 rather than inferred:
+  //   select prosrc from pg_proc where proname='compute_session_wrapped'
+  // shows prior_sessions selecting (array_agg(win_pct ORDER BY rn))[1] AS
+  // cs_prior_last_win_pct, and the gate reading it.
+  //
+  // It needs its own fixture because it wants the OPPOSITE prior night from
+  // XS-7: bounced_back fires on a prior win_pct BELOW 50, consistent_dominator
+  // on tonight's at or above 70. So the teams swap between the two nights, and
+  // the player under test is the one who lost the first night.
+  it("does not let a hidden session supply the record you bounced back from", async () => {
+    const organizer = await makeProfile({ faker });
+    const [p1, p2, p3, p4] = await makeFour();
+
+    const hidden = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(hidden.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(hidden.id, organizer.id);
+    await queryCommitted("update public.sessions set is_hidden = true where id = $1", [hidden.id]);
+    await backdate(hidden.id, 7);
+
+    // p3 lost 0-3: win_pct 0, which is the < 50 bounced_back wants to see.
+    expect(await readWrap(hidden.id, p3.id)).not.toContain("clean_sweep");
+
+    const tonight = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(tonight.id, [p3.id, p4.id], [p1.id, p2.id]);
+    await closeAs(tonight.id, organizer.id);
+
+    const wrap = await readWrap(tonight.id, p3.id);
+    expect(wrap.length).toBeGreaterThan(0);
+    expect(wrap).not.toContain("bounced_back");
+  });
+
+  // ── XS-10: and a visible one still supplies it ────
+
+  // Same counterweight XS-8 is to XS-7: without it, a filter that emptied
+  // prior_sessions_ranked outright would pass XS-9.
+  it("still bounces you back off a visible prior session", async () => {
+    const organizer = await makeProfile({ faker });
+    const [p1, p2, p3, p4] = await makeFour();
+
+    const first = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(first.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(first.id, organizer.id);
+    await backdate(first.id, 7);
+
+    const tonight = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(tonight.id, [p3.id, p4.id], [p1.id, p2.id]);
+    await closeAs(tonight.id, organizer.id);
+
+    const wrap = await readWrap(tonight.id, p3.id);
+    expect(wrap).toContain("bounced_back");
+  });
 });
