@@ -1034,7 +1034,7 @@ export type CloseSessionResult = {
 };
 
 /**
- * Hard ceiling on each Wrapped RPC during close.
+ * Hard ceiling on the WHOLE Wrapped pre-compute phase — not on each call.
  *
  * 08/15/2026 prod: PostgREST never returned from these RPCs (Warp "Thread
  * killed by timeout manager" on a ~60 s cadence). The same two calls
@@ -1045,15 +1045,30 @@ export type CloseSessionResult = {
  * desired outcome: a hung Wrapped pre-compute must never strand an open
  * session.
  *
- * 3 s is ~4× the historical PostgREST max (~827 ms) and leaves room for the
- * flip + broadcast inside a ~10 s serverless budget if both RPCs hang.
+ * The budget is a PHASE budget because the phase makes up to three calls
+ * (ledger, compute, compute retry) plus a backoff. A per-call ceiling
+ * multiplies: three hung calls at 3 s each plus the 600 ms backoff is 9.6 s,
+ * which overruns the ~10 s serverless budget the ceiling exists to protect
+ * — the phase would blow the deadline while every individual call looks
+ * obedient. One shared deadline is the invariant that actually holds:
+ * whatever happens inside, `is_active` flips within this many ms.
+ *
+ * 5 s is ~3× the historical PostgREST max for the ledger + compute pair
+ * (~827 ms each) and leaves ~5 s for the flip + broadcast.
  */
-const CLOSE_WRAPPED_RPC_MS = 3_000;
+const CLOSE_WRAPPED_PHASE_MS = 5_000;
 
 type CloseRpcOutcome = "ok" | "timeout" | "failed";
 
+/** Absolute deadline for the Wrapped phase, shared by every call in it. */
+function startPhaseBudget(totalMs: number) {
+  const endsAt = Date.now() + totalMs;
+  return { remaining: () => Math.max(0, endsAt - Date.now()) };
+}
+
 async function runCloseRpc(
   label: string,
+  budgetMs: number,
   run: () => PromiseLike<{ error: { message: string; code?: string } | null }>
 ): Promise<{ outcome: CloseRpcOutcome; code?: string }> {
   // Attach a rejection handler BEFORE racing. After a timeout we abandon the
@@ -1063,12 +1078,17 @@ async function runCloseRpc(
   // compute retry still sees a real failure.
   const pending = Promise.resolve(run());
   void pending.catch(() => {});
+  if (budgetMs <= 0) {
+    // The phase is spent. Still FIRE the call — an abandoned RPC is exactly
+    // what a timeout produces here, and postgres landing the rows late is
+    // strictly better than never landing them — but do not wait for it.
+    console.warn(`[closeSession] ${label} fired unawaited — Wrapped phase budget spent`);
+    return { outcome: "timeout" };
+  }
   try {
-    const result = await withTimeout(pending, CLOSE_WRAPPED_RPC_MS);
+    const result = await withTimeout(pending, budgetMs);
     if (result === null) {
-      console.warn(
-        `[closeSession] ${label} exceeded ${CLOSE_WRAPPED_RPC_MS}ms — continuing with close`
-      );
+      console.warn(`[closeSession] ${label} exceeded ${budgetMs}ms — continuing with close`);
       return { outcome: "timeout" };
     }
     if (result.error) {
@@ -1151,7 +1171,8 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   // rivalry and partnership ledgers from this session's completed
   // matches. Must run before compute_session_wrapped so the award
   // RPC can read up-to-date cross-session data.
-  const ledger = await runCloseRpc("refresh_cross_session_stats", () =>
+  const budget = startPhaseBudget(CLOSE_WRAPPED_PHASE_MS);
+  const ledger = await runCloseRpc("refresh_cross_session_stats", budget.remaining(), () =>
     supabase.rpc("refresh_cross_session_stats", { p_session_id: sessionId })
   );
 
@@ -1164,14 +1185,15 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   // the same holder (and stacks another hung PostgREST thread).
   let wrappedReady = false;
   {
-    const first = await runCloseRpc("compute_session_wrapped", () =>
+    const first = await runCloseRpc("compute_session_wrapped", budget.remaining(), () =>
       supabase.rpc("compute_session_wrapped", { p_session_id: sessionId })
     );
     if (first.outcome === "ok") {
       wrappedReady = true;
     } else if (first.outcome === "failed" && first.code !== "57014" && first.code !== "55P03") {
-      await new Promise((r) => setTimeout(r, 600));
-      const retry = await runCloseRpc("compute_session_wrapped retry", () =>
+      // The backoff spends phase budget too, so it never outlives the deadline.
+      await new Promise((r) => setTimeout(r, Math.min(600, budget.remaining())));
+      const retry = await runCloseRpc("compute_session_wrapped retry", budget.remaining(), () =>
         supabase.rpc("compute_session_wrapped", { p_session_id: sessionId })
       );
       wrappedReady = retry.outcome === "ok";

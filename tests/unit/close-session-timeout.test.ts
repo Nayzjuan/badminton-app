@@ -12,6 +12,8 @@
 //   CST-3  compute succeeds → wrappedReady true
 //   CST-4  57014 → no retry, still closes
 //   CST-5  ledger refresh fails, compute succeeds → rows written, NOT ready
+//   CST-6  all three RPCs share ONE phase budget, not one each
+//   CST-7  a fast failure retries, and the retry's success counts
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -133,7 +135,11 @@ describe("closeSession — Wrapped hang must not block close", () => {
     expect(flipped).toBe(true);
     expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, false);
     expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(1);
-    expect(vi.mocked(withTimeout).mock.calls.every((c) => c[1] === 3_000)).toBe(true);
+    // The phase budget, not a per-call one: the first call gets all of it, and
+    // nothing may ever be handed more than the phase has left. CST-6 pins the
+    // decrement — here withTimeout resolves instantly, so no time is consumed.
+    expect(vi.mocked(withTimeout).mock.calls[0][1]).toBe(5_000);
+    expect(vi.mocked(withTimeout).mock.calls.every((c) => c[1] > 0 && c[1] <= 5_000)).toBe(true);
   });
 
   it("CST-2: an RPC throw still closes the session", async () => {
@@ -224,5 +230,76 @@ describe("closeSession — Wrapped hang must not block close", () => {
     expect(result.success).toBe(true);
     expect(result.wrappedReady).toBe(false);
     expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(1);
+  });
+
+  // A per-call ceiling multiplies: ledger + compute + retry at 3 s each plus
+  // the 600 ms backoff is 9.6 s, past the ~10 s serverless budget the ceiling
+  // exists to protect — every call looks obedient while the phase overruns.
+  // One deadline is the invariant that actually holds. Here the ledger burns
+  // the whole phase, so compute must get ZERO, not a fresh allowance.
+  it("CST-6: the Wrapped RPCs share one phase budget, they do not each get a fresh one", async () => {
+    let clock = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      const budgets: number[] = [];
+      vi.mocked(withTimeout).mockImplementation(async (_promise, ms) => {
+        budgets.push(ms);
+        clock += ms; // this call consumed its entire allowance and timed out
+        return null;
+      });
+      let flipped = false;
+      const rpc = vi.fn((_name: string) => new Promise<{ error: RpcError }>(() => {}));
+      vi.mocked(createServiceClient).mockReturnValue(
+        makeServiceClient({
+          rpc,
+          onSessionFlip: () => {
+            flipped = true;
+          },
+        }) as never
+      );
+
+      const result = await closeSession(SESSION_ID);
+
+      expect(budgets).toEqual([5_000]);
+      // compute was FIRED — postgres landing the rows late beats never — but
+      // it was not awaited, because there was no budget left to await it with.
+      expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(1);
+      expect(result.success).toBe(true);
+      expect(result.wrappedReady).toBe(false);
+      expect(flipped).toBe(true);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  // The one CloseRpcOutcome transition nothing asserted: a fast, non-timeout
+  // failure is the only outcome that earns a retry, and the retry's success
+  // has to be what decides wrappedReady.
+  it("CST-7: a fast failure retries once and the retry's success reports wrappedReady", async () => {
+    // Leave a sliver of phase budget so the retry is still affordable and the
+    // real backoff sleep is Math.min(600, sliver) rather than a 600 ms stall.
+    const t0 = 1_700_000_000_000;
+    let call = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => (call++ === 0 ? t0 : t0 + 4_950));
+    try {
+      vi.mocked(withTimeout).mockImplementation(async (promise) => promise);
+      let computes = 0;
+      const rpc = vi.fn((name: string) => {
+        if (name === "compute_session_wrapped" && computes++ === 0) {
+          return Promise.resolve({ error: { message: "deadlock detected", code: "40P01" } });
+        }
+        return Promise.resolve({ error: null });
+      });
+      vi.mocked(createServiceClient).mockReturnValue(makeServiceClient({ rpc }) as never);
+
+      const result = await closeSession(SESSION_ID);
+
+      expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(2);
+      expect(result.success).toBe(true);
+      expect(result.wrappedReady).toBe(true);
+      expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, true);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });
