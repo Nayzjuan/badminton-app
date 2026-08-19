@@ -27,6 +27,7 @@ import { isSessionOrganizer, isSessionActive, getActorContext } from "@/app/acti
 import { isClubAdmin } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
 import { getClientIp } from "@/lib/client-ip";
+import { withTimeout } from "@/lib/with-timeout";
 import type { ScoringFormat } from "@/types/database";
 import { scoringFormatSchema } from "@/lib/schemas/sessions";
 
@@ -1032,6 +1033,56 @@ export type CloseSessionResult = {
   alreadyClosed?: boolean;
 };
 
+/**
+ * Hard ceiling on each Wrapped RPC during close.
+ *
+ * 08/15/2026 prod: PostgREST never returned from these RPCs (Warp "Thread
+ * killed by timeout manager" on a ~60 s cadence). The same two calls
+ * completed in well under a second as postgres. closeSession awaited them
+ * *before* flipping `is_active`, so the platform killed the action and the
+ * session stayed open. Losing this race abandons the wait, not the query —
+ * the RPC may still finish and write rows after we close. That is the
+ * desired outcome: a hung Wrapped pre-compute must never strand an open
+ * session.
+ *
+ * 3 s is ~4× the historical PostgREST max (~827 ms) and leaves room for the
+ * flip + broadcast inside a ~10 s serverless budget if both RPCs hang.
+ */
+const CLOSE_WRAPPED_RPC_MS = 3_000;
+
+type CloseRpcOutcome = "ok" | "timeout" | "failed";
+
+async function runCloseRpc(
+  label: string,
+  run: () => PromiseLike<{ error: { message: string; code?: string } | null }>
+): Promise<{ outcome: CloseRpcOutcome; code?: string }> {
+  // Attach a rejection handler BEFORE racing. After a timeout we abandon the
+  // wait, not the fetch — PostgREST will still reject later (Warp thread-kill)
+  // and that must not surface as an unhandledRejection. A separate .catch
+  // (not folded into withTimeout) keeps throw distinct from timeout so the
+  // compute retry still sees a real failure.
+  const pending = Promise.resolve(run());
+  void pending.catch(() => {});
+  try {
+    const result = await withTimeout(pending, CLOSE_WRAPPED_RPC_MS);
+    if (result === null) {
+      console.warn(
+        `[closeSession] ${label} exceeded ${CLOSE_WRAPPED_RPC_MS}ms — continuing with close`
+      );
+      return { outcome: "timeout" };
+    }
+    if (result.error) {
+      console.warn(`[closeSession] ${label} failed:`, result.error.message);
+      return { outcome: "failed", code: result.error.code };
+    }
+    return { outcome: "ok" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[closeSession] ${label} threw:`, msg);
+    return { outcome: "failed" };
+  }
+}
+
 export async function closeSession(sessionId: string): Promise<CloseSessionResult> {
   if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
 
@@ -1091,68 +1142,39 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
 
   // ── 0. Pre-compute Wrapped stats ────────────────────────────
   // Runs before broadcast so rows exist when players' browsers
-  // receive the session_closed event.
+  // receive the session_closed event. Bounded: a hung RPC used to
+  // block the is_active flip entirely (08/15 Saturday session sat
+  // open for two days). Failure or timeout is non-fatal — we close
+  // anyway and wrappedReady=false sends viewers to the lobby.
   //
   // Step 0a: refresh_cross_session_stats populates the all-time
   // rivalry and partnership ledgers from this session's completed
   // matches. Must run before compute_session_wrapped so the award
-  // RPC can read up-to-date cross-session data. Non-fatal: a failure
-  // here is logged but does not abort the close or block Wrapped.
-  {
-    const { error: crossErr } = await supabase.rpc("refresh_cross_session_stats", {
-      p_session_id: sessionId,
-    });
-    if (crossErr) {
-      console.warn(
-        "[closeSession] refresh_cross_session_stats failed (non-fatal, cross-session awards may be stale):",
-        crossErr.message
-      );
-    }
-  }
+  // RPC can read up-to-date cross-session data.
+  await runCloseRpc("refresh_cross_session_stats", () =>
+    supabase.rpc("refresh_cross_session_stats", { p_session_id: sessionId })
+  );
 
   // Step 0b: compute per-player stats and awards.
   //
-  // NOTE: supabase.rpc() resolves with { data, error } — it never
-  // throws. The old try/catch only caught network-level exceptions,
-  // not Supabase-level errors. We check { error } explicitly and
-  // retry once, EXCEPT when retrying is provably pointless (below).
+  // supabase.rpc() usually resolves with { data, error }, but a
+  // PostgREST thread-kill or fetch abort THROWS. runCloseRpc covers
+  // both. Retry once on a fast error, never on timeout / 57014 /
+  // 55P03 — those mean the budget is gone and retrying queues behind
+  // the same holder (and stacks another hung PostgREST thread).
   let wrappedReady = false;
   {
-    const { error: rpcError } = await supabase.rpc("compute_session_wrapped", {
-      p_session_id: sessionId,
-    });
-    if (rpcError) {
-      // 57014 = statement timeout, 55P03 = lock_not_available. Both mean the
-      // 8 s budget was spent waiting on the per-club advisory lock this RPC
-      // takes; an immediate retry queues behind the same holder and burns
-      // another 8 s (plus the 600 ms sleep) before failing identically. The
-      // organizer is holding a spinner for all of it, so we stop here and let
-      // wrappedReady=false drive the fallback instead.
-      if (rpcError.code === "57014" || rpcError.code === "55P03") {
-        console.error(
-          `[closeSession] compute_session_wrapped timed out (${rpcError.code}) — not retrying; Wrapped will be empty until recomputed:`,
-          rpcError.message
-        );
-      } else {
-        console.warn(
-          "[closeSession] compute_session_wrapped failed, retrying in 600 ms:",
-          rpcError.message
-        );
-        await new Promise((r) => setTimeout(r, 600));
-        const { error: retryError } = await supabase.rpc("compute_session_wrapped", {
-          p_session_id: sessionId,
-        });
-        if (retryError) {
-          console.error(
-            "[closeSession] compute_session_wrapped retry also failed — Wrapped pages will show empty stats:",
-            retryError.message
-          );
-        } else {
-          wrappedReady = true;
-        }
-      }
-    } else {
+    const first = await runCloseRpc("compute_session_wrapped", () =>
+      supabase.rpc("compute_session_wrapped", { p_session_id: sessionId })
+    );
+    if (first.outcome === "ok") {
       wrappedReady = true;
+    } else if (first.outcome === "failed" && first.code !== "57014" && first.code !== "55P03") {
+      await new Promise((r) => setTimeout(r, 600));
+      const retry = await runCloseRpc("compute_session_wrapped retry", () =>
+        supabase.rpc("compute_session_wrapped", { p_session_id: sessionId })
+      );
+      wrappedReady = retry.outcome === "ok";
     }
   }
 

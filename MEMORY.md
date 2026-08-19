@@ -32,6 +32,20 @@
 
 ---
 
+## 🚨 08/15 SATURDAY CLOSE HUNG ON WRAPPED — 2026-08-17.
+
+**Prod recovery (done):** session `3367d4c6-6838-4cf7-8abe-5f5c3143dd1e` ("08/15 Saturday Session") closed at `2026-08-16 18:24:09 UTC`. `refresh_cross_session_stats` + `compute_session_wrapped` ran as postgres (both returned immediately), then `is_active=false`, 29 leftover `waiting` → `left` (37 left total), 4 courts `closed`, 54 completed / 5 cancelled unchanged. **37 Wrapped rows** (min 3 / max 7 games). `session_closed` broadcast 202.
+
+**Cause:** `closeSession` awaited the two Wrapped RPCs *before* flipping `is_active`. PostgREST never returned (Warp timeout-manager kills ~60 s apart, 01:29–01:33 PHT 08/17). Edge logs show **zero** completed `/rpc/compute_session_wrapped` or `/rpc/refresh_cross_session_stats` in 24 h. Same RPCs via MCP postgres: sub-second. Organizer toast: "Failed to close session. Please try again." Stelle identity migration at 17:28:34 UTC was coincidental, not the blocker.
+
+**Code fix (this branch):** `runCloseRpc` races each RPC against `CLOSE_WRAPPED_RPC_MS = 3_000`. Timeout / throw / error → log, continue, flip anyway, `wrappedReady=false`. No retry on timeout or `57014`/`55P03`. Abandoned fetch gets `void pending.catch(() => {})` so a later Warp-kill is not an unhandledRejection. Pinned CST-1…4 in `tests/unit/close-session-timeout.test.ts`.
+
+**Review (Minor issues, addressed):** unhandled late reject; CST-1 now asserts no compute retry + 3s bound.
+
+**Next:** merge + deploy TypeScript only (no migration). Until then the UI close path can still hang on a PostgREST stall.
+
+---
+
 ## ⚖️ LOPSIDED TEAM SPLITS BANNED — 2026-08-17. Shipped `24fcc7a` (#73).
 
 The 07/30 balance gate stopped *preferring* INT+INT vs BEG+BEG; it still emitted that split as a stall-break. Ban: `snakeDraft` never returns a lopsided split (`gap > minGap + SKILL_VARIANCE_MAX`). When every mixed pairing is at the partnership cap, it seats mixed anyway (`usedCapOverride`) after Fix B tries another body. `rotatedDraft` drops lopsided from the cycle but still returns `null` so Tier-3 can expand the window. Preview / Tier-1/2 treat `usedCapOverride` like `null`. Last-resort accepts it.
