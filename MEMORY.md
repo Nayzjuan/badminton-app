@@ -51,7 +51,8 @@ the diff the next round reviews. Changes made:
 
 | Change | Where |
 |---|---|
-| Review gate capped at 2 rounds; "Minor issues" is a PASS; scoped to `*.ts,*.tsx,*.sql` | `CLAUDE.md`, `.claude/settings.json` |
+| Review gate: **every finding is fixed at every severity**, re-review capped at 2 rounds, scoped to `*.ts,*.tsx,*.sql` | `CLAUDE.md`, `.claude/settings.json` |
+| Leftovers after round 2 are handed over **with a reason** from a closed list of five, never as a bare list | `CLAUDE.md`, `HANDOFF.md` |
 | `npm run test:unit` added to mandatory validation + a clean-worktree check | `CLAUDE.md`, `.husky/pre-push` |
 | Writing rules: no counts in prose, no line numbers, markdown formatting is not a defect | `CLAUDE.md` |
 | Read-first mandate replaced by a bounded `DOC_INDEX.md` (~25k token budget) | `CLAUDE.md`, `HANDOFF.md` |
@@ -291,10 +292,18 @@ the review gate on 2026-08-19 and accepted as-is — the 08/15 incident was an *
 CST-1…CST-5 cover hang, throw, success, 57014-no-retry, and the ledger guard, but never a first
 failure that the retry rescues.
 
-**5. Cleanup: 15 stale remote branches** whose PRs are all merged. `origin` has 17 heads; keep only
-`main` and `backup/main-pre-cleanup-20260713` (a deliberate safety branch — **do not delete it**).
-🪤 `git branch -r --merged origin/main` finds only 6 of the 15: `--merged` asks whether a tip is an
-ancestor of `main`, which is never true for a **squash**-merged branch. Classify with
+**5. Cleanup: stale remote branches whose PRs are all merged.** Keep `main`,
+`backup/main-pre-cleanup-20260713` (a deliberate safety branch — **do not delete it**) and whatever
+is currently in flight. Re-derive the list rather than trusting a number here:
+
+```
+git ls-remote --heads origin | sed 's#.*refs/heads/##' > /tmp/heads.txt
+gh pr list --state all --limit 100 --json number,state,headRefName > /tmp/prs.json
+```
+then keep only heads whose `headRefName` has a `MERGED` PR and no `OPEN` one. Re-run on
+2026-08-19 after a `git fetch --prune`: every non-kept head had a merged PR and none were
+ambiguous. 🪤 `git branch -r --merged origin/main` misses most of them — `--merged` asks whether a
+tip is an ancestor of `main`, which is never true for a **squash**-merged branch. Classify with
 `gh pr list --state all`, never with `--merged` alone.
 
 ---

@@ -137,12 +137,14 @@ sentence. If you correct something, the correction carries the same burden of pr
 3. **Code review gate — bounded.** After validation, spawn one independent review subagent
    over `git diff origin/main...HEAD -- '*.ts' '*.tsx' '*.sql'`. **Precondition:** if that
    pathspec is empty (a docs-, config- or comment-only change), the gate does not run at all.
-   **Verdicts:** `LGTM` and `Minor issues` are both a PASS — log the minor items in `MEMORY.md`
-   and write the summary. Only `Needs fixes` earns a second round, and **there is no round 3**:
-   anything still open after round 2 gets written down as a known issue, not re-reviewed.
-   Prose, markdown formatting, and commit messages are permanently out of scope. See the full
-   rules and spawn prompt in `CLAUDE.md`. (A `Stop` hook in `.claude/settings.json` runs the
-   same gate with the same bounds.)
+   **Every finding gets fixed, at every severity** — "minor" describes the size of an item,
+   not whether it is optional. Then spawn round 2 to verify, and fix everything that returns.
+   **There is no round 3.** The cap bounds *reviewing*, not *fixing*: fix without limit,
+   re-review at most twice. Anything still unfixed after round 2 is handed to the user **with
+   a stated reason** from the five admissible reasons in `CLAUDE.md` — a bare list of open
+   items is not a handoff. Prose, markdown formatting, and commit messages are permanently out
+   of scope. See the full rules and spawn prompt in `CLAUDE.md`. (A `Stop` hook in
+   `.claude/settings.json` runs the same gate with the same bounds.)
 4. **Commit with explicit pathspecs, never `git add -A`.** Another session may be editing this
    same checkout concurrently; a blanket add has previously swept a peer's in-flight files into
    a pushed commit. Session-start `git status` is a stale snapshot.

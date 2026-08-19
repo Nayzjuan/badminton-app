@@ -113,19 +113,51 @@ merge gate.
 
 1. Finish applying all code changes.
 2. Run the Validation Workflow. It must be clean.
-3. Spawn the review agent (prompt below).
-4. **"LGTM" or "Minor issues" → DONE.** Write the summary. "Minor issues" is a PASS: log the
-   items in `MEMORY.md`, do not fix-and-re-review.
-5. **"Needs fixes"** → fix the flagged items, spawn ONE more round.
-6. **HARD CAP: there is no round 3.** If round 2 still says "Needs fixes", stop. Log the open
-   findings, state them in the completion summary, and hand them to the user.
+3. Spawn review round 1.
+4. **Fix every finding it returns, at every severity.** A verdict is a work list, not a
+   grade. "Minor issues" means the items are *small*, not that they are *optional* —
+   there is no severity that authorizes skipping a fix. The only things you may leave
+   alone are the ones the OUT OF SCOPE list below says are not defects at all.
+5. Spawn review round 2 to verify the fixes. Fix everything it returns, the same way.
+6. **HARD CAP: there is no round 3.** The cap bounds *reviewing*, not *fixing* — those
+   are different acts, and conflating them is what produced five-round tasks. Fix
+   without limit; re-review at most twice.
 
-**Terminate signal.** If a finding sits in text that an earlier round of this same task
-authored, that is the stop signal, not a defect. Corrections that correct corrections do not
-converge — there is no compiler for prose.
+**Anything still unfixed after round 2 must be handed over WITH A REASON.** A bare list is
+not a handoff — the reader cannot tell a blocked item from an abandoned one. For each item
+state, in this order:
+
+  - what the finding is, and the command or test that demonstrates it
+  - **why it is not fixed**, using one of the five admissible reasons below
+  - what you already tried, and what it did
+  - the smallest next step that would resolve it, and who can take it
+
+**The five admissible reasons.** Nothing else counts:
+
+  1. **Needs a decision that is not mine** — the fix is a product, UX, or priority
+     tradeoff with no technically-correct answer. State the options and your recommendation.
+  2. **Needs access I do not have** — a production write, a live session, a device, a
+     credential, a paid plan feature.
+  3. **Correct but unverifiable here** — the fix is written and committed, but nothing in
+     this environment can prove it (needs real traffic, a live close, a second club).
+     Say the fix shipped unverified; do not imply it is confirmed.
+  4. **Out of scope by size** — fixing it would change behaviour well beyond this task and
+     belongs in its own branch. Name the branch you would open.
+  5. **The two rounds disagree** — round 2 contradicts round 1's fix and there is no
+     adjudicator. Give both positions and your reading. This is the *only* reason that is
+     about the review process rather than the code, and it should be rare.
+
+"It seemed minor", "I ran out of rounds", and "the reviewer may be wrong" are **not**
+admissible. The first two are what step 4 exists to prevent; the third is a claim you must
+either substantiate — reproduce the finding and show it does not hold — or act on.
 
 **Commit messages are permanently out of scope.** PRs are squash-merged; intermediate
 messages are discarded. Never spend a round correcting one.
+
+**Prose is out of scope, and that is what the cap protects.** A finding that lands in text an
+earlier round of this same task authored is not a defect to fix — corrections that correct
+corrections do not converge, because nothing executes a sentence. This is a statement about
+*text*. It is never a reason to leave a code finding unfixed.
 
 **Spawn prompt — note the pathspec and the exclusions:**
 
@@ -143,10 +175,18 @@ IN SCOPE: logic correctness, edge cases, type safety, React rules of hooks,
 consistency with existing patterns in src/, regressions.
 
 Every finding must be expressible as a failing test, a failing `npx tsc --noEmit`,
-or a reproducible command. If you cannot express it that way it is a TODO, not a
-blocker — say so and mark the verdict accordingly.
+or a reproducible command. State that expression with the finding. If you cannot
+express it that way, label the finding UNSURE and say what you would need to
+settle it.
 
-Return one of: LGTM / Minor issues (list) / Needs fixes (list). Be direct.
+EVERY FINDING YOU RETURN WILL BE FIXED — there is no severity that gets skipped.
+So do not pad the list. A speculative finding is not free; it costs a real edit
+to real code. Report what you can substantiate, and nothing else. An empty list
+is a legitimate and useful answer.
+
+Return a list. For each finding: SEVERITY (BLOCKER / MINOR / UNSURE), the file,
+what is wrong, and the reproduction. Severity orders the work — it does not
+decide whether the work happens. Be direct.
 ```
 
 A `Stop` hook in `.claude/settings.json` runs the same gate automatically and applies the
