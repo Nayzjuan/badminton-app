@@ -19,9 +19,8 @@
 
 ## 🚧 IN FLIGHT — process overhaul, 2026-08-19
 
-Branch `test/verification-gaps`. **Not on any remote.** `git branch -r --contains` is empty for
-every commit below, and `git ls-remote --heads origin` does not list the branch — the same
-shape as the container-local loss of 2026-07. Push or PR before doing anything else.
+Branch `test/verification-gaps`, **pushed** — re-derive its state rather than trusting this line:
+`git ls-remote --heads origin test/verification-gaps` and `gh pr list --head test/verification-gaps`.
 
 - `c9c1295` — verification-gap tests (1,834 insertions) **and**
   `supabase/migrations/20260818120000_lock_queue_status_events_grants.sql`. That migration is
@@ -41,6 +40,17 @@ shape as the container-local loss of 2026-07. Push or PR before doing anything e
   guard disabled). (b) Suite MTC's `createdObjects` anchored its schema qualifier to `public`, so
   any other schema bound the name capture to the **schema**: `create table private.audit_log`
   yielded `private`, which matches the corpus trivially. MTC-4.
+- `d54aed3` — the review gate's third finding, fixed rather than logged: the 3 s Wrapped ceiling
+  was per RPC, so ledger + compute + retry + the 600 ms backoff could reach ~9.6 s while every
+  individual call looked obedient — past the serverless budget the ceiling exists to protect.
+  `CLOSE_WRAPPED_PHASE_MS` is now one absolute deadline shared by all three (`startPhaseBudget`);
+  a call reached with the budget spent is **fired but not awaited**, so rows still land late
+  rather than never. CST-6 (verified failing against a per-call budget) + CST-7, which pins the
+  `"failed" → retry → ok` transition `CloseRpcOutcome` never had a test for.
+- `d94475b` — `.husky/pre-push` skips the gate when every ref in the push is a deletion. Deleting
+  a merged branch ships no code; unguarded it re-ran the full ~17 s suite once per branch.
+- `86a1d93` — the manifest's size gate now measures the **read unit**, not the file. See the
+  table row below.
 
 **Why the overhaul:** feature and bug-fix work had slowed to the point where review round 3+ was
 still finding "mistakes". The cause was not the code. Two uncapped rules — the review gate
@@ -57,7 +67,8 @@ the diff the next round reviews. Changes made:
 | Writing rules: no counts in prose, no line numbers, markdown formatting is not a defect | `CLAUDE.md` |
 | Read-first mandate replaced by a bounded `DOC_INDEX.md` (~25k token budget) | `CLAUDE.md`, `HANDOFF.md` |
 | CI `paths-ignore` for docs + `concurrency` cancel-in-progress | `.github/workflows/*.yml` |
-| MEMORY.md capped at 40 KB, APP_MANIFEST warned at 300 KB | `.husky/pre-commit` |
+| MEMORY.md capped at 40 KB — that one **is** read whole, so total bytes are the real cost | `.husky/pre-commit` |
+| APP_MANIFEST capped per **section**, not per file: nothing reads it whole, so total bytes measured a cost no reader pays. `DOC_INDEX` now maps `####` too, and `gen-doc-index.mjs --check` fails a section over 40 KB. The remedy is a sub-heading — **nothing is deleted** | `scripts/gen-doc-index.mjs`, `.husky/pre-commit` |
 | 23 stale root plans archived; history and reference split out of MEMORY.md | `docs/archive/`, `docs/reference/` |
 
 ---
@@ -248,23 +259,13 @@ Once the firewall hides a draft's `match_players` rows from the very player it r
 
 ## 📋 OPEN ITEMS
 
-Triaged out of the retired 45 KB "STANDING TO-DO" on 2026-08-19. The reasoning behind each —
-including every superseded framing — is in `docs/archive/MEMORY_HISTORY.md`, Part 2. **Do not
-re-import that reasoning here.** If an item closes, delete it from this list.
+Triaged out of the retired 45 KB "STANDING TO-DO" on 2026-08-19, worked down to two on
+2026-08-20. The reasoning behind each — including every superseded framing — is in
+`docs/archive/MEMORY_HISTORY.md`, Part 2. **Do not re-import that reasoning here.** If an item
+closes, delete it from this list; if it closes by DECISION rather than by a fix, archive the
+decision with its reason first, or the next session re-opens it as a gap.
 
-**1. Live-session watch: do held cross-court drafts complete their lifecycle?**
-Cross-court generation works — the 08/15 session created 12 held drafts — but only **2** reached a
-court, and the publish path that blocked the other 10 was fixed after the fact (PR #68 →
-`main` `61e942b`, migration stamp `20260816024129`). Nothing has re-measured it since. Watch, in
-one live session with auto-matchmaking ON:
-  - (a) created → published → on court, against the **12 → 2** baseline;
-  - (b) whether any hold outlives `CROSS_COURT_MAX_HOLD_MINUTES = 15`. The cancel is event-driven
-    off match end/cancel, **not a timer**, so a court that goes quiet strands its hold.
-  - (c) fold in the first real `closeSession()` exercise of
-    `refresh_cross_session_stats` (migration `20260812100000`, stamp `20260812144342`). Every
-    production invocation so far has been manual; no session has closed since it was applied.
-
-**2. Drop the two pre-rebuild backup tables — on or after 2026-09-12.**
+**1. Drop the two pre-rebuild backup tables — on or after 2026-09-12.**
 ```sql
 drop table if exists public.player_rivalries_prerebuild_20260812;
 drop table if exists public.player_partnerships_prerebuild_20260812;
@@ -272,41 +273,16 @@ drop table if exists public.player_partnerships_prerebuild_20260812;
 They are the only evidence trail for the three disclosed badge revocations of 2026-08-12, which is
 why they were kept. ⚠️ Both are **untracked DB objects** — no migration file exists for them or for
 the RLS-enable applied to them — so they will not appear in any `supabase db diff`. The expiry date
-above is the only thing that closes that drift.
+above is the only thing that closes that drift. ⏳ An early drop was raised on 2026-08-20 and is
+**awaiting the user's call** — the drop is irreversible and 2026-09-12 is three weeks out, so the
+question is whether the retention window still buys anything.
 
-**3. The cross-session stats ledger has no as-of date.**
+**2. The cross-session stats ledger has no as-of date.**
 Replaying an old session counts later results as pre-tonight history. Separate defect from the
-under-count that was fixed on 2026-08-12; the rebuild does not touch it.
-
-**4. Optional hardening: project-wide Realtime "Allow public access" OFF.**
-Requires every `postgres_changes` channel to be private first — a scoped project of its own, not a
-toggle. This is the single remaining open item from the 2026-07-21 tenancy audit.
-
-**6. `closeSession`'s 3s ceiling is per-RPC, not per-phase.**
-`withTimeout(…, 3_000)` wraps each call, so the worst case before `is_active` flips is refresh 3s +
-compute 3s + 600 ms backoff + retry 3s ≈ 9.6s. No route in the repo sets `maxDuration`, so the
-platform default is the real ceiling and nothing pins it. Fix if it ever bites: one phase deadline
-shared by all three calls (compute `deadline = start + 3_000` once, pass the remainder). Raised by
-the review gate on 2026-08-19 and accepted as-is — the 08/15 incident was an *unbounded* wait, and
-9.6s is bounded. 🪤 `CloseRpcOutcome`'s `"failed" → retry → ok` transition is still unasserted:
-CST-1…CST-5 cover hang, throw, success, 57014-no-retry, and the ledger guard, but never a first
-failure that the retry rescues.
-
-**5. Cleanup: stale remote branches whose PRs are all merged.** Keep `main`,
-`backup/main-pre-cleanup-20260713` (a deliberate safety branch — **do not delete it**) and whatever
-is currently in flight. Re-derive the list rather than trusting a number here:
-
-```
-git ls-remote --heads origin | sed 's#.*refs/heads/##' > /tmp/heads.txt
-gh pr list --state all --limit 100 --json number,state,headRefName > /tmp/prs.json
-```
-then keep only heads whose `headRefName` has a `MERGED` PR and no `OPEN` one. Re-run on
-2026-08-19 after a `git fetch --prune`: every non-kept head had a merged PR and none were
-ambiguous. 🪤 `git branch -r --merged origin/main` misses most of them — `--merged` asks whether a
-tip is an ancestor of `main`, which is never true for a **squash**-merged branch. Classify with
-`gh pr list --state all`, never with `--merged` alone.
-
----
+under-count that was fixed on 2026-08-12; the rebuild does not touch it — both ledgers in the
+measured A/B were *complete* and 16 grants still moved, so completeness does not confer
+as-of-ness. The mechanism and the measured grant delta per award slug are written up in
+`APP_MANIFEST.md` §3.7 (search `rivalry_with_tonight`); do not re-derive them here.
 
 ## 📚 Where everything else lives
 

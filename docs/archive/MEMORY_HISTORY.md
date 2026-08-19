@@ -13,7 +13,44 @@
 
 ---
 
-## Part 1 — sessions 2026-08-18 back to 2026-07-24
+## Part 1 — sessions 2026-08-20 back to 2026-07-24
+
+## ⚖️ TWO OPEN ITEMS CLOSED BY DECISION, NOT BY FIX — 2026-08-20
+
+Both were carried out of the retired STANDING TO-DO on 2026-08-19 and closed by the user on
+2026-08-20 without being worked. Recorded here so the next reader does not "close the gap" and
+reintroduce them as tasks.
+
+### 1. Live-session watch on cross-court held drafts — ⚖️ CLOSED, will not be run as a task
+
+Was: watch one live session with auto-matchmaking ON and measure (a) created → published → on
+court against the 08/15 baseline of 12 held drafts → 2 on court, (b) whether any hold outlives
+`CROSS_COURT_MAX_HOLD_MINUTES`, (c) the first real `closeSession()` exercise of
+`refresh_cross_session_stats`.
+
+**Why closed.** It was never an engineering task — it is an observation that can only happen
+when a session happens, and it had no owner, no trigger and no completion condition, so it sat
+in OPEN ITEMS as permanent furniture. The publish-path defects it was meant to detect are
+already fixed and shipped (PR #68 → `main` `61e942b`, migration stamp `20260816024129`) and
+pinned by tests. If a future session produces held drafts that do not reach a court, that is a
+bug report with real evidence, which beats a standing instruction to go looking. The two
+sub-questions worth keeping are recorded as behaviour in `APP_MANIFEST.md`, not as a to-do:
+the hold cancel is event-driven off match end/cancel and **not** a timer, so a court that goes
+quiet strands its hold.
+
+### 2. Project-wide Realtime "Allow public access" OFF — ⚖️ ACCEPTED (deliberate non-fix)
+
+The last open finding from the 2026-07-21 tenancy audit. Turning the project-wide toggle off
+requires every `postgres_changes` channel to be private first, which is a scoped project of its
+own, not a setting change — flipping it before that work is done takes the live app down.
+
+**Decision: accepted, not fixed.** The residual exposure is bounded by RLS, which is enforced at
+join time on every channel (see the JWT-before-join behaviour in `APP_MANIFEST.md`) and is
+covered by Suite RB's negative-coverage tests. This toggle is defence in depth on top of a
+control that is already tested, not the control itself. ⚠️ This is a **decision**, not a
+finding that was disproved: if the private-channel migration ever happens for another reason,
+turn the toggle off in the same change. Do not re-open it on its own.
+
 
 ## 🔔 ORGANIZER NOTICE INBOX + PLAYER SCORE CORRECTION — 2026-08-16. Code merged (#71 / `8fdb909`). Migration APPLIED TO PROD.
 

@@ -247,7 +247,7 @@ reader treats it as a gap to close and reintroduces the design that was delibera
 | `docs/archive/LEADERBOARD_UI_SPEC.md` | 23 KB |
 | `docs/archive/MATCHMAKING_ENGINE_AUDIT_2026-08-12.md` | 12 KB |
 | `docs/archive/MATCH_PROVENANCE_AUDIT_PLAN.md` | 33 KB |
-| `docs/archive/MEMORY_HISTORY.md` | 600 KB |
+| `docs/archive/MEMORY_HISTORY.md` | 602 KB |
 | `docs/archive/MIGRATION_CHECKLIST.md` | 1021 B |
 | `docs/archive/MONTHLY_LEADERBOARD_PLAN.md` | 22 KB |
 | `docs/archive/MULTI_TENANT_PHASE2_PLAN.md` | 8 KB |
