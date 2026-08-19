@@ -79,7 +79,6 @@ async function readPartnership(playerId: string, partnerId: string) {
   return data;
 }
 
-
 async function readWrap(sessionId: string, playerId: string) {
   const { data } = await serviceClient()
     .from("session_wrapped_stats")
@@ -377,5 +376,65 @@ describe("cross-session ledgers — Suite XS", () => {
     });
     expect(error).toBeNull();
     expect(await readWrap(s2.id, p3.id)).toEqual(comeback);
+  });
+
+  // ── XS-7: a hidden session is not anybody's "previous night" ────
+
+  // _prior_awards has filtered is_hidden since 20260811000000. The two CTEs
+  // that decide which session counts as the one before — prior_sessions_ranked
+  // and prior_carry — did not, so an infrastructure session could hand a real
+  // player a streak and a dominant night they never played in front of anyone.
+  //
+  // Both gates are asserted because they are two separate rewrites over two
+  // separate CTEs: consistent_dominator reads prior_sessions_ranked, momentum
+  // reads prior_carry. Filtering one and not the other passes a one-gate test.
+  //
+  // Close first, hide second: is_hidden is set by hand after the fact, which is
+  // the only order that leaves a wrap row behind to be mistaken for history.
+  it("does not let a hidden session serve as the prior session", async () => {
+    const organizer = await makeProfile({ faker });
+    const [p1, p2, p3, p4] = await makeFour();
+
+    const hidden = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(hidden.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(hidden.id, organizer.id);
+    await queryCommitted("update public.sessions set is_hidden = true where id = $1", [hidden.id]);
+    await backdate(hidden.id, 7);
+
+    // A 3-0 night is win_pct 100 and a 3-game win streak — everything both
+    // gates need, if the night were allowed to count at all.
+    expect(await readWrap(hidden.id, p1.id)).toContain("clean_sweep");
+
+    const tonight = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(tonight.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(tonight.id, organizer.id);
+
+    const wrap = await readWrap(tonight.id, p1.id);
+    expect(wrap.length).toBeGreaterThan(0);
+    expect(wrap).not.toContain("consistent_dominator");
+    expect(wrap).not.toContain("momentum");
+  });
+
+  // ── XS-8: and a visible one still is ────
+
+  // XS-7 alone is satisfiable by filtering both CTEs down to nothing. Same two
+  // nights, same scores, the first one left visible: the awards XS-7 requires
+  // to be ABSENT must be PRESENT.
+  it("still carries a visible prior session forward", async () => {
+    const organizer = await makeProfile({ faker });
+    const [p1, p2, p3, p4] = await makeFour();
+
+    const first = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(first.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(first.id, organizer.id);
+    await backdate(first.id, 7);
+
+    const tonight = await makeSession({ faker, organizer: organizer.id });
+    await threeMatches(tonight.id, [p1.id, p2.id], [p3.id, p4.id]);
+    await closeAs(tonight.id, organizer.id);
+
+    const wrap = await readWrap(tonight.id, p1.id);
+    expect(wrap).toContain("consistent_dominator");
+    expect(wrap).toContain("momentum");
   });
 });

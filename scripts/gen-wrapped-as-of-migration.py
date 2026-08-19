@@ -24,6 +24,9 @@ import hashlib
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _wrapped_apply_sql import emit  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "supabase/migrations/20260811000000_one_time_milestone_awards.sql"
 OUT = ROOT / "supabase/migrations/20260820000000_wrapped_reads_the_ledger_as_of_this_session.sql"
@@ -396,6 +399,40 @@ comment on function public.compute_session_wrapped(uuid) is
 """
 
 
+
+def _flag_dest(flag: str) -> Path:
+    """Resolve <path> for a flag. <path> is an OUTPUT destination, not an input.
+
+    `--apply-sql <the migration>` reads naturally as "apply this file" and would
+    instead overwrite the 54 KB migration with a ~12 KB DO block. That was done
+    for real on 2026-08-11 against the sibling generator; refuse it here.
+    """
+    try:
+        raw = sys.argv[sys.argv.index(flag) + 1]
+    except IndexError:
+        sys.exit(f"ABORT: {flag} needs an output path, e.g. {flag} /tmp/out.sql")
+    if raw.startswith("--"):
+        sys.exit(f"ABORT: {flag} needs an output path but got the flag {raw!r}")
+    p = Path(raw)
+
+    def _same(a: Path, b: Path) -> bool:
+        if a.resolve() == b.resolve():
+            return True
+        if a.exists() and b.exists():
+            sa, sb = a.stat(), b.stat()
+            return (sa.st_dev, sa.st_ino) == (sb.st_dev, sb.st_ino)  # hardlink
+        return False
+
+    for guard, what in ((OUT, "the migration"), (BASE, "the baseline")):
+        if _same(p, guard):
+            sys.exit(
+                f"ABORT: {flag} <path> is an OUTPUT destination, and you pointed it at "
+                f"{what} ({guard.name}). Use a scratch path."
+            )
+    if not p.parent.exists():
+        sys.exit(f"ABORT: {flag} <path> directory does not exist: {p.parent}")
+    return p
+
 def main() -> None:
     base_sql = BASE.read_text(encoding="utf-8")
     body = extract_body(base_sql)
@@ -428,6 +465,26 @@ def main() -> None:
             f"baseline's 35 -- apply_migration strips non-ASCII from stored "
             f"function bodies, so added text must be ASCII-only"
         )
+
+    flag_mode = "--verify-sql" in sys.argv or "--apply-sql" in sys.argv
+    if flag_mode:
+        # Read-only by contract: the body stays in memory and OUT is untouched.
+        verify_sql, apply_sql, target = emit(
+            generator=Path(__file__).name,
+            migration="20260820000000_wrapped_reads_the_ledger_as_of_this_session.sql",
+            preamble=base_sql[base_sql.index("CREATE OR REPLACE FUNCTION public.compute_session_wrapped") : base_sql.index("AS $function$\n") + len("AS $function$\n")],
+            body=body,
+            subs=SUBS,
+            baseline_md5=BASELINE_MD5,
+        )
+        if "--verify-sql" in sys.argv:
+            d = _flag_dest("--verify-sql"); d.write_text(verify_sql, encoding="utf-8")
+            print(f"wrote {d}")
+        if "--apply-sql" in sys.argv:
+            d = _flag_dest("--apply-sql"); d.write_text(apply_sql, encoding="utf-8")
+            print(f"wrote {d}")
+        print(f"target md5 = {target}  ({len(SUBS)} substitutions)")
+        return
 
     OUT.write_text(HEADER + body + FOOTER, encoding="utf-8")
     print(f"wrote {OUT.relative_to(ROOT)}  ({OUT.stat().st_size} bytes)")
