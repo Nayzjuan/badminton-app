@@ -27,8 +27,21 @@ fi
 # This cap is the forcing function. When it fires, the fix is to MOVE closed
 # entries to docs/archive/, not to raise the number.
 #   Escape hatch (use it only to land the cleanup itself): git commit --no-verify
+#
+# The two documents are capped on DIFFERENT things, because they are read in
+# different ways and only one of them is read whole.
+#
+#   MEMORY.md      — loaded in full every session. Total bytes ARE the cost, so
+#                    the cap is on total bytes and it is hard.
+#   APP_MANIFEST.md — never read whole (CLAUDE.md forbids it); it is opened one
+#                    indexed section at a time. Total bytes are not the cost —
+#                    the largest SINGLE SECTION is, because that is the block a
+#                    reader is told to open, and an oversized one truncates the
+#                    context silently. So the manifest is checked by section, by
+#                    `gen-doc-index.mjs --check`, and the remedy is a `####`
+#                    sub-heading, not a deletion. A 346 KB file whose median
+#                    section is 1.6 KB is FINE; nothing needs to be left out.
 MEMORY_CAP=40000
-MANIFEST_WARN=300000
 
 if git diff --cached --name-only | grep -qx 'MEMORY.md'; then
   SIZE=$(git show :MEMORY.md | wc -c | tr -d ' ')
@@ -42,11 +55,15 @@ if git diff --cached --name-only | grep -qx 'MEMORY.md'; then
 fi
 
 if git diff --cached --name-only | grep -qx 'APP_MANIFEST.md'; then
-  SIZE=$(git show :APP_MANIFEST.md | wc -c | tr -d ' ')
-  if [ "$SIZE" -gt "$MANIFEST_WARN" ]; then
-    echo "[pre-commit] ⚠ APP_MANIFEST.md is ${SIZE} bytes (soft limit ${MANIFEST_WARN})."
-    echo "             Dated incident narrative belongs in docs/incidents/, not here."
-  fi
+  # Measure the STAGED blob, not the working tree — the commit is what ships.
+  STAGED_MANIFEST=$(mktemp)
+  git show :APP_MANIFEST.md > "$STAGED_MANIFEST"
+  node scripts/gen-doc-index.mjs --check "$STAGED_MANIFEST" || {
+    rm -f "$STAGED_MANIFEST"
+    echo "             Override for the split commit itself: git commit --no-verify"
+    exit 1
+  }
+  rm -f "$STAGED_MANIFEST"
 fi
 
 # ── Lint-staged (Prettier, ESLint) ───────────────────────────────────────────

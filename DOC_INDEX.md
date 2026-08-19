@@ -38,19 +38,45 @@ After a context compaction, do **not** re-read any of this.
 | &nbsp;&nbsp;&nbsp;&nbsp;Realtime Subscription Auth (JWT-before-join) | 82–91 | `sed -n '82,91p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Shared Server Action Helpers | 92–104 | `sed -n '92,104p' APP_MANIFEST.md` |
 | **2. Database Schema & State** | 105–129 | `sed -n '105,129p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Tables | 130–316 | `sed -n '130,316p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Tables | 130–131 | `sed -n '130,131p' APP_MANIFEST.md` |
+| **`profiles`** | 132–153 | `sed -n '132,153p' APP_MANIFEST.md` |
+| **`sessions`** | 154–173 | `sed -n '154,173p' APP_MANIFEST.md` |
+| **`session_organizers`** | 174–184 | `sed -n '174,184p' APP_MANIFEST.md` |
+| **`courts`** | 185–194 | `sed -n '185,194p' APP_MANIFEST.md` |
+| **`queue_entries`** | 195–209 | `sed -n '195,209p' APP_MANIFEST.md` |
+| **`matches`** | 210–227 | `sed -n '210,227p' APP_MANIFEST.md` |
+| **`match_players`** | 228–238 | `sed -n '228,238p' APP_MANIFEST.md` |
+| **`match_games`** | 239–251 | `sed -n '239,251p' APP_MANIFEST.md` |
+| **`session_wrapped_stats`** | 252–274 | `sed -n '252,274p' APP_MANIFEST.md` |
+| **`identity_migrations`** | 275–286 | `sed -n '275,286p' APP_MANIFEST.md` |
+| **`push_subscriptions`** | 287–301 | `sed -n '287,301p' APP_MANIFEST.md` |
+| **`club_milestones`** | 302–316 | `sed -n '302,316p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Enums | 317–329 | `sed -n '317,329p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Views | 330–342 | `sed -n '330,342p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Postgres Functions (RPCs) | 343–371 | `sed -n '343,371p' APP_MANIFEST.md` |
 | **3. Feature Inventory & Logic Rules** | 372–373 | `sed -n '372,373p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.1 Matchmaking Engine | 374–651 | `sed -n '374,651p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.1 Matchmaking Engine | 374–379 | `sed -n '374,379p' APP_MANIFEST.md` |
+| **Priority Scoring (`computePriorityScore`) — 3-Tier System** | 380–420 | `sed -n '380,420p' APP_MANIFEST.md` |
+| **Candidate Scoring (`scoreCandidates`)** | 421–434 | `sed -n '421,434p' APP_MANIFEST.md` |
+| **Group Assembly (`buildCombinationGroup`) — N-choose-3 Combination Search** | 435–447 | `sed -n '435,447p' APP_MANIFEST.md` |
+| **Partnership Cap Enforcement** | 448–457 | `sed -n '448,457p' APP_MANIFEST.md` |
+| **Team Draft (`snakeDraft` / `rotatedDraft`)** | 458–470 | `sed -n '458,470p' APP_MANIFEST.md` |
+| **Anti-Repeat / Diversity Logic** | 471–497 | `sed -n '471,497p' APP_MANIFEST.md` |
+| **Engine Constants (`src/lib/constants.ts`)** | 498–534 | `sed -n '498,534p' APP_MANIFEST.md` |
+| **Engine Capacity (`runEngineInternal`) — Dynamic Draft Cap** | 535–562 | `sed -n '535,562p' APP_MANIFEST.md` |
+| **Engine Flow** | 563–588 | `sed -n '563,588p' APP_MANIFEST.md` |
+| **DB-Level TOCTOU Guards (`create_match_with_players`, migration `20260507000000`)** | 589–611 | `sed -n '589,611p' APP_MANIFEST.md` |
+| **Cross-Court Diversity Drafting (held drafts)** | 612–651 | `sed -n '612,651p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.2 On-Deck Queue | 652–669 | `sed -n '652,669p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.3 Active Courts | 670–683 | `sed -n '670,683p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.4 Tap-to-Swap (Intra-match & Cross-match) | 684–704 | `sed -n '684,704p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.5 Draft / Review Mode | 705–763 | `sed -n '705,763p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.5 Draft / Review Mode | 705–745 | `sed -n '705,745p' APP_MANIFEST.md` |
+| **Auto-Publish Mode (the publish gate, OFF) — `sessions.auto_publish`** | 746–763 | `sed -n '746,763p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.6 VIP Tags | 764–791 | `sed -n '764,791p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.7 Session Wrapped | 792–997 | `sed -n '792,997p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.8 Player Identity Reconnect | 998–1016 | `sed -n '998,1016p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.7 Session Wrapped | 792–917 | `sed -n '792,917p' APP_MANIFEST.md` |
+| **3.7.1 One-time milestone awards (migrations `20260811000000` + `20260811000001`)** | 918–997 | `sed -n '918,997p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.8 Player Identity Reconnect | 998–1010 | `sed -n '998,1010p' APP_MANIFEST.md` |
+| **Queue-status audit (`queue_status_events`, 2026-08-15)** | 1011–1016 | `sed -n '1011,1016p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.8a Credential-guessing rate limits (2026-07-21) | 1017–1038 | `sed -n '1017,1038p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.8b Duplicate-Name Resolution (forced rename on next login) | 1039–1070 | `sed -n '1039,1070p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.8c Google OAuth — Sign-in & Account Upgrade | 1071–1130 | `sed -n '1071,1130p' APP_MANIFEST.md` |
@@ -73,7 +99,13 @@ After a context compaction, do **not** re-read any of this.
 | &nbsp;&nbsp;&nbsp;&nbsp;3.22a RPC execute lockdown + live-swap session binding (2026-07-23) | 1458–1494 | `sed -n '1458,1494p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.23–3.44 Incident write-ups (moved out of this file) | 1495–1522 | `sed -n '1495,1522p' APP_MANIFEST.md` |
 | **4. UI/UX Conventions (Impeccable Standards)** | 1523–1524 | `sed -n '1523,1524p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.1 Design System — "Court Nights" Theme | 1525–1607 | `sed -n '1525,1607p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.1 Design System — "Court Nights" Theme | 1525–1528 | `sed -n '1525,1528p' APP_MANIFEST.md` |
+| **Font Stack — 4 typefaces, 4 roles** | 1529–1539 | `sed -n '1529,1539p' APP_MANIFEST.md` |
+| **Color Space — OKLCH (perceptually uniform)** | 1540–1543 | `sed -n '1540,1543p' APP_MANIFEST.md` |
+| **Semantic tokens — Light mode (`:root`)** | 1544–1560 | `sed -n '1544,1560p' APP_MANIFEST.md` |
+| **Semantic tokens — Dark mode (`.dark`)** | 1561–1575 | `sed -n '1561,1575p' APP_MANIFEST.md` |
+| **Organizer Command-Center Token Namespace (`cc-*`)** | 1576–1597 | `sed -n '1576,1597p' APP_MANIFEST.md` |
+| **Key components added in the revamp** | 1598–1607 | `sed -n '1598,1607p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;4.2 Color Semantic Language | 1608–1622 | `sed -n '1608,1622p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;4.3 Typography Hierarchy | 1623–1637 | `sed -n '1623,1637p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;4.4 Spacing Conventions | 1638–1646 | `sed -n '1638,1646p' APP_MANIFEST.md` |
@@ -92,7 +124,9 @@ After a context compaction, do **not** re-read any of this.
 | **7. Testing** | 1786–1787 | `sed -n '1786,1787p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1788–1805 | `sed -n '1788,1805p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 1806–1832 | `sed -n '1806,1832p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 1833–1978 | `sed -n '1833,1978p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 1833–1868 | `sed -n '1833,1868p' APP_MANIFEST.md` |
+| **The migration set must replay from scratch (2026-07-22)** | 1869–1951 | `sed -n '1869,1951p' APP_MANIFEST.md` |
+| **`after()` in integration tests** | 1952–1978 | `sed -n '1952,1978p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 1979–1992 | `sed -n '1979,1992p' APP_MANIFEST.md` |
 | **8. File Map** | 1993–2244 | `sed -n '1993,2244p' APP_MANIFEST.md` |
 | **9. Known Gotchas** | 2245–2281 | `sed -n '2245,2281p' APP_MANIFEST.md` |
@@ -244,3 +278,9 @@ A document is not free to keep. Every line in `APP_MANIFEST.md` and `MEMORY.md` 
 every session, forever, and paid for in context that is then not available for the code. When
 an item closes, move it out. When a plan ships, archive it. When a claim is dated, it is an
 incident write-up and belongs in `docs/incidents/`.
+
+Size alone is not the defect, and nothing here is deleted to make a number go down —
+closed items MOVE to `docs/archive/`, which stays greppable. What actually breaks a read is
+one oversized SECTION, because a section is the unit you are told to open. `npm run docs:index`
+splits nothing by itself; `node scripts/gen-doc-index.mjs --check` reports the distribution and
+fails on an oversized one. The remedy is a `####` sub-heading, which removes no content.

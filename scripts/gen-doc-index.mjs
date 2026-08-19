@@ -6,11 +6,22 @@
 // section and the map is true again. Never edit DOC_INDEX.md by hand.
 
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 
 const ROOT = process.cwd();
 
-/** Files whose ## / ### headings become the section map. */
+/**
+ * Files whose ## … #### headings become the section map.
+ *
+ * Depth 4, not 3, because the map's job is to bound the READ UNIT — the block a
+ * reader opens with one `sed -n` — and the unit is whatever sits between two
+ * indexed headings. At depth 3 the two largest units in APP_MANIFEST.md were
+ * 61 KB and 55 KB, big enough to truncate the context silently, which is the
+ * exact failure the index exists to prevent. Indexing the `####` headings those
+ * sections already contain splits them without deleting a word. Recompute the
+ * distribution rather than trusting a number here:
+ *   node scripts/gen-doc-index.mjs --check
+ */
 const MAPPED = ["APP_MANIFEST.md", "docs/reference/ARCHITECTURE_QUICKREF.md"];
 
 /** Files listed by name + purpose only — too small or too volatile to map by heading. */
@@ -28,17 +39,60 @@ const LISTED = [
 const bytes = (p) => (existsSync(join(ROOT, p)) ? statSync(join(ROOT, p)).size : 0);
 const kb = (n) => (n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
 
+// `--check` passes an absolute temp path (the staged blob), so resolve both forms.
+const atRoot = (p) => (isAbsolute(p) ? p : join(ROOT, p));
+
 function headings(relPath) {
-  const lines = readFileSync(join(ROOT, relPath), "utf8").split("\n");
+  const lines = readFileSync(atRoot(relPath), "utf8").split("\n");
   const found = [];
   lines.forEach((line, i) => {
-    const m = /^(#{2,3})\s+(.*)$/.exec(line);
+    const m = /^(#{2,4})\s+(.*)$/.exec(line);
     if (m) found.push({ depth: m[1].length, title: m[2].trim(), start: i + 1 });
   });
   return found.map((h, i) => ({
     ...h,
     end: i + 1 < found.length ? found[i + 1].start - 1 : lines.length,
   }));
+}
+
+/**
+ * Largest block a reader may be told to open with one `sed -n` — NOT a cap on
+ * the file.
+ *
+ * The old gate warned when APP_MANIFEST.md passed 300 KB, but nothing reads
+ * APP_MANIFEST.md whole; CLAUDE.md forbids it. Total bytes were a proxy for the
+ * thing that actually hurts, and the proxy was wrong in both directions: it
+ * fires on a 346 KB file whose median section is 1.5 KB, and it would stay
+ * silent on a 120 KB file that was one unsplittable heading. What truncates a
+ * context is one oversized SECTION, so that is what this measures.
+ *
+ * The fix when it fires is a `####` sub-heading, never a deletion — splitting a
+ * section removes nothing and the index picks the new heading up on the next
+ * run. Re-derive the current distribution instead of trusting a number in prose:
+ *   node scripts/gen-doc-index.mjs --check
+ */
+const SECTION_WARN = 40000;
+
+/** `--check [file]` — report the read-unit distribution; exit 1 if any is oversized. */
+if (process.argv.includes("--check")) {
+  const target = process.argv[process.argv.indexOf("--check") + 1] || "APP_MANIFEST.md";
+  const lines = readFileSync(atRoot(target), "utf8").split("\n");
+  const units = headings(target)
+    .map((h) => ({ ...h, size: Buffer.byteLength(lines.slice(h.start - 1, h.end).join("\n")) }))
+    .sort((a, b) => b.size - a.size);
+  const over = units.filter((u) => u.size > SECTION_WARN);
+  const mid = [...units].sort((a, b) => a.size - b.size)[Math.floor(units.length / 2)];
+  console.log(
+    `${target}: ${units.length} read units, median ${mid.size} B, largest ${units[0].size} B (cap ${SECTION_WARN})`,
+  );
+  for (const u of over) {
+    console.log(`  \u2717 ${u.size} B  lines ${u.start}-${u.end}  ${u.title}`);
+  }
+  if (over.length) {
+    console.log("  Split it with a #### sub-heading — do not delete content, and do not raise the cap.");
+    process.exit(1);
+  }
+  process.exit(0);
 }
 
 const out = [];
@@ -126,6 +180,12 @@ out.push("A document is not free to keep. Every line in `APP_MANIFEST.md` and `M
 out.push("every session, forever, and paid for in context that is then not available for the code. When");
 out.push("an item closes, move it out. When a plan ships, archive it. When a claim is dated, it is an");
 out.push("incident write-up and belongs in `docs/incidents/`.");
+out.push("");
+out.push("Size alone is not the defect, and nothing here is deleted to make a number go down —");
+out.push("closed items MOVE to `docs/archive/`, which stays greppable. What actually breaks a read is");
+out.push("one oversized SECTION, because a section is the unit you are told to open. `npm run docs:index`");
+out.push("splits nothing by itself; `node scripts/gen-doc-index.mjs --check` reports the distribution and");
+out.push("fails on an oversized one. The remedy is a `####` sub-heading, which removes no content.");
 out.push("");
 
 writeFileSync(join(ROOT, "DOC_INDEX.md"), out.join("\n"));
