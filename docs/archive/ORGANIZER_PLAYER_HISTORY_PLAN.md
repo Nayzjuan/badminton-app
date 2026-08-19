@@ -8,7 +8,7 @@
 > `match-history-panel.tsx` integration and `tests/unit/match-history-filter.test.ts`
 > are all live on `main`. The header below survived unedited from the pre-approval
 > draft, which is why a later pending-work sweep re-inventoried a finished feature
-> as unstarted. **The living description is [APP_MANIFEST.md §3.24](APP_MANIFEST.md)** —
+> as unstarted. **The living description is [APP_MANIFEST.md §3.24](../../APP_MANIFEST.md)** —
 > read that, not this. This file is kept only for the design rationale and the
 > adversarial-review trail.
 >

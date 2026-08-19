@@ -1,0 +1,31 @@
+# 3.27 The `realtime:` topic prefix — every private broadcast silently discarded (2026-08-04)
+
+> Extracted from `APP_MANIFEST.md` §3.27 on 2026-08-19. This is a **dated incident
+> write-up**, not current-state documentation. The behaviour it describes may have
+> been superseded; `src/` and `src/types/database.ts` are the authority.
+
+
+**File:** `src/lib/broadcast.ts` · pinned by `tests/unit/realtime-private-broadcast.test.ts` RPB-2 and `tests/e2e/scenario-r-resilience.spec.ts` R-1/R-2. (Shipped alongside, but unrelated: the `is_hidden` leaderboard work in §2 — `src/lib/clubs.ts`, `src/app/leaderboard/page.tsx`, and the two `20260804*` migrations.)
+
+**The bug.** All six senders in `broadcast.ts` posted to the topic `` `realtime:session-events:${sessionId}` ``, while every client joins the channel named `session-events:{sessionId}`. The topic strings never matched, so **no browser has ever received a message from this module.** Affected events: `session_closed`, `auto_matchmaking_toggled`, `auto_publish_toggled`, `cap_saturation`, `draft_cap_phase`, `organizer_intervention`. The fix is the removal of that prefix — nothing else changed.
+
+**`draft_cap_phase` was the one event this did NOT revive — it had a second, independent defect, fixed separately in §3.28.** `broadcast.ts` carried no server-only guard, so it was bundled into whatever imported it, and `use-organizer-dashboard.ts` is `"use client"`. Its `clearing`/`generating`/`done` calls therefore ran **in the browser**, where `SUPABASE_SERVICE_ROLE_KEY` is undefined — the client build compiles that read to a runtime `process.env` lookup rather than inlining a literal (confirmed by inspecting the emitted chunk; the key is correctly *not* shipped to the browser), so `postBroadcast` returned at its missing-key guard. Those phases were never sent, and the co-organizer lockout overlay never engaged for anyone. The failure direction was at least safe — the unlock was delivered, the lock was not. See §3.28 for the fix.
+
+**Why it survived months of use, and this is the part worth remembering.** Three independent things each made a dead channel look alive:
+
+1. **The transport lies by design.** Supabase's REST broadcast endpoint (`POST /realtime/v1/api/broadcast`) answers **202 for any topic string whatsoever**. There is no such thing as an unknown topic — a topic nobody joined is a valid topic with zero subscribers. A send to a misspelled channel is byte-for-byte indistinguishable from a delivered one at the call site, and no error surfaces anywhere, ever.
+2. **A polling fallback masked the two visible events.** `use-organizer-session.ts` re-fetches every 15 s, so `auto_matchmaking_toggled` and `auto_publish_toggled` *did* reach the UI — just via the poll, a second or two late, which reads as normal latency. Those two happen to be the only events a developer routinely exercises by hand. The other four have no fallback and were simply dead: closing a session never pushed players to Wrapped, and organizer interventions never toasted.
+3. **A local repro was misread and became a standing instruction.** An earlier session tested the prefixed topic locally, saw it fail, observed the toggles working in production, and concluded production "normalises the prefix." `MEMORY.md` was then annotated *"Do not 'fix' the prefix on a local repro alone"* — which would have steered the next agent straight back past the bug. That note is now struck through and replaced.
+
+The RLS policy corroborates it independently: `realtime_topic_session_id` (migration `20260723100000`) only parses topics matching `^session-events:<uuid>$`, so the prefixed form could never have been authorized for a subscriber even if one had joined it.
+
+**How it was actually proven**, since a 202 proves nothing. A Node probe against production Realtime with a real authenticated subscriber: prefixed → 202, `delivered: false`; unprefixed → 202, `delivered: true`. Then end-to-end, R-1/R-2 **fail against the deployed app and pass against a local production build whose sole diff is `broadcast.ts`** — the assertions are windowed tighter than the 15 s poll, so the poll cannot account for a pass.
+
+**Standing rule this establishes:** never conclude a broadcast was delivered from a 202, or from UI that has a polling fallback. Delivery is only ever proven by a subscriber that received the message.
+
+**Regression shape.** RPB-2 no longer pins the topic to a literal; it asserts the sent topic equals the name the client passes to `.channel()`, so the two halves cannot drift apart again. That is only sound while RPB-3 keeps the client's literal anchored — otherwise both halves could agree on a wrong value and still pass. Both tests carry that dependency in comments.
+
+**Test-infrastructure findings from the same production verification.** (1) `match_events.match_id` is **`ON DELETE SET NULL`**, so deleting a match nulls the pointer and preserves the audit row forever. E2E teardown deleted matches but not events, depositing ~36 rows per full-suite run into a production table — 171 had accumulated since 2026-07-02. `tests/helpers/teardown.ts`, `emergency-cleanup.ts` and `validate-cleanup.mts` now all delete/count `match_events` **by `session_id`**, never through the match ids: orphaned rows have a null `match_id` and are invisible to a matches-based query, which is exactly why the leak went unseen by a validator that reported "fully clean" throughout. `tests/integration/helpers/truncate.ts` carried the identical leak against the local integration DB and was fixed the same way. `emergency-cleanup.ts` also now spares `E2E_OrganizerBot` (it previously deleted it, unlike `teardown.ts`) — removing that account invalidates the saved Playwright storage state and breaks every sign-in until `npm run test:setup` re-creates it. (2) `useFlipList` is called in `waitlist-tab.tsx` *above* the `if (loading)` early return; roughly 60% of runs consequently emitted four 240 ms ENTER animations instead of a 320 ms MOVE despite stable row identity. Cosmetic, not a regression from #45/#46/#48. Recorded at the time as a `test.fixme` with the measurement and a fix direction — **the diagnosis was right about the call site and wrong about the remedy; fixed in the hook instead, §3.29. The fixme is now an enabled test.**
+
+---
+

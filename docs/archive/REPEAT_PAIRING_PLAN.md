@@ -8,7 +8,7 @@
 > `use-pair-counts.ts`, `use-repeat-pairing.ts`, `manual-match-bar.tsx`,
 > `repeat-pair-details.tsx`, `repeat-marker.tsx`, wired into `queue-control.tsx`,
 > `queue-skill-groups.tsx` and `organizer-dashboard.tsx`. Four bugs found in review
-> were fixed before merge. **The living description is [APP_MANIFEST.md §3.25](APP_MANIFEST.md)** —
+> were fixed before merge. **The living description is [APP_MANIFEST.md §3.25](../../APP_MANIFEST.md)** —
 > read that, not this. Kept for the design rationale only.
 >
 > **Original status line (superseded):** ~~Foundation is BUILT + TESTED (uncommitted in the working tree). UI wiring is the remaining work.~~

@@ -185,9 +185,16 @@ export async function fixPlayerRecord(
   // ── Post-correction: recompute Session Wrapped if session is closed ──
   // If the session has already been closed and Wrapped distributed,
   // the stats + awards need to reflect the corrected roster. We re-run
-  // compute_session_wrapped unconditionally on closed sessions — it is
-  // idempotent (upserts session_wrapped_stats) and picks up the updated
-  // match_players + player_partnerships written by the RPC above.
+  // compute_session_wrapped unconditionally on closed sessions: it upserts
+  // session_wrapped_stats and picks up the updated match_players +
+  // player_partnerships written by the RPC above.
+  //
+  // This call is the ONLY caller that runs the RPC on a session that is not
+  // the club's newest, which is what made 20260820000000 necessary: the
+  // cross-session ledgers carry no as-of date, so re-wrapping a month-old
+  // session used to read every night since as if it had already happened, and
+  // handed the player badges that were not true on the night they played. The
+  // RPC now bounds its own reads to the session's own end. Suite XS-5 pins it.
   //
   // Active sessions: skip — Wrapped hasn't been distributed yet, so
   // there is nothing stale to fix. Stats will be correct at close time.
@@ -199,8 +206,9 @@ export async function fixPlayerRecord(
 
   if (sessionRow && !sessionRow.is_active) {
     // Fire-and-forget via after() so the Fix Record action returns immediately
-    // rather than blocking on the Wrapped recompute. The RPC is idempotent —
-    // if it fails, Wrapped will be slightly stale until manually recomputed.
+    // rather than blocking on the Wrapped recompute. Re-running it is safe and
+    // settles on the same rows — if it fails, Wrapped stays as it was until
+    // something recomputes it again.
     after(() =>
       Promise.resolve(db.rpc("compute_session_wrapped", { p_session_id: sessionId }))
         .then(({ error: wrappedErr }) => {

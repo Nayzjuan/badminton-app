@@ -67,3 +67,6 @@ supabase/.temp/
 # Engine replay fixtures from scripts/replay-sessions.ts — real session rosters
 # (member names + skill levels) and the saved metric runs derived from them.
 .replay-cache/
+# Python bytecode. scripts/gen-*-migration.py import the shared emitter
+# scripts/_wrapped_apply_sql.py, and importing it writes this directory.
+__pycache__/

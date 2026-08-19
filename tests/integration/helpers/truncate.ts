@@ -154,6 +154,20 @@ async function truncateViaDeletes(client: ReturnType<typeof serviceClient>): Pro
   await wipe(client.from("match_games").delete().neq("id", ZERO_UUID), "match_games");
   await wipe(client.from("matches").delete().neq("id", ZERO_UUID), "matches");
   await wipe(client.from("queue_entries").delete().neq("id", ZERO_UUID), "queue_entries");
+  // Same shape as match_events above: queue_status_events has NO foreign key to
+  // queue_entries (session_id / player_id are plain uuid columns), so deleting
+  // the queue rows cannot cascade it. Its trigger fires on every status change
+  // any suite makes, so without this it grew for the whole run.
+  //
+  // Requires 20260818120000 (the DELETE grant). On a local database that has
+  // not replayed it, this throws `permission denied` and takes EVERY
+  // integration suite down, not just the audit one — deliberately, because a
+  // silent skip is exactly how the table grew unnoticed in the first place. If
+  // that is the failure in front of you, re-run `supabase db reset`.
+  await wipe(
+    client.from("queue_status_events").delete().neq("id", ZERO_UUID),
+    "queue_status_events"
+  );
   await wipe(client.from("courts").delete().neq("id", ZERO_UUID), "courts");
   await wipe(client.from("session_organizers").delete().neq("id", ZERO_UUID), "session_organizers");
   await wipe(client.from("sessions").delete().neq("id", ZERO_UUID), "sessions");

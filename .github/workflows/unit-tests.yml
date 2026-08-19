@@ -1,27 +1,82 @@
 # ============================================================
-# CI: Unit Tests — Chillax Badminton
+# CI: Static Checks + Unit Tests — Chillax Badminton
 # ============================================================
 # Runs on every push to any branch and every pull request.
 # Vitest auto-discovers all tests/unit/**/*.test.ts files,
 # so new test files are picked up automatically — no changes
 # to this file needed when you add tests.
 #
+# WHY type-check and lint run HERE, not just in CLAUDE.md:
+#   `npx tsc --noEmit` and `npm run lint` were documented as a
+#   mandatory pre-merge workflow but nothing executed them. A
+#   documented gate that no machine runs is not a gate — it is a
+#   comment. Both are cheap; both now RUN on every push and PR.
+#   They run BEFORE the tests so a type error is reported as a
+#   type error, not as a confusing suite failure.
+#
+# ⚠️  RUNNING IS NOT BLOCKING. These checks block a merge only if
+#   branch protection lists this job as a required status check.
+#   A required-check CONTEXT is the job's `name:` — NOT the YAML
+#   key, and not the workflow name. This commit changed it:
+#       required context:  Vitest  →  Types, Lint, Vitest
+#   (for completeness the YAML key went `vitest` → `checks` and
+#    the workflow `Unit Tests` → `Static Checks + Unit Tests`,
+#    but neither string appears in Settings → Branches.)
+#   So a rule still requiring `Vitest` now requires a context
+#   that never reports, which silently UN-gates the branch.
+#
+#   🚨 AND TODAY THERE IS NO RULE TO RE-POINT. This repo is
+#   PRIVATE on a free plan, where branch protection and rulesets
+#   are unavailable — measured 2026-08-19, both endpoints answer
+#   403 "Upgrade to GitHub Pro or make this repository public":
+#       gh api repos/:owner/:repo/branches/main/protection
+#       gh api repos/:owner/:repo/rulesets
+#   So NOTHING blocks a merge here, and nothing can until the
+#   repo goes public or the plan changes. Re-point it then:
+#   github.com → Settings → Branches → require
+#   `Types, Lint, Vitest`. Until then this file documents a gate
+#   it does not enforce — which is the *reason* the note exists,
+#   not a contradiction of it (APP_MANIFEST §3.44 B).
+#
+#   Meanwhile the enforcement lives where it CAN: `.husky/pre-push`
+#   runs these same three checks, in this same order, and refuses
+#   the push. Weaker than a server-side rule — `--no-verify` skips
+#   it and it binds one machine — but it is what exists.
+#
 # Failure notifications:
 #   GitHub emails the pusher automatically when this fails.
 #   Go to github.com → Settings → Notifications to configure.
 # ============================================================
 
-name: Unit Tests
+name: Static Checks + Unit Tests
 
 on:
   push:
     branches: ["**"]
+    # Markdown does not change what this job verifies. A docs-only branch used to
+    # manufacture a full green run per commit — 34 runs over 17 SHAs on one prose
+    # branch, 3.9 runner-hours, all green. That is worse than the wasted minutes:
+    # it is 34 pieces of false evidence that something was verified.
+    #
+    # ⚠️ If branch protection ever becomes available (see header), a required check
+    # that never reports BLOCKS a docs-only PR instead of skipping it. Handle it
+    # then with a companion job that reports the same context as a no-op — do not
+    # simply delete this filter.
+    paths-ignore: ["**/*.md", "docs/**", ".claude/**"]
   pull_request:
     branches: ["**"]
+    paths-ignore: ["**/*.md", "docs/**", ".claude/**"]
+
+# One in-flight run per ref. Pushing three fixups used to leave three full runs
+# racing, and the loser could report after the winner — a stale red or a stale
+# green attached to a SHA nobody was looking at any more.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  vitest:
-    name: Vitest
+  checks:
+    name: Types, Lint, Vitest
     runs-on: ubuntu-latest
 
     steps:
@@ -36,6 +91,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
 
       - name: Run unit tests
         run: npm run test:unit

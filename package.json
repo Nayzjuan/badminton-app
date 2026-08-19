@@ -9,6 +9,7 @@
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "docs:index": "node scripts/gen-doc-index.mjs",
     "test:unit": "vitest run",
     "test:unit:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts --reporter=verbose",

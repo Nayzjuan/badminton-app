@@ -1171,27 +1171,64 @@ export async function recomputeHeldReadiness(
     .eq("status", "pending")
     .is("held_ready_at", null);
 
-  if (error || !heldMatches || heldMatches.length === 0) return;
+  if (error) {
+    // A read that FAILED is not a session with no holds. Both used to return
+    // here identically, so every silent branch below was also silent about the
+    // one condition that explains the other three.
+    console.warn(
+      `[matchmaking] recomputeHeldReadiness: held-draft fetch failed for session ${sessionId} — ` +
+        `${error.message}; nothing recomputed this pass.`
+    );
+    return;
+  }
+  if (!heldMatches || heldMatches.length === 0) return;
 
   // Auto-publish mode publishes each held draft the moment it becomes ready
   // (below), rather than at creation — see the if (ready) block. Fetch once.
-  const { data: heldSessionRow } = await supabase
+  const { data: heldSessionRow, error: sessionErr } = await supabase
     .from("sessions")
     .select("auto_publish")
     .eq("id", sessionId)
     .single();
-  const autoPublish = shouldAutoPublishMatch(heldSessionRow?.auto_publish ?? false);
+
+  // The one read whose wrong answer is UNRECOVERABLE. Defaulting to false in a
+  // session that is really in auto mode stamps the draft ready and then never
+  // publishes it — and in auto mode the on-deck panel hides both the drafts
+  // section and publish-all, so no organizer can finish or clear it either.
+  // That is precisely the orphan the AP2/AP3 branch below exists to prevent,
+  // reached through a failed read instead of a refused publish. Stamping
+  // nothing this pass costs one lifecycle event; the caller re-enters.
+  if (sessionErr || !heldSessionRow) {
+    console.warn(
+      `[matchmaking] recomputeHeldReadiness: auto_publish read failed for session ${sessionId} — ` +
+        `${sessionErr?.message ?? "no row returned"}; skipping the pass rather than ` +
+        `stamping drafts that auto mode could then never publish.`
+    );
+    return;
+  }
+  const autoPublish = shouldAutoPublishMatch(heldSessionRow.auto_publish ?? false);
 
   for (const held of heldMatches) {
     const pulledId = held.pulled_player_ids?.[0];
 
     // 1. Roster integrity (N-2) — pulled body still in this match's roster?
     if (pulledId) {
-      const { data: rosterRows } = await supabase
+      const { data: rosterRows, error: rosterErr } = await supabase
         .from("match_players")
         .select("player_id")
         .eq("match_id", held.id);
-      const stillIn = (rosterRows ?? []).some((r) => r.player_id === pulledId);
+      // `?? []` used to fold a FAILED read into "the body is not in the roster",
+      // which downgrades the draft and throws the pull away — a destructive
+      // answer derived from no answer. Leave the row exactly as it is and let
+      // the next pass decide on a real read.
+      if (rosterErr || !rosterRows) {
+        console.warn(
+          `[matchmaking] recomputeHeldReadiness: roster read failed for held draft ${held.id} — ` +
+            `${rosterErr?.message ?? "no rows returned"}; left untouched this pass.`
+        );
+        continue;
+      }
+      const stillIn = rosterRows.some((r) => r.player_id === pulledId);
       if (!stillIn) {
         await supabase
           .from("matches")
@@ -1210,11 +1247,22 @@ export async function recomputeHeldReadiness(
       continue;
     }
 
-    const { data: srcMatch } = await supabase
+    const { data: srcMatch, error: srcErr } = await supabase
       .from("matches")
       .select("status, completed_at")
       .eq("id", held.pulled_from_match_id)
       .maybeSingle();
+
+    // Same distinction as the roster read, and `maybeSingle` already draws it:
+    // a source that is GONE is data null WITH error null. Cancelling on the
+    // other case releases three seated players because one SELECT failed.
+    if (srcErr) {
+      console.warn(
+        `[matchmaking] recomputeHeldReadiness: source-match read failed for held draft ${held.id} — ` +
+          `${srcErr.message}; left untouched this pass.`
+      );
+      continue;
+    }
 
     if (!srcMatch) {
       await supabase.rpc("clear_on_deck_match_atomic", {
@@ -1258,12 +1306,23 @@ export async function recomputeHeldReadiness(
 
     // promotionsSinceFreed = matches that got a started_at after the body freed (C-5,
     // derivable from existing timestamps — no dedicated counter column).
-    const { count: promotionsSinceFreed } = await supabase
+    const { count: promotionsSinceFreed, error: promoErr } = await supabase
       .from("matches")
       .select("id", { count: "exact", head: true })
       .eq("session_id", sessionId)
       .in("status", ["in_progress", "completed", "cancelled"])
       .gt("started_at", pulledFreedAt);
+
+    // Falling back to 0 only DELAYS the stamp — the rest-fallback arm below
+    // still resolves the hold on its own — so it stays the default. It does not
+    // stay silent: a persistently failing count reads as "the promotion arm
+    // never fires", which is indistinguishable from a wrong threshold.
+    if (promoErr) {
+      console.warn(
+        `[matchmaking] recomputeHeldReadiness: promotion count failed for held draft ${held.id} — ` +
+          `${promoErr.message}; treating it as 0 (the rest fallback still applies).`
+      );
+    }
 
     const ready = isHeldMatchReady({
       pulledFreedAt,
@@ -1278,6 +1337,16 @@ export async function recomputeHeldReadiness(
         .update({ held_ready_at: new Date().toISOString() })
         .eq("id", held.id)
         .is("held_ready_at", null); // idempotent — stamp once
+
+      if (stampErr) {
+        // The one write this whole function exists to make. Unlogged, a failure
+        // here is indistinguishable from "not ready yet" at every observation
+        // point the app has — including the tests.
+        console.warn(
+          `[matchmaking] recomputeHeldReadiness: readiness stamp failed for held draft ${held.id} — ` +
+            `${stampErr.message}; the hold stays unready until the next pass.`
+        );
+      }
 
       // Auto-publish (D12): publish the held draft the instant it's ready, so it
       // can take a court with no organizer review. Publishing HERE — not at
