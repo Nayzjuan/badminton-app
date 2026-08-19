@@ -22,8 +22,26 @@ name: Integration Tests
 on:
   push:
     branches: ["**"]
+    # Markdown does not change what this job verifies. A docs-only branch used to
+    # manufacture a full green run per commit — 34 runs over 17 SHAs on one prose
+    # branch, 3.9 runner-hours, all green. That is worse than the wasted minutes:
+    # it is 34 pieces of false evidence that something was verified.
+    #
+    # ⚠️ If branch protection ever becomes available (see header), a required check
+    # that never reports BLOCKS a docs-only PR instead of skipping it. Handle it
+    # then with a companion job that reports the same context as a no-op — do not
+    # simply delete this filter.
+    paths-ignore: ["**/*.md", "docs/**", ".claude/**"]
   pull_request:
     branches: ["**"]
+    paths-ignore: ["**/*.md", "docs/**", ".claude/**"]
+
+# One in-flight run per ref. Pushing three fixups used to leave three full runs
+# racing, and the loser could report after the winner — a stale red or a stale
+# green attached to a SHA nobody was looking at any more.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   integration:

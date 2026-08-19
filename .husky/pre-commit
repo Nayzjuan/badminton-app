@@ -16,5 +16,38 @@ if [ -n "$DESIGN_STAGED" ]; then
   git add APP_MANIFEST.md
 fi
 
+# ── Living-document size caps ────────────────────────────────────────────────
+# MEMORY.md is loaded into context every session. It grew 12 KB -> 678 KB in four
+# months, and the last commit that DELETED anything from it was 2026-05-19 — the
+# prune habit stopped exactly where the growth curve started. Past ~200 KB the
+# mandated read set no longer fits the context window, which does not fail loudly:
+# it silently truncates, and MEMORY.md is newest-first, so what gets dropped is the
+# current-state reference at the END — the part that actually matters.
+#
+# This cap is the forcing function. When it fires, the fix is to MOVE closed
+# entries to docs/archive/, not to raise the number.
+#   Escape hatch (use it only to land the cleanup itself): git commit --no-verify
+MEMORY_CAP=40000
+MANIFEST_WARN=300000
+
+if git diff --cached --name-only | grep -qx 'MEMORY.md'; then
+  SIZE=$(git show :MEMORY.md | wc -c | tr -d ' ')
+  if [ "$SIZE" -gt "$MEMORY_CAP" ]; then
+    echo "[pre-commit] ✗ MEMORY.md is ${SIZE} bytes, cap is ${MEMORY_CAP}."
+    echo "             Move ✅ SHIPPED / CLOSED entries to docs/archive/ — do not raise the cap."
+    echo "             Override for the cleanup commit itself: git commit --no-verify"
+    exit 1
+  fi
+  echo "[pre-commit] ✓ MEMORY.md ${SIZE}/${MEMORY_CAP} bytes"
+fi
+
+if git diff --cached --name-only | grep -qx 'APP_MANIFEST.md'; then
+  SIZE=$(git show :APP_MANIFEST.md | wc -c | tr -d ' ')
+  if [ "$SIZE" -gt "$MANIFEST_WARN" ]; then
+    echo "[pre-commit] ⚠ APP_MANIFEST.md is ${SIZE} bytes (soft limit ${MANIFEST_WARN})."
+    echo "             Dated incident narrative belongs in docs/incidents/, not here."
+  fi
+fi
+
 # ── Lint-staged (Prettier, ESLint) ───────────────────────────────────────────
 npx lint-staged

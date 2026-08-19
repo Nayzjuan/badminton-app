@@ -1,6 +1,15 @@
 # Multi-Tenant SaaS Migration Plan
 
-> **Status:** Architectural design document — NO CODE HAS BEEN WRITTEN.
+> ## ✅ SHIPPED — this document is HISTORICAL (corrected 2026-08-19)
+>
+> **The line below said "NO CODE HAS BEEN WRITTEN" for six weeks after the feature shipped.**
+> Multi-tenant clubs merged to `main` as `f3aae17` and deployed on **2026-07-02**; the
+> platform-owner model followed on **2026-07-05** (`1bd4769`). The club UI was re-skinned in
+> `6735be4`. This file is kept for the design rationale only — the living description is
+> `APP_MANIFEST.md` §11 and the write-ups in `docs/incidents/2026-07-0*`.
+>
+> **Status:** ~~Architectural design document — NO CODE HAS BEEN WRITTEN.~~ Superseded by the
+> shipped implementation.
 > **Author:** Generated via codebase investigation, June 2026.
 > **Revision:** v2 (2026-06-30) — audit corrected against the **live database** (Supabase project `usxftpexoimletqmrggb`) and current code. See "v2 Revision Log" below for what changed and why.
 > **Scope:** Transitioning from a single-organizer/single-group model to a multi-club SaaS model.

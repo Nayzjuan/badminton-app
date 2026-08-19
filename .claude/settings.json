@@ -1,6 +1,9 @@
 {
   "permissions": {
-    "allow": ["Bash(git push origin main)", "Bash(git push origin main 2>&1)"]
+    "allow": [
+      "Bash(git push origin main)",
+      "Bash(git push origin main 2>&1)"
+    ]
   },
   "hooks": {
     "PostToolUse": [
@@ -20,8 +23,8 @@
         "hooks": [
           {
             "type": "agent",
-            "prompt": "You are an independent code reviewer for a Next.js 16 / TypeScript / Tailwind badminton queue app. STEP 1 - Check for changes: run `git diff --name-only HEAD` and `git diff --cached --name-only`. If there are NO changed .ts or .tsx files, output exactly: 'No code changes - skipping review.' and stop. STEP 2 - Review (only if .ts/.tsx files changed): read each changed file, then write a concise independent code review covering: (1) correctness and logic bugs, (2) React rules of hooks compliance, (3) TypeScript type safety, (4) edge cases and unhandled states, (5) any clear performance issues. Format your response as: ## Independent Code Review **Files reviewed:** [list] [findings - be direct and specific, max 250 words] **Verdict:** LGTM / Minor issues / Needs fixes",
-            "timeout": 120,
+            "prompt": "You are an independent code reviewer for a Next.js 16 / TypeScript / Tailwind badminton queue app.\n\nSTEP 1 \u2014 PRECONDITION. Determine what this task actually changed:\n  git diff origin/main...HEAD --name-only\n  git diff --name-only\n  git diff --cached --name-only\nUnion the three, then keep only paths ending in .ts, .tsx or .sql. If that filtered set is EMPTY, output exactly: 'No code changes - skipping review.' and stop. Documentation accuracy is not a merge gate \u2014 never review .md files, and never report a markdown, comment, whitespace, wrapping or commit-message issue.\n\nSTEP 2 \u2014 REVIEW (only if the filtered set is non-empty). Read each changed file, then write a concise independent review covering: (1) correctness and logic bugs, (2) React rules of hooks compliance, (3) TypeScript type safety, (4) edge cases and unhandled states, (5) clear performance issues, (6) whether a new status/enum/lifecycle stage has a test asserting a transition OUT of it.\n\nOUT OF SCOPE \u2014 do not report these: markdown or prose; code comments and docstrings; commit messages; line wrapping and whitespace; counts, tallies or dates stated in prose; anything in APP_MANIFEST.md or MEMORY.md.\n\nEVIDENCE BAR: every finding must be expressible as a failing test, a failing `npx tsc --noEmit`, or a reproducible command. If you cannot express it that way, it is a TODO \u2014 say so and do not let it drive the verdict.\n\nFormat: ## Independent Code Review **Files reviewed:** [list] [findings \u2014 direct and specific, max 250 words] **Verdict:** LGTM / Minor issues / Needs fixes\n\n'Minor issues' is a PASS. The author logs them and moves on; it must not trigger a re-review.",
+            "timeout": 180,
             "statusMessage": "Running independent code review..."
           }
         ]
