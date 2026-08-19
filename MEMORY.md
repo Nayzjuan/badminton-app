@@ -17,137 +17,51 @@
 
 ---
 
-## 🚧 IN FLIGHT — process overhaul, 2026-08-19
+## 🔒 STANDING CONSTRAINTS — carried forward, not history
 
-Branch `test/verification-gaps`, **pushed** — re-derive its state rather than trusting this line:
-`git ls-remote --heads origin test/verification-gaps` and `gh pr list --head test/verification-gaps`.
+Narrative for each is in `docs/archive/MEMORY_HISTORY.md` (grep the phrase). These are here because
+they bind the *next* change, not because they record a past one.
 
-- `c9c1295` — verification-gap tests (1,834 insertions) **and**
-  `supabase/migrations/20260818120000_lock_queue_status_events_grants.sql`. That migration is
-  **already applied to prod** (stamp `20260819011750`), so prod holds an object whose only
-  source record is this un-pushed commit.
-- `a2ecd02` — P0: `closeSession` no longer strands an open session when the Wrapped pre-compute
-  hangs. `runCloseRpc` wraps both RPCs in `withTimeout(3_000)`; `is_active` flips regardless.
-  Pinned by `tests/unit/close-session-timeout.test.ts` (CST-1…4).
-- `75ba680` + `5dcbcac` — the governance changes tabulated below.
-- `baf2f79` + `3423036` — the review gate's two findings, fixed in one round.
-  (a) `refresh_cross_session_stats` and `compute_session_wrapped` take **different** advisory
-  locks, so the `await` was the only thing ordering them: a timed-out ledger refresh let compute
-  snapshot cross-session awards that omit the session being closed, and the close still reported
-  `wrappedReady`. Rows are still written — a missing `session_wrapped_stats` row replays the intro
-  forever and `fixPlayerRecord` is the only other compute call site — but the close no longer
-  claims they are ready, so the watcher routes to the club lobby. CST-5 (verified failing with the
-  guard disabled). (b) Suite MTC's `createdObjects` anchored its schema qualifier to `public`, so
-  any other schema bound the name capture to the **schema**: `create table private.audit_log`
-  yielded `private`, which matches the corpus trivially. MTC-4.
-- `d54aed3` — the review gate's third finding, fixed rather than logged: the 3 s Wrapped ceiling
-  was per RPC, so ledger + compute + retry + the 600 ms backoff could reach ~9.6 s while every
-  individual call looked obedient — past the serverless budget the ceiling exists to protect.
-  `CLOSE_WRAPPED_PHASE_MS` is now one absolute deadline shared by all three (`startPhaseBudget`);
-  a call reached with the budget spent is **fired but not awaited**, so rows still land late
-  rather than never. CST-6 (verified failing against a per-call budget) + CST-7, which pins the
-  `"failed" → retry → ok` transition `CloseRpcOutcome` never had a test for.
-- `d94475b` — `.husky/pre-push` skips the gate when every ref in the push is a deletion. Deleting
-  a merged branch ships no code; unguarded it re-ran the full ~17 s suite once per branch.
-- `86a1d93` — the manifest's size gate now measures the **read unit**, not the file. See the
-  table row below.
-
-**Why the overhaul:** feature and bug-fix work had slowed to the point where review round 3+ was
-still finding "mistakes". The cause was not the code. Two uncapped rules — the review gate
-(unbounded rounds, no scope filter) and the autopilot memory mandate (unbounded document growth)
-— turned every task into a prose-review loop with no adjudicator. Code review converges because
-a compiler and a test suite settle disputes; prose review does not, and each correction enlarges
-the diff the next round reviews. Changes made:
-
-| Change | Where |
-|---|---|
-| Review gate: **every finding is fixed at every severity**, re-review capped at 2 rounds, scoped to `*.ts,*.tsx,*.sql` | `CLAUDE.md`, `.claude/settings.json` |
-| Leftovers after round 2 are handed over **with a reason** from a closed list of five, never as a bare list | `CLAUDE.md`, `HANDOFF.md` |
-| `npm run test:unit` added to mandatory validation + a clean-worktree check | `CLAUDE.md`, `.husky/pre-push` |
-| Writing rules: no counts in prose, no line numbers, markdown formatting is not a defect | `CLAUDE.md` |
-| Read-first mandate replaced by a bounded `DOC_INDEX.md` (~25k token budget) | `CLAUDE.md`, `HANDOFF.md` |
-| CI `paths-ignore` for docs + `concurrency` cancel-in-progress | `.github/workflows/*.yml` |
-| MEMORY.md capped at 40 KB — that one **is** read whole, so total bytes are the real cost | `.husky/pre-commit` |
-| APP_MANIFEST capped per **section**, not per file: nothing reads it whole, so total bytes measured a cost no reader pays. `DOC_INDEX` now maps `####` too, and `gen-doc-index.mjs --check` fails a section over 40 KB. The remedy is a sub-heading — **nothing is deleted** | `scripts/gen-doc-index.mjs`, `.husky/pre-commit` |
-| 23 stale root plans archived; history and reference split out of MEMORY.md | `docs/archive/`, `docs/reference/` |
+- **Nothing on GitHub gates a merge here, and nothing can.** Private repo on a free plan; branch
+  protection and rulesets both answer `403 "Upgrade to GitHub Pro or make this repository public"`.
+  `.husky/pre-push` (tsc + lint + unit, in CI's order) is the only gate — and 🪤 **a local hook is
+  not a merge gate**: `--no-verify` skips it and it binds one machine.
+- **`ALTER DEFAULT PRIVILEGES` differs between prod and local.** `FOR ROLE postgres IN SCHEMA public`
+  is `arwdDxtm` on prod, `Dxtm` locally, so a `CREATE TABLE` carrying no explicit grants ships **two
+  different ACLs**. Name every role whenever the intent is narrower than the default.
+- 🪤 **An assertion that a privilege is ABSENT proves nothing unless the environment would otherwise
+  grant it** — otherwise the test agrees with the environment rather than with the migration.
+- 🪤 **A fix for a class is the likeliest place the next instance of it hides.** After fixing the
+  flagged sites, grep for the shape.
+- 🪤 **A green sibling run is not a passing test.** One SHA can produce a failing push-event run and a
+  passing pull_request run. Per-run `headSha` + per-run conclusion, never the badge.
+- ⚖️ **Held-draft readiness is best-effort ON PURPOSE — do not "close the gap" with a retry.**
+  `recomputeHeldReadiness` logs a failed stamp and leaves it for the next lifecycle event; the engine
+  heartbeat makes that dense. A transient 502 there is expected. See APP_MANIFEST, *Cross-Court
+  Diversity Drafting (held drafts)* → "A failed read is never an answer".
 
 ---
 
-## 🧪 VERIFICATION GAPS CLOSED — 2026-08-18. Branch `test/verification-gaps` (not yet merged).
-
-**Why:** the cross-court publish path shipped dead for four days (§3.41) and three migrations in four days created objects **no test referenced even once**. Both are the same defect: nothing enforced that a shipped object was ever exercised.
-
-**The defect this uncovered — `queue_status_events` (20260815) granted nobody anything.** RLS was enabled with no policy and the comment claimed "only the service role (which bypasses RLS) can read it". ACLs and RLS are independent gates and the ACL is checked first, so what shipped was whatever `ALTER DEFAULT PRIVILEGES` was in force — and **prod and local disagree**: `FOR ROLE postgres IN SCHEMA public` is `arwdDxtm` on prod, `Dxtm` locally. One grant-less `CREATE TABLE`, two opposite defects:
-
-- **local / CI**: no SELECT for anyone → trail written correctly (trigger is SECURITY DEFINER) and unreadable by everything. `permission denied` before RLS is consulted.
-- **prod**: `anon` + `authenticated` got SELECT/INSERT/UPDATE/DELETE/TRUNCATE on an audit table. RLS-with-no-policy is the only thing stopping it — real, but one `CREATE POLICY` from not being.
-
-**`20260818120000_lock_queue_status_events_grants.sql`** — `REVOKE ALL … FROM PUBLIC, anon, authenticated, service_role`, then `GRANT SELECT, DELETE TO service_role`. INSERT/UPDATE/TRUNCATE withheld so no API caller (or leaked service key) can forge a transition or drop the trail. ⚠️ **APPLIED LOCAL ONLY — NOT ON PROD.** Migrations are applied by hand here; merging ships no schema. Verify by stamp, never by build.
-
-🪤 **The first draft of that fix had the bug it was fixing, and QSA-10 was green through it.** It copied the sibling's `FROM PUBLIC, anon, authenticated` and omitted `service_role`. A REVOKE only touches roles it names, and `GRANT SELECT, DELETE` is a no-op against a role already holding `arwdDxtm` — so on **prod** the "withheld" INSERT/UPDATE would still have been held. The sibling is fine with three roles only because it ends `GRANT ALL TO service_role`: it wants the default. **Name the role whenever the intent is narrower than the default.** QSA-10's `ins:false, upd:false` couldn't see it because the *local* default (`Dxtm`) already withholds them — the test was agreeing with the environment, not the migration. `TRUNCATE` is the discriminator: the default grants it in both environments, so only an explicit REVOKE removes it (measured: `service_role=rdDxtm` → `rd`). **An assertion that a privilege is ABSENT proves nothing unless the environment would otherwise grant it** — pick the privilege the default hands out. Mutant M19.
-
-**Five gates added:** whole-schema `service_role` SELECT sweep in `schema-parity` (one new case; the file is 32 total. No `relacl IS NOT NULL` filter — a NULL ACL is the owner-only default, the case most worth catching); **Suite MTC** `tests/unit/migration-test-coverage.test.ts` (every migrated table/view/function must be *named* by a non-comment test line; ratcheting exemption lists); **Suite QSA** 11 cases + 8 measured mutants; **XC-4** (a held draft rests, ripens and actually publishes — §3.41's lifecycle half); **CI now runs `tsc --noEmit` + `npm run lint`**, which CLAUDE.md mandated and nothing executed.
-
-**E2E prod-leak fixed before it leaked:** `queue_status_events` has no FK to `queue_entries`, exactly like `match_events` (which leaked 171 rows into a prod table in 2026). Both `teardown.ts` paths now delete it and `validate-cleanup.mts` counts it. Prod held 29 rows, all from the 08/16 manual close — zero from E2E.
-
-**Banked:** a review agent's claims need checking too — it reported the prod ACL as the *local* one and I only found the two-environment split by querying prod directly. My own first drafts of the M12 and M18 blast radii were both **narrower than measured** (M18: predicted 4 cases, actually kills 8). Predicting a mutant's reach is the same error as trusting a migration's comment about who can read a table.
-
-**Also banked:** Suite MTC's corpus first counted **every** `.ts` under `tests/`, so a table was "covered" by its own line in `helpers/truncate.ts` — the routine first step for any new table would have satisfied the gate meant to catch it. Narrowing to `*.test.ts(x)` / `*.spec.ts` immediately exposed three tables named nowhere else: `club_invites`, `co_organizer_join_attempts`, `match_games` (now grandfathered). **A coverage gate whose corpus includes bookkeeping files measures bookkeeping.**
-
-**Review gate — five rounds:** Needs fixes ×4 → **round 5 "Minor issues"**, every item fixed rather than logged. Round 2 found my own migration reproducing the bug it fixed (`REVOKE` omitted `service_role`); round 4 found the MEMORY migration-queue banner still claiming repo↔prod agreement and the CI note naming the job *key* instead of the required-check *context*. Round 5's three were all the same class this branch polices — **prose that is checkable and wrong**: a quote in §3.44 A attributed to §7's "Forward hazard" note when it belongs to the "Landing order matters" paragraph after it; `emergency-cleanup.ts` claiming its own short-circuit "is how `match_events` reached 171 rows" when that leak was the *automatic* teardown's (this script never touched them); and `teardown.ts` step 6b justifying its position with "doing it last also sweeps whatever `repairSandboxState` generated" when `resetSandboxSession` never calls `repairSandboxState` and three steps follow 6b. All three effects were right and all three *reasons* were wrong — the exact failure mode of [[comments-that-explain-why-rot]], committed while documenting it.
-
-**Next:** merge. ✅ `20260818120000` is **already on prod** (stamp `20260819011750`, applied 2026-08-19) — the REVOKE was the half that mattered there, and prod's `relacl` went `{postgres=arwdDxtm, anon=arwdDxtm, authenticated=arwdDxtm, service_role=arwdDxtm}` → `{postgres=arwdDxtm, service_role=rd}`, i.e. anon genuinely held full DML on the audit trail until that apply. Prod was never the unreadable half; local was. `truncateTracked()` hard-couples **24 of 27** integration files to it — `auth.real`, `draft-cap-override` and `schema-parity` don't call it, so those three stay green on a stale DB and are not evidence it landed. Also: the CI job's **display name** changed `Vitest` → `Types, Lint, Vitest` (the YAML key went `vitest` → `checks`, but a required-status-check context is the job's `name:`, not its key). Any branch-protection rule pinned to `Vitest` is now pinned to a context that never reports. 🚨 **But there is no such rule and there cannot be one:** the repo is private on a free plan, so branch protection and rulesets are unavailable — both `gh api` endpoints answered `403 "Upgrade to GitHub Pro or make this repository public"` on 2026-08-19. **Nothing on GitHub gates a merge here today, and nothing can until the repo goes public or the plan changes.** The renamed context matters when that changes, not before. So the gate moved to where it can exist: **`.husky/pre-push`** (new) runs `tsc --noEmit` + `lint` + unit, in CI's order, ~17s, and refuses the push. Integration is excluded (needs local Supabase) and E2E is excluded (**it targets prod**). 🪤 A local hook is not a merge gate — `--no-verify` skips it and it binds one machine.
-
-**Then XC-4 flaked once in CI — and the flake was the finding.** `expected null not to be null` on `held_ready_at`; the sibling run at the same SHA passed, and it has never reproduced locally (8/8 single-file, 27/27 full suite, plus an independent agent run). Static analysis got as far as *proving the pass ran* — `runEngineForSession`'s "toggle is OFF" line is the last statement of the same `if (match.court_id)` block `recomputeHeldReadiness` opens, and it appears at both lifecycle events — and *proving the readiness math deterministic*. Which left exactly one class: a swallowed read error. **Not attributable to a specific branch, precisely because all five sites were silent.** That silence was the real defect, not a diagnostic gap: `recomputeHeldReadiness` decided a held draft's fate from five reads and discarded every error, and two branches downstream are destructive — `?? []` folded a *failed* roster read into "the pulled body left" (downgrade, pull thrown away), and a *failed* source read was indistinguishable from "the source is gone" (`clear_on_deck_match_atomic`, three parked players released). One transient `SELECT` = a deleted reach.
-
-**Fixed in `805fdc1` + follow-up:** absent vs unreadable are now separate everywhere — `maybeSingle` already draws that line (missing row = `data` null **with** `error` null), so the cancel and downgrade paths behave identically on real data and merely skip one pass on an error; every caller re-enters at the next lifecycle event. Two reads stay asymmetric on purpose: the promotion count still defaults to `0` (miscounting only *delays* a stamp the rest-fallback resolves anyway), while a failed `auto_publish` read now abandons the whole pass — round 2's finding, and the only unrecoverable wrong answer, since defaulting to draft mode in an auto session stamps a draft ready that will never publish and auto mode hides *both* the drafts section and publish-all, so no organizer can clear it. `CC-RDY-ERR1`…`ERR5`; all five fail against the pre-fix body (round 2 verified 4 by checking out `805fdc1~1` into a scratch tree; ERR5 is ERR4's fixture with one response flipped, and ERR4 asserts that fixture *does* stamp).
-
-**Review gate — two rounds, as designed.** Round 1: no findings. Round 2: one MINOR, fixed. It is the counterexample worth keeping: the commit claimed "*every* read now separates absent from unreadable" and had guarded four of five. 🪤 **A fix for a class is the likeliest place the next instance of it hides** — the fifth read sits in the same function, six lines above the ones I fixed. Round 2 also settled the load-bearing assumption by reading installed `postgrest-js` rather than recalling it: `maybeSingle()` sets `isMaybeSingle` only, never sends `pgrst.object`, and a 0-row result leaves `error` untouched. Had that been wrong, `if (srcErr) continue` would have silently disabled the R3-B cancel outright.
-
-✅ **Then it recurred on the very next CI run and the new log named it outright** — one push-event run failed while its pull_request sibling at the same SHA passed, and the diff between "unknowable" and "solved" was one `console.warn`:
-
-> `recomputeHeldReadiness: readiness stamp failed for held draft c6c16b7a… — An invalid response was received from the upstream server`
-
-That string is a **502 from the API gateway**, on the `held_ready_at` UPDATE, *after* the readiness math had already resolved. Not a clock, not the engine toggle, not the publish path, and not any of the five branches I hardened — the stamp round-trip itself. It only shows up in CI because CI is contended: 293s there against 103s locally. The two hardening assertions did their job by **staying green** and eliminating everything upstream: the backdate hit exactly one row and `endMatchAction` returned `{success:true}`, so the failure could only be at or after the stamp. **A silent branch cannot be root-caused by reasoning, only by being made to speak** — three sessions of static analysis got as far as "it must be a swallowed error", and one log line got the rest in a single run.
-
-**The test was asserting more than the system promises.** Production readiness is best-effort by design — a failed stamp is logged and left for the next lifecycle event — so XC-4 asserting the stamp after exactly one event made a transient 502 a test failure. It now drives the same pass up to 3× (the stamp is idempotent via `.is("held_ready_at", null)`, so a retry cannot double-write); the first attempt is still the whole real `endMatchAction`. **No production retry was added:** the next event already retries, and the engine heartbeat makes that dense in a live session. XC-4 is self-verifying besides — it backdates from `Date.now()`, the same clock `isHeldMatchReady` reads, so cross-clock skew is not a variable either.
-
-🪤 **A green sibling run is not a passing test.** Both times, the same SHA produced one failing push-event run and one passing pull_request run. Reading the PR's check list would have shown green and hidden a reproducible defect twice over. Per-run `headSha` + per-run conclusion, never the badge — see [[green-pr-untested-commit]].
-
----
-
-## 🚨 08/15 SATURDAY CLOSE HUNG ON WRAPPED — 2026-08-17.
-
-**Prod recovery (done):** session `3367d4c6-6838-4cf7-8abe-5f5c3143dd1e` ("08/15 Saturday Session") closed at `2026-08-16 18:24:09 UTC`. `refresh_cross_session_stats` + `compute_session_wrapped` ran as postgres (both returned immediately), then `is_active=false`, 29 leftover `waiting` → `left` (37 left total), 4 courts `closed`, 54 completed / 5 cancelled unchanged. **37 Wrapped rows** (min 3 / max 7 games). `session_closed` broadcast 202.
-
-**Cause:** `closeSession` awaited the two Wrapped RPCs *before* flipping `is_active`. PostgREST never returned (Warp timeout-manager kills ~60 s apart, 01:29–01:33 PHT 08/17). Edge logs show **zero** completed `/rpc/compute_session_wrapped` or `/rpc/refresh_cross_session_stats` in 24 h. Same RPCs via MCP postgres: sub-second. Organizer toast: "Failed to close session. Please try again." Stelle identity migration at 17:28:34 UTC was coincidental, not the blocker.
-
-**Code fix (this branch):** `runCloseRpc` races each RPC against `CLOSE_WRAPPED_RPC_MS = 3_000`. Timeout / throw / error → log, continue, flip anyway, `wrappedReady=false`. No retry on timeout or `57014`/`55P03`. Abandoned fetch gets `void pending.catch(() => {})` so a later Warp-kill is not an unhandledRejection. Pinned CST-1…4 in `tests/unit/close-session-timeout.test.ts`.
-
-**Review (Minor issues, addressed):** unhandled late reject; CST-1 now asserts no compute retry + 3s bound.
-
-**Next:** merge + deploy TypeScript only (no migration). Until then the UI close path can still hang on a PostgREST stall.
-
----
-
-## ⚖️ LOPSIDED TEAM SPLITS BANNED — 2026-08-17. Shipped `24fcc7a` (#73).
-
-The 07/30 balance gate stopped *preferring* INT+INT vs BEG+BEG; it still emitted that split as a stall-break. Ban: `snakeDraft` never returns a lopsided split (`gap > minGap + SKILL_VARIANCE_MAX`). When every mixed pairing is at the partnership cap, it seats mixed anyway (`usedCapOverride`) after Fix B tries another body. `rotatedDraft` drops lopsided from the cycle but still returns `null` so Tier-3 can expand the window. Preview / Tier-1/2 treat `usedCapOverride` like `null`. Last-resort accepts it.
-
-**Accepted hole:** mixed seating may exceed `MAX_PARTNERSHIP_REPEATS` when no other body exists. Organizer-created lopsided matches unchanged. Gap ≤ minGap+2 (H-2 4/3/3/2) is still allowed.
-
-**Review (Minor issues):** `simRunAlgorithm` still treats `usedCapOverride` as a stall on every path (incl. last-resort) so the 30-player "never exceed cap" invariant holds. Production last-resort is covered by MC-new-2. Preview / CCO-11 comments and assertion tightened.
----
-
-## ✅ MIGRATION QUEUE — EMPTY as of 2026-08-19. Repo and prod agree.
+## 🗂️ MIGRATION LEDGER — applied migrations and their prod stamps
 
 **Migrations in this project are applied BY HAND. There is no deploy automation for the database.
 Merging a PR ships TypeScript only.** **Every new migration must be
 added to this table with its prod stamp** — the stamps drift from the filenames, and this table is
 the only place that records the mapping.
 
+To ask what is unapplied, query the catalog — `list_migrations`, or
+`select name from supabase_migrations.schema_migrations` — and compare **by name suffix**.
+🪤 **A bare set-difference against `ls supabase/migrations/` overstates the gap in both directions**
+and must not be read as drift: several repo files were renamed after they were applied, so prod still
+holds the older, longer name (`scope_match_players_insert` in the repo is
+`scope_match_players_insert_to_session_organizer` on prod), and several more are local-bootstrap
+declarations of objects prod already had (`initial_schema`, `declare_*`) that are never applied.
+Resolve a suspected gap file by file, never by count.
+
 | Applied | Stamp |
 |---|---|
+| `20260821000000_prior_sessions_exclude_hidden` | `20260821000000` |
+| `20260820000000_wrapped_reads_the_ledger_as_of_this_session` | `20260820000000` |
 | `20260818120000_lock_queue_status_events_grants` | `20260819011750` |
 | `20260818000000_session_notifications` | `20260816065517` |
 | `20260817000000_queue_leave_notices` | `20260816052740` |
