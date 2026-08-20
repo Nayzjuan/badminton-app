@@ -225,6 +225,33 @@ badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 _(Item 2 — the two orphaned Supabase preview branches — was **deleted 2026-08-20** and is closed.
 The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 
+**3. The add-court failure-surface fix is committed but NOT pushed and NOT merged.** Branch
+`hotfix/add-court-silent-failure` at `bf59b56`, duplicated as `backup/add-court-fix`, sitting on
+`main` `18611b2`. Validation clean (`tsc` 0, lint 0, 76 files / 1408 passed / 1 skipped). The merge
+decision is the user's and has not been given — the instruction to "merge right away" was premised
+on a live outage, and that premise is false. See the next paragraph before touching it.
+
+**Do not re-derive the "can't add courts in production" outage — it is CLOSED, and it was #80.**
+`export type { NotificationType }` in `src/app/actions/notifications.ts` made Next's server-action
+transform emit a type as a runtime identifier, so the whole action entry for
+`/c/[clubSlug]/organizer/[sessionId]` threw at module evaluation and every organizer action 500'd
+before reaching Postgres. Evidence that it is over, so nobody re-investigates: the fix deployed at
+10:28:42Z, the residual runtime errors are attributed to the **old** deployment and stop at
+10:29:46Z, and Court 11 (10:30:32Z) and Court 12 (10:30:41Z) both inserted after it. The branch
+above fixes two **residual** defects #80 never touched, neither of which needs an outage to fire: a
+swallowed `{ error }` (the live trigger is a duplicate name against `UNIQUE (session_id, name)`),
+and a missing `try/catch` (a *rejecting* action is invisible to the `{ success }` branch and
+stranded the button on "Adding…").
+
+**Gotcha — this checkout is shared, and your own branch label can move out from under you.** On
+2026-08-20 a concurrent session created `test/use-server-export-whitelist` at my commit and left
+`hotfix/add-court-silent-failure` reset back to `main`. The commit was never lost — it was reachable
+as the other branch's tip — but the only check that finds this is `git rev-parse <your-branch>`
+against the SHA you committed. `git status --porcelain` stays clean through all of it, and
+`git log` on the branch you *think* you are on shows main's history with your work simply absent.
+Re-verify HEAD and your branch SHA before concluding a task, and `git branch -f backup/<name> <sha>`
+the moment you commit.
+
 **Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
 auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.
 Ours land in `MIGRATIONS_FAILED` because the integration replays `supabase/migrations/` into the
