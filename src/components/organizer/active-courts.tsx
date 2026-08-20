@@ -179,9 +179,32 @@ export function ActiveCourts({
     const name = newCourtName.trim();
     if (!name) return;
     setAdding(true);
-    const result = await onAddCourt(name);
-    if (!result.error) setNewCourtName("");
-    setAdding(false);
+    try {
+      const result = await onAddCourt(name);
+      if (result.error) {
+        // Every other court handler toasts its failure; this one used to drop it,
+        // so a failed add was indistinguishable from a no-op. The live case is a
+        // duplicate court name: courts has UNIQUE (session_id, name), so re-adding
+        // an existing name returns success:false and the organizer saw nothing.
+        showToast({ type: "error", title: "Add Court Failed", body: result.error });
+        return;
+      }
+      setNewCourtName("");
+    } catch (err) {
+      // A server action that 500s REJECTS rather than returning success:false —
+      // the branch above never sees it. This is the shape the "use server" entry
+      // outage took: without a catch the throw skipped the spinner reset and the
+      // button stayed on "Adding…" indefinitely, with nothing shown to explain it.
+      console.error("[ActiveCourts] addCourt threw:", err);
+      showToast({
+        type: "error",
+        title: "Add Court Failed",
+        body: "The server did not respond. Check your connection and try again.",
+      });
+    } finally {
+      // Always clear — a thrown or hung action must never freeze the button.
+      setAdding(false);
+    }
   }
 
   async function handleCallNextMatch(courtId: string) {

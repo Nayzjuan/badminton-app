@@ -40,7 +40,20 @@ export async function addCourtAction(sessionId: string, name: string): Promise<C
 
   const svc = createServiceClient();
   const { error } = await svc.from("courts").insert({ session_id: sessionId, name });
-  if (error) return { success: false, message: error.message };
+  if (error) {
+    // 23505 = unique_violation on courts_session_id_name_key (session_id, name).
+    // Re-adding an existing court name is the single most likely way an organizer
+    // reaches this branch, and the raw Postgres text names an index rather than
+    // telling them what to do about it.
+    if (error.code === "23505") {
+      // Typographic quotes, not ASCII ": a court literally named `Court "A"` would
+      // otherwise render as ...named "Court "A"", where the delimiters are
+      // indistinguishable from the name's own quotes.
+      return { success: false, message: `This session already has a court named “${name}”.` };
+    }
+    console.error("addCourtAction: insert failed:", error);
+    return { success: false, message: "Failed to add court. Please try again." };
+  }
   return { success: true, message: "Court added." };
 }
 
