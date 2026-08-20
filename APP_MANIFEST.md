@@ -1815,7 +1815,12 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 
   Three layers enforce it, deliberately at different altitudes:
   - `tests/unit/use-server-exports.test.ts` — US-1/US-2 whitelist the source shape, US-3
-    discriminates the detectors so the suite cannot pass by scanning nothing.
+    discriminates the detectors so the suite cannot pass by scanning nothing. That last clause
+    is the one that needs guarding: the review of this very suite found that its file selector
+    matched one whole line against one directive, so a legal prologue — `"use server"; // note`,
+    or a preceding `"use strict"` — made a module invisible to BOTH tests. A file nothing scans
+    is worse than a missed finding, because the suite still reports green. It now reads the
+    directive prologue, and US-3 pins each of those spellings.
   - `npm run check:server-exports` (`scripts/check-server-entry-exports.mjs`, wired as
     `postbuild`) — reads the EMITTED chunks and asserts every identifier in every
     `ensureServerEntryExports([...])` array is bound in its own chunk. This is the layer that
@@ -1881,7 +1886,7 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `queue-actions.test.ts`         | Queue join/leave/rejoin guards, ghost re-queue prevention                                                                                   |
 | `match-origin-tracking.test.ts` | `origin` enum transitions — `auto` → `modified`, stickiness of `manual`                                                                     |
 | `migration-test-coverage.test.ts` | **Suite MTC — the tripwire for zero coverage** (§3.44). Static analysis over `supabase/migrations/**` and `tests/**`: every table, view and function a migration creates must be *named* by at least one non-comment test line (MTC-1); the exemption lists may only shrink (MTC-2); the extractor and the comment stripper are themselves discriminated (MTC-3). Asserts mention, never behaviour — index and trigger names are deliberately out of scope |
-| `use-server-exports.test.ts` | **Suite US — the `"use server"` export whitelist.** Static analysis over `src/**`: no `"use server"` module may carry an export CLAUSE of any spelling or a star re-export (US-1); every `export` line must be an `async function` or an erasable `type`/`interface` declaration (US-2); the detectors are themselves discriminated, including the two variants that defeated the earlier blacklist — `export { X }` after `import type { X }`, and `export * from "…"` — plus comment-only and multi-line clauses (US-3). Enumerate what it scans with `rg -l '^\s*["'"'"']use server' src/`. Source shape only; the emitted-output check is `npm run check:server-exports` |
+| `use-server-exports.test.ts` | **Suite US — the `"use server"` export whitelist.** Static analysis over `src/**`: no `"use server"` module may carry an export CLAUSE of any spelling or a star re-export (US-1); every `export` line must be an `async function` or an erasable `type`/`interface` declaration (US-2); the detectors are themselves discriminated, including the two variants that defeated the earlier blacklist — `export { X }` after `import type { X }`, and `export * from "…"` — plus comment-only clauses, clauses split after the `export` keyword, and directives carrying a trailing comment (US-3). Enumerate what it scans with `rg -l '^\s*["'"'"']use server' src/`. Source shape only; the emitted-output check is `npm run check:server-exports` |
 
 ### E2E Tests (Playwright)
 

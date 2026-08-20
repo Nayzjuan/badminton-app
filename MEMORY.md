@@ -243,12 +243,20 @@ Vercel SSO-gates (302 → `vercel.com/sso-api`) while the alias returns 200 — 
 tests the login wall. Ask the API, not the docs' example payload:
 `gh api repos/:owner/:repo/deployments --jq '.[].environment'`.
 
-⚠️ **`origin/test/use-server-export-whitelist` is MIS-BASED — do not open a PR from it.** It was
-branched while HEAD sat on `hotfix/add-court-silent-failure`, so it carries that peer branch's
-commits underneath the test work, and a PR from it would propose merging a fix whose merge has not
-been authorised. Superseded by `test/server-export-gate` (one commit on `origin/main`). Delete the
-stale ref with `git push origin --delete test/use-server-export-whitelist`; `backup/use-server-whitelist`
-holds the old tip.
+_(The mis-based `test/use-server-export-whitelist` was **deleted from origin 2026-08-21** and is
+closed. It had been branched while HEAD sat on `hotfix/add-court-silent-failure`, so a PR from it
+would have proposed merging a peer's fix whose merge was never authorised. Verified before deleting
+that it orphaned nothing — `git log origin/hotfix/add-court-silent-failure..origin/test/use-server-export-whitelist`
+was empty; `backup/use-server-whitelist` still holds the old tip. Superseded by
+`test/server-export-gate`.)_
+
+🪤 **A guard that reports green while scanning nothing is the failure mode to design against**, and
+it is not hypothetical here: the review of `use-server-exports.test.ts` found its own file selector
+matched one whole line against one directive, so `"use server"; // note` or a preceding
+`"use strict"` made a module invisible to the entire suite. Same shape in three other places this
+task — an `if:` filter that matches no environment, a `postbuild` check that finds zero arrays, a CI
+job skipped for missing secrets. Only the last one announces itself, which is why it emits a
+`::notice::`. When you add a gate, assert on the SIZE of what it examined.
 
 **Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
 auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.
