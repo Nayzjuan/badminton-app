@@ -213,27 +213,18 @@ the tables cost nothing to keep (idle, no `anon`/`authenticated` grants, RLS ena
 insurance), and three more weeks of an evidence trail is cheaper than not having one if a revoked
 badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 
-**2. Delete two orphaned Supabase preview branches — BLOCKED ON A PERMISSION, not on a decision.**
-| branch id | git branch | PR | preview ref |
-|---|---|---|---|
-| `0090f77f-9145-41ba-accc-60486840c057` | `feat/organizer-notice-inbox` | #71 | `wbgqhkahsqxkinfoxvze` |
-| `d1715f7a-b11a-4aac-b552-f3583a523e1b` | `feat/queue-leave-notices` | #70 | `cyxfcvsdgrghqkbswpta` |
+_(Item 2 — the two orphaned Supabase preview branches — was **deleted 2026-08-20** and is closed.
+The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 
-Both PRs are merged and neither git branch exists on origin (`git ls-remote --heads origin`), so
-the previews are pure garbage. They are not harmless: they hold the plan's two concurrent-branch
-slots, so **every new PR's "Supabase Preview" check is cancelled** with "Maximum number of
-concurrent branches reached" — seen on #76. Nothing is *blocked* by that (the repo has no branch
-protection, so no check is required), but the red is permanent until these are dropped.
-
-⚠️ **`6d7318f8-77dc-45dd-8b62-997a1093b8eb` is the default `main` branch, ref
-`usxftpexoimletqmrggb` — that is PRODUCTION. Never pass it to `delete_branch`.**
-
-Why it is still open: `delete_branch` is refused by the Claude Code auto-mode classifier, which is
-a separate gate from the settings allowlist and cannot be talked around. Nothing an agent can write
-resolves it. Either the user deletes both from the Supabase dashboard (Branches → ⋯ → Delete), or
-they add `"Bash(supabase branches delete:*)"` to `.claude/settings.local.json` — per
-[[classifier-block-allow-rule]] an allowlist entry overrides the classifier and takes effect
-mid-turn with no restart.
+**Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
+auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.
+Ours land in `MIGRATIONS_FAILED` because the integration replays `supabase/migrations/` into the
+preview and the bootstrap declarations abort it (`00000000000000_initial_schema` issues a bare
+`CREATE TYPE` → `42710`). A branch that never provisioned is never cleaned up, and each one holds a
+concurrent-branch slot until the plan limit is hit — at which point **every** new PR's "Supabase
+Preview" check is `CANCELLED` with "Maximum number of concurrent branches reached". Two had
+accumulated from PRs #70/#71. Check `list_branches` when that check goes red; the only non-recurring
+fix is turning branching off in the Supabase GitHub integration, since previews are never used here.
 
 ## 📚 Where everything else lives
 
