@@ -35,6 +35,15 @@ they bind the *next* change, not because they record a past one.
   flagged sites, grep for the shape.
 - 🪤 **A green sibling run is not a passing test.** One SHA can produce a failing push-event run and a
   passing pull_request run. Per-run `headSha` + per-run conclusion, never the badge.
+- 🪤 **A `"use server"` module must never re-export a type**, and no check in this repo can tell you
+  when one does. `export type { X };` erases under `tsc`, `eslint`, `vitest` **and** `next build`,
+  but Next's server-action transform emits every export specifier as a runtime identifier inside
+  `ensureServerEntryExports([...])`; a type has no binding, so the chunk dies at module evaluation
+  and takes **every action in the entry** with it. One such line ran four days in prod. The whole
+  visible symptom was an optimistic toggle snapping back, because a failed action and an unchanged
+  value render identically. `tests/unit/use-server-exports.test.ts` now pins the class; verify a fix
+  of this shape by grepping `ensureServerEntryExports)(\[` in `.next/server/chunks/ssr/`, never by a
+  green build. See `docs/incidents/2026-08-20-a-type-re-export-took-down-every-organizer-action.md`.
 - ⚖️ **Held-draft readiness is best-effort ON PURPOSE — do not "close the gap" with a retry.**
   `recomputeHeldReadiness` logs a failed stamp and leaves it for the next lifecycle event; the engine
   heartbeat makes that dense. A transient 502 there is expected. See APP_MANIFEST, *Cross-Court
