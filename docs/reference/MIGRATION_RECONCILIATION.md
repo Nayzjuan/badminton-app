@@ -48,7 +48,7 @@ against it. Four mechanisms produce a name that appears on one side only:
 | `20260702000005_legacy_backfill_new_signups` | BOOTSTRAP_DECLARATION | One-time DML; replays as a no-op on an empty DB. |
 | `20260702000006_handle_new_user_legacy_autoenroll` | APPLIED_THEN_REVERSED | Reversed by `20260705140714 primary_club_and_retire_autoenroll`. `handle_new_user` on prod records the removal. |
 | `20260702000007_regrant_leaderboard_history_views_stopgap` | APPLIED_THEN_REVERSED | Reversed on prod by `20260702152731`; repo-side reversal is `20260722010001_lock_leaderboard_reads_to_service_role`. |
-| `20260702000008_club_member_guard_hierarchy_recheck` | **APPLIED, NEVER STAMPED** | See "The one real gap" below. |
+| `20260702000008_club_member_guard_hierarchy_recheck` | APPLIED + STAMPED | Hand-applied outside the ledger; stamp back-filled. See § "The stamp gap, closed". |
 | `20260702000009_rename_legacy_club_to_chillax` | BOOTSTRAP_DECLARATION | `clubs` holds exactly one row, `CHILLAX`/`chillax`. |
 | `20260721240000_grant_limiter_execute_to_service_role` | BOOTSTRAP_DECLARATION | `service_role` already holds EXECUTE on the three limiters. |
 | `20260722000000_declare_realtime_publication_membership` | BOOTSTRAP_DECLARATION | `supabase_realtime` membership already matches the asserted set. |
@@ -74,10 +74,20 @@ against it. Four mechanisms produce a name that appears on one side only:
 | `20260701102205 scope_match_players_insert_to_session_organizer` | RENAMED | repo `20260701000012_scope_match_players_insert` |
 | `20260702152731 revoke_leaderboard_history_view_grants_post_cutover` | SUPERSEDED | Named explicitly in `20260722010001_lock_leaderboard_reads_to_service_role`, which is its repo-side equivalent. |
 
-## The one real gap
+## The stamp gap, closed
 
-`20260702000008_club_member_guard_hierarchy_recheck` **is applied to production but carries no
-row in `schema_migrations`.** It was hand-applied outside the ledger. Verify:
+`20260702000008_club_member_guard_hierarchy_recheck` was hand-applied to production **outside the
+ledger**, so it ran for a long time with no row in `schema_migrations`: `list_migrations`
+under-reported it, and a reader who trusted the ledger would conclude it never shipped. The stamp
+has been back-filled — `version` `20260702000008`, `name`
+`club_member_guard_hierarchy_recheck`, `statements` NULL.
+
+`statements` is NULL on purpose. That is what `supabase migration repair --status applied` writes:
+the row asserts *already applied*, it does not record an execution. Fabricating a body there would
+claim bytes nobody can prove ran. The `version` matches the repo filename exactly, so
+`supabase db push` will never re-run this file.
+
+Verify the DDL, never the ledger row:
 
 ```sql
 select p.proname, pg_get_function_identity_arguments(p.oid) as args,
@@ -94,9 +104,8 @@ can produce that parameter, so it is a unique fingerprint. The app half is deplo
 call sites), which is independent confirmation: were the DDL absent, member removal and role
 changes would fail in production.
 
-Re-applying it is safe — every statement is `DROP … IF EXISTS` plus `CREATE` — but the missing
-row means `list_migrations` under-reports. Inserting the stamp is a production write and needs
-a human decision.
+Re-applying it is safe — every statement is `DROP … IF EXISTS` plus `CREATE` — but there is no
+longer a reason to.
 
 The dangerous reading is not "unapplied" but "dead code". Deleting this file would **not** trip
 the `functionExists` checks in Suite G: `20260702000000` and `20260702000001` already create both
