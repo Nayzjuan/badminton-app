@@ -16,7 +16,10 @@
 -- test, so it is intentionally left to its own migration rather than bundled
 -- into this build-only foundation. Tracked in MULTI_TENANT_PLAN.md §4.5.
 --
--- Idempotent (CREATE OR REPLACE). BUILD ONLY — not applied to production yet.
+-- Idempotent (CREATE OR REPLACE). ✅ APPLIED to production, stamp `20260630093017`.
+-- (Was labelled "BUILD ONLY — not applied to production yet"; that was true when
+--  written and went stale on apply. Verify with `list_migrations`, not this note.
+--  Disposition: docs/reference/MIGRATION_RECONCILIATION.md)
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION public.migrate_player_identity(p_old_user_id uuid, p_new_user_id uuid)

@@ -385,6 +385,60 @@ describe("Schema Parity — Suite G", () => {
     expect(actual).toEqual(expected);
   });
 
+  it("the club-member guards still carry the hierarchy recheck", async () => {
+    // 20260702000008 is APPLIED to production but was never stamped into
+    // supabase_migrations.schema_migrations, so `list_migrations` does not list
+    // it and a reader who trusts the ledger concludes it never shipped. Deleting
+    // it as dead code would NOT fail functionExists() above: the earlier
+    // 20260702000000 / 20260702000001 pair already creates both functions, so
+    // the names survive and only the arity and the body change. That is the
+    // blind spot this test closes — it asserts the post-fix SHAPE, which is the
+    // only claim about this migration that a machine can check.
+    //
+    // The recheck matters because club_member_set_role and club_member_deactivate
+    // read the target's role, then write. Without p_expected_role re-read under
+    // pg_advisory_xact_lock, two concurrent admins can each pass their own
+    // hierarchy check against a role the other is in the middle of changing.
+    //
+    // Each must exist EXACTLY ONCE. The migration drops the pre-fix arity first;
+    // a leftover overload makes PostgREST answer PGRST203 and every role change
+    // in src/app/actions/clubs.ts fails.
+    const expected = [
+      "club_member_deactivate(uuid,uuid,text)",
+      "club_member_set_role(uuid,uuid,text,text)",
+    ];
+    let actual: string[] = [];
+    let bodies: { name: string; recheck: boolean; locked: boolean }[] = [];
+    await withTx(async (db) => {
+      const { rows } = await db.query<{
+        sig: string;
+        name: string;
+        recheck: boolean;
+        locked: boolean;
+      }>(
+        `SELECT p.oid::regprocedure::text AS sig,
+                p.proname                 AS name,
+                p.prosrc LIKE '%role_changed%'        AS recheck,
+                p.prosrc LIKE '%pg_advisory_xact_lock%' AS locked
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public'
+            AND p.proname IN ('club_member_deactivate','club_member_set_role')
+          ORDER BY 1`
+      );
+      actual = rows.map((r) => r.sig);
+      bodies = rows.map((r) => ({
+        name: r.name,
+        recheck: r.recheck,
+        locked: r.locked,
+      }));
+    });
+    expect(actual).toEqual(expected);
+    expect(bodies).toEqual([
+      { name: "club_member_deactivate", recheck: true, locked: true },
+      { name: "club_member_set_role", recheck: true, locked: true },
+    ]);
+  });
+
   // ── Leaderboard read surface (20260722010000 / 20260722010001) ──
   // TENANCY_AUDIT_2026-07-21.md #6: these four functions are SECURITY DEFINER
   // with every scoping parameter DEFAULTED, so `{}` over PostgREST returned

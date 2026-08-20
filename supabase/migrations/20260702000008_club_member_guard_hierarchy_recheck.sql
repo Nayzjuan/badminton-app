@@ -15,7 +15,30 @@
 --
 -- NOTE: coupled with the app change in src/app/actions/clubs.ts + the RPC types
 -- in src/types/database.ts — apply this migration together with that code (the
--- branch's standard deploy: migrations first). Not applied to prod yet.
+-- branch's standard deploy: migrations first).
+--
+-- APPLIED TO PRODUCTION, BUT NEVER STAMPED. No row in
+-- supabase_migrations.schema_migrations carries this file, so `list_migrations`
+-- under-reports it. The DDL is live regardless — verify, do not trust this note:
+--
+--   select p.proname, pg_get_function_identity_arguments(p.oid) as args,
+--          (p.prosrc like '%role_changed%') as has_recheck
+--     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--    where n.nspname = 'public'
+--      and p.proname in ('club_member_deactivate','club_member_set_role');
+--
+-- Both return p_expected_role in the signature and has_recheck = true.
+-- `grep -l p_expected_role supabase/migrations/*.sql` returns only this file, so
+-- that parameter is a unique fingerprint of this migration. The app half is
+-- deployed too, which is independent confirmation: were the DDL absent, every
+-- removeMember / changeMemberRole call would fail against a missing overload.
+-- Re-applying is safe (DROP ... IF EXISTS + CREATE throughout).
+-- Do NOT delete this file as unapplied. 20260702000000 / 20260702000001 already
+-- create both functions, so a delete leaves the NAMES in place and silently
+-- reverts only the arity and the recheck. Suite G's "the club-member guards
+-- still carry the hierarchy recheck" is what fails if you try.
+--
+-- Full disposition: docs/reference/MIGRATION_RECONCILIATION.md
 -- ============================================================
 
 DROP FUNCTION IF EXISTS public.club_member_deactivate(uuid, uuid);

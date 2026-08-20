@@ -16,7 +16,10 @@
 --   a later phase once createSession passes club_id explicitly
 --   (see MULTI_TENANT_PLAN.md §8 Phase 2 + Decision Log).
 --
--- Idempotent. BUILD ONLY — not applied to production yet.
+-- Idempotent. ✅ APPLIED to production, stamp `20260630092842`.
+-- (Was labelled "BUILD ONLY — not applied to production yet"; that was true when
+--  written and went stale on apply. Verify with `list_migrations`, not this note.
+--  Disposition: docs/reference/MIGRATION_RECONCILIATION.md)
 -- ============================================================
 
 -- ---- 1. Legacy club (fixed id so it can serve as a column DEFAULT) ----

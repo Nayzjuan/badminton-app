@@ -103,8 +103,6 @@ const GRANDFATHERED: string[] = [
   "_fix_record_partnership_delta",
   "checkout_player_cleanup_drafts",
   "club_invites",
-  "club_member_deactivate",
-  "club_member_set_role",
   "club_milestones",
   "co_organizer_join_attempts",
   "count_completed_matches_by_session",

@@ -52,11 +52,15 @@ the only place that records the mapping.
 To ask what is unapplied, query the catalog — `list_migrations`, or
 `select name from supabase_migrations.schema_migrations` — and compare **by name suffix**.
 🪤 **A bare set-difference against `ls supabase/migrations/` overstates the gap in both directions**
-and must not be read as drift: several repo files were renamed after they were applied, so prod still
-holds the older, longer name (`scope_match_players_insert` in the repo is
-`scope_match_players_insert_to_session_organizer` on prod), and several more are local-bootstrap
-declarations of objects prod already had (`initial_schema`, `declare_*`) that are never applied.
-Resolve a suspected gap file by file, never by count.
+and must not be read as drift. **Every differing name was reconciled file-by-file against a prod
+catalog snapshot on 2026-08-20 — see `docs/reference/MIGRATION_RECONCILIATION.md`, which
+dispositions all of them.** The result: **zero unapplied migrations, zero drift.** They split into
+bootstrap declarations of objects prod already had (`initial_schema`, `declare_*`,
+`create_dashboard_authored_view`) that must never be applied; files renamed *after* they were
+applied, so prod holds the older name (`scope_match_players_insert` in the repo is
+`scope_match_players_insert_to_session_organizer` on prod); early hand-applied fixes since
+superseded by a whole-body `CREATE OR REPLACE`; and two stopgaps applied then reversed.
+Resolve a suspected gap file by file, never by count — and check that doc before re-deriving it.
 
 | Applied | Stamp |
 |---|---|
@@ -208,6 +212,21 @@ above is the only thing that closes that drift. ⚖️ An early drop was **raise
 the tables cost nothing to keep (idle, no `anon`/`authenticated` grants, RLS enabled as fail-closed
 insurance), and three more weeks of an evidence trail is cheaper than not having one if a revoked
 badge is ever disputed. **Do not re-raise this before 2026-09-12.**
+
+**2. Stamp `20260702000008_club_member_guard_hierarchy_recheck` into prod's ledger — NEEDS A DECISION.**
+The migration **is applied** (both `club_member_deactivate` and `club_member_set_role` carry
+`p_expected_role` and the `role_changed` branch on prod; the app half is deployed and calls them
+that way), but **no row in `supabase_migrations.schema_migrations` records it** — it was
+hand-applied outside the ledger. So `list_migrations` under-reports, and a future session reading
+it will believe the guard is missing. Inserting the stamp is a **production write**, hence a human
+call. Re-applying the file instead is also safe (`DROP … IF EXISTS` + `CREATE` throughout) but
+churns two SECURITY DEFINER functions for a bookkeeping fix. Evidence and the verification query:
+`docs/reference/MIGRATION_RECONCILIATION.md` § "The one real gap".
+The *shape* is no longer at risk either way: Suite G's "the club-member guards still carry the
+hierarchy recheck" pins both `regprocedure` signatures and asserts `role_changed` +
+`pg_advisory_xact_lock` in both bodies — deleting the migration file leaves the function NAMES in
+place (`20260702000000` creates them), so the older `functionExists` checks would have stayed
+green. Only the ledger row is still open.
 
 ## 📚 Where everything else lives
 
