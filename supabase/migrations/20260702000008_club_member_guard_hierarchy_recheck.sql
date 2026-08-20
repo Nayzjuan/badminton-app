@@ -33,6 +33,11 @@
 -- deployed too, which is independent confirmation: were the DDL absent, every
 -- removeMember / changeMemberRole call would fail against a missing overload.
 -- Re-applying is safe (DROP ... IF EXISTS + CREATE throughout).
+-- Do NOT delete this file as unapplied. 20260702000000 / 20260702000001 already
+-- create both functions, so a delete leaves the NAMES in place and silently
+-- reverts only the arity and the recheck. Suite G's "the club-member guards
+-- still carry the hierarchy recheck" is what fails if you try.
+--
 -- Full disposition: docs/reference/MIGRATION_RECONCILIATION.md
 -- ============================================================
 

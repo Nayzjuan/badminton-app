@@ -222,6 +222,11 @@ it will believe the guard is missing. Inserting the stamp is a **production writ
 call. Re-applying the file instead is also safe (`DROP … IF EXISTS` + `CREATE` throughout) but
 churns two SECURITY DEFINER functions for a bookkeeping fix. Evidence and the verification query:
 `docs/reference/MIGRATION_RECONCILIATION.md` § "The one real gap".
+The *shape* is no longer at risk either way: Suite G's "the club-member guards still carry the
+hierarchy recheck" pins both `regprocedure` signatures and asserts `role_changed` +
+`pg_advisory_xact_lock` in both bodies — deleting the migration file leaves the function NAMES in
+place (`20260702000000` creates them), so the older `functionExists` checks would have stayed
+green. Only the ledger row is still open.
 
 ## 📚 Where everything else lives
 

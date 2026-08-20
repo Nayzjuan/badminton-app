@@ -98,12 +98,20 @@ Re-applying it is safe — every statement is `DROP … IF EXISTS` plus `CREATE`
 row means `list_migrations` under-reports. Inserting the stamp is a production write and needs
 a human decision.
 
+The dangerous reading is not "unapplied" but "dead code". Deleting this file would **not** trip
+the `functionExists` checks in Suite G: `20260702000000` and `20260702000001` already create both
+functions, so the names survive a delete and only the arity and the body change. Suite G's
+"the club-member guards still carry the hierarchy recheck" pins the post-fix `regprocedure`
+signatures and asserts `role_changed` and `pg_advisory_xact_lock` are still in both bodies —
+verified by restoring the pre-fix definitions on a local database and watching it fail.
+
 ## Verification is mechanical, not documentary
 
 `tests/integration/schema-parity.test.ts` (Suite G) re-derives these invariants from the catalog
 on every `supabase db reset` — function existence, the leaderboard read lockdown, service_role
-EXECUTE coverage, and the live-swap RPC signatures. That suite, not this table, is the gate. This
-table exists so a future reader does not mistake a name difference for drift.
+EXECUTE coverage, the live-swap RPC signatures, and the club-member guard shape. That suite, not
+this table, is the gate. This table exists so a future reader does not mistake a name difference
+for drift.
 
 🪤 A from-scratch replay is not continuously equal to production — only equal at the end. The
 `compute_session_wrapped` body installed at `20260423100000` carries the PG17-broken
