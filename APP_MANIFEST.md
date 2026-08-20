@@ -1793,6 +1793,15 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 - Auth check always first: `getUser()` via RLS client → `isSessionOrganizer()` → then proceed.
 - DB reads/writes via `createServiceClient()`.
 - **UUID validation always before DB call**: `isValidUUID(id)` guard on every incoming UUID parameter.
+- **A `"use server"` module never re-exports a type.** `export type { X };` and `export { type X };`
+  erase under `tsc`, `eslint`, `vitest` and `next build` alike, but Next's server-action transform
+  enumerates the export *specifiers* of such a module and emits each one as a runtime identifier
+  inside `ensureServerEntryExports([...])`. A type has no runtime binding, so the emitted array
+  references a free variable and the chunk throws `ReferenceError` at module evaluation — killing
+  every server action bundled into that entry, not just the file that declared it. Declare types in
+  a plain module and import them. `tests/unit/use-server-exports.test.ts` (US-1) enforces this;
+  `docs/incidents/2026-08-20-a-type-re-export-took-down-every-organizer-action.md` is the case that
+  produced the rule.
 
 ### dnd-kit Isolation
 

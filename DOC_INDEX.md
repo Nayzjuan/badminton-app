@@ -18,7 +18,7 @@ After a context compaction, do **not** re-read any of this.
 | `CLAUDE.md` | 11 KB | The rules. Read this in full — it is the only doc that is not optional. |
 | `HANDOFF.md` | 10 KB | Onboarding: repo paths, Supabase/Vercel connector discovery, workflow rules. |
 | `AGENTS.md` | 327 B | Next.js 16 is not the Next.js in your training data. Read before any Next API. |
-| `MEMORY.md` | 18 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
+| `MEMORY.md` | 20 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
 | `README.md` | 1 KB | Public-facing project readme. |
 | `PRODUCT.md` | 4 KB | What the product is for, in the user's language. |
 | `MATCHMAKING.md` | 20 KB | Standalone narrative of the matchmaking engine. |
@@ -26,7 +26,7 @@ After a context compaction, do **not** re-read any of this.
 
 ---
 
-## `APP_MANIFEST.md` — 352 KB
+## `APP_MANIFEST.md` — 353 KB
 
 | Section | Lines | Read with |
 |---|---|---|
@@ -117,30 +117,30 @@ After a context compaction, do **not** re-read any of this.
 | &nbsp;&nbsp;&nbsp;&nbsp;4.8 Component Patterns | 1731–1758 | `sed -n '1731,1758p' APP_MANIFEST.md` |
 | **5. Realtime Architecture** | 1759–1786 | `sed -n '1759,1786p' APP_MANIFEST.md` |
 | **6. Architectural Patterns & Rules** | 1787–1788 | `sed -n '1787,1788p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Server Action Convention | 1789–1796 | `sed -n '1789,1796p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;dnd-kit Isolation | 1797–1807 | `sed -n '1797,1807p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;TypeScript Convention | 1808–1814 | `sed -n '1808,1814p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Service Client Rule | 1815–1818 | `sed -n '1815,1818p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;PostgREST Gotchas | 1819–1823 | `sed -n '1819,1823p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Null-guard on Draft Functions | 1824–1829 | `sed -n '1824,1829p' APP_MANIFEST.md` |
-| **7. Testing** | 1830–1831 | `sed -n '1830,1831p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1832–1849 | `sed -n '1832,1849p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 1850–1876 | `sed -n '1850,1876p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 1877–1912 | `sed -n '1877,1912p' APP_MANIFEST.md` |
-| **The migration set must replay from scratch (2026-07-22)** | 1913–1995 | `sed -n '1913,1995p' APP_MANIFEST.md` |
-| **`after()` in integration tests** | 1996–2022 | `sed -n '1996,2022p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2023–2036 | `sed -n '2023,2036p' APP_MANIFEST.md` |
-| **8. File Map** | 2037–2288 | `sed -n '2037,2288p' APP_MANIFEST.md` |
-| **9. Known Gotchas** | 2289–2325 | `sed -n '2289,2325p' APP_MANIFEST.md` |
-| **10. Digital Twin — Interactive Architecture Documentation** | 2326–2331 | `sed -n '2326,2331p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2332–2335 | `sed -n '2332,2335p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2336–2349 | `sed -n '2336,2349p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2350–2368 | `sed -n '2350,2368p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2369–2372 | `sed -n '2369,2372p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2373–2385 | `sed -n '2373,2385p' APP_MANIFEST.md` |
-| **11. Multi-Tenant (Clubs)** | 2386–2541 | `sed -n '2386,2541p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2542–2558 | `sed -n '2542,2558p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2559–2573 | `sed -n '2559,2573p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Server Action Convention | 1789–1805 | `sed -n '1789,1805p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;dnd-kit Isolation | 1806–1816 | `sed -n '1806,1816p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;TypeScript Convention | 1817–1823 | `sed -n '1817,1823p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Service Client Rule | 1824–1827 | `sed -n '1824,1827p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;PostgREST Gotchas | 1828–1832 | `sed -n '1828,1832p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Null-guard on Draft Functions | 1833–1838 | `sed -n '1833,1838p' APP_MANIFEST.md` |
+| **7. Testing** | 1839–1840 | `sed -n '1839,1840p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1841–1858 | `sed -n '1841,1858p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 1859–1885 | `sed -n '1859,1885p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 1886–1921 | `sed -n '1886,1921p' APP_MANIFEST.md` |
+| **The migration set must replay from scratch (2026-07-22)** | 1922–2004 | `sed -n '1922,2004p' APP_MANIFEST.md` |
+| **`after()` in integration tests** | 2005–2031 | `sed -n '2005,2031p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2032–2045 | `sed -n '2032,2045p' APP_MANIFEST.md` |
+| **8. File Map** | 2046–2297 | `sed -n '2046,2297p' APP_MANIFEST.md` |
+| **9. Known Gotchas** | 2298–2334 | `sed -n '2298,2334p' APP_MANIFEST.md` |
+| **10. Digital Twin — Interactive Architecture Documentation** | 2335–2340 | `sed -n '2335,2340p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2341–2344 | `sed -n '2341,2344p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2345–2358 | `sed -n '2345,2358p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2359–2377 | `sed -n '2359,2377p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2378–2381 | `sed -n '2378,2381p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2382–2394 | `sed -n '2382,2394p' APP_MANIFEST.md` |
+| **11. Multi-Tenant (Clubs)** | 2395–2550 | `sed -n '2395,2550p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2551–2567 | `sed -n '2551,2567p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2568–2582 | `sed -n '2568,2582p' APP_MANIFEST.md` |
 
 ---
 
@@ -221,6 +221,7 @@ when you need the reasoning behind a past decision.
 | `docs/incidents/2026-08-16-organizer-notices.md` | 2 KB |
 | `docs/incidents/2026-08-16-publishing-a-held-cross-court-draft.md` | 37 KB |
 | `docs/incidents/2026-08-18-the-audit-trail-nobody-could-read-and-the-four-ways-a-test-c.md` | 15 KB |
+| `docs/incidents/2026-08-20-a-type-re-export-took-down-every-organizer-action.md` | 4 KB |
 
 ---
 
