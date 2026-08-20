@@ -25,7 +25,13 @@ import { logMatchEvent } from "@/lib/match-event-log";
 import { isRpcNotFound } from "@/lib/rpc-utils";
 import type { SessionNotification } from "@/types/database";
 
-export type { NotificationType };
+// NOTE: do NOT re-export a type from this file. It carries "use server", and
+// Next's server-action transform emits every export specifier of such a module
+// as a runtime identifier inside ensureServerEntryExports([...]). A type has no
+// runtime binding, so the emitted array references a free variable and the whole
+// chunk dies at module evaluation with `ReferenceError: <Type> is not defined` —
+// taking every server action bundled with it down. Import NotificationType from
+// "@/lib/notifications/push-server" instead. See tests/unit/use-server-exports.test.ts.
 
 /**
  * Send a Web Push notification to all registered devices for `userId`.
