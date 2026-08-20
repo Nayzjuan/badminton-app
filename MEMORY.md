@@ -213,20 +213,27 @@ the tables cost nothing to keep (idle, no `anon`/`authenticated` grants, RLS ena
 insurance), and three more weeks of an evidence trail is cheaper than not having one if a revoked
 badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 
-**2. Stamp `20260702000008_club_member_guard_hierarchy_recheck` into prod's ledger — NEEDS A DECISION.**
-The migration **is applied** (both `club_member_deactivate` and `club_member_set_role` carry
-`p_expected_role` and the `role_changed` branch on prod; the app half is deployed and calls them
-that way), but **no row in `supabase_migrations.schema_migrations` records it** — it was
-hand-applied outside the ledger. So `list_migrations` under-reports, and a future session reading
-it will believe the guard is missing. Inserting the stamp is a **production write**, hence a human
-call. Re-applying the file instead is also safe (`DROP … IF EXISTS` + `CREATE` throughout) but
-churns two SECURITY DEFINER functions for a bookkeeping fix. Evidence and the verification query:
-`docs/reference/MIGRATION_RECONCILIATION.md` § "The one real gap".
-The *shape* is no longer at risk either way: Suite G's "the club-member guards still carry the
-hierarchy recheck" pins both `regprocedure` signatures and asserts `role_changed` +
-`pg_advisory_xact_lock` in both bodies — deleting the migration file leaves the function NAMES in
-place (`20260702000000` creates them), so the older `functionExists` checks would have stayed
-green. Only the ledger row is still open.
+**2. Delete two orphaned Supabase preview branches — BLOCKED ON A PERMISSION, not on a decision.**
+| branch id | git branch | PR | preview ref |
+|---|---|---|---|
+| `0090f77f-9145-41ba-accc-60486840c057` | `feat/organizer-notice-inbox` | #71 | `wbgqhkahsqxkinfoxvze` |
+| `d1715f7a-b11a-4aac-b552-f3583a523e1b` | `feat/queue-leave-notices` | #70 | `cyxfcvsdgrghqkbswpta` |
+
+Both PRs are merged and neither git branch exists on origin (`git ls-remote --heads origin`), so
+the previews are pure garbage. They are not harmless: they hold the plan's two concurrent-branch
+slots, so **every new PR's "Supabase Preview" check is cancelled** with "Maximum number of
+concurrent branches reached" — seen on #76. Nothing is *blocked* by that (the repo has no branch
+protection, so no check is required), but the red is permanent until these are dropped.
+
+⚠️ **`6d7318f8-77dc-45dd-8b62-997a1093b8eb` is the default `main` branch, ref
+`usxftpexoimletqmrggb` — that is PRODUCTION. Never pass it to `delete_branch`.**
+
+Why it is still open: `delete_branch` is refused by the Claude Code auto-mode classifier, which is
+a separate gate from the settings allowlist and cannot be talked around. Nothing an agent can write
+resolves it. Either the user deletes both from the Supabase dashboard (Branches → ⋯ → Delete), or
+they add `"Bash(supabase branches delete:*)"` to `.claude/settings.local.json` — per
+[[classifier-block-allow-rule]] an allowlist entry overrides the classifier and takes effect
+mid-turn with no restart.
 
 ## 📚 Where everything else lives
 

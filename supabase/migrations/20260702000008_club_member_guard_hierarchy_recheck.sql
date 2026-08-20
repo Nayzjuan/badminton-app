@@ -17,9 +17,12 @@
 -- in src/types/database.ts — apply this migration together with that code (the
 -- branch's standard deploy: migrations first).
 --
--- APPLIED TO PRODUCTION, BUT NEVER STAMPED. No row in
--- supabase_migrations.schema_migrations carries this file, so `list_migrations`
--- under-reports it. The DDL is live regardless — verify, do not trust this note:
+-- APPLIED TO PRODUCTION, AND NOW STAMPED. It was hand-applied outside the
+-- ledger, so for a long time no row in supabase_migrations.schema_migrations
+-- carried it and `list_migrations` under-reported it. The stamp was back-filled
+-- as version 20260702000008 with statements NULL — that mirrors
+-- `supabase migration repair --status applied`, which records "already applied"
+-- without claiming to have executed a body. Verify the DDL, not this note:
 --
 --   select p.proname, pg_get_function_identity_arguments(p.oid) as args,
 --          (p.prosrc like '%role_changed%') as has_recheck
