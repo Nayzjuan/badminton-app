@@ -167,13 +167,15 @@ function offendingClauses(src: string): string[] {
 }
 
 function disallowedExportLines(src: string): string[] {
-  return stripComments(src)
-    .split("\n")
-    // `export\b`, not `export[ \t]` — a clause split after the keyword leaves a
-    // bare `export` line with no trailing space, which the latter never sees.
-    .filter((line) => /^[ \t]*export\b/.test(line))
-    .map((line) => line.trim())
-    .filter((line) => !ALLOWED_EXPORT.test(line));
+  return (
+    stripComments(src)
+      .split("\n")
+      // `export\b`, not `export[ \t]` — a clause split after the keyword leaves a
+      // bare `export` line with no trailing space, which the latter never sees.
+      .filter((line) => /^[ \t]*export\b/.test(line))
+      .map((line) => line.trim())
+      .filter((line) => !ALLOWED_EXPORT.test(line))
+  );
 }
 
 const FILES = walk(SRC).map((file) => ({ file, src: fs.readFileSync(file, "utf8") }));
@@ -241,9 +243,7 @@ describe("US-3 — the detectors discriminate", () => {
 
   it("flags a clause split across lines, which a line-anchored pattern cannot see", () => {
     // Both are valid TS and both emit the specifier that killed the chunk.
-    expect(offendingClauses('"use server";\nexport\n{ NotificationType };')).toEqual([
-      "export {",
-    ]);
+    expect(offendingClauses('"use server";\nexport\n{ NotificationType };')).toEqual(["export {"]);
     expect(offendingClauses('"use server";\nexport\n* from "./types";')).toEqual(["export *"]);
     expect(offendingClauses('"use server";\nexport type\n{ NotificationType };')).toEqual([
       "export type {",
