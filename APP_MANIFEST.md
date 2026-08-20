@@ -1793,15 +1793,41 @@ Seven channels per organizer session — 5 health-monitored + 2 ancillary:
 - Auth check always first: `getUser()` via RLS client → `isSessionOrganizer()` → then proceed.
 - DB reads/writes via `createServiceClient()`.
 - **UUID validation always before DB call**: `isValidUUID(id)` guard on every incoming UUID parameter.
-- **A `"use server"` module never re-exports a type.** `export type { X };` and `export { type X };`
-  erase under `tsc`, `eslint`, `vitest` and `next build` alike, but Next's server-action transform
-  enumerates the export *specifiers* of such a module and emits each one as a runtime identifier
-  inside `ensureServerEntryExports([...])`. A type has no runtime binding, so the emitted array
-  references a free variable and the chunk throws `ReferenceError` at module evaluation — killing
-  every server action bundled into that entry, not just the file that declared it. Declare types in
-  a plain module and import them. `tests/unit/use-server-exports.test.ts` (US-1) enforces this;
-  `docs/incidents/2026-08-20-a-type-re-export-took-down-every-organizer-action.md` is the case that
-  produced the rule.
+- **A `"use server"` module carries no export CLAUSE at all** — not `export { X }`, not
+  `export type { X }`, not `export { type X }`, with or without a `from "…"`, and no
+  `export *`. It may export an `async function`, or an erasable `type` / `interface`
+  DECLARATION. Nothing else.
+
+  Next's server-action transform enumerates the export *specifiers* of such a module and emits
+  each one as a runtime identifier inside `ensureServerEntryExports([...])`. A type has no
+  runtime binding, so the emitted array references a free variable and the chunk throws
+  `ReferenceError` at module evaluation — killing every server action bundled into that entry,
+  not just the file that declared it. Declare types in a plain module and import them.
+
+  **The rule is stated as a whitelist because the narrower version was measured and failed.**
+  It previously read "never re-exports a type" and named the two `type`-keyword spellings. But
+  `export { X }` following `import type { X }` carries no `type` keyword, is clean under
+  `tsc` (`isolatedModules` raises TS1205 only for the `… from "…"` form), clean under `eslint`,
+  passed the suite written to prevent this, built with exit 0, and emitted the byte-identical
+  defect. The clause is the hazard, not the keyword: it is the only construct that yields an
+  emitted specifier, and one file cannot tell you whether the name behind it has a runtime
+  binding.
+
+  Three layers enforce it, deliberately at different altitudes:
+  - `tests/unit/use-server-exports.test.ts` — US-1/US-2 whitelist the source shape, US-3
+    discriminates the detectors so the suite cannot pass by scanning nothing.
+  - `npm run check:server-exports` (`scripts/check-server-entry-exports.mjs`, wired as
+    `postbuild`) — reads the EMITTED chunks and asserts every identifier in every
+    `ensureServerEntryExports([...])` array is bound in its own chunk. This is the layer that
+    holds when the source shape is novel, and the only one that sees a defect introduced by
+    re-chunking rather than by an edit. `next build` alone cannot: it emits chunks without
+    evaluating them, so it exits 0 on a bundle that throws on first request.
+  - `.github/workflows/post-deploy-smoke.yml` — Scenario B against the live production site, the
+    backstop for "broken deploy" in general.
+
+  `docs/incidents/2026-08-20-a-type-re-export-took-down-every-organizer-action.md` is the case
+  that produced the rule, including why the commit that triggered it did not touch the file
+  that contained it.
 
 ### dnd-kit Isolation
 
@@ -1855,11 +1881,12 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `queue-actions.test.ts`         | Queue join/leave/rejoin guards, ghost re-queue prevention                                                                                   |
 | `match-origin-tracking.test.ts` | `origin` enum transitions — `auto` → `modified`, stickiness of `manual`                                                                     |
 | `migration-test-coverage.test.ts` | **Suite MTC — the tripwire for zero coverage** (§3.44). Static analysis over `supabase/migrations/**` and `tests/**`: every table, view and function a migration creates must be *named* by at least one non-comment test line (MTC-1); the exemption lists may only shrink (MTC-2); the extractor and the comment stripper are themselves discriminated (MTC-3). Asserts mention, never behaviour — index and trigger names are deliberately out of scope |
+| `use-server-exports.test.ts` | **Suite US — the `"use server"` export whitelist.** Static analysis over `src/**`: no `"use server"` module may carry an export CLAUSE of any spelling or a star re-export (US-1); every `export` line must be an `async function` or an erasable `type`/`interface` declaration (US-2); the detectors are themselves discriminated, including the two variants that defeated the earlier blacklist — `export { X }` after `import type { X }`, and `export * from "…"` — plus comment-only and multi-line clauses (US-3). Enumerate what it scans with `rg -l '^\s*["'"'"']use server' src/`. Source shape only; the emitted-output check is `npm run check:server-exports` |
 
 ### E2E Tests (Playwright)
 
 - **Location:** `tests/e2e/`
-- **Run:** `npm run test:e2e`
+- **Run:** `npm run test:e2e` — or `npm run test:e2e:smoke` for Scenario B alone.
 - **Target:** Live Vercel deployment — **not localhost**.
 - **Auth bypass:** Header `x-vercel-protection-bypass: {VERCEL_BYPASS_SECRET}` injected in `playwright.config.ts`.
 - **Sandbox safety (teardown.ts):** Two hard guards before any DELETE: `TEST_SESSION_ID` env var must be defined AND `sessions.name` must start with `"🤖 E2E SANDBOX"`.
@@ -1882,6 +1909,41 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | M — Player queue       | `scenario-m-player-queue.spec.ts`              | Queue position number, "in line" status UI                                                                     |
 | N — Leaderboard        | `scenario-n-leaderboard.spec.ts`               | Tab accessible; data after completed match; DB ordering (2 wins > 1 win via `v_session_leaderboard`)           |
 | O — Player scoring     | `scenario-o-player-scoring.spec.ts`            | Score form visible; submit asserts exact scores `completed\|21\|15` and `games_played=1`                       |
+
+#### Post-deploy smoke (`.github/workflows/post-deploy-smoke.yml`)
+
+Playwright targets production, so it can never be a pre-merge gate — `.husky/pre-push` says so
+explicitly and is right. It runs **after** Vercel reports a Production deployment healthy, via the
+`deployment_status` event.
+
+It runs Scenario B, which clicks `toggle-auto-matchmaking` and then polls the DB for
+`is_auto_matchmaking_on` instead of trusting the optimistic button text — a 500'd server action
+fails that poll. Scenario L asserts the same toggle against DB state. Either would have caught the
+2026-08-20 outage on the deploy that caused it; neither ran anywhere.
+
+The sandbox session is a single shared resource (`workers: 1`, one `TEST_SESSION_ID`), so a
+`concurrency` group serialises runs and cancels a run whose deployment has already been superseded.
+
+Two properties of the trigger are counter-intuitive enough to be worth stating, because getting
+either wrong yields a workflow that never runs — indistinguishable, on the Actions tab, from one
+that passes. Both are observable rather than documented; ask the API with
+`gh api repos/:owner/:repo/deployments --jq '.[].environment'`:
+
+- The account has three Vercel projects and GitHub names the environment after each one, so the
+  values are `Production – badminton-app`, `Production – badminton-marketing`,
+  `Production – digital-twin` and their `Preview – …` counterparts. **There is no bare
+  `Production`**, and the separator is an en dash, so the job matches with `startsWith` plus
+  `contains` rather than `==` on either half.
+- The event's `environment_url` is the *per-deployment* host, and Vercel puts that behind SSO
+  Deployment Protection — it answers 302 to `vercel.com/sso-api` while the alias answers 200. So
+  the job smokes the stable production alias instead. That is also what real users hit, which is
+  what a production smoke is for; the race it admits is what `cancel-in-progress` covers.
+
+**It no-ops with a notice until its secrets exist** — `TEST_SESSION_ID`,
+`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. (`VERCEL_BYPASS_SECRET` is passed through
+but not required, and is not part of the guard.) A permanently-red required check trains people to
+ignore it, which is the same failure as a gate nothing runs — and so does a permanently-green one
+that never executed, hence the notice in the log.
 
 ### Integration Tests (Vitest — live Supabase)
 

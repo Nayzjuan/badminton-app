@@ -225,6 +225,31 @@ badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 _(Item 2 — the two orphaned Supabase preview branches — was **deleted 2026-08-20** and is closed.
 The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 
+**3. The post-deploy smoke is committed but INERT until three GitHub secrets exist.**
+`.github/workflows/post-deploy-smoke.yml` runs Scenario B against the production alias
+`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. Until
+`TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are added at
+Settings → Secrets and variables → Actions it **no-ops with a `::notice::` and reports green**.
+That green means "not configured", not "the smoke passed" — read the job log before treating it as
+evidence. Only the user can add the secrets. By design it drives the live production Supabase
+sandbox session, so a run mutates real rows and depends on `tests/helpers/global-teardown.ts` to
+sweep.
+
+🪤 **Two things about the `deployment_status` trigger are not guessable, and both were wrong on
+the first pass.** The environment is `Production – badminton-app` — EN DASH, project-suffixed; there
+is no bare `Production`, so an `== 'Production'` filter fires never, and a silent workflow is worth
+exactly as much as no workflow. And the event's `environment_url` is the per-deployment host, which
+Vercel SSO-gates (302 → `vercel.com/sso-api`) while the alias returns 200 — so smoking the event URL
+tests the login wall. Ask the API, not the docs' example payload:
+`gh api repos/:owner/:repo/deployments --jq '.[].environment'`.
+
+⚠️ **`origin/test/use-server-export-whitelist` is MIS-BASED — do not open a PR from it.** It was
+branched while HEAD sat on `hotfix/add-court-silent-failure`, so it carries that peer branch's
+commits underneath the test work, and a PR from it would propose merging a fix whose merge has not
+been authorised. Superseded by `test/server-export-gate` (one commit on `origin/main`). Delete the
+stale ref with `git push origin --delete test/use-server-export-whitelist`; `backup/use-server-whitelist`
+holds the old tip.
+
 **Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
 auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.
 Ours land in `MIGRATIONS_FAILED` because the integration replays `supabase/migrations/` into the

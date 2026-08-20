@@ -20,6 +20,7 @@
     "test:integration:reset": "supabase db reset && npm run test:integration",
     "test:setup": "npx tsx tests/helpers/init-sandbox.ts",
     "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test tests/e2e/scenario-b-engine-flows.spec.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
     "prepare": "husky"
