@@ -56,12 +56,27 @@ function walk(dir, out = []) {
   return out;
 }
 
-/** Is there a binding for `name` anywhere in this chunk? */
+/**
+ * Is there a binding for `name` anywhere in this chunk?
+ *
+ * `name` is escaped before interpolation because the identifier grammar admits
+ * `$`, which is a regex anchor: unescaped, EVERY alternative below becomes
+ * unmatchable and a perfectly good build fails with a message asserting the
+ * opposite of the truth — from `postbuild`, i.e. as a red production deploy.
+ * This toolchain does generate such names (`.next/server` already contains
+ * `$$RSC_SERVER_ACTION_0`), and the SWC mangler reaches `$` once a scope
+ * exhausts the 52 letters.
+ */
 function isBound(source, name) {
+  const q = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // `(?![\w$])` rather than `\b`: `$` is not a word character, so `\b` fails to
+  // anchor a name that ends in one — `let $=1` would read as unbound. The
+  // assignment arm also refuses a leading `.`, since `o.X = 1` assigns a
+  // property and creates no chunk-local binding, and refuses `==`/`=>`.
   const declared = new RegExp(
-    `(?:var|let|const|function|class)\\s+${name}\\b` + // var X / function X / class X
-      `|\\b${name}\\s*=` + //                            X = …  (assignment form)
-      `|function\\s*\\*?\\s*${name}\\b`, //              generator
+    `(?:var|let|const|function|class)\\s+${q}(?![\\w$])` + // var X / function X / class X
+      `|(?<![\\w$.])${q}\\s*=(?![=>])` + //                   X = …  (assignment form)
+      `|function\\s*\\*?\\s*${q}(?![\\w$])`, //             generator
     "m"
   );
   return declared.test(source);

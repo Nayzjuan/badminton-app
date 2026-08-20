@@ -76,25 +76,46 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * First line of real code, with leading blank lines, line comments and block
- * comments skipped. Every file in this repo opens with a banner comment, so a
- * naive "line 1" check would classify all of them as neither client nor server.
+ * Every string in the module's DIRECTIVE PROLOGUE — the run of string-literal
+ * statements a module may open with, before any other code.
+ *
+ * This reads the prologue rather than one line because a file this function
+ * misses is invisible to EVERY test below, which is the worst failure mode this
+ * file has: the suite goes green by scanning nothing. A prologue legally admits
+ * a trailing comment and more than one directive, so all of
+ *
+ *     "use server"; // organizer mutations
+ *     "use strict";
+ *     "use server";
+ *
+ * are server modules that a whole-line match against a single directive drops.
+ * Prettier rewrites none of them, so they survive an ordinary commit — in a repo
+ * where every file opens with a banner comment.
  */
-function firstCodeLine(src: string): string {
-  let rest = src.replace(/^﻿/, ""); // strip a byte-order mark, if any
+function directives(src: string): string[] {
+  let rest = src.replace(/^\uFEFF/, ""); // strip a byte-order mark, if any
+  const found: string[] = [];
   for (;;) {
-    const next = rest
-      .replace(/^\s+/, "")
-      .replace(/^\/\/[^\n]*\n?/, "")
-      .replace(/^\/\*[\s\S]*?\*\//, "");
-    if (next === rest) break;
-    rest = next;
+    for (;;) {
+      const next = rest
+        .replace(/^\s+/, "")
+        .replace(/^\/\/[^\n]*/, "")
+        .replace(/^\/\*[\s\S]*?\*\//, "");
+      if (next === rest) break;
+      rest = next;
+    }
+    // A directive is a bare string-literal statement. Anything else ends the
+    // prologue — including an `import`, so this loop stops at the first import.
+    const m = /^(["'])((?:[^\\\n]|\\.)*?)\1[ \t]*;?/.exec(rest);
+    if (!m) break;
+    found.push(m[2]);
+    rest = rest.slice(m[0].length);
   }
-  return rest.split("\n")[0].trim();
+  return found;
 }
 
 function hasUseServer(src: string): boolean {
-  return /^["']use server["']\s*;?$/.test(firstCodeLine(src));
+  return directives(src).includes("use server");
 }
 
 /**
@@ -119,27 +140,38 @@ function stripComments(src: string): string {
  * after `export`/`export type` is what discriminates the clause from the
  * declaration.
  */
-const EXPORT_CLAUSE = /^[ \t]*export[ \t]*(?:type[ \t]*)?\{/gm;
+//
+// The gap between the tokens is `\s`, not `[ \t]`, because a clause may be split
+// across lines: `export\n{ X };` and `export\n* from "./t";` are both valid TS
+// that emit a specifier, and a line-anchored pattern sees neither. `export\b`
+// keeps `exporttype{` out; the leading `[^\w$.]` rejects `myexport {` and the
+// property access `o.export`.
+const EXPORT_CLAUSE = /(?:^|[^\w$.])(export\b\s*(?:type\b\s*)?\{)/g;
 
 /** `export * from "…"` / `export * as ns from "…"` — unresolvable by reading one file. */
-const STAR_REEXPORT = /^[ \t]*export[ \t]*\*/gm;
+const STAR_REEXPORT = /(?:^|[^\w$.])(export\b\s*\*)/g;
 
 /** Every `export …` line that is NOT one of the allowed forms. */
 const ALLOWED_EXPORT =
   /^[ \t]*export[ \t]+(?:async[ \t]+function[ \t]|type[ \t]+[A-Za-z_$][\w$]*[ \t]*[=<]|interface[ \t])/;
 
+/** Collapse the matched clause to one space, so a split clause reports as a joined one. */
+const label = (m: RegExpMatchArray) => m[1].replace(/\s+/g, " ").trim();
+
 function offendingClauses(src: string): string[] {
   const clean = stripComments(src);
   return [
-    ...[...clean.matchAll(EXPORT_CLAUSE)].map((m) => m[0].trim()),
-    ...[...clean.matchAll(STAR_REEXPORT)].map((m) => m[0].trim()),
+    ...[...clean.matchAll(EXPORT_CLAUSE)].map(label),
+    ...[...clean.matchAll(STAR_REEXPORT)].map(label),
   ];
 }
 
 function disallowedExportLines(src: string): string[] {
   return stripComments(src)
     .split("\n")
-    .filter((line) => /^[ \t]*export[ \t]/.test(line))
+    // `export\b`, not `export[ \t]` — a clause split after the keyword leaves a
+    // bare `export` line with no trailing space, which the latter never sees.
+    .filter((line) => /^[ \t]*export\b/.test(line))
     .map((line) => line.trim())
     .filter((line) => !ALLOWED_EXPORT.test(line));
 }
@@ -190,6 +222,39 @@ describe("US-3 — the detectors discriminate", () => {
     expect(hasUseServer('// banner\n\n"use server";\n\nexport async function a() {}')).toBe(true);
     expect(hasUseServer('"use client";\nexport function a() {}')).toBe(false);
     expect(hasUseServer("export async function a() {}")).toBe(false);
+  });
+
+  // A file this misses is scanned by NOTHING below, so the suite would go green
+  // by looking at zero files — the same failure as having no suite. Each of
+  // these is a legal directive prologue that a whole-line match against one
+  // directive drops, and prettier rewrites none of them.
+  it("recognises a directive carrying a trailing comment, or preceded by another", () => {
+    expect(hasUseServer('"use server"; // organizer mutations\nexport type { X };')).toBe(true);
+    expect(hasUseServer('"use server"; /* actions */\nexport type { X };')).toBe(true);
+    expect(hasUseServer('"use strict";\n"use server";\nexport type { X };')).toBe(true);
+    expect(hasUseServer("'use server';\nexport async function a() {}")).toBe(true);
+
+    // …without swallowing a module that merely mentions the string later.
+    expect(hasUseServer('import x from "y";\nconst s = "use server";')).toBe(false);
+    expect(hasUseServer('"use client";\n"use server";')).toBe(true);
+  });
+
+  it("flags a clause split across lines, which a line-anchored pattern cannot see", () => {
+    // Both are valid TS and both emit the specifier that killed the chunk.
+    expect(offendingClauses('"use server";\nexport\n{ NotificationType };')).toEqual([
+      "export {",
+    ]);
+    expect(offendingClauses('"use server";\nexport\n* from "./types";')).toEqual(["export *"]);
+    expect(offendingClauses('"use server";\nexport type\n{ NotificationType };')).toEqual([
+      "export type {",
+    ]);
+    // US-2 must see the bare `export` line too — it has no trailing space.
+    expect(disallowedExportLines("export\n{ NotificationType };")).toEqual(["export"]);
+
+    // A word merely ending in "export", or a property access, is not a clause.
+    expect(offendingClauses("const myexport = { a: 1 };")).toEqual([]);
+    expect(offendingClauses("o.export = { a: 1 };")).toEqual([]);
+    expect(offendingClauses("const exporttype = { a: 1 };")).toEqual([]);
   });
 
   it("flags every spelling of an export clause", () => {
