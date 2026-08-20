@@ -14,7 +14,10 @@
 -- Steps: add club_id (nullable) -> backfill to Legacy -> SET NOT NULL ->
 --        swap PK to (club_id, ...) -> CREATE OR REPLACE refresh_cross_session_stats.
 --
--- Idempotent. BUILD ONLY — not applied to production yet.
+-- Idempotent. ✅ APPLIED to production, stamp `20260630092933`.
+-- (Was labelled "BUILD ONLY — not applied to production yet"; that was true when
+--  written and went stale on apply. Verify with `list_migrations`, not this note.
+--  Disposition: docs/reference/MIGRATION_RECONCILIATION.md)
 -- ============================================================
 
 -- ---- 1+2 — add club_id, backfill to Legacy club ----

@@ -9,7 +9,10 @@
 -- (createServiceClient), which bypasses RLS — the same pattern player_renames
 -- uses. Member-read policies are added with the route migration, not now.
 --
--- Idempotent: safe to re-run. BUILD ONLY — not applied to production yet.
+-- Idempotent: safe to re-run. ✅ APPLIED to production, stamp `20260630092810`.
+-- (Was labelled "BUILD ONLY — not applied to production yet"; that was true when
+--  written and went stale on apply. Verify with `list_migrations`, not this note.
+--  Disposition: docs/reference/MIGRATION_RECONCILIATION.md)
 -- See MULTI_TENANT_PLAN.md §4.1, §4.2, §8 Phase 0.
 -- ============================================================
 
