@@ -386,14 +386,15 @@ describe("Schema Parity — Suite G", () => {
   });
 
   it("the club-member guards still carry the hierarchy recheck", async () => {
-    // 20260702000008 is APPLIED to production but was never stamped into
-    // supabase_migrations.schema_migrations, so `list_migrations` does not list
-    // it and a reader who trusts the ledger concludes it never shipped. Deleting
-    // it as dead code would NOT fail functionExists() above: the earlier
-    // 20260702000000 / 20260702000001 pair already creates both functions, so
-    // the names survive and only the arity and the body change. That is the
-    // blind spot this test closes — it asserts the post-fix SHAPE, which is the
-    // only claim about this migration that a machine can check.
+    // 20260702000008 was hand-applied to production outside the ledger; its
+    // schema_migrations stamp was back-filled afterwards. The hazard was never
+    // re-application, and it does NOT go away with the stamp: it is deletion as
+    // dead code. Deleting the file would not fail a functionExists() assertion,
+    // because the earlier 20260702000000 / 20260702000001 pair already creates
+    // both functions — the NAMES survive and only the arity and the body
+    // silently revert. That is the blind spot this test closes: it asserts the
+    // post-fix SHAPE, which is the only claim about this migration a machine
+    // can check.
     //
     // The recheck matters because club_member_set_role and club_member_deactivate
     // read the target's role, then write. Without p_expected_role re-read under
