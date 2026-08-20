@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "npm run check:server-exports",
+    "check:server-exports": "node scripts/check-server-entry-exports.mjs",
     "start": "next start",
     "lint": "eslint",
     "format": "prettier --write .",
