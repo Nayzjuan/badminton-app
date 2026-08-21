@@ -343,6 +343,28 @@ describe("Suite CM — acceptClubInvite", () => {
     expect(res.success).toBe(false);
     expect(res.message).toBe("This invite has already been used.");
     expect(calls.filter((c) => c.table === "club_members")).toHaveLength(0);
+
+    // The gate itself, asserted on the RECORDED calls rather than on the
+    // outcome. `Chain` returns its queued result no matter which filters were
+    // applied, so "zero rows came back" is a fact this test supplied — it is
+    // not evidence that the conditional UPDATE exists. Only the pairs below
+    // can go red when a clause is deleted.
+    const inviteOps = calls
+      .filter((c) => c.table === "club_invites")
+      .map((c) => [c.method, c.args[0], c.args[1]]);
+    expect(inviteOps, "the invite lookup was not bound to the submitted token").toContainEqual([
+      "eq",
+      "token",
+      "tok",
+    ]);
+    expect(
+      inviteOps,
+      "the consume UPDATE was not bound to the invite row that was just looked up"
+    ).toContainEqual(["eq", "id", validInvite.id]);
+    expect(
+      inviteOps,
+      "the consume UPDATE dropped `consumed_at IS NULL` — unconditional, every tab redeeming the same one-time link wins the race"
+    ).toContainEqual(["is", "consumed_at", null]);
   });
 
   it("CM-11 (negative): a transient invite-lookup error is retryable, not 'invalid link'", async () => {
@@ -588,13 +610,26 @@ describe("Suite CM — restoreMember", () => {
 
     expect(res.success).toBe(true);
     const update = calls.find((c) => c.table === "club_members" && c.method === "update");
-    expect(update!.args[0]).toMatchObject({ is_active: true });
-    // Same authorize-on-A / operate-on-B binding as CM-19, on the write path.
+    // toEqual, not toMatchObject: restoreMember's contract is that the prior
+    // role is PRESERVED, and a subset match is satisfied by a payload that also
+    // rewrites `role`.
+    expect(update!.args[0], "the restore payload wrote a column other than is_active").toEqual({
+      is_active: true,
+    });
+    // Same authorize-on-A / operate-on-B binding as CM-19, on the write path —
+    // and asserted as column=VALUE pairs, because a presence check stays green
+    // for a mutant that keeps both eq() calls and swaps their arguments.
     const eqAfterUpdate = calls
       .slice(calls.indexOf(update!))
       .filter((c) => c.method === "eq")
-      .map((c) => c.args[0]);
-    expect(eqAfterUpdate).toContain("club_id");
+      .map((c) => [c.args[0], c.args[1]]);
+    expect(
+      eqAfterUpdate,
+      "the restore UPDATE is not bound to BOTH the member row and the authorized club"
+    ).toEqual([
+      ["id", MEMBER_ROW_ID],
+      ["club_id", CLUB_ID],
+    ]);
   });
 });
 

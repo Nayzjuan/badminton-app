@@ -242,6 +242,12 @@ describe("Suite UH — getUpcomingHeldDraft", () => {
 
     const res = await getUpcomingHeldDraft(session.id);
 
+    // Assert the discriminant FIRST. `res.success === true && …` is false for
+    // every `{ success: false }` return, so without this line a query error, a
+    // renamed column, or a guard added ahead of the read all satisfy the
+    // negative below — the test would report "correctly ignored" for an action
+    // that never read anything.
+    expect(res.success, res.success === false ? res.error : "").toBe(true);
     expect(
       res.success === true && res.upcoming.reserved,
       'a match that already started was reported as an upcoming reservation — the .eq("status", "pending") filter is missing'

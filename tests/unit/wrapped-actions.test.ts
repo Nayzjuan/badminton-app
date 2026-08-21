@@ -37,7 +37,7 @@
 // Whether the RLS policy itself is correct is a database question and
 // belongs in an integration suite, not here.
 //
-// IDs: WR-1 … WR-10
+// IDs: WR-1 … WR-10 (WR-8 retired — see the note where it stood)
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -71,10 +71,15 @@ function builder(resp: Resp, ops: string[]) {
   const b: Record<string, unknown> = {};
   const self = () => b;
   b["select"] = self;
-  b["update"] = (payload: Record<string, unknown>) => {
-    // Record only the KEYS: the value is new Date().toISOString(), which is
-    // different on every run and cannot be asserted against.
-    ops.push(`update:${Object.keys(payload).sort().join(",")}`);
+  b["update"] = (payload: Record<string, unknown>, opts?: unknown) => {
+    // Record the KEYS, not the values: the value is new Date().toISOString(),
+    // which is different on every run and cannot be asserted against. The
+    // SECOND argument is recorded in full, because `{ count: "exact" }` is the
+    // only reason PostgREST returns a count at all — drop it and `dismissed`
+    // is permanently false while every other assertion in this file stays
+    // green. It is also type-clean to drop (the parameter defaults to `{}`),
+    // so nothing but this record catches it.
+    ops.push(`update:${Object.keys(payload).sort().join(",")}|${JSON.stringify(opts)}`);
     return b;
   };
   for (const m of ["eq", "is"])
@@ -173,7 +178,7 @@ describe("Suite WR — dismissWrappedIntro", () => {
         "are not all present — dropping player_id dismisses the recap for the " +
         "whole session, dropping the IS NULL overwrites the original timestamp"
     ).toEqual([
-      "update:intro_dismissed_at",
+      `update:intro_dismissed_at|${JSON.stringify({ count: "exact" })}`,
       `eq:session_id=${JSON.stringify(SESSION_ID)}`,
       `eq:player_id=${JSON.stringify(PLAYER_ID)}`,
       "is:intro_dismissed_at=null",
@@ -203,6 +208,9 @@ describe("Suite WR — dismissWrappedIntro", () => {
     // { count: "exact" } option is ever dropped from the update, `count`
     // arrives undefined — and `(count ?? 0) > 0` must read that as "nothing
     // changed" rather than throwing or reporting a stamp that never happened.
+    // That the option is actually PASSED is WR-2's job, not this one's: this
+    // test supplies the undefined itself, so on its own it would stay green
+    // for a version that never requests a count at all.
     installUserClient([{ error: null, count: undefined }]);
 
     const res = await dismissWrappedIntro(SESSION_ID, PLAYER_ID);
@@ -295,22 +303,19 @@ describe("Suite WR — getWrappedData", () => {
     ]);
   });
 
-  it("WR-8 (edge): a null point_diff is recomputed rather than rendered as zero", async () => {
-    // point_diff is nullable. Rendering a null as 0 would silently show every
-    // pre-backfill player an even record on their recap.
-    installServiceClient([
-      { data: { club_id: CLUB_ID } },
-      { data: statsRow({ point_diff: null, points_for: 100, points_against: 77 }) },
-      { data: { display_name: "Miggy", skill_level: "advanced" } },
-      { data: [] },
-    ]);
-
-    const res = await getWrappedData(SESSION_ID, PLAYER_ID);
-
-    expect(res.stats.pointDiff, "a null point_diff was not recomputed from the point totals").toBe(
-      23
-    );
-  });
+  // WR-8 is RETIRED, deliberately, and the ID is left unused rather than
+  // recycled. It asserted that a null `point_diff` is recomputed from the
+  // point totals — a fixture the database cannot produce:
+  //   supabase/migrations/20260423000000_session_wrapped_stats.sql declares
+  //   `point_diff integer GENERATED ALWAYS AS (points_for - points_against)
+  //   STORED` over two NOT NULL DEFAULT 0 columns, and src/types/database.ts
+  //   types it `number`, not `number | null`.
+  // So the `?? statsRow.points_for - statsRow.points_against` in
+  // src/app/actions/wrapped.ts is unreachable defence, and a test over it
+  // pinned dead code in place: simplifying that expression to the plain
+  // column read — a correct change — would have turned WR-8 red for a reason
+  // that has nothing to do with a player's recap. The straight-through
+  // mapping IS covered, by WR-7's exact `toEqual` on the whole stats object.
 
   it("WR-9 (edge): a player with no stats row still gets their name, an empty record, and the club id", async () => {
     // compute_session_wrapped never ran, or the player completed no matches.
