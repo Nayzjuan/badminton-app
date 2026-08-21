@@ -53,19 +53,25 @@ export default defineConfig({
       // Thresholds are set conservatively at current actuals — raise them
       // incrementally as new test suites are added.
       //
-      // Files NOT yet included (no unit tests):
+      // Files NOT yet included. Recompute the candidate list with:
+      //
+      //   for f in src/lib/*.ts src/hooks/*.ts; do
+      //     b=$(basename "$f" .ts)
+      //     grep -rq "/$b\"" tests/unit || echo "$f"
+      //   done
+      //
       //   src/hooks/use-organizer-data.ts      — too complex, integration-tested
-      //   src/hooks/use-session-data.ts        — integration-tested
       //   src/hooks/use-organizer-matches.ts   — integration-tested
       //   src/hooks/use-organizer-broadcast.ts — thin wrapper
-      //   src/hooks/use-organizer-courts.ts    — thin wrapper
-      //   src/hooks/use-organizer-queue.ts     — thin wrapper
       //   src/hooks/use-organizer-session.ts   — no longer a thin wrapper, and
       //     its draft-cap lease IS unit-tested (use-organizer-session-cap-phase),
       //     but the bulk of the file is realtime subscription wiring that no unit
       //     test exercises; adding it here would fail perFile on that alone.
-      //   src/hooks/use-visibility-refresh.ts  — browser-only
       //   src/hooks/use-h2h.ts                 — small, E2E-covered
+      //   src/lib/fonts.ts                     — two exported string constants
+      //     and no behaviour. There is no mutation of this file that a test
+      //     could catch which `npx tsc --noEmit` does not already catch, so a
+      //     suite here would assert its own fixture.
       //   src/app/actions/dev.ts               — Suite DV covers the three
       //     guards (NODE_ENV, DEV_TOOLS_ENABLED, auth) and the session binding
       //     on every delete, which is the whole reason the file is dangerous.
@@ -115,6 +121,50 @@ export default defineConfig({
         "src/lib/score-input.ts",
         "src/lib/safe-next.ts",
         "src/lib/rename-gate.ts",
+        // ── The src/lib and src/hooks modules that no test named at all ──
+        // Every entry below was written against the same question: if the
+        // behaviour this test names were broken, would this test go red? Each
+        // one was answered by applying a mutation to the source and watching
+        // the named IDs fail, then restoring the source byte-for-byte. They
+        // are ratcheted here rather than left unmeasured because an untested
+        // module is a bigger hole than a weak test, and nothing but this list
+        // stops one from silently becoming untested again.
+        //
+        // Libraries (Suites CI / RU / LR / TD / VC / OP / NW / WA / VU / LU).
+        // All 100 on every metric except wrapped-awards.ts branches (89.47).
+        "src/lib/client-ip.ts",
+        "src/lib/rpc-utils.ts",
+        "src/lib/leaderboard-refresh.ts",
+        "src/lib/trailing-debounce.ts",
+        "src/lib/vip-config.ts",
+        "src/lib/oauth-provision.ts",
+        "src/lib/session-notice-write.ts",
+        "src/lib/wrapped-awards.ts",
+        "src/lib/validate.ts",
+        "src/lib/utils.ts",
+        // Hooks (Suites CS / SI / PC / VR / EMH / LS / OAL / OC / OQ / SD / CP).
+        // The weakest of these is use-organizer-alerts.ts at
+        // 79.64/79.51/96.42/81.05 — clear of the floor below, and clear of
+        // the existing hook floor-setters, so none of the four thresholds
+        // moved. The rest are 100 on every metric except use-live-match-swap
+        // (97.67/97.61), use-session-data (96.34/88.46/95.45/98.66) and
+        // use-session-completed-players (96.42 branches).
+        "src/hooks/use-club-slug.ts",
+        "src/hooks/use-score-input.ts",
+        "src/hooks/use-pair-counts.ts",
+        "src/hooks/use-visibility-refresh.ts",
+        "src/hooks/use-edit-match.ts",
+        "src/hooks/use-live-match-swap.ts",
+        "src/hooks/use-organizer-alerts.ts",
+        "src/hooks/use-organizer-courts.ts",
+        "src/hooks/use-organizer-queue.ts",
+        "src/hooks/use-session-data.ts",
+        "src/hooks/use-session-completed-players.ts",
+        // Reached only through use-session-data, but measured 100 on every
+        // metric via SD-23 — the test that pins TOKEN_REFRESHED triggering a
+        // refetch. Listed so a narrowing of that trigger fails the floor here
+        // as well as reddening SD-23.
+        "src/hooks/use-auth-recovery-refetch.ts",
       ]),
       exclude: ["**/*.d.ts", "**/__tests__/**", "**/node_modules/**"],
 
