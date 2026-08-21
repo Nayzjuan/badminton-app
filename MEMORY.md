@@ -283,6 +283,29 @@ miss; confirm with `--coverage.reporter=json-summary` before "fixing" one. (c) *
 reports the pipe's exit code**, so `npm run … | tail` showed 0 while 16 threshold ERRORs scrolled
 past. Verify coverage gates unpiped.
 
+**5. Every `src/app/actions/` module now has a suite — `src/lib/` and `src/hooks/` do not.**
+Suites CT/HH/HI/OA/RN/UM/DV/WR closed the last eight action modules that had NO test of any kind,
+each mutation-proven (the mutation was applied, the named IDs were watched going red, the source
+restored). What is still named by no test is the layer underneath: recompute the list with
+`for f in src/lib/*.ts src/hooks/*.ts; do rg -qF "$(basename $f .ts)" tests/ || echo $f; done`.
+`src/lib/wrapped-awards.ts` is the largest of them. That is a separate branch, not a leftover of
+this one.
+
+⚠️ **Two court-action findings are open in the integration lane, not the unit lane** (a unit test
+with a mocked client structurally cannot see either): `removeCourtAction` will delete a court that
+is `in_use` by a live match — the FK is `ON DELETE SET NULL` and only `court-card.tsx` gates it
+client-side — and none of the three court actions consults `isSessionActive`, unlike six sibling
+action sites. Both are behaviour questions, not typos; decide the intended contract before writing
+the test that pins it.
+
+🪤 **A raised timeout is headroom, not a fix.** Five component/hook tests were red 50–75% of runs
+under CPU contention, always with a timeout or a query error rather than a failed assertion. The
+causes were ordinary — a synchronous `getBy*` for a pending-driven label, typing into an input
+still `disabled={isPending}`, waiting on a spy that fires before React commits, an exact equality
+on a wall-clock-derived value. A residual remains in `queue-control-duplicate-confirm` /
+`queue-control-repeat-pairing` at ~6× CPU oversubscription (Radix portal teardown); both are green
+sequentially and at normal parallelism.
+
 **Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
 auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.
 Ours land in `MIGRATIONS_FAILED` because the integration replays `supabase/migrations/` into the

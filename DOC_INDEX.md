@@ -18,7 +18,7 @@ After a context compaction, do **not** re-read any of this.
 | `CLAUDE.md` | 11 KB | The rules. Read this in full — it is the only doc that is not optional. |
 | `HANDOFF.md` | 10 KB | Onboarding: repo paths, Supabase/Vercel connector discovery, workflow rules. |
 | `AGENTS.md` | 327 B | Next.js 16 is not the Next.js in your training data. Read before any Next API. |
-| `MEMORY.md` | 24 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
+| `MEMORY.md` | 26 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
 | `README.md` | 1 KB | Public-facing project readme. |
 | `PRODUCT.md` | 4 KB | What the product is for, in the user's language. |
 | `MATCHMAKING.md` | 20 KB | Standalone narrative of the matchmaking engine. |
@@ -26,7 +26,7 @@ After a context compaction, do **not** re-read any of this.
 
 ---
 
-## `APP_MANIFEST.md` — 363 KB
+## `APP_MANIFEST.md` — 370 KB
 
 | Section | Lines | Read with |
 |---|---|---|
@@ -124,25 +124,25 @@ After a context compaction, do **not** re-read any of this.
 | &nbsp;&nbsp;&nbsp;&nbsp;PostgREST Gotchas | 1859–1863 | `sed -n '1859,1863p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Null-guard on Draft Functions | 1864–1869 | `sed -n '1864,1869p' APP_MANIFEST.md` |
 | **7. Testing** | 1870–1871 | `sed -n '1870,1871p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1872–1916 | `sed -n '1872,1916p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 1917–1943 | `sed -n '1917,1943p' APP_MANIFEST.md` |
-| **Post-deploy smoke (`.github/workflows/post-deploy-smoke.yml`)** | 1944–1987 | `sed -n '1944,1987p' APP_MANIFEST.md` |
-| **Nightly E2E regression (`.github/workflows/e2e-regression.yml`)** | 1988–2000 | `sed -n '1988,2000p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 2001–2036 | `sed -n '2001,2036p' APP_MANIFEST.md` |
-| **The migration set must replay from scratch (2026-07-22)** | 2037–2119 | `sed -n '2037,2119p' APP_MANIFEST.md` |
-| **`after()` in integration tests** | 2120–2146 | `sed -n '2120,2146p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2147–2160 | `sed -n '2147,2160p' APP_MANIFEST.md` |
-| **8. File Map** | 2161–2412 | `sed -n '2161,2412p' APP_MANIFEST.md` |
-| **9. Known Gotchas** | 2413–2449 | `sed -n '2413,2449p' APP_MANIFEST.md` |
-| **10. Digital Twin — Interactive Architecture Documentation** | 2450–2455 | `sed -n '2450,2455p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2456–2459 | `sed -n '2456,2459p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2460–2473 | `sed -n '2460,2473p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2474–2492 | `sed -n '2474,2492p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2493–2496 | `sed -n '2493,2496p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2497–2509 | `sed -n '2497,2509p' APP_MANIFEST.md` |
-| **11. Multi-Tenant (Clubs)** | 2510–2665 | `sed -n '2510,2665p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2666–2682 | `sed -n '2666,2682p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2683–2697 | `sed -n '2683,2697p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1872–1936 | `sed -n '1872,1936p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 1937–1963 | `sed -n '1937,1963p' APP_MANIFEST.md` |
+| **Post-deploy smoke (`.github/workflows/post-deploy-smoke.yml`)** | 1964–2007 | `sed -n '1964,2007p' APP_MANIFEST.md` |
+| **Nightly E2E regression (`.github/workflows/e2e-regression.yml`)** | 2008–2020 | `sed -n '2008,2020p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 2021–2058 | `sed -n '2021,2058p' APP_MANIFEST.md` |
+| **The migration set must replay from scratch (2026-07-22)** | 2059–2141 | `sed -n '2059,2141p' APP_MANIFEST.md` |
+| **`after()` in integration tests** | 2142–2168 | `sed -n '2142,2168p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2169–2182 | `sed -n '2169,2182p' APP_MANIFEST.md` |
+| **8. File Map** | 2183–2434 | `sed -n '2183,2434p' APP_MANIFEST.md` |
+| **9. Known Gotchas** | 2435–2471 | `sed -n '2435,2471p' APP_MANIFEST.md` |
+| **10. Digital Twin — Interactive Architecture Documentation** | 2472–2477 | `sed -n '2472,2477p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2478–2481 | `sed -n '2478,2481p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2482–2495 | `sed -n '2482,2495p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2496–2514 | `sed -n '2496,2514p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2515–2518 | `sed -n '2515,2518p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2519–2531 | `sed -n '2519,2531p' APP_MANIFEST.md` |
+| **11. Multi-Tenant (Clubs)** | 2532–2687 | `sed -n '2532,2687p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2688–2704 | `sed -n '2688,2704p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2705–2719 | `sed -n '2705,2719p' APP_MANIFEST.md` |
 
 ---
 
