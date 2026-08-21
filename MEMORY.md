@@ -225,15 +225,20 @@ badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 _(Item 2 — the two orphaned Supabase preview branches — was **deleted 2026-08-20** and is closed.
 The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 
-**3. The post-deploy smoke is committed but INERT until three GitHub secrets exist.**
+**3. The post-deploy smoke is LIVE ON MAIN but INERT until three GitHub secrets exist.**
 `.github/workflows/post-deploy-smoke.yml` runs Scenario B against the production alias
-`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. Until
+`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. The trigger is
+**confirmed working against a real Production deployment**, not just reasoned about: merging PR #81
+produced three `Production – …` deployments and the job ran for `badminton-app` and skipped for
+`badminton-marketing` and `digital-twin`, which is the whole point of the `contains()` clause. Until
 `TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are added at
 Settings → Secrets and variables → Actions it **no-ops with a `::notice::` and reports green**.
 That green means "not configured", not "the smoke passed" — read the job log before treating it as
 evidence. Only the user can add the secrets. By design it drives the live production Supabase
 sandbox session, so a run mutates real rows and depends on `tests/helpers/global-teardown.ts` to
-sweep.
+sweep. The guard does announce itself where a reader will actually look —
+`gh api repos/:owner/:repo/actions/runs/<id>/jobs --jq '.jobs[0].id'` then `.../check-runs/<id>/annotations`
+renders the notice — so prefer that over reading the step log, which only echoes the script source.
 
 🪤 **Two things about the `deployment_status` trigger are not guessable, and both were wrong on
 the first pass.** The environment is `Production – badminton-app` — EN DASH, project-suffixed; there
