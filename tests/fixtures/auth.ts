@@ -39,8 +39,29 @@ function getAdminClient() {
 }
 
 // ── Constants ─────────────────────────────────────────────────
-const ORGANIZER_EMAIL = process.env.TEST_ORGANIZER_EMAIL ?? "organizer-bot@playwright.local";
-const ORGANIZER_PASSWORD = process.env.TEST_ORGANIZER_PASSWORD ?? "E2E_OrganizerBot_2024!";
+// No literal fallbacks. This fixture authenticates against a REAL Supabase
+// project, so a default password here is a live credential — and the bot is a
+// permanent club member (tests/helpers/teardown.ts never deletes it), so the
+// session it hands out reads the real member roster through profiles_select.
+// Fail loudly instead: an unset variable must stop the run, not silently log in.
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  // A value copied verbatim from .env.test.example (`<generate-a-fresh-…>`) is
+  // not a credential. Treat it as unset, or the run fails later with an opaque
+  // "invalid login credentials" instead of naming the variable.
+  if (!value || /^<.*>$/.test(value)) {
+    throw new Error(
+      `Missing ${name}. The E2E organizer bot has no default credentials. ` +
+        "Set TEST_ORGANIZER_EMAIL / TEST_ORGANIZER_PASSWORD / TEST_ORGANIZER_PIN " +
+        "in .env.test (see .env.test.example)."
+    );
+  }
+  return value;
+}
+
+const ORGANIZER_EMAIL = requiredEnv("TEST_ORGANIZER_EMAIL");
+const ORGANIZER_PASSWORD = requiredEnv("TEST_ORGANIZER_PASSWORD");
+const ORGANIZER_PIN = requiredEnv("TEST_ORGANIZER_PIN");
 
 // Storage state is saved here — gitignored, rebuilt when missing.
 export const ORGANIZER_STORAGE_STATE = path.resolve(
@@ -132,7 +153,7 @@ export async function ensureOrganizerAccount(): Promise<string> {
   const db = getAdminClient();
 
   const organizerId = await findOrCreateBotUser(ORGANIZER_EMAIL, "E2E_OrganizerBot", {
-    pin: "9999",
+    pin: ORGANIZER_PIN,
     password: ORGANIZER_PASSWORD,
   });
 

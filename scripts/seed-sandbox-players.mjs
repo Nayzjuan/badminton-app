@@ -1,9 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://usxftpexoimletqmrggb.supabase.co";
-const SERVICE_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzeGZ0cGV4b2ltbGV0cW1yZ2diIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTgwMDQ5NywiZXhwIjoyMDkxMzc2NDk3fQ.ZAyG17CyItcIRG1AEhGIzDoAoiVFOzYsZ3Vl_afMfvo";
-const SESSION_ID = "6903896c-7cb1-466b-94a1-4009d07f88d8";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SESSION_ID = process.env.SANDBOX_SESSION_ID;
+if (!SUPABASE_URL || !SERVICE_KEY || !SESSION_ID) {
+  throw new Error(
+    "Missing NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SANDBOX_SESSION_ID. " +
+      "Populate .env.local and pass SANDBOX_SESSION_ID=<session uuid>."
+  );
+}
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },

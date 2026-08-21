@@ -5282,7 +5282,7 @@ Moved the `useMemo` before all early returns. Hook logic is unchanged; it just r
 All four migrations applied to prod (`usxftpexoimletqmrggb`) + data-fix executed + verified.
 
 - **Migrations applied:** `20260608000000` (cols/RPCs/migrate copy-all), `…000001` (partial UNIQUE index `idx_profiles_unique_active_name`, applied non-concurrent — tiny table), `…000002` (handle_new_user OAuth hardening).
-- **Data-fix executed (live, atomic, guarded):** MERGED Miggy ghost `3a14c449`→`499b5fb7` (61 games) and lianne `9c6bc387`→Lianne `f30a6c4f` (12 games, kept PIN 0000); FLAGGED 2 Tristans (`74029ccf`,`df80ed55`) + 1 Jason (`8ef4b364`). Bea/Bea T was merged earlier in-session. **0 un-flagged dup clusters remain** → index built clean.
+- **Data-fix executed (live, atomic, guarded):** MERGED Miggy ghost `3a14c449`→`499b5fb7` (61 games) and lianne `9c6bc387`→Lianne `f30a6c4f` (12 games, kept PIN «redacted»); FLAGGED 2 Tristans (`74029ccf`,`df80ed55`) + 1 Jason (`8ef4b364`). Bea/Bea T was merged earlier in-session. **0 un-flagged dup clusters remain** → index built clean.
 - **Runbook deviated from the committed file in 2 ways (the file predates the lessons):** (1) Miggy ghost was `sessions.created_by` on a session → had to reassign created_by + session_organizers to real Miggy before delete (the NO-ACTION FK); (2) added the scoped H2H rebuild (player_rivalries/partnerships) for the Lianne merge, same as the Bea/Bea T fix — the committed runbook still omits both.
 - **Hardening:** `player_renames` → RLS enabled (deny-all; service_role bypasses). `handle_new_user` → REVOKE EXECUTE from anon/authenticated (was RPC-exposed; trigger still fires). Leaderboard refreshed.
 - **Advisors (pre-existing, NOT mine, untouched):** `migrate_player_identity` mutable search_path (project-wide pattern, SECURITY INVOKER); `auth_allow_anonymous_sign_ins`; `rls_policy_always_true` on match_players; `materialized_view_in_api`.
@@ -5336,7 +5336,7 @@ Built (NOT yet merged / NOT applied to prod). Scope A = lazy/reactive. Code comp
 
 **DATA FIX — `supabase/data-fixes/20260608_duplicate_name_data_fix.sql` (BUILD ONLY, hand-run, guarded+idempotent):**
 
-- MERGE Miggy ghost `3a14c449` (0 games) → real `499b5fb7`; MERGE lianne `9c6bc387` (PIN 1111) → Lianne `f30a6c4f` (keep latest PIN 0000, reassign 6 games). Guards abort if the "ghost" owns data.
+- MERGE Miggy ghost `3a14c449` (0 games) → real `499b5fb7`; MERGE lianne `9c6bc387` (PIN «redacted») → Lianne `f30a6c4f` (keep latest PIN «redacted», reassign 6 games). Guards abort if the "ghost" owns data.
 - FLAG non-canonical of remaining clusters (Tristan/Bea/Jason) generically: canonical = most completed games, tiebreak `created_at,id`. Keeps real name in `collided_name`.
 - Then: apply unique index `000001` → `refresh_alltime_leaderboard()` → recompute Wrapped for merge-affected sessions. Preview + verify queries included.
 
@@ -6030,12 +6030,12 @@ Allows the organizer to correct a completed match's player roster (wrong player 
 
 ### Jake L Duplicate Profile Merge (2026-05-22) — COMPLETE
 
-Identity chain forked on 2026-05-09 when two devices PIN-reconnected from ancestor `a3f26e57` simultaneously. By 2026-05-22, two live profiles both had PIN `0356`:
+Identity chain forked on 2026-05-09 when two devices PIN-reconnected from ancestor `a3f26e57` simultaneously. By 2026-05-22, two live profiles both had PIN «redacted»:
 
 - Branch 1 `8d63e740`: 29 match_players, 5 queue_entries, 4 session_organizers
 - Branch 2 `d766f00a`: 6 match_players, 6 queue_entries, 6 sessions.created_by (this was the active organizer)
 
-`migrate_player_identity` RPC could not be used (FK constraint on sessions.created_by). Manual SQL transaction merged Branch 1 into Branch 2, then migrated forward to `a3ffbfa6` (current Jake L profile, created 2026-05-22, PIN `0356`).
+`migrate_player_identity` RPC could not be used (FK constraint on sessions.created_by). Manual SQL transaction merged Branch 1 into Branch 2, then migrated forward to `a3ffbfa6` (current Jake L profile, created 2026-05-22, PIN «redacted»).
 
 Result: Jake L has 35 match_players, single PIN, correct session ownership.
 
@@ -6530,7 +6530,7 @@ Full visual redesign of `waitlist-tab.tsx` using `/impeccable` + `/ui-ux-pro-max
 - Skill badge has no dark mode variant — renders washed out on dark navy. P1 fix pending.
 - `match_opponent_pairs` CTE in the Wrapped RPC still SELECTs `opp_a` / `opp_b` columns from `LEAST/GREATEST` even though they're not aggregated downstream. Postgres optimizes these out, but tidy-up could remove them.
 - 3 incremental fix migrations were applied to Supabase dev (`expand_wrapped_awards`, `fix_wrapped_awards_uuid_max`, `fix_wrapped_awards_array_append`, `fix_wrapped_awards_double_trouble_scope`). The local migration file `20260508000000_expand_wrapped_awards.sql` is the consolidated final version that also incorporates the `20260509` threshold tweaks. If migrations are ever replayed from scratch, only the consolidated `20260508` version + the `20260509` patch run; intermediate fix names won't reappear.
-- **Jake L duplicate profiles (data integrity, 2026-05-14):** Two profiles for the same human (PIN `0356`). `8d63e740…` (May 9, player) owns 29 match_players + 5 queue_entries across real sessions. `ea9f0ae5…` (May 12, organizer) owns all 5 real sessions via `sessions.created_by` but has zero play history. Both are post-migration profiles ending different branches of a chain that split on May 9 03:21 when two devices PIN-reconnected from the same `a3f26e57` ancestor. `migrate_player_identity` is supposed to consolidate but didn't. Fix: run `migrate_player_identity('8d63e740-4715-4fd4-b2d3-e3e59c87b840', 'ea9f0ae5-ccb8-492b-9907-5aeb72178d15')` to merge the player profile into the organizer profile (or vice versa) so Jake L's match history lives under one identity. Hold until tonight's session closes.
+- **Jake L duplicate profiles (data integrity, 2026-05-14):** Two profiles for the same human (PIN «redacted»). `8d63e740…` (May 9, player) owns 29 match_players + 5 queue_entries across real sessions. `ea9f0ae5…` (May 12, organizer) owns all 5 real sessions via `sessions.created_by` but has zero play history. Both are post-migration profiles ending different branches of a chain that split on May 9 03:21 when two devices PIN-reconnected from the same `a3f26e57` ancestor. `migrate_player_identity` is supposed to consolidate but didn't. Fix: run `migrate_player_identity('8d63e740-4715-4fd4-b2d3-e3e59c87b840', 'ea9f0ae5-ccb8-492b-9907-5aeb72178d15')` to merge the player profile into the organizer profile (or vice versa) so Jake L's match history lives under one identity. Hold until tonight's session closes.
 - **Hero-card stats not refreshed by leaderboard realtime (2026-05-14):** `LeaderboardHeroCard`'s fallback `myStats` (used for below-`MIN_GP` players) is fetched once per `[currentUserId, scopeTab, activeSessionId]` change and not re-fetched by the new `subscribeToMatches` hook. A player who finishes a game while looking at the leaderboard but is still below threshold sees stale "Play N more games to appear" stats until they switch tabs. Low priority — only affects the very-early-session view.
 - **3 pre-existing `react-hooks/set-state-in-effect` lint errors in `leaderboard-page.tsx`** at the initial-load, lazy-load-alltime, and hero-card-stats useEffects. These predate today's realtime work — confirmed by stash-and-relint. Worth a dedicated cleanup pass alongside the same pattern in `use-player-match.ts`, `use-queue.ts`, `theme-toggle.tsx`.
 - **`fix_record_swap_player` does NOT update `player_rivalries`** (all-time H2H table). If player A is replaced by player B in a corrected match, `player_rivalries` still credits A with the H2H result against that match's opponents, and B receives nothing. This is intentional for the first version — rivalries are only used for Session Wrapped awards display, not matchmaking. Effect: wrapped awards relying on `player_rivalries` (e.g. `nemesis_slayer`, `the_dynasty`, `settled_the_score`) may reflect slightly stale data after a Fix Record correction. A follow-up migration can add the same delta pattern as `_fix_record_partnership_delta` but targeting `player_rivalries` rows. Documented in migration comment.
@@ -6617,7 +6617,7 @@ was lost.
 
 - DB state was correct: `queue_entries.status = "playing"`, match `7204be9e…` `in_progress` on COURT 12, team A.
 - Client UI showed "Join Queue" landing instead of the COURT 12 match overlay. Root cause: anonymous auth identity drift — his `auth.uid()` no longer matched profile `21b9380b…`, so `WHERE player_id = auth.uid()` queries returned zero rows.
-- Recommended path: PIN reconnect from the 3-dot menu → enter PIN `1111` → `migrate_player_identity` consolidates back to profile.
+- Recommended path: PIN reconnect from the 3-dot menu → enter PIN «redacted» → `migrate_player_identity` consolidates back to profile.
 
 **⚠️ PENDING — cross-session ledger fixup owed at session close:**
 

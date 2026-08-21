@@ -17,6 +17,34 @@
 
 ---
 
+## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
+
+A pre-publication audit (the repo is private; making it public was the question) found live
+credentials in tracked files. **The code is fixed; the credentials are still valid.** Removing a
+secret from HEAD does not revoke it — the blob stays in every commit that carried it.
+
+- **`service_role` JWT** was hardcoded in `scripts/seed-sandbox-players.mjs` — full RLS bypass,
+  `exp` 2036, byte-identical to the live key in `.env.local`, reachable from every ref that
+  contains its introducing commit (`git branch -a --contains 43d35a9 | wc -l`). Now read from
+  `process.env`, matching `scripts/prod-snapshot.ts` and `scripts/replay/fetch.ts`.
+  ⚠️ **Rotation is outstanding and is the only thing that revokes it.** Rotating the JWT secret
+  also invalidates the `anon` key and signs out every user — `.env.local`, `.env.test`, the Vercel
+  env and the `SUPABASE_SERVICE_ROLE_KEY` Actions secret must change in the same window.
+- **E2E organizer bot** email/password/PIN were literal defaults in `tests/fixtures/auth.ts`,
+  `tests/helpers/init-sandbox.ts` and `.env.test.example`, against a `.env.test` pointing at
+  **prod**; teardown never deletes that account. All three now require env and reject the
+  `<placeholder>` shape. ⚠️ **E2E cannot run until `TEST_ORGANIZER_{EMAIL,PASSWORD,PIN}` are set**
+  — the 03:00 `e2e-regression.yml` cron will fail until then. Recreate the bot off-prod.
+- **Members' PINs are stored and compared in cleartext** (`pin text`; `.eq("pin", …)`). Real
+  PINs were written into tracked files; those are redacted now — the remaining hits from
+  `git grep -nIE 'PIN [0-9]{4}'` are all under `tests/`, synthetic throwaway players, not members.
+  ⚠️ **Reset the PINs and organizer passcodes** — redaction does not un-publish them. Hashing the
+  column is a separate migration and is not done.
+- Member names pseudonymised in `scripts/simulate-31p-3court.ts`, `leaderboard-preview.html` and
+  the `SELECTIVE_CLEANUP_PLAN.md` allowlist. **Narrative prose in `docs/archive/` still names real
+  members** — deliberately left, because scrubbing it destroys the incident record. If the repo is
+  ever published, publish a fresh squashed tree, not this history.
+
 ## 🔒 STANDING CONSTRAINTS — carried forward, not history
 
 Narrative for each is in `docs/archive/MEMORY_HISTORY.md` (grep the phrase). These are here because

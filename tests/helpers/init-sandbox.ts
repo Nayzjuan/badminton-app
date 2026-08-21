@@ -98,6 +98,14 @@ function loadEnv(): Record<string, string> {
       envLocal.get("SUPABASE_SERVICE_ROLE_KEY") ??
       envLocal.get("NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY") ??
       process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+    // The organizer bot is a permanent account on a real project — it gets no
+    // literal default here, for the same reason as tests/fixtures/auth.ts.
+    TEST_ORGANIZER_EMAIL:
+      envLocal.get("TEST_ORGANIZER_EMAIL") ?? process.env.TEST_ORGANIZER_EMAIL ?? "",
+    TEST_ORGANIZER_PASSWORD:
+      envLocal.get("TEST_ORGANIZER_PASSWORD") ?? process.env.TEST_ORGANIZER_PASSWORD ?? "",
+    TEST_ORGANIZER_PIN:
+      envLocal.get("TEST_ORGANIZER_PIN") ?? process.env.TEST_ORGANIZER_PIN ?? "",
   };
 }
 
@@ -142,6 +150,21 @@ async function main() {
     );
   }
 
+  for (const name of [
+    "TEST_ORGANIZER_EMAIL",
+    "TEST_ORGANIZER_PASSWORD",
+    "TEST_ORGANIZER_PIN",
+  ] as const) {
+    // `<…>` is the placeholder shape used in .env.test.example — not a value.
+    if (!env[name] || /^<.*>$/.test(env[name])) {
+      fail(
+        `${name} is not set.\n` +
+          `    Add it to .env.local or .env.test — the organizer bot has no default credentials.\n` +
+          "    See .env.test.example."
+      );
+    }
+  }
+
   ok(`Supabase URL: ${c.dim}${env.NEXT_PUBLIC_SUPABASE_URL}${c.reset}`);
 
   // ── Step 2: Connect (service role — bypasses RLS) ─────────
@@ -152,9 +175,9 @@ async function main() {
   );
 
   // ── Step 3: Ensure organizer bot account exists ───────────
-  const ORGANIZER_EMAIL = "organizer-bot@playwright.local";
+  const ORGANIZER_EMAIL = env.TEST_ORGANIZER_EMAIL;
   const ORGANIZER_DISPLAY = "E2E_OrganizerBot";
-  const ORGANIZER_PASSWORD = "E2E_OrganizerBot_2024!";
+  const ORGANIZER_PASSWORD = env.TEST_ORGANIZER_PASSWORD;
 
   info("Checking organizer bot account…");
 
@@ -187,7 +210,7 @@ async function main() {
         id: organizerUserId,
         display_name: ORGANIZER_DISPLAY,
         skill_level: "intermediate",
-        pin: "9999",
+        pin: env.TEST_ORGANIZER_PIN,
       },
       { onConflict: "id" }
     );
