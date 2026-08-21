@@ -314,6 +314,18 @@ describe("shouldRefreshLeaderboard — module-level state", () => {
       "behaviour under a backwards clock jump changed — `now - lastRefreshAt` goes negative, which is less than any positive interval, so the gate stays shut; this test records that rather than endorsing it, because the alternative (treating a negative delta as 'window elapsed') would let a clock adjustment trigger an unbounded run of rebuilds"
     ).toBe(false);
 
+    // The -5 s probe above is INSIDE the window, so it is also satisfied by a
+    // source comparing the MAGNITUDE of the delta (`Math.abs(now - lastRefreshAt)
+    // < minIntervalMs`) rather than its signed value. That mutant breaks exactly
+    // the property this test names — any backwards jump of at least the window
+    // re-opens the gate — while leaving every assertion above green. This probe
+    // is what kills it.
+    at(-45_000);
+    expect(
+      gate(),
+      "a backwards clock jump LARGER than the window reopened the gate — the comparison is on the MAGNITUDE of the delta rather than its sign, so one NTP correction lets an unbounded run of full cross-club rebuilds through"
+    ).toBe(false);
+
     at(45_000);
     expect(
       gate(),
