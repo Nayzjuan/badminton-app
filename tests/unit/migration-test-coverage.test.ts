@@ -99,10 +99,18 @@ const ALLOWLIST: Record<string, string> = {};
  * tests/integration/helpers/truncate.ts and by nothing else — which is to say,
  * not covered. That was the price of closing the loophole, not a precedent.
  *
- * `club_invites` has since been REMOVED from the list: Suite CM
- * (tests/unit/club-member-management.test.ts) asserts the invite contract
- * itself — the grantable-role cap, expiry, and one-time redemption under a
- * lost consume race. MTC-2 is what forced this edit, exactly as designed.
+ * Two of the three have since been REMOVED from the list, both times because
+ * MTC-2 turned red and refused to let the exemption outlive its reason:
+ *
+ *   `club_invites` — Suite CM (tests/unit/club-member-management.test.ts)
+ *     asserts the invite contract itself: the grantable-role cap, expiry, and
+ *     one-time redemption under a lost consume race.
+ *   `match_games` — Suite DV (tests/unit/dev-tools-guard.test.ts) asserts that
+ *     clearSessionData deletes match_games bound to the match ids it just
+ *     read, and skips the delete entirely for a session with no matches.
+ *
+ * That leaves `co_organizer_join_attempts`. MTC-2 is what forced both edits,
+ * exactly as designed.
  */
 const GRANDFATHERED: string[] = [
   "_fix_record_partnership_delta",
@@ -122,7 +130,6 @@ const GRANDFATHERED: string[] = [
   "is_session_organizer",
   "leaderboard_refresh_state",
   "lookup_active_session",
-  "match_games",
   "player_renames",
   "push_subscriptions",
   "realtime_topic_session_id",
