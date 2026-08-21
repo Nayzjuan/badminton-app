@@ -32,6 +32,15 @@ export default defineConfig({
     include: ["tests/unit/**/*.test.ts", "tests/unit/**/*.test.tsx"],
     reporters: ["verbose"], // shows each test name in the terminal
 
+    // Vitest's default is 5 s, and the component suites spend most of a test
+    // inside userEvent + waitFor. Under CPU contention QRP-S2 exceeded it
+    // outright ("Test timed out in 5000ms") while asserting nothing wrong.
+    // This ceiling has to stay above the 5 s asyncUtilTimeout set in
+    // tests/setup/jest-dom.ts, or a waitFor that is about to report a real
+    // failure gets cut off first and reports the wrong reason.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
+
     coverage: {
       provider: "v8", // requires @vitest/coverage-v8 devDep
       reporter: ["text", "lcov"], // text → terminal summary; lcov → CI/IDE integration
@@ -57,6 +66,14 @@ export default defineConfig({
       //     test exercises; adding it here would fail perFile on that alone.
       //   src/hooks/use-visibility-refresh.ts  — browser-only
       //   src/hooks/use-h2h.ts                 — small, E2E-covered
+      //   src/app/actions/dev.ts               — Suite DV covers the three
+      //     guards (NODE_ENV, DEV_TOOLS_ENABLED, auth) and the session binding
+      //     on every delete, which is the whole reason the file is dangerous.
+      //     The seeding bodies underneath are DB work with no unit surface, so
+      //     the file measures 28.57 statements / 26.76 lines and cannot clear
+      //     the floor below. Listing it here would fail the build for being
+      //     honest about that. Raise it via the integration lane, not by
+      //     lowering the floor.
       //
       // READING THE TEXT REPORT: the terminal table OMITS files at 100% on
       // every metric. Their absence is not an include[] miss — score-input.ts,
@@ -81,6 +98,18 @@ export default defineConfig({
         "src/hooks/use-fix-record.ts",
         // Club member management (Suite CM)
         "src/app/actions/clubs.ts",
+        // Server actions that had NO test of any kind until Suites CT / HH /
+        // HI / OA / RN / UM / WR. Each measured 100 on every metric except
+        // wrapped.ts branches (84.61) — well clear of the floor below, so they
+        // are ratcheted here rather than left unmeasured. They print NO ROW in
+        // the terminal table for exactly that reason; see the note above.
+        "src/app/actions/courts.ts",
+        "src/app/actions/h2h.ts",
+        "src/app/actions/history.ts",
+        "src/app/actions/oauth.ts",
+        "src/app/actions/rename.ts",
+        "src/app/actions/upcoming-match.ts",
+        "src/app/actions/wrapped.ts",
         // Utilities with unit tests
         "src/lib/matchmaking-core.ts",
         "src/lib/score-input.ts",
