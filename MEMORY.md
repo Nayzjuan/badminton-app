@@ -283,13 +283,25 @@ miss; confirm with `--coverage.reporter=json-summary` before "fixing" one. (c) *
 reports the pipe's exit code**, so `npm run … | tail` showed 0 while 16 threshold ERRORs scrolled
 past. Verify coverage gates unpiped.
 
-**5. Every `src/app/actions/` module now has a suite — `src/lib/` and `src/hooks/` do not.**
-Suites CT/HH/HI/OA/RN/UM/DV/WR closed the last eight action modules that had NO test of any kind,
-each mutation-proven (the mutation was applied, the named IDs were watched going red, the source
-restored). What is still named by no test is the layer underneath: recompute the list with
-`for f in src/lib/*.ts src/hooks/*.ts; do rg -qF "$(basename $f .ts)" tests/ || echo $f; done`.
-`src/lib/wrapped-awards.ts` is the largest of them. That is a separate branch, not a leftover of
-this one.
+**5. `src/app/actions/`, `src/lib/` and `src/hooks/` are all closed — every module is named by a
+suite.** Suites CT/HH/HI/OA/RN/UM/DV/WR closed the last eight action modules; then
+CI/RU/LR/TD/VC/OP/NW/WA/VU/LU and CS/SI/PC/VR/EMH/LS/OAL/OC/OQ/SD/CP closed the 21 lib and hook
+modules underneath. All mutation-proven the same way (apply the mutation, watch the named IDs go
+red, restore the source and verify the hash). Recompute what is left with
+`for f in src/lib/*.ts src/hooks/*.ts; do b=$(basename "$f" .ts); grep -rq "/$b\"" tests/unit || echo "$f"; done`
+— it should print only `src/lib/fonts.ts` (two exported string constants; no mutation of it exists
+that a test could catch and `tsc` could not) and `src/hooks/use-auth-recovery-refetch.ts` (reached
+only through `use-session-data`, driven to 100% by SD-23, and ratcheted in `coverage.include`
+anyway). `coverage.include` now carries all of them; the four thresholds did not move.
+
+⚠️ **Three limits are recorded in the suites rather than fixed, and must not be mistaken for
+coverage.** (a) `SD-22` asserts that `loading` still reaches `false` when all three reads fail, but
+has **no valid mutation proof** — "loading eventually settles" is a precondition of every other test
+in that file, so any mutation breaking it reddens the whole suite and names nothing. (b) Dropping
+the `?? 0` coalesce on a score in `use-session-completed-players.ts` is an **equivalent mutant**: JS
+coerces `null` to `0` in a relational comparison, so no output can differ and `CP-10` is not a test
+of that operator. (c) The same hook's `loading` flag is **over-determined by two sites**, so the
+single-site mutation is unkillable; `CP-15` names it only when both change together.
 
 ⚠️ **Two court-action findings are open in the integration lane, not the unit lane** (a unit test
 with a mocked client structurally cannot see either): `removeCourtAction` will delete a court that
