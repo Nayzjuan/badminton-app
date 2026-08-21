@@ -225,13 +225,20 @@ badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 _(Item 2 — the two orphaned Supabase preview branches — was **deleted 2026-08-20** and is closed.
 The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 
-**3. The post-deploy smoke is committed but INERT until three GitHub secrets exist.**
+**3. The post-deploy smoke needs three GitHub secrets — and now FAILS LOUDLY without them.**
 `.github/workflows/post-deploy-smoke.yml` runs Scenario B against the production alias
-`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. Until
-`TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are added at
-Settings → Secrets and variables → Actions it **no-ops with a `::notice::` and reports green**.
-That green means "not configured", not "the smoke passed" — read the job log before treating it as
-evidence. Only the user can add the secrets. By design it drives the live production Supabase
+`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. It needs
+`TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` at
+Settings → Secrets and variables → Actions. **Only the user can add them.**
+
+⚠️ **Behaviour CHANGED 2026-08-21 and the two paths differ deliberately.** On a real
+`deployment_status` event an unconfigured run now **fails the job** — a production deploy that
+was never smoked is a red X, not a green tick. On manual `workflow_dispatch` it still skips
+quietly, so you can dispatch the workflow to inspect it without manufacturing a red run. The
+previous always-green no-op is what made this item survivable for weeks: it reported success for
+"not configured", and nobody reads a green job's log. `.github/workflows/e2e-regression.yml`
+(nightly, added the same day) shares the same secrets and the same guard. **Until the user adds
+them, every Production deploy shows one red check, and that is the intended state.** By design it drives the live production Supabase
 sandbox session, so a run mutates real rows and depends on `tests/helpers/global-teardown.ts` to
 sweep.
 
@@ -257,6 +264,24 @@ matched one whole line against one directive, so `"use server"; // note` or a pr
 task — an `if:` filter that matches no environment, a `postbuild` check that finds zero arrays, a CI
 job skipped for missing secrets. Only the last one announces itself, which is why it emits a
 `::notice::`. When you add a gate, assert on the SIZE of what it examined.
+
+**4. Coverage thresholds are now REAL, per-file, and measured — do not lower one to go green.**
+Both configs previously asserted floors that nothing ever evaluated, because CI ran `test:unit` /
+`test:integration` with no `--coverage`. Unit's were 40/40/30/40 (unfailable); integration's were a
+flat 85/85/70/85 that **not one file met** — sessions.ts is really at 38% statements. Both CI
+workflows now run the `:coverage` variants, so the numbers finally bite. Integration floors are
+per-file entries in `RATCHETS` (`vitest.integration.config.ts`); raise one when the real number
+moves up, never lower it. `match-drafts.ts` is lowest (35/24/32/35) and is the cross-court publish
+path shipped broken twice — it is the first to raise.
+
+🪤 **Three traps banked here, each of which produced a wrong conclusion first.** (a) A Vitest
+`coverage.thresholds` **global block applies to every file even when per-glob entries match it** —
+it is not a fallback, it silently overrides every ratchet beneath it; there is now no global block
+and `assertEveryTargetRatcheted` enforces that each target has its own. (b) The **v8 text reporter
+omits files that are at 100% on every metric** — their absence from the table is NOT an `include[]`
+miss; confirm with `--coverage.reporter=json-summary` before "fixing" one. (c) **A piped command
+reports the pipe's exit code**, so `npm run … | tail` showed 0 while 16 threshold ERRORs scrolled
+past. Verify coverage gates unpiped.
 
 **Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
 auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.

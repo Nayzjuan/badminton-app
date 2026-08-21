@@ -1875,6 +1875,28 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 - **Run:** `npm run test:unit`
 - **Scope:** Pure logic only — no DB, no network.
 
+**CI runs `test:unit:coverage`, not `test:unit`, and then `npm run build`.** Both changes close a
+gap where the check reported on less than it appeared to. `vitest.config.ts` carries `perFile`
+coverage floors, and a run without `--coverage` never evaluates them — the floors sat at
+40/40/30/40, which every included file cleared by thirty-plus points, and nothing had ever reported
+against them to say so. They are now a ratchet set just under the weakest measured file per metric,
+with the floor-setting file named per metric in the config; recompute with `npm run
+test:unit:coverage` and raise them, never lower them to green a build. `coverage.include` is
+wrapped in `assertAllExist()` so a renamed or deleted target fails config load instead of silently
+contributing no coverage and no threshold — which is what `src/app/actions/match.ts` had been doing
+in the integration config since `6355c41`.
+
+⚠️ **Reading the text coverage report:** the terminal table omits any file at 100% on every metric.
+Their absence is not an `include[]` miss. Confirm with `--coverage.reporter=json-summary` before
+concluding a target is unmeasured.
+
+The build step exists because `tsc`, `lint` and `vitest` all stayed green for four days while every
+organizer server action 500'd in production (`18611b2`). It is **not** the primary guard for that
+defect — `use-server-exports.test.ts` gates the source spelling far more cheaply. The build closes
+the residual only: chunking and dependency-graph failures no source-level rule can predict, caught
+by `postbuild` → `check:server-exports` walking the emitted chunks. It is deliberately absent from
+`.husky/pre-push`, where ~90s per push is a cost that gets paid with `--no-verify`.
+
 | File                            | Covers                                                                                                                                      |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `matchmaking-core.test.ts`      | `computePriorityScore`, `scoreCandidates`, `buildCombinationGroup`, `snakeDraft`, `rotatedDraft`, `isDiversityViolation`, `countConsecutiveOpponentRepeats` — regression suite (173) |
@@ -1887,6 +1909,10 @@ Any cross-user write (swap, matchmaking, match end/cancel, session close) must u
 | `match-origin-tracking.test.ts` | `origin` enum transitions — `auto` → `modified`, stickiness of `manual`                                                                     |
 | `migration-test-coverage.test.ts` | **Suite MTC — the tripwire for zero coverage** (§3.44). Static analysis over `supabase/migrations/**` and `tests/**`: every table, view and function a migration creates must be *named* by at least one non-comment test line (MTC-1); the exemption lists may only shrink (MTC-2); the extractor and the comment stripper are themselves discriminated (MTC-3). Asserts mention, never behaviour — index and trigger names are deliberately out of scope |
 | `use-server-exports.test.ts` | **Suite US — the `"use server"` export whitelist.** Static analysis over `src/**`: no `"use server"` module may carry an export CLAUSE of any spelling or a star re-export (US-1); every `export` line must be an `async function` or an erasable `type`/`interface` declaration (US-2); the detectors are themselves discriminated, including the two variants that defeated the earlier blacklist — `export { X }` after `import type { X }`, and `export * from "…"` — plus comment-only clauses, clauses split after the `export` keyword, and directives carrying a trailing comment (US-3). Enumerate what it scans with `rg -l '^\s*["'"'"']use server' src/`. Source shape only; the emitted-output check is `npm run check:server-exports` |
+| `safe-next.test.ts` | **Suite SN — the open-redirect guard.** `safeNext` is the only redirect sanitiser in the app and had zero tests; the shipped `startsWith("//")` blacklist let `/\evil.com` through, which WHATWG URL parsing treats as protocol-relative. SN-4 asserts the bug and proves its own premise (`new URL("/\\evil.com", origin).origin !== origin`); SN-13 runs the property over a candidate list whose length is itself asserted, so the loop cannot pass vacuously. Enumerate the call sites with `rg -n 'safeNext\(' src/` |
+| `rename-gate.test.ts` | **Suite RG — `enforceRenameGate`.** Making the gate inert (`if (true) return;`) left `tsc` and the whole suite green before this file existed. RG-1 asserts the fast path issues *zero* queries; RG-3/RG-4 assert the grandfather and organizer carve-outs by their `column=value` pairs, not just by table name; RG-6 pins `encodeURIComponent` so a `next` carrying `&` is not truncated |
+| `session-active-guard.test.ts` | **Suite SA — `isSessionActive`.** Untested at every altitude: every unit file `vi.mock`s it away. SA-4/SA-5 pin the two branches that fail **OPEN** by design, so the deliberate choice is visible rather than inferred; SA-6 asserts the service client is the one used — fail-open plus an RLS-bound client would compose into a guard that never bites |
+| `club-member-management.test.ts` | **Suite CM — `src/app/actions/clubs.ts`,** which had no unit coverage at all: role changes, soft-remove/restore, and the last-owner guard, each with its negative |
 
 ### E2E Tests (Playwright)
 
@@ -1944,11 +1970,33 @@ that passes. Both are observable rather than documented; ask the API with
   the job smokes the stable production alias instead. That is also what real users hit, which is
   what a production smoke is for; the race it admits is what `cancel-in-progress` covers.
 
-**It no-ops with a notice until its secrets exist** — `TEST_SESSION_ID`,
-`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`. (`VERCEL_BYPASS_SECRET` is passed through
-but not required, and is not part of the guard.) A permanently-red required check trains people to
-ignore it, which is the same failure as a gate nothing runs — and so does a permanently-green one
-that never executed, hence the notice in the log.
+**Its behaviour when the secrets are missing depends on how it was triggered** —
+`TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+(`VERCEL_BYPASS_SECRET` is passed through but not required, and is not part of the guard.)
+
+- On `deployment_status` — a real Production deploy — an unconfigured run **fails**. Every step
+  after the guard is `if: configured == 'true'`, so an unconfigured job used to run zero tests and
+  conclude `success`: a green check against a deploy that was never smoked. That is the same
+  failure as a gate nothing runs, except it also manufactures evidence to the contrary.
+- On `workflow_dispatch` — someone pressing Run — it still skips quietly. A human who ran it
+  manually can read the notice; nobody is being told a deploy was verified.
+
+A permanently-red required check trains people to ignore it, so this is a deliberately narrow
+window: it is red only while a *production deploy* is going unsmoked, and adding the three secrets
+closes it.
+
+#### Nightly E2E regression (`.github/workflows/e2e-regression.yml`)
+
+Of the fifteen scenarios above, exactly one — B — had any execution path: the post-deploy smoke
+runs it. The other fourteen were files that nothing invoked, on any event, ever. A suite that no
+trigger references is indistinguishable from a deleted one, and cost nothing to keep passing.
+
+This workflow gives them one: a nightly `schedule` plus `workflow_dispatch`, against production,
+with the same `concurrency` serialisation as the smoke (one shared sandbox session). It is not a
+merge gate and cannot be — Playwright here targets a deployed environment, not a build.
+
+It shares the smoke's secrets, and therefore its guard: unconfigured, a scheduled run fails rather
+than reporting green.
 
 ### Integration Tests (Vitest — live Supabase)
 

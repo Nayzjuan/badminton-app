@@ -98,11 +98,15 @@ const ALLOWLIST: Record<string, string> = {};
  * was previously "covered" by a single delete line in
  * tests/integration/helpers/truncate.ts and by nothing else — which is to say,
  * not covered. That was the price of closing the loophole, not a precedent.
+ *
+ * `club_invites` has since been REMOVED from the list: Suite CM
+ * (tests/unit/club-member-management.test.ts) asserts the invite contract
+ * itself — the grantable-role cap, expiry, and one-time redemption under a
+ * lost consume race. MTC-2 is what forced this edit, exactly as designed.
  */
 const GRANDFATHERED: string[] = [
   "_fix_record_partnership_delta",
   "checkout_player_cleanup_drafts",
-  "club_invites",
   "club_milestones",
   "co_organizer_join_attempts",
   "count_completed_matches_by_session",

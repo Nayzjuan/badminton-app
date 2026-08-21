@@ -125,6 +125,9 @@ describe("Score Submission Cascade — Suite F", () => {
       );
 
     expect(entries).not.toBeNull();
+    // not-null is not not-empty — an empty read would assert neither the status
+    // nor the games_played increment below.
+    expect(entries!).toHaveLength(players.length);
     for (const e of entries!) {
       expect(e.status).toBe("waiting");
       expect(e.games_played).toBe(1); // was 0 (playing), now 1 after completion
@@ -380,6 +383,9 @@ describe("Score Submission Cascade — Suite F", () => {
         "player_id",
         players.map((p) => p.id)
       );
+    // `?? []` on a failed read would skip the loop and pass — this is a
+    // negative test, so a vacuous pass is exactly the wrong outcome.
+    expect(entries).toHaveLength(players.length);
     for (const e of entries ?? []) {
       expect(e.status).toBe("playing");
     }
@@ -435,6 +441,7 @@ describe("Score Submission Cascade — Suite F", () => {
       .select("player_id, status")
       .eq("session_id", session.id)
       .in("player_id", [players[1].id, players[2].id, players[3].id]);
+    expect(others).toHaveLength(3);
     for (const e of others ?? []) {
       expect(e.status).toBe("waiting");
     }
