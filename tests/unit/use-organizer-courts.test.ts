@@ -55,6 +55,9 @@
 //   OC-11  a realtime court event triggers a refetch that reaches state
 //   OC-12  a sessionId change DOES re-open the channel (positive control:
 //          proves OC-7 is not satisfied by a dead effect)
+//   OC-12b the RE-OPENED channel's handler reads the NEW session, not the old
+//          one — the freshness half of the ref pattern, which OC-9 and OC-12
+//          together still cannot see
 //   OC-13  unmount runs the unsubscriber returned by subscribeToCourts, once
 //   OC-14  addCourt forwards (sessionId, name), refetches, returns {}
 //   OC-15  (negative) a refused write returns the message and never starts the
@@ -539,6 +542,47 @@ describe("useOrganizerCourts — Suite OC", () => {
       courtSubs[courtSubs.length - 1].sessionId,
       "the new channel was not bound to the new session id"
     ).toBe(OTHER_SESSION_ID);
+  });
+
+  // ── OC-12b ──────────────────────────────────────────────────
+  // CLAUDE.md's subscription-stability rule has four halves, and this file
+  // pinned three: the handler is the ref indirection, not fetchCourts itself
+  // (OC-9); the effect does not re-run on every render (OC-7); a real
+  // sessionId change does re-open, bound to the new id (OC-12). The fourth is
+  // FRESHNESS — that the surviving ref points at the CURRENT fetcher. Delete
+  // the `fetchCourtsRef.current = fetchCourts` sync effect and all of OC-7,
+  // OC-9 and OC-12 stay green while every realtime event on the new session
+  // refetches and commits the PREVIOUS session's courts.
+  it("OC-12b: the re-opened channel's handler reads the NEW session, not the old one", async () => {
+    courtsResponse = { data: [], error: null };
+
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useOrganizerCourts(id, supabase, setSession, undefined),
+      { initialProps: { id: SESSION_ID } }
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    rerender({ id: OTHER_SESSION_ID });
+    await waitFor(() => expect(courtSubs[courtSubs.length - 1].sessionId).toBe(OTHER_SESSION_ID));
+
+    const before = courtReads().length;
+    await act(async () => {
+      courtSubs[courtSubs.length - 1].handler();
+    });
+    const fresh = JSON.stringify(courtReads().slice(before));
+
+    expect(
+      courtReads().length,
+      "the newest channel's handler fired no read at all — this test must exercise a live refetch, or the binding assertions below are vacuous"
+    ).toBeGreaterThan(before);
+    expect(
+      fresh,
+      "a realtime event on the NEW session refetched nothing bound to it — the ref still holds the fetcher captured for the old sessionId"
+    ).toContain(`eq:session_id=${OTHER_SESSION_ID}`);
+    expect(
+      fresh,
+      "a realtime event on the new session refetched the PREVIOUS session's courts and committed them into the organizer panel"
+    ).not.toContain(`eq:session_id=${SESSION_ID}`);
   });
 
   // ── OC-13 ───────────────────────────────────────────────────

@@ -289,19 +289,55 @@ CI/RU/LR/TD/VC/OP/NW/WA/VU/LU and CS/SI/PC/VR/EMH/LS/OAL/OC/OQ/SD/CP closed the 
 modules underneath. All mutation-proven the same way (apply the mutation, watch the named IDs go
 red, restore the source and verify the hash). Recompute what is left with
 `for f in src/lib/*.ts src/hooks/*.ts; do b=$(basename "$f" .ts); grep -rq "/$b\"" tests/unit || echo "$f"; done`
-— it should print only `src/lib/fonts.ts` (two exported string constants; no mutation of it exists
-that a test could catch and `tsc` could not) and `src/hooks/use-auth-recovery-refetch.ts` (reached
-only through `use-session-data`, driven to 100% by SD-23, and ratcheted in `coverage.include`
-anyway). `coverage.include` now carries all of them; the four thresholds did not move.
+— it should print only `src/hooks/use-auth-recovery-refetch.ts` (reached only through
+`use-session-data`, driven to 100% by SD-23, and ratcheted in `coverage.include` anyway).
+`src/lib/fonts.ts` was on that list as "two string constants no test could cover"; that was wrong.
+Suite FT resolves every Tailwind token those strings name back to a real declaration in
+`globals.css` and `layout.tsx`, and a one-character typo (`font-display` → `font-dispay`) reddens
+FT-2 and FT-3 while `npx tsc --noEmit` still exits 0 — which is the whole point, because an
+undeclared custom property is invalid at computed-value time and `font-family` inherits, so the
+component silently renders in the body font instead of failing. `coverage.include` now carries all
+of them; the four thresholds did not move.
 
-⚠️ **Three limits are recorded in the suites rather than fixed, and must not be mistaken for
+⚠️ **Two limits are recorded in the suites rather than fixed, and must not be mistaken for
 coverage.** (a) `SD-22` asserts that `loading` still reaches `false` when all three reads fail, but
 has **no valid mutation proof** — "loading eventually settles" is a precondition of every other test
-in that file, so any mutation breaking it reddens the whole suite and names nothing. (b) Dropping
-the `?? 0` coalesce on a score in `use-session-completed-players.ts` is an **equivalent mutant**: JS
-coerces `null` to `0` in a relational comparison, so no output can differ and `CP-10` is not a test
-of that operator. (c) The same hook's `loading` flag is **over-determined by two sites**, so the
-single-site mutation is unkillable; `CP-15` names it only when both change together.
+in that file, so any mutation breaking it reddens the whole suite and names nothing. (b) Two
+**equivalent mutants** are named rather than tested: dropping the `?? 0` coalesce on a score in
+`use-session-completed-players.ts` (JS coerces `null` to `0` in a relational comparison, so no
+output can differ, and `CP-10` is not a test of that operator), and the profiles-fetcher ref sync in
+`use-organizer-queue.ts` (bound by player ids, not `sessionId`, so `OQ-17b` pins the queue fetcher's
+ref only).
+
+🪤 **A third "limit" was a false claim, not a limit.** `CP-15` was recorded as unkillable because the
+`loading` flag is "over-determined by two sites". It is not: `useState(true)` (the seed on first
+mount) and `setLoading(true)` (the re-arm at the head of every re-fetch) are independent properties,
+now pinned by `CP-15` and `CP-16` separately, each killed alone. What actually hid it: **React
+commits the first render before running effects**, so `result.current.loading` read after
+`renderHook` observes the effect's write, never the `useState` seed — only a per-render recorder
+(`seen[0]`) can see it. An "unkillable" verdict is a claim about the test, not the code, and it
+carries the same burden of proof as any other.
+
+✅ **Four source defects fixed on `test/regression-suite-hardening`, all found by mutating the
+SOURCE rather than by reading the tests** — every file involved was green and three were at 100%
+line coverage. Write-up: `docs/incidents/2026-08-21-four-defects-the-green-suites-never-named.md`.
+The live one: `useOrganizerAlerts` marked a due pause bucket as seen **during the render phase**, so
+React discarded the pass, the committed due list came out empty, and `recordPauseReminder` was
+**unreachable** — an organizer was never told a player had been paused past the threshold. `seenPause`
+is now a ref and the whole pipeline lives in one effect; restoring the old shape reddens OAL-25/27/28/30.
+🪤 Moving the marking into an effect is NOT the fix — it trips `react-hooks/set-state-in-effect` and
+`react-hooks/refs` (reading `.current` during render is flagged too). Move the DERIVATION, not the
+write: deriving the due list during render is what forced the marking to happen there. The other three: a rejected server
+action wedged `EditMatchDialog` with `isPending` stuck true (the repo's standard refusal is now
+synthesized at all three call sites, mirroring `use-fix-record.ts`); `use-session-completed-players`
+had no `fetchSeq` guard (latent — today's only caller keys the sheet by `match.id`); and both
+`use-session-data` fetchers re-check their sequence after the `hasAuthSession` probe, not just after
+the query.
+
+⚠️ **Two dead-code items are deliberately NOT removed.** `clearPauseSeenForPlayer`
+(`src/lib/organizer-alerts.ts`) now has no `src/` caller — `knownPauseKeys` is what makes the write
+exactly-once — and `seenPause` is behaviourally redundant with that ref. Deleting either changes
+emit behaviour and belongs in its own branch, not in a test-hardening one.
 
 ⚠️ **Two court-action findings are open in the integration lane, not the unit lane** (a unit test
 with a mocked client structurally cannot see either): `removeCourtAction` will delete a court that

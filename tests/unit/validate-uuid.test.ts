@@ -111,15 +111,38 @@ describe("Suite VU — isValidUUID", () => {
     expect(isValidUUID(`${VALID}\nDROP TABLE matches;`)).toBe(false);
   });
 
-  it("VU-11 (negative): rejects wrong group lengths", () => {
+  it("VU-11 (negative): rejects wrong group lengths, in EVERY group", () => {
     expect(isValidUUID("3367d4c-1f2a-4b8e-9c0d-5e6f7a8b9c0d"), "8-group too short").toBe(false);
     expect(isValidUUID("3367d4c67-1f2a-4b8e-9c0d-5e6f7a8b9c0d"), "8-group too long").toBe(false);
     expect(isValidUUID("3367d4c6-1f2a-4b8e-9c0d-5e6f7a8b9c0"), "final group too short").toBe(false);
+    // Both directions in every group, not just the first. A quantifier that
+    // loses its upper bound ({12} -> {12,}, {4} -> {4,}) is a one-character
+    // edit that no short-group case can catch: a too-SHORT input is still
+    // rejected by a widened regex, so the too-short trio above stays green
+    // through the mutation it is meant to be guarding.
+    expect(isValidUUID(`${VALID}d`), "final group too long").toBe(false);
+    expect(isValidUUID("3367d4c6-1f2aa-4b8e-9c0d-5e6f7a8b9c0d"), "2nd group too long").toBe(false);
+    expect(isValidUUID("3367d4c6-1f2a-4b8ee-9c0d-5e6f7a8b9c0d"), "3rd group too long").toBe(false);
+    expect(isValidUUID("3367d4c6-1f2a-4b8e-9c0dd-5e6f7a8b9c0d"), "4th group too long").toBe(false);
   });
 
   it("VU-12 (negative): rejects a non-hex character in a group", () => {
     // `g` is outside [0-9a-f]. A regex widened to \w or [a-z0-9] takes it.
     expect(isValidUUID("3367d4c6-1f2a-4b8e-9c0d-5e6f7a8b9c0g")).toBe(false);
+    // A hyphen admitted INTO the character class ([0-9a-f] -> [0-9a-f-]) keeps
+    // the overall length and the four separators intact, so every other
+    // negative here still passes; only a group that eats a hyphen catches it.
+    expect(isValidUUID("3367d4-6-1f2a-4b8e-9c0d-5e6f7a8b9c0d"), "hyphen inside a group").toBe(
+      false
+    );
+    // Non-ASCII. \p{Hex_Digit} with the `u` flag looks like a tidy rewrite of
+    // [0-9a-f] and is not one: it also matches the fullwidth forms U+FF10-FF19
+    // and U+FF21-FF26 / U+FF41-FF46. Postgres would reject the id; the guard
+    // this file covers is the thing that is supposed to reject it first.
+    expect(
+      isValidUUID("\uFF13\uFF13\uFF16\uFF17\uFF44\uFF14\uFF43\uFF16-1f2a-4b8e-9c0d-5e6f7a8b9c0d"),
+      "fullwidth Unicode hex digits"
+    ).toBe(false);
   });
 
   it("VU-13 (negative): rejects the unhyphenated and brace-wrapped forms", () => {

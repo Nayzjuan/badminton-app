@@ -24,17 +24,17 @@
 // which over the coloured court graphic is unreadable rather than merely plain,
 // and which nothing in the markup flags as wrong.
 //
-// KNOWN DEFECT, PINNED BELOW (VC-9 / VC-10). isVipTheme's check is
-// `theme in VIP_THEMES`, and `in` walks the prototype chain. Every key on
+// WHY VC-9 / VC-10 TEST THE PROTOTYPE CHAIN. `isVipTheme` must use
+// `Object.prototype.hasOwnProperty.call(VIP_THEMES, theme)`, not `theme in
+// VIP_THEMES`. The `in` operator walks the prototype chain, so every key on
 // Object.prototype — "toString", "constructor", "__proto__", "valueOf",
-// "hasOwnProperty" — therefore passes as a valid VipTheme, and
-// getVipThemeConfig returns Object.prototype's own member for it: truthy,
-// so VipTag's `if (!config)` does not catch it, and field-less, so the class
-// list ends up with an empty slot where the styling belongs. VC-9 and VC-10
-// assert TODAY's behaviour on
-// purpose; the fix is a one-liner
-// (`Object.prototype.hasOwnProperty.call(VIP_THEMES, theme)`), and when
-// someone applies it those two tests are the ones that must be flipped.
+// "hasOwnProperty" — would narrow `string` to `VipTheme` (the type guard would
+// lie to tsc), and getVipThemeConfig would return Object.prototype's own
+// member for it: truthy, so VipTag's `if (!config)` would not catch it, and
+// field-less, so the class list would carry an empty slot where the styling
+// belongs. Reverting that one line is the whole regression, and it is a silent
+// one — nothing throws and nothing in the markup looks wrong. VC-9 and VC-10
+// are what turn it red.
 //
 // The other half of the file is drift: VIP_THEMES is a Record keyed by a
 // hand-written union in the same file, and each entry is five hand-copied
@@ -52,9 +52,9 @@
 //   VC-6  isVipTheme accepts every declared key (positive control for VC-7)
 //   VC-7  (negative) isVipTheme rejects an unknown string, null, undefined and ""
 //   VC-8  (negative, edge) near-miss spellings of a real key are rejected
-//   VC-9  (edge, KNOWN DEFECT) Object.prototype keys are reported as valid themes
-//   VC-10 (edge, KNOWN DEFECT) and getVipThemeConfig hands VipTag a truthy,
-//         field-less object for them, so the null guard does not catch it
+//   VC-9  (negative, edge) Object.prototype keys are NOT valid themes
+//   VC-10 (negative, edge) and getVipThemeConfig returns null for them rather
+//         than a truthy, field-less object the null guard cannot catch
 //   VC-11 every entry carries all five config fields as non-empty strings
 //   VC-12 the runtime keys of VIP_THEMES are exactly the VipTheme union members
 //   VC-13 (edge) no two entries share a label or a neonClass (a copy-pasted preset)
@@ -135,15 +135,6 @@ const CLASS_PREFIX: Record<"neonClass" | "holoFrom" | "holoVia" | "holoTo", stri
   holoVia: "via-",
   holoTo: "to-",
 };
-
-/** Reproduces VipTag's neon class list so a missing field shows up as a token. */
-function neonClassList(config: VipThemeConfig): string {
-  return [
-    "font-black tracking-widest uppercase text-[13px] leading-none",
-    config.neonClass,
-    "animate-pulse",
-  ].join(" ");
-}
 
 describe("vip-config (VC)", () => {
   it("VC-1: getVipThemeConfig returns the exact VIP_THEMES entry for every declared key", () => {
@@ -251,43 +242,21 @@ describe("vip-config (VC)", () => {
     }
   });
 
-  it("VC-9 (edge, KNOWN DEFECT): keys inherited from Object.prototype are reported as valid themes", () => {
+  it("VC-9 (edge): keys inherited from Object.prototype are NOT valid themes", () => {
     for (const key of PROTOTYPE_KEYS) {
       expect(
         isVipTheme(key),
-        `KNOWN DEFECT, pinned deliberately: isVipTheme uses \`theme in VIP_THEMES\`, and \`in\` walks the prototype chain, so "${key}" is currently accepted as a VIP theme. This assertion records today's behaviour, NOT the desired behaviour. If it just went red you have fixed the defect (Object.prototype.hasOwnProperty.call(VIP_THEMES, theme)) — flip VC-9 and VC-10 to expect false/null rather than reverting the fix`
-      ).toBe(true);
+        `"${key}" was accepted as a VIP theme. isVipTheme must use Object.prototype.hasOwnProperty.call(VIP_THEMES, theme) — the \`in\` operator walks the prototype chain, and \`profiles.vip_theme\` is free-form text with no CHECK constraint, so an inherited key reaching the type guard narrows \`string\` to \`VipTheme\` and lies to tsc about it`
+      ).toBe(false);
     }
   });
 
-  it("VC-10 (edge, KNOWN DEFECT): getVipThemeConfig hands VipTag a truthy, field-less object for those keys", () => {
+  it("VC-10 (edge): getVipThemeConfig returns null for those keys rather than a field-less object", () => {
     for (const key of PROTOTYPE_KEYS) {
-      const config = getVipThemeConfig(key);
-
       expect(
-        config,
-        `KNOWN DEFECT, pinned deliberately: getVipThemeConfig("${key}") currently returns Object.prototype's own member instead of null, which is truthy and therefore survives VipTag's \`if (!config) return null\`. If this went red the defect is fixed — flip VC-9 and VC-10 rather than reverting`
-      ).not.toBeNull();
-
-      const fields = config as unknown as Partial<VipThemeConfig>;
-      expect(
-        fields.neonClass,
-        `"${key}" resolved to something that HAS a neonClass. That is a stronger claim than this file expects and means the object's contents changed — reread VIP_THEMES before trusting either branch of this test`
-      ).toBeUndefined();
-
-      // The concrete production harm, spelled out: this is the class attribute
-      // VipTag would put on the DOM node for such a value. Array.join maps the
-      // missing field to "", so the damage is an EMPTY SLOT, not a visible
-      // "undefined" token — nothing in the markup looks wrong on inspection.
-      const rendered = neonClassList(config as VipThemeConfig);
-      expect(
-        rendered,
-        `the class list VipTag builds for "${key}" no longer has an empty slot where the theme class belongs. Either the defect was fixed (flip VC-9/VC-10) or VipTag's join was changed — this assertion is the record of WHY the prototype leak matters: Array.join turns the missing neonClass into "", so React writes a perfectly valid-looking class attribute with nothing in it`
-      ).toContain("  ");
-      expect(
-        rendered,
-        `"${key}" produced a class list that DOES carry the neon bloom. The whole harm of the prototype leak is that the tag renders in the inherited text colour with no glow — visible, unstyled, and unreadable over the coloured court graphic — rather than being hidden by the null guard`
-      ).not.toContain("[text-shadow:");
+        getVipThemeConfig(key),
+        `getVipThemeConfig("${key}") returned Object.prototype's own member instead of null. That value is TRUTHY, so it survives VipTag's \`if (!config) return null\` — and it has no neonClass, so Array.join maps the missing field to "" and React writes a syntactically perfect class attribute with an empty slot where the styling belongs. The tag then renders in the inherited text colour, with no bloom and no gradient, over the coloured court graphic. A truthy-but-field-less return is quieter and worse than a throw`
+      ).toBeNull();
     }
   });
 

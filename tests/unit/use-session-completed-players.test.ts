@@ -41,8 +41,12 @@
 //   CP-12  the list is ordered by display_name, not by insertion or id
 //   CP-13  the match_players read is scoped by match_id to the completed ids
 //   CP-14  the profiles read is scoped by id to the DISTINCT player ids
-//   CP-15  loading is true on the first render and false once the read lands
-//   CP-16  changing the excluded match re-runs the read against the NEW id
+//   CP-15  loading is true on the FIRST COMMITTED render (the useState seed,
+//          not the setLoading inside the fetch) and false once the read lands
+//   CP-16  changing the excluded match re-runs the read against the NEW id,
+//          and returns to loading while it does
+//   CP-17  (negative, race) a slow pipeline for the PREVIOUS excluded match
+//          cannot overwrite the list built for the current one
 //
 // WHAT THIS FILE DOES NOT PROVE
 //   - That PostgREST honours the filters. The mock records the filters it is
@@ -66,7 +70,7 @@
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import { useSessionCompletedPlayers } from "@/hooks/use-session-completed-players";
 
 // ── Constants ─────────────────────────────────────────────────
@@ -120,6 +124,13 @@ const EMPTY_OK: TableResult = { data: [], error: null };
 
 let queryLog: QueryLog[] = [];
 let responses: Record<string, TableResult> = {};
+// Per-call overrides, indexed by that table's call number. The default in
+// `responses` answers every call, which is what makes two overlapping runs of
+// the pipeline indistinguishable; CP-17 needs them to differ.
+let perCallResponses: Record<string, TableResult[]> = {};
+// A promise parked in front of ONE specific (table, call index) so the two
+// pipelines can be interleaved deterministically rather than by timing.
+let gate: { table: string; callIndex: number; promise: Promise<void> } | null = null;
 
 function logsFor(table: string): QueryLog[] {
   return queryLog.filter((l) => l.table === table);
@@ -132,6 +143,7 @@ function opsOf(table: string, callIndex = 0): string[] {
 function buildMockClient() {
   return {
     from: (table: string) => {
+      const callIndex = queryLog.filter((l) => l.table === table).length;
       const log: QueryLog = { table, ops: [] };
       queryLog.push(log);
       const chain: Record<string, unknown> = {
@@ -151,8 +163,14 @@ function buildMockClient() {
           log.ops.push(`in:${col}=[${vals.map(String).join(",")}]`);
           return chain;
         },
-        then: (onFulfilled: (v: unknown) => unknown) =>
-          Promise.resolve(responses[table] ?? EMPTY_OK).then(onFulfilled),
+        then: (onFulfilled: (v: unknown) => unknown) => {
+          const result = perCallResponses[table]?.[callIndex] ?? responses[table] ?? EMPTY_OK;
+          const held =
+            gate && gate.table === table && gate.callIndex === callIndex
+              ? gate.promise
+              : Promise.resolve();
+          return held.then(() => result).then(onFulfilled);
+        },
       };
       return chain;
     },
@@ -212,6 +230,8 @@ describe("useSessionCompletedPlayers — the history-swap candidate list", () =>
   beforeEach(() => {
     queryLog = [];
     responses = {};
+    perCallResponses = {};
+    gate = null;
   });
 
   afterEach(() => {
@@ -542,14 +562,27 @@ describe("useSessionCompletedPlayers — the history-swap candidate list", () =>
   });
 
   // ── CP-15 ──────────────────────────────────────────────────
-  it("CP-15: loading is true on the first render and false once the read lands", async () => {
+  it("CP-15: loading is true on the FIRST COMMITTED render and false once the read lands", async () => {
     seedTwoMatches();
 
-    const { result } = renderHook(() => useSessionCompletedPlayers(SESSION_ID, TARGET_MATCH));
+    // Per-render recording, not a post-flush read of result.current. React
+    // commits the first render BEFORE running the effect that calls
+    // fetchPlayers, so `result.current.loading` after renderHook observes the
+    // `setLoading(true)` inside the fetch, not the `useState(true)` initial
+    // value — and `useState(true)` -> `useState(false)` therefore survives.
+    // That mutant is a real regression: the FixRecordSheet paints "no other
+    // players" for one frame before the read lands. seen[0] is the only place
+    // the initial value is visible.
+    const seen: boolean[] = [];
+    const { result } = renderHook(() => {
+      const r = useSessionCompletedPlayers(SESSION_ID, TARGET_MATCH);
+      seen.push(r.loading);
+      return r;
+    });
 
     expect(
-      result.current.loading,
-      "the hook did not start in a loading state — the sheet would flash 'no other players' before the read lands"
+      seen[0],
+      "the hook's INITIAL state is not loading — the sheet paints 'no other players' for one frame before the read lands, then repopulates"
     ).toBe(true);
     expect(result.current.players, "candidates existed before any read completed").toEqual([]);
 
@@ -558,9 +591,21 @@ describe("useSessionCompletedPlayers — the history-swap candidate list", () =>
   });
 
   // ── CP-16 ──────────────────────────────────────────────────
-  it("CP-16: changing the excluded match re-runs the read against the NEW id", async () => {
+  it("CP-16: changing the excluded match re-runs the read against the NEW id, loading again", async () => {
     seedTwoMatches();
-    const { rerender, result } = await renderLoaded();
+    const seen: boolean[] = [];
+    const { rerender, result } = renderHook(
+      ({ exclude }: { exclude: string }) => {
+        const r = useSessionCompletedPlayers(SESSION_ID, exclude);
+        seen.push(r.loading);
+        return r;
+      },
+      { initialProps: { exclude: TARGET_MATCH } }
+    );
+    await waitFor(() =>
+      expect(result.current.loading, "the candidate read never settled").toBe(false)
+    );
+    const mark = seen.length;
 
     rerender({ exclude: OTHER_TARGET_MATCH });
     await waitFor(() =>
@@ -582,5 +627,78 @@ describe("useSessionCompletedPlayers — the history-swap candidate list", () =>
       result.current.players,
       "the re-fetch settled but produced no candidates for a session that has them"
     ).toHaveLength(3);
+    // The second site of the loading contract, and the one the settled-value
+    // assertion above cannot see: `setLoading(true)` at the top of
+    // fetchPlayers. Delete it and loading simply never leaves false across the
+    // switch — the sheet keeps showing the PREVIOUS match's candidates,
+    // indistinguishable from a settled list, until the new read lands.
+    expect(
+      seen.slice(mark),
+      "loading never returned to true across the excluded-match change — the picker presents the previous correction's candidate list as though it were this one's"
+    ).toContain(true);
+  });
+
+  // ── CP-17 (negative, race) ─────────────────────────────────
+  it("CP-17 (negative, race): a slow pipeline for the PREVIOUS match cannot overwrite the new one", async () => {
+    // fetchPlayers awaits three sequential round-trips and excludeMatchId is
+    // one of its deps, so two runs can be in flight at once. Without a
+    // sequence guard the last writer wins, and the last writer is the SLOWER
+    // pipeline — which here is the one built for the match that is no longer
+    // being corrected.
+    let release!: () => void;
+    gate = {
+      table: "matches",
+      callIndex: 0,
+      promise: new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    };
+    perCallResponses = {
+      // call 0 = the stale pipeline (parked at the gate), call 1 = the fresh one
+      matches: [
+        { data: [{ id: MATCH_1 }], error: null },
+        { data: [{ id: MATCH_3 }], error: null },
+      ],
+      // The fresh pipeline runs to completion first, so it takes call 0 of
+      // both downstream tables; the stale one takes call 1 after release.
+      match_players: [
+        { data: [mp("p-new", MATCH_3, "a", 11, 5)], error: null },
+        { data: [mp("p-old", MATCH_1, "a", 11, 5)], error: null },
+      ],
+      profiles: [
+        { data: [profile("p-new", "New")], error: null },
+        { data: [profile("p-old", "Old")], error: null },
+      ],
+    };
+
+    const { rerender, result } = renderHook(
+      ({ exclude }: { exclude: string }) => useSessionCompletedPlayers(SESSION_ID, exclude),
+      { initialProps: { exclude: TARGET_MATCH } }
+    );
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    rerender({ exclude: OTHER_TARGET_MATCH });
+    await waitFor(() =>
+      expect(
+        result.current.players.map((p) => p.player_id),
+        "control failed: the fresh pipeline never landed, so 'the stale one did not overwrite it' would be vacuously true"
+      ).toEqual(["p-new"])
+    );
+
+    await act(async () => {
+      release();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    expect(
+      result.current.players.map((p) => p.player_id),
+      "the previous match's candidate list overwrote the current one — the organiser is offered the players of the very match they are correcting, which is the swap the exclusion exists to prevent"
+    ).toEqual(["p-new"]);
+    expect(
+      result.current.loading,
+      "the stale pipeline released loading on behalf of a fetch nobody is waiting for"
+    ).toBe(false);
   });
 });

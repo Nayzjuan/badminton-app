@@ -1974,16 +1974,22 @@ red?* — and answered by applying a mutation to the source, watching the named 
 restoring the source byte-for-byte. **Green proves nothing; only a mutation that turns a test red
 proves a test works.**
 
-Three limits are recorded in the suites rather than fixed, and must not be read as coverage:
+Two limits are recorded in the suites rather than fixed, and must not be read as coverage:
 
 - **`SD-22` has no valid mutation proof.** Its property — `loading` still reaches `false` when all
   three reads fail — is a precondition of every other test in that file, so any mutation that breaks
   it reddens the whole suite and names nothing. An unfalsifiable assertion is not a passing one.
 - **Dropping the `?? 0` coalesce on a score in `use-session-completed-players.ts` is an equivalent
   mutant.** JS coerces `null` to `0` in a relational comparison, so no output can differ, and `CP-10`
-  is therefore not a test of that operator.
-- **That same hook's `loading` flag is over-determined by two sites,** so the single-site mutation is
-  unkillable; `CP-15` names it only when both change together.
+  is therefore not a test of that operator. The same reasoning applies to the profiles-fetcher ref
+  sync in `use-organizer-queue.ts`, which is bound by player ids rather than by `sessionId`: `OQ-17b`
+  deliberately pins the queue fetcher's ref only, and says so.
+
+Two independent `loading` properties are pinned separately in `use-session-completed-players.ts`:
+`CP-15` covers the `useState(true)` seed on first mount, `CP-16` the `setLoading(true)` re-arm at
+the head of every re-fetch. Changing either site alone reddens exactly one of them. The trap worth
+carrying: React commits the first render before running effects, so reading `result.current.loading`
+after `renderHook` observes the effect's write, not the seed — only a per-render recorder can see it.
 
 ### E2E Tests (Playwright)
 
@@ -2766,4 +2772,5 @@ rule against a changelog at the end. They are now in `docs/incidents/` with the 
 | 3.42 | 2026-08-16 | [3.42 Organizer notices — leave-queue + 15-minute pause reminder](docs/incidents/2026-08-16-organizer-notices.md) |
 | 3.43 | 2026-08-16 | [3.43 Organizer notice inbox + player score correction](docs/incidents/2026-08-16-organizer-notice-inbox-player-score-correction.md) |
 | 3.44 | 2026-08-18 | [3.44 The audit trail nobody could read, and the four ways a test can be green without being a test](docs/incidents/2026-08-18-the-audit-trail-nobody-could-read-and-the-four-ways-a-test-c.md) |
+| 3.45 | 2026-08-21 | [3.45 Four defects the green suites never named](docs/incidents/2026-08-21-four-defects-the-green-suites-never-named.md) |
 

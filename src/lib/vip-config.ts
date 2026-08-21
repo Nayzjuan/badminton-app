@@ -108,8 +108,18 @@ export function getVipThemeConfig(theme: string | null | undefined): VipThemeCon
   return VIP_THEMES[theme];
 }
 
-/** Type guard: is this string a valid VipTheme key? */
+/**
+ * Type guard: is this string a valid VipTheme key?
+ *
+ * Uses hasOwnProperty rather than `in`. `in` walks the prototype chain, so
+ * "toString", "constructor" and "__proto__" would all narrow to VipTheme and
+ * getVipThemeConfig would then return Object.prototype's own member for them:
+ * truthy, so VipTag's `if (!config) return null` would not catch it, and
+ * field-less, so the class list would render with an empty slot where the
+ * styling belongs. `profiles.vip_theme` is free-form text with no CHECK
+ * constraint, which is why the own-property check matters here.
+ */
 export function isVipTheme(theme: string | null | undefined): theme is VipTheme {
   if (!theme) return false;
-  return theme in VIP_THEMES;
+  return Object.prototype.hasOwnProperty.call(VIP_THEMES, theme);
 }

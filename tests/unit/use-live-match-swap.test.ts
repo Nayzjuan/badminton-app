@@ -50,6 +50,8 @@
 //   LS-7   (edge) selectReplacement(null) deselects and re-locks Confirm
 //   LS-8   Confirm is locked until a replacement is picked, then unlocks
 //   LS-9   (negative) an on-deck pick keeps Confirm locked until a fill is picked
+//   LS-9b  (negative) re-tapping the chosen fill DESELECTS it and re-locks
+//          Confirm, and a fresh fill clears a stale error banner
 //   LS-10  (negative) a pick made while no sheet is open never unlocks Confirm
 //   LS-11  same_match → swapTeamsInActiveMatch, exact positional tuple, and
 //          neither other action is called
@@ -492,6 +494,68 @@ describe("useLiveMatchSwap — client state machine (LS)", () => {
       result.current.canConfirm,
       "Confirm never unlocked even with both the on-deck pick and its fill chosen — the 3-way swap is unreachable"
     ).toBe(true);
+  });
+
+  // ── LS-9b ──────────────────────────────────────────────────
+  // The mirror of LS-9, in the two directions LS-9 cannot see. Both are
+  // user-reachable: live-swap-sheet.tsx fires
+  // `onSelectFill(selectedFill?.player_id === f.player_id ? null : f)`, so
+  // tapping the already-chosen filler passes null. selectReplacement has both
+  // properties covered (LS-7 for the null, LS-4 for the error clear);
+  // selectFill had neither, and two one-line mutations to it survived the
+  // whole suite.
+  it("LS-9b: (negative) re-tapping the chosen fill deselects it, and a fill clears a stale error", async () => {
+    // swapActiveFromOnDeck, not swapPlayerInActiveMatch: this test drives an
+    // ON-DECK pick, which is the only branch a fill participates in at all.
+    mockSwapActiveFromOnDeck.mockResolvedValue({
+      success: false,
+      message: "That player was just taken.",
+      errorCode: "PLAYER_UNAVAILABLE",
+    });
+    const { result } = setup();
+
+    arm(result, ONDECK_PICK, FILL_PICK);
+    expect(
+      result.current.canConfirm,
+      "setup failed: Confirm never unlocked, so 'deselecting re-locks it' would be vacuous"
+    ).toBe(true);
+
+    // Direction one: fill -> null.
+    act(() => {
+      result.current.selectFill(null);
+    });
+    expect(
+      result.current.state.selectedFill,
+      "tapping the chosen filler again did not clear it — the sheet shows no selection while the hook still holds one, and Confirm swaps in a player the organizer just deselected"
+    ).toBeNull();
+    expect(
+      result.current.canConfirm,
+      "Confirm stayed unlocked with no fill chosen — confirming here empties the on-deck slot"
+    ).toBe(false);
+
+    // Direction two: a fresh fill must clear the previous failure's banner,
+    // exactly as selectReplacement does in LS-4.
+    act(() => {
+      result.current.selectFill(FILL_PICK);
+    });
+    await act(async () => {
+      result.current.confirm();
+    });
+    expect(result.current.state.error, "setup failed: no error banner to clear").toBe(
+      "That player was just taken."
+    );
+
+    act(() => {
+      result.current.selectFill(FILL_PICK);
+    });
+    expect(
+      result.current.state.error,
+      "the previous failure's banner is still showing under a fresh fill, which reads as 'this one is unavailable too'"
+    ).toBeNull();
+    expect(
+      result.current.state.errorCode,
+      "the stale errorCode outlived the fill that produced it"
+    ).toBeNull();
   });
 
   // ── LS-10 ──────────────────────────────────────────────────

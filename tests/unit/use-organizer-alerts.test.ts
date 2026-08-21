@@ -72,6 +72,18 @@
 //   OAL-22  markRead(id) targets exactly that id and leaves its neighbour alone
 //   OAL-23  (negative) markRead does not locally clear a score_correction, but
 //           still calls the server (positive control: player_left clears)
+//   OAL-25  a pause already past the threshold at hydrate writes ONE reminder,
+//           bucket 1, and does NOT interrupt (it is catch-up, not news)
+//   OAL-26  (negative) a pause under the threshold, and a player who has
+//           resumed, write nothing at all
+//   OAL-27  a pause that crosses the threshold on a 15 s tick DOES interrupt —
+//           it happened while the organizer was watching
+//   OAL-28  (lifecycle) the same bucket still due on later ticks writes exactly
+//           once; deepening into bucket 2 writes exactly once more
+//   OAL-29  (negative) a closed session writes nothing, and neither does a
+//           queue that has not loaded yet
+//   OAL-30  (negative, edge) a player who resumes and pauses again does NOT
+//           re-arm a bucket already written — the client mirrors the DB unique
 //   OAL-24  unreadCount counts a pending correction that is already "read", and
 //           stops counting a resolved one
 //
@@ -84,16 +96,10 @@
 //     returns nothing. Channel-name/setAuth-order/unsubscribe properties belong
 //     to the hooks that do open channels and are covered there.
 //
-//   - THE PAUSE-REMINDER WRITE. `recordPauseReminder` is unreachable in the
-//     hook as it stands, so there is no behaviour here to pin and no honest
-//     positive control to pair a negative with. The render-phase
-//     `setSeenPause(nextSeen)` re-renders the component before React commits,
-//     and the second pass recomputes `duePause` as empty — so the effect keyed
-//     on `duePauseKey` only ever commits with an empty key. Demonstrated by
-//     mutation: replacing that one call with `void nextSeen;` makes
-//     recordPauseReminder fire with (sessionId, playerId, 1, false) on a queue
-//     holding a 20-minute pause; restoring it makes it fire zero times. This is
-//     reported as a source defect, not covered as behaviour.
+//   - WHEN A PAUSE REMINDER IS *DELIVERED*. OAL-25 … OAL-29 pin the write and
+//     its interrupt flag; what the organizer then sees arrives through the
+//     row → broadcast → enqueueNotice path that OAL-11 … OAL-15 own. Nothing
+//     here asserts the two halves meet in production.
 //
 //   - THE SERVER SIDE of listSessionNotifications / markNotificationRead /
 //     recordPauseReminder — the organizer authorization, the partial-unique
@@ -110,7 +116,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import type { QueueNoticePayload } from "@/lib/broadcast";
-import type { SessionNotification } from "@/types/database";
+import type { QueueFullWithWaitTime, SessionNotification } from "@/types/database";
 import { CENTER_ALERT_CAP } from "@/lib/constants";
 
 // ── Constants ─────────────────────────────────────────────────
@@ -235,13 +241,61 @@ function setVisibility(state: DocumentVisibilityState): void {
   });
 }
 
-/** The hook takes a queue only for the pause clock; nothing here needs a row. */
+/** The hook takes a queue only for the pause clock; most tests need no row. */
 const NO_QUEUE: never[] = [];
 
 function mount(sessionId: string = SESSION_ID) {
   return renderHook(({ id }: { id: string }) => useOrganizerAlerts(id, NO_QUEUE, false, true), {
     initialProps: { id: sessionId },
   });
+}
+
+/**
+ * One queue row, shaped for the pause clock. `minutesAgo` is resolved against
+ * Date.now() at call time rather than a frozen literal: the hook compares
+ * paused_at to its own ticking `nowMs`, so a fixed timestamp would drift into
+ * a different bucket as the suite runs.
+ */
+function pausedRow(
+  playerId: string,
+  displayName: string,
+  minutesAgo: number | null
+): QueueFullWithWaitTime {
+  return {
+    id: `qe-${playerId}`,
+    session_id: SESSION_ID,
+    player_id: playerId,
+    status: "waiting",
+    games_played: 0,
+    joined_at: "2026-08-21T09:00:00.000Z",
+    position: null,
+    is_paused: minutesAgo !== null,
+    paused_at: minutesAgo === null ? null : new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+    created_at: "2026-08-21T09:00:00.000Z",
+    display_name: displayName,
+    skill_level: "intermediate",
+    skill_level_int: 2,
+    wait_minutes: 0,
+    is_bottleneck: false,
+    status_priority: 2,
+  };
+}
+
+/** Mount with a queue, and let the hydrate fetch settle so the pause clock arms. */
+async function mountPaused(
+  queue: QueueFullWithWaitTime[],
+  opts: { isClosed?: boolean; queueReady?: boolean } = {}
+) {
+  const isClosed = opts.isClosed ?? false;
+  const queueReady = opts.queueReady ?? true;
+  const rendered = renderHook(
+    ({ q }: { q: QueueFullWithWaitTime[] }) =>
+      useOrganizerAlerts(SESSION_ID, q, isClosed, queueReady),
+    { initialProps: { q: queue } }
+  );
+  await waitFor(() => expect(listSpy).toHaveBeenCalled());
+  await settleMicrotasks();
+  return rendered;
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────
@@ -756,6 +810,45 @@ describe("useOrganizerAlerts — enqueueNotice without a row (ephemeral)", () =>
       "the cap dropped the OLDEST card instead of the newest, so the first player to leave is the one the organizer never hears about"
     ).toBe("Player 0 left the queue");
   });
+
+  it("OAL-18b (edge): notification-BACKED cards are capped the same way, and the oldest still survives", async () => {
+    // enqueueNotice has two arms and they each call capCenterQueue separately.
+    // OAL-18 only walks the ephemeral one, so the row-backed cap can be deleted
+    // whole and the suite stays green — and the row-backed arm is the one that
+    // matters at session close, when a run of server-side events arrives down
+    // the queue_notice broadcast in a single burst.
+    const { result } = mount();
+    await waitFor(() => expect(listSpy).toHaveBeenCalled());
+
+    const overflow = CENTER_ALERT_CAP + 2;
+    act(() => {
+      for (let i = 0; i < overflow; i += 1) {
+        result.current.enqueueNotice(
+          makeNotice({
+            playerId: `player-${i}`,
+            playerName: `Player ${i}`,
+            notification: makeNotification(`cap-${i}`, {
+              subject_player_id: `player-${i}`,
+              payload: { playerName: `Player ${i}` },
+            }),
+          })
+        );
+      }
+    });
+
+    expect(
+      result.current.remaining,
+      "the row-backed center-card queue is unbounded — every server-side notice raises a card with no cap, so a session close buries the organizer"
+    ).toBe(CENTER_ALERT_CAP);
+    expect(
+      result.current.current?.id,
+      "the row-backed cap dropped the OLDEST card instead of the newest — the first event of the burst is the one the organizer never sees"
+    ).toBe("cap-0");
+    expect(
+      result.current.inbox,
+      "capping the CARD queue also dropped rows from the inbox — the cap is a display bound on the interrupt stack, not a reason to lose the record"
+    ).toHaveLength(overflow);
+  });
 });
 
 // ── OAL-19 … OAL-24 — dismiss, markRead, unreadCount ──────────
@@ -987,5 +1080,152 @@ describe("useOrganizerAlerts — dismiss, markRead, unreadCount", () => {
       recordPauseSpy,
       "a pause reminder was written for a session with an empty queue — nobody is paused"
     ).not.toHaveBeenCalled();
+  });
+});
+
+// ── OAL-25 … OAL-29 — the pause-reminder write ────────────────
+// This is the only path in the hook that writes to the database on its own,
+// with no user gesture behind it, and it is the organizer's only prompt that a
+// player has been sitting paused. It shipped unreachable: the bookkeeping
+// `setSeenPause` ran in the RENDER phase, React discarded that pass and
+// re-rendered before commit, and on the second pass every due bucket was
+// already marked seen — so the committed `duePauseKey` was always "" and the
+// effect returned at its own length check. Nothing errored and nothing was
+// slow; the feature simply never fired. These five pin both halves: that a due
+// pause DOES write, and that everything which is not a due pause does not.
+describe("useOrganizerAlerts — pause reminders", () => {
+  it("OAL-25: a pause already past the threshold at hydrate writes ONE reminder, bucket 1, and does not interrupt", async () => {
+    await mountPaused([pausedRow(ANA, "Ana", 20)]);
+
+    await waitFor(() =>
+      expect(
+        recordPauseSpy,
+        "a player paused 20 minutes produced no reminder — the organizer is never told, and the player waits until someone happens to look at Match Control"
+      ).toHaveBeenCalledTimes(1)
+    );
+    expect(
+      recordPauseSpy.mock.calls[0],
+      "the reminder was written with the wrong arguments: it must name THIS session, THIS player and bucket 1 (15–29 min), and must NOT interrupt — it was already due when the organizer opened the page, so it is catch-up, not news"
+    ).toEqual([SESSION_ID, ANA, 1, false]);
+  });
+
+  it("OAL-26 (negative): a pause under the threshold, and a player who has resumed, write nothing", async () => {
+    await mountPaused([pausedRow(ANA, "Ana", 5), pausedRow(BEN, "Ben", null)]);
+
+    // Give the clock a tick to prove the silence is the guard, not latency.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    expect(
+      recordPauseSpy,
+      "a 5-minute pause and an un-paused player produced a reminder — the organizer is interrupted about players who are fine, which is how an alert channel gets ignored"
+    ).not.toHaveBeenCalled();
+  });
+
+  it("OAL-27: a pause that crosses the threshold on a tick DOES interrupt", async () => {
+    // 14 minutes at hydrate: under the bucket, so the catch-up arming records
+    // nothing. Two ticks later it is past 15 and the reminder is live news.
+    const { rerender } = await mountPaused([pausedRow(ANA, "Ana", 14)]);
+
+    expect(
+      recordPauseSpy,
+      "a 14-minute pause fired before it was due — the threshold is not being applied"
+    ).not.toHaveBeenCalled();
+
+    rerender({ q: [pausedRow(ANA, "Ana", 16)] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    await waitFor(() =>
+      expect(
+        recordPauseSpy,
+        "a pause that crossed the threshold while the page was open produced no reminder"
+      ).toHaveBeenCalledTimes(1)
+    );
+    expect(
+      recordPauseSpy.mock.calls[0],
+      "a pause that became due WHILE the organizer was watching must interrupt (interrupt=true). Only buckets that were already due at hydrate are suppressed, so treating this one as catch-up silences the live case the feature exists for"
+    ).toEqual([SESSION_ID, ANA, 1, true]);
+  });
+
+  it("OAL-28 (lifecycle): the same bucket writes exactly once across ticks; deepening to bucket 2 writes exactly once more", async () => {
+    const { rerender } = await mountPaused([pausedRow(ANA, "Ana", 20)]);
+    await waitFor(() => expect(recordPauseSpy).toHaveBeenCalledTimes(1));
+
+    // Four more ticks with the same bucket still due.
+    for (let i = 0; i < 4; i += 1) {
+      rerender({ q: [pausedRow(ANA, "Ana", 20 + i)] });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+    }
+
+    expect(
+      recordPauseSpy,
+      "the same pause bucket wrote again on a later tick — every 15 s the organizer gets the same alert, and session_notifications fills with duplicates of one event"
+    ).toHaveBeenCalledTimes(1);
+
+    // Past 30 minutes: a NEW bucket, and the escalation the organizer needs.
+    rerender({ q: [pausedRow(ANA, "Ana", 31)] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    await waitFor(() =>
+      expect(
+        recordPauseSpy,
+        "a pause deepening past 30 minutes produced no second reminder — the escalation stops at the first bucket and a player can sit paused indefinitely after one dismissed card"
+      ).toHaveBeenCalledTimes(2)
+    );
+    expect(
+      recordPauseSpy.mock.calls[1],
+      "the escalation wrote the wrong bucket or suppressed its interrupt — bucket 2 became due while the organizer was watching, so it is news"
+    ).toEqual([SESSION_ID, ANA, 2, true]);
+  });
+
+  it("OAL-29 (negative): a closed session writes nothing, and neither does a queue that has not loaded", async () => {
+    const { unmount } = await mountPaused([pausedRow(ANA, "Ana", 20)], { isClosed: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(
+      recordPauseSpy,
+      "a CLOSED session still wrote pause reminders — the organizer is alerted about a session that has already ended"
+    ).not.toHaveBeenCalled();
+    unmount();
+
+    await mountPaused([pausedRow(BEN, "Ben", 20)], { queueReady: false });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(
+      recordPauseSpy,
+      "a reminder was written before the queue had loaded — an error or auth hold leaves the queue empty or partial, and arming off it invents alerts from a snapshot that is not the session"
+    ).not.toHaveBeenCalled();
+  });
+
+  it("OAL-30 (negative, edge): a player who resumes and pauses again does not re-write a bucket already sent", async () => {
+    const { rerender } = await mountPaused([pausedRow(ANA, "Ana", 20)]);
+    await waitFor(() => expect(recordPauseSpy).toHaveBeenCalledTimes(1));
+
+    // Resume: prunePauseSeen drops ana:1, so the bucket becomes "unseen" again
+    // and collectDuePauseAlerts will re-emit it the moment she re-pauses.
+    rerender({ q: [pausedRow(ANA, "Ana", null)] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    // Re-paused, past the threshold again — a fresh bucket 1.
+    rerender({ q: [pausedRow(ANA, "Ana", 18)] });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    expect(
+      recordPauseSpy,
+      "a second bucket-1 reminder was written for the same player in the same session. session_notifications_pause_bucket_idx is UNIQUE on (session_id, subject_player_id, payload->>'bucket') with no status predicate, so the insert is rejected for the whole life of the session — the write is a guaranteed round-trip to a constraint violation, and knownPauseKeys is the client-side mirror of that index"
+    ).toHaveBeenCalledTimes(1);
   });
 });

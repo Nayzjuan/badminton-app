@@ -540,7 +540,20 @@ describe("NW: emitOrganizerNotice — the insert", () => {
     let threw: unknown = null;
     let res: { row: SessionNotification | null; duplicate: boolean } | undefined;
     try {
-      res = await emitOrganizerNotice({ ...BASE, matchId: MATCH_ID });
+      // score_correction, not BASE's player_left: it is the one kind that
+      // carries fields beyond playerName, so the full-payload assertion below
+      // has something to distinguish. Every other fixture in this file makes
+      // the returned row echo the input exactly, which leaves WHICH object the
+      // broadcast reads from untested — and on THIS path `data` is null, so a
+      // row-sourced broadcast would put `kind: undefined, playerId: undefined`
+      // on the wire: an unrenderable toast on exactly the degradation path
+      // this test exists to protect.
+      res = await emitOrganizerNotice({
+        ...BASE,
+        kind: "score_correction",
+        matchId: MATCH_ID,
+        payload: { playerName: "Alex", proposedScoreA: 21, proposedScoreB: 19 },
+      });
     } catch (e) {
       threw = e;
     }
@@ -564,6 +577,27 @@ describe("NW: emitOrganizerNotice — the insert", () => {
       payload.notification,
       "a failed insert is being broadcast as though a row existed"
     ).toBeNull();
+    // toEqual on the WHOLE object, not field-by-field: the point is that every
+    // field is sourced from the caller's `input` and none from the inserted
+    // row, and only an exhaustive comparison says that. A field-by-field spot
+    // check re-sources the fields it forgot to name.
+    expect(
+      payload,
+      "a broadcast field is being read back off the inserted row instead of the caller's input — on this path there IS no row, so each such field reaches the client as undefined"
+    ).toEqual({
+      kind: "score_correction",
+      playerId: SUBJECT_ID,
+      playerName: "Alex",
+      cancelledDraft: false,
+      actorId: undefined,
+      actorName: undefined,
+      notification: null,
+      bucket: undefined,
+      interrupt: undefined,
+      matchId: MATCH_ID,
+      proposedScoreA: 21,
+      proposedScoreB: 19,
+    });
     expect(
       recorded.length,
       "the insert was never attempted on the missing-table path — this test must exercise a real write that failed, not a write that was skipped"
@@ -644,6 +678,15 @@ describe("NW: emitOrganizerNotice — the insert", () => {
       payload.notification,
       "an absent row is being broadcast as undefined rather than null — clients distinguish the two when deciding whether to upsert by id"
     ).toBeNull();
+    // The only call in this file that passes matchId: null, so the only one
+    // that exercises the `?? undefined` coercion. NW-10 omits matchId
+    // entirely, and `undefined ?? undefined` is undefined either way.
+    // QueueNoticePayload declares `matchId?: string`, so a null on the wire is
+    // off-contract for any client that branches on `matchId !== undefined`.
+    expect(
+      payload.matchId,
+      "a null matchId reached the wire as null instead of being omitted"
+    ).toBeUndefined();
   });
 
   it("NW-17 (negative): the write touches session_notifications and nothing else", async () => {
@@ -810,6 +853,15 @@ describe("NW: closePendingScoreCorrections — the read/update binding", () => {
 
   it("NW-22: the stamp broadcast to clients is the stamp written to the row", async () => {
     const recorded = useServiceClient({ read: { data: [noticeRow()], error: null } });
+    // Move the pinned clock at the one seam between the UPDATE and the
+    // broadcast loop — getActorContext is awaited exactly there. Without this
+    // the whole test runs at a single frozen instant, so two separate
+    // `new Date()` calls ARE equal and the equality below is satisfied by the
+    // very code it claims to forbid.
+    vi.mocked(getActorContext).mockImplementation(async () => {
+      vi.setSystemTime(new Date("2026-08-21T10:00:05.000Z"));
+      return { id: ACTOR_ID, name: ACTOR_NAME };
+    });
 
     await closePendingScoreCorrections(MATCH_ID, "resolved", ACTOR_ID);
 

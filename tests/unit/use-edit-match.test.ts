@@ -79,6 +79,10 @@
 //                  savedOnce; (edge) a failure with neither message nor error
 //                  leaves `message` a real null, not the string "undefined"
 //   EMH-27  isPending is true for the whole in-flight window and false after
+//   EMH-28  (negative) a REJECTED plain save unwedges: isPending falls, a
+//                  refusal is shown, nothing latches
+//   EMH-29  (negative) a REJECTED correction unwedges the notification branch
+//   EMH-30  (negative) a REJECTED revert unwedges, and arms no close
 //
 // STRATEGY
 // --------
@@ -185,6 +189,27 @@ async function revert(view: Rendered) {
   await act(async () => {
     view.result.current.handleRevert();
   });
+}
+
+/**
+ * Fires an action whose server call REJECTS, absorbing the throw `act()`
+ * re-raises when the hook does NOT catch it.
+ *
+ * Swallowing it here is deliberate. An uncaught rejection inside
+ * `startTransition` surfaces as an opaque stack with no hook state in it, and
+ * the property under test is not "does it throw" — it is what the ORGANIZER is
+ * left looking at afterwards. Letting the assertions below be the failure
+ * signal is what makes the three tests report a wedged dialog rather than a
+ * network error the test itself arranged.
+ */
+async function actExpectingRejection(fn: () => void) {
+  try {
+    await act(async () => {
+      fn();
+    });
+  } catch {
+    /* see above */
+  }
 }
 
 function advance(ms: number) {
@@ -1239,5 +1264,132 @@ describe("useEditMatch — Unit Suite (EMH)", () => {
     expect(view.result.current.message, "the resolved verdict was not applied").toBe(
       "Scores updated."
     );
+  });
+
+  // ── EMH-28 (negative) ──────────────────────────────────────
+  //
+  // The three tests below are the only ones in this file that exercise a
+  // server action that REJECTS rather than resolving `{ success: false }`.
+  // That distinction is the whole point: every other negative here hands the
+  // hook a well-formed refusal, which every branch already handles. A
+  // rejection — a dropped connection, a 500 from the Next.js action endpoint,
+  // the `"use server"` module-evaluation ReferenceError this repo shipped for
+  // four days — takes a different path entirely. It unwinds out of the
+  // `await`, past every setState, and out of the async `startTransition`
+  // scope, where nothing catches it.
+  //
+  // What the organizer sees is worse than an error. EditMatchDialog binds
+  // `disabled={isPending}` to both score inputs, the Save button and the
+  // Revert button, and renders "Saving…" / "Reverting…" off the same flag.
+  // A stuck `isPending` therefore freezes every control in the dialog with a
+  // spinner label and no message — indistinguishable from a slow network, and
+  // unrecoverable without closing and reopening. `message` stays null, so
+  // there is nothing on screen to explain it.
+  it("EMH-28 (negative): a rejected plain save unwedges the dialog and shows a refusal", async () => {
+    const onSaved = vi.fn();
+    const onOpenChange = vi.fn();
+    mockUpdate.mockRejectedValue(new Error("network down"));
+
+    const view = mount({ onSaved, onOpenChange });
+    open(view);
+    typeScores(view, "23", "21");
+    await actExpectingRejection(() => view.result.current.handleSaveScore());
+
+    expect(
+      view.result.current.isPending,
+      "isPending never came back down after a rejected save — both score inputs, Save and Revert stay disabled behind a 'Saving…' label for the life of the dialog"
+    ).toBe(false);
+    expect(
+      view.result.current.message,
+      "a rejected save left the feedback slot empty — the dialog is frozen with no reason given"
+    ).not.toBeNull();
+    expect(
+      view.result.current.isError,
+      "a rejected save was not painted as an error"
+    ).toBe(true);
+    expect(view.result.current.savedOnce, "savedOnce latched on a save that threw").toBe(false);
+    expect(
+      onSaved,
+      "the parent was refreshed after a save that never reached the server"
+    ).not.toHaveBeenCalled();
+    expect(
+      view.result.current.scoreA,
+      "a rejected save re-seeded the fields as though it had persisted"
+    ).toBe("23");
+    expect(vi.getTimerCount(), "a rejected save armed a close timer").toBe(0);
+    expect(closeCalls(onOpenChange), "a rejected save closed the dialog").toBe(0);
+  });
+
+  // ── EMH-29 (negative) ──────────────────────────────────────
+  // Same property, the OTHER action. The notification branch returns before
+  // ever reaching the plain-save code, so a catch on one says nothing about
+  // the other — and this is the branch an organizer reaches from a player's
+  // score-correction request, where a wedged dialog also leaves the request
+  // itself unresolved.
+  it("EMH-29 (negative): a rejected correction unwedges the notification branch", async () => {
+    const onSaved = vi.fn();
+    const onOpenChange = vi.fn();
+    mockResolve.mockRejectedValue(new Error("action endpoint 500"));
+
+    const view = mount({ notificationId: NOTIFICATION_ID, onSaved, onOpenChange });
+    open(view);
+    typeScores(view, "23", "21");
+    await actExpectingRejection(() => view.result.current.handleSaveScore());
+
+    expect(
+      view.result.current.isPending,
+      "isPending never came back down after a rejected correction — the dialog is wedged and the player's request stays unresolved"
+    ).toBe(false);
+    expect(
+      view.result.current.message,
+      "a rejected correction left the feedback slot empty"
+    ).not.toBeNull();
+    expect(view.result.current.isError, "a rejected correction was not painted as an error").toBe(
+      true
+    );
+    expect(view.result.current.savedOnce, "savedOnce latched on a correction that threw").toBe(
+      false
+    );
+    expect(onSaved, "the parent was refreshed after a correction that threw").not.toHaveBeenCalled();
+    expect(vi.getTimerCount(), "a rejected correction armed a close timer").toBe(0);
+    expect(closeCalls(onOpenChange), "a rejected correction closed the dialog").toBe(0);
+    expect(
+      mockUpdate,
+      "the rejection fell through into the plain-save path and wrote the scores twice"
+    ).not.toHaveBeenCalled();
+  });
+
+  // ── EMH-30 (negative) ──────────────────────────────────────
+  // handleRevert is a third, separate `startTransition` scope. It is also the
+  // only path whose SUCCESS arm closes the dialog, so the failure arm has to
+  // be visibly distinguishable from the success arm — a stuck spinner reads,
+  // to the organizer, exactly like a revert that is still going through.
+  it("EMH-30 (negative): a rejected revert unwedges and arms no close", async () => {
+    const onSaved = vi.fn();
+    const onOpenChange = vi.fn();
+    mockUpdate.mockRejectedValue(new Error("network down"));
+
+    const view = mount({ onSaved, onOpenChange });
+    open(view);
+    await actExpectingRejection(() => view.result.current.handleRevert());
+
+    expect(
+      view.result.current.isPending,
+      "isPending never came back down after a rejected revert — the dialog stays frozen on 'Reverting…'"
+    ).toBe(false);
+    expect(
+      view.result.current.message,
+      "a rejected revert left the feedback slot empty — a frozen dialog with no reason"
+    ).not.toBeNull();
+    expect(view.result.current.isError, "a rejected revert was not painted as an error").toBe(true);
+    expect(onSaved, "the parent was refreshed after a revert that threw").not.toHaveBeenCalled();
+    expect(vi.getTimerCount(), "a rejected revert armed a close timer").toBe(0);
+
+    advance(DIALOG_CLOSE_DELAY_MS * 10);
+    expect(
+      view.result.current.open,
+      "a rejected revert auto-closed the dialog, discarding the reason and parking the organizer on a match that is still in history"
+    ).toBe(true);
+    expect(closeCalls(onOpenChange), "a close was scheduled on a rejected revert").toBe(0);
   });
 });

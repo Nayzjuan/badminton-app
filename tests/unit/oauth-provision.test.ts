@@ -109,7 +109,16 @@ import type { OAuthMeta } from "@/lib/oauth-name";
 const USER_ID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 const OTHER_USER_ID = "9999eeee-8888-4fff-9aaa-7777bbbb6666";
 
-const META: OAuthMeta = { full_name: "Miggy Reyes", name: null, email: "miggy@example.com" };
+// These two MUST differ, for the same reason the two PINs below must. If
+// DERIVED were byte-identical to META.full_name, no assertion in this file
+// could tell "the value deriveDisplayName returned" apart from "the raw
+// Google metadata field", and every write below — display_name,
+// collided_name, the name handed to isNameTaken, the returned assignedName —
+// could be re-sourced straight from meta.full_name with the suite still
+// green. The apostrophe is the point: it is a character the real sanitiser
+// strips, so DERIVED reads as a plausible derivation of META rather than an
+// arbitrary rename.
+const META: OAuthMeta = { full_name: "Miggy O'Reyes", name: null, email: "miggy@example.com" };
 const DERIVED = "Miggy Reyes";
 
 // These two MUST differ. If they matched, every "the existing PIN survived"

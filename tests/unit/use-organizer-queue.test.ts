@@ -71,6 +71,8 @@
 //          reporters
 //   OQ-16  unmount closes both channels and the auth-recovery listener
 //   OQ-17  a sessionId change re-opens both channels (positive control, OQ-12)
+//   OQ-17b the RE-OPENED queue channel's handler reads the NEW session — the
+//          freshness half of the ref pattern, invisible to OQ-14 + OQ-17
 //   OQ-18  (negative) a reorder / wait-time tick with the SAME membership does
 //          not refetch profiles
 //   OQ-19  a membership change DOES refetch, bound to the new id set (positive
@@ -829,6 +831,54 @@ describe("useOrganizerQueue — Suite OQ", () => {
       queueSubs[queueSubs.length - 1].sessionId,
       "the new queue channel was not bound to the new session id"
     ).toBe(OTHER_SESSION_ID);
+  });
+
+  // ── OQ-17b ──────────────────────────────────────────────────
+  // The twin of OC-12b in use-organizer-courts.test.ts, for the same reason.
+  // OQ-14 proves the handler is the ref indirection and OQ-17 proves the
+  // channel re-opens bound to the new id; neither can see whether the ref
+  // still points at the CURRENT fetcher. Delete
+  // `fetchQueueRef.current = fetchQueue` and all 28 other tests stay green
+  // while every post-switch realtime event refetches the OLD session's rows
+  // and commits them into the organizer panel.
+  //
+  // Only the queue ref is probed here. The profiles fetcher does not close
+  // over sessionId — it is bound by the player ids it is handed — so dropping
+  // ITS sync produces an equivalent mutant, and a test for it would assert
+  // nothing.
+  it("OQ-17b: the re-opened queue channel's handler reads the NEW session", async () => {
+    queueResponse = { data: [], error: null };
+    const { rerender } = renderHook(
+      ({ id }: { id: string }) =>
+        useOrganizerQueue(id, supabase, onStatusQueue, onStatusProfiles, onProfileChange),
+      { initialProps: { id: SESSION_ID } }
+    );
+    await act(async () => {
+      await flush();
+    });
+
+    rerender({ id: OTHER_SESSION_ID });
+    await waitFor(() => expect(queueSubs[queueSubs.length - 1].sessionId).toBe(OTHER_SESSION_ID));
+
+    const before = queueReads().length;
+    await act(async () => {
+      queueSubs[queueSubs.length - 1].handler();
+      await flush();
+    });
+    const fresh = JSON.stringify(queueReads().slice(before));
+
+    expect(
+      queueReads().length,
+      "the newest channel's handler fired no read at all — this test must exercise a live refetch, or the binding assertions below are vacuous"
+    ).toBeGreaterThan(before);
+    expect(
+      fresh,
+      "a realtime event on the NEW session refetched nothing bound to it — the ref still holds the fetcher captured for the old sessionId"
+    ).toContain(`eq:session_id=${OTHER_SESSION_ID}`);
+    expect(
+      fresh,
+      "a realtime event on the new session refetched the PREVIOUS session's queue rows and committed them into the organizer panel"
+    ).not.toContain(`eq:session_id=${SESSION_ID}`);
   });
 
   // ── OQ-18 (negative) ────────────────────────────────────────

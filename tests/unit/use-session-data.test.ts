@@ -44,6 +44,10 @@
 //   SD-6   on_deck rows pin above waiting rows, order kept inside each tier
 //   SD-7   fetchSeq — two overlapping waitlist fetches resolve OUT OF ORDER
 //          and the later-started one wins
+//   SD-7b  (edge) the seq is re-checked AFTER the auth probe too — a stale
+//          empty-but-authed fetch must not clear a newer populated queue
+//   SD-7c  fetchSeq — the SAME race on the courts read, which had no guard
+//   SD-7d  (edge) the courts seq is re-checked after the auth probe too
 //   SD-8   (negative) an errored waitlist fetch preserves the populated list
 //   SD-9   positive control for SD-8/SD-11 — a genuinely empty waitlist WITH
 //          auth DOES clear the list
@@ -203,6 +207,13 @@ let callCount: Record<string, number> = {};
 let resolvers: Record<string, Resolver> = {};
 let mockSession: { access_token: string } | null = { access_token: "test-jwt" };
 let getSessionCalls = 0;
+/**
+ * Set by SD-7b to suspend the NEXT auth probe. The hold-state guards await
+ * hasAuthSession, which is a second await inside the fetch — the only way to
+ * prove the seq is re-checked after it is to park a fetch there while a newer
+ * one overtakes it. Consumed once, so only the probe it targets is gated.
+ */
+let authProbeGate: Promise<void> | null = null;
 let authListener: ((event: string) => void) | null = null;
 
 function countOf(table: string): number {
@@ -261,9 +272,14 @@ function buildMockClient() {
       // The auth-loss guard (the REAL hasAuthSession — see the importOriginal
       // below) probes this. Counting the calls is how SD-10 proves the error
       // branch returns BEFORE the empty-result branch is entered.
-      getSession: () => {
+      getSession: async () => {
         getSessionCalls += 1;
-        return Promise.resolve({ data: { session: mockSession } });
+        if (authProbeGate) {
+          const gate = authProbeGate;
+          authProbeGate = null;
+          await gate;
+        }
+        return { data: { session: mockSession } };
       },
       onAuthStateChange: (cb: (event: string) => void) => {
         authListener = cb;
@@ -365,6 +381,7 @@ describe("useSessionData — the player-side data spine", () => {
     resolvers = {};
     mockSession = { access_token: "test-jwt" };
     getSessionCalls = 0;
+    authProbeGate = null;
     authListener = null;
     subscriptions.length = 0;
     for (const k of Object.keys(unsubCounts)) delete unsubCounts[k];
@@ -425,14 +442,17 @@ describe("useSessionData — the player-side data spine", () => {
       ops,
       "the waitlist status filter changed shape — it must carry BOTH waiting and on_deck, or drafted players vanish from the queue mid-call"
     ).toContain("in:status=[waiting,on_deck]");
+    // Assert the whole ordered list, not `some(startsWith(...))` per column.
+    // Two order() calls ARE a compound sort: games_played is the key and
+    // joined_at is only the tiebreak, so swapping them makes joined_at the key
+    // and the queue becomes FIFO-with-a-games-tiebreak — a different queue,
+    // same two calls. And `startsWith("order:games_played")` also matches
+    // `order:games_played:desc`, which puts the players who have played the
+    // MOST at the front. Both mutations survive a presence-only assertion.
     expect(
-      ops.some((o) => o.startsWith("order:games_played")),
-      "the matchmaking order (fewest games first) was dropped from the waitlist read"
-    ).toBe(true);
-    expect(
-      ops.some((o) => o.startsWith("order:joined_at")),
-      "the joined_at tiebreak was dropped — equal-game players stop being FIFO"
-    ).toBe(true);
+      ops.filter((o) => o.startsWith("order:")),
+      "the waitlist sort changed: it must be games_played ASC first (fewest games served first) and joined_at ASC second (FIFO tiebreak). A swap or a direction flip serves the wrong player next, and nothing errors"
+    ).toEqual(["order:games_played:asc", "order:joined_at:asc"]);
   });
 
   // ── SD-3 ───────────────────────────────────────────────────
@@ -571,6 +591,142 @@ describe("useSessionData — the player-side data spine", () => {
       result.current.waitlist.map((w) => w.player_id),
       "a STALE waitlist fetch resolving after a newer one overwrote the newer result — players see a queue that is one refetch out of date, with no error anywhere"
     ).toEqual(["fresh-player"]);
+  });
+
+  // ── SD-7b (edge) ───────────────────────────────────────────
+  it("SD-7b (edge): the seq is re-checked AFTER the auth probe — a stale empty-but-authed waitlist fetch does not clear a newer populated queue", async () => {
+    seedFullSession();
+    const { result } = await renderLoaded();
+
+    // The stale fetch comes back EMPTY, so it does not return at the seq check
+    // that follows the query — it walks into the hold-state guard and awaits
+    // hasAuthSession. That await is where it gets overtaken. The client IS
+    // authed, so when it resumes the guard falls through and it would call
+    // setWaitlist([]) — clearing a queue that a newer fetch has just filled.
+    const staleAt = countOf("queue_entries");
+    resolvers.queue_entries = (callIndex) =>
+      callIndex === staleAt
+        ? EMPTY_OK
+        : { data: [makeQueueRow("fresh-player", "waiting", "Fresh")], error: null };
+
+    let releaseProbe!: () => void;
+    authProbeGate = new Promise<void>((res) => {
+      releaseProbe = res;
+    });
+
+    let stalePending!: Promise<void>;
+    await act(async () => {
+      stalePending = result.current.refresh();
+      // Do not release until the stale fetch is actually parked in the probe.
+      // If it were still before the first seq check, that check would catch it
+      // and this test would pass without exercising the second one at all.
+      await waitFor(() =>
+        expect(
+          getSessionCalls,
+          "the stale fetch never reached the auth probe — this test would then prove nothing about the post-probe seq check"
+        ).toBeGreaterThan(0)
+      );
+      await result.current.refresh();
+    });
+
+    expect(
+      result.current.waitlist.map((w) => w.player_id),
+      "the newer waitlist fetch never landed — the positive control failed, so the assertion below would pass for the wrong reason"
+    ).toEqual(["fresh-player"]);
+
+    await act(async () => {
+      releaseProbe();
+      await stalePending;
+    });
+
+    expect(
+      result.current.waitlist.map((w) => w.player_id),
+      "a stale empty-but-authed waitlist fetch resumed from the auth probe and blanked a queue that a newer fetch had already filled — every player sees 'No One Waiting' with no error anywhere"
+    ).toEqual(["fresh-player"]);
+  });
+
+  // ── SD-7c ──────────────────────────────────────────────────
+  it("SD-7c: fetchSeq — two overlapping COURTS fetches resolve OUT OF ORDER and the later-started one wins", async () => {
+    seedFullSession();
+    const { result } = await renderLoaded();
+
+    // Same race as SD-7, on the read that had no guard at all. courts is
+    // refetched by its own debounced subscription AND by every refresh(), so
+    // two runs overlapping is the ordinary case, not the exotic one.
+    const staleAt = countOf("courts");
+    let releaseStale!: () => void;
+    const staleGate = new Promise<void>((res) => {
+      releaseStale = res;
+    });
+    resolvers.courts = (callIndex) =>
+      callIndex === staleAt
+        ? staleGate.then(() => ({ data: [makeCourt("court-stale", "Stale")], error: null }))
+        : { data: [makeCourt("court-fresh", "Fresh")], error: null };
+
+    let stalePending!: Promise<void>;
+    await act(async () => {
+      stalePending = result.current.refresh();
+      await result.current.refresh();
+    });
+
+    expect(
+      result.current.courts.map((c) => c.id),
+      "the second (newer) courts fetch never landed — the positive control for the race guard failed"
+    ).toEqual(["court-fresh"]);
+
+    await act(async () => {
+      releaseStale();
+      await stalePending;
+    });
+
+    expect(
+      result.current.courts.map((c) => c.id),
+      "a STALE courts fetch resolving after a newer one overwrote the newer result — the court panel shows a court that has since been renamed, closed or deleted, and only the next realtime event fixes it"
+    ).toEqual(["court-fresh"]);
+  });
+
+  // ── SD-7d (edge) ───────────────────────────────────────────
+  it("SD-7d (edge): the courts seq is re-checked AFTER the auth probe too — a stale empty-but-authed courts fetch does not clear a newer panel", async () => {
+    seedFullSession();
+    const { result } = await renderLoaded();
+
+    const staleAt = countOf("courts");
+    resolvers.courts = (callIndex) =>
+      callIndex === staleAt
+        ? EMPTY_OK
+        : { data: [makeCourt("court-fresh", "Fresh")], error: null };
+
+    let releaseProbe!: () => void;
+    authProbeGate = new Promise<void>((res) => {
+      releaseProbe = res;
+    });
+
+    let stalePending!: Promise<void>;
+    await act(async () => {
+      stalePending = result.current.refresh();
+      await waitFor(() =>
+        expect(
+          getSessionCalls,
+          "the stale courts fetch never reached the auth probe — this test would then prove nothing about the post-probe seq check"
+        ).toBeGreaterThan(0)
+      );
+      await result.current.refresh();
+    });
+
+    expect(
+      result.current.courts.map((c) => c.id),
+      "the newer courts fetch never landed — the positive control failed"
+    ).toEqual(["court-fresh"]);
+
+    await act(async () => {
+      releaseProbe();
+      await stalePending;
+    });
+
+    expect(
+      result.current.courts.map((c) => c.id),
+      "a stale empty-but-authed courts fetch resumed from the auth probe and blanked a panel a newer fetch had already filled"
+    ).toEqual(["court-fresh"]);
   });
 
   // ── SD-8 (negative) ────────────────────────────────────────

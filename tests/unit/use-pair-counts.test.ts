@@ -325,6 +325,18 @@ describe("usePairCounts — Unit Suite", () => {
       result.current,
       "a failed refetch cleared counts back to null instead of holding the last good graph"
     ).not.toBeNull();
+    // "Did not throw" is the half of the title neither PC-4 nor PC-5 could see.
+    // The hook guards with `if (cancelled || !result.success) return;` and
+    // wraps the whole handler in a .catch that logs. Drop the `!result.success`
+    // half and the handler falls through to `new Map(result.data.partnerships)`
+    // on a payload that HAS no `data`: it throws, the catch swallows it, and
+    // counts still end up exactly where these two assert they are. Only the
+    // absence of a logged error distinguishes "recognised the failure" from
+    // "crashed on it and was rescued".
+    expect(
+      errorSpy,
+      "the failure arm was not RECOGNISED as a failure — it fell through to build Maps from a payload with no `data`, threw, and the catch swallowed it"
+    ).not.toHaveBeenCalled();
   });
 
   // ── PC-5 (negative, edge) ──────────────────────────────────
@@ -343,6 +355,18 @@ describe("usePairCounts — Unit Suite", () => {
       "a { success:false } first load wrote counts anyway — the payload has no `data` on the failure arm, so anything written here is fabricated"
     ).toBeNull();
     expect(mockGetCounts, "the load was never attempted").toHaveBeenCalledTimes(1);
+    // "Did not throw" is the half of the title neither PC-4 nor PC-5 could see.
+    // The hook guards with `if (cancelled || !result.success) return;` and
+    // wraps the whole handler in a .catch that logs. Drop the `!result.success`
+    // half and the handler falls through to `new Map(result.data.partnerships)`
+    // on a payload that HAS no `data`: it throws, the catch swallows it, and
+    // counts still end up exactly where these two assert they are. Only the
+    // absence of a logged error distinguishes "recognised the failure" from
+    // "crashed on it and was rescued".
+    expect(
+      errorSpy,
+      "the failure arm was not RECOGNISED as a failure — it fell through to build Maps from a payload with no `data`, threw, and the catch swallowed it"
+    ).not.toHaveBeenCalled();
   });
 
   // ── PC-6 (negative) ────────────────────────────────────────

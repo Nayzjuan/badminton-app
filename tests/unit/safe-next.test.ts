@@ -59,8 +59,23 @@ describe("Suite SN — safeNext", () => {
     expect(new URL("/\\evil.com", APP_ORIGIN).origin).not.toBe(APP_ORIGIN);
   });
 
-  it("SN-5 (negative): rejects a protocol-relative URL", () => {
+  it("SN-5 (negative): rejects a protocol-relative URL, including the authority-empty forms the parser THROWS on", () => {
     expect(safeNext("//evil.com")).toBe("/clubs");
+
+    // These are a different arm, not more of the same. Every other hostile
+    // string in this file PARSES — it resolves to an origin the guard then
+    // rejects. "//" and its kin start with "/" so they clear the pre-filter,
+    // but `new URL("//", base)` is a TypeError: rooted with an EMPTY
+    // authority is not a URL at all. The only thing standing between that and
+    // an unhandled throw is safeNext's try/catch, and without these three
+    // inputs that catch can be deleted with the whole suite still green.
+    // The callers make it a 500 rather than a redirect: `redirect(safeNext())`
+    // in the /rename Server Component, NextResponse.redirect in the
+    // /auth/callback route, and signInWithGoogle — a "use server" action,
+    // where CLAUDE.md forbids throwing outright.
+    expect(safeNext("//"), "?next=// must fall back, not throw").toBe("/clubs");
+    expect(safeNext("/\\"), "?next=/\\ must fall back, not throw").toBe("/clubs");
+    expect(safeNext("//?"), "?next=//? must fall back, not throw").toBe("/clubs");
   });
 
   it("SN-6 (negative): rejects a mixed slash-backslash protocol-relative URL", () => {
@@ -115,6 +130,12 @@ describe("Suite SN — safeNext", () => {
       "/\n//evil.com",
       " //evil.com",
       "///evil.com",
+      // Authority-empty: the URL constructor THROWS on these rather than
+      // resolving them, so they exercise safeNext's catch arm. A throw escapes
+      // the loop body and reddens this test directly.
+      "//",
+      "/\\",
+      "//?",
       "/clubs",
       "/play?x=1",
       "",
