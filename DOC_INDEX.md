@@ -18,7 +18,7 @@ After a context compaction, do **not** re-read any of this.
 | `CLAUDE.md` | 11 KB | The rules. Read this in full — it is the only doc that is not optional. |
 | `HANDOFF.md` | 10 KB | Onboarding: repo paths, Supabase/Vercel connector discovery, workflow rules. |
 | `AGENTS.md` | 327 B | Next.js 16 is not the Next.js in your training data. Read before any Next API. |
-| `MEMORY.md` | 20 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
+| `MEMORY.md` | 22 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
 | `README.md` | 1 KB | Public-facing project readme. |
 | `PRODUCT.md` | 4 KB | What the product is for, in the user's language. |
 | `MATCHMAKING.md` | 20 KB | Standalone narrative of the matchmaking engine. |
@@ -26,7 +26,7 @@ After a context compaction, do **not** re-read any of this.
 
 ---
 
-## `APP_MANIFEST.md` — 353 KB
+## `APP_MANIFEST.md` — 359 KB
 
 | Section | Lines | Read with |
 |---|---|---|
@@ -117,30 +117,31 @@ After a context compaction, do **not** re-read any of this.
 | &nbsp;&nbsp;&nbsp;&nbsp;4.8 Component Patterns | 1731–1758 | `sed -n '1731,1758p' APP_MANIFEST.md` |
 | **5. Realtime Architecture** | 1759–1786 | `sed -n '1759,1786p' APP_MANIFEST.md` |
 | **6. Architectural Patterns & Rules** | 1787–1788 | `sed -n '1787,1788p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Server Action Convention | 1789–1805 | `sed -n '1789,1805p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;dnd-kit Isolation | 1806–1816 | `sed -n '1806,1816p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;TypeScript Convention | 1817–1823 | `sed -n '1817,1823p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Service Client Rule | 1824–1827 | `sed -n '1824,1827p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;PostgREST Gotchas | 1828–1832 | `sed -n '1828,1832p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Null-guard on Draft Functions | 1833–1838 | `sed -n '1833,1838p' APP_MANIFEST.md` |
-| **7. Testing** | 1839–1840 | `sed -n '1839,1840p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1841–1858 | `sed -n '1841,1858p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 1859–1885 | `sed -n '1859,1885p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 1886–1921 | `sed -n '1886,1921p' APP_MANIFEST.md` |
-| **The migration set must replay from scratch (2026-07-22)** | 1922–2004 | `sed -n '1922,2004p' APP_MANIFEST.md` |
-| **`after()` in integration tests** | 2005–2031 | `sed -n '2005,2031p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2032–2045 | `sed -n '2032,2045p' APP_MANIFEST.md` |
-| **8. File Map** | 2046–2297 | `sed -n '2046,2297p' APP_MANIFEST.md` |
-| **9. Known Gotchas** | 2298–2334 | `sed -n '2298,2334p' APP_MANIFEST.md` |
-| **10. Digital Twin — Interactive Architecture Documentation** | 2335–2340 | `sed -n '2335,2340p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2341–2344 | `sed -n '2341,2344p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2345–2358 | `sed -n '2345,2358p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2359–2377 | `sed -n '2359,2377p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2378–2381 | `sed -n '2378,2381p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2382–2394 | `sed -n '2382,2394p' APP_MANIFEST.md` |
-| **11. Multi-Tenant (Clubs)** | 2395–2550 | `sed -n '2395,2550p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2551–2567 | `sed -n '2551,2567p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2568–2582 | `sed -n '2568,2582p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Server Action Convention | 1789–1836 | `sed -n '1789,1836p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;dnd-kit Isolation | 1837–1847 | `sed -n '1837,1847p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;TypeScript Convention | 1848–1854 | `sed -n '1848,1854p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Service Client Rule | 1855–1858 | `sed -n '1855,1858p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;PostgREST Gotchas | 1859–1863 | `sed -n '1859,1863p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Null-guard on Draft Functions | 1864–1869 | `sed -n '1864,1869p' APP_MANIFEST.md` |
+| **7. Testing** | 1870–1871 | `sed -n '1870,1871p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1872–1890 | `sed -n '1872,1890p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 1891–1917 | `sed -n '1891,1917p' APP_MANIFEST.md` |
+| **Post-deploy smoke (`.github/workflows/post-deploy-smoke.yml`)** | 1918–1952 | `sed -n '1918,1952p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 1953–1988 | `sed -n '1953,1988p' APP_MANIFEST.md` |
+| **The migration set must replay from scratch (2026-07-22)** | 1989–2071 | `sed -n '1989,2071p' APP_MANIFEST.md` |
+| **`after()` in integration tests** | 2072–2098 | `sed -n '2072,2098p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2099–2112 | `sed -n '2099,2112p' APP_MANIFEST.md` |
+| **8. File Map** | 2113–2364 | `sed -n '2113,2364p' APP_MANIFEST.md` |
+| **9. Known Gotchas** | 2365–2401 | `sed -n '2365,2401p' APP_MANIFEST.md` |
+| **10. Digital Twin — Interactive Architecture Documentation** | 2402–2407 | `sed -n '2402,2407p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2408–2411 | `sed -n '2408,2411p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2412–2425 | `sed -n '2412,2425p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2426–2444 | `sed -n '2426,2444p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2445–2448 | `sed -n '2445,2448p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2449–2461 | `sed -n '2449,2461p' APP_MANIFEST.md` |
+| **11. Multi-Tenant (Clubs)** | 2462–2617 | `sed -n '2462,2617p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2618–2634 | `sed -n '2618,2634p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2635–2649 | `sed -n '2635,2649p' APP_MANIFEST.md` |
 
 ---
 

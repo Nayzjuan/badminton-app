@@ -225,6 +225,39 @@ badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 _(Item 2 — the two orphaned Supabase preview branches — was **deleted 2026-08-20** and is closed.
 The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 
+**3. The post-deploy smoke is committed but INERT until three GitHub secrets exist.**
+`.github/workflows/post-deploy-smoke.yml` runs Scenario B against the production alias
+`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. Until
+`TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are added at
+Settings → Secrets and variables → Actions it **no-ops with a `::notice::` and reports green**.
+That green means "not configured", not "the smoke passed" — read the job log before treating it as
+evidence. Only the user can add the secrets. By design it drives the live production Supabase
+sandbox session, so a run mutates real rows and depends on `tests/helpers/global-teardown.ts` to
+sweep.
+
+🪤 **Two things about the `deployment_status` trigger are not guessable, and both were wrong on
+the first pass.** The environment is `Production – badminton-app` — EN DASH, project-suffixed; there
+is no bare `Production`, so an `== 'Production'` filter fires never, and a silent workflow is worth
+exactly as much as no workflow. And the event's `environment_url` is the per-deployment host, which
+Vercel SSO-gates (302 → `vercel.com/sso-api`) while the alias returns 200 — so smoking the event URL
+tests the login wall. Ask the API, not the docs' example payload:
+`gh api repos/:owner/:repo/deployments --jq '.[].environment'`.
+
+_(The mis-based `test/use-server-export-whitelist` was **deleted from origin 2026-08-21** and is
+closed. It had been branched while HEAD sat on `hotfix/add-court-silent-failure`, so a PR from it
+would have proposed merging a peer's fix whose merge was never authorised. Verified before deleting
+that it orphaned nothing — `git log origin/hotfix/add-court-silent-failure..origin/test/use-server-export-whitelist`
+was empty; `backup/use-server-whitelist` still holds the old tip. Superseded by
+`test/server-export-gate`.)_
+
+🪤 **A guard that reports green while scanning nothing is the failure mode to design against**, and
+it is not hypothetical here: the review of `use-server-exports.test.ts` found its own file selector
+matched one whole line against one directive, so `"use server"; // note` or a preceding
+`"use strict"` made a module invisible to the entire suite. Same shape in three other places this
+task — an `if:` filter that matches no environment, a `postbuild` check that finds zero arrays, a CI
+job skipped for missing secrets. Only the last one announces itself, which is why it emits a
+`::notice::`. When you add a gate, assert on the SIZE of what it examined.
+
 **Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
 auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.
 Ours land in `MIGRATIONS_FAILED` because the integration replays `supabase/migrations/` into the

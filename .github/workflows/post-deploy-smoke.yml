@@ -1,0 +1,173 @@
+# ============================================================
+# CI: Post-Deploy Smoke — Chillax Badminton
+# ============================================================
+# Runs Scenario B against the PRODUCTION site, immediately after Vercel reports
+# a production deployment healthy.
+#
+# WHY THIS EXISTS — the gap it closes, stated plainly:
+#   On 2026-08-16 a chunking change put `src/app/actions/notifications.ts` into
+#   the organizer route's server-action entry. That module carried
+#   `export type { NotificationType };`, which Next's transform emits as a
+#   RUNTIME identifier. The chunk threw ReferenceError at module evaluation and
+#   EVERY organizer action 500'd for four days.
+#
+#   Nothing caught it, and nothing COULD have:
+#     * tsc / eslint / vitest all erase the type before they see it.
+#     * `next build` emits chunks without evaluating them — exit 0.
+#     * the commit that broke it did not touch the offending file. The bad
+#       line was ten weeks old. Reviewing that day's diff would show nothing.
+#
+#   The only thing that observes this class is a REAL REQUEST to the DEPLOYED
+#   ARTIFACT. That is this workflow.
+#
+#   `npm run check:server-exports` (postbuild) now catches this specific
+#   defect at build time and is the faster, cheaper gate. This one is the
+#   backstop for the general case: "the deploy is broken in a way no static
+#   check models."
+#
+# WHY SCENARIO B: it clicks toggle-auto-matchmaking — the exact control that
+#   was dead — and then refuses to trust the optimistic UI, polling the DB for
+#   `is_auto_matchmaking_on` before continuing. A 500'd server action fails
+#   that poll. It would have caught the outage on the deploy that caused it.
+#
+# ⚠️ THIS TOUCHES PRODUCTION. Playwright has no local server (see
+#   playwright.config.ts) — it drives the live deployment against the
+#   "🤖 E2E SANDBOX" session in the production Supabase project. That is the
+#   suite's existing design, not a decision made here. Consequences:
+#     * All specs share one TEST_SESSION_ID and run with workers: 1, so two
+#       concurrent runs would corrupt each other. The concurrency group below
+#       serialises them and cancels superseded deploys.
+#     * tests/helpers/global-teardown.ts sweeps the sandbox afterwards and
+#       REFUSES to run against a session whose name does not start with
+#       "🤖 E2E SANDBOX".
+#
+# REQUIRED SECRETS — until these are set this workflow no-ops with a notice
+# rather than failing, so it never manufactures red on an unconfigured repo.
+# Add at github.com → Settings → Secrets and variables → Actions:
+#     TEST_SESSION_ID              UUID of the 🤖 E2E SANDBOX session
+#     NEXT_PUBLIC_SUPABASE_URL     the project URL
+#     SUPABASE_SERVICE_ROLE_KEY    service_role secret (bypasses RLS)
+# `VERCEL_BYPASS_SECRET` is optional and not part of the guard: the production
+# alias is not protection-gated today (measured below), and playwright.config.ts
+# treats it as optional. It is passed through so that turning Deployment
+# Protection on later does not silently start smoking a login wall.
+# ============================================================
+
+name: Post-Deploy Smoke
+
+on:
+  # Vercel reports every deployment's health here. This fires for all three
+  # projects in the account, hence the environment filter on the job.
+  deployment_status:
+  # Manual re-run, e.g. to confirm a rollback is healthy.
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployment URL to smoke (defaults to production)"
+        required: false
+        default: "https://badminton-app-dusky-six.vercel.app"
+
+# One smoke at a time — the sandbox session is a single shared resource. If a
+# newer deploy lands mid-run, cancel this one: its result describes an artifact
+# that is no longer live.
+concurrency:
+  group: post-deploy-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Scenario B against production
+    runs-on: ubuntu-latest
+    # `deployment_status` has no state filter in `on:`, so it is applied here.
+    #
+    # The environment strings are NOT what you would guess, and guessing wrong
+    # makes this workflow a silent permanent no-op — the same failure as having
+    # no gate at all. Measured against the live API on 2026-08-21:
+    #
+    #     gh api repos/:owner/:repo/deployments \
+    #       --jq '.[] | {environment, state: .state}'
+    #
+    # returns "Production – badminton-app", "Production – badminton-marketing",
+    # "Production – digital-twin" and the three "Preview – …" counterparts.
+    # There is no bare "Production". The separator is an EN DASH, so neither
+    # half is matched with `==`; startsWith + contains avoids depending on that
+    # character at all. "badminton-app" does not match "badminton-marketing".
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       startsWith(github.event.deployment_status.environment, 'Production') &&
+       contains(github.event.deployment_status.environment, 'badminton-app'))
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # A missing secret is a configuration state, not a regression. Skipping
+      # loudly beats a permanent red X that everyone learns to ignore — which
+      # is the same failure mode as a gate nothing runs.
+      - name: Check smoke is configured
+        id: guard
+        env:
+          TEST_SESSION_ID: ${{ secrets.TEST_SESSION_ID }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+        run: |
+          missing=""
+          [ -z "$TEST_SESSION_ID" ] && missing="$missing TEST_SESSION_ID"
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] && missing="$missing NEXT_PUBLIC_SUPABASE_URL"
+          if [ -n "$missing" ]; then
+            echo "::notice::Post-deploy smoke SKIPPED — missing secrets:$missing"
+            echo "::notice::Add them at Settings → Secrets and variables → Actions."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node 20
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        if: steps.guard.outputs.configured == 'true'
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        if: steps.guard.outputs.configured == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke the deployment
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          # The stable production alias — deliberately NOT the event's
+          # `environment_url`. Targeting the exact artifact that just deployed
+          # is the more precise idea and it is the one this file used first,
+          # but it does not work here: Vercel puts the per-deployment host
+          # behind SSO Deployment Protection. Measured 2026-08-21 —
+          #
+          #   badminton-app-dusky-six.vercel.app            -> 200
+          #   badminton-j5jijtv0w-nayzjuans-projects…       -> 302
+          #     location: https://vercel.com/sso-api?url=…
+          #
+          # so a smoke against `environment_url` would test the login wall, not
+          # the app. The alias is also what real users hit, which is what a
+          # production smoke is for. The race it admits — a newer deploy taking
+          # the alias mid-run — is what `cancel-in-progress` above handles.
+          TEST_BASE_URL: ${{ inputs.base_url || 'https://badminton-app-dusky-six.vercel.app' }}
+          TEST_SESSION_ID: ${{ secrets.TEST_SESSION_ID }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.VERCEL_BYPASS_SECRET }}
+        run: npm run test:e2e:smoke
+
+      - name: Upload Playwright report
+        # Only useful when something failed; the report is the whole diagnosis.
+        if: failure() && steps.guard.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
