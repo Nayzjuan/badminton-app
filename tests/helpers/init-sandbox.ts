@@ -45,10 +45,19 @@ const c = {
 function log(symbol: string, msg: string) {
   console.log(`  ${symbol}  ${msg}`);
 }
-function ok(msg: string)   { log(`${c.green}✓${c.reset}`, msg); }
-function info(msg: string) { log(`${c.cyan}→${c.reset}`, msg); }
-function warn(msg: string) { log(`${c.yellow}⚠${c.reset}`, msg); }
-function fail(msg: string) { log(`${c.red}✗${c.reset}`, msg); process.exit(1); }
+function ok(msg: string) {
+  log(`${c.green}✓${c.reset}`, msg);
+}
+function info(msg: string) {
+  log(`${c.cyan}→${c.reset}`, msg);
+}
+function warn(msg: string) {
+  log(`${c.yellow}⚠${c.reset}`, msg);
+}
+function fail(msg: string) {
+  log(`${c.red}✗${c.reset}`, msg);
+  process.exit(1);
+}
 
 // ── Parse a .env file into a key→value map ────────────────────
 function parseEnvFile(filePath: string): Map<string, string> {
@@ -62,7 +71,10 @@ function parseEnvFile(filePath: string): Map<string, string> {
     const eqIdx = trimmed.indexOf("=");
     if (eqIdx === -1) continue;
     const key = trimmed.slice(0, eqIdx).trim();
-    const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, "");
+    const val = trimmed
+      .slice(eqIdx + 1)
+      .trim()
+      .replace(/^["']|["']$/g, "");
     map.set(key, val);
   }
   return map;
@@ -97,15 +109,15 @@ function loadEnv(): Record<string, string> {
     SUPABASE_SERVICE_ROLE_KEY:
       envLocal.get("SUPABASE_SERVICE_ROLE_KEY") ??
       envLocal.get("NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY") ??
-      process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+      process.env.SUPABASE_SERVICE_ROLE_KEY ??
+      "",
     // The organizer bot is a permanent account on a real project — it gets no
     // literal default here, for the same reason as tests/fixtures/auth.ts.
     TEST_ORGANIZER_EMAIL:
       envLocal.get("TEST_ORGANIZER_EMAIL") ?? process.env.TEST_ORGANIZER_EMAIL ?? "",
     TEST_ORGANIZER_PASSWORD:
       envLocal.get("TEST_ORGANIZER_PASSWORD") ?? process.env.TEST_ORGANIZER_PASSWORD ?? "",
-    TEST_ORGANIZER_PIN:
-      envLocal.get("TEST_ORGANIZER_PIN") ?? process.env.TEST_ORGANIZER_PIN ?? "",
+    TEST_ORGANIZER_PIN: envLocal.get("TEST_ORGANIZER_PIN") ?? process.env.TEST_ORGANIZER_PIN ?? "",
   };
 }
 
@@ -127,9 +139,7 @@ function prompt(question: string): Promise<string> {
 
 async function main() {
   console.log();
-  console.log(
-    `${c.bold}${c.cyan}🏸 Badminton App — E2E Sandbox Initialiser${c.reset}`
-  );
+  console.log(`${c.bold}${c.cyan}🏸 Badminton App — E2E Sandbox Initialiser${c.reset}`);
   console.log(c.dim + "─".repeat(50) + c.reset);
   console.log();
 
@@ -168,11 +178,9 @@ async function main() {
   ok(`Supabase URL: ${c.dim}${env.NEXT_PUBLIC_SUPABASE_URL}${c.reset}`);
 
   // ── Step 2: Connect (service role — bypasses RLS) ─────────
-  const db = createClient(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+  const db = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 
   // ── Step 3: Ensure organizer bot account exists ───────────
   const ORGANIZER_EMAIL = env.TEST_ORGANIZER_EMAIL;
@@ -241,9 +249,7 @@ async function main() {
   if (existingSessions && existingSessions.length > 0) {
     const session = existingSessions[0];
     sandboxSessionId = session.id;
-    ok(
-      `Sandbox session already exists: ${c.dim}${sandboxSessionId}${c.reset}`
-    );
+    ok(`Sandbox session already exists: ${c.dim}${sandboxSessionId}${c.reset}`);
 
     // Ensure it's active (could have been deactivated by a previous test run)
     if (!session.is_active) {
@@ -326,7 +332,7 @@ async function main() {
 
   // Also backfill SUPABASE_SERVICE_ROLE_KEY if it's still the placeholder
   const currentKey = existingTestEnv.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!currentKey || currentKey.startsWith("eyJhbGciOiJIUzI1NiIsIn") && currentKey.length < 60) {
+  if (!currentKey || (currentKey.startsWith("eyJhbGciOiJIUzI1NiIsIn") && currentKey.length < 60)) {
     updates.SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   }
 
@@ -336,22 +342,15 @@ async function main() {
 
   // Check if TEST_BASE_URL still needs to be set
   const currentBaseUrl = parseEnvFile(ENV_TEST).get("TEST_BASE_URL") ?? "";
-  const baseUrlIsPlaceholder =
-    !currentBaseUrl || currentBaseUrl.includes("your-app.vercel.app");
+  const baseUrlIsPlaceholder = !currentBaseUrl || currentBaseUrl.includes("your-app.vercel.app");
 
   // ── Step 8: Summary ────────────────────────────────────────
   console.log();
   console.log(c.dim + "─".repeat(50) + c.reset);
-  console.log(
-    `${c.bold}${c.green}  ✓ Sandbox ready!${c.reset}`
-  );
+  console.log(`${c.bold}${c.green}  ✓ Sandbox ready!${c.reset}`);
   console.log();
-  console.log(
-    `  ${c.dim}Session ID:${c.reset}  ${c.bold}${sandboxSessionId}${c.reset}`
-  );
-  console.log(
-    `  ${c.dim}Env file:${c.reset}    ${c.bold}.env.test${c.reset} (auto-updated)`
-  );
+  console.log(`  ${c.dim}Session ID:${c.reset}  ${c.bold}${sandboxSessionId}${c.reset}`);
+  console.log(`  ${c.dim}Env file:${c.reset}    ${c.bold}.env.test${c.reset} (auto-updated)`);
   console.log();
 
   if (baseUrlIsPlaceholder) {
@@ -360,15 +359,11 @@ async function main() {
         ` Edit ${c.bold}.env.test${c.reset} and set ${c.bold}TEST_BASE_URL${c.reset}` +
         ` to your Vercel deployment URL.\n`
     );
-    console.log(
-      `  ${c.dim}Example:${c.reset}  TEST_BASE_URL=https://badminton-app.vercel.app\n`
-    );
+    console.log(`  ${c.dim}Example:${c.reset}  TEST_BASE_URL=https://badminton-app.vercel.app\n`);
 
     // Offer interactive prompt if running in a TTY
     if (process.stdin.isTTY) {
-      const answer = await prompt(
-        `  Enter your Vercel URL now (or press Enter to skip): `
-      );
+      const answer = await prompt(`  Enter your Vercel URL now (or press Enter to skip): `);
       if (answer && answer.startsWith("http")) {
         upsertEnvFile(ENV_TEST, { TEST_BASE_URL: answer });
         ok(`TEST_BASE_URL set to ${answer}`);
@@ -378,9 +373,7 @@ async function main() {
   }
 
   console.log(`  Run your tests with:`);
-  console.log(
-    `  ${c.bold}${c.cyan}  npm run test:e2e${c.reset}\n`
-  );
+  console.log(`  ${c.bold}${c.cyan}  npm run test:e2e${c.reset}\n`);
 }
 
 main().catch((err) => {
