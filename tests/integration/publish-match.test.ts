@@ -128,6 +128,9 @@ describe("publishMatchAction — Suite C", () => {
       );
 
     expect(entries).not.toBeNull();
+    // not-null is not not-empty: an empty array runs the loop zero times and
+    // passes while asserting nothing about the promotion this test is named for.
+    expect(entries!).toHaveLength(players.length);
     for (const e of entries!) {
       expect(e.status).toBe("on_deck");
     }

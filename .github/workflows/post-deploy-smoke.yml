@@ -163,6 +163,34 @@ jobs:
           VERCEL_BYPASS_SECRET: ${{ secrets.VERCEL_BYPASS_SECRET }}
         run: npm run test:e2e:smoke
 
+      # ── A skipped smoke must not read as a passed smoke ──────
+      # Every step above is gated on the guard, so on an unconfigured repo this
+      # job finished with conclusion `success` having issued ZERO requests to
+      # the deployment. Measured on run 32437527897: `Check smoke is
+      # configured` succeeded and `Smoke the deployment` was SKIPPED, and the
+      # run still rendered a green check. Across the last 20 runs, 14 skipped
+      # and 1 "succeeded" that way; none ever executed the smoke.
+      #
+      # That is precisely the failure this workflow exists to prevent, wearing
+      # a green tick — the header above already names it ("a permanently-green
+      # one that never executed") but nothing enforced it.
+      #
+      # Fails ONLY on the real trigger. `workflow_dispatch` keeps the
+      # skip-over-red behaviour the header chose, so an unconfigured fork or
+      # clone can still run this workflow without manufacturing a red X.
+      # It self-clears the moment the three secrets exist.
+      - name: Fail if a production deploy went unsmoked
+        if: >-
+          always() && github.event_name == 'deployment_status' &&
+          steps.guard.outputs.configured != 'true'
+        run: |
+          echo "::error::A Production deployment was NOT smoked — required secrets are missing."
+          echo "This check is red because the deploy is UNVERIFIED, not because it is broken."
+          echo "Add TEST_SESSION_ID, NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY at"
+          echo "  Settings -> Secrets and variables -> Actions"
+          echo "and re-run. See the header of this file for what each one is."
+          exit 1
+
       - name: Upload Playwright report
         # Only useful when something failed; the report is the whole diagnosis.
         if: failure() && steps.guard.outputs.configured == 'true'

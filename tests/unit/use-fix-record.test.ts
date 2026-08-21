@@ -302,8 +302,15 @@ describe("useFixRecord — confirm() success path", () => {
     act(() => result.current.confirm());
     await waitFor(() => expect(onSuccess).toHaveBeenCalled());
 
-    // Full state reset — back to initial
-    expect(result.current.step).toBe("selecting_out");
+    // Full state reset — back to initial.
+    //
+    // Waiting on onSuccess is NOT waiting on the reset. use-fix-record.ts runs
+    // `reset(); onSuccess();` — the spy records synchronously, while the four
+    // setState calls inside reset() are still queued for a later commit. On a
+    // loaded machine that commit lands after the assertion and the test reads
+    // step === "submitting". Wait for the reset itself; the remaining three
+    // fields are set in the same commit, so they stay synchronous.
+    await waitFor(() => expect(result.current.step).toBe("selecting_out"));
     expect(result.current.outPlayer).toBeNull();
     expect(result.current.inPlayer).toBeNull();
     expect(result.current.errorMessage).toBeNull();

@@ -32,9 +32,12 @@ const mockSubmit = vi.mocked(submitMatchScore);
 const MATCH_ID = "44444444-4444-4444-8444-444444444444";
 
 async function submitScores(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText(/your team score/i), "21");
-  await user.type(screen.getByLabelText(/opponents score/i), "18");
-  await user.click(screen.getByRole("button", { name: /submit final score/i }));
+  // findBy throughout: the submit button's label is pending-driven, so a
+  // synchronous query issued while a previous submission is still settling
+  // throws a query error instead of asserting anything.
+  await user.type(await screen.findByLabelText(/your team score/i), "21");
+  await user.type(await screen.findByLabelText(/opponents score/i), "18");
+  await user.click(await screen.findByRole("button", { name: /submit final score/i }));
 }
 
 describe("ScoreInputCard — losing the submission race", () => {
@@ -89,7 +92,12 @@ describe("ScoreInputCard — losing the submission race", () => {
     await waitFor(() =>
       expect(screen.getByText("You are not a player in this match.")).toBeInTheDocument()
     );
-    expect(screen.getByRole("button", { name: /submit final score/i })).toBeInTheDocument();
+    // The form is re-armed a commit AFTER the error message renders, so this
+    // has to retry rather than read the DOM once.
+    expect(
+      await screen.findByRole("button", { name: /submit final score/i }),
+      "the form was not re-armed after an ordinary failure"
+    ).toBeInTheDocument();
   });
 
   it("SR-4: a success still shows the submitted confirmation", async () => {

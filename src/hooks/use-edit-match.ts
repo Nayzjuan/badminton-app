@@ -162,7 +162,18 @@ export function useEditMatch(
     setMessage(null);
     startTransition(async () => {
       if (options.notificationId) {
-        const result = await resolveScoreCorrection(options.notificationId, a, b);
+        // A rejected action inside startTransition is not caught by anything:
+        // it leaves isPending stuck true for the life of the dialog, which
+        // EditMatchDialog binds to `disabled` on both score inputs and both
+        // buttons, and to the "Saving…" / "Reverting…" labels. The organizer
+        // is left with a wedged dialog and no explanation. Synthesize the
+        // repo's standard refusal instead, mirroring use-fix-record.ts.
+        let result: Awaited<ReturnType<typeof resolveScoreCorrection>>;
+        try {
+          result = await resolveScoreCorrection(options.notificationId, a, b);
+        } catch {
+          result = { success: false, error: "An unexpected error occurred. Please try again." };
+        }
         if (result.alreadyResolved) {
           setMessage(
             result.actorName
@@ -190,7 +201,12 @@ export function useEditMatch(
         return;
       }
 
-      const result = await updateMatchDetails(matchId, a, b, false);
+      let result: Awaited<ReturnType<typeof updateMatchDetails>>;
+      try {
+        result = await updateMatchDetails(matchId, a, b, false);
+      } catch {
+        result = { success: false, message: "An unexpected error occurred. Please try again." };
+      }
       setMessage(result.message);
       setIsError(!result.success);
       if (result.success) {
@@ -213,7 +229,12 @@ export function useEditMatch(
   function handleRevert() {
     cancelPendingClose();
     startTransition(async () => {
-      const result = await updateMatchDetails(matchId, 0, 0, true);
+      let result: Awaited<ReturnType<typeof updateMatchDetails>>;
+      try {
+        result = await updateMatchDetails(matchId, 0, 0, true);
+      } catch {
+        result = { success: false, message: "An unexpected error occurred. Please try again." };
+      }
       setMessage(result.message);
       setIsError(!result.success);
       if (result.success) {

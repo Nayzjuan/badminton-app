@@ -69,35 +69,62 @@ export default async function setup(): Promise<() => Promise<void>> {
   }
 
   // ── 3. Apply pending migrations ─────────────────────────────
-  // Runs 'supabase db push --local' to apply any unapplied
-  // migrations in supabase/migrations/. Idempotent — only applies
-  // what hasn't run yet. CI fails fast if a migration errors.
+  // Applies any unapplied migrations in supabase/migrations/. Idempotent —
+  // only applies what hasn't run yet.
+  //
+  // TWO THINGS WERE WRONG HERE, and they hid each other:
+  //
+  //   1. Only a bare `supabase` was tried. This machine has no `supabase` on
+  //      PATH at all (the CLI is reached through npx), so BOTH attempts threw
+  //      on every local run.
+  //   2. The failure was caught and downgraded to a console.warn ending
+  //      "Continuing — tests may fail if schema is stale."
+  //
+  // Together those mean every local integration run has executed against
+  // whatever schema happened to already be in the container, with no migration
+  // ever applied and nothing louder than a warning to say so. A suite that
+  // greens on an unknown schema is worse than a suite that never ran: it is
+  // indistinguishable from one that verified something.
+  //
+  // So: resolve the CLI the way the machine actually has it, and if none of
+  // the candidates works, ABORT. CI installs the CLI via supabase/setup-cli@v1,
+  // so `supabase` resolves there on the first candidate.
   console.log("\n[global-setup] Applying migrations...");
-  try {
-    execSync("supabase db push --local", {
-      stdio: "inherit",
-      cwd: process.cwd(),
-    });
-    console.log("[global-setup] Migrations up to date ✓");
-  } catch {
-    // CLI might not be installed in this PATH, or 'db push' might
-    // not be available in the installed version. Fall back to
-    // 'supabase migration up' (older CLI) or warn and continue.
+
+  // Keep in lockstep with the `version:` pin in
+  // .github/workflows/integration-tests.yml — a local run that applies
+  // migrations with a different CLI than CI is not reproducing CI.
+  const PINNED_CLI = "supabase@2.109.1";
+  const candidates = [
+    "supabase db push --local",
+    "supabase migration up",
+    `npx --yes ${PINNED_CLI} db push --local`,
+    `npx --yes ${PINNED_CLI} migration up`,
+  ];
+
+  let applied: string | null = null;
+  const failures: string[] = [];
+  for (const cmd of candidates) {
     try {
-      execSync("supabase migration up", {
-        stdio: "inherit",
-        cwd: process.cwd(),
-      });
-      console.log("[global-setup] Migrations applied via 'migration up' ✓");
-    } catch {
-      console.warn(
-        "\n[global-setup] ⚠  Could not auto-apply migrations.\n" +
-          "  Ensure your local schema is up to date:\n" +
-          "    supabase db reset   (resets + re-applies all migrations)\n" +
-          "  Continuing — tests may fail if schema is stale.\n"
-      );
+      execSync(cmd, { stdio: "inherit", cwd: process.cwd() });
+      applied = cmd;
+      break;
+    } catch (err) {
+      failures.push(`    ${cmd}\n      → ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+
+  if (!applied) {
+    throw new Error(
+      "[global-setup] Could not apply migrations — refusing to run the " +
+        "integration suite against a schema of unknown vintage.\n\n" +
+        "  Every candidate failed:\n" +
+        failures.join("\n") +
+        "\n\n  Fix your local schema, then re-run:\n" +
+        `    npx --yes ${PINNED_CLI} db reset   (resets + re-applies all migrations)\n`
+    );
+  }
+  console.log(`[global-setup] Migrations up to date ✓  (via: ${applied})`);
 
   console.log("[global-setup] Local Supabase is ready ✓\n");
 

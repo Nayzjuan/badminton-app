@@ -17,7 +17,7 @@
 // data already in hand — no network request needed).
 // ============================================================
 
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import type { SkillLevel } from "@/types/database";
 
@@ -57,8 +57,18 @@ export function useSessionCompletedPlayers(
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const [players, setPlayers] = useState<SessionCompletedPlayer[]>([]);
   const [loading, setLoading] = useState(true);
+  // Race-condition guard (CLAUDE.md guardrail 2). fetchPlayers awaits THREE
+  // sequential round-trips and excludeMatchId is one of its deps, so two runs
+  // can be in flight at once and the pipeline that started first can finish
+  // last — committing the previous match's candidate list over the one being
+  // corrected. Today's only caller keys <FixRecordSheet> by match.id, which
+  // keeps excludeMatchId stable for the life of a mounted instance, so this is
+  // a latent violation rather than a live bug; the guard is here so the next
+  // caller does not have to rediscover that.
+  const fetchSeq = useRef(0);
 
   const fetchPlayers = useCallback(async () => {
+    const mySeq = ++fetchSeq.current;
     setLoading(true);
 
     // Step 1: all completed match IDs in the session (excluding the target match)
@@ -69,6 +79,7 @@ export function useSessionCompletedPlayers(
       .eq("status", "completed")
       .neq("id", excludeMatchId);
 
+    if (mySeq !== fetchSeq.current) return;
     if (!completedMatches || completedMatches.length === 0) {
       setPlayers([]);
       setLoading(false);
@@ -83,6 +94,7 @@ export function useSessionCompletedPlayers(
       .select("player_id, match_id, team, matches!inner(team_a_score, team_b_score)")
       .in("match_id", matchIds);
 
+    if (mySeq !== fetchSeq.current) return;
     if (!matchPlayerRows || matchPlayerRows.length === 0) {
       setPlayers([]);
       setLoading(false);
@@ -96,6 +108,7 @@ export function useSessionCompletedPlayers(
       .select("id, display_name, skill_level")
       .in("id", distinctPlayerIds);
 
+    if (mySeq !== fetchSeq.current) return;
     if (!profiles) {
       setPlayers([]);
       setLoading(false);

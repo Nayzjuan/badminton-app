@@ -276,9 +276,9 @@ test.describe("Session Management — [L-3] Close session", () => {
           await page.getByRole("menuitem", { name: /end session|close session/i }).click();
           uiActionPerformed = true;
         } else {
-          // Button not found in either location — the UI shape differs from
-          // what we expect.  Skip DB assertions rather than falsely failing.
-          console.warn("[L-3] Close session button not found — skipping DB assertions.");
+          // Button in neither location. Left false so the assertion below fails
+          // with a readable reason instead of the test passing silently.
+          console.warn("[L-3] Close session button not found in toolbar or menu.");
         }
       } else {
         await closeBtn.click();
@@ -291,10 +291,14 @@ test.describe("Session Management — [L-3] Close session", () => {
         uiActionPerformed = true;
       }
 
-      if (!uiActionPerformed) {
-        // Nothing to assert — the test is inconclusive for this environment.
-        return;
-      }
+      // A close control that cannot be found is the regression this test exists
+      // to catch, so it fails here. The previous `return` skipped every DB
+      // assertion below and reported a pass — the more broken the toolbar was,
+      // the more certainly this spec went green.
+      expect(
+        uiActionPerformed,
+        "Close/End Session control found in neither the toolbar nor the session-options menu"
+      ).toBe(true);
 
       // Allow server action + replica lag to settle
       await page.waitForTimeout(4_000);

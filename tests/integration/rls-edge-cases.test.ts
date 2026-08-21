@@ -25,6 +25,8 @@ import {
   makeSession,
   makeQueueEntry,
   makeCompletedMatch,
+  makeCourt,
+  enableAutoMatchmaking,
   TEST_USER_PASSWORD,
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
@@ -131,8 +133,10 @@ describe("RLS Edge Cases — Suite E", () => {
       created_by: organizer.id,
     });
 
-    // Should be blocked by RLS — either a permission error or policy violation
-    expect(error).not.toBeNull();
+    // Blocked by RLS. Assert the code: `not.toBeNull()` would equally accept
+    // PGRST205 ("sessions" not found), so a dropped or renamed table would
+    // read as a successful denial.
+    expect(error?.code).toBe("42501");
   });
 
   // ── JS Layer — auth gate cross-session isolation ──────────
@@ -215,22 +219,51 @@ describe("RLS Edge Cases — Suite E", () => {
     expect(result.message).toMatch(/not authenticated|not authenticated/i);
   });
 
-  it("unauthenticated caller cannot run the engine for a session", async () => {
-    // runEngineForSession is fire-and-forget (no auth gate — it trusts callers).
-    // It should exit gracefully when auto-matchmaking is OFF.
+  // NOTE ON THE NAME: this test was previously called "unauthenticated caller
+  // cannot run the engine for a session", which claimed coverage that does not
+  // and cannot exist here — runEngineForSession is fire-and-forget and has NO
+  // auth gate (it trusts its callers; the gate lives on the actions that call
+  // it). Nothing in src/ could be changed to make the old name come true, so
+  // the test produced a false "yes" for anyone auditing "do we have a negative
+  // test for engine auth?". What it actually asserts is the toggle.
+  it("runEngineForSession is a no-op while auto-matchmaking is OFF, and creates matches once it is ON", async () => {
     const organizer = await makeProfile({ faker });
     const session = await makeSession({ faker, organizer: organizer.id });
-    // auto-matchmaking OFF (default) — engine should return without creating matches
+    await makeCourt({ sessionId: session.id, name: "Court 1" });
+    const players = await Promise.all(
+      Array.from({ length: 8 }, () => makeProfile({ faker, skill: "intermediate" }))
+    );
+    await Promise.all(
+      players.map((p) => makeQueueEntry({ sessionId: session.id, playerId: p.id }))
+    );
 
-    clearMockAuth();
-    await runEngineForSession(session.id); // should not throw
+    // ── Negative: toggle OFF (the sessions default) ──────────
+    clearMockAuth(); // no auth gate to trip — asserted by the positive half below
+    await runEngineForSession(session.id); // must not throw
 
-    const { count } = await serviceClient()
+    const { count: offCount } = await serviceClient()
       .from("matches")
       .select("id", { count: "exact", head: true })
       .eq("session_id", session.id);
 
-    expect(count).toBe(0); // no matches — toggle was off
+    expect(offCount, "engine produced matches while auto-matchmaking was OFF").toBe(0);
+
+    // ── Positive control: same queue, same court, same (absent) auth, toggle ON.
+    // Without this half `toBe(0)` is satisfied by an engine that is simply dead —
+    // an empty queue, a missing court, or a thrown-and-swallowed error all read
+    // as "the toggle was honoured".
+    await enableAutoMatchmaking(session.id);
+    await runEngineForSession(session.id);
+
+    const { count: onCount } = await serviceClient()
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", session.id);
+
+    expect(
+      onCount ?? 0,
+      "engine produced no matches with the toggle ON — the OFF assertion above proves nothing"
+    ).toBeGreaterThan(0);
   });
 
   // ── DB Layer — leaderboard read surface (TENANCY_AUDIT_2026-07-21 #6) ──
@@ -269,7 +302,13 @@ describe("RLS Edge Cases — Suite E", () => {
       "v_alltime_leaderboard_mat",
     ] as const) {
       const { data, error } = await anon.from(relation).select("player_id").limit(1);
-      expect(error, `${relation} answered anon`).not.toBeNull();
+      // Assert the CODE, not merely that some error came back. Measured
+      // against the local stack: a revoked grant answers 42501, but a
+      // RENAMED OR DELETED relation answers PGRST205 — and `not.toBeNull()`
+      // cannot tell those apart. So this loop stayed green if the view it
+      // guards ceased to exist, which is the one outcome that makes the
+      // guarantee meaningless.
+      expect(error?.code, `${relation} answered anon (or does not exist)`).toBe("42501");
       expect(data ?? []).toHaveLength(0);
     }
   });
@@ -295,13 +334,20 @@ describe("RLS Edge Cases — Suite E", () => {
     // that used to return every player in every club. Same for
     // get_alltime_snapshot_before. This is the exact request the audit made.
     const streaks = await anon.rpc("get_player_streaks", {});
-    expect(streaks.error, "get_player_streaks answered anon").not.toBeNull();
+    // 42501 = EXECUTE revoked; PGRST202 = the revoke also hides the signature
+    // from the schema cache. Either is a real denial; a bare not.toBeNull()
+    // would also accept PGRST202 for a function that was simply renamed away.
+    expect(["42501", "PGRST202"], "get_player_streaks answered anon").toContain(
+      streaks.error?.code
+    );
     expect(streaks.data ?? []).toHaveLength(0);
 
     const snapshot = await anon.rpc("get_alltime_snapshot_before", {
       p_cutoff: new Date().toISOString(),
     });
-    expect(snapshot.error, "get_alltime_snapshot_before answered anon").not.toBeNull();
+    expect(["42501", "PGRST202"], "get_alltime_snapshot_before answered anon").toContain(
+      snapshot.error?.code
+    );
     expect(snapshot.data ?? []).toHaveLength(0);
 
     // Scoped, but still a full board for any session id — and session ids are
@@ -309,7 +355,9 @@ describe("RLS Edge Cases — Suite E", () => {
     const board = await anon.rpc("get_session_leaderboard_public", {
       p_session_id: session.id,
     });
-    expect(board.error, "get_session_leaderboard_public answered anon").not.toBeNull();
+    expect(["42501", "PGRST202"], "get_session_leaderboard_public answered anon").toContain(
+      board.error?.code
+    );
     expect(board.data ?? []).toHaveLength(0);
 
     // The browser-callable replacement is authenticated-only: anon must not
@@ -317,7 +365,9 @@ describe("RLS Edge Cases — Suite E", () => {
     const scoped = await anon.rpc("get_session_player_streaks", {
       p_session_id: session.id,
     });
-    expect(scoped.error, "get_session_player_streaks answered anon").not.toBeNull();
+    expect(["42501", "PGRST202"], "get_session_player_streaks answered anon").toContain(
+      scoped.error?.code
+    );
     expect(scoped.data ?? []).toHaveLength(0);
   });
 

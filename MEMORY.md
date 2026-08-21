@@ -225,13 +225,20 @@ badge is ever disputed. **Do not re-raise this before 2026-09-12.**
 _(Item 2 — the two orphaned Supabase preview branches — was **deleted 2026-08-20** and is closed.
 The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 
-**3. The post-deploy smoke is committed but INERT until three GitHub secrets exist.**
+**3. The post-deploy smoke needs three GitHub secrets — and now FAILS LOUDLY without them.**
 `.github/workflows/post-deploy-smoke.yml` runs Scenario B against the production alias
-`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. Until
-`TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are added at
-Settings → Secrets and variables → Actions it **no-ops with a `::notice::` and reports green**.
-That green means "not configured", not "the smoke passed" — read the job log before treating it as
-evidence. Only the user can add the secrets. By design it drives the live production Supabase
+`badminton-app-dusky-six.vercel.app` after each Production deploy of this project. It needs
+`TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` at
+Settings → Secrets and variables → Actions. **Only the user can add them.**
+
+⚠️ **Behaviour CHANGED 2026-08-21 and the two paths differ deliberately.** On a real
+`deployment_status` event an unconfigured run now **fails the job** — a production deploy that
+was never smoked is a red X, not a green tick. On manual `workflow_dispatch` it still skips
+quietly, so you can dispatch the workflow to inspect it without manufacturing a red run. The
+previous always-green no-op is what made this item survivable for weeks: it reported success for
+"not configured", and nobody reads a green job's log. `.github/workflows/e2e-regression.yml`
+(nightly, added the same day) shares the same secrets and the same guard. **Until the user adds
+them, every Production deploy shows one red check, and that is the intended state.** By design it drives the live production Supabase
 sandbox session, so a run mutates real rows and depends on `tests/helpers/global-teardown.ts` to
 sweep.
 
@@ -257,6 +264,95 @@ matched one whole line against one directive, so `"use server"; // note` or a pr
 task — an `if:` filter that matches no environment, a `postbuild` check that finds zero arrays, a CI
 job skipped for missing secrets. Only the last one announces itself, which is why it emits a
 `::notice::`. When you add a gate, assert on the SIZE of what it examined.
+
+**4. Coverage thresholds are now REAL, per-file, and measured — do not lower one to go green.**
+Both configs previously asserted floors that nothing ever evaluated, because CI ran `test:unit` /
+`test:integration` with no `--coverage`. Unit's were 40/40/30/40 (unfailable); integration's were a
+flat 85/85/70/85 that **not one file met** — sessions.ts is really at 38% statements. Both CI
+workflows now run the `:coverage` variants, so the numbers finally bite. Integration floors are
+per-file entries in `RATCHETS` (`vitest.integration.config.ts`); raise one when the real number
+moves up, never lower it. `match-drafts.ts` is lowest (35/24/32/35) and is the cross-court publish
+path shipped broken twice — it is the first to raise.
+
+🪤 **Three traps banked here, each of which produced a wrong conclusion first.** (a) A Vitest
+`coverage.thresholds` **global block applies to every file even when per-glob entries match it** —
+it is not a fallback, it silently overrides every ratchet beneath it; there is now no global block
+and `assertEveryTargetRatcheted` enforces that each target has its own. (b) The **v8 text reporter
+omits files that are at 100% on every metric** — their absence from the table is NOT an `include[]`
+miss; confirm with `--coverage.reporter=json-summary` before "fixing" one. (c) **A piped command
+reports the pipe's exit code**, so `npm run … | tail` showed 0 while 16 threshold ERRORs scrolled
+past. Verify coverage gates unpiped.
+
+**5. `src/app/actions/`, `src/lib/` and `src/hooks/` are all closed — every module is named by a
+suite.** Suites CT/HH/HI/OA/RN/UM/DV/WR closed the last eight action modules; then
+CI/RU/LR/TD/VC/OP/NW/WA/VU/LU and CS/SI/PC/VR/EMH/LS/OAL/OC/OQ/SD/CP closed the 21 lib and hook
+modules underneath. All mutation-proven the same way (apply the mutation, watch the named IDs go
+red, restore the source and verify the hash). Recompute what is left with
+`for f in src/lib/*.ts src/hooks/*.ts; do b=$(basename "$f" .ts); grep -rq "/$b\"" tests/unit || echo "$f"; done`
+— it should print only `src/hooks/use-auth-recovery-refetch.ts` (reached only through
+`use-session-data`, driven to 100% by SD-23, and ratcheted in `coverage.include` anyway).
+`src/lib/fonts.ts` was on that list as "two string constants no test could cover"; that was wrong.
+Suite FT resolves every Tailwind token those strings name back to a real declaration in
+`globals.css` and `layout.tsx`, and a one-character typo (`font-display` → `font-dispay`) reddens
+FT-2 and FT-3 while `npx tsc --noEmit` still exits 0 — which is the whole point, because an
+undeclared custom property is invalid at computed-value time and `font-family` inherits, so the
+component silently renders in the body font instead of failing. `coverage.include` now carries all
+of them; the four thresholds did not move.
+
+⚠️ **Two limits are recorded in the suites rather than fixed, and must not be mistaken for
+coverage.** (a) `SD-22` asserts that `loading` still reaches `false` when all three reads fail, but
+has **no valid mutation proof** — "loading eventually settles" is a precondition of every other test
+in that file, so any mutation breaking it reddens the whole suite and names nothing. (b) Two
+**equivalent mutants** are named rather than tested: dropping the `?? 0` coalesce on a score in
+`use-session-completed-players.ts` (JS coerces `null` to `0` in a relational comparison, so no
+output can differ, and `CP-10` is not a test of that operator), and the profiles-fetcher ref sync in
+`use-organizer-queue.ts` (bound by player ids, not `sessionId`, so `OQ-17b` pins the queue fetcher's
+ref only).
+
+🪤 **A third "limit" was a false claim, not a limit.** `CP-15` was recorded as unkillable because the
+`loading` flag is "over-determined by two sites". It is not: `useState(true)` (the seed on first
+mount) and `setLoading(true)` (the re-arm at the head of every re-fetch) are independent properties,
+now pinned by `CP-15` and `CP-16` separately, each killed alone. What actually hid it: **React
+commits the first render before running effects**, so `result.current.loading` read after
+`renderHook` observes the effect's write, never the `useState` seed — only a per-render recorder
+(`seen[0]`) can see it. An "unkillable" verdict is a claim about the test, not the code, and it
+carries the same burden of proof as any other.
+
+✅ **Four source defects fixed on `test/regression-suite-hardening`, all found by mutating the
+SOURCE rather than by reading the tests** — every file involved was green and three were at 100%
+line coverage. Write-up: `docs/incidents/2026-08-21-four-defects-the-green-suites-never-named.md`.
+The live one: `useOrganizerAlerts` marked a due pause bucket as seen **during the render phase**, so
+React discarded the pass, the committed due list came out empty, and `recordPauseReminder` was
+**unreachable** — an organizer was never told a player had been paused past the threshold. `seenPause`
+is now a ref and the whole pipeline lives in one effect; restoring the old shape reddens OAL-25/27/28/30.
+🪤 Moving the marking into an effect is NOT the fix — it trips `react-hooks/set-state-in-effect` and
+`react-hooks/refs` (reading `.current` during render is flagged too). Move the DERIVATION, not the
+write: deriving the due list during render is what forced the marking to happen there. The other three: a rejected server
+action wedged `EditMatchDialog` with `isPending` stuck true (the repo's standard refusal is now
+synthesized at all three call sites, mirroring `use-fix-record.ts`); `use-session-completed-players`
+had no `fetchSeq` guard (latent — today's only caller keys the sheet by `match.id`); and both
+`use-session-data` fetchers re-check their sequence after the `hasAuthSession` probe, not just after
+the query.
+
+⚠️ **Two dead-code items are deliberately NOT removed.** `clearPauseSeenForPlayer`
+(`src/lib/organizer-alerts.ts`) now has no `src/` caller — `knownPauseKeys` is what makes the write
+exactly-once — and `seenPause` is behaviourally redundant with that ref. Deleting either changes
+emit behaviour and belongs in its own branch, not in a test-hardening one.
+
+⚠️ **Two court-action findings are open in the integration lane, not the unit lane** (a unit test
+with a mocked client structurally cannot see either): `removeCourtAction` will delete a court that
+is `in_use` by a live match — the FK is `ON DELETE SET NULL` and only `court-card.tsx` gates it
+client-side — and none of the three court actions consults `isSessionActive`, unlike six sibling
+action sites. Both are behaviour questions, not typos; decide the intended contract before writing
+the test that pins it.
+
+🪤 **A raised timeout is headroom, not a fix.** Five component/hook tests were red 50–75% of runs
+under CPU contention, always with a timeout or a query error rather than a failed assertion. The
+causes were ordinary — a synchronous `getBy*` for a pending-driven label, typing into an input
+still `disabled={isPending}`, waiting on a spy that fires before React commits, an exact equality
+on a wall-clock-derived value. A residual remains in `queue-control-duplicate-confirm` /
+`queue-control-repeat-pairing` at ~6× CPU oversubscription (Radix portal teardown); both are green
+sequentially and at normal parallelism.
 
 **Gotcha — Supabase preview branches orphan themselves on this repo.** The GitHub integration
 auto-deletes a preview branch when its PR merges, but only if the branch finished provisioning.

@@ -5,10 +5,17 @@
 // /play/[sessionId] after the organizer bot has been seeded
 // into the waiting queue via the DB admin API.
 //
-//   [M-1] Player can join queue and see their position number.
+//   [M-1] A player already in the queue sees their position numeral.
 //         - Seed the organizer bot into the waiting queue.
 //         - Navigate to /play/[sessionId] as that player.
 //         - Assert a queue position numeral (#1) is visible.
+//
+//   NOTE ON SCOPE: neither test here exercises joinQueueAction — both seed
+//   queue_entries directly, so the join path could be entirely broken and both
+//   would still pass. This spec covers the QueueStatus *rendering* only. The
+//   join action itself is covered by tests/integration/queue-join.test.ts
+//   (Suite L), including its reject paths. These tests were previously named
+//   "player can join queue", which claimed coverage that does not exist here.
 //
 //   [M-2] Player in queue sees correct status UI.
 //         - Same setup as [M-1].
@@ -85,10 +92,12 @@ async function seedOrganizerInQueue() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// [M-1] Player in queue sees their position number
+// [M-1] Player already in queue sees their position number
 // ─────────────────────────────────────────────────────────────
 test.describe("Player Queue — [M-1] Position number visible", () => {
-  test("player can join queue and see their position number", async ({ browser }) => {
+  test("a player already in the queue sees their position numeral and urgency banner", async ({
+    browser,
+  }) => {
     await seedOrganizerInQueue();
 
     const context = await browser.newContext({
