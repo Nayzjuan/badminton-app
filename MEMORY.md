@@ -230,6 +230,9 @@ The recurrence risk is recorded under "Gotchas" rather than kept open here.)_
 `badminton-app-dusky-six.vercel.app` after each Production deploy of this project. It needs
 `TEST_SESSION_ID`, `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` at
 Settings → Secrets and variables → Actions. **Only the user can add them.**
+✅ **The trigger itself is confirmed against a real Production deploy**, not reasoned about:
+merging PR #81 produced three `Production – …` deployments, and the job ran for `badminton-app`
+while skipping `badminton-marketing` and `digital-twin` — which is what the `contains()` clause is for.
 
 ⚠️ **Behaviour CHANGED 2026-08-21 and the two paths differ deliberately.** On a real
 `deployment_status` event an unconfigured run now **fails the job** — a production deploy that
@@ -240,7 +243,13 @@ previous always-green no-op is what made this item survivable for weeks: it repo
 (nightly, added the same day) shares the same secrets and the same guard. **Until the user adds
 them, every Production deploy shows one red check, and that is the intended state.** By design it drives the live production Supabase
 sandbox session, so a run mutates real rows and depends on `tests/helpers/global-teardown.ts` to
-sweep.
+sweep. The guard does announce itself where a reader will actually look —
+`gh api repos/:owner/:repo/actions/runs/<id>/jobs --jq '.jobs[0].id'` then `.../check-runs/<id>/annotations`
+renders the guard's message — prefer it over the step log, which only echoes the script source.
+🚨 The same call chain is the ONLY way to see a GitHub **Actions billing stop**, which presents as a
+failed job with **zero steps and no log at all** — in the PR UI it is indistinguishable from a code
+failure. Live on 2026-08-21: PR #83's four red checks were a billing halt, not a failing test, and a
+rerun reproduced it. **Actions cannot run for this repo until Settings → Billing & plans is settled.**
 
 🪤 **Two things about the `deployment_status` trigger are not guessable, and both were wrong on
 the first pass.** The environment is `Production – badminton-app` — EN DASH, project-suffixed; there
