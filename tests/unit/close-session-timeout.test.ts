@@ -138,7 +138,22 @@ describe("closeSession — Wrapped hang must not block close", () => {
     // The phase budget, not a per-call one: the first call gets all of it, and
     // nothing may ever be handed more than the phase has left. CST-6 pins the
     // decrement — here withTimeout resolves instantly, so no time is consumed.
-    expect(vi.mocked(withTimeout).mock.calls[0][1]).toBe(5_000);
+    //
+    // A RANGE, not toBe(5_000): the budget is `endsAt - Date.now()`, so exact
+    // equality is really asserting that zero wall-clock elapsed between
+    // startPhaseBudget and the first call. That holds on an idle machine and
+    // fails on a busy one — observed as "expected 4996 to be 5000". The
+    // property being tested is that the first call gets the WHOLE phase, and
+    // the floor still catches every way of breaking it: splitting the budget
+    // across the three calls yields ~1_667, and lowering the constant is
+    // caught outright.
+    const firstBudget = vi.mocked(withTimeout).mock.calls[0][1];
+    expect(
+      firstBudget,
+      "the first Wrapped RPC was handed less than the full phase budget — it is " +
+        "being divided per-call instead of shared"
+    ).toBeGreaterThan(4_500);
+    expect(firstBudget).toBeLessThanOrEqual(5_000);
     expect(vi.mocked(withTimeout).mock.calls.every((c) => c[1] > 0 && c[1] <= 5_000)).toBe(true);
   });
 

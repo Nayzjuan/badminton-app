@@ -395,20 +395,33 @@ describe("Matchmaking Engine — Suite A", () => {
 
     const newMatchIds = (newMatches ?? []).map((m) => m.id);
 
-    if (newMatchIds.length > 0) {
-      const { data: allNewMatchPlayers } = await serviceClient()
-        .from("match_players")
-        .select("player_id")
-        .in("match_id", newMatchIds);
+    // The engine MUST have drafted something from p5-p8, or the four assertions
+    // below are a search of an empty set — all four trivially true. This test
+    // previously wrapped them in `if (newMatchIds.length > 0)`, which meant that
+    // anything stopping the engine from drafting at all (MAX_AUTO_DRAFTS = 0
+    // reproduces it) turned the whole TOCTOU check into a green no-op. The
+    // stronger the breakage, the more certainly it passed.
+    expect(
+      newMatchIds,
+      "engine created no new draft — the double-booking assertions below would search an empty set"
+    ).not.toHaveLength(0);
 
-      const newPlayerIds = new Set((allNewMatchPlayers ?? []).map((r) => r.player_id));
+    const { data: allNewMatchPlayers } = await serviceClient()
+      .from("match_players")
+      .select("player_id")
+      .in("match_id", newMatchIds);
 
-      // None of the already-committed players should appear in the new drafts
-      expect(newPlayerIds.has(p1.id)).toBe(false);
-      expect(newPlayerIds.has(p2.id)).toBe(false);
-      expect(newPlayerIds.has(p3.id)).toBe(false);
-      expect(newPlayerIds.has(p4.id)).toBe(false);
-    }
+    // Same trap one level down: a draft with no match_players rows would also
+    // give an empty set to search.
+    expect(allNewMatchPlayers ?? [], "the new draft has no match_players rows").not.toHaveLength(0);
+
+    const newPlayerIds = new Set((allNewMatchPlayers ?? []).map((r) => r.player_id));
+
+    // None of the already-committed players should appear in the new drafts
+    expect(newPlayerIds.has(p1.id)).toBe(false);
+    expect(newPlayerIds.has(p2.id)).toBe(false);
+    expect(newPlayerIds.has(p3.id)).toBe(false);
+    expect(newPlayerIds.has(p4.id)).toBe(false);
   });
 
   // ── Test 8: hasDraftsBlocking propagation ────────────────
@@ -606,6 +619,9 @@ describe("Matchmaking Engine — Suite A", () => {
       .select("status")
       .eq("session_id", session.id)
       .in("player_id", [p1.id, p2.id, p3.id, p4.id]);
+    // Without this, a read returning nothing would "prove" the players stayed
+    // waiting by not checking any of them.
+    expect(entries).toHaveLength(4);
     for (const e of entries ?? []) {
       expect(e.status).toBe("waiting");
     }

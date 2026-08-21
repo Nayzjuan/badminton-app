@@ -98,15 +98,36 @@ const ALLOWLIST: Record<string, string> = {};
  * was previously "covered" by a single delete line in
  * tests/integration/helpers/truncate.ts and by nothing else — which is to say,
  * not covered. That was the price of closing the loophole, not a precedent.
+ *
+ * Two of the three have since been REMOVED from the list, both times because
+ * MTC-2 turned red and refused to let the exemption outlive its reason:
+ *
+ *   `club_invites` — Suite CM (tests/unit/club-member-management.test.ts)
+ *     asserts the invite contract itself: the grantable-role cap, expiry, and
+ *     one-time redemption under a lost consume race.
+ *   `match_games` — Suite DV (tests/unit/dev-tools-guard.test.ts) asserts that
+ *     clearSessionData deletes match_games bound to the match ids it just
+ *     read, and skips the delete entirely for a session with no matches.
+ *
+ * That leaves `co_organizer_join_attempts` of the original three.
+ *
+ * Two OLDER entries — grandfathered long before that narrowing — have also
+ * been removed since, for the same reason and by the same red test:
+ *
+ *   `get_h2h_record` — Suite HH (tests/unit/h2h-actions.test.ts) asserts the
+ *     RPC's argument binding and the null-vs-undefined shape of its result.
+ *   `rename_player_identity` — Suite RN (tests/unit/rename-actions.test.ts)
+ *     asserts the RPC's argument binding and the mapping of each failure code
+ *     it can return.
+ *
+ * MTC-2 is what forced all four edits, exactly as designed.
  */
 const GRANDFATHERED: string[] = [
   "_fix_record_partnership_delta",
   "checkout_player_cleanup_drafts",
-  "club_invites",
   "club_milestones",
   "co_organizer_join_attempts",
   "count_completed_matches_by_session",
-  "get_h2h_record",
   "get_leaderboard_months",
   "get_monthly_leaderboard",
   "get_primary_club_slug",
@@ -118,11 +139,9 @@ const GRANDFATHERED: string[] = [
   "is_session_organizer",
   "leaderboard_refresh_state",
   "lookup_active_session",
-  "match_games",
   "player_renames",
   "push_subscriptions",
   "realtime_topic_session_id",
-  "rename_player_identity",
   "reorder_on_deck_matches",
   "requeue_finished_players",
   "revert_match_to_active",

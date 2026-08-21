@@ -1,0 +1,129 @@
+# ============================================================
+# Full E2E regression suite
+# ============================================================
+# WHY THIS FILE EXISTS
+#
+# The repo has 18 Playwright specs. Until this file, exactly ONE of them
+# (scenario-b, via post-deploy-smoke.yml → `test:e2e:smoke`) had any path to
+# ever execute. The `test:e2e` script that runs all 18 existed in package.json
+# and was called by nothing.
+#
+# That is the failure this file closes, and it is worth naming precisely: the
+# other 17 specs were not *failing*, they were not *running*. A suite that does
+# not run cannot go red, so it reads exactly like a suite that passes — and
+# every commit that broke one of them merged green. Coverage you never execute
+# is not coverage; it is a record of what someone once intended to check.
+#
+# SCHEDULE, NOT PER-DEPLOY. These 18 specs run serially (playwright.config.ts
+# sets `workers: 1`) because they share one sandbox session against the real
+# production Supabase project. Scenario I alone drives a 50-player simulation.
+# Gating every deploy on the full set would make deploys slow and would make a
+# flake block a release; the fast per-deploy signal stays in post-deploy-smoke.
+#
+# ⚠️ `retries: 2` in playwright.config.ts applies here. A spec that passes only
+# on retry is reported as a pass. If this suite starts to matter as a gate,
+# revisit that — retries make a flaky regression suite indistinguishable from
+# a solid one.
+# ============================================================
+
+name: E2E Regression
+
+on:
+  # Nightly, after typical working hours (03:00 UTC = 11:00 Asia/Manila).
+  schedule:
+    - cron: "0 3 * * *"
+  # Manual run — the way to use this suite before a risky merge.
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployment URL to test (defaults to production)"
+        required: false
+        default: "https://badminton-app-dusky-six.vercel.app"
+      grep:
+        description: "Only run specs matching this pattern (Playwright --grep)"
+        required: false
+        default: ""
+
+# The sandbox session is a single shared resource — one run at a time. Unlike
+# the smoke, do NOT cancel in progress: a nightly run that is half-finished
+# still has value, and there is no newer artifact racing it.
+concurrency:
+  group: e2e-regression
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: Full E2E suite
+    runs-on: ubuntu-latest
+    # Scenario I is a 50-player simulation and the suite is serial. This is a
+    # runaway guard, not a target.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Same reasoning as post-deploy-smoke.yml: a missing secret is a
+      # configuration state, not a regression. Skip loudly rather than leave a
+      # permanent red X that everyone learns to ignore.
+      - name: Check E2E is configured
+        id: guard
+        env:
+          TEST_SESSION_ID: ${{ secrets.TEST_SESSION_ID }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+        run: |
+          missing=""
+          [ -z "$TEST_SESSION_ID" ] && missing="$missing TEST_SESSION_ID"
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] && missing="$missing NEXT_PUBLIC_SUPABASE_URL"
+          if [ -n "$missing" ]; then
+            echo "::notice::E2E regression SKIPPED — missing secrets:$missing"
+            echo "::notice::Add them at Settings → Secrets and variables → Actions."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node 20
+        if: steps.guard.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        if: steps.guard.outputs.configured == 'true'
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        if: steps.guard.outputs.configured == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Run the full E2E suite
+        if: steps.guard.outputs.configured == 'true'
+        env:
+          # The stable production alias, for the same reason post-deploy-smoke
+          # uses it: per-deployment Vercel hosts sit behind SSO Deployment
+          # Protection and would return the login wall, not the app.
+          TEST_BASE_URL: ${{ inputs.base_url || 'https://badminton-app-dusky-six.vercel.app' }}
+          TEST_SESSION_ID: ${{ secrets.TEST_SESSION_ID }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.VERCEL_BYPASS_SECRET }}
+        run: |
+          if [ -n "${{ inputs.grep }}" ]; then
+            npm run test:e2e -- --grep "${{ inputs.grep }}"
+          else
+            npm run test:e2e
+          fi
+
+      - name: Upload Playwright report
+        # Always, not just on failure: for a nightly run nobody watched, the
+        # report is the only record of what actually executed.
+        if: always() && steps.guard.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14

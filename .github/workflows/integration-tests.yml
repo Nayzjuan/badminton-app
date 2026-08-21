@@ -149,19 +149,25 @@ jobs:
             echo "Resetting local DB before full suite run..."
             supabase db reset
           fi
-          npm run test:integration
+          npm run test:integration:coverage
         env:
           SKIP_DB_RESET: "" # empty = always reset in CI
 
-      # ── 8. Upload coverage (optional) ───────────────────────
-      # Only uploads if tests pass. Useful for tracking coverage
-      # trends over time without blocking on coverage thresholds.
+      # ── 8. Upload coverage ──────────────────────────────────
+      # Step 7 used to run `test:integration` — WITHOUT --coverage — so
+      # coverage/integration/ was never written and this step logged
+      #   ##[warning]No files were found with the provided path
+      # on five consecutive green runs. A warning is not a failure, so the
+      # job stayed green while the thresholds in vitest.integration.config.ts
+      # were never once evaluated. `if-no-files-found: error` makes the next
+      # recurrence a red step instead of a line nobody reads.
       - name: Upload integration coverage
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: integration-coverage
           path: coverage/integration/
+          if-no-files-found: error
           retention-days: 7
 
       # ── 9. Stop Supabase ──────────────────────────────────────

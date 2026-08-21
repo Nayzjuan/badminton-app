@@ -346,18 +346,29 @@ test.describe("Leaderboard — [N-4] DB ordering correctness", () => {
       .in("player_id", [p1.id, p2.id])
       .order("wins", { ascending: false });
 
-    if (!error && rows && rows.length >= 2) {
-      const p1Row = rows.find((r) => r.player_id === p1.id);
-      const p2Row = rows.find((r) => r.player_id === p2.id);
-      if (p1Row && p2Row) {
-        expect(p1Row.wins).toBeGreaterThan(p2Row.wins);
-        const p1Idx = rows.findIndex((r) => r.player_id === p1.id);
-        const p2Idx = rows.findIndex((r) => r.player_id === p2.id);
-        expect(p1Idx).toBeLessThan(p2Idx);
-      }
-    } else if (error) {
-      console.warn("[N-4] v_session_leaderboard not available:", error.message);
-    }
+    // beforeEach fully resets the sandbox and this test soft-resets again, so
+    // the three seeded matches are the only ones in scope: the view must return
+    // a row for each player with exactly the wins seeded above. Every branch
+    // here used to be a silent skip — a dropped or renamed view, a permission
+    // change, or missing rows all reported a pass, which is precisely the
+    // regression this test exists to catch.
+    expect(error, `v_session_leaderboard query failed: ${error?.message ?? ""}`).toBeNull();
+    expect(rows, "v_session_leaderboard returned no rows").not.toBeNull();
+
+    const p1Row = rows!.find((r) => r.player_id === p1.id);
+    const p2Row = rows!.find((r) => r.player_id === p2.id);
+    expect(p1Row, "no leaderboard row for the 2-win player").toBeDefined();
+    expect(p2Row, "no leaderboard row for the 1-win player").toBeDefined();
+
+    // The name of this test claims 2 wins vs 1 — assert that, not just ordering.
+    expect(p1Row!.wins).toBe(2);
+    expect(p2Row!.wins).toBe(1);
+    expect(p1Row!.wins).toBeGreaterThan(p2Row!.wins);
+
+    // ...and that the view's own ordering puts the 2-win player first.
+    const p1Idx = rows!.findIndex((r) => r.player_id === p1.id);
+    const p2Idx = rows!.findIndex((r) => r.player_id === p2.id);
+    expect(p1Idx).toBeLessThan(p2Idx);
 
     for (const p of [p1, p2, p3, p4, p5, p6]) {
       await db.auth.admin.deleteUser(p.id).catch(() => undefined);

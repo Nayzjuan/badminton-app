@@ -48,6 +48,17 @@ async function closeDialog(user: User) {
 }
 
 async function typeScores(user: User, a: string, b: string) {
+  // The inputs carry disabled={isPending} (edit-match-dialog.tsx), and the
+  // "Scores updated." confirmation can render in a commit where isPending is
+  // still true. Typing at that instant throws "clear() is only supported on
+  // editable elements" — a userEvent error, not a failed assertion, so it
+  // reports nothing about the behaviour the test names. Wait for the property
+  // that actually has to hold before typing is meaningful.
+  await waitFor(() => {
+    for (const input of screen.getAllByRole("spinbutton")) {
+      expect(input).not.toBeDisabled();
+    }
+  });
   const inputs = screen.getAllByRole("spinbutton");
   await user.clear(inputs[0]);
   await user.type(inputs[0], a);
@@ -56,7 +67,13 @@ async function typeScores(user: User, a: string, b: string) {
 }
 
 async function save(user: User) {
-  await user.click(screen.getByRole("button", { name: /^save (score|again)$/i }));
+  // findBy, not getBy. This button's label is pending-driven — it reads
+  // "Saving…" while isPending, then "Save Score"/"Save Again" (see
+  // edit-match-dialog.tsx). A synchronous query run while the previous save
+  // is still settling throws "Unable to find ... /^save (score|again)$/i",
+  // which is a query error rather than a failed assertion and so says nothing
+  // about the behaviour under test.
+  await user.click(await screen.findByRole("button", { name: /^save (score|again)$/i }));
 }
 
 describe("EditMatchDialog — repeat edits", () => {
@@ -106,7 +123,13 @@ describe("EditMatchDialog — repeat edits", () => {
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
 
     // Organizer dismisses; realtime then pushes the new persisted scores down.
-    await user.click(screen.getByRole("button", { name: /^done$/i }));
+    //
+    // findBy, not getBy: the waitFor above proves updateMatchDetails was
+    // CALLED, which is not the same as React having re-rendered the dialog's
+    // Save button into a Done button. A synchronous query here passes only
+    // when the render happens to land inside the same tick, and throws
+    // "Unable to find ... /^done$/i" whenever the machine is busy.
+    await user.click(await screen.findByRole("button", { name: /^done$/i }));
     await waitFor(() => expect(screen.queryByText("Edit Match Score")).not.toBeInTheDocument());
     rerender(<EditMatchDialog matchId={MATCH_ID} initialScoreA={19} initialScoreB={21} />);
 

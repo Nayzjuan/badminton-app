@@ -849,6 +849,7 @@ describe("Manual Match Creation & Swap Origin — Suite M", () => {
           players.map((p) => p.id)
         );
 
+      expect(entries).toHaveLength(players.length);
       for (const e of entries ?? []) {
         expect(e.status).toBe("waiting");
         expect(e.games_played).toBe(0);

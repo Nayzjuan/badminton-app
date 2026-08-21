@@ -98,5 +98,42 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # --coverage, not a bare run. vitest.config.ts carries perFile coverage
+      # floors, and a run without --coverage never evaluates them: the floors
+      # were 40/40/30/40 and nothing had reported against them, so no one could
+      # see that every included file cleared them by 30+ points.
       - name: Run unit tests
-        run: npm run test:unit
+        run: npm run test:unit:coverage
+
+      # Cache Next's build cache so the added build step costs ~30s, not ~90s.
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**/*.ts', 'src/**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('package-lock.json') }}-
+            ${{ runner.os }}-next-
+
+      # WHY a build runs in CI at all — tsc, lint and vitest ALL stayed green
+      # for four days while every organizer server action 500'd in production
+      # (18611b2). The defect was a `export type { X }` in a "use server"
+      # module: the transform emits the specifier as a runtime identifier, so
+      # the chunk dies at module evaluation — something only bundling can see.
+      #
+      # NOTE ON WHAT THIS DOES **NOT** BUY: that exact spelling is already
+      # gated cheaply by tests/unit/use-server-exports.test.ts (mutating the
+      # rule red-fails 2 tests). The build closes the residual — chunking and
+      # dependency-graph failures that no source-level rule can predict — via
+      # `postbuild` → check:server-exports, which walks the emitted chunks.
+      #
+      # Deliberately NOT added to .husky/pre-push: ~90s on every push is a
+      # cost that gets paid with --no-verify.
+      - name: Build (catches bundler-only failures tsc cannot see)
+        run: npm run build
+        env:
+          # Build-time placeholders. next build evaluates module scope, so
+          # NEXT_PUBLIC_* reads must resolve — these are never used to connect,
+          # and no real secret belongs in a workflow that runs on every branch.
+          NEXT_PUBLIC_SUPABASE_URL: "https://placeholder.supabase.co"
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: "placeholder-anon-key-for-build-only"

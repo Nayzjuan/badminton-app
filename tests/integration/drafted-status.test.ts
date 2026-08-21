@@ -82,7 +82,13 @@ async function getStatuses(sessionId: string, playerIds: string[]) {
     .select("player_id, status")
     .eq("session_id", sessionId)
     .in("player_id", playerIds);
-  return data ?? [];
+  const rows = data ?? [];
+  // Every caller does `for (const e of getStatuses(...)) expect(e.status)...`,
+  // so a short read asserts nothing and the test passes green. Returning one
+  // row per requested player is part of this helper's contract — a missing
+  // queue_entry is itself a regression, not a reason to assert less.
+  expect(rows.map((r) => r.player_id).sort()).toEqual([...playerIds].sort());
+  return rows;
 }
 
 // ─────────────────────────────────────────────────────────────

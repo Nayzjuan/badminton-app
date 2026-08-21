@@ -145,7 +145,8 @@ export function collectDuePauseAlerts(
 
 /**
  * Drop buckets for resumed or departed players. Returns the same Set when
- * nothing changed so a render-time state adjust can no-op by reference.
+ * nothing changed, so the caller's effect can compare by reference and skip
+ * the state write instead of scheduling a render on every tick.
  */
 export function prunePauseSeen(
   seen: ReadonlySet<string>,

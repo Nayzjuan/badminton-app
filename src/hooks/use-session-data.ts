@@ -73,8 +73,12 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     courtsRef.current = courts;
   }, [courts]);
 
-  // Race-condition guard for fetchWaitlist (fetchActiveMatches uses its own
-  // internal seqRef inside useEnrichedMatches).
+  // Race-condition guards. Every fetch in this hook that awaits more than once
+  // needs one: `supabase` and `sessionId` are the deps of both callbacks, so a
+  // realtime burst can have two runs of the SAME callback in flight, and the
+  // slower one must not commit over the faster one. fetchActiveMatches uses its
+  // own internal seqRef inside useEnrichedMatches.
+  const fetchCourtsSeq = useRef(0);
   const fetchWaitlistSeq = useRef(0);
 
   // ── Active match enrichment (shared hook) ─────────────────
@@ -87,11 +91,16 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
   // ── Fetch courts ──────────────────────────────────────────
 
   const fetchCourts = useCallback(async () => {
+    const mySeq = ++fetchCourtsSeq.current;
+
     const { data, error } = await supabase
       .from("courts")
       .select("*")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true });
+
+    if (mySeq !== fetchCourtsSeq.current) return;
+
     if (error) {
       // Preserve stale courts rather than clearing — transient failures should
       // not wipe the panel. The next realtime event will trigger a re-fetch.
@@ -104,9 +113,16 @@ export function useSessionData(sessionId: string): UseSessionDataResult {
     // success, not an error, so the error branch above can't catch it. Applies
     // to the FIRST fetch too (cold start racing auth hydration). Hold; the
     // auth-recovery refetch reconverges.
-    if (data.length === 0 && !(await hasAuthSession(supabase))) {
-      console.warn("[useSessionData] fetchCourts: empty result without auth — holding state");
-      return;
+    //
+    // hasAuthSession is a second await, so re-check the sequence after it too:
+    // a newer run can start and finish while this one is inside the probe.
+    if (data.length === 0) {
+      const authed = await hasAuthSession(supabase);
+      if (mySeq !== fetchCourtsSeq.current) return;
+      if (!authed) {
+        console.warn("[useSessionData] fetchCourts: empty result without auth — holding state");
+        return;
+      }
     }
     setCourts(data);
   }, [supabase, sessionId]);

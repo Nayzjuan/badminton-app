@@ -79,25 +79,38 @@ const CALLER = { id: "00000000-0000-4000-8000-0000000ca11e" };
 
 type Resp = { data?: unknown; error?: unknown; count?: number };
 
-/** Chainable builder that resolves (await / .maybeSingle / .single) to `resp`. */
-function builder(resp: Resp) {
+/** One recorded table access: the table name plus the filters applied to it. */
+type Recorded = { table: string; ops: string[] };
+
+/**
+ * Chainable builder that resolves (await / .maybeSingle / .single) to `resp`
+ * AND records every filter it is given as `op:column=value`.
+ *
+ * Recording the arguments is the entire point. The previous builder assigned a
+ * bare `() => b` to eq/in/neq/…, so it captured the table name and nothing
+ * else. Under that mock isPlayerInSessionScope could have its two filters
+ * SWAPPED (`.eq("session_id", targetUserId).eq("player_id", sessionId)`) or
+ * have `.eq("session_id", …)` DELETED OUTRIGHT — the account-takeover
+ * primitive this file's header describes, where the guard starts returning
+ * true for anyone who has ever queued in ANY session — and all 17 tests here,
+ * plus the whole unit suite, stayed green. Both mutants are now caught by
+ * TG-SCOPE-4, which asserts the column-to-value PAIRING; asserting merely that
+ * two eq() calls happened does not catch the swap, because the swap makes two
+ * eq() calls too.
+ */
+function builder(resp: Resp, ops: string[]) {
   const b: Record<string, unknown> = {};
   const self = () => b;
-  for (const m of [
-    "select",
-    "eq",
-    "neq",
-    "in",
-    "or",
-    "gte",
-    "lte",
-    "order",
-    "limit",
-    "update",
-    "insert",
-    "upsert",
-  ])
-    b[m] = self;
+  for (const m of ["select", "order", "limit", "update", "insert", "upsert"]) b[m] = self;
+  for (const m of ["eq", "neq", "in", "gte", "lte"])
+    b[m] = (col: string, val: unknown) => {
+      ops.push(`${m}:${col}=${String(val)}`);
+      return b;
+    };
+  b["or"] = (expr: string) => {
+    ops.push(`or:${expr}`);
+    return b;
+  };
   b["maybeSingle"] = () => Promise.resolve(resp);
   b["single"] = () => Promise.resolve(resp);
   b["then"] = (res: (v: Resp) => unknown, rej?: (e: unknown) => unknown) =>
@@ -105,13 +118,26 @@ function builder(resp: Resp) {
   return b;
 }
 
-/** Service client whose from() hands back `responses` in call order. */
+/**
+ * Service client whose from() hands back `responses` in call order.
+ * `recorded` accumulates one entry per from()/rpc() call, in the same order.
+ */
 function serviceClient(responses: Resp[], rpcResp?: Resp) {
   let i = 0;
+  const recorded: Recorded[] = [];
   return {
-    from: vi.fn(() => builder(responses[i++] ?? { data: null, error: null })),
+    recorded,
+    from: vi.fn((table: string) => {
+      const entry: Recorded = { table, ops: [] };
+      recorded.push(entry);
+      return builder(responses[i++] ?? { data: null, error: null }, entry.ops);
+    }),
     // The rate limiter is one atomic RPC (insert + count in a single txn).
-    rpc: vi.fn(() => builder(rpcResp ?? { data: null, error: null })),
+    rpc: vi.fn((fn: string) => {
+      const entry: Recorded = { table: `rpc:${fn}`, ops: [] };
+      recorded.push(entry);
+      return builder(rpcResp ?? { data: null, error: null }, entry.ops);
+    }),
   };
 }
 
@@ -152,6 +178,42 @@ describe("TG-SCOPE: isPlayerInSessionScope", () => {
     expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(false);
     const tables = svc.from.mock.calls.map((c: unknown[]) => c[0]);
     expect(tables).not.toContain("club_members");
+  });
+
+  it("TG-SCOPE-4 (negative): the queue lookup is bound to BOTH the session and the target, by column", async () => {
+    // TG-SCOPE-1/2/3 assert only the returned boolean and the table name, so
+    // they cannot see which columns were filtered. Two mutations survive them:
+    //   (a) swap the values  — .eq("session_id", targetUserId)
+    //                          .eq("player_id", sessionId)
+    //   (b) drop the session filter entirely, leaving .eq("player_id", …),
+    //       which makes the guard true for any target who has ever queued in
+    //       ANY session — the account-takeover primitive itself.
+    // Asserting the column=value PAIRING catches both; (b) alone would be
+    // caught by a presence check, (a) needs the pairing.
+    const svc = serviceClient([{ data: { id: "q1" } }]);
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
+    );
+
+    expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(true);
+
+    const queueRead = svc.recorded.find((r) => r.table === "queue_entries");
+    expect(queueRead, "isPlayerInSessionScope never read queue_entries").toBeDefined();
+    expect(queueRead!.ops).toContain(`eq:session_id=${SESSION_ID}`);
+    expect(queueRead!.ops).toContain(`eq:player_id=${TARGET_ID}`);
+  });
+
+  it("TG-SCOPE-5 (negative): the guard reads queue_entries and nothing else", async () => {
+    // A future arm added to this guard — club membership, session_organizers,
+    // profiles — re-opens the hole TG-SCOPE-3 documents. Pin the table set so
+    // widening the guard has to come here and say so.
+    const svc = serviceClient([{ data: null }]);
+    vi.mocked(createServiceClient).mockReturnValue(
+      svc as unknown as ReturnType<typeof createServiceClient>
+    );
+
+    expect(await isPlayerInSessionScope(TARGET_ID, SESSION_ID)).toBe(false);
+    expect(svc.recorded.map((r) => r.table)).toEqual(["queue_entries"]);
   });
 });
 
@@ -367,7 +429,10 @@ describe("TG-GRANT: queue_entries writes use the service client", () => {
   it("TG-GRANT-1: checkoutPlayer updates via the service client, not the user client", async () => {
     const userCtx = {
       ...authedAs(CALLER),
-      from: vi.fn(() => builder({ data: null, error: null })),
+      // Ops are deliberately discarded: this client exists only to prove it is
+      // never the one that writes, which `expect(userCtx.from).not.toHaveBeen…`
+      // below asserts on the spy, not on recorded columns.
+      from: vi.fn(() => builder({ data: null, error: null }, [])),
     };
     vi.mocked(createServerSupabaseClient).mockResolvedValue(
       userCtx as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>

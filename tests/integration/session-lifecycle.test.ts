@@ -13,6 +13,8 @@
 //     K-4  Negative: name length > 60 rejected.
 //     K-5  Negative: passcode length > 20 rejected.
 //     K-6  Negative: unauthenticated rejected.
+//     K-6b Negative: plain club member (right club, wrong role) rejected.
+//     K-6c Negative: deactivated owner (right role, is_active=false) rejected.
 //
 //   joinAsCoOrganizer
 //     K-7  Happy: valid passcode → session_organizers row inserted,
@@ -60,6 +62,29 @@ async function makeClubOwner(userId: string, clubId: string = DEFAULT_CLUB_ID): 
       { onConflict: "club_id,player_id" }
     );
   if (error) throw new Error(`[makeClubOwner] ${error.message}`);
+}
+
+/**
+ * Seed an arbitrary club_members row. Exists so the club-admin gate can be
+ * probed from the two directions makeClubOwner cannot reach: the right club
+ * with the WRONG role, and the right role on a DEACTIVATED row.
+ */
+async function makeClubMemberRow(
+  userId: string,
+  opts: { role: "owner" | "admin" | "member"; isActive: boolean; clubId?: string }
+): Promise<void> {
+  const { error } = await serviceClient()
+    .from("club_members")
+    .upsert(
+      {
+        club_id: opts.clubId ?? DEFAULT_CLUB_ID,
+        player_id: userId,
+        role: opts.role,
+        is_active: opts.isActive,
+      },
+      { onConflict: "club_id,player_id" }
+    );
+  if (error) throw new Error(`[makeClubMemberRow] ${error.message}`);
 }
 
 /**
@@ -348,6 +373,61 @@ describe("Session Lifecycle — Suite K", () => {
       .select("*", { count: "exact", head: true })
       .eq("organizer_passcode", "ANON1");
     expect(count).toBe(0);
+  });
+
+  // ── K-6b / K-6c: the club-admin gate itself ───────────────
+  // K-6 only proves the *authentication* check. Both of these were absent, and
+  // their absence was measured: rewriting isClubAdmin to `role !== null` — which
+  // hands every rank-and-file member the power to create sessions — left the unit
+  // suite (74 files / 1400 tests) AND the integration suite (27 files / 321 tests)
+  // fully green. Every existing caller is seeded as an active owner, so no test
+  // ever asked the gate a question it could answer wrongly.
+  //
+  // Each uses a FRESH profile: getClubRole is wrapped in React cache(), so
+  // reusing one id across two roles inside a file can serve a memoised answer.
+
+  it("K-6b: createSession rejects a plain club member (right club, wrong role)", async () => {
+    const member = await makeProfile({ faker });
+    await makeClubMemberRow(member.id, { role: "member", isActive: true });
+    mockAuthAs(member.id);
+
+    const result = await createSession({
+      clubId: DEFAULT_CLUB_ID,
+      name: "Member-made",
+      scoring: "single",
+      passcode: "MEMB1",
+    });
+
+    expect(result.success, "a plain member created a session").toBe(false);
+    expect(result.message).toMatch(/only club owners and admins/i);
+
+    const { count } = await serviceClient()
+      .from("sessions")
+      .select("*", { count: "exact", head: true })
+      .eq("organizer_passcode", "MEMB1");
+    expect(count, "refusal returned but a session row was still written").toBe(0);
+  });
+
+  it("K-6c: createSession rejects a deactivated owner (right role, is_active=false)", async () => {
+    const exOwner = await makeProfile({ faker });
+    await makeClubMemberRow(exOwner.id, { role: "owner", isActive: false });
+    mockAuthAs(exOwner.id);
+
+    const result = await createSession({
+      clubId: DEFAULT_CLUB_ID,
+      name: "Ex-owner-made",
+      scoring: "single",
+      passcode: "EXOWN",
+    });
+
+    expect(result.success, "a deactivated owner created a session").toBe(false);
+    expect(result.message).toMatch(/only club owners and admins/i);
+
+    const { count } = await serviceClient()
+      .from("sessions")
+      .select("*", { count: "exact", head: true })
+      .eq("organizer_passcode", "EXOWN");
+    expect(count, "refusal returned but a session row was still written").toBe(0);
   });
 
   // ============================================================

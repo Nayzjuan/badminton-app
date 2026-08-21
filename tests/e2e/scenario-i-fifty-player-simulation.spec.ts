@@ -1962,8 +1962,22 @@ test.describe("Group 10 — Stress and Edge Cases", () => {
         .eq("session_id", sessionId)
         .eq("status", "in_progress");
 
-      // Count distinct court IDs — no court should have 2 in-progress matches
+      // Assert the click WORKED before asserting it didn't work twice. With
+      // zero matches the dedupe check below is `expect(0).toBe(0)` — a
+      // guaranteed pass, and the louder the breakage the greener this test.
+      expect(
+        inProgress ?? [],
+        "Call Next Match created no in-progress match — the dedupe assertion " +
+          "below would pass vacuously"
+      ).not.toHaveLength(0);
+
+      // Count distinct court IDs — no court should have 2 in-progress matches.
+      // `.filter(Boolean)` would also mask a null court_id, so require every
+      // row to have kept one.
       const courtIds = (inProgress ?? []).map((m) => m.court_id).filter(Boolean);
+      expect(courtIds, "an in_progress match has a null court_id").toHaveLength(
+        (inProgress ?? []).length
+      );
       const uniqueCourts = new Set(courtIds);
       expect(courtIds.length).toBe(uniqueCourts.size);
     } finally {
