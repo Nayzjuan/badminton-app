@@ -270,7 +270,8 @@ function pausedRow(
     joined_at: "2026-08-21T09:00:00.000Z",
     position: null,
     is_paused: minutesAgo !== null,
-    paused_at: minutesAgo === null ? null : new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+    paused_at:
+      minutesAgo === null ? null : new Date(Date.now() - minutesAgo * 60_000).toISOString(),
     created_at: "2026-08-21T09:00:00.000Z",
     display_name: displayName,
     skill_level: "intermediate",

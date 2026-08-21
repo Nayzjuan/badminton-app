@@ -692,9 +692,7 @@ describe("useSessionData — the player-side data spine", () => {
 
     const staleAt = countOf("courts");
     resolvers.courts = (callIndex) =>
-      callIndex === staleAt
-        ? EMPTY_OK
-        : { data: [makeCourt("court-fresh", "Fresh")], error: null };
+      callIndex === staleAt ? EMPTY_OK : { data: [makeCourt("court-fresh", "Fresh")], error: null };
 
     let releaseProbe!: () => void;
     authProbeGate = new Promise<void>((res) => {

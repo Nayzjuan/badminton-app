@@ -1303,10 +1303,7 @@ describe("useEditMatch — Unit Suite (EMH)", () => {
       view.result.current.message,
       "a rejected save left the feedback slot empty — the dialog is frozen with no reason given"
     ).not.toBeNull();
-    expect(
-      view.result.current.isError,
-      "a rejected save was not painted as an error"
-    ).toBe(true);
+    expect(view.result.current.isError, "a rejected save was not painted as an error").toBe(true);
     expect(view.result.current.savedOnce, "savedOnce latched on a save that threw").toBe(false);
     expect(
       onSaved,
@@ -1350,7 +1347,10 @@ describe("useEditMatch — Unit Suite (EMH)", () => {
     expect(view.result.current.savedOnce, "savedOnce latched on a correction that threw").toBe(
       false
     );
-    expect(onSaved, "the parent was refreshed after a correction that threw").not.toHaveBeenCalled();
+    expect(
+      onSaved,
+      "the parent was refreshed after a correction that threw"
+    ).not.toHaveBeenCalled();
     expect(vi.getTimerCount(), "a rejected correction armed a close timer").toBe(0);
     expect(closeCalls(onOpenChange), "a rejected correction closed the dialog").toBe(0);
     expect(
