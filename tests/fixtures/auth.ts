@@ -28,6 +28,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { BrowserContext, Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
+import { isFilledValue } from "../helpers/env-placeholder";
 
 // ── Admin client (service role) ───────────────────────────────
 function getAdminClient() {
@@ -39,8 +40,28 @@ function getAdminClient() {
 }
 
 // ── Constants ─────────────────────────────────────────────────
-const ORGANIZER_EMAIL = process.env.TEST_ORGANIZER_EMAIL ?? "organizer-bot@playwright.local";
-const ORGANIZER_PASSWORD = process.env.TEST_ORGANIZER_PASSWORD ?? "E2E_OrganizerBot_2024!";
+// No literal fallbacks. This fixture authenticates against a REAL Supabase
+// project, so a default password here is a live credential — and the bot is a
+// permanent club member (tests/helpers/teardown.ts never deletes it), so the
+// session it hands out reads the real member roster through profiles_select.
+// Fail loudly instead: an unset variable must stop the run, not silently log in.
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  // An uncopied placeholder is not a credential — share the test with
+  // init-sandbox.ts rather than restating it, so the two cannot drift.
+  if (!isFilledValue(value)) {
+    throw new Error(
+      `Missing ${name}. The E2E organizer bot has no default credentials. ` +
+        "Set TEST_ORGANIZER_EMAIL / TEST_ORGANIZER_PASSWORD / TEST_ORGANIZER_PIN " +
+        "in .env.test, which is gitignored and loaded by playwright.config.ts."
+    );
+  }
+  return value;
+}
+
+const ORGANIZER_EMAIL = requiredEnv("TEST_ORGANIZER_EMAIL");
+const ORGANIZER_PASSWORD = requiredEnv("TEST_ORGANIZER_PASSWORD");
+const ORGANIZER_PIN = requiredEnv("TEST_ORGANIZER_PIN");
 
 // Storage state is saved here — gitignored, rebuilt when missing.
 export const ORGANIZER_STORAGE_STATE = path.resolve(
@@ -63,6 +84,15 @@ async function findUserIdByEmail(
     const { data, error } = await db.auth.admin.listUsers({ page, perPage });
     if (error) {
       throw new Error(`[seed] findUserIdByEmail(${label}): ${error.message}`);
+    }
+    // listUsers() can resolve with neither an error nor a payload — a gateway
+    // 5xx between here and GoTrue yields an empty body. Reading `data.users`
+    // then throws a bare TypeError naming neither the bot nor this call, which
+    // is what makes an already-flaky lookup unreadable in CI output.
+    if (!data?.users) {
+      throw new Error(
+        `[seed] findUserIdByEmail(${label}): listUsers returned no payload on page ${page}.`
+      );
     }
     const found = data.users.find((u) => u.email === email);
     if (found) return found.id;
@@ -132,7 +162,7 @@ export async function ensureOrganizerAccount(): Promise<string> {
   const db = getAdminClient();
 
   const organizerId = await findOrCreateBotUser(ORGANIZER_EMAIL, "E2E_OrganizerBot", {
-    pin: "9999",
+    pin: ORGANIZER_PIN,
     password: ORGANIZER_PASSWORD,
   });
 
@@ -321,7 +351,11 @@ export async function signInOrganizerBot(page: Page, baseURL: string): Promise<v
   // Navigate to /play — middleware will validate cookies and redirect
   // appropriately. The organizer bot has no active queue entry, so it
   // should land on /play (session picker).
-  await page.goto(playUrl, { waitUntil: "networkidle" });
+  // Explicit timeout rather than inheriting use.navigationTimeout: /play opens a
+  // Supabase realtime websocket, so "networkidle" is not guaranteed to be reached
+  // at all. Bound it here so the failure names the navigation instead of surfacing
+  // as the enclosing beforeAll hook running out its 60s test timeout.
+  await page.goto(playUrl, { waitUntil: "networkidle", timeout: 30_000 });
 
   // The middleware may redirect — wait for any /play or /organizer URL
   await page.waitForURL(/\/(play|organizer)/, { timeout: 20_000 });
@@ -358,7 +392,19 @@ export async function loadOrganizerContext(context: BrowserContext): Promise<voi
   // the test uses `use: { storageState: ORGANIZER_STORAGE_STATE }`.
   // This function exists for explicit context loading in tests that
   // manage their own context (e.g., multi-context realtime tests).
-  const state = JSON.parse(fs.readFileSync(ORGANIZER_STORAGE_STATE, "utf8"));
+  // A run killed mid-write leaves this file truncated. Unguarded, the next run
+  // dies on a bare SyntaxError that names neither the file nor the remedy, and
+  // the file is gitignored so there is nothing to diff against.
+  let state: { cookies?: Parameters<BrowserContext["addCookies"]>[0] };
+  try {
+    state = JSON.parse(fs.readFileSync(ORGANIZER_STORAGE_STATE, "utf8"));
+  } catch (err) {
+    throw new Error(
+      `[auth] Organizer storage state at ${ORGANIZER_STORAGE_STATE} is unreadable: ` +
+        `${err instanceof Error ? err.message : String(err)}.\n` +
+        "Delete the file and re-run — signInOrganizerBot() rebuilds it."
+    );
+  }
   await context.addCookies(state.cookies ?? []);
 }
 

@@ -24,6 +24,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
+import { isPlaceholderValue } from "./env-placeholder";
 
 // ── Paths ─────────────────────────────────────────────────────
 const ROOT = path.resolve(__dirname, "../..");
@@ -45,10 +46,19 @@ const c = {
 function log(symbol: string, msg: string) {
   console.log(`  ${symbol}  ${msg}`);
 }
-function ok(msg: string)   { log(`${c.green}✓${c.reset}`, msg); }
-function info(msg: string) { log(`${c.cyan}→${c.reset}`, msg); }
-function warn(msg: string) { log(`${c.yellow}⚠${c.reset}`, msg); }
-function fail(msg: string) { log(`${c.red}✗${c.reset}`, msg); process.exit(1); }
+function ok(msg: string) {
+  log(`${c.green}✓${c.reset}`, msg);
+}
+function info(msg: string) {
+  log(`${c.cyan}→${c.reset}`, msg);
+}
+function warn(msg: string) {
+  log(`${c.yellow}⚠${c.reset}`, msg);
+}
+function fail(msg: string) {
+  log(`${c.red}✗${c.reset}`, msg);
+  process.exit(1);
+}
 
 // ── Parse a .env file into a key→value map ────────────────────
 function parseEnvFile(filePath: string): Map<string, string> {
@@ -62,7 +72,10 @@ function parseEnvFile(filePath: string): Map<string, string> {
     const eqIdx = trimmed.indexOf("=");
     if (eqIdx === -1) continue;
     const key = trimmed.slice(0, eqIdx).trim();
-    const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, "");
+    const val = trimmed
+      .slice(eqIdx + 1)
+      .trim()
+      .replace(/^["']|["']$/g, "");
     map.set(key, val);
   }
   return map;
@@ -90,14 +103,39 @@ function upsertEnvFile(filePath: string, updates: Record<string, string>): void 
 
 // ── Load env: .env.local first, then system env as fallback ───
 function loadEnv(): Record<string, string> {
+  // Precedence deliberately matches playwright.config.ts, which loads .env.test
+  // first and .env.local with `override: false` — so .env.test wins in both.
+  // They have to agree. This script seeds the very session the suite then tests;
+  // the moment .env.test points at a different project (which is exactly what
+  // moving the E2E bot off prod means) a seeder that preferred .env.local would
+  // write to one project while the suite ran against another, and the failure
+  // would look like missing seed data rather than a config split.
+  //
+  // Reading .env.test at all is the fix for `npm run test:setup` dying with
+  // "TEST_ORGANIZER_EMAIL is not set" while the E2E suite ran fine: the
+  // credentials were present, just in the file this function did not open.
+  // parseEnvFile returns an empty map for an absent file, so a checkout with
+  // no .env.test behaves exactly as before.
+  const envTest = parseEnvFile(ENV_TEST);
   const envLocal = parseEnvFile(ENV_LOCAL);
+  const pick = (...keys: string[]): string => {
+    for (const key of keys) {
+      const found = envTest.get(key) ?? envLocal.get(key) ?? process.env[key];
+      if (found) return found;
+    }
+    return "";
+  };
   return {
-    NEXT_PUBLIC_SUPABASE_URL:
-      envLocal.get("NEXT_PUBLIC_SUPABASE_URL") ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    SUPABASE_SERVICE_ROLE_KEY:
-      envLocal.get("SUPABASE_SERVICE_ROLE_KEY") ??
-      envLocal.get("NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY") ??
-      process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+    NEXT_PUBLIC_SUPABASE_URL: pick("NEXT_PUBLIC_SUPABASE_URL"),
+    SUPABASE_SERVICE_ROLE_KEY: pick(
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY"
+    ),
+    // The organizer bot is a permanent account on a real project — it gets no
+    // literal default here, for the same reason as tests/fixtures/auth.ts.
+    TEST_ORGANIZER_EMAIL: pick("TEST_ORGANIZER_EMAIL"),
+    TEST_ORGANIZER_PASSWORD: pick("TEST_ORGANIZER_PASSWORD"),
+    TEST_ORGANIZER_PIN: pick("TEST_ORGANIZER_PIN"),
   };
 }
 
@@ -119,9 +157,7 @@ function prompt(question: string): Promise<string> {
 
 async function main() {
   console.log();
-  console.log(
-    `${c.bold}${c.cyan}🏸 Badminton App — E2E Sandbox Initialiser${c.reset}`
-  );
+  console.log(`${c.bold}${c.cyan}🏸 Badminton App — E2E Sandbox Initialiser${c.reset}`);
   console.log(c.dim + "─".repeat(50) + c.reset);
   console.log();
 
@@ -142,19 +178,31 @@ async function main() {
     );
   }
 
+  for (const name of [
+    "TEST_ORGANIZER_EMAIL",
+    "TEST_ORGANIZER_PASSWORD",
+    "TEST_ORGANIZER_PIN",
+  ] as const) {
+    if (isPlaceholderValue(env[name])) {
+      fail(
+        `${name} is not set.\n` +
+          "    Add it to .env.test or .env.local (both gitignored) — the organizer\n" +
+          "    bot has no default credentials."
+      );
+    }
+  }
+
   ok(`Supabase URL: ${c.dim}${env.NEXT_PUBLIC_SUPABASE_URL}${c.reset}`);
 
   // ── Step 2: Connect (service role — bypasses RLS) ─────────
-  const db = createClient(
-    env.NEXT_PUBLIC_SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  );
+  const db = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 
   // ── Step 3: Ensure organizer bot account exists ───────────
-  const ORGANIZER_EMAIL = "organizer-bot@playwright.local";
+  const ORGANIZER_EMAIL = env.TEST_ORGANIZER_EMAIL;
   const ORGANIZER_DISPLAY = "E2E_OrganizerBot";
-  const ORGANIZER_PASSWORD = "E2E_OrganizerBot_2024!";
+  const ORGANIZER_PASSWORD = env.TEST_ORGANIZER_PASSWORD;
 
   info("Checking organizer bot account…");
 
@@ -187,7 +235,7 @@ async function main() {
         id: organizerUserId,
         display_name: ORGANIZER_DISPLAY,
         skill_level: "intermediate",
-        pin: "9999",
+        pin: env.TEST_ORGANIZER_PIN,
       },
       { onConflict: "id" }
     );
@@ -218,9 +266,7 @@ async function main() {
   if (existingSessions && existingSessions.length > 0) {
     const session = existingSessions[0];
     sandboxSessionId = session.id;
-    ok(
-      `Sandbox session already exists: ${c.dim}${sandboxSessionId}${c.reset}`
-    );
+    ok(`Sandbox session already exists: ${c.dim}${sandboxSessionId}${c.reset}`);
 
     // Ensure it's active (could have been deactivated by a previous test run)
     if (!session.is_active) {
@@ -301,9 +347,15 @@ async function main() {
     updates.NEXT_PUBLIC_SUPABASE_URL = env.NEXT_PUBLIC_SUPABASE_URL;
   }
 
-  // Also backfill SUPABASE_SERVICE_ROLE_KEY if it's still the placeholder
+  // Also backfill SUPABASE_SERVICE_ROLE_KEY if it's still the placeholder.
+  // Detect the placeholder by its truncation marker, not by a hardcoded base64
+  // JWT header: the previous check keyed on the exact encoding of
+  // {"alg":"HS256","typ":"JWT"}, so an example file that ever switched `alg` --
+  // or moved to Supabase's non-JWT `sb_secret_*` key format -- would stop
+  // matching and silently leave the placeholder in place. No real secret ends
+  // in an ellipsis, so this cannot clobber a genuine key.
   const currentKey = existingTestEnv.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!currentKey || currentKey.startsWith("eyJhbGciOiJIUzI1NiIsIn") && currentKey.length < 60) {
+  if (isPlaceholderValue(currentKey)) {
     updates.SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   }
 
@@ -313,22 +365,15 @@ async function main() {
 
   // Check if TEST_BASE_URL still needs to be set
   const currentBaseUrl = parseEnvFile(ENV_TEST).get("TEST_BASE_URL") ?? "";
-  const baseUrlIsPlaceholder =
-    !currentBaseUrl || currentBaseUrl.includes("your-app.vercel.app");
+  const baseUrlIsPlaceholder = !currentBaseUrl || currentBaseUrl.includes("your-app.vercel.app");
 
   // ── Step 8: Summary ────────────────────────────────────────
   console.log();
   console.log(c.dim + "─".repeat(50) + c.reset);
-  console.log(
-    `${c.bold}${c.green}  ✓ Sandbox ready!${c.reset}`
-  );
+  console.log(`${c.bold}${c.green}  ✓ Sandbox ready!${c.reset}`);
   console.log();
-  console.log(
-    `  ${c.dim}Session ID:${c.reset}  ${c.bold}${sandboxSessionId}${c.reset}`
-  );
-  console.log(
-    `  ${c.dim}Env file:${c.reset}    ${c.bold}.env.test${c.reset} (auto-updated)`
-  );
+  console.log(`  ${c.dim}Session ID:${c.reset}  ${c.bold}${sandboxSessionId}${c.reset}`);
+  console.log(`  ${c.dim}Env file:${c.reset}    ${c.bold}.env.test${c.reset} (auto-updated)`);
   console.log();
 
   if (baseUrlIsPlaceholder) {
@@ -337,15 +382,11 @@ async function main() {
         ` Edit ${c.bold}.env.test${c.reset} and set ${c.bold}TEST_BASE_URL${c.reset}` +
         ` to your Vercel deployment URL.\n`
     );
-    console.log(
-      `  ${c.dim}Example:${c.reset}  TEST_BASE_URL=https://badminton-app.vercel.app\n`
-    );
+    console.log(`  ${c.dim}Example:${c.reset}  TEST_BASE_URL=https://badminton-app.vercel.app\n`);
 
     // Offer interactive prompt if running in a TTY
     if (process.stdin.isTTY) {
-      const answer = await prompt(
-        `  Enter your Vercel URL now (or press Enter to skip): `
-      );
+      const answer = await prompt(`  Enter your Vercel URL now (or press Enter to skip): `);
       if (answer && answer.startsWith("http")) {
         upsertEnvFile(ENV_TEST, { TEST_BASE_URL: answer });
         ok(`TEST_BASE_URL set to ${answer}`);
@@ -355,9 +396,7 @@ async function main() {
   }
 
   console.log(`  Run your tests with:`);
-  console.log(
-    `  ${c.bold}${c.cyan}  npm run test:e2e${c.reset}\n`
-  );
+  console.log(`  ${c.bold}${c.cyan}  npm run test:e2e${c.reset}\n`);
 }
 
 main().catch((err) => {
