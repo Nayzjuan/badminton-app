@@ -17,6 +17,12 @@
 
 ---
 
+## 2026-08-22 — two-highest stack banned unless tied for best gap
+
+`isBalancedSplit` (`matchmaking-core.ts`) still uses gap ≤ minGap + `SKILL_VARIANCE_MAX`, but a seating that puts the two highest-skill players on the same team is now balanced only when that gap equals minGap. That is what stops L.ADV+L.ADV vs U.INT+INT (gap 3) and vs U.INT+U.INT (gap 2): both were inside the +2 tolerance. Mixed Split 2 on 6/5/4/3 (gap 2, not stacked) stays eligible. e2e [H-2] 4/3/3/2 now rotates to Split 2 instead of Split 1; the assertion is still "partnership differs", so the spec does not change.
+
+---
+
 ## 🔒 STANDING CONSTRAINTS — carried forward, not history
 
 Narrative for each is in `docs/archive/MEMORY_HISTORY.md` (grep the phrase). These are here because
