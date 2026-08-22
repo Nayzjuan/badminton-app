@@ -1996,6 +1996,7 @@ after `renderHook` observes the effect's write, not the seed — only a per-rend
 - **Location:** `tests/e2e/`
 - **Run:** `npm run test:e2e` — or `npm run test:e2e:smoke` for Scenario B alone.
 - **Target:** Live Vercel deployment — **not localhost**.
+- **Credentials:** `playwright.config.ts` loads `.env.test` then `.env.local` (`override: false`, so `.env.test` wins). Both files are gitignored; nothing in the tree carries a working organizer credential. `npm run test:setup` (`tests/helpers/init-sandbox.ts`) reads the same two files.
 - **Auth bypass:** Header `x-vercel-protection-bypass: {VERCEL_BYPASS_SECRET}` injected in `playwright.config.ts`.
 - **Sandbox safety (teardown.ts):** Two hard guards before any DELETE: `TEST_SESSION_ID` env var must be defined AND `sessions.name` must start with `"🤖 E2E SANDBOX"`.
 - **Locator best practice:** Scope to dialog/container — `page.getByRole("dialog").getByText("E2E_Alice")` not `page.getByText("E2E_Alice")` (names can appear in Sonner toasts).
@@ -2227,7 +2228,8 @@ in that test is silently skipped as already in-flight. Such a test must
 
 - `tests/helpers/teardown.ts` — `resetSandboxSession()`, `softResetSandboxSession()`, `seedSession()`, `repairSandboxState()` — sandbox lifecycle. `repairSandboxState()` is called automatically at the start of `softResetSandboxSession` (Step 0) to heal any stuck state left by a previous crashed test run — cancels orphaned matches, returns stuck players to `waiting`, frees stuck courts.
 - `tests/helpers/admin-db.ts` — Service-role client for test assertions
-- `tests/fixtures/auth.ts` — Organizer bot sign-in via cookie injection, `ORGANIZER_STORAGE_STATE` path
+- `tests/fixtures/auth.ts` — Organizer bot sign-in via cookie injection, `ORGANIZER_STORAGE_STATE` path. The bot has **no default credentials**: `TEST_ORGANIZER_EMAIL` / `_PASSWORD` / `_PIN` must be set or the module throws at import, naming the missing variable. Throwaway `E2E_*` bots created per-test still take a literal PIN — they are deleted by teardown and authenticate nothing.
+- `tests/helpers/env-placeholder.ts` — `isPlaceholderValue` / `isFilledValue`, the single definition of "this env var was never filled in" (empty, `<angle-bracketed>`, or ending in a literal ellipsis). Shared by `tests/fixtures/auth.ts` and `tests/helpers/init-sandbox.ts`, which previously carried copies that disagreed. `isFilledValue` is the narrowing negation, so a caller that throws on a placeholder keeps a `string`.
 - `tests/fixtures/seed-sandbox.ts` — **Run with `npx tsx`** — idempotently seeds all 50 E2E_ bot players + 6 courts into the live sandbox session (`TEST_SESSION_ID`). Reads `.env.test` + `.env.local`. Safe to re-run.
 - `tests/integration/factories/index.ts` — `makeProfile`, `makeSession`, `makeQueueEntry`, `makeCourt`, `makeMatch` — composable DB factories for integration tests
 - `tests/integration/helpers/mock-auth.ts` — `mockAuthAs(userId)` / `clearMockAuth()` — per-test auth identity control

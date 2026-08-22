@@ -19,9 +19,19 @@
 
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 
-A pre-publication audit (the repo is private; making it public was the question) found live
-credentials in tracked files. **The code is fixed; the credentials are still valid.** Removing a
-secret from HEAD does not revoke it — the blob stays in every commit that carried it.
+An audit found live credentials in tracked files. **The code is fixed; the credentials are still
+valid.** Removing a secret from HEAD does not revoke it — the blob stays in every commit that
+carried it.
+
+⚠️ **The premise that audit was written under was wrong, and it inverts the severity.** It said
+the repo was private and publishing it was the open question. The repo is **public, and has been
+since it was created** — `gh repo view Nayzjuan/badminton-app --json isPrivate,visibility,createdAt`,
+cross-checked against the `PublicEvent` in the repo's event history, whose timestamp equals
+`createdAt`. So the `service_role` key was not *about to be* exposed; it was **world-readable for
+the entire time it was committed** (`git log -1 --format=%cI 43d35a9` gives the start of that
+window). GitHub secret scanning is **disabled** on the repo, so the usual partner notification that
+would have auto-revoked the key with Supabase never fired. Treat the key as compromised, not as
+at-risk.
 
 - **`service_role` JWT** was hardcoded in `scripts/seed-sandbox-players.mjs` — full RLS bypass,
   `exp` 2036, byte-identical to the live key in `.env.local`, reachable from every ref that
@@ -33,8 +43,14 @@ secret from HEAD does not revoke it — the blob stays in every commit that carr
 - **E2E organizer bot** email/password/PIN were literal defaults in `tests/fixtures/auth.ts`,
   `tests/helpers/init-sandbox.ts` and `.env.test.example`, against a `.env.test` pointing at
   **prod**; teardown never deletes that account. All three now require env and reject the
-  `<placeholder>` shape. ⚠️ **E2E cannot run until `TEST_ORGANIZER_{EMAIL,PASSWORD,PIN}` are set**
-  — the 03:00 `e2e-regression.yml` cron will fail until then. Recreate the bot off-prod.
+  `<placeholder>` shape. ✅ **E2E runs again locally** — the values live in `.env.test` (gitignored,
+  unchanged, so the existing bot account still works); no real member's PIN was touched. The
+  placeholder test is now one shared predicate (`tests/helpers/env-placeholder.ts`,
+  `isPlaceholderValue` / `isFilledValue`) because the two copies had already diverged, and
+  `loadEnv` in `init-sandbox.ts` reads `.env.test` as well as `.env.local` — parsing only the
+  latter left `npm run test:setup` failing on credentials that were present the whole time.
+  ⚠️ **CI still has no values**: the 03:00 `e2e-regression.yml` cron fails until
+  `TEST_ORGANIZER_{EMAIL,PASSWORD,PIN}` exist as Actions secrets. Recreate the bot off-prod.
 - **Members' PINs are stored and compared in cleartext** (`pin text`; `.eq("pin", …)`). Real
   PINs were written into tracked files; those are redacted now — the remaining hits from
   `git grep -nIE 'PIN [0-9]{4}'` are all under `tests/`, synthetic throwaway players, not members.
@@ -42,8 +58,13 @@ secret from HEAD does not revoke it — the blob stays in every commit that carr
   column is a separate migration and is not done.
 - Member names pseudonymised in `scripts/simulate-31p-3court.ts`, `leaderboard-preview.html` and
   the `SELECTIVE_CLEANUP_PLAN.md` allowlist. **Narrative prose in `docs/archive/` still names real
-  members** — deliberately left, because scrubbing it destroys the incident record. If the repo is
-  ever published, publish a fresh squashed tree, not this history.
+  members** — deliberately left, because scrubbing it destroys the incident record. That tradeoff
+  was struck for a repo believed to be private; it is public, so re-decide it rather than inherit it.
+
+**Next actions, in order, all requiring dashboard access:** rotate the `service_role` key; update
+`.env.local`, the Vercel env and the Actions secret in the same window; enable secret scanning and
+push protection; then reset the member PINs and organizer passcodes. Merging PR #84 stops `main`
+from serving the key but does not remove it from history, and does not revoke it.
 
 ## 🔒 STANDING CONSTRAINTS — carried forward, not history
 
