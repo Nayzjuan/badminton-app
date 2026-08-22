@@ -121,7 +121,12 @@ export function DraftCapPopover({
     "inline-flex items-center gap-[5px]",
     "font-command text-[9px] uppercase tracking-[0.13em]",
     "border transition-all",
-    "px-2 sm:px-[10px] py-0 h-[28px]",
+    // 44px below sm so the chip meets the touch minimum its row-mates
+    // (Auto, Publish) hold at mobile widths; 28px from sm up, which is
+    // the pre-existing desktop proportion and unchanged from origin/main.
+    // A padded ::before hit area is not an option here -- the clip-path
+    // below clips hit-testing, not just paint.
+    "px-2 sm:px-[10px] py-0 h-11 sm:h-[28px]",
     "clip-path-[polygon(0_0,calc(100%_-_5px)_0,100%_5px,100%_100%,5px_100%,0_calc(100%_-_5px))]",
   ];
 

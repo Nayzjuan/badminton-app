@@ -77,7 +77,13 @@ export function OrganizerHeaderPreview() {
         autoPublish={autoPublish}
         togglingAutoPublish={false}
         handleToggleAutoPublish={(enabled) => setAutoPublish(enabled)}
-        setAutoPublishConfirmOpen={() => {}}
+        // counts.drafts > 0, so the header routes through the confirm
+        // dialog rather than handleToggleAutoPublish. The harness stands
+        // in for the organizer accepting it; without this the "Publish On"
+        // state is unreachable and cannot be checked at any width.
+        setAutoPublishConfirmOpen={(open) => {
+          if (open) setAutoPublish(true);
+        }}
         capPhase={null}
         handleCapChange={async () => {}}
         switcherOpen={switcherOpen}

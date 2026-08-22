@@ -282,16 +282,24 @@ export function OrganizerSessionHeader({
           {/* Identity: session name over the live tallies. */}
           <div className="flex min-w-0 flex-1 basis-[240px] flex-col gap-0.5">
             <div className="flex min-w-0 items-center gap-2">
-              <div className="relative min-w-0 flex-1" ref={switcherRef}>
+              <div className="relative min-w-0" ref={switcherRef}>
                 <button
                   onClick={() => canSwitch && setSwitcherOpen(!switcherOpen)}
                   aria-expanded={canSwitch ? switcherOpen : undefined}
-                  // max-w-full is load-bearing: a <button> resolves width:auto
+                  // The max-width is load-bearing: a <button> resolves width:auto
                   // to fit-content even inside a flex-shrunk parent, so without
                   // a cap the <h1> paints past its box and `truncate` never
                   // engages — that is the overlap this component was split out
                   // to fix.
-                  className={`flex max-w-full items-center gap-2 rounded-lg px-2 py-1 -mx-2
+                  //
+                  // It is 100%+1rem, not 100%, because -mx-2 makes the wrapper
+                  // shrink-to-fit to the button's MARGIN box, 16px narrower than
+                  // its content. A plain max-w-full resolves to that reduced width
+                  // and truncates the title 16px early even with a whole free row
+                  // beside it. The +1rem returns exactly the slack the negative
+                  // margin removed, so the cap still bites the moment the wrapper
+                  // actually shrinks.
+                  className={`flex max-w-[calc(100%+1rem)] items-center gap-2 rounded-lg px-2 py-1 -mx-2
                               min-h-[44px] transition-colors
                               ${canSwitch ? "hover:bg-cc-bg-3 cursor-pointer" : "cursor-default"}`}
                 >
