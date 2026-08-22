@@ -292,7 +292,7 @@ export function OrganizerSessionHeader({
                   // engages — that is the overlap this component was split out
                   // to fix.
                   className={`flex max-w-full items-center gap-2 rounded-lg px-2 py-1 -mx-2
-                              min-h-[36px] transition-colors
+                              min-h-[44px] transition-colors
                               ${canSwitch ? "hover:bg-cc-bg-3 cursor-pointer" : "cursor-default"}`}
                 >
                   <h1 className="font-command truncate text-base lg:text-xl font-bold text-cc-t1 tracking-wide">
