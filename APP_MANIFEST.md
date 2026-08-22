@@ -1745,6 +1745,24 @@ Always wrapped in `AlertDialog` with explicit cancel + confirm. The only excepti
 **Full-screen overlay presence (`MatchAlertPresence`, `match-alert.tsx`):**
 The match takeover is presence-managed, not conditionally mounted: `player-dashboard.tsx` renders `<MatchAlertPresence active={…|null}>` unconditionally inside the status tabpanel so state changes animate (see §4.7); the committed-key state machine adjusts state during render (guarded, converges, StrictMode-safe). A11y contract: overlay containers are `role="region"` + descriptive `aria-label` — **never** `role="alert"`, which would re-announce the entire roster on every child update; one visually-hidden `role="status"` `aria-live="polite"` span announces each state change exactly once. Focus moves into the overlay on appear (`tabIndex={-1}` root, synchronous focus in an `isActive`-keyed effect) and restores to the previously-focused element on exit. The outgoing crossfade/exit layer is inert (`aria-hidden` + `pointer-events-none`) so its stale controls (e.g. the in_progress ScoreInputCard) can't be touched mid-transition. (E2E note: `getByRole("region", { name: /on deck|match starting/i })` — see scenario-e/j.)
 
+**Organizer session header (`session-header.tsx`):**
+The organizer board's sticky header is its own component, rendered by `organizer-dashboard.tsx` as a pure function of the board state — it owns no state of its own. Three bands, none of which may overflow:
+
+1. **Utility bar** — back link on the left; organizer name (`lg` and up), theme toggle, notice bell and, below `lg`, the ⋮ overflow menu on the right. Every icon control in the header lives in this one cluster at 44×44px, which is what makes the bell read as aligned rather than orphaned.
+2. **Command bar** — the identity block (session-switcher button carrying the `<h1>`, with the live tallies beneath it) beside the organizer controls (auto-matchmaking, auto-publish, draft cap, TV / Share / Close).
+3. **Tab rail** — horizontally scrollable, unchanged across widths.
+
+Band 2 is **one `flex-wrap` row at every width**. Wrapping, not a breakpoint, is what makes overflow structurally impossible: when the controls no longer fit beside the identity block they drop to their own line, and when they no longer fit on one line they wrap among themselves. Nothing in the header is `shrink-0` at a size that can exceed a phone viewport.
+
+Two rules keep it that way, and both are load-bearing:
+
+- **Every control renders exactly once.** Responsive behaviour is label-level (`hidden xl:inline` on a chip's text), never element-level. The earlier version carried a desktop copy and a mobile copy of the stats, the auto toggle, the publish toggle and the cap chip; the copies drifted — one said "in play" where the other said "active" — and the mobile copies sat below the 44px touch minimum. TV / Share / Close are the one exception to *rendering*, not to duplication: below `lg` the three chips are hidden and the ⋮ menu is the single route to the same three actions.
+- **The title button carries `max-w-full`.** A `<button>` resolves `width:auto` to fit-content even inside a flex-shrunk parent, so without it the `truncate` on the `<h1>` never engages and the session name paints straight through the tallies. This is the exact defect the rebuild fixed.
+
+Shared chip chrome lives in the `CHIP` constant, which deliberately carries **no** `display` utility: Tailwind emits all display utilities in one group and the stylesheet order — not the class-attribute order — decides the winner, so a `CHIP` that began with `inline-flex` silently defeated `hidden lg:inline-flex` at the call site. Call sites supply their own display class (`inline-flex`, or `LINK_CHIP` which starts `hidden lg:inline-flex`).
+
+`/sandbox/organizer-header` renders the header alone with knobs for a long session name, sync-offline, a closed session and unread notice counts — the failure mode here is a layout one, and layout is only falsifiable against a live viewport.
+
 **Skill badge (`src/components/ui/skill-badge.tsx`):**
 
 - Light: `bg-{color}-100 text-{color}-800`
@@ -2306,6 +2324,8 @@ src/
   components/
     organizer/
       organizer-dashboard.tsx    # Shell, tab nav (courts/queue/monitor/history/leaderboard)
+      session-header.tsx         # Sticky organizer header — utility bar / command bar / tab rail
+      organizer-header-preview.tsx # Sandbox harness for session-header.tsx (/sandbox/organizer-header)
       organizer-entry.tsx        # Passcode gate / session picker for additional organizers
       active-courts.tsx          # Court cards, TeamsGrid, ScoreModal trigger, CourtTimeAlert
       on-deck-panel.tsx          # Pending match cards, swap flow, publish controls, H2HStrip
