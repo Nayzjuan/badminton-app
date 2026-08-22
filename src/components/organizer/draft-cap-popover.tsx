@@ -49,8 +49,6 @@ interface DraftCapPopoverProps {
    * `capPhase`, not from this call.
    */
   onChange: (cap: number | null) => void | Promise<void>;
-  /** Whether to render the mobile-compact variant (no caret label). */
-  compact?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -59,6 +57,9 @@ function chipLabel(value: number | null): string {
   return value === null ? "Dynamic" : String(value);
 }
 
+/** Narrow-viewport label. Rendered alongside chipLabel and swapped by CSS —
+ *  a boolean prop cannot see the viewport, and the one that used to exist had
+ *  to be threaded through a second, drift-prone copy of this chip. */
 function chipLabelCompact(value: number | null): string {
   return value === null ? "DYN" : String(value);
 }
@@ -80,7 +81,6 @@ export function DraftCapPopover({
   autoPublishIsOn = false,
   capPhase,
   onChange,
-  compact = false,
 }: DraftCapPopoverProps) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -121,7 +121,7 @@ export function DraftCapPopover({
     "inline-flex items-center gap-[5px]",
     "font-command text-[9px] uppercase tracking-[0.13em]",
     "border transition-all",
-    compact ? "px-2 py-0 h-[28px]" : "px-[10px] py-0 h-[28px]",
+    "px-2 sm:px-[10px] py-0 h-[28px]",
     "clip-path-[polygon(0_0,calc(100%_-_5px)_0,100%_5px,100%_100%,5px_100%,0_calc(100%_-_5px))]",
   ];
 
@@ -182,9 +182,10 @@ export function DraftCapPopover({
           className="font-semibold"
           style={{ color: isDynamic && !isDisabled ? "var(--cc-accent)" : undefined }}
         >
-          {compact ? chipLabelCompact(value) : chipLabel(value)}
+          <span className="sm:hidden">{chipLabelCompact(value)}</span>
+          <span className="hidden sm:inline">{chipLabel(value)}</span>
         </span>
-        {!compact && <span className="text-cc-t3 text-[8px]">{open ? "▴" : "▾"}</span>}
+        <span className="hidden text-cc-t3 text-[8px] sm:inline">{open ? "▴" : "▾"}</span>
       </button>
 
       {/* ── Popover ─────────────────────────────────────────── */}
