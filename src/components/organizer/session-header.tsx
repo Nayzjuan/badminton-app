@@ -173,8 +173,11 @@ export function OrganizerSessionHeader({
         <div className="flex items-center justify-between gap-2">
           <button
             onClick={() => router.push(clubSlug ? clubBase(clubSlug) : "/organizer")}
+            /* text-cc-t2, not the inherited t3: on the light canvas t3 measures
+               4.17:1 against the header background, under the 4.5:1 floor for
+               12px text. t2 is 9:1 in light and 7.1:1 in dark. */
             className="inline-flex items-center gap-1.5 whitespace-nowrap rounded px-3 py-2
-                       min-h-[44px] -ml-1 text-xs font-medium text-cc-t3
+                       min-h-[44px] -ml-1 text-xs font-medium text-cc-t2
                        hover:text-cc-t1 hover:bg-cc-bg-3 transition-colors"
           >
             <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
