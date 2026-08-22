@@ -320,10 +320,15 @@ export function isGroupValid(players: ScoredPlayer[], maxVariance: number): bool
 // always beats a fresh-but-lopsided match.
 //
 // Lopsided splits (gap > minGap + SKILL_VARIANCE_MAX) are never returned.
-// When every balanced split is partnership-capped, snakeDraft still seats
-// the four mixed and flags `usedCapOverride` so the caller can try a
-// different body first. rotatedDraft does NOT cap-override — it returns
-// null so the skill window can still expand.
+// Stacking the two highest-skill players is only legal when that seating
+// is tied for the best gap — otherwise freshness would still emit
+// L.ADV+L.ADV vs U.INT+INT (gap 3 ≤ minGap 1 + 2) and L.ADV+L.ADV vs
+// U.INT+U.INT (gap 2 ≤ minGap 0 + 2). Mixed Split 2 on 6/5/4/3 (gap 2,
+// not stacked) stays eligible. When every balanced split is
+// partnership-capped, snakeDraft still seats the four mixed and flags
+// `usedCapOverride` so the caller can try a different body first.
+// rotatedDraft does NOT cap-override — it returns null so the skill
+// window can still expand.
 
 export type SnakeDraftResult = {
   teamA: ScoredPlayer[];
@@ -354,9 +359,22 @@ function splitSkillGap(split: TeamSplit): number {
   );
 }
 
-/** Splits whose team-skill gap is within SKILL_VARIANCE_MAX of the best gap. */
-function isBalancedSplit(split: TeamSplit, minGap: number): boolean {
-  return splitSkillGap(split) <= minGap + SKILL_VARIANCE_MAX;
+/** True when the two highest-skill players sit on the same team. */
+function isTwoHighestTogether(split: TeamSplit, sorted: ScoredPlayer[]): boolean {
+  const top = new Set([sorted[0].player_id, sorted[1].player_id]);
+  return (
+    split.teamA.filter((p) => top.has(p.player_id)).length === 2 ||
+    split.teamB.filter((p) => top.has(p.player_id)).length === 2
+  );
+}
+
+/** Splits whose team-skill gap is within SKILL_VARIANCE_MAX of the best gap.
+ *  A two-highest stack is only balanced when it is tied for that best gap. */
+function isBalancedSplit(split: TeamSplit, minGap: number, sorted: ScoredPlayer[]): boolean {
+  const gap = splitSkillGap(split);
+  if (gap > minGap + SKILL_VARIANCE_MAX) return false;
+  if (isTwoHighestTogether(split, sorted) && gap > minGap) return false;
+  return true;
 }
 
 /** The three candidate seatings, most-balanced first, from skill-DESC order. */
@@ -620,8 +638,8 @@ export function snakeDraft(
   opponentCap?: number,
   lastOpponents?: LastOpponents
 ): SnakeDraftResult | null {
-  const { splits, minGap } = splitsForFour(allFour);
-  const balancedSplits = splits.filter((s) => isBalancedSplit(s, minGap));
+  const { splits, minGap, sorted } = splitsForFour(allFour);
+  const balancedSplits = splits.filter((s) => isBalancedSplit(s, minGap, sorted));
 
   // Without cap enforcement, always return the balanced default (Split 0).
   if (!partnershipCounts || cap === undefined) {
@@ -630,13 +648,16 @@ export function snakeDraft(
 
   // Partition by balance: the freshness passes must never trade team
   // balance away just to avoid a within-cap partnership repeat. Splits
-  // within SKILL_VARIANCE_MAX of the best gap still count as balanced —
-  // that keeps the fresh-pair preference alive between near-equal splits
-  // (e.g. skills 6/5/4/3: Split 2's gap of 2 is acceptable) while
-  // refusing genuinely lopsided ones (e.g. 4/4/1/1: high+high vs
+  // within SKILL_VARIANCE_MAX of the best gap still count as balanced
+  // when they mix the two highest players — that keeps the fresh-pair
+  // preference alive between near-equal mixed splits (e.g. skills
+  // 6/5/4/3: Split 2's gap of 2 is acceptable) while refusing a
+  // two-highest stack that is worse than the mixed seating (e.g.
+  // 5/5/4/3: L.ADV+L.ADV vs U.INT+INT has gap 3; 4/4/1/1 high+high vs
   // low+low has gap 6). Those used to fire as a stall-prevention
-  // fallback; they are now banned. Cap override seats a mixed split
-  // instead, flagged so the caller can still try a different body.
+  // fallback or as a "within tolerance" freshness pick; they are now
+  // banned. Cap override seats a mixed split instead, flagged so the
+  // caller can still try a different body.
   const constraints: SplitConstraints = {
     partnershipCounts,
     cap,
@@ -1012,7 +1033,8 @@ export function buildCombinationGroup(
 //   Split 2 — [0,2] vs [1,3]: alternating cross-split
 //
 // splitIndex = repeatCount % 3. Lopsided splits (gap > minGap +
-// SKILL_VARIANCE_MAX) are dropped from the cycle — a 2-high+2-low four
+// SKILL_VARIANCE_MAX) and two-highest stacks that are worse than the
+// best mixed gap are dropped from the cycle — a 2-high+2-low four
 // never sits high+high vs low+low just because it is their second repeat.
 // When cap enforcement is active, the function tries the remaining
 // balanced splits starting from splitIndex, returning the first that
@@ -1059,7 +1081,7 @@ export function rotatedDraft(
   const minGap = Math.min(...splits.map(splitSkillGap));
   const rotationOrdered = [0, 1, 2]
     .map((i) => splits[(splitIndex + i) % 3])
-    .filter((s) => isBalancedSplit(s, minGap));
+    .filter((s) => isBalancedSplit(s, minGap, sorted));
 
   // Without cap enforcement, still skip lopsided — partner variety among
   // mixed splits is enough.

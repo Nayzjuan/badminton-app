@@ -1097,7 +1097,7 @@ describe("rotatedDraft", () => {
     expect(teamB.map((p) => p.player_id).sort()).toEqual(["p4", "p5"]);
   });
 
-  it("H-2 shape (4/3/3/2): splitIndex=1 is still allowed — gap 2 is balanced", () => {
+  it("H-2 shape (4/3/3/2): splitIndex=1 skips stacked top-vs-bottom, uses the mixed cross-split", () => {
     const dan = makePlayer("dan", { skillInt: 4 });
     const bob = makePlayer("bob", { skillInt: 3 });
     const cara = makePlayer("cara", { skillInt: 3 });
@@ -1105,9 +1105,11 @@ describe("rotatedDraft", () => {
     const ids = ["dan", "bob", "cara", "alice"];
     const result = rotatedDraft([dan, bob, cara, alice], [ids]);
     expect(result).not.toBeNull();
-    // Sorted DESC: dan, bob, cara, alice. Split 1 = dan+bob vs cara+alice, gap 2.
-    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["bob", "dan"]);
-    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["alice", "cara"]);
+    // Sorted DESC: dan, bob, cara, alice. Split 1 = dan+bob vs cara+alice
+    // stacks the two highest (gap 2 > minGap 0) and is dropped. Split 2
+    // (dan+cara vs bob+alice) is the mixed seating rotation continues to.
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["cara", "dan"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["alice", "bob"]);
   });
 
   it("splitIndex=1 (1 full-repeat roster): skips lopsided top-vs-bottom, uses the mixed cross-split", () => {
@@ -1751,6 +1753,72 @@ describe("snakeDraft — opponent-cap preference", () => {
       // rotatedDraft must still fail closed so Tier-3 can expand the window.
       expect(rotatedDraft([h1, h2, l1, l2], [], counts, MAX_PARTNERSHIP_REPEATS)).toBeNull();
     });
+
+    function isStackedHighs(r: { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] }, high: number) {
+      const teamIsHighs = (team: ScoredPlayer[]) =>
+        team[0].skill_level_int === high && team[1].skill_level_int === high;
+      return teamIsHighs(r.teamA) || teamIsHighs(r.teamB);
+    }
+
+    it("L.ADV+L.ADV vs U.INT+INT: freshness repeats mixed, never stacks the two L.ADVs", () => {
+      const la1 = makePlayer("la1", { skillInt: 5 });
+      const la2 = makePlayer("la2", { skillInt: 5 });
+      const ui = makePlayer("ui", { skillInt: 4 });
+      const mid = makePlayer("mid", { skillInt: 3 });
+      // Every mixed pair used once. Old gate treated stacked gap 3 as
+      // balanced (minGap 1 + SKILL_VARIANCE_MAX 2) and Pass 1 picked it.
+      const counts = new Map([
+        ["la1:ui", 1],
+        ["la1:mid", 1],
+        ["la2:ui", 1],
+        ["la2:mid", 1],
+      ]);
+      const result = snakeDraft([la1, la2, ui, mid], counts, MAX_PARTNERSHIP_REPEATS);
+      expect(result).not.toBeNull();
+      expect(isStackedHighs(result!, 5)).toBe(false);
+      expect(teamGap(result!)).toBe(1);
+      expect(result!.usedCapOverride).toBeUndefined();
+    });
+
+    it("L.ADV+L.ADV vs U.INT+U.INT: freshness repeats mixed, never stacks the two L.ADVs", () => {
+      const la1 = makePlayer("la1", { skillInt: 5 });
+      const la2 = makePlayer("la2", { skillInt: 5 });
+      const ui1 = makePlayer("ui1", { skillInt: 4 });
+      const ui2 = makePlayer("ui2", { skillInt: 4 });
+      const counts = new Map([
+        ["la1:ui1", 1],
+        ["la1:ui2", 1],
+        ["la2:ui1", 1],
+        ["la2:ui2", 1],
+      ]);
+      const result = snakeDraft([la1, la2, ui1, ui2], counts, MAX_PARTNERSHIP_REPEATS);
+      expect(result).not.toBeNull();
+      expect(isStackedHighs(result!, 5)).toBe(false);
+      expect(teamGap(result!)).toBe(0);
+      expect(result!.usedCapOverride).toBeUndefined();
+    });
+
+    it("6/5/4/3 mixed Split 2 (gap 2) stays eligible — the stack ban is not an absolute gap-2 cap", () => {
+      const adv = makePlayer("adv", { skillInt: 6 });
+      const la = makePlayer("la", { skillInt: 5 });
+      const ui = makePlayer("ui", { skillInt: 4 });
+      const mid = makePlayer("mid", { skillInt: 3 });
+      // Split 0 pairs stale; Split 2 (adv+ui vs la+mid, gap 2, mixed) is fresh.
+      const counts = new Map([
+        ["adv:mid", 1],
+        ["la:ui", 1],
+      ]);
+      const result = snakeDraft([adv, la, ui, mid], counts, MAX_PARTNERSHIP_REPEATS);
+      expect(result).not.toBeNull();
+      const idsA = result!.teamA.map((p) => p.player_id).sort();
+      const idsB = result!.teamB.map((p) => p.player_id).sort();
+      const stackedHighs =
+        (idsA.includes("adv") && idsA.includes("la")) ||
+        (idsB.includes("adv") && idsB.includes("la"));
+      expect(stackedHighs).toBe(false);
+      expect(teamGap(result!)).toBe(2);
+      expect(idsA).toEqual(["adv", "ui"]);
+    });
   });
 
   it("Pass 2b: last resort — returns most-balanced split when all capped on both partnership+opponent", () => {
@@ -1836,6 +1904,25 @@ describe("rotatedDraft — cap enforcement", () => {
     expect(result).not.toBeNull();
     expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
     expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("L.ADV+L.ADV+U.INT+INT: splitIndex=1 skips the stack, uses the mixed cross-split", () => {
+    const la1 = makePlayer("la1", { skillInt: 5 });
+    const la2 = makePlayer("la2", { skillInt: 5 });
+    const ui = makePlayer("ui", { skillInt: 4 });
+    const mid = makePlayer("mid", { skillInt: 3 });
+    const ids = ["la1", "la2", "ui", "mid"];
+    const result = rotatedDraft([la1, la2, ui, mid], [ids]);
+    expect(result).not.toBeNull();
+    // Sorted DESC: la1, la2, ui, mid. Split 1 = la1+la2 vs ui+mid (gap 3).
+    // Split 2 = la1+ui vs la2+mid.
+    const idsA = result!.teamA.map((p) => p.player_id).sort();
+    const idsB = result!.teamB.map((p) => p.player_id).sort();
+    const stacked =
+      (idsA[0] === "la1" && idsA[1] === "la2") || (idsB[0] === "la1" && idsB[1] === "la2");
+    expect(stacked).toBe(false);
+    expect(idsA).toEqual(["la1", "ui"]);
+    expect(idsB).toEqual(["la2", "mid"]);
   });
 
   it("falls back to the next mixed split when the natural rotation split is capped (splitIndex=0→Split 2)", () => {

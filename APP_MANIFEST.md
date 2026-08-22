@@ -464,9 +464,9 @@ Sort all 4 players DESC by skill, then apply a **two-pass approach** for partner
 
 Split order (most → least skill-balanced): `[0,3] vs [1,2]` → `[0,2] vs [1,3]` → `[0,1] vs [2,3]`.
 
-- **snakeDraft** (normal): **balance-gated four-pass** (2026-07-30; lopsided seating **banned** 2026-08-17). Splits are partitioned by team-skill gap: **balanced** = gap ≤ minGap + `SKILL_VARIANCE_MAX`. The four-pass freshness search runs over the **balanced pool only** — lopsided splits (high+high vs low+low, the INT+INT vs BEG+BEG incident) are never returned. When every balanced split is partnership-capped, snakeDraft still seats the four mixed and flags **`usedCapOverride: true`** so the caller can try a different body first. Preview and Tier-1/2 swaps treat that flag like today's `null` (must not prefer an over-cap four). Last-resort and the main path after Fix B accept it (keep the four). The tolerance keeps the fresh-pair preference alive between near-equal splits (6/5/4/3: Split 2's gap 2 is still acceptable) and consequently balance also outranks opponent-cap freshness. `null` is no longer the stall-break for a real four.
+- **snakeDraft** (normal): **balance-gated four-pass** (2026-07-30; lopsided seating **banned** 2026-08-17; two-highest stack **banned unless tied for best gap** 2026-08-22). Splits are partitioned by team-skill gap: **balanced** = gap ≤ minGap + `SKILL_VARIANCE_MAX`, and a seating that puts the two highest-skill players on the same team is balanced only when that gap equals minGap. The four-pass freshness search runs over the **balanced pool only** — lopsided splits (high+high vs low+low, the INT+INT vs BEG+BEG incident) and adjacent-tier stacks (L.ADV+L.ADV vs U.INT+INT, gap 3; L.ADV+L.ADV vs U.INT+U.INT, gap 2) are never returned. When every balanced split is partnership-capped, snakeDraft still seats the four mixed and flags **`usedCapOverride: true`** so the caller can try a different body first. Preview and Tier-1/2 swaps treat that flag like today's `null` (must not prefer an over-cap four). Last-resort and the main path after Fix B accept it (keep the four). The relative tolerance keeps the fresh-pair preference alive between near-equal *mixed* splits (6/5/4/3: Split 2's gap 2 is still acceptable) and consequently balance also outranks opponent-cap freshness. `null` is no longer the stall-break for a real four.
 - **Balance-preserving swap** (`runAlgorithm` main path): when snakeDraft flags `usedCapOverride`, the engine tries replacing each trio member (lowest-priority first, never a Red-Zone member — mirrors the diversity-swap guard) with another eligible scored candidate (skill window, ≤1 pulled body, no diversity violation) and takes the first swap whose draft is under the cap. If no such alternative exists, the mixed over-cap draft is accepted rather than stalling — never a lopsided split.
-- **rotatedDraft** (forced repeat): cycles through 3 split configs based on `repeatCount % 3`, then **drops lopsided splits from the cycle**. A 2-high+2-low four therefore rotates between the two mixed pairings, not top-vs-bottom. A 4/3/3/2 four (e2e [H-2]) still allows Split 1 because gap 2 is balanced. Returns **`null`** when every remaining balanced split is partnership-capped so Tier-3 can still expand the skill window — this function does not cap-override.
+- **rotatedDraft** (forced repeat): cycles through 3 split configs based on `repeatCount % 3`, then **drops lopsided and stacked-worse-than-minGap splits from the cycle**. A 2-high+2-low four therefore rotates between the two mixed pairings, not top-vs-bottom. A 4/3/3/2 four (e2e [H-2]) skips Split 1 for the same reason (two-highest stack, gap 2 > minGap 0) and continues to the mixed cross-split. Returns **`null`** when every remaining balanced split is partnership-capped so Tier-3 can still expand the skill window — this function does not cap-override.
 
 #### Anti-Repeat / Diversity Logic
 
@@ -1745,6 +1745,24 @@ Always wrapped in `AlertDialog` with explicit cancel + confirm. The only excepti
 **Full-screen overlay presence (`MatchAlertPresence`, `match-alert.tsx`):**
 The match takeover is presence-managed, not conditionally mounted: `player-dashboard.tsx` renders `<MatchAlertPresence active={…|null}>` unconditionally inside the status tabpanel so state changes animate (see §4.7); the committed-key state machine adjusts state during render (guarded, converges, StrictMode-safe). A11y contract: overlay containers are `role="region"` + descriptive `aria-label` — **never** `role="alert"`, which would re-announce the entire roster on every child update; one visually-hidden `role="status"` `aria-live="polite"` span announces each state change exactly once. Focus moves into the overlay on appear (`tabIndex={-1}` root, synchronous focus in an `isActive`-keyed effect) and restores to the previously-focused element on exit. The outgoing crossfade/exit layer is inert (`aria-hidden` + `pointer-events-none`) so its stale controls (e.g. the in_progress ScoreInputCard) can't be touched mid-transition. (E2E note: `getByRole("region", { name: /on deck|match starting/i })` — see scenario-e/j.)
 
+**Organizer session header (`session-header.tsx`):**
+The organizer board's sticky header is its own component, rendered by `organizer-dashboard.tsx` as a pure function of the board state — it owns no state of its own. Three bands, none of which may overflow:
+
+1. **Utility bar** — back link on the left; organizer name (`lg` and up), theme toggle, notice bell and, below `lg`, the ⋮ overflow menu on the right. Every icon control in the header lives in this one cluster at 44×44px, which is what makes the bell read as aligned rather than orphaned.
+2. **Command bar** — the identity block (session-switcher button carrying the `<h1>`, with the live tallies beneath it) beside the organizer controls (auto-matchmaking, auto-publish, draft cap, TV / Share / Close).
+3. **Tab rail** — horizontally scrollable, unchanged across widths.
+
+Band 2 is **one `flex-wrap` row at every width**. Wrapping, not a breakpoint, is what makes overflow structurally impossible: when the controls no longer fit beside the identity block they drop to their own line, and when they no longer fit on one line they wrap among themselves. Nothing in the header is `shrink-0` at a size that can exceed a phone viewport.
+
+Two rules keep it that way, and both are load-bearing:
+
+- **Every control renders exactly once.** Responsive behaviour is label-level (`hidden xl:inline` on a chip's text), never element-level. The earlier version carried a desktop copy and a mobile copy of the stats, the auto toggle, the publish toggle and the cap chip; the copies drifted — one said "in play" where the other said "active" — and the mobile copies sat below the 44px touch minimum. TV / Share / Close are the one exception to *rendering*, not to duplication: below `lg` the three chips are hidden and the ⋮ menu is the single route to the same three actions.
+- **The title button carries `max-w-[calc(100%+1rem)]`.** A `<button>` resolves `width:auto` to fit-content even inside a flex-shrunk parent, so without a cap the `truncate` on the `<h1>` never engages and the session name paints straight through the tallies. This is the exact defect the rebuild fixed. The cap is `100%+1rem` rather than `100%` because the button's `-mx-2` makes its wrapper shrink-to-fit to the button's *margin* box; a plain `max-w-full` resolves to that reduced width and truncates the title 1rem early even with a whole free row beside it.
+
+Shared chip chrome lives in the `CHIP` constant, which deliberately carries **no** `display` utility: Tailwind emits all display utilities in one group and the stylesheet order — not the class-attribute order — decides the winner, so a `CHIP` that began with `inline-flex` silently defeated `hidden lg:inline-flex` at the call site. Call sites supply their own display class (`inline-flex`, or `LINK_CHIP` which starts `hidden lg:inline-flex`).
+
+`/sandbox/organizer-header` renders the header alone with knobs for a long session name, sync-offline, a closed session and unread notice counts — the failure mode here is a layout one, and layout is only falsifiable against a live viewport.
+
 **Skill badge (`src/components/ui/skill-badge.tsx`):**
 
 - Light: `bg-{color}-100 text-{color}-800`
@@ -2306,6 +2324,8 @@ src/
   components/
     organizer/
       organizer-dashboard.tsx    # Shell, tab nav (courts/queue/monitor/history/leaderboard)
+      session-header.tsx         # Sticky organizer header — utility bar / command bar / tab rail
+      organizer-header-preview.tsx # Sandbox harness for session-header.tsx (/sandbox/organizer-header)
       organizer-entry.tsx        # Passcode gate / session picker for additional organizers
       active-courts.tsx          # Court cards, TeamsGrid, ScoreModal trigger, CourtTimeAlert
       on-deck-panel.tsx          # Pending match cards, swap flow, publish controls, H2HStrip

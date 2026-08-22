@@ -17,6 +17,12 @@
 
 ---
 
+## 2026-08-22 — two-highest stack banned unless tied for best gap
+
+`isBalancedSplit` (`matchmaking-core.ts`) still uses gap ≤ minGap + `SKILL_VARIANCE_MAX`, but a seating that puts the two highest-skill players on the same team is now balanced only when that gap equals minGap. That is what stops L.ADV+L.ADV vs U.INT+INT (gap 3) and vs U.INT+U.INT (gap 2): both were inside the +2 tolerance. Mixed Split 2 on 6/5/4/3 (gap 2, not stacked) stays eligible. e2e [H-2] 4/3/3/2 now rotates to Split 2 instead of Split 1; the assertion is still "partnership differs", so the spec does not change.
+
+---
+
 ## 🔒 STANDING CONSTRAINTS — carried forward, not history
 
 Narrative for each is in `docs/archive/MEMORY_HISTORY.md` (grep the phrase). These are here because
@@ -372,6 +378,17 @@ concurrent-branch slot until the plan limit is hit — at which point **every** 
 Preview" check is `CANCELLED` with "Maximum number of concurrent branches reached". Two had
 accumulated from PRs #70/#71. Check `list_branches` when that check goes red; the only non-recurring
 fix is turning branching off in the Supabase GitHub integration, since previews are never used here.
+
+🪤 **Two Tailwind/flexbox traps, both found in the organizer header rebuild.** (a) Tailwind emits
+every `display` utility in ONE group, so the generated stylesheet's order — not the order of the
+class attribute — picks the winner: a shared constant that starts `inline-flex` silently defeats a
+`hidden lg:inline-flex` appended at the call site, and the element stays visible on a phone. Keep
+`display` out of shared class constants; let call sites supply it. (b) A `<button>` resolves
+`width:auto` to fit-content **even inside a flex-shrunk parent**, so `truncate` on a descendant
+`<h1>` never engages without `max-w-full` on the button — that is how the session name came to paint
+straight through the live tallies at 1280. Both are only falsifiable against a live viewport:
+`/sandbox/organizer-header` renders the header alone with knobs for a long name, sync-offline, a
+closed session and unread counts.
 
 ## 📚 Where everything else lives
 

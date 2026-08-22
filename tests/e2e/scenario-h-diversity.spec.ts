@@ -39,8 +39,8 @@
 //   Engine: anchor + 3 (only choice) → diversity violation →
 //           Tier-1 swap fails (no other players) → Tier-2 expand
 //           fails (no fresh candidates) → Tier-3 rotatedDraft
-//           fires with repeatCount=1 (splitIndex=1: top pair
-//           vs bottom pair).
+//           fires with repeatCount=1 (splitIndex=1 skipped as a
+//           two-highest stack; rotation continues to Split 2).
 //   Assert: the new pending match contains exactly the same 4
 //           players AND the partnership pair {teamA_set, teamB_set}
 //           differs from the completed match's partnership pair —
