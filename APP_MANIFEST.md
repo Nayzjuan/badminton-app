@@ -1996,7 +1996,7 @@ after `renderHook` observes the effect's write, not the seed — only a per-rend
 - **Location:** `tests/e2e/`
 - **Run:** `npm run test:e2e` — or `npm run test:e2e:smoke` for Scenario B alone.
 - **Target:** Live Vercel deployment — **not localhost**.
-- **Credentials:** `playwright.config.ts` loads `.env.test` then `.env.local` (`override: false`, so `.env.test` wins). Both files are gitignored; nothing in the tree carries a working organizer credential. `npm run test:setup` (`tests/helpers/init-sandbox.ts`) reads the same two files.
+- **Credentials:** `playwright.config.ts` loads `.env.test` then `.env.local` (`override: false`, so `.env.test` wins). Both files are gitignored; nothing in the tree carries a working organizer credential. `npm run test:setup` (`tests/helpers/init-sandbox.ts`) reads the same two files with the same precedence, deliberately — it seeds the session the suite then tests, so a split would seed one project and test another.
 - **Auth bypass:** Header `x-vercel-protection-bypass: {VERCEL_BYPASS_SECRET}` injected in `playwright.config.ts`.
 - **Sandbox safety (teardown.ts):** Two hard guards before any DELETE: `TEST_SESSION_ID` env var must be defined AND `sessions.name` must start with `"🤖 E2E SANDBOX"`.
 - **Locator best practice:** Scope to dialog/container — `page.getByRole("dialog").getByText("E2E_Alice")` not `page.getByText("E2E_Alice")` (names can appear in Sonner toasts).

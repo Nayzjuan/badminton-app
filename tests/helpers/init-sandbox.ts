@@ -103,43 +103,39 @@ function upsertEnvFile(filePath: string, updates: Record<string, string>): void 
 
 // ── Load env: .env.local first, then system env as fallback ───
 function loadEnv(): Record<string, string> {
-  const envLocal = parseEnvFile(ENV_LOCAL);
-  // Also read .env.test. It is the file this script WRITES (TEST_SESSION_ID) and
-  // the file playwright.config.ts loads, so it is where the organizer credentials
-  // naturally live. Parsing only .env.local made `npm run test:setup` die with
-  // "TEST_ORGANIZER_EMAIL is not set" while the E2E suite itself ran fine — the
-  // credentials were present, just in the file this function did not look at.
-  // Strictly a new fallback: .env.local still wins where it defines a value.
+  // Precedence deliberately matches playwright.config.ts, which loads .env.test
+  // first and .env.local with `override: false` — so .env.test wins in both.
+  // They have to agree. This script seeds the very session the suite then tests;
+  // the moment .env.test points at a different project (which is exactly what
+  // moving the E2E bot off prod means) a seeder that preferred .env.local would
+  // write to one project while the suite ran against another, and the failure
+  // would look like missing seed data rather than a config split.
+  //
+  // Reading .env.test at all is the fix for `npm run test:setup` dying with
+  // "TEST_ORGANIZER_EMAIL is not set" while the E2E suite ran fine: the
+  // credentials were present, just in the file this function did not open.
+  // parseEnvFile returns an empty map for an absent file, so a checkout with
+  // no .env.test behaves exactly as before.
   const envTest = parseEnvFile(ENV_TEST);
+  const envLocal = parseEnvFile(ENV_LOCAL);
+  const pick = (...keys: string[]): string => {
+    for (const key of keys) {
+      const found = envTest.get(key) ?? envLocal.get(key) ?? process.env[key];
+      if (found) return found;
+    }
+    return "";
+  };
   return {
-    NEXT_PUBLIC_SUPABASE_URL:
-      envLocal.get("NEXT_PUBLIC_SUPABASE_URL") ??
-      envTest.get("NEXT_PUBLIC_SUPABASE_URL") ??
-      process.env.NEXT_PUBLIC_SUPABASE_URL ??
-      "",
-    SUPABASE_SERVICE_ROLE_KEY:
-      envLocal.get("SUPABASE_SERVICE_ROLE_KEY") ??
-      envLocal.get("NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY") ??
-      envTest.get("SUPABASE_SERVICE_ROLE_KEY") ??
-      process.env.SUPABASE_SERVICE_ROLE_KEY ??
-      "",
+    NEXT_PUBLIC_SUPABASE_URL: pick("NEXT_PUBLIC_SUPABASE_URL"),
+    SUPABASE_SERVICE_ROLE_KEY: pick(
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY"
+    ),
     // The organizer bot is a permanent account on a real project — it gets no
     // literal default here, for the same reason as tests/fixtures/auth.ts.
-    TEST_ORGANIZER_EMAIL:
-      envLocal.get("TEST_ORGANIZER_EMAIL") ??
-      envTest.get("TEST_ORGANIZER_EMAIL") ??
-      process.env.TEST_ORGANIZER_EMAIL ??
-      "",
-    TEST_ORGANIZER_PASSWORD:
-      envLocal.get("TEST_ORGANIZER_PASSWORD") ??
-      envTest.get("TEST_ORGANIZER_PASSWORD") ??
-      process.env.TEST_ORGANIZER_PASSWORD ??
-      "",
-    TEST_ORGANIZER_PIN:
-      envLocal.get("TEST_ORGANIZER_PIN") ??
-      envTest.get("TEST_ORGANIZER_PIN") ??
-      process.env.TEST_ORGANIZER_PIN ??
-      "",
+    TEST_ORGANIZER_EMAIL: pick("TEST_ORGANIZER_EMAIL"),
+    TEST_ORGANIZER_PASSWORD: pick("TEST_ORGANIZER_PASSWORD"),
+    TEST_ORGANIZER_PIN: pick("TEST_ORGANIZER_PIN"),
   };
 }
 
