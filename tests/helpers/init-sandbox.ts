@@ -59,6 +59,14 @@ function fail(msg: string) {
   process.exit(1);
 }
 
+// ── Placeholder detection ─────────────────────────────────────
+// .env.test.example uses two placeholder shapes, neither of them a usable
+// value: `<angle-bracketed prose>`, and a real-looking prefix cut off with a
+// literal ellipsis (the service-role key line). Both mean "not filled in yet".
+function isPlaceholderValue(value: string): boolean {
+  return !value || /^<.*>$/.test(value) || value.endsWith("...");
+}
+
 // ── Parse a .env file into a key→value map ────────────────────
 function parseEnvFile(filePath: string): Map<string, string> {
   const map = new Map<string, string>();
@@ -165,8 +173,7 @@ async function main() {
     "TEST_ORGANIZER_PASSWORD",
     "TEST_ORGANIZER_PIN",
   ] as const) {
-    // `<…>` is the placeholder shape used in .env.test.example — not a value.
-    if (!env[name] || /^<.*>$/.test(env[name])) {
+    if (isPlaceholderValue(env[name])) {
       fail(
         `${name} is not set.\n` +
           `    Add it to .env.local or .env.test — the organizer bot has no default credentials.\n` +
@@ -330,9 +337,15 @@ async function main() {
     updates.NEXT_PUBLIC_SUPABASE_URL = env.NEXT_PUBLIC_SUPABASE_URL;
   }
 
-  // Also backfill SUPABASE_SERVICE_ROLE_KEY if it's still the placeholder
+  // Also backfill SUPABASE_SERVICE_ROLE_KEY if it's still the placeholder.
+  // Detect the placeholder by its truncation marker, not by a hardcoded base64
+  // JWT header: the previous check keyed on the exact encoding of
+  // {"alg":"HS256","typ":"JWT"}, so an example file that ever switched `alg` --
+  // or moved to Supabase's non-JWT `sb_secret_*` key format -- would stop
+  // matching and silently leave the placeholder in place. No real secret ends
+  // in an ellipsis, so this cannot clobber a genuine key.
   const currentKey = existingTestEnv.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  if (!currentKey || (currentKey.startsWith("eyJhbGciOiJIUzI1NiIsIn") && currentKey.length < 60)) {
+  if (isPlaceholderValue(currentKey)) {
     updates.SUPABASE_SERVICE_ROLE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
   }
 

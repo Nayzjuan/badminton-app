@@ -85,6 +85,15 @@ async function findUserIdByEmail(
     if (error) {
       throw new Error(`[seed] findUserIdByEmail(${label}): ${error.message}`);
     }
+    // listUsers() can resolve with neither an error nor a payload — a gateway
+    // 5xx between here and GoTrue yields an empty body. Reading `data.users`
+    // then throws a bare TypeError naming neither the bot nor this call, which
+    // is what makes an already-flaky lookup unreadable in CI output.
+    if (!data?.users) {
+      throw new Error(
+        `[seed] findUserIdByEmail(${label}): listUsers returned no payload on page ${page}.`
+      );
+    }
     const found = data.users.find((u) => u.email === email);
     if (found) return found.id;
     if (data.users.length < perPage) break; // last page reached, exhausted
@@ -342,7 +351,11 @@ export async function signInOrganizerBot(page: Page, baseURL: string): Promise<v
   // Navigate to /play — middleware will validate cookies and redirect
   // appropriately. The organizer bot has no active queue entry, so it
   // should land on /play (session picker).
-  await page.goto(playUrl, { waitUntil: "networkidle" });
+  // Explicit timeout rather than inheriting use.navigationTimeout: /play opens a
+  // Supabase realtime websocket, so "networkidle" is not guaranteed to be reached
+  // at all. Bound it here so the failure names the navigation instead of surfacing
+  // as the enclosing beforeAll hook running out its 60s test timeout.
+  await page.goto(playUrl, { waitUntil: "networkidle", timeout: 30_000 });
 
   // The middleware may redirect — wait for any /play or /organizer URL
   await page.waitForURL(/\/(play|organizer)/, { timeout: 20_000 });
@@ -379,7 +392,19 @@ export async function loadOrganizerContext(context: BrowserContext): Promise<voi
   // the test uses `use: { storageState: ORGANIZER_STORAGE_STATE }`.
   // This function exists for explicit context loading in tests that
   // manage their own context (e.g., multi-context realtime tests).
-  const state = JSON.parse(fs.readFileSync(ORGANIZER_STORAGE_STATE, "utf8"));
+  // A run killed mid-write leaves this file truncated. Unguarded, the next run
+  // dies on a bare SyntaxError that names neither the file nor the remedy, and
+  // the file is gitignored so there is nothing to diff against.
+  let state: { cookies?: Parameters<BrowserContext["addCookies"]>[0] };
+  try {
+    state = JSON.parse(fs.readFileSync(ORGANIZER_STORAGE_STATE, "utf8"));
+  } catch (err) {
+    throw new Error(
+      `[auth] Organizer storage state at ${ORGANIZER_STORAGE_STATE} is unreadable: ` +
+        `${err instanceof Error ? err.message : String(err)}.\n` +
+        "Delete the file and re-run — signInOrganizerBot() rebuilds it."
+    );
+  }
   await context.addCookies(state.cookies ?? []);
 }
 
