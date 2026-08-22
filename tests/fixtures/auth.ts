@@ -28,6 +28,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { BrowserContext, Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
+import { isFilledValue } from "../helpers/env-placeholder";
 
 // ── Admin client (service role) ───────────────────────────────
 function getAdminClient() {
@@ -46,14 +47,13 @@ function getAdminClient() {
 // Fail loudly instead: an unset variable must stop the run, not silently log in.
 function requiredEnv(name: string): string {
   const value = process.env[name];
-  // A value copied verbatim from .env.test.example (`<generate-a-fresh-…>`) is
-  // not a credential. Treat it as unset, or the run fails later with an opaque
-  // "invalid login credentials" instead of naming the variable.
-  if (!value || /^<.*>$/.test(value)) {
+  // An uncopied placeholder is not a credential — share the test with
+  // init-sandbox.ts rather than restating it, so the two cannot drift.
+  if (!isFilledValue(value)) {
     throw new Error(
       `Missing ${name}. The E2E organizer bot has no default credentials. ` +
         "Set TEST_ORGANIZER_EMAIL / TEST_ORGANIZER_PASSWORD / TEST_ORGANIZER_PIN " +
-        "in .env.test (see .env.test.example)."
+        "in .env.test, which is gitignored and loaded by playwright.config.ts."
     );
   }
   return value;
