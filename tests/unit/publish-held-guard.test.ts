@@ -48,6 +48,10 @@ vi.mock("@/lib/match-event-log", () => ({
   logPublishedEvents: vi.fn(),
   fetchRosterSnapshots: vi.fn().mockResolvedValue(new Map()),
 }));
+vi.mock("@/lib/broadcast", () => ({
+  broadcastOrganizerIntervention: vi.fn(),
+  broadcastDraftsPublished: vi.fn(),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";

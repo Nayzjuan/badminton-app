@@ -19,7 +19,8 @@
 // calls undoLiveSwap().
 // ============================================================
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
+import { toast } from "sonner";
 import {
   swapPlayerInActiveMatch,
   swapTeamsInActiveMatch,
@@ -96,9 +97,12 @@ const INITIAL: LiveSwapState = {
 export function useLiveMatchSwap({
   sessionId,
   onSuccess,
+  activeMatches,
 }: {
   sessionId: string;
   onSuccess: (undoCtx: LiveSwapUndoContext) => void;
+  /** Live in-progress + pending set. Drives realtime close — not the open() snapshot. */
+  activeMatches?: EnrichedMatch[];
 }) {
   const [state, setState] = useState<LiveSwapState>(INITIAL);
   const [isPending, startTransition] = useTransition();
@@ -209,6 +213,13 @@ export function useLiveMatchSwap({
           result.errorCode === "ONDECK_MATCH_STARTED";
 
         if (shouldClose) {
+          if (result.errorCode === "PLAYER_NOT_IN_MATCH") {
+            toast.info(`${outgoingPlayer.display_name} was already moved.`);
+          } else if (result.errorCode === "MATCH_NOT_ACTIVE") {
+            toast.info("This match is no longer live.");
+          } else {
+            toast.warning("That on-deck match already started.");
+          }
           setState(INITIAL);
         } else {
           setState((prev) => ({
@@ -228,6 +239,27 @@ export function useLiveMatchSwap({
     const result = await undoLiveSwap(ctx);
     return result.success;
   }
+
+  // Realtime close from the LIVE list, not the snapshot `open()` stored.
+  // Skip while we are the ones submitting — our own success already closes.
+  useEffect(() => {
+    if (!activeMatches) return;
+    const { isOpen, isSubmitting, outgoingPlayer, match } = state;
+    if (!isOpen || isSubmitting || !outgoingPlayer || !match) return;
+    const live = activeMatches.find((m) => m.id === match.id);
+    if (!live || live.status !== "in_progress") {
+      toast.info("This match is no longer live.");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState(INITIAL);
+      return;
+    }
+    const roster = live.players ?? [];
+    if (roster.length > 0 && !roster.some((p) => p.player_id === outgoingPlayer.player_id)) {
+      toast.info(`${outgoingPlayer.display_name} was already moved.`);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState(INITIAL);
+    }
+  }, [activeMatches, state]);
 
   return {
     state,

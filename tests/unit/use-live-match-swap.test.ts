@@ -79,6 +79,8 @@
 //          is ALL it refuses; a sheet that latched shut would pass LS-16 too)
 //   LS-27  undo() forwards the exact context and reports the server's success
 //   LS-28  (negative) undo() reports false when the server refuses
+//   LS-29  a live roster drop closes from activeMatches, not the open() snapshot
+//   LS-29b an empty live roster does not close (enrich glitch, not a move)
 //
 // WHAT THIS FILE DOES NOT PROVE
 //   - That the RPCs move the right rows, or that they are atomic. That is
@@ -188,10 +190,14 @@ const OK = { success: true, message: "Player swapped.", undoContext: UNDO_CTX };
 
 type Hook = ReturnType<typeof useLiveMatchSwap>;
 
-function setup() {
+function setup(activeMatches?: EnrichedMatch[]) {
   const onSuccess = vi.fn();
-  const view = renderHook(() => useLiveMatchSwap({ sessionId: SESSION_ID, onSuccess }));
-  return { result: view.result as { current: Hook }, onSuccess };
+  const view = renderHook(
+    ({ matches }: { matches?: EnrichedMatch[] }) =>
+      useLiveMatchSwap({ sessionId: SESSION_ID, onSuccess, activeMatches: matches }),
+    { initialProps: { matches: activeMatches } }
+  );
+  return { result: view.result as { current: Hook }, onSuccess, rerender: view.rerender };
 }
 
 /** Opens the sheet on OUTGOING (team a) and picks `candidate`. */
@@ -1133,5 +1139,49 @@ describe("useLiveMatchSwap — client state machine (LS)", () => {
       reversed,
       "a refused reversal was reported as success — the organizer is told the swap was undone while both players are still where the swap put them"
     ).toBe(false);
+  });
+
+  it("LS-29: a live roster drop closes the sheet from activeMatches, not the open() snapshot", () => {
+    const withOut = {
+      ...MATCH,
+      status: "in_progress",
+      players: [{ player_id: OUTGOING.player_id }, { player_id: TEAM_PICK.player_id }],
+    } as EnrichedMatch;
+    const withoutOut = {
+      ...MATCH,
+      status: "in_progress",
+      players: [{ player_id: TEAM_PICK.player_id }],
+    } as EnrichedMatch;
+    const { result, rerender } = setup([withOut]);
+
+    act(() => {
+      result.current.open(OUTGOING, "a", MATCH);
+    });
+    expect(result.current.isOpen).toBe(true);
+
+    act(() => {
+      rerender({ matches: [withoutOut] });
+    });
+    expect(result.current.isOpen).toBe(false);
+  });
+
+  it("LS-29b: an empty live roster does not close the sheet (enrich glitch, not a move)", () => {
+    const withOut = {
+      ...MATCH,
+      status: "in_progress",
+      players: [{ player_id: OUTGOING.player_id }],
+    } as EnrichedMatch;
+    const emptyRoster = { ...MATCH, status: "in_progress", players: [] } as EnrichedMatch;
+    const { result, rerender } = setup([withOut]);
+
+    act(() => {
+      result.current.open(OUTGOING, "a", MATCH);
+    });
+    expect(result.current.isOpen).toBe(true);
+
+    act(() => {
+      rerender({ matches: [emptyRoster] });
+    });
+    expect(result.current.isOpen).toBe(true);
   });
 });

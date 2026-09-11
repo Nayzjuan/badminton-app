@@ -8,6 +8,7 @@
 //
 // Key invariants tested:
 //   • Idempotency: second close returns "already closed" with no side effects
+//   • Concurrent close: only the ended_at claim winner computes Wrapped (Test 3b)
 //   • Authorization: non-organizer rejected; co-organizer succeeds
 //   • Authorization ORDER: the denial is not a session-UUID existence or
 //     status oracle (Test 1b) — the gate must precede the session fetch
@@ -246,6 +247,43 @@ describe("closeSession — Suite B", () => {
       .eq("session_id", session.id);
 
     // Should have stats for all 4 players — not duplicated
+    expect(wrappedCount).toBeLessThanOrEqual(4);
+  });
+
+  // Two organizers tapping Close at the same instant used to both pass an
+  // is_active read, both run compute_session_wrapped, then the slower one
+  // re-wrote awards after the winner had cancelled pending matches. The
+  // ended_at claim is the CAS that makes the second return alreadyClosed
+  // without touching Wrapped.
+  it("Test 3b: concurrent closes — only the claim winner succeeds", async () => {
+    const { session, organizer } = await seedActiveSession();
+
+    const restore = mockAuthAs(organizer.id);
+    let first: Awaited<ReturnType<typeof closeSession>>;
+    let second: Awaited<ReturnType<typeof closeSession>>;
+    try {
+      [first, second] = await Promise.all([closeSession(session.id), closeSession(session.id)]);
+    } finally {
+      restore();
+    }
+
+    const wins = [first, second].filter((r) => r.success);
+    const yielded = [first, second].filter((r) => r.alreadyClosed || r.closeInFlight);
+    expect(wins).toHaveLength(1);
+    expect(yielded).toHaveLength(1);
+    expect(yielded[0]?.success).toBe(false);
+
+    const { data: s } = await serviceClient()
+      .from("sessions")
+      .select("is_active")
+      .eq("id", session.id)
+      .single();
+    expect(s?.is_active).toBe(false);
+
+    const { count: wrappedCount } = await serviceClient()
+      .from("session_wrapped_stats")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", session.id);
     expect(wrappedCount).toBeLessThanOrEqual(4);
   });
 

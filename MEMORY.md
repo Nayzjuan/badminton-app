@@ -17,6 +17,20 @@
 
 ---
 
+## 2026-09-11 — co-organizer UI: stale modals close; named toasts
+
+Idle score modal settles only when `endMatch` is not in flight, then reads `matches.status` so scored vs cancelled stays distinct (`idleScoreModalDecision`, `toastForTerminalMatchStatus`). Swap sheets still close on `PLAYER_NOT_IN_MATCH` (LS-22); they now toast the outgoing name and close from the **live** match list. `drafts_published` names a co-organizer publish. Auto-off/on toasts on the other tab via `pendingAuto` skip. `session_closed` may carry the closer; organizer `creditCloser` waits 200 ms for that name after a nameless row/poll. Pins: ISM-1–8, CT-1–3, SS-4c, LS-29, LS-29b, OD-24, PE-1/2, CST-12.
+
+## 2026-09-10 — co-organizer audit: close serialized; duplicate-session parked
+
+`closeSession` (`claimSessionClose`) now CAS-stamps `sessions.ended_at` while `is_active` stays true, then runs Wrapped, then CAS-flips `is_active`. A second closer gets `closeInFlight` (stay on the board) if Wrapped is still running, or `alreadyClosed` if the night is done — never a second `compute_session_wrapped`. A claim older than 30s with `is_active` still true can be stolen (crashed closer); a lost steal re-reads and returns `closeInFlight` if the night is still live. Pins: CST-8/9/10/11, OD-22l, Test 3b.
+
+**Kept on purpose:** club members who open `/c/[slug]/organizer` still see the co-organizer passcode on active cards. That is the join path.
+
+**PARKED — duplicate active session per club.** `createSession` still has only the 10-minute SELECT-then-INSERT window. A sub-commit-latency double-create can still open two active nights in one club (07/25 incident class). Closing it fully is a partial UNIQUE on `(club_id) WHERE is_active AND NOT is_hidden`. Do not "just add the index" without a product call on whether a club may run two overlapping nights.
+
+---
+
 ## 2026-08-22 — two-highest stack banned unless tied for best gap
 
 `isBalancedSplit` (`matchmaking-core.ts`) still uses gap ≤ minGap + `SKILL_VARIANCE_MAX`, but a seating that puts the two highest-skill players on the same team is now balanced only when that gap equals minGap. That is what stops L.ADV+L.ADV vs U.INT+INT (gap 3) and vs U.INT+U.INT (gap 2): both were inside the +2 tolerance. Mixed Split 2 on 6/5/4/3 (gap 2, not stacked) stays eligible. e2e [H-2] 4/3/3/2 now rotates to Split 2 instead of Split 1; the assertion is still "partnership differs", so the spec does not change.

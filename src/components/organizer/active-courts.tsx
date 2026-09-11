@@ -33,6 +33,8 @@ import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { MatchmakingResult } from "@/app/actions/matchmaking";
 import type { MatchActionCode } from "@/app/actions/_shared";
 import { settledMatchToast } from "@/lib/settled-match-toast";
+import { idleScoreModalDecision, toastForTerminalMatchStatus } from "@/lib/idle-score-modal";
+import { createBrowserSupabaseClient } from "@/utils/supabase/client";
 import type { RosterPlayer } from "@/components/organizer/match-roster";
 import { CourtCard } from "./court-card";
 
@@ -104,6 +106,12 @@ export function ActiveCourts({
   const [scoringMatchId, setScoringMatchId] = useState<string | null>(null);
   const scoringMatch =
     scoringMatchId !== null ? (activeMatches.find((m) => m.id === scoringMatchId) ?? null) : null;
+  // Set BEFORE awaiting endMatch. The action always refetches, so the id
+  // drops from activeMatches while submit is still in flight — that path
+  // belongs to settledMatchToast, not the idle closer.
+  const endingMatchIdRef = useRef<string | null>(null);
+  const scoringMatchIdRef = useRef<string | null>(scoringMatchId);
+  scoringMatchIdRef.current = scoringMatchId;
 
   // ── Live swap state ─────────────────────────────────────────
   // Set of all player IDs currently in ANY in_progress match —
@@ -120,6 +128,7 @@ export function ActiveCourts({
 
   const liveSwap = useLiveMatchSwap({
     sessionId,
+    activeMatches,
     onSuccess: (undoCtx) => {
       const description =
         undoCtx.type === "team_swap"
@@ -157,6 +166,33 @@ export function ActiveCourts({
     setBanner(t);
     bannerTimerRef.current = setTimeout(() => setBanner(null), TOAST_DISMISS_MS);
   }
+
+  // Idle close: a co-organizer or player settled this match while the modal
+  // sat open. Skip while our own endMatch is in flight — that refetch would
+  // otherwise steal scored-vs-cancelled from settledMatchToast.
+  const liveMatchIds = useMemo(() => activeMatches.map((m) => m.id), [activeMatches]);
+  useEffect(() => {
+    const id = scoringMatchId;
+    const decision = idleScoreModalDecision({
+      scoringMatchId: id,
+      liveMatchIds,
+      endingMatchId: endingMatchIdRef.current,
+    });
+    if (decision !== "settle" || !id) return;
+    let cancelled = false;
+    void (async () => {
+      const supabase = createBrowserSupabaseClient();
+      const { data } = await supabase.from("matches").select("status").eq("id", id).maybeSingle();
+      if (cancelled || scoringMatchIdRef.current !== id) return;
+      if (endingMatchIdRef.current === id) return;
+      const settled = toastForTerminalMatchStatus(data?.status);
+      setScoringMatchId(null);
+      showToast({ type: "warning", ...settled });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [scoringMatchId, liveMatchIds]);
 
   // ── Helpers ─────────────────────────────────────────────────
   function setCourtError(courtId: string, msg: string | null) {
@@ -463,27 +499,32 @@ export function ActiveCourts({
         onClose={() => setScoringMatchId(null)}
         onSubmit={async (teamAScore, teamBScore) => {
           if (!scoringMatchId) return { error: "No match selected." };
-          const result = await onEndMatch(scoringMatchId, teamAScore, teamBScore);
-          const settledToast = settledMatchToast(result.code);
-          if (settledToast) {
-            // The match is settled — by someone else, one way or another. The
-            // board has already been refetched by onEndMatch, so close the modal
-            // rather than holding the organizer on a form for a match that is
-            // now in history. settledMatchToast owns which of the two outcomes
-            // this is; the copy differs materially between them.
-            setScoringMatchId(null);
-            showToast({ type: "warning", ...settledToast });
-            return { settled: true, settledMessage: result.error };
+          endingMatchIdRef.current = scoringMatchId;
+          try {
+            const result = await onEndMatch(scoringMatchId, teamAScore, teamBScore);
+            const settledToast = settledMatchToast(result.code);
+            if (settledToast) {
+              // The match is settled — by someone else, one way or another. The
+              // board has already been refetched by onEndMatch, so close the modal
+              // rather than holding the organizer on a form for a match that is
+              // now in history. settledMatchToast owns which of the two outcomes
+              // this is; the copy differs materially between them.
+              setScoringMatchId(null);
+              showToast({ type: "warning", ...settledToast });
+              return { settled: true, settledMessage: result.error };
+            }
+            if (!result.error) {
+              setScoringMatchId(null);
+              showToast({
+                type: "success",
+                title: "Match Ended",
+                body: `Score: ${teamAScore} – ${teamBScore}. Players back in queue.`,
+              });
+            }
+            return result;
+          } finally {
+            endingMatchIdRef.current = null;
           }
-          if (!result.error) {
-            setScoringMatchId(null);
-            showToast({
-              type: "success",
-              title: "Match Ended",
-              body: `Score: ${teamAScore} – ${teamBScore}. Players back in queue.`,
-            });
-          }
-          return result;
         }}
       />
 

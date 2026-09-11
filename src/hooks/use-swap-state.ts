@@ -113,6 +113,23 @@ export function useSwapState(
     if (onDeckMatches.length < prevLen) {
       setSwapContext(null);
       toast.warning("A match moved to a court — tap a player to try again.");
+      return;
+    }
+
+    // (c) Sheet still open but the outgoing player left that pending match.
+    // SS-4 does not run (the match is still on-deck). Swap broadcasts have
+    // no actor, so this toast is what names the move.
+    if (swapContext.mode === "sheet") {
+      const live = onDeckMatches.find((m) => m.id === swapContext.matchId);
+      const roster = live?.players ?? [];
+      if (
+        live &&
+        roster.length > 0 &&
+        !roster.some((p) => p.player_id === swapContext.outPlayerId)
+      ) {
+        setSwapContext(null);
+        toast.info(`${swapContext.outPlayerName} was already moved.`);
+      }
     }
   }, [onDeckMatches, swapContext]);
 

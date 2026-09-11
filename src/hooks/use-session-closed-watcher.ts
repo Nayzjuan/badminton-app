@@ -44,6 +44,7 @@ import { clubBase, clubWrapped } from "@/lib/club-paths";
 import { getPlayerSessionStatus } from "@/app/actions/sessions";
 import { withTimeout } from "@/lib/with-timeout";
 import type { SessionClosedPayload } from "@/lib/broadcast";
+import { closerToastMessage } from "@/lib/closer-toast";
 
 /**
  * Let the "session's over" toast register before the route changes.
@@ -55,6 +56,14 @@ import type { SessionClosedPayload } from "@/lib/broadcast";
  * destination probe runs in, so the shorter delay costs nothing.
  */
 const WRAPPED_REDIRECT_DELAY_MS = 250;
+
+/**
+ * How long an organizer board waits for a named `session_closed` after a
+ * nameless row/poll signal. Broadcast and the is_active flip usually arrive
+ * together; this is the leftover that lets the closer's name land on the
+ * toast without a `closed_by` column.
+ */
+const CLOSER_NAME_GRACE_MS = 200;
 
 /**
  * How long the per-viewer destination probe gets before we commit anyway.
@@ -118,6 +127,12 @@ export function useSessionClosedWatcher(
     fallbackPath?: string;
     /** Copy for the pre-redirect toast. */
     toastMessage?: string;
+    /**
+     * Organizer boards only. When set, a closer name on the payload
+     * replaces toastMessage ("{name} closed the session."). Players
+     * must leave this off so the awards copy never changes.
+     */
+    creditCloser?: boolean;
   }
 ): SessionClosedWatcher {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
@@ -126,6 +141,7 @@ export function useSessionClosedWatcher(
 
   const fallbackPath = options?.fallbackPath;
   const toastMessage = options?.toastMessage ?? "Session's over — time to see your awards! 🏆";
+  const creditCloser = options?.creditCloser === true;
 
   // Keep stable refs so subscription callbacks always read current values
   // without re-registering channels.
@@ -134,6 +150,7 @@ export function useSessionClosedWatcher(
   const clubSlugRef = useRef(clubSlug);
   const fallbackPathRef = useRef(fallbackPath);
   const toastMessageRef = useRef(toastMessage);
+  const creditCloserRef = useRef(creditCloser);
   useEffect(() => {
     playerIdRef.current = playerId;
   });
@@ -148,6 +165,9 @@ export function useSessionClosedWatcher(
   });
   useEffect(() => {
     toastMessageRef.current = toastMessage;
+  });
+  useEffect(() => {
+    creditCloserRef.current = creditCloser;
   });
 
   // All three detection paths can conclude "closed" for the same closure
@@ -165,6 +185,12 @@ export function useSessionClosedWatcher(
   // returning player to the lobby once the session is inactive), and an
   // uncancelled push would then yank them off the page they just landed on.
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLeaveRef = useRef<{
+    wrappedReady: boolean | undefined;
+    actorId?: string | null;
+    actorName?: string | null;
+  } | null>(null);
   useEffect(() => {
     // Reset on every mount, not just the first: StrictMode's double-invoke in
     // dev would otherwise leave this latched true for the surviving mount.
@@ -172,6 +198,7 @@ export function useSessionClosedWatcher(
     return () => {
       unmountedRef.current = true;
       if (redirectTimerRef.current !== null) clearTimeout(redirectTimerRef.current);
+      if (graceTimerRef.current !== null) clearTimeout(graceTimerRef.current);
     };
   }, []);
 
@@ -223,12 +250,28 @@ export function useSessionClosedWatcher(
    *   came from the row subscription or a poll (older clients also send
    *   `undefined`, which must NOT be read as `false`).
    */
-  const leaveClosedSession = useCallback(
-    (wrappedReady: boolean | undefined) => {
+  const commitLeave = useCallback(
+    (pending: {
+      wrappedReady: boolean | undefined;
+      actorId?: string | null;
+      actorName?: string | null;
+    }) => {
       if (navigatedRef.current || suppressedRef.current) return;
       navigatedRef.current = true;
+      pendingLeaveRef.current = null;
+      if (graceTimerRef.current !== null) {
+        clearTimeout(graceTimerRef.current);
+        graceTimerRef.current = null;
+      }
 
-      toast.info(toastMessageRef.current, { duration: 2_000 });
+      const message = creditCloserRef.current
+        ? closerToastMessage(toastMessageRef.current, playerIdRef.current, {
+            actorId: pending.actorId,
+            actorName: pending.actorName,
+          })
+        : toastMessageRef.current;
+
+      toast.info(message, { duration: 2_000 });
 
       // Repaint the current route from the server immediately, so anything
       // still on screen reflects the closed session even if the push below is
@@ -255,7 +298,7 @@ export function useSessionClosedWatcher(
         }, WRAPPED_REDIRECT_DELAY_MS);
       });
 
-      void Promise.all([resolveDestination(wrappedReady), toastShown]).then(([path]) => {
+      void Promise.all([resolveDestination(pending.wrappedReady), toastShown]).then(([path]) => {
         if (unmountedRef.current) return;
         routerRef.current.push(path);
       });
@@ -263,10 +306,62 @@ export function useSessionClosedWatcher(
     [resolveDestination]
   );
 
+  const leaveClosedSession = useCallback(
+    (
+      wrappedReady: boolean | undefined,
+      actor?: { actorId?: string | null; actorName?: string | null }
+    ) => {
+      if (navigatedRef.current || suppressedRef.current) return;
+
+      if (pendingLeaveRef.current) {
+        if (actor?.actorName) {
+          pendingLeaveRef.current = {
+            ...pendingLeaveRef.current,
+            actorId: actor.actorId,
+            actorName: actor.actorName,
+            wrappedReady: wrappedReady ?? pendingLeaveRef.current.wrappedReady,
+          };
+          commitLeave(pendingLeaveRef.current);
+        }
+        return;
+      }
+
+      const named =
+        creditCloserRef.current &&
+        !!actor?.actorName &&
+        !!actor.actorId &&
+        actor.actorId !== playerIdRef.current;
+
+      if (creditCloserRef.current && !named) {
+        pendingLeaveRef.current = {
+          wrappedReady,
+          actorId: actor?.actorId,
+          actorName: actor?.actorName,
+        };
+        graceTimerRef.current = setTimeout(() => {
+          graceTimerRef.current = null;
+          const pending = pendingLeaveRef.current;
+          if (pending) commitLeave(pending);
+        }, CLOSER_NAME_GRACE_MS);
+        return;
+      }
+
+      commitLeave({
+        wrappedReady,
+        actorId: actor?.actorId,
+        actorName: actor?.actorName,
+      });
+    },
+    [commitLeave]
+  );
+
   // ── Path 1: broadcast (fed in by the caller) ──────────────────
   const handleSessionClosed = useCallback(
     (payload?: SessionClosedPayload) => {
-      leaveClosedSession(payload?.wrappedReady);
+      leaveClosedSession(payload?.wrappedReady, {
+        actorId: payload?.actorId,
+        actorName: payload?.actorName,
+      });
     },
     [leaveClosedSession]
   );

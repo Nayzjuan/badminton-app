@@ -14,7 +14,7 @@ import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
-import { broadcastOrganizerIntervention } from "@/lib/broadcast";
+import { broadcastOrganizerIntervention, broadcastDraftsPublished } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import {
@@ -435,6 +435,11 @@ export async function publishMatchAction(
         actorId: publishActor.id,
         actorName: publishActor.name,
       });
+      void broadcastDraftsPublished(match.session_id, {
+        actorId: publishActor.id,
+        actorName: publishActor.name,
+        count: 1,
+      });
 
       // On-deck ping: this draft's players just transitioned drafted → on_deck.
       // Fetch the roster and notify them (OS-level push for backgrounded phones),
@@ -583,6 +588,11 @@ async function publishMatchFallback(
       actorId: fallbackActor.id,
       actorName: fallbackActor.name,
     });
+    void broadcastDraftsPublished(sessionId, {
+      actorId: fallbackActor.id,
+      actorName: fallbackActor.name,
+      count: 1,
+    });
   }
 
   if (playerIds.length > 0) {
@@ -714,6 +724,11 @@ export async function publishAllDraftMatchesAction(
         reason: "publish_all",
         actorId: batchActor.id,
         actorName: batchActor.name,
+      });
+      void broadcastDraftsPublished(sessionId, {
+        actorId: batchActor.id,
+        actorName: batchActor.name,
+        count: publishedIds.length,
       });
 
       const { data: rosterRows } = await svc
@@ -868,6 +883,11 @@ async function publishAllDraftsFallback(
       reason: "publish_all",
       actorId: batchFallbackActor.id,
       actorName: batchFallbackActor.name,
+    });
+    void broadcastDraftsPublished(sessionId, {
+      actorId: batchFallbackActor.id,
+      actorName: batchFallbackActor.name,
+      count: publishedMatchIds.size,
     });
 
     const publishedPlayerIds = [

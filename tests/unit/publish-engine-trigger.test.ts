@@ -29,12 +29,17 @@ vi.mock("@/lib/match-event-log", () => ({
   logPublishedEvents: vi.fn(),
   fetchRosterSnapshots: vi.fn().mockResolvedValue(new Map()),
 }));
+vi.mock("@/lib/broadcast", () => ({
+  broadcastOrganizerIntervention: vi.fn(),
+  broadcastDraftsPublished: vi.fn(),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { runEngineForSession } from "@/app/actions/matchmaking";
 import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match-drafts";
+import { broadcastDraftsPublished } from "@/lib/broadcast";
 
 // ── Valid UUIDs ────────────────────────────────────────────────
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
@@ -139,6 +144,11 @@ describe("publishMatchAction — engine trigger", () => {
     expect(result.success).toBe(true);
     expect(runEngineForSession).toHaveBeenCalledOnce();
     expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(broadcastDraftsPublished).toHaveBeenCalledWith(SESSION_ID, {
+      actorId: "user-1",
+      actorName: "Org",
+      count: 1,
+    });
   });
 
   // ── PE-2 ───────────────────────────────────────────────────────
@@ -154,6 +164,7 @@ describe("publishMatchAction — engine trigger", () => {
 
     expect(result.success).toBe(true);
     expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(broadcastDraftsPublished).not.toHaveBeenCalled();
   });
 
   // ── PE-3 ───────────────────────────────────────────────────────

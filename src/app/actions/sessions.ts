@@ -159,9 +159,11 @@ export async function createSession(opts: {
   // second session later in the day.
   //
   // Best-effort SELECT-then-INSERT: a sub-commit-latency tie can still slip
-  // through (closing that fully needs a DB constraint, and time-window
-  // uniqueness can't be expressed as an index). This catches the realistic
-  // human race; the 343 ms real one would have been caught.
+  // through. Closing that fully needs a partial UNIQUE on
+  // `(club_id) WHERE is_active AND NOT is_hidden` — PARKED, not in this
+  // change. Time-window uniqueness cannot be expressed as an index. This
+  // catches the realistic human race; the 343 ms real one would have been
+  // caught. See MEMORY.md (duplicate active session per club).
   // is_hidden=false keeps the E2E sandbox session out of the guard.
   const DUPLICATE_SESSION_WINDOW_MS = 10 * 60_000;
   const dupCutoff = new Date(Date.now() - DUPLICATE_SESSION_WINDOW_MS).toISOString();
@@ -1031,6 +1033,13 @@ export type CloseSessionResult = {
    * back into a red toast.
    */
   alreadyClosed?: boolean;
+  /**
+   * true when another closer has claimed (`ended_at` set) but `is_active` is
+   * still true — Wrapped is in flight. The UI must NOT treat this as a
+   * finished night: navigating away would leave the board while the session
+   * is still live. Stay; the watcher will move this tab when the flip lands.
+   */
+  closeInFlight?: boolean;
 };
 
 /**
@@ -1057,6 +1066,118 @@ export type CloseSessionResult = {
  * (~827 ms each) and leaves ~5 s for the flip + broadcast.
  */
 const CLOSE_WRAPPED_PHASE_MS = 5_000;
+
+/**
+ * How long a close-claim (`ended_at` stamped, `is_active` still true) is
+ * treated as an in-flight close rather than a crashed one. Must sit well
+ * above the Wrapped phase budget so a healthy closer is never stolen from
+ * mid-compute; short enough that a serverless kill after the claim cannot
+ * leave the night un-closeable.
+ */
+const CLOSE_CLAIM_STALE_MS = 30_000;
+
+type CloseClaimResult =
+  | { ok: true }
+  | { ok: false; alreadyClosed?: boolean; closeInFlight?: boolean; message: string };
+
+/**
+ * Exclusive claim on closing this session, WITHOUT flipping `is_active`.
+ *
+ * The client watcher redirects on `is_active === false` (postgres_changes
+ * and the status poll). Wrapped rows must exist before that flip, or
+ * viewers get sent to the lobby instead of their recap. So the claim
+ * stamps `ended_at` while leaving the session "live"; the loser of the
+ * CAS never runs `compute_session_wrapped` — that is the whole point.
+ * Two concurrent closes used to both pass an `is_active` read, both
+ * compute awards, then the slower one re-ran Wrapped after the winner
+ * had already cancelled pending matches and drained the queue.
+ *
+ * A crashed closer (claim landed, process died before the flip) leaves
+ * `ended_at` set and `is_active` true. After CLOSE_CLAIM_STALE_MS a
+ * later organizer can steal the claim with a CAS on the old `ended_at`.
+ */
+async function claimSessionClose(
+  supabase: ReturnType<typeof createServiceClient>,
+  sessionId: string
+): Promise<CloseClaimResult> {
+  const claimedAt = new Date().toISOString();
+  const { data: claimed, error: claimErr } = await supabase
+    .from("sessions")
+    .update({ ended_at: claimedAt })
+    .eq("id", sessionId)
+    .eq("is_active", true)
+    .is("ended_at", null)
+    .select("id");
+
+  if (claimErr) {
+    return { ok: false, message: `Failed to close session: ${claimErr.message}` };
+  }
+  if (claimed && claimed.length > 0) return { ok: true };
+
+  const { data: row, error: readErr } = await supabase
+    .from("sessions")
+    .select("id, is_active, ended_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (readErr) {
+    return { ok: false, message: `Failed to close session: ${readErr.message}` };
+  }
+  // Organizer gate already passed; a missing row here is a concurrent delete,
+  // not "you don't organize this". Same message as the pre-claim miss.
+  if (!row) return { ok: false, message: "Session not found." };
+  if (!row.is_active) {
+    return { ok: false, alreadyClosed: true, message: "Session is already closed." };
+  }
+  // Claim UPDATE returned 0 rows but the re-read is still claimable.
+  // Do not label that alreadyClosed — the night is live (OD-22l).
+  if (!row.ended_at) {
+    return { ok: false, message: "Could not close the session. Please try again." };
+  }
+
+  const claimedMs = Date.parse(row.ended_at);
+  const age = Number.isFinite(claimedMs) ? Date.now() - claimedMs : Number.POSITIVE_INFINITY;
+  if (age < CLOSE_CLAIM_STALE_MS) {
+    return {
+      ok: false,
+      closeInFlight: true,
+      message: "Another organizer is closing this session.",
+    };
+  }
+
+  const { data: stolen, error: stealErr } = await supabase
+    .from("sessions")
+    .update({ ended_at: new Date().toISOString() })
+    .eq("id", sessionId)
+    .eq("is_active", true)
+    .eq("ended_at", row.ended_at)
+    .select("id");
+
+  if (stealErr) {
+    return { ok: false, message: `Failed to close session: ${stealErr.message}` };
+  }
+  if (stolen && stolen.length > 0) return { ok: true };
+
+  // Steal lost the CAS. Re-read: the night may already be flipped, or
+  // another recoverer now holds the claim. Do not treat "0 steal rows"
+  // as alreadyClosed — that is the OD-22l failure mode (leave a live board).
+  const { data: afterSteal, error: afterErr } = await supabase
+    .from("sessions")
+    .select("id, is_active, ended_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (afterErr) {
+    return { ok: false, message: `Failed to close session: ${afterErr.message}` };
+  }
+  if (!afterSteal || !afterSteal.is_active) {
+    return { ok: false, alreadyClosed: true, message: "Session is already closed." };
+  }
+  return {
+    ok: false,
+    closeInFlight: true,
+    message: "Another organizer is closing this session.",
+  };
+}
 
 type CloseRpcOutcome = "ok" | "timeout" | "failed";
 
@@ -1145,19 +1266,19 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
     return { success: false, message: "Not authorized. Organizer access required." };
   }
 
-  // Verify the session is currently active. Only an organizer reaches here,
-  // so both branches below are safe to distinguish.
-  const { data: session, error: sessionError } = await supabase
-    .from("sessions")
-    .select("id, is_active")
-    .eq("id", sessionId)
-    .single();
-
-  if (sessionError || !session) {
-    return { success: false, message: "Session not found." };
-  }
-  if (!session.is_active) {
-    return { success: false, message: "Session is already closed.", alreadyClosed: true };
+  // Exclusive claim BEFORE Wrapped. Stamps `ended_at` while leaving
+  // `is_active` true so client watchers (which redirect on the is_active
+  // flip) do not fire until awards exist. The loser never runs
+  // compute_session_wrapped: alreadyClosed if the night is done, closeInFlight
+  // if another closer is still in Wrapped.
+  const claim = await claimSessionClose(supabase, sessionId);
+  if (!claim.ok) {
+    return {
+      success: false,
+      message: claim.message,
+      alreadyClosed: claim.alreadyClosed,
+      closeInFlight: claim.closeInFlight,
+    };
   }
 
   // ── 0. Pre-compute Wrapped stats ────────────────────────────
@@ -1238,23 +1359,32 @@ export async function closeSession(sessionId: string): Promise<CloseSessionResul
   // about). Now: session closed but rows possibly stale — invisible, because a
   // closed session's board is unreachable, and joinQueueAction refuses to add
   // anything back.
-  const { error: updateError } = await supabase
+  // Compare-and-swap: only the claim holder should still see is_active=true.
+  // 0 rows means another closer already flipped — do not broadcast or
+  // teardown again (those are the winner's job).
+  const { data: flipped, error: updateError } = await supabase
     .from("sessions")
     .update({
       is_active: false,
       ended_at: new Date().toISOString(),
     })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    .eq("is_active", true)
+    .select("id");
 
   if (updateError) {
     return { success: false, message: `Failed to close session: ${updateError.message}` };
+  }
+  if (!flipped || flipped.length === 0) {
+    return { success: false, message: "Session is already closed.", alreadyClosed: true };
   }
 
   // ── 2. Broadcast session_closed to all connected players ───
   // Emitted the instant the session row is committed. Retried once inside the
   // helper; `delivered` is reported back so the organizer's UI can say so
   // rather than claiming a clean close that no phone heard.
-  const delivered = await broadcastSessionClosed(sessionId, wrappedReady);
+  const closer = await getActorContext(user.id);
+  const delivered = await broadcastSessionClosed(sessionId, wrappedReady, closer);
 
   // ── 3. Independent cleanups (different tables, no interdependency) run
   //       in parallel: cancel lingering matches, mark queue entries "left"
