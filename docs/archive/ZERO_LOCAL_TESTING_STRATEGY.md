@@ -267,7 +267,7 @@ Target suite size: **8–12 specs total**, full run under 90 seconds.
 | | |
 |---|---|
 | **Objective** | A player who closes their browser tab can re-enter their identity using `name + 4-digit PIN` and resume their queue position with no data loss. |
-| **Initial State** | • 1 player (`Alice`, PIN `1234`) signed in, in queue position 3<br>• Alice's browser context is then **discarded** (`context.close()`) to simulate closing the tab |
+| **Initial State** | • 1 player (`Alice`, PIN «redacted») signed in, in queue position 3<br>• Alice's browser context is then **discarded** (`context.close()`) to simulate closing the tab |
 | **Steps** | 1. Open a fresh browser context (no cookies)<br>2. Navigate to `/play`<br>3. Click "Already played here? Reconnect"<br>4. Type `Alice`, `1234`, submit |
 | **UI Assertions** | • Redirected to `/play/{sessionId}` automatically<br>• Queue position 3 displayed<br>• `games_played` count unchanged |
 | **DB Assertions** | • A new `auth.users` row was NOT created (reconnect found existing profile)<br>• `queue_entries.player_id` still points to Alice's original profile<br>• `profiles.id` unchanged |

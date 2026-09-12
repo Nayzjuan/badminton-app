@@ -84,7 +84,9 @@ function clockStr(m: number) {
   return `${Math.floor(m / 60)}h${String(Math.round(m % 60)).padStart(2, "0")}m`;
 }
 
-// ─── Real Saturday 06/06 roster ───────────────────────────────────────────────
+// ─── Saturday 06/06 roster, pseudonymised ────────────────────────────────────
+// Arrival times, skills and ids are the real measured shape; display names are
+// placeholders so the file carries no member PII.
 // joinMin = minutes from session reference (07:12:02 UTC).
 // Negative  → already in queue before session started (early arrival).
 // Positive  → joins the queue mid-session (late joiner event).
@@ -97,39 +99,39 @@ interface PlayerDef {
 
 const ROSTER: PlayerDef[] = [
   // ── Early arrival ─────────────────────────────────────────────────────────
-  { id: "e4669891-1f1f-40e2-8c73-49125e9eeb69", name: "Michael Yan", skill: 4, joinMin: -95.66 },
+  { id: "e4669891-1f1f-40e2-8c73-49125e9eeb69", name: "Player 01", skill: 4, joinMin: -95.66 },
   // ── Main group arrives at T≈0 ─────────────────────────────────────────────
-  { id: "757a93e9-514f-4d4f-8b68-82fc8cf6f661", name: "Gelo", skill: 3, joinMin: 0.01 },
-  { id: "bf10c1c0-f886-4ce0-9d54-894bfb018149", name: "Jeff", skill: 3, joinMin: 0.01 },
-  { id: "8ecf82c1-2918-4329-8d84-0d216b51f9a0", name: "Chu", skill: 6, joinMin: 5.55 },
-  { id: "8d8dc213-84fd-4422-8f4f-4eead22bef01", name: "Barts", skill: 5, joinMin: 10.87 },
-  { id: "9215b10f-c64b-4e6e-ae2d-5dc84ef265e8", name: "Veejay", skill: 4, joinMin: 10.87 },
-  { id: "77005375-4040-4fed-8138-77908ddd86de", name: "Stelle", skill: 4, joinMin: 10.87 },
-  { id: "750a3b1e-beb9-4a78-a9ba-c567ba38566a", name: "Dexter", skill: 4, joinMin: 13.33 },
-  { id: "8db8a64d-33e0-4edc-910c-0542db83bd9a", name: "Carlo", skill: 4, joinMin: 13.33 },
-  { id: "9c3a6676-bea7-49b4-9784-1b96899720cd", name: "Eduard", skill: 2, joinMin: 22.73 },
-  { id: "99f49d77-1491-410e-b895-cf4deb64ab37", name: "Miguel T", skill: 1, joinMin: 22.73 },
-  { id: "f06ce3c8-0f88-4d8a-a931-7a34d4404914", name: "Madrid", skill: 4, joinMin: 22.73 },
-  { id: "39ddb52f-372a-4180-ae65-4a0886baff77", name: "JCG", skill: 2, joinMin: 26.31 },
-  { id: "080dccf2-73f5-43e9-a1ec-7c88c335744c", name: "Jackie B", skill: 3, joinMin: 26.31 },
-  { id: "0fc00f04-04d7-4bff-ade7-ee0935fdecf7", name: "Rae", skill: 2, joinMin: 26.31 },
-  { id: "77c03a5b-1c4d-4a3e-b07c-b3bb8cf3ac07", name: "Enid", skill: 3, joinMin: 37.97 },
-  { id: "56d954dd-61e9-40cb-b161-5e60a3209502", name: "Bri", skill: 4, joinMin: 37.97 },
-  { id: "64044d4b-f8f3-479a-9037-5d68fe4af5b4", name: "Don Gao", skill: 6, joinMin: 37.97 },
-  { id: "d59c4a24-6811-4922-a005-1dd57fabcead", name: "Marc", skill: 2, joinMin: 37.97 },
-  { id: "3cda1cf9-6c7c-4535-a4a7-0abeb502d960", name: "Hannah", skill: 2, joinMin: 39.77 },
-  { id: "e62d20fb-bc1a-4b00-98b0-0d49fab4b4b1", name: "Gessa", skill: 1, joinMin: 39.77 },
-  { id: "8ef4b364-e187-4d6b-9b92-286fdf90edae", name: "Jason", skill: 2, joinMin: 39.77 },
-  { id: "8c90917f-9cc6-4c04-b2a4-241f8765e39c", name: "KARLO", skill: 2, joinMin: 39.77 },
-  { id: "499b5fb7-b7d6-4429-b35e-c77df4e30930", name: "Miggy", skill: 5, joinMin: 45.01 },
-  { id: "9bb6fd8f-fa7e-44e9-b311-ddd9175d1e41", name: "Paul", skill: 6, joinMin: 45.01 },
-  { id: "50d9fb43-55dd-46fc-8cb4-9b6c4f999093", name: "Alvin DG", skill: 4, joinMin: 45.01 },
-  { id: "1cc01052-f77e-42c6-8a88-f8201acfd117", name: "Marcus", skill: 5, joinMin: 45.01 },
+  { id: "757a93e9-514f-4d4f-8b68-82fc8cf6f661", name: "Player 02", skill: 3, joinMin: 0.01 },
+  { id: "bf10c1c0-f886-4ce0-9d54-894bfb018149", name: "Player 03", skill: 3, joinMin: 0.01 },
+  { id: "8ecf82c1-2918-4329-8d84-0d216b51f9a0", name: "Player 04", skill: 6, joinMin: 5.55 },
+  { id: "8d8dc213-84fd-4422-8f4f-4eead22bef01", name: "Player 05", skill: 5, joinMin: 10.87 },
+  { id: "9215b10f-c64b-4e6e-ae2d-5dc84ef265e8", name: "Player 06", skill: 4, joinMin: 10.87 },
+  { id: "77005375-4040-4fed-8138-77908ddd86de", name: "Player 07", skill: 4, joinMin: 10.87 },
+  { id: "750a3b1e-beb9-4a78-a9ba-c567ba38566a", name: "Player 08", skill: 4, joinMin: 13.33 },
+  { id: "8db8a64d-33e0-4edc-910c-0542db83bd9a", name: "Player 09", skill: 4, joinMin: 13.33 },
+  { id: "9c3a6676-bea7-49b4-9784-1b96899720cd", name: "Player 10", skill: 2, joinMin: 22.73 },
+  { id: "99f49d77-1491-410e-b895-cf4deb64ab37", name: "Player 11", skill: 1, joinMin: 22.73 },
+  { id: "f06ce3c8-0f88-4d8a-a931-7a34d4404914", name: "Player 12", skill: 4, joinMin: 22.73 },
+  { id: "39ddb52f-372a-4180-ae65-4a0886baff77", name: "Player 13", skill: 2, joinMin: 26.31 },
+  { id: "080dccf2-73f5-43e9-a1ec-7c88c335744c", name: "Player 14", skill: 3, joinMin: 26.31 },
+  { id: "0fc00f04-04d7-4bff-ade7-ee0935fdecf7", name: "Player 15", skill: 2, joinMin: 26.31 },
+  { id: "77c03a5b-1c4d-4a3e-b07c-b3bb8cf3ac07", name: "Player 16", skill: 3, joinMin: 37.97 },
+  { id: "56d954dd-61e9-40cb-b161-5e60a3209502", name: "Player 17", skill: 4, joinMin: 37.97 },
+  { id: "64044d4b-f8f3-479a-9037-5d68fe4af5b4", name: "Player 18", skill: 6, joinMin: 37.97 },
+  { id: "d59c4a24-6811-4922-a005-1dd57fabcead", name: "Player 19", skill: 2, joinMin: 37.97 },
+  { id: "3cda1cf9-6c7c-4535-a4a7-0abeb502d960", name: "Player 20", skill: 2, joinMin: 39.77 },
+  { id: "e62d20fb-bc1a-4b00-98b0-0d49fab4b4b1", name: "Player 21", skill: 1, joinMin: 39.77 },
+  { id: "8ef4b364-e187-4d6b-9b92-286fdf90edae", name: "Player 22", skill: 2, joinMin: 39.77 },
+  { id: "8c90917f-9cc6-4c04-b2a4-241f8765e39c", name: "Player 23", skill: 2, joinMin: 39.77 },
+  { id: "499b5fb7-b7d6-4429-b35e-c77df4e30930", name: "Player 24", skill: 5, joinMin: 45.01 },
+  { id: "9bb6fd8f-fa7e-44e9-b311-ddd9175d1e41", name: "Player 25", skill: 6, joinMin: 45.01 },
+  { id: "50d9fb43-55dd-46fc-8cb4-9b6c4f999093", name: "Player 26", skill: 4, joinMin: 45.01 },
+  { id: "1cc01052-f77e-42c6-8a88-f8201acfd117", name: "Player 27", skill: 5, joinMin: 45.01 },
   // ── Late joiners — arrive T≈97 min ────────────────────────────────────────
-  { id: "31ba86eb-b0ba-4b6f-9919-82b21c91fbca", name: "Lei", skill: 1, joinMin: 97.37 },
-  { id: "5f1a1b3e-4107-4b4c-9e79-bef91246aa39", name: "Clark", skill: 1, joinMin: 97.37 },
-  { id: "fd5ff256-0499-4bae-ad6b-845e276bf9ac", name: "Aim", skill: 2, joinMin: 97.37 },
-  { id: "2c098465-b70f-4a85-ad96-e156e490b7cd", name: "Kate C", skill: 2, joinMin: 97.37 },
+  { id: "31ba86eb-b0ba-4b6f-9919-82b21c91fbca", name: "Player 28", skill: 1, joinMin: 97.37 },
+  { id: "5f1a1b3e-4107-4b4c-9e79-bef91246aa39", name: "Player 29", skill: 1, joinMin: 97.37 },
+  { id: "fd5ff256-0499-4bae-ad6b-845e276bf9ac", name: "Player 30", skill: 2, joinMin: 97.37 },
+  { id: "2c098465-b70f-4a85-ad96-e156e490b7cd", name: "Player 31", skill: 2, joinMin: 97.37 },
 ];
 
 const COURTS = [

@@ -42,7 +42,7 @@ The backup uses `INSERT ... ON CONFLICT DO UPDATE` — it is a **restore script*
 
 **Critical limitation**: The backup does NOT include `auth.users` rows. Deleting a Chillax profile's `auth.users` entry would permanently lock that player out of the app with no recovery. The plan therefore **never touches** the 18 Chillax profile IDs.
 
-**ID discrepancy — 3 profiles differ from backup**: Miggy, Jake L, and Kevin DC reconnected after the backup using their PINs. The reconnect flow deleted their original profile IDs and created new ones. The allowlists in this plan use the **live IDs** (confirmed from the DB), not the stale backup IDs. These 3 IDs are marked with ⚠️ in the allowlist below.
+**ID discrepancy — 3 profiles differ from backup**: three members reconnected after the backup using their PINs. The reconnect flow deleted their original profile IDs and created new ones. The allowlists in this plan use the **live IDs** (confirmed from the DB), not the stale backup IDs. These 3 IDs are marked with ⚠️ in the allowlist below.
 
 ---
 
@@ -75,24 +75,24 @@ public.profiles ─── ON DELETE NO ACTION ──► public.sessions │
 ## The 18 Profile IDs to Preserve (from backup — DO NOT DELETE)
 
 ```
-15612a9e-0433-41de-8ac7-42bfaf782e24  -- Stelle
-364d415b-9c73-4cbf-954b-893a30296d5d  -- Kevin DC ⚠️ reconnected (was 55c8d569 in backup)
-fea2e4ea-3abc-4d61-acc0-5ca21eeffd50  -- Carlo B
-05ea8e14-e80d-40d4-bb85-aead6c419eeb  -- Clarice
-5dc98804-5f48-4b3f-ac0b-5f108626f096  -- Chu
-2b97e4c1-8712-4c40-8428-924a7231c4d9  -- Veejay Banda
-58e747c7-feb9-458d-94a4-ad1636786691  -- Blader O
-e98a31a5-ef68-4847-9428-496b9f6bf312  -- Rye
-3d17ccd0-5bf9-4f5b-ae1a-37f92afd3144  -- Alvin DG
-12a7f748-807a-434c-99f9-fae1a0f30b0f  -- Sucram
-b261fa1d-6a71-4208-b177-888837bc8bb8  -- Guian
-79b7fd76-bfec-464b-a606-2ef3f1d38e99  -- Bianca v
-ae503f1f-72be-4549-9621-7a823854cb12  -- Arvin Nicholas Castro (original)
-4f24c673-1415-4aa0-8727-52af23913112  -- Maya
-b162ac12-5c99-4f8d-a7d1-3e9654ee5a54  -- Bea
-37af82bf-e92b-471f-add9-cb19fa4c5d2d  -- Arvin Nicholas Castro (reconnect)
-5d28d32f-32bf-4826-a5e0-43f5bc306fdc  -- Miggy (organizer/DEV) ⚠️ reconnected (was 99292c53 in backup)
-91cb6052-df0e-4540-9fc6-835225987f1f  -- Jake L ⚠️ reconnected (was 076cb21c in backup)
+15612a9e-0433-41de-8ac7-42bfaf782e24  -- member 01
+364d415b-9c73-4cbf-954b-893a30296d5d  -- member 02 ⚠️ reconnected (was 55c8d569 in backup)
+fea2e4ea-3abc-4d61-acc0-5ca21eeffd50  -- member 03
+05ea8e14-e80d-40d4-bb85-aead6c419eeb  -- member 04
+5dc98804-5f48-4b3f-ac0b-5f108626f096  -- member 05
+2b97e4c1-8712-4c40-8428-924a7231c4d9  -- member 06
+58e747c7-feb9-458d-94a4-ad1636786691  -- member 07
+e98a31a5-ef68-4847-9428-496b9f6bf312  -- member 08
+3d17ccd0-5bf9-4f5b-ae1a-37f92afd3144  -- member 09
+12a7f748-807a-434c-99f9-fae1a0f30b0f  -- member 10
+b261fa1d-6a71-4208-b177-888837bc8bb8  -- member 11
+79b7fd76-bfec-464b-a606-2ef3f1d38e99  -- member 12
+ae503f1f-72be-4549-9621-7a823854cb12  -- member 13 (original)
+4f24c673-1415-4aa0-8727-52af23913112  -- member 14
+b162ac12-5c99-4f8d-a7d1-3e9654ee5a54  -- member 15
+37af82bf-e92b-471f-add9-cb19fa4c5d2d  -- member 16 (reconnect)
+5d28d32f-32bf-4826-a5e0-43f5bc306fdc  -- member 17 (organizer/DEV) ⚠️ reconnected (was 99292c53 in backup)
+91cb6052-df0e-4540-9fc6-835225987f1f  -- member 18 ⚠️ reconnected (was 076cb21c in backup)
 ```
 
 ## The 24 Match IDs to Preserve (from backup — Chillax only)

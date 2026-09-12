@@ -23,8 +23,8 @@
 --
 -- Verified inputs (2026-06-08), all guarded below so a stale assumption
 -- raises instead of corrupting data:
---   Miggy  — KEEP 499b5fb7… (69 games, PIN 7777) · DELETE ghost 3a14c449… (0 games, PIN 7777)
---   Lianne — KEEP f30a6c4f… ("Lianne", PIN 0000, latest) · MERGE 9c6bc387… ("lianne", PIN 1111) in
+--   Miggy  — KEEP 499b5fb7… (69 games, PIN «redacted») · DELETE ghost 3a14c449… (0 games, PIN «redacted»)
+--   Lianne — KEEP f30a6c4f… ("Lianne", PIN «redacted», latest) · MERGE 9c6bc387… ("lianne", PIN «redacted») in
 -- ============================================================
 
 
@@ -88,14 +88,14 @@ BEGIN
   END IF;
 END $$;
 
--- ── 1b. Lianne: reassign loser → winner, keep winner (latest PIN 0000) ───────
+-- ── 1b. Lianne: reassign loser → winner, keep winner (latest PIN «redacted») ───────
 -- Loser and winner are in DIFFERENT sessions, so reassignment cannot collide on
 -- the (session_id, player_id) uniqueness of queue_entries / wrapped_stats; the
 -- NOT EXISTS guards make it conflict-safe even if that ever changes.
 DO $$
 DECLARE
-  v_loser  uuid := '9c6bc387-2c73-4f61-ac79-be14f75e7916'; -- "lianne" PIN 1111
-  v_winner uuid := 'f30a6c4f-4325-43fd-881f-b8b21b8c9656'; -- "Lianne" PIN 0000 (latest)
+  v_loser  uuid := '9c6bc387-2c73-4f61-ac79-be14f75e7916'; -- "lianne" PIN «redacted»
+  v_winner uuid := 'f30a6c4f-4325-43fd-881f-b8b21b8c9656'; -- "Lianne" PIN «redacted» (latest)
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = v_loser) THEN
     RAISE NOTICE 'Lianne loser % already merged — skipping (idempotent).', v_loser;
@@ -130,7 +130,7 @@ BEGIN
                       WHERE w.user_id = v_winner AND w.session_id = o.session_id);
   DELETE FROM session_organizers WHERE user_id = v_loser;
 
-  -- Winner keeps its own (latest) PIN 0000 and "Lianne" capitalization — no change.
+  -- Winner keeps its own (latest) PIN «redacted» and "Lianne" capitalization — no change.
   -- Audit the merge.
   INSERT INTO player_renames (player_id, old_name, new_name, reason, actor_user_id)
   SELECT v_winner, 'lianne', display_name, 'data_fix_merge', v_winner
