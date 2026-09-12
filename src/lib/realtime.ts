@@ -27,6 +27,7 @@ import type {
   CapSaturationPayload,
   DraftCapPhasePayload,
   QueueNoticePayload,
+  DraftsPublishedPayload,
 } from "@/lib/broadcast";
 
 type TypedClient = SupabaseClient<Database>;
@@ -332,6 +333,8 @@ export type OrganizerBroadcastHandlers = {
    * Organizer dashboards show a centered card. Player-side listeners omit this.
    */
   onQueueNotice?: (payload: QueueNoticePayload) => void;
+  /** Fired when an organizer publishes one or more drafts. Organizer boards only. */
+  onDraftsPublished?: (payload: DraftsPublishedPayload) => void;
   /**
    * Optional connection-state callback, same contract as the postgres_changes
    * subscribers. It exists because this channel went private (migration
@@ -381,6 +384,7 @@ export function subscribeToOrganizerBroadcast(
     onCapSaturation,
     onDraftCapPhaseChanged,
     onQueueNotice,
+    onDraftsPublished,
     onStatus,
   } = handlers;
   const channelName = `session-events:${sessionId}`;
@@ -429,6 +433,13 @@ export function subscribeToOrganizerBroadcast(
       .on("broadcast", { event: "queue_notice" }, (msg: { payload: QueueNoticePayload }) => {
         onQueueNotice?.(msg.payload);
       })
+      .on(
+        "broadcast",
+        { event: "drafts_published" },
+        (msg: { payload: DraftsPublishedPayload }) => {
+          onDraftsPublished?.(msg.payload);
+        }
+      )
       .subscribe(createStatusHandler(channelName, onStatus));
   });
 

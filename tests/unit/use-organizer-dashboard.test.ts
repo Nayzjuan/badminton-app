@@ -298,6 +298,21 @@ describe("useOrganizerDashboard", () => {
       // autoMatchmaking should still read true (now from liveAutoMatchmaking)
       await waitFor(() => expect(result.current.autoMatchmaking).toBe(true));
     });
+
+    it("OD-24: a co-organizer Auto flip toasts; first paint does not", () => {
+      const { rerender } = renderHook(
+        ({ live }) => useOrganizerDashboard(makeParams({ liveAutoMatchmaking: live })),
+        { initialProps: { live: false } }
+      );
+      expect(toast.success).not.toHaveBeenCalled();
+
+      rerender({ live: true });
+
+      expect(toast.success).toHaveBeenCalledWith(
+        "Engine running",
+        expect.objectContaining({ description: expect.stringMatching(/co-organizer/i) })
+      );
+    });
   });
 
   describe("OD-8: Esc key calls handleCancelSwap", () => {
@@ -577,6 +592,31 @@ describe("useOrganizerDashboard", () => {
       expect(toast.info).toHaveBeenCalledWith("This session was already closed.");
       expect(toast.error).not.toHaveBeenCalled();
       expect(mockRouter.push).toHaveBeenCalledWith("/organizer");
+    });
+
+    it("OD-22l: a close still in flight stays on the board", async () => {
+      const suppress = vi.fn();
+      vi.mocked(closeSession).mockResolvedValue({
+        success: false,
+        message: "Another organizer is closing this session.",
+        closeInFlight: true,
+      });
+
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(
+          makeParams({ organizerId: ORGANIZER_ID, suppressCloseWatcher: suppress })
+        )
+      );
+
+      await act(async () => {
+        await result.current.handleCloseSession();
+      });
+
+      expect(toast.info).toHaveBeenCalledWith("Another organizer is closing this session.");
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(mockRouter.push).not.toHaveBeenCalled();
+      expect(suppress).toHaveBeenCalledWith(true);
+      expect(suppress).toHaveBeenCalledWith(false);
     });
 
     it("OD-22g: an undelivered broadcast offers a re-send that actually re-sends", async () => {

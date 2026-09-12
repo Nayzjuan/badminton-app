@@ -71,6 +71,7 @@ export function OrganizerDashboard({
   } = useSessionClosedWatcher(session.id, profile.id, {
     fallbackPath: clubSlug ? clubBase(clubSlug) : "/organizer",
     toastMessage: "This session was closed.",
+    creditCloser: true,
   });
 
   // Leave notices arrive on the session broadcast before useOrganizerAlerts

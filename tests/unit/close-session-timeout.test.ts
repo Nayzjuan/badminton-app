@@ -14,6 +14,11 @@
 //   CST-5  ledger refresh fails, compute succeeds → rows written, NOT ready
 //   CST-6  all three RPCs share ONE phase budget, not one each
 //   CST-7  a fast failure retries, and the retry's success counts
+//   CST-8  a missed claim on an already-closed session never runs Wrapped
+//   CST-9  a concurrent closer (fresh ended_at, still active) never runs Wrapped
+//   CST-10 a stale claim is stolen and the recoverer still closes
+//   CST-11 a missed steal on a still-active session is closeInFlight, not alreadyClosed
+//   CST-12 a missed claim on a still-claimable row is a retryable failure, not alreadyClosed
 // ============================================================
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
@@ -37,7 +42,7 @@ vi.mock("@/lib/with-timeout", () => ({ withTimeout: vi.fn() }));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { isSessionOrganizer } from "@/app/actions/_shared";
+import { isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { broadcastSessionClosed } from "@/lib/broadcast";
 import { withTimeout } from "@/lib/with-timeout";
 import { closeSession } from "@/app/actions/sessions";
@@ -53,6 +58,14 @@ type RpcError = { message: string; code?: string } | null;
 function makeServiceClient(opts: {
   rpc: (name: string) => Promise<{ error: RpcError }>;
   onSessionFlip?: () => void;
+  /** Rows returned by the ended_at claim UPDATE. Default: this closer wins. */
+  claimRows?: { id: string }[] | null;
+  /** Re-read after a missed claim. */
+  sessionRow?: { id: string; is_active: boolean; ended_at: string | null } | null;
+  /** Rows returned by a stale-claim steal. */
+  stealRows?: { id: string }[] | null;
+  /** Rows returned by the is_active flip. Default: this closer wins. */
+  flipRows?: { id: string }[] | null;
 }) {
   return {
     rpc: vi.fn((name: string) => opts.rpc(name)),
@@ -61,19 +74,58 @@ function makeServiceClient(opts: {
         return {
           select: () => ({
             eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data:
+                    opts.sessionRow === undefined
+                      ? { id: SESSION_ID, is_active: true, ended_at: null }
+                      : opts.sessionRow,
+                  error: null,
+                }),
               single: () =>
                 Promise.resolve({
-                  data: { id: SESSION_ID, is_active: true },
+                  data: { id: SESSION_ID, is_active: true, ended_at: null },
                   error: null,
                 }),
             }),
           }),
-          update: () => ({
-            eq: () => {
-              opts.onSessionFlip?.();
-              return Promise.resolve({ error: null });
-            },
-          }),
+          update: (payload: Record<string, unknown>) => {
+            let isEndedAtNull = false;
+            let eqEndedAt: unknown = undefined;
+            const api = {
+              eq: (col: string, val: unknown) => {
+                if (col === "ended_at") eqEndedAt = val;
+                return api;
+              },
+              is: (col: string, val: unknown) => {
+                if (col === "ended_at" && val === null) isEndedAtNull = true;
+                return api;
+              },
+              select: () => {
+                if (payload.is_active === false) {
+                  opts.onSessionFlip?.();
+                  return Promise.resolve({
+                    data: opts.flipRows === undefined ? [{ id: SESSION_ID }] : opts.flipRows,
+                    error: null,
+                  });
+                }
+                if (isEndedAtNull) {
+                  return Promise.resolve({
+                    data: opts.claimRows === undefined ? [{ id: SESSION_ID }] : opts.claimRows,
+                    error: null,
+                  });
+                }
+                if (eqEndedAt !== undefined) {
+                  return Promise.resolve({
+                    data: opts.stealRows === undefined ? [{ id: SESSION_ID }] : opts.stealRows,
+                    error: null,
+                  });
+                }
+                return Promise.resolve({ data: [{ id: SESSION_ID }], error: null });
+              },
+            };
+            return api;
+          },
         };
       }
       if (table === "courts") {
@@ -111,6 +163,7 @@ beforeEach(() => {
   errorSpy.mockClear();
   vi.mocked(createServerSupabaseClient).mockResolvedValue(makeServerClient(ORG_ID) as never);
   vi.mocked(isSessionOrganizer).mockResolvedValue(true);
+  vi.mocked(getActorContext).mockResolvedValue({ id: ORG_ID, name: "Org" });
   vi.mocked(broadcastSessionClosed).mockResolvedValue(true);
 });
 
@@ -133,7 +186,10 @@ describe("closeSession — Wrapped hang must not block close", () => {
     expect(result.success).toBe(true);
     expect(result.wrappedReady).toBe(false);
     expect(flipped).toBe(true);
-    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, false);
+    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, false, {
+      id: ORG_ID,
+      name: "Org",
+    });
     expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(1);
     // The phase budget, not a per-call one: the first call gets all of it, and
     // nothing may ever be handed more than the phase has left. CST-6 pins the
@@ -188,7 +244,10 @@ describe("closeSession — Wrapped hang must not block close", () => {
 
     expect(result.success).toBe(true);
     expect(result.wrappedReady).toBe(true);
-    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, true);
+    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, true, {
+      id: ORG_ID,
+      name: "Org",
+    });
   });
 
   // 0a (refresh_cross_session_stats) and 0b (compute_session_wrapped) take
@@ -225,7 +284,10 @@ describe("closeSession — Wrapped hang must not block close", () => {
     expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(1);
     // …but the watcher must route to the lobby, not to a stale Wrapped.
     expect(result.wrappedReady).toBe(false);
-    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, false);
+    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, false, {
+      id: ORG_ID,
+      name: "Org",
+    });
   });
 
   it("CST-4: statement-timeout (57014) does not retry, still closes", async () => {
@@ -312,9 +374,160 @@ describe("closeSession — Wrapped hang must not block close", () => {
       expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(2);
       expect(result.success).toBe(true);
       expect(result.wrappedReady).toBe(true);
-      expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, true);
+      expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, true, {
+        id: ORG_ID,
+        name: "Org",
+      });
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it("CST-8: a missed claim on an already-closed session never runs Wrapped", async () => {
+    const rpc = vi.fn((_name: string) => Promise.resolve({ error: null }));
+    let flipped = false;
+    vi.mocked(createServiceClient).mockReturnValue(
+      makeServiceClient({
+        rpc,
+        claimRows: [],
+        sessionRow: {
+          id: SESSION_ID,
+          is_active: false,
+          ended_at: new Date().toISOString(),
+        },
+        onSessionFlip: () => {
+          flipped = true;
+        },
+      }) as never
+    );
+
+    const result = await closeSession(SESSION_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.alreadyClosed).toBe(true);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(flipped).toBe(false);
+    expect(broadcastSessionClosed).not.toHaveBeenCalled();
+  });
+
+  it("CST-9: a concurrent closer (fresh ended_at, still active) reports closeInFlight, not alreadyClosed", async () => {
+    const rpc = vi.fn((_name: string) => Promise.resolve({ error: null }));
+    let flipped = false;
+    vi.mocked(createServiceClient).mockReturnValue(
+      makeServiceClient({
+        rpc,
+        claimRows: [],
+        sessionRow: {
+          id: SESSION_ID,
+          is_active: true,
+          ended_at: new Date(Date.now() - 1_000).toISOString(),
+        },
+        onSessionFlip: () => {
+          flipped = true;
+        },
+      }) as never
+    );
+
+    const result = await closeSession(SESSION_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.closeInFlight).toBe(true);
+    expect(result.alreadyClosed).toBeUndefined();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(flipped).toBe(false);
+    expect(broadcastSessionClosed).not.toHaveBeenCalled();
+  });
+
+  // Keep in lockstep with CLOSE_CLAIM_STALE_MS in sessions.ts (not exported:
+  // this file is "use server" and must not export a const).
+  const STALE_MS = 30_000;
+
+  it("CST-10: a stale claim is stolen and the recoverer still closes", async () => {
+    vi.mocked(withTimeout).mockImplementation(async (promise) => promise);
+    const rpc = vi.fn((_name: string) => Promise.resolve({ error: null }));
+    let flipped = false;
+    vi.mocked(createServiceClient).mockReturnValue(
+      makeServiceClient({
+        rpc,
+        claimRows: [],
+        sessionRow: {
+          id: SESSION_ID,
+          is_active: true,
+          ended_at: new Date(Date.now() - (STALE_MS + 1_000)).toISOString(),
+        },
+        stealRows: [{ id: SESSION_ID }],
+        onSessionFlip: () => {
+          flipped = true;
+        },
+      }) as never
+    );
+
+    const result = await closeSession(SESSION_ID);
+
+    expect(result.success).toBe(true);
+    expect(result.wrappedReady).toBe(true);
+    expect(flipped).toBe(true);
+    expect(rpc.mock.calls.filter((c) => c[0] === "compute_session_wrapped")).toHaveLength(1);
+    expect(broadcastSessionClosed).toHaveBeenCalledWith(SESSION_ID, true, {
+      id: ORG_ID,
+      name: "Org",
+    });
+  });
+
+  it("CST-11: a missed steal on a still-active session is closeInFlight, not alreadyClosed", async () => {
+    const rpc = vi.fn((_name: string) => Promise.resolve({ error: null }));
+    let flipped = false;
+    vi.mocked(createServiceClient).mockReturnValue(
+      makeServiceClient({
+        rpc,
+        claimRows: [],
+        sessionRow: {
+          id: SESSION_ID,
+          is_active: true,
+          ended_at: new Date(Date.now() - (STALE_MS + 1_000)).toISOString(),
+        },
+        stealRows: [],
+        onSessionFlip: () => {
+          flipped = true;
+        },
+      }) as never
+    );
+
+    const result = await closeSession(SESSION_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.closeInFlight).toBe(true);
+    expect(result.alreadyClosed).toBeUndefined();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(flipped).toBe(false);
+    expect(broadcastSessionClosed).not.toHaveBeenCalled();
+  });
+
+  it("CST-12: a missed claim on a still-claimable row is a retryable failure, not alreadyClosed", async () => {
+    const rpc = vi.fn((_name: string) => Promise.resolve({ error: null }));
+    let flipped = false;
+    vi.mocked(createServiceClient).mockReturnValue(
+      makeServiceClient({
+        rpc,
+        claimRows: [],
+        sessionRow: {
+          id: SESSION_ID,
+          is_active: true,
+          ended_at: null,
+        },
+        onSessionFlip: () => {
+          flipped = true;
+        },
+      }) as never
+    );
+
+    const result = await closeSession(SESSION_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.alreadyClosed).toBeUndefined();
+    expect(result.closeInFlight).toBeUndefined();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(flipped).toBe(false);
+    expect(broadcastSessionClosed).not.toHaveBeenCalled();
   });
 });
