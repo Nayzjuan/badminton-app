@@ -252,6 +252,7 @@ export function useOrganizerDashboard({
   // null = no in-flight toggle; use liveAutoMatchmaking as truth.
   const [pendingAuto, setPendingAuto] = useState<boolean | null>(null);
   const [togglingAuto, setTogglingAuto] = useState(false);
+  const seenLiveAutoRef = useRef<boolean | null>(null);
 
   // ── Auto-publish optimistic toggle (mirrors auto-matchmaking) ──
   const [pendingAutoPublish, setPendingAutoPublish] = useState<boolean | null>(null);
@@ -295,6 +296,32 @@ export function useOrganizerDashboard({
   useEffect(() => {
     if (pendingAuto !== null && liveAutoMatchmaking === pendingAuto) {
       setPendingAuto(null);
+    }
+  }, [liveAutoMatchmaking, pendingAuto]);
+
+  // Co-organizer (or this organizer's other tab) flipped Auto. This tab's
+  // own echo is skipped: pendingAuto already matches, and handleToggleAuto
+  // already toasted. First paint must not toast.
+  useEffect(() => {
+    if (seenLiveAutoRef.current === null) {
+      seenLiveAutoRef.current = liveAutoMatchmaking;
+      return;
+    }
+    if (seenLiveAutoRef.current === liveAutoMatchmaking) return;
+    seenLiveAutoRef.current = liveAutoMatchmaking;
+    if (pendingAuto === liveAutoMatchmaking) return;
+    if (liveAutoMatchmaking) {
+      toast.success("Engine running", {
+        description: "A co-organizer turned auto-matchmaking ON.",
+        position: "bottom-right",
+        duration: 3_000,
+      });
+    } else {
+      toast.info("Engine paused", {
+        description: "A co-organizer turned auto-matchmaking OFF.",
+        position: "bottom-right",
+        duration: 3_000,
+      });
     }
   }, [liveAutoMatchmaking, pendingAuto]);
 
@@ -344,8 +371,18 @@ export function useOrganizerDashboard({
     try {
       const result = await closeSession(sessionId);
 
+      if (result.closeInFlight) {
+        // A co-organizer claimed the close; the session is still live until
+        // they flip is_active. Stay on the board and listen — alreadyClosed
+        // would navigate away from a night that has not ended yet.
+        setCloseOpen(false);
+        suppressCloseWatcher?.(false);
+        toast.info(result.message);
+        return;
+      }
+
       // `alreadyClosed` is a success from the organizer's point of view: a
-      // double-submit, or a co-organizer who got there first. The session is
+      // double-submit, or a co-organizer who closed it first. The session is
       // in the state they asked for, so say so and leave.
       if (result.success || result.alreadyClosed) {
         setCloseOpen(false);

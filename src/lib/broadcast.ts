@@ -203,6 +203,13 @@ export interface SessionClosedPayload {
    * would render an all-zero recap — see useSessionClosedWatcher.
    */
   wrappedReady?: boolean;
+  /**
+   * Who closed. Optional — omit on the wire when unknown so RPB-2's exact
+   * payload still holds. Players ignore these; the organizer watcher names
+   * the closer only when `creditCloser` is on and this is not the viewer.
+   */
+  actorId?: string;
+  actorName?: string | null;
 }
 
 /**
@@ -224,9 +231,12 @@ export interface SessionClosedPayload {
  */
 export async function broadcastSessionClosed(
   sessionId: string,
-  wrappedReady: boolean
+  wrappedReady: boolean,
+  actor?: { id: string | null; name: string | null }
 ): Promise<boolean> {
   const payload: SessionClosedPayload = { sessionId, wrappedReady };
+  if (actor?.id) payload.actorId = actor.id;
+  if (actor?.name) payload.actorName = actor.name;
   return await postBroadcast(`session-events:${sessionId}`, "session_closed", payload, {
     retry: true,
   });
@@ -257,6 +267,31 @@ export async function broadcastAutoMatchmakingToggled(
 ): Promise<void> {
   const payload: AutoMatchmakingToggledPayload = { isOn };
   await postBroadcast(`session-events:${sessionId}`, "auto_matchmaking_toggled", payload);
+}
+
+// ── drafts_published ──────────────────────────────────────
+
+export interface DraftsPublishedPayload {
+  actorId: string;
+  actorName: string | null;
+  /** How many drafts actually flipped. Always ≥ 1 — skip the send at 0. */
+  count: number;
+}
+
+/**
+ * Tell OTHER organizers that drafts were published. Players do not
+ * subscribe — they already get the on-deck ping. Organizer self-echo
+ * is skipped on actorId. Publish All is one event with count, not N.
+ *
+ * Channel: session-events:{sessionId}
+ * Event:   drafts_published
+ */
+export async function broadcastDraftsPublished(
+  sessionId: string,
+  payload: DraftsPublishedPayload
+): Promise<void> {
+  if (payload.count <= 0) return;
+  await postBroadcast(`session-events:${sessionId}`, "drafts_published", payload);
 }
 
 // ── auto_publish_toggled ──────────────────────────────────

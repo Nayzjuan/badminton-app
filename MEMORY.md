@@ -66,6 +66,26 @@ at-risk.
 push protection; then reset the member PINs and organizer passcodes. Merging PR #84 stops `main`
 from serving the key but does not remove it from history, and does not revoke it.
 
+## 2026-09-11 — co-organizer UI: stale modals close; named toasts
+
+Idle score modal settles only when `endMatch` is not in flight, then reads `matches.status` so scored vs cancelled stays distinct (`idleScoreModalDecision`, `toastForTerminalMatchStatus`). Swap sheets still close on `PLAYER_NOT_IN_MATCH` (LS-22); they now toast the outgoing name and close from the **live** match list. `drafts_published` names a co-organizer publish. Auto-off/on toasts on the other tab via `pendingAuto` skip. `session_closed` may carry the closer; organizer `creditCloser` waits 200 ms for that name after a nameless row/poll. Pins: ISM-1–8, CT-1–3, SS-4c, LS-29, LS-29b, OD-24, PE-1/2, CST-12.
+
+## 2026-09-10 — co-organizer audit: close serialized; duplicate-session parked
+
+`closeSession` (`claimSessionClose`) now CAS-stamps `sessions.ended_at` while `is_active` stays true, then runs Wrapped, then CAS-flips `is_active`. A second closer gets `closeInFlight` (stay on the board) if Wrapped is still running, or `alreadyClosed` if the night is done — never a second `compute_session_wrapped`. A claim older than 30s with `is_active` still true can be stolen (crashed closer); a lost steal re-reads and returns `closeInFlight` if the night is still live. Pins: CST-8/9/10/11, OD-22l, Test 3b.
+
+**Kept on purpose:** club members who open `/c/[slug]/organizer` still see the co-organizer passcode on active cards. That is the join path.
+
+**PARKED — duplicate active session per club.** `createSession` still has only the 10-minute SELECT-then-INSERT window. A sub-commit-latency double-create can still open two active nights in one club (07/25 incident class). Closing it fully is a partial UNIQUE on `(club_id) WHERE is_active AND NOT is_hidden`. Do not "just add the index" without a product call on whether a club may run two overlapping nights.
+
+---
+
+## 2026-08-22 — two-highest stack banned unless tied for best gap
+
+`isBalancedSplit` (`matchmaking-core.ts`) still uses gap ≤ minGap + `SKILL_VARIANCE_MAX`, but a seating that puts the two highest-skill players on the same team is now balanced only when that gap equals minGap. That is what stops L.ADV+L.ADV vs U.INT+INT (gap 3) and vs U.INT+U.INT (gap 2): both were inside the +2 tolerance. Mixed Split 2 on 6/5/4/3 (gap 2, not stacked) stays eligible. e2e [H-2] 4/3/3/2 now rotates to Split 2 instead of Split 1; the assertion is still "partnership differs", so the spec does not change.
+
+---
+
 ## 🔒 STANDING CONSTRAINTS — carried forward, not history
 
 Narrative for each is in `docs/archive/MEMORY_HISTORY.md` (grep the phrase). These are here because
@@ -421,6 +441,17 @@ concurrent-branch slot until the plan limit is hit — at which point **every** 
 Preview" check is `CANCELLED` with "Maximum number of concurrent branches reached". Two had
 accumulated from PRs #70/#71. Check `list_branches` when that check goes red; the only non-recurring
 fix is turning branching off in the Supabase GitHub integration, since previews are never used here.
+
+🪤 **Two Tailwind/flexbox traps, both found in the organizer header rebuild.** (a) Tailwind emits
+every `display` utility in ONE group, so the generated stylesheet's order — not the order of the
+class attribute — picks the winner: a shared constant that starts `inline-flex` silently defeats a
+`hidden lg:inline-flex` appended at the call site, and the element stays visible on a phone. Keep
+`display` out of shared class constants; let call sites supply it. (b) A `<button>` resolves
+`width:auto` to fit-content **even inside a flex-shrunk parent**, so `truncate` on a descendant
+`<h1>` never engages without `max-w-full` on the button — that is how the session name came to paint
+straight through the live tallies at 1280. Both are only falsifiable against a live viewport:
+`/sandbox/organizer-header` renders the header alone with knobs for a long name, sync-offline, a
+closed session and unread counts.
 
 ## 📚 Where everything else lives
 

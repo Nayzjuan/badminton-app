@@ -1118,9 +1118,9 @@ export async function seedSession(
     //   - isDiversityViolation([all 4]) = true (4-of-4 overlap with completed)
     //   - Tier 1 swap: swapPool empty (no other players) → fail
     //   - Tier 2 expand: widerEligible empty (all 4 already in group) → fail
-    //   - Tier 3 rotatedDraft: repeatCount=1 → splitIndex=1. For this
-    //     4/3/3/2 four, Split 1 (gap 2) is still balanced. A 6/5/4/3
-    //     four would skip top-vs-bottom as lopsided.
+    //   - Tier 3 rotatedDraft: repeatCount=1 → splitIndex=1. Split 1
+    //     stacks the two highest (dan+top-int vs bottom-int+alice, gap 2
+    //     > minGap 0) and is dropped; rotation continues to Split 2.
     //
     // The rotated split with sorted-DESC-by-skill input (dan, bob/cara, alice)
     // produces partnership pairs that DIFFER from {alice+dan, bob+cara}.
@@ -1164,9 +1164,10 @@ export async function seedSession(
     // ── Create the COMPLETED match: alice+dan vs bob+cara ────────
     // Skill sums: A=2+4=6, B=3+3=6 → balanced.
     // Partnership pairs: {alice+dan, bob+cara}.
-    // After rotatedDraft (splitIndex=1), the new partnership pair will be
-    // {dan+top-int, alice+bottom-int} which differs from above regardless
-    // of whether bob or cara wins the stable-sort tie.
+    // After rotatedDraft (splitIndex=1 skipped → Split 2), the new
+    // partnership pair will be {dan+one-int, alice+other-int} which
+    // differs from above regardless of whether bob or cara wins the
+    // stable-sort tie.
     const { data: completedMatch, error: completedErr } = await db
       .from("matches")
       .insert({

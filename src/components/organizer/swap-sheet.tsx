@@ -28,7 +28,8 @@
 //   - PLAYER_UNAVAILABLE / generic → keep sheet open, show error
 // ============================================================
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { toast } from "sonner";
 import { AlertTriangle, Pause, Search, Users } from "lucide-react";
 import { SkillBadge } from "@/components/ui/skill-badge";
 import {
@@ -93,6 +94,8 @@ export function SwapSheet({
   const [isConfirming, setIsConfirming] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const contextRef = useRef(context);
+  contextRef.current = context;
 
   // Reset all local state when the swap context changes (i.e. the organizer picks
   // a different player to swap out). The parent also passes key={matchId+outPlayerId}
@@ -218,14 +221,16 @@ export function SwapSheet({
     setIsConfirming(false);
 
     if (result.errorCode === "MATCH_STARTED") {
-      // Layer 2 useEffect in dashboard will also close this, but handle
-      // here as an immediate fallback in case realtime is slow.
+      // SS-4 already toasts "Match has started". Do not toast again.
       onClose();
       return;
     }
 
     if (result.errorCode === "PLAYER_NOT_IN_MATCH") {
-      // outPlayer was already swapped by a concurrent organizer
+      // Skip if Layer 2 already closed + named the outgoing player.
+      if (contextRef.current) {
+        toast.info(`${context.outPlayerName} was already moved.`);
+      }
       onClose();
       return;
     }

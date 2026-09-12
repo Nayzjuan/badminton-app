@@ -27,6 +27,7 @@ vi.mock("sonner", () => ({
     success: vi.fn(),
     error: vi.fn(),
     warning: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
@@ -63,8 +64,8 @@ function makeCtx(
   };
 }
 
-function makeMatch(id: string) {
-  return { id } as Parameters<typeof useSwapState>[1][0];
+function makeMatch(id: string, players: { player_id: string }[] = []) {
+  return { id, players } as Parameters<typeof useSwapState>[1][0];
 }
 
 // ── Default mock actions ───────────────────────────────────────
@@ -188,6 +189,21 @@ describe("useSwapState", () => {
 
       await waitFor(() => expect(result.current.swapContext).toBeNull());
       expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/moved to a court/i));
+    });
+
+    it("SS-4c: sheet mode closes when the outgoing player leaves a still-pending match", async () => {
+      const withAlice = makeMatch(MATCH_A, [{ player_id: PLAYER_ALICE }]);
+      const { result, rerender } = setup([withAlice]);
+
+      act(() => result.current.handlePlayerTap(makeCtx()));
+      act(() => result.current.handleOpenBenchSwap());
+      expect(result.current.swapContext?.mode).toBe("sheet");
+
+      rerender({ matches: [makeMatch(MATCH_A, [{ player_id: PLAYER_BOB }])] });
+
+      await waitFor(() => expect(result.current.swapContext).toBeNull());
+      expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/already moved/i));
+      expect(toast.warning).not.toHaveBeenCalled();
     });
   });
 

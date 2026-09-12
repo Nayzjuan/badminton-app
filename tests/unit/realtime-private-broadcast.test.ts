@@ -265,7 +265,7 @@ describe("private session-events broadcast", () => {
     releaseAuth();
     await flush();
 
-    expect(chan.on).toHaveBeenCalledTimes(7);
+    expect(chan.on).toHaveBeenCalledTimes(8);
     expect(chan.send).not.toHaveBeenCalled();
     unsub();
     expect(client.removeChannel).toHaveBeenCalledTimes(1);

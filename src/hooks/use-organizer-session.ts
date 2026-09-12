@@ -29,6 +29,7 @@ import type {
   OrganizerInterventionPayload,
   SessionClosedPayload,
   QueueNoticePayload,
+  DraftsPublishedPayload,
 } from "@/lib/broadcast";
 import type { Session } from "@/types/database";
 
@@ -331,6 +332,13 @@ export function useOrganizerSession(
       },
       onCapSaturation: (payload: CapSaturationPayload) => {
         setCapSaturation(payload);
+      },
+      onDraftsPublished: (payload: DraftsPublishedPayload) => {
+        if (!payload.actorId || payload.actorId === currentUserIdRef.current) return;
+        const who = payload.actorName ?? "A co-organizer";
+        const what =
+          payload.count === 1 ? "published a match." : `published ${payload.count} matches.`;
+        toast.info(`${who} ${what}`, { duration: 4_000, closeButton: true });
       },
       onQueueNotice: (payload: QueueNoticePayload) => {
         // Only an organizer kick suppresses the acting dashboard's center

@@ -48,6 +48,10 @@ vi.mock("@/app/actions/_shared", () => ({
   isSessionOrganizer: vi.fn(),
   getActorContext: vi.fn(),
 }));
+vi.mock("@/lib/broadcast", () => ({
+  broadcastOrganizerIntervention: vi.fn(),
+  broadcastDraftsPublished: vi.fn(),
+}));
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
