@@ -83,7 +83,7 @@ describe("lookup_active_session — Suite LAS", () => {
     const restore = mockAuthAs(organizer.id);
     try {
       const closed = await closeSession(session.id);
-      expect(closed.success, closed.message ?? closed.error).toBe(true);
+      expect(closed.success, closed.message).toBe(true);
     } finally {
       restore();
     }
