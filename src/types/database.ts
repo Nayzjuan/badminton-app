@@ -210,7 +210,10 @@ export type SessionOrganizer = {
 };
 
 export type SessionNotificationKind =
-  "player_left" | "player_checked_out" | "player_paused_long" | "score_correction";
+  | "player_left"
+  | "player_checked_out"
+  | "player_paused_long"
+  | "score_correction";
 
 export type SessionNotificationStatus = "unread" | "read" | "resolved" | "superseded";
 

@@ -21,7 +21,8 @@ import { normalizeName } from "@/lib/normalize-name";
 import type { SkillLevel } from "@/types/database";
 
 export type NameCheckResult =
-  { available: true } | { available: false; code: "invalid" | "reused" | "taken"; message: string };
+  | { available: true }
+  | { available: false; code: "invalid" | "reused" | "taken"; message: string };
 
 /**
  * Live availability check for a candidate name. Runs the full ladder:
