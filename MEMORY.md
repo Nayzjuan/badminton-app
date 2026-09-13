@@ -17,11 +17,11 @@
 
 ---
 
-## 2026-09-13 — Google name confirm + skill + identity merge (UNAPPLIED)
+## 2026-09-13 — Google name confirm + skill + identity merge
 
 `profiles.needs_name_confirm` + `/rename` confirm mode (keep-same valid) + skill picker + self-serve `ChangeDisplayName`. Fresh Google unique path claims the name and sets the flag; collision stays `needs_rename`. Historical **Google-native** rows (google identity, no anonymous) are backfilled. `identity_already_exists` + `intent=link` → signed cookie → `/auth/continue-google` → `merge_guest_play_into_profile` (keeper name untouched — **not** `migrate_player_identity`). Join L1 lives in `ClubJoinScreen` (after enroll, before enqueue) so `/j/[id]` and `/c/[slug]/join/[id]` share it.
 
-⚠️ **`20260913000000_oauth_name_confirm.sql` is NOT applied.** Without the GRANT, authenticated `/play` `/rename` L2 500 on the new column. Do not claim a prod stamp until `list_migrations` shows it.
+`GRANT SELECT (needs_name_confirm)` confirmed on prod (operator). Do not re-apply. Stamp is not in this file — `list_migrations` on `usxftpexoimletqmrggb` must write the ledger row.
 
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 
